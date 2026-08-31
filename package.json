@@ -1,0 +1,10 @@
+{
+  "name": "pi-planner-only",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Planner-only guard and lightweight Pi orchestration layer",
+  "dependencies": {
+    "typebox": "^1.3.7"
+  }
+}

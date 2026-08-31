@@ -14,6 +14,13 @@ export const ORCHESTRATION_TOOLS = new Set([
 	"questionnaire",
 ]);
 
+/**
+ * Read-only Git inspection exposed to the parent instead of a general shell.
+ * Unlike the `bash` audit allowlist below, this is a first-class tool: it is
+ * present in the parent's schema, not just tolerated on a stale call.
+ */
+export const AUDIT_TOOLS = new Set(["git_audit"]);
+
 const SAFE_GIT_STATUS_FLAGS = new Set([
 	"--short",
 	"-s",
@@ -118,7 +125,11 @@ export function decidePolicy(policy: PolicyInput): PolicyDecision {
 	if (toolName === "subagent" && subagentDelegatesToChildren(policy.input)) {
 		return { block: false };
 	}
-	if (READ_ONLY_TOOLS.has(toolName) || ORCHESTRATION_TOOLS.has(toolName)) {
+	if (
+		READ_ONLY_TOOLS.has(toolName) ||
+		ORCHESTRATION_TOOLS.has(toolName) ||
+		AUDIT_TOOLS.has(toolName)
+	) {
 		return { block: false };
 	}
 
