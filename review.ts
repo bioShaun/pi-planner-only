@@ -6,7 +6,7 @@
  * what the parent must do next and hands back a decision plus guidance.
  */
 
-import { MAX_REPORT_CORRECTIONS, MAX_REVIEW_ROUNDS } from "./types.ts";
+import { MAX_REPORT_CORRECTIONS, MAX_REVIEW_ROUNDS, isTerminalTaskState } from "./types.ts";
 import type {
 	FindingCategory,
 	FindingSeverity,
@@ -19,8 +19,9 @@ import type {
 } from "./types.ts";
 import { evidenceAction } from "./evidence.ts";
 import type { EvidenceComparison } from "./evidence.ts";
-import { jsonCandidates } from "./task.ts";
-import type { TaskRecord } from "./task.ts";
+import { jsonCandidates } from "./report.ts";
+import { TASK_TRANSITIONS } from "./task.ts";
+import type { TaskRecord, TaskStore } from "./task.ts";
 
 const REVIEW_VERDICTS: readonly ReviewVerdict[] = ["pass", "request_changes", "blocked"];
 
@@ -377,4 +378,56 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 				],
 			};
 	}
+}
+
+/**
+ * Apply a ReviewDecision to the Task store. Decide and apply share this
+ * module so round ordering and terminal guards have locality.
+ */
+export function applyReviewDecision(
+	store: TaskStore,
+	taskId: string,
+	decision: ReviewDecision,
+): TaskRecord {
+	const task = store.require(taskId);
+	if (isTerminalTaskState(task.state)) return task;
+	if (task.state !== "reviewing") {
+		// A verdict recorded without re-delegating (e.g. via /planner-only
+		// review) still passes through the spec's EXECUTING -> REVIEWING hop.
+		if (!TASK_TRANSITIONS[task.state].includes("reviewing")) {
+			store.transition(taskId, "executing");
+		}
+		store.transition(taskId, "reviewing");
+	}
+	if (decision.nextState !== "reviewing" && store.require(taskId).state === "reviewing") {
+		store.transition(taskId, decision.nextState);
+	}
+	if (decision.action === "report_correction") store.useReportCorrection(taskId);
+	if (decision.consumesRound) store.incrementRound(taskId);
+	return store.require(taskId);
+}
+
+export interface AdvanceReviewInput {
+	store: TaskStore;
+	taskId: string;
+	report?: WorkerReport;
+	reportError?: string;
+	comparison?: EvidenceComparison;
+	review?: ReviewResult;
+}
+
+/** Decide then apply. The Review loop's external interface. */
+export function advanceReview(input: AdvanceReviewInput): {
+	task: TaskRecord;
+	decision: ReviewDecision;
+} {
+	const task = input.store.require(input.taskId);
+	const decision = decideReview({
+		task,
+		...(input.report ? { report: input.report } : {}),
+		...(input.reportError ? { reportError: input.reportError } : {}),
+		...(input.comparison ? { comparison: input.comparison } : {}),
+		...(input.review ? { review: input.review } : {}),
+	});
+	return { task: applyReviewDecision(input.store, input.taskId, decision), decision };
 }

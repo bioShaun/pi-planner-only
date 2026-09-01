@@ -1,4 +1,8 @@
 import type { TaskRole } from "./types.ts";
+import { extractTaskSpec } from "./task.ts";
+import type { TaskRecord } from "./task.ts";
+import { buildFreshReviewerTask } from "./review.ts";
+import { describeComparison } from "./evidence.ts";
 
 /**
  * §13 — capability profiles. Worker is unbounded (the selected agent keeps its
@@ -75,4 +79,45 @@ export function applyRoleDelegation(
 		}
 	}
 	return { mutated, role: options.role };
+}
+
+/** Concatenate task/tasks/chain prompts from a subagent payload. */
+export function delegationPrompt(input: unknown): string {
+	if (!input || typeof input !== "object") return "";
+	const params = input as { task?: unknown; tasks?: unknown; chain?: unknown };
+	const parts: string[] = [typeof params.task === "string" ? params.task : ""];
+	if (Array.isArray(params.tasks)) {
+		parts.push(...params.tasks.map((item) => (item && typeof item === "object" ? String((item as { task?: unknown }).task ?? "") : "")));
+	}
+	if (Array.isArray(params.chain)) {
+		parts.push(...params.chain.map((item) => (item && typeof item === "object" ? String((item as { task?: unknown }).task ?? "") : "")));
+	}
+	return parts.filter(Boolean).join("\n");
+}
+
+/**
+ * Remap the child agent, and for reviewers replace the payload with a fresh
+ * packet. Looks up an existing Task when the prompt embeds a taskId.
+ */
+export function prepareRoleDelegation(
+	rawInput: unknown,
+	lookup: (taskId: string) => TaskRecord | undefined,
+): void {
+	if (!rawInput || typeof rawInput !== "object" || Array.isArray(rawInput)) return;
+	const input = rawInput as Record<string, unknown>;
+	const spec = extractTaskSpec(delegationPrompt(input));
+	const role = spec?.role ?? inferRoleFromAgent(typeof input.agent === "string" ? input.agent : undefined);
+	if (!role) return;
+	const existing = spec?.taskId ? lookup(spec.taskId) : undefined;
+	const packetSpec = spec ?? existing?.spec;
+	const packetReport = existing?.reports.at(-1);
+	const packet = role === "reviewer" && (packetSpec || packetReport)
+		? buildFreshReviewerTask({
+			taskId: spec?.taskId ?? existing?.taskId ?? "unknown",
+			...(packetSpec ? { spec: packetSpec } : {}),
+			...(packetReport ? { report: packetReport } : {}),
+			...(existing?.lastComparison ? { evidence: describeComparison(existing.lastComparison) } : {}),
+		})
+		: undefined;
+	applyRoleDelegation(input, { role, ...(packet ? { packet } : {}) });
 }

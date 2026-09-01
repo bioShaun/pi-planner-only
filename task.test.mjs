@@ -2,18 +2,21 @@ import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import {
 	TaskStore,
-	compactWorkerReport,
 	createTaskId,
 	createTaskSpec,
-	extractWorkerReport,
+	extractTaskSpec,
 	findWriterConflict,
+	validateTaskSpec,
+	canTransition,
+} from "./task.ts";
+import {
+	compactWorkerReport,
+	extractWorkerReport,
 	isWorkerReport,
 	renderWorkerReport,
 	stableStringify,
-	validateTaskSpec,
 	validateWorkerReport,
-	canTransition,
-} from "./task.ts";
+} from "./report.ts";
 import { MAX_WORKER_REPORT_CHARS, WORKER_REPORT_VERSION } from "./types.ts";
 
 const cwd = process.cwd();
@@ -251,5 +254,27 @@ assert.equal(
 );
 // different cwd is fine
 assert.equal(findWriterConflict([writerA], "/elsewhere", "worker", "B").conflict, false);
+
+{
+	const store = new TaskStore();
+	const spec = createTaskSpec({ objective: "bind", cwd, role: "explorer" }, "T-bind-001");
+	const task = store.create(createTaskSpec({ objective: "x", cwd, role: "worker" }, "T-bind-001"));
+	store.bindSpec(task.taskId, spec);
+	assert.equal(store.require(task.taskId).role, "explorer");
+	assert.equal(store.require(task.taskId).spec?.objective, "bind");
+	store.ensureCwd(task.taskId, "/should-not-overwrite");
+	assert.equal(store.require(task.taskId).cwd, spec.cwd);
+	const comparison = {
+		fresh: true,
+		reasons: [],
+		overlappingPaths: [],
+		unrelatedPaths: [],
+		missingPaths: [],
+		unexplained: false,
+	};
+	store.setLastComparison(task.taskId, comparison);
+	assert.equal(store.require(task.taskId).lastComparison?.fresh, true);
+	assert.ok(extractTaskSpec(`please do:\n\`\`\`json\n${JSON.stringify(spec)}\n\`\`\``));
+}
 
 console.log("planner-only task lifecycle: PASS");

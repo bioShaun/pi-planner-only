@@ -1,11 +1,9 @@
 /**
- * `git_audit` — a bounded, read-only Git tool for the parent (spec §9).
+ * Git-read: Root's only Git access. Fixed, read-only argv — never a shell.
  *
- * The parent needs Git evidence to review worker output, but must not regain a
- * general shell. Every operation maps to a fixed argv built here; nothing is
- * ever handed to a shell, so injection is structurally impossible. The explicit
- * input validation exists so a malformed or hostile `operation` is rejected
- * with a clear message instead of silently doing nothing.
+ * git_audit (the parent tool), Evidence probe, and the leftover bash allowlist
+ * all take argv from this module. One table, two adapters (pi.exec in prod,
+ * in-memory in tests).
  */
 
 import { statSync } from "node:fs";
@@ -16,6 +14,23 @@ import {
 	MAX_GIT_AUDIT_OUTPUT_CHARS,
 } from "./types.ts";
 
+/** Shared runner seam for git_audit and Evidence capture. */
+export type GitRunner = (
+	args: readonly string[],
+	cwd: string,
+) => Promise<{ stdout: string; stderr?: string; code: number }>;
+
+/**
+ * Argv owned by Git-read. Evidence probe and git_audit `status`/`head` share
+ * these rows. Evidence's working-tree diff is `diff HEAD --stat` (includes
+ * staged); the git_audit `diff-stat` tool stays `diff --stat` (unstaged).
+ */
+export const GIT_READ_ARGV = {
+	gitDir: ["rev-parse", "--git-dir"],
+	head: ["rev-parse", "HEAD"],
+	status: ["status", "--porcelain=v2", "--branch"],
+	evidenceDiffStat: ["diff", "HEAD", "--stat"],
+} as const;
 export const GIT_AUDIT_OPERATIONS = [
 	"status",
 	"diff-stat",
@@ -73,7 +88,7 @@ function isForbiddenOperation(operation: string): boolean {
 	return tokens.some((token) => (FORBIDDEN_GIT_OPERATIONS as readonly string[]).includes(token));
 }
 
-export function clampEntries(value: number | undefined): number {
+function clampEntries(value: number | undefined): number {
 	if (value === undefined || !Number.isFinite(value)) return DEFAULT_GIT_AUDIT_ENTRIES;
 	return Math.min(MAX_GIT_AUDIT_ENTRIES, Math.max(1, Math.trunc(value)));
 }
@@ -83,7 +98,7 @@ export function clampEntries(value: number | undefined): number {
  * a mutating Git subcommand. Returns a human-readable reason, or undefined when
  * the request is safe.
  */
-export function rejectGitAuditRequest(request: GitAuditRequest): string | undefined {
+function rejectGitAuditRequest(request: GitAuditRequest): string | undefined {
 	const operation = request.operation;
 	if (typeof operation !== "string" || !operation.trim()) {
 		return "git_audit requires an operation";
@@ -118,7 +133,7 @@ export function resolveGitAudit(request: GitAuditRequest): ResolvedGitAudit {
 	const staged = request.staged === true;
 	switch (operation) {
 		case "status":
-			return { ok: true, operation, argv: ["status", "--porcelain=v2", "--branch"] };
+			return { ok: true, operation, argv: [...GIT_READ_ARGV.status] };
 		case "diff-stat":
 			return { ok: true, operation, argv: ["diff", ...(staged ? ["--cached"] : []), "--stat"] };
 		case "diff-names":
@@ -126,7 +141,7 @@ export function resolveGitAudit(request: GitAuditRequest): ResolvedGitAudit {
 		case "diff-check":
 			return { ok: true, operation, argv: ["diff", ...(staged ? ["--cached"] : []), "--check"] };
 		case "head":
-			return { ok: true, operation, argv: ["rev-parse", "HEAD"] };
+			return { ok: true, operation, argv: [...GIT_READ_ARGV.head] };
 		case "log":
 			return {
 				ok: true,
@@ -162,7 +177,7 @@ const EMPTY_MESSAGES: Record<GitAuditOperation, string> = {
 };
 
 /** Bound the output before it can reach the parent's context. */
-export function formatGitAudit(
+function formatGitAudit(
 	operation: GitAuditOperation,
 	result: GitAuditCommandResult,
 ): string {
@@ -177,10 +192,7 @@ export function formatGitAudit(
 	return `${header}\n${stdout.slice(0, MAX_GIT_AUDIT_OUTPUT_CHARS)}\n… (truncated, ${stdout.length} chars total)`;
 }
 
-export type GitAuditRunner = (
-	args: readonly string[],
-	cwd: string,
-) => Promise<GitAuditCommandResult>;
+export type GitAuditRunner = GitRunner;
 
 export interface GitAuditOutcome {
 	ok: boolean;
@@ -203,7 +215,8 @@ export async function runGitAudit(
 
 	let result: GitAuditCommandResult;
 	try {
-		result = await run(resolved.argv, target);
+		const raw = await run(resolved.argv, target);
+		result = { stdout: raw.stdout, stderr: raw.stderr ?? "", code: raw.code };
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return { ok: false, operation: resolved.operation, text: `git_audit failed: ${message}`, code: 1 };
@@ -215,4 +228,67 @@ export async function runGitAudit(
 		text: formatGitAudit(resolved.operation, result),
 		code: result.code,
 	};
+}
+
+const SAFE_GIT_STATUS_FLAGS = new Set([
+	"--short",
+	"-s",
+	"--branch",
+	"-b",
+	"--porcelain",
+	"--porcelain=v1",
+	"--porcelain=v2",
+]);
+
+const SAFE_GIT_DIFF_FLAGS = new Set([
+	"--cached",
+	"--staged",
+	"--stat",
+	"--numstat",
+	"--shortstat",
+	"--name-only",
+	"--name-status",
+	"--check",
+	"--no-color",
+	"--no-ext-diff",
+	"--no-textconv",
+]);
+
+const SAFE_GIT_LOG_FLAGS = new Set([
+	"--oneline",
+	"--decorate",
+	"--no-decorate",
+	"--stat",
+	"--no-color",
+]);
+
+function allFlagsAllowed(tokens: string[], allowed: Set<string>): boolean {
+	return tokens.every((token) => allowed.has(token));
+}
+
+/**
+ * Leftover bash allowlist for a stale `bash` tool call. Same Git-read module
+ * owns the flags so the allowlist cannot drift from git_audit / Evidence.
+ */
+export function isSafeAuditCommand(command: string): boolean {
+	const trimmed = command.trim();
+	if (!trimmed || SHELL_METACHARACTERS.test(trimmed)) return false;
+	if (trimmed === "pwd") return true;
+
+	const tokens = trimmed.split(/\s+/);
+	if (tokens[0] !== "git" || tokens.length < 2) return false;
+
+	const subcommand = tokens[1];
+	const args = tokens.slice(2);
+	if (subcommand === "status") return allFlagsAllowed(args, SAFE_GIT_STATUS_FLAGS);
+	if (subcommand === "diff") return allFlagsAllowed(args, SAFE_GIT_DIFF_FLAGS);
+	if (subcommand === "log") {
+		return args.every((token) =>
+			SAFE_GIT_LOG_FLAGS.has(token) ||
+			/^-n\d+$/.test(token) ||
+			/^--max-count=\d+$/.test(token),
+		);
+	}
+
+	return false;
 }

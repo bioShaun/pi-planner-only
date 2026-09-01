@@ -1,3 +1,7 @@
+import { isSafeAuditCommand } from "./git-audit.ts";
+
+export { isSafeAuditCommand };
+
 export const READ_ONLY_TOOLS = new Set([
 	"read",
 	"grep",
@@ -16,44 +20,10 @@ export const ORCHESTRATION_TOOLS = new Set([
 
 /**
  * Read-only Git inspection exposed to the parent instead of a general shell.
- * Unlike the `bash` audit allowlist below, this is a first-class tool: it is
+ * Unlike the leftover `bash` allowlist, this is a first-class tool: it is
  * present in the parent's schema, not just tolerated on a stale call.
  */
 export const AUDIT_TOOLS = new Set(["git_audit"]);
-
-const SAFE_GIT_STATUS_FLAGS = new Set([
-	"--short",
-	"-s",
-	"--branch",
-	"-b",
-	"--porcelain",
-	"--porcelain=v1",
-	"--porcelain=v2",
-]);
-
-const SAFE_GIT_DIFF_FLAGS = new Set([
-	"--cached",
-	"--staged",
-	"--stat",
-	"--numstat",
-	"--shortstat",
-	"--name-only",
-	"--name-status",
-	"--check",
-	"--no-color",
-	"--no-ext-diff",
-	"--no-textconv",
-]);
-
-const SAFE_GIT_LOG_FLAGS = new Set([
-	"--oneline",
-	"--decorate",
-	"--no-decorate",
-	"--stat",
-	"--no-color",
-]);
-
-const SHELL_META = /[;&|`$><\n\r\\]/;
 
 export interface PolicyInput {
 	toolName: string;
@@ -79,33 +49,6 @@ function subagentDelegatesToChildren(input: unknown): boolean {
 	if (typeof params.gate === "string" && params.gate.trim()) return false;
 	if (typeof params.workflow === "string" && params.workflow !== "review") return false;
 	return true;
-}
-
-function allFlagsAllowed(tokens: string[], allowed: Set<string>): boolean {
-	return tokens.every((token) => allowed.has(token));
-}
-
-export function isSafeAuditCommand(command: string): boolean {
-	const trimmed = command.trim();
-	if (!trimmed || SHELL_META.test(trimmed)) return false;
-	if (trimmed === "pwd") return true;
-
-	const tokens = trimmed.split(/\s+/);
-	if (tokens[0] !== "git" || tokens.length < 2) return false;
-
-	const subcommand = tokens[1];
-	const args = tokens.slice(2);
-	if (subcommand === "status") return allFlagsAllowed(args, SAFE_GIT_STATUS_FLAGS);
-	if (subcommand === "diff") return allFlagsAllowed(args, SAFE_GIT_DIFF_FLAGS);
-	if (subcommand === "log") {
-		return args.every((token) =>
-			SAFE_GIT_LOG_FLAGS.has(token) ||
-			/^-n\d+$/.test(token) ||
-			/^--max-count=\d+$/.test(token),
-		);
-	}
-
-	return false;
 }
 
 function blockedReason(toolName: string): string {

@@ -8,9 +8,11 @@
 
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
+import { GIT_READ_ARGV } from "./git-audit.ts";
+import type { GitRunner } from "./git-audit.ts";
 import type { EvidenceRef, TaskScope, WorkerReport } from "./types.ts";
 
-export type GitRunner = (args: readonly string[], cwd: string) => Promise<{ stdout: string; code: number }>;
+export type { GitRunner };
 
 export interface GitProbe {
 	available: boolean;
@@ -67,15 +69,15 @@ export async function probeGit(run: GitRunner, cwd: string): Promise<GitProbe> {
 
 	let gitDir: { stdout: string; code: number };
 	try {
-		gitDir = await run(["rev-parse", "--git-dir"], cwd);
+		gitDir = await run([...GIT_READ_ARGV.gitDir], cwd);
 	} catch {
 		return empty;
 	}
 	if (gitDir.code !== 0) return empty;
 
-	const head = await run(["rev-parse", "HEAD"], cwd);
-	const status = await run(["status", "--porcelain=v2", "--branch"], cwd);
-	const diffStat = await run(["diff", "HEAD", "--stat"], cwd);
+	const head = await run([...GIT_READ_ARGV.head], cwd);
+	const status = await run([...GIT_READ_ARGV.status], cwd);
+	const diffStat = await run([...GIT_READ_ARGV.evidenceDiffStat], cwd);
 	const porcelain = status.code === 0 ? status.stdout : "";
 
 	return {

@@ -5,6 +5,7 @@ import {
 	ROLE_TOOL_PROFILES,
 	applyRoleDelegation,
 	inferRoleFromAgent,
+	prepareRoleDelegation,
 	roleAllowsMutatingTools,
 } from "./roles.ts";
 
@@ -66,5 +67,27 @@ assert.doesNotMatch(reviewer.task, /rubber-stamp/);
 const already = { agent: "reviewer", task: "review", context: "fresh" };
 assert.equal(applyRoleDelegation(already, { role: "reviewer" }).mutated, false);
 assert.equal(already.agent, "reviewer");
+
+{
+	const payload = {
+		agent: "worker",
+		task: JSON.stringify({
+			taskId: "T-20260831-009",
+			objective: "review the parser",
+			cwd: "/repo",
+			role: "reviewer",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: false },
+			expectedEvidence: {},
+			stopConditions: [],
+		}),
+	};
+	prepareRoleDelegation(payload, () => undefined);
+	assert.equal(payload.agent, "reviewer");
+	assert.equal(payload.context, "fresh");
+	assert.match(String(payload.task), /PLANNER-ONLY FRESH REVIEW/);
+}
 
 console.log("planner-only roles: PASS");

@@ -4,9 +4,8 @@ import { join } from "node:path";
 import {
 	FORBIDDEN_GIT_OPERATIONS,
 	GIT_AUDIT_OPERATIONS,
-	clampEntries,
-	formatGitAudit,
-	rejectGitAuditRequest,
+	GIT_READ_ARGV,
+	isSafeAuditCommand,
 	resolveGitAudit,
 	runGitAudit,
 	validateGitAuditCwd,
@@ -17,11 +16,8 @@ import { DEFAULT_GIT_AUDIT_ENTRIES, MAX_GIT_AUDIT_ENTRIES, MAX_GIT_AUDIT_OUTPUT_
 // Allowed operations map to fixed, read-only argv
 // --------------------------------------------------------------------------
 
-assert.deepEqual(resolveGitAudit({ operation: "status" }).argv, [
-	"status",
-	"--porcelain=v2",
-	"--branch",
-]);
+assert.deepEqual(resolveGitAudit({ operation: "status" }).argv, [...GIT_READ_ARGV.status]);
+assert.deepEqual(resolveGitAudit({ operation: "head" }).argv, [...GIT_READ_ARGV.head]);
 assert.deepEqual(resolveGitAudit({ operation: "diff-stat" }).argv, ["diff", "--stat"]);
 assert.deepEqual(resolveGitAudit({ operation: "diff-names", staged: true }).argv, [
 	"diff",
@@ -34,7 +30,7 @@ assert.deepEqual(resolveGitAudit({ operation: "diff-check", staged: true }).argv
 	"--cached",
 	"--check",
 ]);
-assert.deepEqual(resolveGitAudit({ operation: "head" }).argv, ["rev-parse", "HEAD"]);
+assert.deepEqual(resolveGitAudit({ operation: "head" }).argv, [...GIT_READ_ARGV.head]);
 assert.deepEqual(resolveGitAudit({ operation: "log" }).argv, [
 	"log",
 	"--oneline",
@@ -64,12 +60,18 @@ for (const operation of GIT_AUDIT_OPERATIONS) {
 // Entry bounds
 // --------------------------------------------------------------------------
 
-assert.equal(clampEntries(undefined), DEFAULT_GIT_AUDIT_ENTRIES);
-assert.equal(clampEntries(1), 1);
-assert.equal(clampEntries(0), 1);
-assert.equal(clampEntries(-5), 1);
-assert.equal(clampEntries(99999), MAX_GIT_AUDIT_ENTRIES);
-assert.equal(clampEntries(3.7), 3);
+assert.deepEqual(
+	resolveGitAudit({ operation: "log" }).argv,
+	["log", "--oneline", "-n", String(DEFAULT_GIT_AUDIT_ENTRIES)],
+);
+assert.deepEqual(resolveGitAudit({ operation: "log", maxEntries: 1 }).argv[3], "1");
+assert.deepEqual(resolveGitAudit({ operation: "log", maxEntries: 0 }).argv[3], "1");
+assert.deepEqual(resolveGitAudit({ operation: "log", maxEntries: -5 }).argv[3], "1");
+assert.deepEqual(
+	resolveGitAudit({ operation: "log", maxEntries: 99999 }).argv[3],
+	String(MAX_GIT_AUDIT_ENTRIES),
+);
+assert.deepEqual(resolveGitAudit({ operation: "log", maxEntries: 3.7 }).argv[3], "3");
 
 // --------------------------------------------------------------------------
 // Injection and mutation rejection
@@ -128,9 +130,8 @@ assert.equal(resolveGitAudit({ operation: "status", cwd: "/tmp/$(id)" }).ok, fal
 assert.equal(resolveGitAudit({ operation: "status", cwd: 42 }).ok, false);
 assert.equal(resolveGitAudit({ operation: "status", maxEntries: Number.NaN }).ok, false);
 
-// rejectGitAuditRequest agrees with resolveGitAudit
-assert.equal(rejectGitAuditRequest({ operation: "status" }), undefined);
-assert.ok(rejectGitAuditRequest({ operation: "commit" }));
+assert.equal(resolveGitAudit({ operation: "status" }).ok, true);
+assert.equal(resolveGitAudit({ operation: "commit" }).ok, false);
 
 // --------------------------------------------------------------------------
 // cwd validation
@@ -210,23 +211,37 @@ try {
 // Output bounds
 // --------------------------------------------------------------------------
 
-assert.equal(
-	formatGitAudit("status", { stdout: "", stderr: "", code: 0 }),
-	"git status\n(clean working tree)",
-);
-assert.equal(
-	formatGitAudit("diff-names", { stdout: "", stderr: "", code: 0 }),
-	"git diff-names\n(no changed paths)",
-);
-assert.equal(
-	formatGitAudit("diff-check", { stdout: "", stderr: "", code: 0 }),
-	"git diff-check\n(no whitespace errors)",
-);
-
 const long = "x".repeat(MAX_GIT_AUDIT_OUTPUT_CHARS + 500);
-const truncated = formatGitAudit("log", { stdout: long, stderr: "", code: 0 });
+const formatDir = process.cwd();
+const emptyStatus = await runGitAudit(
+	async () => ({ stdout: "", stderr: "", code: 0 }),
+	{ operation: "status" },
+	formatDir,
+);
+assert.equal(emptyStatus.text, "git status\n(clean working tree)");
+const emptyNames = await runGitAudit(
+	async () => ({ stdout: "", stderr: "", code: 0 }),
+	{ operation: "diff-names" },
+	formatDir,
+);
+assert.equal(emptyNames.text, "git diff-names\n(no changed paths)");
+const emptyCheck = await runGitAudit(
+	async () => ({ stdout: "", stderr: "", code: 0 }),
+	{ operation: "diff-check" },
+	formatDir,
+);
+assert.equal(emptyCheck.text, "git diff-check\n(no whitespace errors)");
+const truncated = (await runGitAudit(
+	async () => ({ stdout: long, stderr: "", code: 0 }),
+	{ operation: "log" },
+	formatDir,
+)).text;
 assert.ok(truncated.length < MAX_GIT_AUDIT_OUTPUT_CHARS + 200);
 assert.match(truncated, /truncated/);
 assert.match(truncated, /500 chars total/);
+
+assert.equal(isSafeAuditCommand("pwd"), true);
+assert.equal(isSafeAuditCommand("git status --short --branch"), true);
+assert.equal(isSafeAuditCommand("git diff --output=/tmp/leak"), false);
 
 console.log("planner-only git_audit: PASS");

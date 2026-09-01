@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import {
 	TaskStore,
 	createTaskSpec,
-	extractWorkerReport,
 } from "./task.ts";
+import { extractWorkerReport } from "./report.ts";
 import {
 	decideReview,
 	deriveVerdict,
@@ -11,6 +11,7 @@ import {
 	summarizeFindings,
 	validateReviewResult,
 	buildFreshReviewerTask,
+	applyReviewDecision,
 } from "./review.ts";
 import { compareEvidence } from "./evidence.ts";
 import { MAX_REVIEW_ROUNDS } from "./types.ts";
@@ -55,15 +56,8 @@ function finding(severity, category = "correctness") {
 	return { severity, category, description: `${severity} finding`, requestedChange: "fix it" };
 }
 
-/** Mirrors the applyDecision() logic in index.ts. */
 function apply(store, taskId, decision) {
-	if (store.require(taskId).state !== "reviewing") store.transition(taskId, "reviewing");
-	if (decision.nextState !== "reviewing" && store.require(taskId).state === "reviewing") {
-		store.transition(taskId, decision.nextState);
-	}
-	if (decision.action === "report_correction") store.useReportCorrection(taskId);
-	if (decision.consumesRound) store.incrementRound(taskId);
-	return store.require(taskId);
+	return applyReviewDecision(store, taskId, decision);
 }
 
 function newTask() {
