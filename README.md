@@ -1,72 +1,76 @@
-# Planner-only extension
+# pi-planner-only
 
-This global Pi extension makes the root session a planner and reviewer. The
-current `pi-subagents` runtime starts children with `--no-extensions`; the
-extension also no-ops when `PI_SUBAGENT_CHILD=1` as a second boundary.
+[中文](README.zh-CN.md) · English
 
-The root session can use read-only inspection tools and delegation/supervision
-tools. While planner-only mode is enabled, `bash`, `edit`, `write`, and other
-mutators are not exposed to the parent model at all. The small safe audit-command
-allowlist exists only in the defense-in-depth `tool_call` policy for stale or
-resumed calls. The `subagent` tool remains usable for child runs, but host-command
-paths such as `workflow: "run-ci"` and `gate` are blocked.
+A [Pi](https://pi.dev) extension that keeps the **root session** a planner and
+reviewer. All file edits, shell, and tests go to subagents.
 
-The extension proactively filters the parent's active tool set at every session
-start and before each model turn. It keeps configured `read`, `grep`, `find`, `ls`,
-`git_audit`, `subagent`, `bg_wait`, `subagent_wait`, `contact_supervisor`, and
-other planner/orchestration tools when present, while removing mutators and
-unknown tools from the schemas the model receives. The `tool_call` policy remains
-a defense-in-depth guard for stale, resumed, or dynamically exposed calls.
+While the guard is on, the parent never sees `bash`, `edit`, or `write` in its
+tool schema. `tool_call` policy is a second gate for stale or resumed calls.
+Child sessions start with `--no-extensions`; the extension also no-ops when
+`PI_SUBAGENT_CHILD=1`.
 
-`/planner-only off` restores only the tools this extension removed, preserving
-tools added by other extensions. `/planner-only on` filters the current active
-set again. The set is restored during `session_shutdown` so reload and session
-replacement can re-capture the complete active set.
+v0.2 adds a thin orchestration layer on top of that guard: structured
+`TaskSpec` / `WorkerReport`, a bounded review loop, read-only `git_audit`,
+evidence freshness, and isolated fresh reviewers.
 
-The global installation directory is `~/.pi/agent/extensions/pi-planner-only`,
-with its entrypoints symlinked to this repository. Pi derives local auto-discovered
-extension labels from the path, so the directory name is the supported source of the
-exact `pi-planner-only` name shown in `[Extensions]`.
+## Install
 
-Commands:
+```bash
+pi install https://github.com/bioShaun/pi-planner-only    # user-level
+# or
+pi install https://github.com/bioShaun/pi-planner-only -l # project-level
+```
+
+Then restart Pi or run `/reload`.
+
+SSH works too: `pi install git:git@github.com:bioShaun/pi-planner-only`.
+
+```bash
+pi update https://github.com/bioShaun/pi-planner-only
+pi remove https://github.com/bioShaun/pi-planner-only
+```
+
+Do **not** also copy this repo into `~/.pi/agent/extensions/` — Pi would load
+the extension twice.
+
+Local checkout:
+
+```bash
+pi install /path/to/pi-planner-only
+# or try once without installing
+pi -e ./index.ts
+```
+
+## Commands
 
 - `/planner-only status`
-- `/planner-only off`
 - `/planner-only on`
-- `/planner-only task [taskId]` — task lifecycle state
+- `/planner-only off`
+- `/planner-only task [taskId]` — lifecycle state
 - `/planner-only review [taskId] [root|fresh|pass|request_changes|blocked] [summary]`
 
-Non-interactive override:
+Non-interactive override: `PI_PLANNER_ONLY=0 pi`. Persistent off marker:
+`~/.pi/agent/planner-only.off`.
 
-```bash
-PI_PLANNER_ONLY=0 pi
-```
+`/planner-only off` restores only tools this extension removed. The set is
+restored on `session_shutdown` so reload can recapture the full tool list.
 
-The persistent off marker is `~/.pi/agent/planner-only.off`. Remove it or run
-`/planner-only on` to restore the guard. Use `/reload` after editing extension
-source.
+## What the parent may use
 
-Run the policy and extension self-tests with:
+Kept when present: `read`, `grep`, `find`, `ls`, `git_audit`, `subagent`,
+`bg_wait`, `subagent_wait`, `subagent_supervisor`, `contact_supervisor`,
+`question`, `questionnaire`.
 
-```bash
-node policy.test.mjs
-node index.test.mjs
-node naming.test.mjs
-node task.test.mjs
-node review.test.mjs
-node evidence.test.mjs
-node git-audit.test.mjs
-```
+Blocked: `edit`, `write`, generic `bash`, unknown mutators, and host-command
+`subagent` paths such as `workflow: "run-ci"` or `gate`.
 
-## v0.2 orchestration layer
+A small git/`pwd` allowlist exists only in `tool_call` policy for stale calls.
+The model schema never includes `bash`.
 
-Above the tool guard, v0.2 adds a small structured orchestration layer. Its job
-is to keep the parent a planner and reviewer and to keep worker output bounded
-and verifiable, not to become an agent framework.
+## v0.2 orchestration
 
-### Structured delegation (TaskSpec)
-
-The parent embeds a `TaskSpec` JSON object in the subagent task prompt:
+The parent embeds a `TaskSpec` JSON object in the subagent task:
 
 ```json
 {
@@ -84,53 +88,49 @@ The parent embeds a `TaskSpec` JSON object in the subagent task prompt:
 ```
 
 `subagent` calls are intercepted: the task is registered, the workspace is
-sampled for baseline evidence, and a declared second `worker` for the same cwd is
-blocked (one writer per cwd; readers and reviewers are unaffected).
+sampled, and a second declared `worker` for the same cwd is blocked (one writer
+per cwd). Restricted roles remap onto builtin agents:
 
-### Structured worker return (WorkerReport)
+| Role | Builtin agent | Child tools |
+|---|---|---|
+| `worker` | unchanged | agent's own allowlist |
+| `explorer` / `reviewer` | `reviewer` | read, grep, find, ls |
+| `validator` | `oracle` | read, grep, find, ls, bash |
 
-Workers return a versioned `WorkerReport` (status, summary, changedFiles,
-validation with exit codes, evidence reference, risks, unresolved). The
-`tool_result` hook:
+A `reviewer` child always launches with `context: "fresh"` and a packet of
+TaskSpec + WorkerReport + evidence refs — not a fork of the parent session.
 
-- extracts and schema-validates the report;
-- compacts anything over 12k characters before it reaches the parent context;
-- re-samples the workspace and checks evidence freshness;
-- appends a review decision and concrete next steps.
+Workers must return a versioned `WorkerReport`. The parent extracts it,
+compacts anything over 12k characters, checks evidence freshness, and appends
+the next review action. Malformed output gets one report-only correction, then
+blocks.
 
-Output that is not a valid `WorkerReport` is never accepted: the parent is told
-to issue exactly one report-only correction, and a second failure blocks the
-task.
-
-### Review lifecycle
-
-States follow `planning → executing → reviewing → completed | changes_requested |
-blocked`, with at most `MAX_REVIEW_ROUNDS` (3) corrections before the loop
-reports blocked. Stale evidence never passes directly: in-scope drift forces a
-revalidation round, while purely out-of-scope drift lets review continue.
-Verdicts are recorded with `/planner-only review pass|request_changes|blocked`,
-and overriding a reviewer is recorded as an override rather than applied
-silently.
+Review states: `planning → executing → reviewing → completed | changes_requested | blocked`.
+At most three corrections (`MAX_REVIEW_ROUNDS`). Stale in-scope evidence cannot
+PASS. Root may override a reviewer; the override is recorded in memory.
 
 ### git_audit
 
-A registered read-only Git tool for the parent: `status`, `diff-stat`,
-`diff-names`, `diff-check`, `head`, `log`. Every operation maps to fixed argv
-built in `git-audit.ts` — no shell is involved, mutating subcommands are
-rejected by name, shell syntax in `operation`/`cwd` is rejected, and output is
-bounded. The parent still never receives `bash`.
+Parent-only read-only Git: `status`, `diff-stat`, `diff-names`, `diff-check`,
+`head`, `log`. Fixed argv, no shell, mutating subcommands rejected.
 
-### Module layout
+## Tests
+
+```bash
+npm test
+```
+
+## Layout
 
 | File | Responsibility |
 |---|---|
-| `types.ts` | `TaskSpec`, `WorkerReport`, `EvidenceRef`, `ReviewResult`, constants |
-| `policy.ts` | tool allowlist and `tool_call` decisions |
-| `task.ts` | TaskSpec/WorkerReport validation, compaction, state machine, task store |
-| `review.ts` | verdict derivation, bounded review loop, reviewer extraction |
-| `evidence.ts` | Git probing, freshness comparison, stale classification |
-| `git-audit.ts` | `git_audit` operation resolution and output bounds |
-| `index.ts` | extension wiring, hooks, `git_audit` registration, commands |
+| `types.ts` | `TaskSpec`, `WorkerReport`, `EvidenceRef`, `ReviewResult` |
+| `policy.ts` | parent tool allowlist and `tool_call` decisions |
+| `task.ts` | validation, compaction, state machine, writer lock |
+| `review.ts` | verdicts, review loop, fresh-review packet |
+| `roles.ts` | TaskRole profiles and agent remapping |
+| `evidence.ts` | Git probe and freshness |
+| `git-audit.ts` | `git_audit` resolution and output bounds |
+| `index.ts` | hooks, tool, commands |
 
-The design target stays "small policy layer", not another agent framework: no
-background advisor, no persistence, no queues, no telemetry.
+No background advisor, persistence, queues, or telemetry.

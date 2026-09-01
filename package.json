@@ -1,9 +1,39 @@
 {
   "name": "pi-planner-only",
   "version": "0.2.0",
-  "private": true,
-  "type": "module",
   "description": "Planner-only guard and lightweight Pi orchestration layer",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bioShaun/pi-planner-only.git"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "planner",
+    "reviewer"
+  ],
+  "files": [
+    "index.ts",
+    "types.ts",
+    "policy.ts",
+    "task.ts",
+    "review.ts",
+    "roles.ts",
+    "evidence.ts",
+    "git-audit.ts",
+    "README.md",
+    "README.zh-CN.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types policy.test.mjs && node --experimental-strip-types roles.test.mjs && node --experimental-strip-types task.test.mjs && node --experimental-strip-types review.test.mjs && node --experimental-strip-types evidence.test.mjs && node --experimental-strip-types git-audit.test.mjs && node --experimental-strip-types index.test.mjs && node --experimental-strip-types naming.test.mjs"
+  },
   "dependencies": {
     "typebox": "^1.3.7"
   }

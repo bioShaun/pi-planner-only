@@ -13,6 +13,7 @@ import type {
 	ReviewFinding,
 	ReviewResult,
 	ReviewVerdict,
+	TaskSpec,
 	TaskState,
 	WorkerReport,
 } from "./types.ts";
@@ -110,6 +111,58 @@ export function validateReviewResult(value: unknown): string[] {
 
 export function isReviewResult(value: unknown): value is ReviewResult {
 	return validateReviewResult(value).length === 0;
+}
+
+export const REVIEWER_PROMPT = `[PLANNER-ONLY FRESH REVIEW]
+
+You are an isolated reviewer for task {TASK_ID}.
+
+You may only read evidence: read, grep, find, ls, git_audit.
+You may not edit, write, or run shell commands, and you may not fix anything.
+
+Return only a ReviewResult JSON object:
+
+  {"taskId":"{TASK_ID}","verdict":"pass|request_changes|blocked",
+   "summary":"...","evidenceFresh":true,
+   "findings":[{"severity":"blocker|major|minor|info",
+   "category":"correctness|scope|test|safety|regression|maintainability|other",
+   "description":"...","requestedChange":"..."}]}
+
+Verdict rules: any blocker or major finding means request_changes.
+Minor or info findings alone may still pass. Do not modify files.`;
+
+export function reviewerPrompt(taskId: string): string {
+	return REVIEWER_PROMPT.replaceAll("{TASK_ID}", taskId);
+}
+
+export interface FreshReviewerTaskInput {
+	taskId: string;
+	spec?: TaskSpec;
+	report?: WorkerReport;
+	evidence?: string;
+}
+
+/**
+ * §11.4 — reviewer input is TaskSpec + WorkerReport + evidence refs, never the
+ * parent's reasoning transcript.
+ */
+export function buildFreshReviewerTask(input: FreshReviewerTaskInput): string {
+	const lines = [
+		reviewerPrompt(input.taskId),
+		"",
+		"You receive only the TaskSpec, WorkerReport, and evidence refs below.",
+		"Do not assume any parent reasoning not present here.",
+	];
+	if (input.spec) {
+		lines.push("", "TaskSpec:", "```json", JSON.stringify(input.spec, null, 2), "```");
+	}
+	if (input.report) {
+		lines.push("", "WorkerReport:", "```json", JSON.stringify(input.report, null, 2), "```");
+	}
+	if (input.evidence) {
+		lines.push("", `Evidence: ${input.evidence}`);
+	}
+	return lines.join("\n");
 }
 
 /**

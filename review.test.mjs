@@ -10,6 +10,7 @@ import {
 	extractReviewResult,
 	summarizeFindings,
 	validateReviewResult,
+	buildFreshReviewerTask,
 } from "./review.ts";
 import { compareEvidence } from "./evidence.ts";
 import { MAX_REVIEW_ROUNDS } from "./types.ts";
@@ -322,6 +323,27 @@ assert.match(summarizeFindings([finding("major", "test")]).join("\n"), /\[major\
 	assert.equal(overrides[0].reviewerVerdict, "request_changes");
 	assert.equal(overrides[0].rootVerdict, "pass");
 	assert.match(overrides[0].reason, /out of scope/);
+}
+
+{
+	const spec = createTaskSpec({
+		objective: "review the parser",
+		cwd: CWD,
+		role: "reviewer",
+		acceptanceCriteria: ["empty input returns []"],
+	});
+	const packet = buildFreshReviewerTask({
+		taskId: spec.taskId,
+		spec,
+		report: makeReport(),
+		evidence: "fresh",
+	});
+	assert.match(packet, /\[PLANNER-ONLY FRESH REVIEW\]/);
+	assert.match(packet, new RegExp(`isolated reviewer for task ${spec.taskId}`));
+	assert.match(packet, /empty input returns \[\]/);
+	assert.match(packet, /Implemented the parser/);
+	assert.match(packet, /Evidence: fresh/);
+	assert.doesNotMatch(packet, /rubber-stamp|I already decided/);
 }
 
 console.log("planner-only review: PASS");

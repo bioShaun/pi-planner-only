@@ -26,7 +26,8 @@ import {
 	validateTaskSpec,
 } from "./task.ts";
 import type { TaskRecord, WriterConflict } from "./task.ts";
-import { decideReview, extractReviewResult, summarizeFindings } from "./review.ts";
+import { applyRoleDelegation, inferRoleFromAgent } from "./roles.ts";
+import { buildFreshReviewerTask, decideReview, extractReviewResult, reviewerPrompt, summarizeFindings } from "./review.ts";
 import type { ReviewDecision } from "./review.ts";
 import {
 	MAX_REVIEW_ROUNDS,
@@ -105,6 +106,8 @@ Before accepting work:
 4. evaluate acceptance criteria
 5. PASS or REQUEST_CHANGES
 
+Role in TaskSpec is enforced at launch: explorer/reviewer remap to the builtin reviewer agent (read/grep/find/ls), validator remaps to oracle (bash, no edits), worker keeps its agent. Reviewer children always start with context=fresh and a bounded packet — never a fork of this session.
+
 Use git_audit for read-only git inspection. It is the only git access you have.
 Never trust a worker that reports its own PASS; inspect the evidence yourself.
 Stale evidence must not be accepted: re-delegate validation instead.
@@ -115,24 +118,6 @@ reports blocked and asks the user how to proceed.
 
 Use /planner-only task to inspect lifecycle state and /planner-only review to
 record a verdict or switch to an isolated fresh reviewer.`;
-
-const REVIEWER_PROMPT = `[PLANNER-ONLY FRESH REVIEW]
-
-You are an isolated reviewer for task {TASK_ID}.
-
-You may only read evidence: read, grep, find, ls, git_audit.
-You may not edit, write, or run shell commands, and you may not fix anything.
-
-Return only a ReviewResult JSON object:
-
-  {"taskId":"{TASK_ID}","verdict":"pass|request_changes|blocked",
-   "summary":"...","evidenceFresh":true,
-   "findings":[{"severity":"blocker|major|minor|info",
-   "category":"correctness|scope|test|safety|regression|maintainability|other",
-   "description":"...","requestedChange":"..."}]}
-
-Verdict rules: any blocker or major finding means request_changes.
-Minor or info findings alone may still pass. Do not modify files.`;
 
 function envDisablesGuard(): boolean {
 	return new Set(["0", "false", "off"]).has(
@@ -350,6 +335,26 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		return { task };
 	};
 
+	const prepareRoleDelegation = (rawInput: unknown): void => {
+		if (!rawInput || typeof rawInput !== "object" || Array.isArray(rawInput)) return;
+		const input = rawInput as Record<string, unknown>;
+		const spec = extractTaskSpec(delegationPrompt(input));
+		const role = spec?.role ?? inferRoleFromAgent(typeof input.agent === "string" ? input.agent : undefined);
+		if (!role) return;
+		const existing = spec?.taskId ? store.get(spec.taskId) : undefined;
+		const packetSpec = spec ?? existing?.spec;
+		const packetReport = existing?.reports.at(-1);
+		const packet = role === "reviewer" && (packetSpec || packetReport)
+			? buildFreshReviewerTask({
+				taskId: spec?.taskId ?? existing?.taskId ?? "unknown",
+				...(packetSpec ? { spec: packetSpec } : {}),
+				...(packetReport ? { report: packetReport } : {}),
+				...(existing?.lastComparison ? { evidence: describeComparison(existing.lastComparison) } : {}),
+			})
+			: undefined;
+		applyRoleDelegation(input, { role, ...(packet ? { packet } : {}) });
+	};
+
 	const applyDecision = (taskId: string, decision: ReviewDecision): TaskRecord => {
 		const task = store.require(taskId);
 		if (isTerminalTaskState(task.state)) return task;
@@ -413,6 +418,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		});
 		if (!decision.block) {
 			if (event.toolName === "subagent" && !isDisabled()) {
+				prepareRoleDelegation(event.input);
 				const outcome = await beginDelegation(event, ctx.cwd || process.cwd());
 				if (outcome.conflict?.conflict) {
 					if (ctx.hasUI) ctx.ui.notify("Blocked concurrent writer for this cwd", "warning");
@@ -547,7 +553,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					...(compacted ? ["", "Note: the report exceeded the parent context budget and was compacted. Re-inspect details with read/grep/git_audit if needed."] : []),
 					"",
 					"Reviewer prompt template for an isolated fresh review:",
-					REVIEWER_PROMPT.replaceAll("{TASK_ID}", taskId),
+					reviewerPrompt(taskId),
 				].join("\n"),
 			}],
 		};

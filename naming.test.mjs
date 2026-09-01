@@ -1,13 +1,28 @@
 import assert from "node:assert/strict";
-import { basename, dirname, join, resolve } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { realpathSync } from "node:fs";
+import { basename, dirname, extname, join, resolve } from "node:path";
 
-const installEntry = process.env.PI_PLANNER_ONLY_EXTENSION_PATH ??
-	join(homedir(), ".pi", "agent", "extensions", "pi-planner-only", "index.ts");
-const expectedRepoEntry = resolve(new URL("./index.ts", import.meta.url).pathname);
+const repoDir = resolve(new URL(".", import.meta.url).pathname);
+const candidates = [
+	process.env.PI_PLANNER_ONLY_EXTENSION_PATH
+		? dirname(process.env.PI_PLANNER_ONLY_EXTENSION_PATH)
+		: undefined,
+	join(homedir(), ".pi", "agent", "git", "github.com", "bioShaun", "pi-planner-only"),
+	join(homedir(), ".pi", "agent", "extensions", "pi-planner-only"),
+].filter((path) => typeof path === "string");
 
-assert.equal(basename(dirname(installEntry)), "pi-planner-only");
-assert.equal(realpathSync(installEntry), expectedRepoEntry);
+const installDir = candidates.find((path) => existsSync(join(path, "index.ts")));
+assert.ok(
+	installDir,
+	"pi-planner-only is not installed. Run: pi install https://github.com/bioShaun/pi-planner-only",
+);
+assert.equal(basename(installDir), "pi-planner-only");
+
+const installed = new Set(readdirSync(installDir));
+for (const name of readdirSync(repoDir)) {
+	if (extname(name) !== ".ts") continue;
+	assert.equal(installed.has(name), true, `extension install is missing ${name}`);
+}
 
 console.log("planner-only naming: PASS");
