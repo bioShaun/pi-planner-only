@@ -111,6 +111,46 @@ export interface ExtractedReport {
 	error?: string;
 }
 
+/** The task identity a Worker result must claim: the delegated task and run. */
+export interface WorkerReportIdentity {
+	taskId: string;
+	workerRunId?: string;
+}
+
+/**
+ * §P0-1 — a schema-valid WorkerReport may still belong to a different task.
+ *
+ * Identity is checked against the delegation, not the report itself:
+ * `taskId`, `evidence.taskId` must match the delegated task, and
+ * `evidence.workerRunId` must match the subagent call when both sides carry one.
+ */
+export function validateWorkerReportIdentity(
+	report: WorkerReport,
+	expected: WorkerReportIdentity,
+): string[] {
+	const errors: string[] = [];
+	if (report.taskId !== expected.taskId) {
+		errors.push(
+			`WorkerReport taskId mismatch: expected ${expected.taskId}, got ${report.taskId}`,
+		);
+	}
+	if (report.evidence.taskId !== expected.taskId) {
+		errors.push(
+			`WorkerReport evidence.taskId mismatch: expected ${expected.taskId}, got ${report.evidence.taskId}`,
+		);
+	}
+	if (
+		expected.workerRunId &&
+		report.evidence.workerRunId &&
+		report.evidence.workerRunId !== expected.workerRunId
+	) {
+		errors.push(
+			`WorkerReport evidence.workerRunId mismatch: expected ${expected.workerRunId}, got ${report.evidence.workerRunId}`,
+		);
+	}
+	return errors;
+}
+
 /** Scan for top-level `{...}` objects while ignoring braces inside strings. */
 function scanBalancedObjects(text: string): string[] {
 	const found: string[] = [];

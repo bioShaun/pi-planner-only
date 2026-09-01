@@ -6,11 +6,15 @@ import {
 	applyRoleDelegation,
 	inferRoleFromAgent,
 	prepareRoleDelegation,
+	resolveDelegationTarget,
 	roleAllowsMutatingTools,
 } from "./roles.ts";
+import { reviewerPrompt } from "./review.ts";
 
 assert.deepEqual([...ROLE_TOOL_PROFILES.explorer].sort(), ["find", "grep", "ls", "read"]);
-assert.deepEqual([...ROLE_TOOL_PROFILES.reviewer].sort(), ["find", "git_audit", "grep", "ls", "read"]);
+// Reviewer children launch with --no-extensions, so git_audit does not exist
+// there. Root passes a bounded Git evidence packet instead.
+assert.deepEqual([...ROLE_TOOL_PROFILES.reviewer].sort(), ["find", "grep", "ls", "read"]);
 assert.deepEqual([...ROLE_TOOL_PROFILES.validator].sort(), ["bash", "find", "grep", "ls", "read"]);
 assert.equal(ROLE_TOOL_PROFILES.worker, undefined);
 
@@ -68,26 +72,79 @@ const already = { agent: "reviewer", task: "review", context: "fresh" };
 assert.equal(applyRoleDelegation(already, { role: "reviewer" }).mutated, false);
 assert.equal(already.agent, "reviewer");
 
+const reviewerSpec = {
+	taskId: "T-20260831-009",
+	objective: "review the parser",
+	cwd: "/repo",
+	role: "reviewer",
+	scope: {},
+	constraints: [],
+	acceptanceCriteria: [],
+	validation: { required: false },
+	expectedEvidence: {},
+	stopConditions: [],
+};
+
 {
-	const payload = {
-		agent: "worker",
-		task: JSON.stringify({
-			taskId: "T-20260831-009",
-			objective: "review the parser",
-			cwd: "/repo",
-			role: "reviewer",
-			scope: {},
-			constraints: [],
-			acceptanceCriteria: [],
-			validation: { required: false },
-			expectedEvidence: {},
-			stopConditions: [],
-		}),
-	};
+	const payload = { agent: "worker", task: JSON.stringify(reviewerSpec) };
 	prepareRoleDelegation(payload, () => undefined);
 	assert.equal(payload.agent, "reviewer");
 	assert.equal(payload.context, "fresh");
 	assert.match(String(payload.task), /PLANNER-ONLY FRESH REVIEW/);
+}
+
+// A reviewer packet names the Task and carries Root's Git evidence
+{
+	const originalSpec = {
+		...reviewerSpec,
+		role: "worker",
+		objective: "implement the parser",
+		acceptanceCriteria: ["empty input returns []"],
+	};
+	const existing = {
+		taskId: "T-20260831-009",
+		spec: originalSpec,
+		reports: [],
+		reviews: [],
+		overrides: [],
+	};
+	const payload = { agent: "reviewer", task: JSON.stringify(reviewerSpec) };
+	prepareRoleDelegation(payload, () => existing, {
+		git: { gitAvailable: true, head: "abc1234", diffCheck: "no whitespace errors" },
+		evidence: "fresh",
+	});
+	assert.match(payload.task, /"reviewMode": "fresh"/);
+	assert.match(payload.task, /"reportTaskId": "T-20260831-009"/);
+	assert.match(payload.task, /"evidenceSummary": "fresh"/);
+	assert.match(payload.task, /"gitAvailable": true/);
+	// the packet shows the Task's original spec, never a reviewer spec
+	assert.match(payload.task, /implement the parser/);
+	assert.doesNotMatch(payload.task, /"role": "reviewer"/);
+}
+
+// The reviewer prompt no longer advertises tools the child cannot have
+assert.doesNotMatch(reviewerPrompt("T-20260831-009"), /git_audit/);
+assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root/);
+
+// Delegation targets: a ReviewRequest outranks an embedded TaskSpec
+{
+	const specPayload = {
+		agent: "worker",
+		task: JSON.stringify({ ...reviewerSpec, role: "worker", objective: "implement" }),
+	};
+	assert.equal(resolveDelegationTarget(specPayload, () => undefined).role, "worker");
+
+	const request = {
+		version: 1,
+		taskId: "T-20260831-009",
+		reportTaskId: "T-20260831-009",
+		reviewMode: "fresh",
+		taskSpec: { ...reviewerSpec, role: "worker" },
+	};
+	const packetPayload = { agent: "reviewer", task: `"reviewMode":"fresh"\n${JSON.stringify(request)}` };
+	const target = resolveDelegationTarget(packetPayload, (taskId) => ({ taskId, spec: reviewerSpec }));
+	assert.equal(target.role, "reviewer");
+	assert.equal(target.taskId, "T-20260831-009");
 }
 
 console.log("planner-only roles: PASS");

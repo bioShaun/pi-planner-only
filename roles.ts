@@ -1,18 +1,22 @@
-import type { TaskRole } from "./types.ts";
+import type { ReviewEvidencePacket, TaskRole, TaskSpec } from "./types.ts";
 import { extractTaskSpec } from "./task.ts";
 import type { TaskRecord } from "./task.ts";
-import { buildFreshReviewerTask } from "./review.ts";
-import { describeComparison } from "./evidence.ts";
+import { buildFreshReviewerTask, extractReviewRequest } from "./review.ts";
+import type { ReviewRequest } from "./types.ts";
 
 /**
  * §13 — capability profiles. Worker is unbounded (the selected agent keeps its
  * own tools). Restricted roles are enforced by remapping to a builtin agent
  * whose allowlist matches the profile; children launch with `--no-extensions`,
  * so this is the per-child tool ceiling the parent can actually apply.
+ *
+ * Reviewer children therefore have no `git_audit`: that tool is registered by
+ * this extension and `--no-extensions` keeps it out of the child. Root passes
+ * a bounded Git evidence packet instead (§P1-2).
  */
 export const ROLE_TOOL_PROFILES: Record<TaskRole, readonly string[] | undefined> = {
 	explorer: ["read", "grep", "find", "ls"],
-	reviewer: ["read", "grep", "find", "ls", "git_audit"],
+	reviewer: ["read", "grep", "find", "ls"],
 	validator: ["read", "grep", "find", "ls", "bash"],
 	worker: undefined,
 };
@@ -95,29 +99,83 @@ export function delegationPrompt(input: unknown): string {
 	return parts.filter(Boolean).join("\n");
 }
 
+export interface DelegationTarget {
+	role: TaskRole;
+	taskId?: string;
+	task?: TaskRecord;
+	/** TaskSpec embedded in the prompt, when the parent supplied one. */
+	spec?: TaskSpec;
+	/** ReviewRequest embedded in a reviewer packet. */
+	request?: ReviewRequest;
+}
+
+/**
+ * Resolve the role and Task identity of a delegation payload.
+ *
+ * A ReviewRequest wins over an embedded TaskSpec: reviewing is an invocation
+ * over an existing Task, so the reviewer packet is not a TaskSpec of its own.
+ */
+export function resolveDelegationTarget(
+	rawInput: unknown,
+	lookup: (taskId: string) => TaskRecord | undefined,
+): DelegationTarget | undefined {
+	if (!rawInput || typeof rawInput !== "object" || Array.isArray(rawInput)) return undefined;
+	const input = rawInput as Record<string, unknown>;
+	const prompt = delegationPrompt(input);
+	const spec = extractTaskSpec(prompt);
+	const request = extractReviewRequest(prompt);
+	const role = request
+		? "reviewer"
+		: spec?.role ??
+			inferRoleFromAgent(typeof input.agent === "string" ? input.agent : undefined);
+	if (!role) return undefined;
+
+	const taskId = request?.taskId ?? spec?.taskId;
+	const task = taskId ? lookup(taskId) : undefined;
+	return {
+		role,
+		...(taskId ? { taskId } : {}),
+		...(task ? { task } : {}),
+		...(spec ? { spec } : {}),
+		...(request ? { request } : {}),
+	};
+}
+
+export interface PrepareRoleDelegationOptions {
+	/** Bounded Git-read sample for a reviewer packet. Root supplies it. */
+	git?: ReviewEvidencePacket;
+	/** Freshness summary of the last Root-side evidence comparison. */
+	evidence?: string;
+}
+
 /**
  * Remap the child agent, and for reviewers replace the payload with a fresh
- * packet. Looks up an existing Task when the prompt embeds a taskId.
+ * ReviewRequest packet. Looks up an existing Task when the prompt embeds a
+ * taskId; the packet shows the Task's *original* spec read-only, so a reviewer
+ * invocation never rewrites the unit of work (§P1-1).
  */
 export function prepareRoleDelegation(
 	rawInput: unknown,
 	lookup: (taskId: string) => TaskRecord | undefined,
+	options: PrepareRoleDelegationOptions = {},
 ): void {
-	if (!rawInput || typeof rawInput !== "object" || Array.isArray(rawInput)) return;
+	const target = resolveDelegationTarget(rawInput, lookup);
+	if (!target) return;
 	const input = rawInput as Record<string, unknown>;
-	const spec = extractTaskSpec(delegationPrompt(input));
-	const role = spec?.role ?? inferRoleFromAgent(typeof input.agent === "string" ? input.agent : undefined);
-	if (!role) return;
-	const existing = spec?.taskId ? lookup(spec.taskId) : undefined;
-	const packetSpec = spec ?? existing?.spec;
-	const packetReport = existing?.reports.at(-1);
-	const packet = role === "reviewer" && (packetSpec || packetReport)
+	// An existing Task's spec is authoritative; without one the embedded spec is
+	// the only description available.
+	const packetSpec = target.role === "reviewer"
+		? (target.task?.spec ?? target.spec)
+		: (target.spec ?? target.task?.spec);
+	const report = target.task?.reports.at(-1);
+	const packet = target.role === "reviewer" && (packetSpec || report || options.git)
 		? buildFreshReviewerTask({
-			taskId: spec?.taskId ?? existing?.taskId ?? "unknown",
+			taskId: target.taskId ?? "unknown",
 			...(packetSpec ? { spec: packetSpec } : {}),
-			...(packetReport ? { report: packetReport } : {}),
-			...(existing?.lastComparison ? { evidence: describeComparison(existing.lastComparison) } : {}),
+			...(report ? { report } : {}),
+			...(options.evidence ? { evidence: options.evidence } : {}),
+			...(options.git ? { git: options.git } : {}),
 		})
 		: undefined;
-	applyRoleDelegation(input, { role, ...(packet ? { packet } : {}) });
+	applyRoleDelegation(input, { role: target.role, ...(packet ? { packet } : {}) });
 }

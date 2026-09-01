@@ -10,7 +10,9 @@ import { MAX_REPORT_CORRECTIONS, MAX_REVIEW_ROUNDS, isTerminalTaskState } from "
 import type {
 	FindingCategory,
 	FindingSeverity,
+	ReviewEvidencePacket,
 	ReviewFinding,
+	ReviewRequest,
 	ReviewResult,
 	ReviewVerdict,
 	TaskSpec,
@@ -118,7 +120,9 @@ export const REVIEWER_PROMPT = `[PLANNER-ONLY FRESH REVIEW]
 
 You are an isolated reviewer for task {TASK_ID}.
 
-You may only read evidence: read, grep, find, ls, git_audit.
+You may inspect files using read, grep, find, and ls.
+Git evidence is supplied by Root in the review packet.
+Do not assume you can execute git or shell commands.
 You may not edit, write, or run shell commands, and you may not fix anything.
 
 Return only a ReviewResult JSON object:
@@ -136,34 +140,106 @@ export function reviewerPrompt(taskId: string): string {
 	return REVIEWER_PROMPT.replaceAll("{TASK_ID}", taskId);
 }
 
+/**
+ * §P0-2 — a ReviewResult is only meaningful for the task the review was
+ * delegated for. A verdict must never be applied to another task.
+ */
+export function validateReviewResultIdentity(
+	review: ReviewResult,
+	expectedTaskId: string,
+): string[] {
+	if (review.taskId === expectedTaskId) return [];
+	return [
+		`ReviewResult taskId mismatch: expected ${expectedTaskId}, got ${review.taskId}`,
+	];
+}
+
 export interface FreshReviewerTaskInput {
 	taskId: string;
+	/** The Task's original spec, shown read-only. Never a reviewer spec. */
 	spec?: TaskSpec;
 	report?: WorkerReport;
+	/** Freshness summary of the last Root-side evidence comparison. */
 	evidence?: string;
+	/** Bounded Git-read sample taken by Root (reviewer children have no git). */
+	git?: ReviewEvidencePacket;
 }
 
 /**
- * §11.4 — reviewer input is TaskSpec + WorkerReport + evidence refs, never the
- * parent's reasoning transcript.
+ * Build the ReviewRequest a Fresh Reviewer is invoked with.
+ *
+ * Deliberately transient: it names the Task and carries the original spec plus
+ * the latest report, so reviewing never mutates the Task itself.
+ */
+export function buildReviewRequest(input: FreshReviewerTaskInput): ReviewRequest {
+	return {
+		version: 1,
+		taskId: input.taskId,
+		reportTaskId: input.report?.taskId ?? input.taskId,
+		reviewMode: "fresh",
+		...(input.spec ? { taskSpec: input.spec } : {}),
+		...(input.report ? { workerReport: input.report } : {}),
+		...(input.evidence ? { evidenceSummary: input.evidence } : {}),
+		...(input.git ? { evidencePacket: input.git } : {}),
+	};
+}
+
+/**
+ * §11.4 — reviewer input is a ReviewRequest, never the parent's reasoning
+ * transcript: the original TaskSpec, the latest WorkerReport, and Root's
+ * evidence refs.
  */
 export function buildFreshReviewerTask(input: FreshReviewerTaskInput): string {
-	const lines = [
+	return [
 		reviewerPrompt(input.taskId),
 		"",
-		"You receive only the TaskSpec, WorkerReport, and evidence refs below.",
+		"You receive only the ReviewRequest below: the original TaskSpec (read-only),",
+		"the latest WorkerReport, and Root's Git evidence.",
 		"Do not assume any parent reasoning not present here.",
-	];
-	if (input.spec) {
-		lines.push("", "TaskSpec:", "```json", JSON.stringify(input.spec, null, 2), "```");
+		"",
+		"ReviewRequest:",
+		"```json",
+		JSON.stringify(buildReviewRequest(input), null, 2),
+		"```",
+	].join("\n");
+}
+
+export function validateReviewRequest(value: unknown): string[] {
+	if (!isPlainObject(value)) return ["ReviewRequest must be an object"];
+	const errors: string[] = [];
+	if (value.version !== 1) errors.push("version must be 1");
+	if (!isNonEmptyString(value.taskId)) errors.push("taskId must be a non-empty string");
+	if (!isNonEmptyString(value.reportTaskId)) {
+		errors.push("reportTaskId must be a non-empty string");
 	}
-	if (input.report) {
-		lines.push("", "WorkerReport:", "```json", JSON.stringify(input.report, null, 2), "```");
+	if (value.reviewMode !== "fresh") errors.push("reviewMode must be fresh");
+	return errors;
+}
+
+/**
+ * Pull the ReviewRequest Root embedded in a reviewer delegation prompt. The
+ * packet is the only place the reviewer's task identity is declared, so a
+ * malformed one is ignored rather than guessed at.
+ */
+export function extractReviewRequest(text: string): ReviewRequest | undefined {
+	if (typeof text !== "string" || !text.trim()) return undefined;
+	for (const candidate of jsonCandidates(text)) {
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(candidate);
+		} catch {
+			continue;
+		}
+		if (
+			!isPlainObject(parsed) ||
+			!("reviewMode" in parsed) ||
+			!("reportTaskId" in parsed)
+		) {
+			continue;
+		}
+		if (validateReviewRequest(parsed).length === 0) return parsed as ReviewRequest;
 	}
-	if (input.evidence) {
-		lines.push("", `Evidence: ${input.evidence}`);
-	}
-	return lines.join("\n");
+	return undefined;
 }
 
 /**

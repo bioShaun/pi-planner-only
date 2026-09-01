@@ -39,8 +39,12 @@ The structured verdict a Reviewer returns.
 _Avoid_: review comments, PR review
 
 **Evidence**:
-A point-in-time fingerprint of the workspace a WorkerReport refers to. Freshness is checked before any accept.
+A point-in-time fingerprint of the workspace a WorkerReport refers to. Freshness is re-sampled by Root at the acceptance boundary; a pass over stale evidence is rejected.
 _Avoid_: artifact, snapshot (unless talking about the Git working tree sample itself)
+
+**ReviewRequest**:
+The transient packet a reviewer invocation carries: the Task's original spec (read-only), the latest WorkerReport, and Root's Git evidence. It names the Task; it never rebinds one.
+_Avoid_: reviewer TaskSpec, review prompt
 
 **Git-read**:
 Root's only Git access: fixed, read-only argv. Never a shell.

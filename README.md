@@ -12,7 +12,10 @@ Child sessions start with `--no-extensions`; the extension also no-ops when
 
 v0.2 adds a thin orchestration layer on top of that guard: structured
 `TaskSpec` / `WorkerReport`, a bounded review loop, read-only `git_audit`,
-evidence freshness, and isolated fresh reviewers.
+evidence freshness, and isolated fresh reviewers. The v0.2.x hardening pass
+tightens the lifecycle seams: task-identity checks on both child contracts, a
+Root-side evidence re-check at every PASS boundary, reviewer invocations that
+no longer mutate a Task, and an optional strict-delegation mode.
 
 ## Install
 
@@ -99,11 +102,43 @@ per cwd). Restricted roles remap onto builtin agents:
 
 A `reviewer` child always launches with `context: "fresh"` and a packet of
 TaskSpec + WorkerReport + evidence refs — not a fork of the parent session.
+The packet is a `ReviewRequest`: an invocation over the Task, never a new
+TaskSpec. The Task's original role, objective, and spec stay unchanged through
+worker, reviewer, and validation runs.
 
 Workers must return a versioned `WorkerReport`. The parent extracts it,
 compacts anything over 12k characters, checks evidence freshness, and appends
 the next review action. Malformed output gets one report-only correction, then
 blocks.
+
+### Task identity and the PASS boundary
+
+Both child contracts are checked against the delegation they answer:
+
+- A `WorkerReport` is accepted only when `taskId`, `evidence.taskId`, and (when
+  present) `evidence.workerRunId` match the delegated task and subagent call.
+  A structurally valid report for the wrong task is rejected like a malformed
+  one: never stored, one report-only correction.
+- A `ReviewResult` is accepted only when its `taskId` matches the reviewed
+  task; mismatched verdicts are never recorded and no state changes.
+
+Evidence is authoritative only at the acceptance boundary. Every Root `pass`
+re-samples the workspace right before accepting and compares it with the
+latest report — freshness proved when the worker returned says nothing about
+freshness now. Stale evidence forces `revalidate` instead of completion, and a
+fresh reviewer's `evidenceFresh: true` never bypasses that Root-side check.
+
+### Strict delegation (optional)
+
+By default a worker delegation without an embedded `TaskSpec` is allowed with a
+warning. Set `PI_PLANNER_ONLY_STRUCTURED_DELEGATION=strict` to block it
+instead. Explorers stay permissive; validators are warned in both modes.
+
+Reviewers have no `git_audit` (children run with `--no-extensions`, and that
+tool belongs to the parent extension). Root samples Git itself and ships a
+bounded evidence packet — HEAD, status, changed files, diff stat, diff check —
+in the `ReviewRequest`; reviewers work with `read`/`grep`/`find`/`ls` only.
+No full diff crosses the seam by default.
 
 Review states: `planning → executing → reviewing → completed | changes_requested | blocked`.
 At most three corrections (`MAX_REVIEW_ROUNDS`). Stale in-scope evidence cannot
@@ -117,20 +152,27 @@ Parent-only read-only Git: `status`, `diff-stat`, `diff-names`, `diff-check`,
 ## Tests
 
 ```bash
-npm test
+npm test          # unit + in-process integration
+npm run test:e2e  # real pi-subagents contracts (skips if not installed)
 ```
+
+The E2E suite runs against the installed `pi-subagents` package — its builtin
+agent allowlists, child launch argv (`--no-extensions`, tool ceiling, fresh
+session), and the payload fields the planner mutates — without any model calls.
 
 ## Layout
 
 | File | Responsibility |
 |---|---|
-| `types.ts` | `TaskSpec`, `WorkerReport`, `EvidenceRef`, `ReviewResult` |
+| `types.ts` | `TaskSpec`, `WorkerReport`, `EvidenceRef`, `ReviewResult`, `ReviewRequest` |
 | `policy.ts` | parent tool allowlist and `tool_call` decisions |
 | `task.ts` | validation, compaction, state machine, writer lock |
+| `report.ts` | `WorkerReport` extraction, compaction, identity |
 | `review.ts` | verdicts, review loop, fresh-review packet |
 | `roles.ts` | TaskRole profiles and agent remapping |
-| `evidence.ts` | Git probe and freshness |
+| `evidence.ts` | Git probe, freshness, review evidence packets |
 | `git-audit.ts` | `git_audit` resolution and output bounds |
+| `orchestrate.ts` | delegation launch, review loop, Task store writes |
 | `index.ts` | hooks, tool, commands |
 
 No background advisor, persistence, queues, or telemetry.

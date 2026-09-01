@@ -6,7 +6,7 @@
 
 守卫开启时，父进程的工具 schema 里不会出现 `bash`、`edit`、`write`。`tool_call` 策略是第二道门，挡住过期或恢复会话里的调用。子进程以 `--no-extensions` 启动；扩展在 `PI_SUBAGENT_CHILD=1` 时直接 no-op。
 
-v0.2 在守卫之上加了一层薄编排：结构化 `TaskSpec` / `WorkerReport`、有界 review 循环、只读 `git_audit`、evidence 新鲜度，以及隔离的 Fresh Reviewer。
+v0.2 在守卫之上加了一层薄编排：结构化 `TaskSpec` / `WorkerReport`、有界 review 循环、只读 `git_audit`、evidence 新鲜度，以及隔离的 Fresh Reviewer。v0.2.x 加固序列收紧了生命周期接缝：两份子契约都做任务身份校验、每次 PASS 在接受边界由 Root 重新采样证据、reviewer 调用不再改写 Task、可选的严格委派模式。
 
 ## 安装
 
@@ -82,9 +82,24 @@ pi -e ./index.ts
 | `explorer` / `reviewer` | `reviewer` | read, grep, find, ls |
 | `validator` | `oracle` | read, grep, find, ls, bash |
 
-`reviewer` 子进程一律 `context: "fresh"`，任务包只有 TaskSpec + WorkerReport + evidence，不会 fork 父会话。
+`reviewer` 子进程一律 `context: "fresh"`，任务包只有 TaskSpec + WorkerReport + evidence，不会 fork 父会话。任务包是 `ReviewRequest`：对 Task 的一次调用，绝不是新的 TaskSpec。Task 的原始 role、objective、spec 在 worker / reviewer / validation 各轮中保持不变。
 
 Worker 必须返回带 version 的 `WorkerReport`。父进程抽取、超过 12k 字符则压缩、检查 evidence 新鲜度，并附上下一步 review 动作。畸形输出只允许一次 report-only 修正，第二次直接 blocked。
+
+### 任务身份与 PASS 边界
+
+两份子契约都要与所属委派对账：
+
+- `WorkerReport` 只有在 `taskId`、`evidence.taskId` 以及（存在时的）`evidence.workerRunId` 与被委派任务和 subagent 调用一致时才被接受。结构合法但属于别的任务的报告按畸形处理：不存储，只给一次 report-only 修正。
+- `ReviewResult` 只有在 `taskId` 与被评审任务一致时才被记录；不匹配的裁决不落库、任何状态都不变。
+
+证据只在接受边界权威。Root 每次 `pass` 都在接受前重新采样工作区并与最新报告比对——worker 返回时的新鲜度说明不了现在。证据过期则强制 `revalidate` 而非完成；fresh reviewer 的 `evidenceFresh: true` 永远绕不过这道 Root 侧检查。
+
+### 严格委派（可选）
+
+默认允许没有内嵌 `TaskSpec` 的 worker 委派，但会告警。设 `PI_PLANNER_ONLY_STRUCTURED_DELEGATION=strict` 则直接阻断。explorer 始终宽松；validator 两种模式都只告警。
+
+Reviewer 没有 `git_audit`（子进程以 `--no-extensions` 启动，该工具属于父扩展）。Root 自己采样 Git，把有界证据包——HEAD、status、变更文件、diff stat、diff check——放进 `ReviewRequest`；reviewer 只用 `read`/`grep`/`find`/`ls`。默认不传全量 diff。
 
 Review 状态：`planning → executing → reviewing → completed | changes_requested | blocked`。最多 3 轮修正（`MAX_REVIEW_ROUNDS`）。范围内 stale evidence 不能直接 PASS。Root 可以覆盖 reviewer，覆盖记录只留在内存。
 
@@ -95,20 +110,25 @@ Review 状态：`planning → executing → reviewing → completed | changes_re
 ## 测试
 
 ```bash
-npm test
+npm test          # 单元 + 进程内集成
+npm run test:e2e  # 真实 pi-subagents 契约（未安装则跳过）
 ```
+
+E2E 套件针对已安装的 `pi-subagents` 包运行——builtin agent 工具面、子进程启动 argv（`--no-extensions`、工具上限、fresh 会话）、以及 planner 改写的负载字段——不发起任何模型调用。
 
 ## 模块
 
 | 文件 | 职责 |
 |---|---|
-| `types.ts` | `TaskSpec`、`WorkerReport`、`EvidenceRef`、`ReviewResult` |
+| `types.ts` | `TaskSpec`、`WorkerReport`、`EvidenceRef`、`ReviewResult`、`ReviewRequest` |
 | `policy.ts` | 父进程工具白名单与 `tool_call` 决策 |
 | `task.ts` | 校验、压缩、状态机、写锁 |
+| `report.ts` | `WorkerReport` 抽取、压缩、身份校验 |
 | `review.ts` | 裁决、review 循环、fresh-review 任务包 |
 | `roles.ts` | TaskRole 画像与 agent remap |
-| `evidence.ts` | Git 探测与新鲜度 |
+| `evidence.ts` | Git 探测、新鲜度、review 证据包 |
 | `git-audit.ts` | `git_audit` 解析与输出上限 |
+| `orchestrate.ts` | 委派启动、review 循环、Task 存储写入 |
 | `index.ts` | hook、工具、命令 |
 
 不做后台 Advisor、持久化、队列或 telemetry。

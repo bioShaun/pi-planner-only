@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { GIT_READ_ARGV } from "./git-audit.ts";
 import type { GitRunner } from "./git-audit.ts";
-import type { EvidenceRef, TaskScope, WorkerReport } from "./types.ts";
+import type { EvidenceRef, ReviewEvidencePacket, TaskScope, WorkerReport } from "./types.ts";
 
 export type { GitRunner };
 
@@ -24,6 +24,11 @@ export interface GitProbe {
 }
 
 const MAX_DIFF_STAT_CHARS = 2000;
+
+/** Bounds for the Git evidence Root hands to a Fresh Reviewer. */
+const MAX_REVIEW_PACKET_STATUS_CHARS = 4000;
+const MAX_REVIEW_PACKET_FILES = 100;
+const MAX_REVIEW_PACKET_DIFF_CHARS = 2000;
 
 export function hashStatus(porcelain: string): string {
 	return createHash("sha256").update(porcelain).digest("hex").slice(0, 16);
@@ -57,8 +62,8 @@ export function parseChangedPaths(porcelain: string): string[] {
 	return [...new Set(paths.filter(Boolean))].sort();
 }
 
-export async function probeGit(run: GitRunner, cwd: string): Promise<GitProbe> {
-	const empty: GitProbe = {
+function unavailableProbe(): GitProbe {
+	return {
 		available: false,
 		head: null,
 		statusPorcelain: null,
@@ -66,6 +71,10 @@ export async function probeGit(run: GitRunner, cwd: string): Promise<GitProbe> {
 		changedPaths: [],
 		diffStat: null,
 	};
+}
+
+export async function probeGit(run: GitRunner, cwd: string): Promise<GitProbe> {
+	const empty = unavailableProbe();
 
 	let gitDir: { stdout: string; code: number };
 	try {
@@ -114,14 +123,7 @@ export async function captureEvidence(
 	try {
 		probe = await probeGit(run, cwd);
 	} catch {
-		probe = {
-			available: false,
-			head: null,
-			statusPorcelain: null,
-			statusHash: null,
-			changedPaths: [],
-			diffStat: null,
-		};
+		probe = unavailableProbe();
 	}
 
 	if (!probe.available) {
@@ -139,6 +141,54 @@ export async function captureEvidence(
 		...(probe.diffStat ? { diffStat: probe.diffStat } : {}),
 		gitAvailable: true,
 		generatedAt,
+	};
+}
+
+function clip(value: string | null | undefined, limit: number): string | undefined {
+	const trimmed = value?.trimEnd();
+	if (!trimmed) return undefined;
+	return trimmed.length <= limit
+		? trimmed
+		: `${trimmed.slice(0, limit)}\n… (truncated, ${trimmed.length} chars total)`;
+}
+
+/**
+ * §P1-2 — Root is the repository-state authority. Reviewer children launch
+ * with `--no-extensions`, so they have no `git_audit`; Root samples the tree
+ * and passes this bounded packet instead. No full diff ever crosses the seam.
+ */
+export async function captureReviewEvidencePacket(
+	run: GitRunner,
+	cwd: string,
+): Promise<ReviewEvidencePacket> {
+	const target = resolve(cwd);
+	let probe: GitProbe;
+	try {
+		probe = await probeGit(run, target);
+	} catch {
+		probe = unavailableProbe();
+	}
+	if (!probe.available) return { gitAvailable: false };
+
+	let diffCheck: string | undefined;
+	try {
+		const result = await run([...GIT_READ_ARGV.diffCheck], target);
+		diffCheck = clip(result.stdout, MAX_REVIEW_PACKET_DIFF_CHARS);
+	} catch {
+		diffCheck = undefined;
+	}
+
+	return {
+		gitAvailable: true,
+		...(probe.head ? { head: probe.head } : {}),
+		...(probe.statusPorcelain
+			? { status: clip(probe.statusPorcelain, MAX_REVIEW_PACKET_STATUS_CHARS) }
+			: {}),
+		...(probe.changedPaths.length
+			? { changedFiles: probe.changedPaths.slice(0, MAX_REVIEW_PACKET_FILES) }
+			: {}),
+		...(probe.diffStat ? { diffStat: clip(probe.diffStat, MAX_REVIEW_PACKET_DIFF_CHARS) } : {}),
+		...(diffCheck ? { diffCheck } : {}),
 	};
 }
 

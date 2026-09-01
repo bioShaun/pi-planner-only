@@ -516,4 +516,32 @@ assert.match(staleResult.content[0].text, /re-delegate validation/);
 gitResponses.delete("status --porcelain=v2 --branch");
 gitResponses.delete("diff HEAD --stat");
 
+// §P0-3 race: an external edit between the report and a Root PASS rejects the pass
+// (the drift case above deleted the shared status fixture; restore it first)
+gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+await handlers.get("tool_call")(
+	{ toolCallId: "call-400", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260831-400")) } },
+	ctx,
+);
+const freshReport = {
+	...workerReport,
+	taskId: "T-20260831-400",
+	evidence: { ...workerReport.evidence, taskId: "T-20260831-400", workerRunId: "call-400", cwd: "/fixture/T-20260831-400", changedPaths: ["src/parser.ts"] },
+};
+const raceWorker = await handlers.get("tool_result")(
+	{ toolCallId: "call-400", toolName: "subagent", input: {}, content: [{ type: "text", text: JSON.stringify(freshReport) }], isError: false },
+	ctx,
+);
+assert.match(raceWorker.content[0].text, /decision: review_pending/);
+gitResponses.set("rev-parse HEAD", { stdout: "def5678\n", stderr: "", code: 0 });
+notices.length = 0;
+await commands.get("planner-only").handler("review T-20260831-400 pass accepting late", ctx);
+assert.match(notices.at(-1).message, /decision: revalidate/);
+assert.match(notices.at(-1).message, /evidence: stale/);
+notices.length = 0;
+await commands.get("planner-only").handler("task T-20260831-400", ctx);
+assert.match(notices.at(-1).message, /State: changes_requested/);
+gitResponses.delete("rev-parse HEAD");
+
 console.log("planner-only extension: PASS");

@@ -228,11 +228,18 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		});
 		if (!decision.block) {
 			if (event.toolName === "subagent" && !isDisabled()) {
-				orchestrator.prepareRoleDelegation(event.input);
+				await orchestrator.prepareRoleDelegation(event.input);
 				const outcome = await orchestrator.beginDelegation(event, ctx.cwd || process.cwd());
+				if (outcome.block) {
+					if (ctx.hasUI) ctx.ui.notify("Blocked unstructured delegation", "warning");
+					return { block: true, reason: outcome.block.reason };
+				}
 				if (outcome.conflict?.conflict) {
 					if (ctx.hasUI) ctx.ui.notify("Blocked concurrent writer for this cwd", "warning");
 					return { block: true, reason: outcome.conflict.reason as string };
+				}
+				for (const warning of outcome.warnings ?? []) {
+					if (ctx.hasUI) ctx.ui.notify(warning, "warning");
 				}
 			}
 			return;
@@ -318,8 +325,8 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				}
 				const verdict = sub as ReviewVerdict;
 				const summary = rest.slice(1).join(" ").trim() || `root verdict: ${verdict}`;
-				const outcome = orchestrator.recordRootVerdict(task, verdict, summary);
-				notify(ctx, orchestrator.renderDecisionBlock(outcome.task, outcome.decision));
+				const outcome = await orchestrator.recordRootVerdict(task, verdict, summary);
+				notify(ctx, orchestrator.renderDecisionBlock(outcome.task, outcome.decision, outcome.evidence));
 				return;
 			}
 			notify(ctx, "Usage: /planner-only [status|on|off|task|review] [args]", "warning");

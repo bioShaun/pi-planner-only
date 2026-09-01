@@ -30,6 +30,9 @@ export const GIT_READ_ARGV = {
 	head: ["rev-parse", "HEAD"],
 	status: ["status", "--porcelain=v2", "--branch"],
 	evidenceDiffStat: ["diff", "HEAD", "--stat"],
+	// Reviewer evidence packet only. git_audit's diff-* operations build their
+	// own argv because they also support the staged variant.
+	diffCheck: ["diff", "--check"],
 } as const;
 export const GIT_AUDIT_OPERATIONS = [
 	"status",

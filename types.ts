@@ -141,6 +141,51 @@ export interface WorkerReport {
 	notes?: string[];
 }
 
+/**
+ * Bounded Git evidence Root samples for a Fresh Reviewer.
+ *
+ * Reviewer children launch with `--no-extensions`, so they cannot run
+ * `git_audit`. Root is the repository-state authority and passes this packet
+ * instead. Full diffs are never sent.
+ */
+export interface ReviewEvidencePacket {
+	gitAvailable: boolean;
+	head?: string;
+	status?: string;
+	changedFiles?: string[];
+	diffStat?: string;
+	diffCheck?: string;
+}
+
+/**
+ * Downward contract for a Fresh Reviewer invocation.
+ *
+ * A Reviewer is an invocation over a Task, not a Task of its own: this shape
+ * carries the original TaskSpec as read-only context and is deliberately
+ * transient — it is never persisted in the Task store and never overwrites the
+ * Task's spec.
+ */
+export interface ReviewRequest {
+	version: 1;
+	taskId: string;
+	/** Task the attached WorkerReport belongs to; equals taskId when in sync. */
+	reportTaskId: string;
+	reviewMode: "fresh";
+	workerReport?: WorkerReport;
+	taskSpec?: TaskSpec;
+	evidenceSummary?: string;
+	evidencePacket?: ReviewEvidencePacket;
+}
+
+/**
+ * Whether a delegation without an embedded TaskSpec is tolerated.
+ * `strict` blocks worker delegations that carry no TaskSpec; `warn` only
+ * reports them. Default stays `warn` so existing sessions do not break.
+ */
+export type StructuredDelegationMode = "warn" | "strict";
+
+export const DEFAULT_STRUCTURED_DELEGATION_MODE: StructuredDelegationMode = "warn";
+
 export interface ReviewFinding {
 	severity: FindingSeverity;
 	category: FindingCategory;

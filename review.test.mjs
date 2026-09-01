@@ -10,7 +10,11 @@ import {
 	extractReviewResult,
 	summarizeFindings,
 	validateReviewResult,
+	validateReviewResultIdentity,
 	buildFreshReviewerTask,
+	buildReviewRequest,
+	extractReviewRequest,
+	validateReviewRequest,
 	applyReviewDecision,
 } from "./review.ts";
 import { compareEvidence } from "./evidence.ts";
@@ -319,25 +323,70 @@ assert.match(summarizeFindings([finding("major", "test")]).join("\n"), /\[major\
 	assert.match(overrides[0].reason, /out of scope/);
 }
 
+// --------------------------------------------------------------------------
+// Fresh reviewer packet: a ReviewRequest, never the parent's transcript
+// --------------------------------------------------------------------------
+
 {
 	const spec = createTaskSpec({
 		objective: "review the parser",
 		cwd: CWD,
-		role: "reviewer",
+		role: "worker",
 		acceptanceCriteria: ["empty input returns []"],
 	});
+	const git = { gitAvailable: true, head: "abc1234", diffCheck: "(no whitespace errors)" };
 	const packet = buildFreshReviewerTask({
 		taskId: spec.taskId,
 		spec,
 		report: makeReport(),
 		evidence: "fresh",
+		git,
 	});
 	assert.match(packet, /\[PLANNER-ONLY FRESH REVIEW\]/);
 	assert.match(packet, new RegExp(`isolated reviewer for task ${spec.taskId}`));
 	assert.match(packet, /empty input returns \[\]/);
 	assert.match(packet, /Implemented the parser/);
-	assert.match(packet, /Evidence: fresh/);
 	assert.doesNotMatch(packet, /rubber-stamp|I already decided/);
+
+	// the packet is a parseable ReviewRequest carrying the original spec
+	const embedded = extractReviewRequest(packet);
+	assert.deepEqual(embedded, {
+		version: 1,
+		taskId: spec.taskId,
+		reportTaskId: "T-20260831-001",
+		reviewMode: "fresh",
+		taskSpec: spec,
+		workerReport: makeReport(),
+		evidenceSummary: "fresh",
+		evidencePacket: git,
+	});
+	assert.equal(extractReviewRequest("no packet here"), undefined);
+	assert.deepEqual(validateReviewRequest({ ...embedded, reviewMode: "root" }).length, 1);
 }
+
+{
+	const request = buildReviewRequest({
+		taskId: "T-20260831-001",
+		report: makeReport(),
+		evidence: "stale (revalidate)",
+	});
+	assert.equal(request.version, 1);
+	assert.equal(request.reviewMode, "fresh");
+	assert.equal(request.reportTaskId, "T-20260831-001");
+	assert.equal(request.evidenceSummary, "stale (revalidate)");
+	assert.equal("taskSpec" in request, false);
+	// without a report the request still names the task it reviews
+	assert.equal(buildReviewRequest({ taskId: "T-20260831-002" }).reportTaskId, "T-20260831-002");
+}
+
+// --------------------------------------------------------------------------
+// ReviewResult task identity (§P0-2)
+// --------------------------------------------------------------------------
+
+assert.deepEqual(validateReviewResultIdentity(makeReview("pass"), "T-20260831-001"), []);
+assert.match(
+	validateReviewResultIdentity(makeReview("pass"), "T-20260831-999").join(""),
+	/ReviewResult taskId mismatch: expected T-20260831-999, got T-20260831-001/,
+);
 
 console.log("planner-only review: PASS");
