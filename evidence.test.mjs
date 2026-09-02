@@ -12,6 +12,11 @@ import {
 
 const CWD = "/repo";
 
+// Branch tracking metadata is not working-tree evidence.
+assert.equal(hashStatus("# branch.ab +1 -0\n1 .M N... 100644 100644 100644 a b c\n"), hashStatus("# branch.ab +2 -0\n1 .M N... 100644 100644 100644 a b c\n"));
+assert.notEqual(hashStatus("1 .M N... 100644 100644 100644 a b c\n"), hashStatus("1 .M N... 100644 100644 100644 a b d\n"));
+
+
 function makeReport(evidence) {
 	return {
 		version: 1,
@@ -221,6 +226,9 @@ const noGit = compareEvidence(
 	makeReport({ gitAvailable: false, changedPaths: ["src/a.ts"] }),
 	makeCurrent({ gitAvailable: false, changedPaths: ["src/a.ts"] }),
 );
-assert.equal(noGit.fresh, true);
+assert.equal(noGit.fresh, false);
+assert.equal(noGit.verifiable, false);
+assert.equal(evidenceAction(noGit), "revalidate");
+assert.match(describeComparison(noGit), /unverifiable/);
 
 console.log("planner-only evidence: PASS");

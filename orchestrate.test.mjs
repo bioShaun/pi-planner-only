@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { PlannerOrchestrator } from "./orchestrate.ts";
+import { PlannerOrchestrator, isDelegationCall } from "./orchestrate.ts";
 import { hashStatus } from "./evidence.ts";
 
 // --------------------------------------------------------------------------
@@ -91,6 +91,55 @@ async function delegateWorker(orch, toolCallId, taskId) {
 		{ toolCallId, input: { task: JSON.stringify(specFor(taskId)) } },
 		BASE,
 	);
+}
+
+// Management calls are not delegations, even when they carry workflow data.
+assert.equal(isDelegationCall({ action: "list" }), false);
+assert.equal(isDelegationCall({ action: "status", id: "x" }), false);
+assert.equal(isDelegationCall({ agent: "worker", task: "..." }), true);
+assert.equal(isDelegationCall({ workflowScript: "..." }), true);
+assert.equal(isDelegationCall({ action: "validate", workflowScript: "..." }), false);
+
+// Async launch receipts remain pending and do not spend correction or rounds.
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260901-450";
+	await orch.beginDelegation({
+		toolCallId: "call-450",
+		input: { async: true, task: JSON.stringify(specFor(taskId)) },
+	}, BASE);
+	const before = orch.store.require(taskId);
+	const result = await orch.handleSubagentResult({
+		toolCallId: "call-450",
+		toolName: "subagent",
+		input: { async: true },
+		content: [{ type: "text", text: JSON.stringify({ runId: "run-450" }) }],
+	});
+	assert.match(result.content[0].text, /Await the run result/);
+	const after = orch.store.require(taskId);
+	assert.equal(after.state, "executing");
+	assert.equal(after.reportCorrections, before.reportCorrections);
+	assert.equal(after.reviewRound, before.reviewRound);
+}
+
+// asyncByDefault prose receipts remain pending without an async input flag.
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260901-451";
+	await orch.beginDelegation({ toolCallId: "call-451", input: { task: JSON.stringify(specFor(taskId)) } }, BASE);
+	const before = orch.store.require(taskId);
+	const receipt = [
+		"Run fan-out: 1/64 used, 63 remaining",
+		"Async: worker [28ac4dc2-8071-450d-8e39-8e1c014ece3d]",
+		"",
+		"The async run is detached and running in the background.",
+		"Mission: 4afdb39f-689d-4d1e-9aad-816e8c76eca1 (active)",
+	].join("\\n");
+	await orch.handleSubagentResult({ toolCallId: "call-451", toolName: "subagent", content: [{ type: "text", text: receipt }] });
+	const after = orch.store.require(taskId);
+	assert.equal(after.state, "executing");
+	assert.equal(after.reportCorrections, before.reportCorrections);
+	assert.equal(after.reviewRound, before.reviewRound);
 }
 
 // --------------------------------------------------------------------------

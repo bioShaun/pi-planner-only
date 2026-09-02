@@ -9,6 +9,7 @@ import { resolve } from "node:path";
 import {
 	MAX_REPORT_CORRECTIONS,
 	MAX_REVIEW_ROUNDS,
+	EXECUTING_STALE_MS,
 	isTerminalTaskState,
 } from "./types.ts";
 import type { EvidenceComparison } from "./evidence.ts";
@@ -192,6 +193,8 @@ export interface TaskRecord {
 	baseEvidence?: EvidenceRef;
 	/** Result of the most recent freshness check. */
 	lastComparison?: EvidenceComparison;
+	/** Reason for an operator-forced terminal state, when applicable. */
+	stateReason?: string;
 	createdAt: string;
 	updatedAt: string;
 }
@@ -348,6 +351,27 @@ export class TaskStore {
 	canCorrectReport(taskId: string): boolean {
 		return this.require(taskId).reportCorrections < MAX_REPORT_CORRECTIONS;
 	}
+
+	/** Release a stuck task through the operator escape hatch. */
+	abandon(taskId: string, reason = "abandoned by operator"): TaskRecord {
+		const record = this.require(taskId);
+		if (isTerminalTaskState(record.state)) {
+			throw new Error(`cannot abandon terminal task: ${record.state}`);
+		}
+		if (record.state === "executing") this.transition(taskId, "failed");
+		else {
+			record.state = "failed";
+			this.touch(record);
+		}
+		record.stateReason = reason;
+		return this.touch(record);
+	}
+}
+
+export function isExecutingStale(task: TaskRecord, now = Date.now()): boolean {
+	if (task.state !== "executing") return false;
+	const updated = Date.parse(task.updatedAt);
+	return Number.isFinite(updated) && now - updated >= EXECUTING_STALE_MS;
 }
 
 export interface WriterConflict {
@@ -376,6 +400,7 @@ export function findWriterConflict(
 			isWriterRole(task.role) &&
 			task.state === "executing" &&
 			task.cwd !== "" &&
+			!isExecutingStale(task) &&
 			resolve(task.cwd) === target,
 	);
 	if (!holder) return { conflict: false };

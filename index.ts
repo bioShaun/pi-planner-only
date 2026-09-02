@@ -12,7 +12,7 @@ import {
 } from "./policy.ts";
 import { GIT_AUDIT_OPERATIONS, runGitAudit } from "./git-audit.ts";
 import type { GitAuditRequest, GitRunner } from "./git-audit.ts";
-import { PlannerOrchestrator } from "./orchestrate.ts";
+import { PlannerOrchestrator, isDelegationCall } from "./orchestrate.ts";
 import { MAX_REVIEW_ROUNDS, WORKER_REPORT_VERSION } from "./types.ts";
 import type { ReviewMode, ReviewVerdict } from "./types.ts";
 
@@ -227,7 +227,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			disabled: isDisabled(),
 		});
 		if (!decision.block) {
-			if (event.toolName === "subagent" && !isDisabled()) {
+			if (event.toolName === "subagent" && !isDisabled() && isDelegationCall(event.input)) {
 				await orchestrator.prepareRoleDelegation(event.input);
 				const outcome = await orchestrator.beginDelegation(event, ctx.cwd || process.cwd());
 				if (outcome.block) {
@@ -284,6 +284,26 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				return;
 			}
 			if (action === "task") {
+				const subaction = (parts[1] ?? "").toLowerCase();
+				if (subaction === "abandon" || subaction === "reset") {
+					const taskId = parts[2];
+					if (!taskId) {
+						notify(ctx, "Usage: /planner-only task abandon|reset <taskId>", "warning");
+						return;
+					}
+					const target = store.get(taskId);
+					if (!target) {
+						notify(ctx, `Unknown planner-only task: ${taskId}`, "warning");
+						return;
+					}
+					try {
+						store.abandon(taskId, `abandoned by operator via /planner-only task ${subaction}`);
+						notify(ctx, `Task ${taskId} abandoned and marked failed.`);
+					} catch (error) {
+						notify(ctx, error instanceof Error ? error.message : String(error), "warning");
+					}
+					return;
+				}
 				const task = parts[1] ? store.get(parts[1]) : store.active();
 				if (!task) {
 					notify(ctx, "No active planner-only task.", "info");
@@ -329,7 +349,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				notify(ctx, orchestrator.renderDecisionBlock(outcome.task, outcome.decision, outcome.evidence));
 				return;
 			}
-			notify(ctx, "Usage: /planner-only [status|on|off|task|review] [args]", "warning");
+				notify(ctx, "Usage: /planner-only [status|on|off|task [abandon|reset <taskId>]|review] [args]", "warning");
 		},
 	});
 }

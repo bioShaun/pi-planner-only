@@ -24,6 +24,12 @@ export const MAX_REVIEW_ROUNDS = 3;
 /** A malformed report gets one report-only correction, then blocks. */
 export const MAX_REPORT_CORRECTIONS = 1;
 
+/** Tasks that remain executing this long no longer hold a writer lock. */
+export const EXECUTING_STALE_MS = (() => {
+	const configured = Number(process.env.PI_PLANNER_ONLY_EXECUTING_STALE_MS);
+	return Number.isFinite(configured) && configured > 0 ? configured : 30 * 60 * 1000;
+})();
+
 /** Bounds for `git_audit` output. */
 export const MAX_GIT_AUDIT_ENTRIES = 200;
 export const DEFAULT_GIT_AUDIT_ENTRIES = 20;

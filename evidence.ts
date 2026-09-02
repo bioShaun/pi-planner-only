@@ -31,7 +31,11 @@ const MAX_REVIEW_PACKET_FILES = 100;
 const MAX_REVIEW_PACKET_DIFF_CHARS = 2000;
 
 export function hashStatus(porcelain: string): string {
-	return createHash("sha256").update(porcelain).digest("hex").slice(0, 16);
+	const entries = porcelain
+		.split("\n")
+		.filter((line) => line && !line.startsWith("#"))
+		.join("\n");
+	return createHash("sha256").update(entries).digest("hex").slice(0, 16);
 }
 
 /**
@@ -197,6 +201,8 @@ export function normalizeEvidencePaths(paths: readonly string[], cwd: string): s
 }
 
 export interface EvidenceComparison {
+	/** False when Git state could not be sampled on either side. */
+	verifiable: boolean;
 	fresh: boolean;
 	reasons: string[];
 	/** Paths changed after the report that fall inside the task's scope. */
@@ -247,6 +253,8 @@ export function compareEvidence(
 	const reportedGit = reported.gitAvailable !== false;
 	const currentGit = current.gitAvailable !== false;
 	const comparable = reportedGit && currentGit;
+	const verifiable = comparable;
+	if (!verifiable) reasons.push("git evidence unavailable — freshness cannot be verified");
 
 	let headChanged = false;
 	if (comparable) {
@@ -303,6 +311,7 @@ export function compareEvidence(
 	}
 
 	return {
+		verifiable,
 		fresh: reasons.length === 0,
 		reasons,
 		overlappingPaths: overlappingPaths.sort(),
@@ -322,11 +331,13 @@ export function isEvidenceStale(report: WorkerReport, current: EvidenceRef): boo
  * review.
  */
 export function evidenceAction(comparison: EvidenceComparison): "review" | "revalidate" {
+	if (!comparison.verifiable) return "revalidate";
 	if (comparison.fresh) return "review";
 	return comparison.unexplained ? "revalidate" : "review";
 }
 
 export function describeComparison(comparison: EvidenceComparison): string {
+	if (!comparison.verifiable) return `unverifiable: ${comparison.reasons.join("; ")}`;
 	if (comparison.fresh) return "fresh";
 	const label = evidenceAction(comparison) === "revalidate" ? "stale (revalidate)" : "stale (out-of-scope only)";
 	return `${label}: ${comparison.reasons.join("; ")}`;

@@ -6,6 +6,7 @@ import {
 	createTaskSpec,
 	extractTaskSpec,
 	findWriterConflict,
+	isExecutingStale,
 	validateTaskSpec,
 	canTransition,
 } from "./task.ts";
@@ -17,7 +18,7 @@ import {
 	stableStringify,
 	validateWorkerReport,
 } from "./report.ts";
-import { MAX_WORKER_REPORT_CHARS, WORKER_REPORT_VERSION } from "./types.ts";
+import { EXECUTING_STALE_MS, MAX_WORKER_REPORT_CHARS, WORKER_REPORT_VERSION } from "./types.ts";
 
 const cwd = process.cwd();
 
@@ -254,6 +255,17 @@ assert.equal(
 );
 // different cwd is fine
 assert.equal(findWriterConflict([writerA], "/elsewhere", "worker", "B").conflict, false);
+
+const staleWriter = { ...writerA, updatedAt: new Date(Date.now() - EXECUTING_STALE_MS - 1).toISOString() };
+assert.equal(isExecutingStale(staleWriter), true);
+assert.equal(findWriterConflict([staleWriter], cwd, "worker", "B").conflict, false);
+assert.equal(findWriterConflict([writerA], cwd, "worker", "B").conflict, true);
+const abandoned = store.create(createTaskSpec({ objective: "stuck", cwd }, "T-abandon-001"));
+store.transition(abandoned.taskId, "executing");
+store.abandon(abandoned.taskId, "operator reset");
+assert.equal(store.require(abandoned.taskId).state, "failed");
+assert.equal(store.require(abandoned.taskId).stateReason, "operator reset");
+assert.throws(() => store.abandon(abandoned.taskId), /terminal task/);
 
 {
 	const store = new TaskStore();

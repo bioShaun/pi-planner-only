@@ -34,10 +34,12 @@ import {
 	TaskStore,
 	createTaskSpec,
 	findWriterConflict,
+	isExecutingStale,
 } from "./task.ts";
 import type { TaskRecord, WriterConflict } from "./task.ts";
 import {
 	DEFAULT_STRUCTURED_DELEGATION_MODE,
+	EXECUTING_STALE_MS,
 	MAX_REVIEW_ROUNDS,
 	MAX_WORKER_REPORT_CHARS,
 } from "./types.ts";
@@ -75,6 +77,7 @@ export type DelegationKind = "worker" | "reviewer" | "explorer" | "validator";
 export interface DelegationRecord {
 	taskId: string;
 	kind: DelegationKind;
+	asyncRequested?: boolean;
 }
 
 export interface DelegationOutcome {
@@ -92,6 +95,15 @@ export interface RootVerdictOutcome {
 	evidence?: string;
 }
 
+export function isDelegationCall(input: unknown): boolean {
+	if (!input || typeof input !== "object") return false;
+	const value = input as Record<string, unknown>;
+	if (typeof value.action === "string" && value.action.trim()) return false;
+	return ["agent", "task", "workflowScript", "workflowScriptPath", "workflow"]
+		.some((key) => key in value && value[key] !== undefined && value[key] !== null &&
+			(typeof value[key] !== "string" || value[key].trim() !== ""));
+}
+
 function resultText(event: { content?: readonly { type: string; text?: string }[] }): string {
 	if (!Array.isArray(event.content)) return "";
 	return event.content
@@ -103,6 +115,30 @@ function resultText(event: { content?: readonly { type: string; text?: string }[
 function truncate(value: string, limit: number): string {
 	if (value.length <= limit) return value;
 	return `${value.slice(0, limit)}\n… (truncated, ${value.length} chars total)`;
+}
+
+function isAsyncInput(input: unknown): boolean {
+	return Boolean(input && typeof input === "object" && (input as Record<string, unknown>).async === true);
+}
+
+function isAsyncLaunchReceipt(event: SubagentEvent, delegation: DelegationRecord): boolean {
+	const text = resultText(event).trim();
+	if (delegation.asyncRequested) return true;
+	if (!text || text.includes('"version"') || text.includes('"taskId"')) return false;
+	try {
+		const value = JSON.parse(text) as Record<string, unknown>;
+		return Boolean(value && typeof value === "object" &&
+			["runId", "run_id", "runDir", "runDirectory", "handle"].some((key) => key in value));
+	} catch {
+		// Real asyncByDefault receipts are prose, so continue to marker detection.
+	}
+	const markers = [
+		/^Async:\s+\S+\s+\[[0-9a-f-]{8,}\]/im,
+		/detached and running in the background/i,
+		/^Run fan-out:/im,
+		/^Mission:\s+[0-9a-f-]{8,}/im,
+	];
+	return markers.filter((marker) => marker.test(text)).length >= 2;
 }
 
 export class PlannerOrchestrator {
@@ -174,7 +210,7 @@ export class PlannerOrchestrator {
 					`Planner-only: ReviewRequest reportTaskId ${target.request.reportTaskId} does not match task ${taskId}.`,
 				);
 			}
-			this.delegations.set(event.toolCallId, { taskId, kind: "reviewer" });
+			this.delegations.set(event.toolCallId, { taskId, kind: "reviewer", asyncRequested: isAsyncInput(input) });
 			return {
 				...(task ? { task } : {}),
 				...(warnings.length ? { warnings } : {}),
@@ -232,7 +268,7 @@ export class PlannerOrchestrator {
 			workerRunId: event.toolCallId,
 		});
 		this.store.setBaseEvidence(task.taskId, base);
-		this.delegations.set(event.toolCallId, { taskId: task.taskId, kind: role });
+		this.delegations.set(event.toolCallId, { taskId: task.taskId, kind: role, asyncRequested: isAsyncInput(event.input) });
 		return {
 			task: this.store.require(task.taskId),
 			...(warnings.length ? { warnings } : {}),
@@ -265,9 +301,11 @@ export class PlannerOrchestrator {
 			`State: ${task.state}`,
 			`Worker round: ${task.reviewRound}/${MAX_REVIEW_ROUNDS}`,
 			`Review mode: ${task.reviewMode}`,
+			...(isExecutingStale(task) ? [`Lock: stale (executing for over ${Math.round(EXECUTING_STALE_MS / 60000)} minutes)`] : []),
 			`Evidence: ${report ? (task.lastComparison ? describeComparison(task.lastComparison) : "not compared") : "no report yet"}`,
 			`Changed files: ${report?.changedFiles.length ?? 0}`,
 		];
+		if (task.stateReason) lines.push(`State reason: ${task.stateReason}`);
 		if (task.reviews.length > 0) {
 			lines.push(`Reviews: ${task.reviews.map((review) => review.verdict).join(", ")}`);
 		}
@@ -350,6 +388,10 @@ export class PlannerOrchestrator {
 	): Promise<{ content: { type: "text"; text: string }[] } | undefined> {
 		const delegation = this.delegations.get(event.toolCallId);
 		if (!delegation) return;
+		if (isAsyncLaunchReceipt(event, delegation)) {
+			const task = this.store.get(delegation.taskId);
+			return task ? { content: [{ type: "text", text: `[PLANNER-ONLY] Async delegation for task ${task.taskId} has started. Await the run result before reviewing.` }] } : undefined;
+		}
 		this.delegations.delete(event.toolCallId);
 
 		const task = this.store.get(delegation.taskId);
