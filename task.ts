@@ -359,10 +359,7 @@ export class TaskStore {
 			throw new Error(`cannot abandon terminal task: ${record.state}`);
 		}
 		if (record.state === "executing") this.transition(taskId, "failed");
-		else {
-			record.state = "failed";
-			this.touch(record);
-		}
+		else this.transition(taskId, "failed");
 		record.stateReason = reason;
 		return this.touch(record);
 	}

@@ -18,7 +18,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { applyRoleDelegation, ROLE_TOOL_PROFILES } from "./roles.ts";
@@ -27,11 +27,11 @@ import { filterPlannerTools } from "./index.ts";
 const agentDir = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
 const pkgDir = join(agentDir, "npm", "node_modules", "pi-subagents");
 if (!existsSync(pkgDir)) {
-	console.log("planner-only pi-subagents E2E: SKIP (pi-subagents is not installed)");
+	console.log("planner-only pi-subagents E2E: SKIP — role-downgrade coverage did NOT run (pi-subagents is not installed)");
 	process.exit(0);
 }
 
-const workDir = mkdtempSync(join(tmpdir(), "planner-only-e2e-"));
+const workDir = mkdtempSync(join(process.cwd(), ".planner-only-e2e-"));
 try {
 	const pkgCopy = join(workDir, "pi-subagents");
 	cpSync(pkgDir, pkgCopy, { recursive: true });

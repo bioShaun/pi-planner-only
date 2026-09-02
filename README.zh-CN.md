@@ -110,9 +110,12 @@ Review 状态：`planning → executing → reviewing → completed | changes_re
 ## 测试
 
 ```bash
-npm test          # 单元 + 进程内集成
-npm run test:e2e  # 真实 pi-subagents 契约（未安装则跳过）
+npm test          # 单元 + 进程内集成（不包含 E2E）
+npm run test:e2e  # 真实 pi-subagents 契约（需要已安装，否则会明确跳过）
 ```
+
+`npm test` 不验证运行时角色降权映射。该覆盖仅由 `test:e2e` 执行；未安装
+`pi-subagents` 时，角色降权仍未验证。
 
 E2E 套件针对已安装的 `pi-subagents` 包运行——builtin agent 工具面、子进程启动 argv（`--no-extensions`、工具上限、fresh 会话）、以及 planner 改写的负载字段——不发起任何模型调用。
 

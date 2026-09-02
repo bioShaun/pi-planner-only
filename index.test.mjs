@@ -3,7 +3,9 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import plannerOnly, { filterPlannerTools, restorePlannerTools } from "./index.ts";
+
+delete process.env.PI_SUBAGENT_CHILD;
+const { default: plannerOnly, filterPlannerTools, restorePlannerTools } = await import("./index.ts");
 
 const handlers = new Map();
 const commands = new Map();

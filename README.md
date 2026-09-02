@@ -152,9 +152,12 @@ Parent-only read-only Git: `status`, `diff-stat`, `diff-names`, `diff-check`,
 ## Tests
 
 ```bash
-npm test          # unit + in-process integration
-npm run test:e2e  # real pi-subagents contracts (skips if not installed)
+npm test          # unit + in-process integration (excludes the E2E suite)
+npm run test:e2e  # real pi-subagents contracts (requires pi-subagents; otherwise loudly skips)
 ```
+
+`npm test` does not verify the runtime role downgrade mapping. That coverage is
+only exercised by `test:e2e`, and is unverified when `pi-subagents` is absent.
 
 The E2E suite runs against the installed `pi-subagents` package — its builtin
 agent allowlists, child launch argv (`--no-extensions`, tool ceiling, fresh
