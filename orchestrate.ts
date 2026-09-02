@@ -54,6 +54,29 @@ import type {
 /** Worker output kept as a fallback when a report cannot be parsed at all. */
 const RAW_OUTPUT_FALLBACK_CHARS = 4000;
 
+function missingBaseEvidence(task: TaskRecord, workerRunId: string): EvidenceRef {
+	return {
+		cwd: task.cwd,
+		taskId: task.taskId,
+		workerRunId,
+		gitAvailable: false,
+		generatedAt: new Date(0).toISOString(),
+	};
+}
+
+function compareWithRootSamples(
+	task: TaskRecord,
+	current: EvidenceRef,
+	report: WorkerReport,
+) {
+	return compareEvidence(
+		task.baseEvidence ?? missingBaseEvidence(task, current.workerRunId),
+		current,
+		report,
+		task.spec?.scope ? { scope: task.spec.scope } : {},
+	);
+}
+
 export interface SubagentEvent {
 	toolCallId: string;
 	toolName?: string;
@@ -166,7 +189,11 @@ export class PlannerOrchestrator {
 		const options: PrepareRoleDelegationOptions = {};
 		const cwd = target?.task?.cwd;
 		if (target?.role === "reviewer" && cwd) {
-			options.git = await captureReviewEvidencePacket(this.gitRunner, cwd);
+			options.git = await captureReviewEvidencePacket(
+				this.gitRunner,
+				cwd,
+				target.task?.lastComparison,
+			);
 			if (target.task?.lastComparison) {
 				options.evidence = describeComparison(target.task.lastComparison);
 			}
@@ -344,8 +371,8 @@ export class PlannerOrchestrator {
 		let evidence: string | undefined;
 
 		if (verdict === "pass" && report) {
-			comparison = compareEvidence(
-				report,
+			comparison = compareWithRootSamples(
+				current,
 				await captureEvidence(this.gitRunner, {
 					cwd: current.cwd,
 					taskId: current.taskId,
@@ -354,7 +381,7 @@ export class PlannerOrchestrator {
 						? { baseGitRef: current.baseEvidence.finalGitRef }
 						: {}),
 				}),
-				current.spec?.scope ? { scope: current.spec.scope } : {},
+				report,
 			);
 			this.store.setLastComparison(current.taskId, comparison);
 			evidence = describeComparison(comparison);
@@ -453,12 +480,16 @@ export class PlannerOrchestrator {
 		this.store.recordReview(task.taskId, review);
 		const report = task.reports.at(-1);
 		const comparison = report
-			? compareEvidence(report, await captureEvidence(this.gitRunner, {
+			? compareWithRootSamples(
+				task,
+				await captureEvidence(this.gitRunner, {
 					cwd: task.cwd,
 					taskId: task.taskId,
 					workerRunId: report.evidence.workerRunId,
 					...(task.baseEvidence?.finalGitRef ? { baseGitRef: task.baseEvidence.finalGitRef } : {}),
-				}), task.spec?.scope ? { scope: task.spec.scope } : {})
+				}),
+				report,
+			)
 			: undefined;
 		if (comparison) this.store.setLastComparison(task.taskId, comparison);
 		const { decision } = advanceReview({
@@ -520,7 +551,7 @@ export class PlannerOrchestrator {
 			...(task.baseEvidence?.finalGitRef ? { baseGitRef: task.baseEvidence.finalGitRef } : {}),
 		});
 		const comparison = report
-			? compareEvidence(report, current, task.spec?.scope ? { scope: task.spec.scope } : {})
+			? compareWithRootSamples(task, current, report)
 			: undefined;
 		if (comparison) this.store.setLastComparison(task.taskId, comparison);
 		const { decision } = advanceReview({

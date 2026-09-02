@@ -31,9 +31,11 @@ pi remove https://github.com/bioShaun/pi-planner-only
 
 ```bash
 pi install /path/to/pi-planner-only
-# 或本次运行试用、不安装
-pi -e ./index.ts
+# 或本次运行试用整个包、不安装
+pi -e .
 ```
+
+`typebox` 和 `@earendil-works/pi-coding-agent` 是 peerDependencies：由 Pi 运行时提供，不要放进 `dependencies`。
 
 ## 命令
 
@@ -93,13 +95,13 @@ Worker 必须返回带 version 的 `WorkerReport`。父进程抽取、超过 12k
 - `WorkerReport` 只有在 `taskId`、`evidence.taskId` 以及（存在时的）`evidence.workerRunId` 与被委派任务和 subagent 调用一致时才被接受。结构合法但属于别的任务的报告按畸形处理：不存储，只给一次 report-only 修正。
 - `ReviewResult` 只有在 `taskId` 与被评审任务一致时才被记录；不匹配的裁决不落库、任何状态都不变。
 
-证据只在接受边界权威。Root 每次 `pass` 都在接受前重新采样工作区并与最新报告比对——worker 返回时的新鲜度说明不了现在。证据过期则强制 `revalidate` 而非完成；fresh reviewer 的 `evidenceFresh: true` 永远绕不过这道 Root 侧检查。
+证据只在接受边界权威。Root 在委派开始时采样 Git（A），在结果处理或 Root `pass` 时再采一次（C）。A 到 C 的差集是 scope 分母；Worker 的 `changedFiles` 和 Git 指纹只是声明，交叉核对但不作权威。Worker 缺 `gitStatusHash` / `finalGitRef` 不会关掉 Root 归因。证据过期或不可验证则强制 `revalidate` 而非完成；fresh reviewer 的 `evidenceFresh: true` 永远绕不过这道 Root 侧检查。cwd 写锁只做精确路径相等：重叠 worktree 是已知的归因限制。
 
 ### 严格委派（可选）
 
 默认允许没有内嵌 `TaskSpec` 的 worker 委派，但会告警。设 `PI_PLANNER_ONLY_STRUCTURED_DELEGATION=strict` 则直接阻断。explorer 始终宽松；validator 两种模式都只告警。
 
-Reviewer 没有 `git_audit`（子进程以 `--no-extensions` 启动，该工具属于父扩展）。Root 自己采样 Git，把有界证据包——HEAD、status、变更文件、diff stat、diff check——放进 `ReviewRequest`；reviewer 只用 `read`/`grep`/`find`/`ls`。默认不传全量 diff。
+Reviewer 没有 `git_audit`（子进程以 `--no-extensions` 启动，该工具属于父扩展）。Root 自己采样 Git，把有界证据包——HEAD、status、当前变更文件、A-to-C 归因/漏报/多报路径、diff stat、diff check——放进 `ReviewRequest`；reviewer 只用 `read`/`grep`/`find`/`ls`。默认不传全量 diff。
 
 Review 状态：`planning → executing → reviewing → completed | changes_requested | blocked`。最多 3 轮修正（`MAX_REVIEW_ROUNDS`）。范围内 stale evidence 不能直接 PASS。Root 可以覆盖 reviewer，覆盖记录只留在内存。
 
@@ -110,13 +112,14 @@ Review 状态：`planning → executing → reviewing → completed | changes_re
 ## 设计规范
 
 - [v0.2 规范](docs/pi-planner-only-v0.2-spec.md)：核心协议与架构。
-- [Evidence Authority 规范](docs/pi-planner-only-evidence-authority-spec.md)：提出由 Root 负责委派归因的证据语义。
+- [Evidence Authority 规范](docs/pi-planner-only-evidence-authority-spec.md)：Root 负责委派归因的证据语义。
 - [P0/P1 加固规范](docs/pi-planner-only-p0-p1-hardening-spec.md)：证据、生命周期与信任边界加固。
 
 ## 测试
 
 ```bash
 npm test          # 单元 + 进程内集成（不包含 E2E）
+npm run typecheck # tsc --noEmit（Pi 直接加载 .ts；这是本地类型检查）
 npm run test:e2e  # 真实 pi-subagents 契约（需要已安装，否则会明确跳过）
 ```
 
@@ -135,7 +138,7 @@ E2E 套件针对已安装的 `pi-subagents` 包运行——builtin agent 工具�
 | `report.ts` | `WorkerReport` 抽取、压缩、身份校验 |
 | `review.ts` | 裁决、review 循环、fresh-review 任务包 |
 | `roles.ts` | TaskRole 画像与 agent remap |
-| `evidence.ts` | Git 探测、新鲜度、review 证据包 |
+| `evidence.ts` | Git 探测、A-to-C 归因、review 证据包 |
 | `git-audit.ts` | `git_audit` 解析与输出上限 |
 | `orchestrate.ts` | 委派启动、review 循环、Task 存储写入 |
 | `index.ts` | hook、工具、命令 |

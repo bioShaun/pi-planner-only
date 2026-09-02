@@ -46,6 +46,20 @@ function makeReport(overrides = {}) {
 	};
 }
 
+function makeBase(overrides = {}) {
+	return {
+		cwd: CWD,
+		taskId: "T-20260831-001",
+		workerRunId: "call-1",
+		finalGitRef: "abc1234",
+		gitStatusHash: "hash-base",
+		changedPaths: [],
+		gitAvailable: true,
+		generatedAt: "2026-08-31T09:00:00.000Z",
+		...overrides,
+	};
+}
+
 function makeReview(verdict, findings = [], summary = "looks good") {
 	return {
 		taskId: "T-20260831-001",
@@ -263,7 +277,7 @@ assert.match(summarizeFindings([finding("major", "test")]).join("\n"), /\[major\
 		gitAvailable: true,
 		generatedAt: "2026-08-31T11:00:00.000Z",
 	};
-	const comparison = compareEvidence(report, current);
+	const comparison = compareEvidence(makeBase(), current, report);
 	assert.equal(comparison.fresh, false);
 
 	// even an explicit pass is overridden by stale evidence
@@ -284,16 +298,21 @@ assert.match(summarizeFindings([finding("major", "test")]).join("\n"), /\[major\
 {
 	const store = newTask();
 	const report = makeReport();
-	const comparison = compareEvidence(report, {
-		cwd: CWD,
-		taskId: "T-20260831-001",
-		workerRunId: "call-1",
-		finalGitRef: "abc1234",
-		gitStatusHash: "hash-two",
-		changedPaths: ["src/parser.ts", "docs/readme.md"],
-		gitAvailable: true,
-		generatedAt: "2026-08-31T11:00:00.000Z",
-	});
+	const comparison = compareEvidence(
+		makeBase(),
+		{
+			cwd: CWD,
+			taskId: "T-20260831-001",
+			workerRunId: "call-1",
+			finalGitRef: "abc1234",
+			gitStatusHash: "hash-two",
+			changedPaths: ["src/parser.ts", "docs/readme.md"],
+			gitAvailable: true,
+			generatedAt: "2026-08-31T11:00:00.000Z",
+		},
+		report,
+		{ scope: { allowedPaths: ["src/parser.ts"] } },
+	);
 	assert.equal(comparison.fresh, false);
 	const decision = decideReview({
 		task: store.require("T-20260831-001"),

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
 	compactWorkerReport,
 	extractWorkerReport,
+	renderWorkerReport,
 	validateWorkerReport,
 	validateWorkerReportIdentity,
 } from "./report.ts";
@@ -131,6 +132,18 @@ assert.equal(
 	assert.equal(compacted, true);
 	assert.equal(report.validation.length, 1);
 	assert.equal(report.validation[0].exitCode, 0);
+}
+
+// gitStatusHash / finalGitRef are optional declaration fields, not required
+{
+	const report = makeReport();
+	delete report.evidence.gitStatusHash;
+	delete report.evidence.finalGitRef;
+	assert.deepEqual(validateWorkerReport(report), []);
+	const rendered = renderWorkerReport(report);
+	assert.match(rendered, /Worker declaration/);
+	assert.match(rendered, /head: \(none\)/);
+	assert.match(rendered, /statusHash: \(none\)/);
 }
 
 console.log("planner-only report: PASS");

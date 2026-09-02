@@ -1,9 +1,11 @@
 /**
  * Evidence capture and freshness checking (spec §10).
  *
- * The parent never accepts a worker report on the worker's word alone: a report
- * is only meaningful while it still describes the current workspace. Git is
- * probed with fixed, read-only argv — never through a shell.
+ * The parent never accepts a worker report on the worker's word alone. Root
+ * samples Git at delegation start (A) and at result handling (C); the A-to-C
+ * delta is the authoritative changed set. The Worker report is a bounded
+ * declaration cross-checked against that delta. Git is probed with fixed,
+ * read-only argv — never through a shell.
  */
 
 import { createHash } from "node:crypto";
@@ -164,6 +166,7 @@ function clip(value: string | null | undefined, limit: number): string | undefin
 export async function captureReviewEvidencePacket(
 	run: GitRunner,
 	cwd: string,
+	comparison?: EvidenceComparison,
 ): Promise<ReviewEvidencePacket> {
 	const target = resolve(cwd);
 	let probe: GitProbe;
@@ -172,7 +175,9 @@ export async function captureReviewEvidencePacket(
 	} catch {
 		probe = unavailableProbe();
 	}
-	if (!probe.available) return { gitAvailable: false };
+
+	const attribution = attributionFields(comparison);
+	if (!probe.available) return { gitAvailable: false, ...attribution };
 
 	let diffCheck: string | undefined;
 	try {
@@ -193,6 +198,25 @@ export async function captureReviewEvidencePacket(
 			: {}),
 		...(probe.diffStat ? { diffStat: clip(probe.diffStat, MAX_REVIEW_PACKET_DIFF_CHARS) } : {}),
 		...(diffCheck ? { diffCheck } : {}),
+		...attribution,
+	};
+}
+
+function attributionFields(comparison?: EvidenceComparison): Pick<
+	ReviewEvidencePacket,
+	"attributedFiles" | "undeclaredFiles" | "extraDeclaredFiles"
+> {
+	if (!comparison?.verifiable) return {};
+	return {
+		...(comparison.truthPaths.length
+			? { attributedFiles: comparison.truthPaths.slice(0, MAX_REVIEW_PACKET_FILES) }
+			: {}),
+		...(comparison.undeclaredPaths.length
+			? { undeclaredFiles: comparison.undeclaredPaths.slice(0, MAX_REVIEW_PACKET_FILES) }
+			: {}),
+		...(comparison.extraDeclaredPaths.length
+			? { extraDeclaredFiles: comparison.extraDeclaredPaths.slice(0, MAX_REVIEW_PACKET_FILES) }
+			: {}),
 	};
 }
 
@@ -201,13 +225,19 @@ export function normalizeEvidencePaths(paths: readonly string[], cwd: string): s
 }
 
 export interface EvidenceComparison {
-	/** False when Git state could not be sampled on either side. */
+	/** False when Git state could not be sampled on Root's A or C endpoint. */
 	verifiable: boolean;
 	fresh: boolean;
 	reasons: string[];
-	/** Paths changed after the report that fall inside the task's scope. */
+	/** Authoritative paths introduced between Root base (A) and Root current (C). */
+	truthPaths: string[];
+	/** truthPaths absent from the Worker declaration. */
+	undeclaredPaths: string[];
+	/** Declared paths absent from truthPaths. */
+	extraDeclaredPaths: string[];
+	/** Undeclared attributed paths that fall inside the task's scope. */
 	overlappingPaths: string[];
-	/** Paths changed after the report that fall outside the task's scope. */
+	/** Undeclared attributed paths that fall outside the task's scope. */
 	unrelatedPaths: string[];
 	/** Paths the report claimed were changed but that are clean now. */
 	missingPaths: string[];
@@ -224,23 +254,38 @@ function sameCwd(left: string, right: string): boolean {
 	return resolve(left) === resolve(right);
 }
 
+function sorted(paths: readonly string[]): string[] {
+	return [...paths].sort();
+}
+
 /**
- * Compare a worker report's evidence against a fresh sample of the workspace.
+ * Compare Root's delegation-time sample (A) with Root's result-time sample (C),
+ * then cross-check the Worker declaration (B) against that delta.
  *
- * Path sets alone cannot detect every overlap: an external edit to a file the
- * worker already reported leaves the path set unchanged while invalidating the
- * report. So a status-hash change is only excused when every newly changed path
- * falls outside the task's scope (spec §10.2).
+ * `truthPaths` is the scope denominator. Worker `changedFiles` / evidence
+ * paths are declaration data only: mismatches are findings and must not hide
+ * attributed paths from scope or PASS decisions.
+ *
+ * Path sets alone cannot detect every overlap: an external edit to a file
+ * already in both A and C leaves the path set unchanged. A Worker status-hash
+ * is only an optional freshness cross-check; when present, a hash change is
+ * excused only when every undeclared attributed path falls outside the task's
+ * scope (spec §10.2).
  */
 export function compareEvidence(
-	report: WorkerReport,
+	base: EvidenceRef,
 	current: EvidenceRef,
+	report: WorkerReport,
 	options: CompareEvidenceOptions = {},
 ): EvidenceComparison {
 	const reported = report.evidence;
 	const reasons: string[] = [];
 	let unexplained = false;
 
+	if (base.cwd && current.cwd && !sameCwd(base.cwd, current.cwd)) {
+		reasons.push(`cwd changed (${base.cwd} -> ${current.cwd})`);
+		unexplained = true;
+	}
 	if (reported.cwd && current.cwd && !sameCwd(reported.cwd, current.cwd)) {
 		reasons.push(`cwd changed (${reported.cwd} -> ${current.cwd})`);
 		unexplained = true;
@@ -250,40 +295,51 @@ export function compareEvidence(
 		unexplained = true;
 	}
 
-	const reportedGit = reported.gitAvailable !== false;
+	const baseGit = base.gitAvailable !== false;
 	const currentGit = current.gitAvailable !== false;
-	const comparable = reportedGit && currentGit;
-	const verifiable = comparable;
+	const verifiable = baseGit && currentGit;
 	if (!verifiable) reasons.push("git evidence unavailable — freshness cannot be verified");
 
 	let headChanged = false;
-	if (comparable) {
-		if (reported.finalGitRef && current.finalGitRef && reported.finalGitRef !== current.finalGitRef) {
-			headChanged = true;
-			reasons.push(`HEAD changed (${reported.finalGitRef} -> ${current.finalGitRef})`);
-			unexplained = true;
-		}
+	if (verifiable && reported.finalGitRef && current.finalGitRef && reported.finalGitRef !== current.finalGitRef) {
+		headChanged = true;
+		reasons.push(`HEAD changed (${reported.finalGitRef} -> ${current.finalGitRef})`);
+		unexplained = true;
 	}
 
-	const reportedPaths = new Set(
-		normalizeEvidencePaths(reported.changedPaths ?? report.changedFiles ?? [], reported.cwd || current.cwd),
+	const pathCwd = current.cwd || reported.cwd || base.cwd;
+	const basePaths = new Set(normalizeEvidencePaths(base.changedPaths ?? [], base.cwd || pathCwd));
+	const currentPaths = new Set(normalizeEvidencePaths(current.changedPaths ?? [], current.cwd || pathCwd));
+	const truthPaths = [...currentPaths].filter((path) => !basePaths.has(path));
+	const truthSet = new Set(truthPaths);
+
+	const declaredPaths = new Set(
+		normalizeEvidencePaths(reported.changedPaths ?? report.changedFiles ?? [], reported.cwd || pathCwd),
 	);
-	const scopePaths = new Set([
-		...reportedPaths,
-		...normalizeEvidencePaths(options.scope?.allowedPaths ?? [], reported.cwd || current.cwd),
-	]);
-	const currentPaths = new Set(normalizeEvidencePaths(current.changedPaths ?? [], current.cwd));
+	const allowedPaths = new Set(
+		normalizeEvidencePaths(options.scope?.allowedPaths ?? [], reported.cwd || pathCwd),
+	);
+	const hasAllowList = allowedPaths.size > 0;
+	const inScope = (path: string): boolean => (hasAllowList ? allowedPaths.has(path) : true);
+
+	const undeclaredPaths: string[] = [];
+	for (const path of truthSet) {
+		if (!declaredPaths.has(path)) undeclaredPaths.push(path);
+	}
+	const extraDeclaredPaths: string[] = [];
+	for (const path of declaredPaths) {
+		if (!truthSet.has(path)) extraDeclaredPaths.push(path);
+	}
 
 	const overlappingPaths: string[] = [];
 	const unrelatedPaths: string[] = [];
-	for (const path of currentPaths) {
-		if (reportedPaths.has(path)) continue;
-		(scopePaths.has(path) ? overlappingPaths : unrelatedPaths).push(path);
+	for (const path of undeclaredPaths) {
+		(inScope(path) ? overlappingPaths : unrelatedPaths).push(path);
 	}
 
 	const missingPaths: string[] = [];
-	if (comparable && !headChanged) {
-		for (const path of reportedPaths) {
+	if (verifiable && !headChanged) {
+		for (const path of declaredPaths) {
 			if (!currentPaths.has(path)) missingPaths.push(path);
 		}
 	}
@@ -295,11 +351,17 @@ export function compareEvidence(
 		reasons.push(`in-scope paths changed after the report: ${overlappingPaths.join(", ")}`);
 		unexplained = true;
 	}
+	if (undeclaredPaths.length > 0) {
+		reasons.push(`under-reported: ${sorted(undeclaredPaths).join(", ")}`);
+	}
+	if (extraDeclaredPaths.length > 0) {
+		reasons.push(`over-reported / unreliable declaration: ${sorted(extraDeclaredPaths).join(", ")}`);
+		unexplained = true;
+	}
 
-	if (comparable && reported.gitStatusHash && current.gitStatusHash) {
+	if (verifiable && reported.gitStatusHash && current.gitStatusHash) {
 		if (reported.gitStatusHash !== current.gitStatusHash) {
 			reasons.push("working tree changed since the report");
-			// Excused only when the drift is fully explained by out-of-scope paths.
 			if (!(unrelatedPaths.length > 0 && overlappingPaths.length === 0 && missingPaths.length === 0)) {
 				unexplained = true;
 			}
@@ -314,15 +376,23 @@ export function compareEvidence(
 		verifiable,
 		fresh: reasons.length === 0,
 		reasons,
-		overlappingPaths: overlappingPaths.sort(),
-		unrelatedPaths: unrelatedPaths.sort(),
-		missingPaths: missingPaths.sort(),
+		truthPaths: sorted(truthPaths),
+		undeclaredPaths: sorted(undeclaredPaths),
+		extraDeclaredPaths: sorted(extraDeclaredPaths),
+		overlappingPaths: sorted(overlappingPaths),
+		unrelatedPaths: sorted(unrelatedPaths),
+		missingPaths: sorted(missingPaths),
 		unexplained,
 	};
 }
 
-export function isEvidenceStale(report: WorkerReport, current: EvidenceRef): boolean {
-	return !compareEvidence(report, current).fresh;
+export function isEvidenceStale(
+	base: EvidenceRef,
+	current: EvidenceRef,
+	report: WorkerReport,
+	options: CompareEvidenceOptions = {},
+): boolean {
+	return !compareEvidence(base, current, report, options).fresh;
 }
 
 /**
@@ -338,7 +408,8 @@ export function evidenceAction(comparison: EvidenceComparison): "review" | "reva
 
 export function describeComparison(comparison: EvidenceComparison): string {
 	if (!comparison.verifiable) return `unverifiable: ${comparison.reasons.join("; ")}`;
-	if (comparison.fresh) return "fresh";
+	const attributed = `attributed ${comparison.truthPaths.length} path${comparison.truthPaths.length === 1 ? "" : "s"}`;
+	if (comparison.fresh) return `fresh (${attributed})`;
 	const label = evidenceAction(comparison) === "revalidate" ? "stale (revalidate)" : "stale (out-of-scope only)";
 	return `${label}: ${comparison.reasons.join("; ")}`;
 }

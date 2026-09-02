@@ -277,8 +277,12 @@ assert.throws(() => store.abandon(abandoned.taskId), /terminal task/);
 	store.ensureCwd(task.taskId, "/should-not-overwrite");
 	assert.equal(store.require(task.taskId).cwd, spec.cwd);
 	const comparison = {
+		verifiable: true,
 		fresh: true,
 		reasons: [],
+		truthPaths: [],
+		undeclaredPaths: [],
+		extraDeclaredPaths: [],
 		overlappingPaths: [],
 		unrelatedPaths: [],
 		missingPaths: [],

@@ -8,17 +8,18 @@ import { hashStatus } from "./evidence.ts";
 // --------------------------------------------------------------------------
 
 const BASE = "/repo";
-const cleanStatus = [
+const emptyStatus = "";
+const dirtyStatus = [
 	"1 .M N... 100644 100644 100644 1111111 2222222 src/parser.ts",
 	"",
 ].join("\n");
-const cleanHash = hashStatus(cleanStatus);
+const cleanHash = hashStatus(dirtyStatus);
 
 const gitDefaults = new Map([
 	["rev-parse --git-dir", ".git\n"],
 	["rev-parse HEAD", "abc1234\n"],
-	["status --porcelain=v2 --branch", cleanStatus],
-	["diff HEAD --stat", " src/parser.ts | 2 +-\n"],
+	["status --porcelain=v2 --branch", emptyStatus],
+	["diff HEAD --stat", ""],
 ]);
 const gitOverrides = new Map();
 const gitRunner = async (args) => {
@@ -26,6 +27,16 @@ const gitRunner = async (args) => {
 	const stdout = gitOverrides.has(key) ? gitOverrides.get(key) : gitDefaults.get(key) ?? "";
 	return { stdout, stderr: "", code: 0 };
 };
+
+function setDirtyTree() {
+	gitOverrides.set("status --porcelain=v2 --branch", dirtyStatus);
+	gitOverrides.set("diff HEAD --stat", " src/parser.ts | 2 +-\n");
+}
+
+function setCleanTree() {
+	gitOverrides.delete("status --porcelain=v2 --branch");
+	gitOverrides.delete("diff HEAD --stat");
+}
 
 function specFor(taskId, role = "worker", cwd = `/fixture/${taskId}`) {
 	return {
@@ -87,10 +98,13 @@ function reviewerResult(toolCallId, taskId, verdict = "pass") {
 }
 
 async function delegateWorker(orch, toolCallId, taskId) {
-	return orch.beginDelegation(
+	setCleanTree();
+	const outcome = await orch.beginDelegation(
 		{ toolCallId, input: { task: JSON.stringify(specFor(taskId)) } },
 		BASE,
 	);
+	setDirtyTree();
+	return outcome;
 }
 
 // Management calls are not delegations, even when they carry workflow data.
@@ -205,12 +219,14 @@ assert.equal(isDelegationCall({ action: "validate", workflowScript: "..." }), fa
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
 	const original = specFor("T-20260901-500");
+	setCleanTree();
 	const delegated = await orch.beginDelegation(
 		{ toolCallId: "call-500", input: { task: JSON.stringify(original) } },
 		BASE,
 	);
 	assert.equal(delegated.task.taskId, "T-20260901-500");
 
+	setDirtyTree();
 	const workerOutcome = await orch.handleSubagentResult(workerResult("call-500", reportFor("T-20260901-500", "call-500")));
 	assert.match(workerOutcome.content[0].text, /decision: review_pending/);
 

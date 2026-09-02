@@ -11,6 +11,15 @@ const review = src("review.ts");
 const evidence = src("evidence.ts");
 const policy = src("policy.ts");
 const roles = src("roles.ts");
+const pkg = JSON.parse(src("package.json"));
+
+// Pi package contract (https://pi.dev/docs — packages.md).
+assert.equal(pkg.keywords.includes("pi-package"), true, "keywords must include pi-package");
+assert.deepEqual(pkg.pi?.extensions, ["./index.ts"], "manifest must name the factory file, not glob helper modules");
+assert.equal(pkg.peerDependencies?.typebox, "*");
+assert.equal(pkg.peerDependencies?.["@earendil-works/pi-coding-agent"], "*");
+assert.equal(pkg.dependencies?.typebox, undefined, "typebox is bundled by Pi; do not ship a second copy");
+assert.equal(pkg.dependencies?.["@earendil-works/pi-coding-agent"], undefined);
 
 // Task memory is written only through TaskStore.
 for (const leak of [

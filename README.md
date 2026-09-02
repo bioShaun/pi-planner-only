@@ -41,9 +41,12 @@ Local checkout:
 
 ```bash
 pi install /path/to/pi-planner-only
-# or try once without installing
-pi -e ./index.ts
+# or try the package once without installing
+pi -e .
 ```
+
+`typebox` and `@earendil-works/pi-coding-agent` are peer dependencies: Pi
+already bundles them. Do not add them to `dependencies`.
 
 ## Commands
 
@@ -122,11 +125,15 @@ Both child contracts are checked against the delegation they answer:
 - A `ReviewResult` is accepted only when its `taskId` matches the reviewed
   task; mismatched verdicts are never recorded and no state changes.
 
-Evidence is authoritative only at the acceptance boundary. Every Root `pass`
-re-samples the workspace right before accepting and compares it with the
-latest report — freshness proved when the worker returned says nothing about
-freshness now. Stale evidence forces `revalidate` instead of completion, and a
-fresh reviewer's `evidenceFresh: true` never bypasses that Root-side check.
+Evidence is authoritative only at the acceptance boundary. Root samples Git
+when a delegation starts (A) and again when the result is handled or a Root
+`pass` is recorded (C). The A-to-C delta is the scope denominator; Worker
+`changedFiles` and Git fingerprints are a declaration, cross-checked but not
+authoritative. Missing Worker `gitStatusHash` / `finalGitRef` does not disable
+Root attribution. Stale or unverifiable evidence forces `revalidate` instead
+of completion, and a fresh reviewer's `evidenceFresh: true` never bypasses
+that Root-side check. The per-cwd writer lock is exact-path only: overlapping
+worktrees are a known attribution limitation.
 
 ### Strict delegation (optional)
 
@@ -136,7 +143,8 @@ instead. Explorers stay permissive; validators are warned in both modes.
 
 Reviewers have no `git_audit` (children run with `--no-extensions`, and that
 tool belongs to the parent extension). Root samples Git itself and ships a
-bounded evidence packet — HEAD, status, changed files, diff stat, diff check —
+bounded evidence packet — HEAD, status, current changed files, A-to-C
+attributed / undeclared / extra-declared paths, diff stat, diff check —
 in the `ReviewRequest`; reviewers work with `read`/`grep`/`find`/`ls` only.
 No full diff crosses the seam by default.
 
@@ -152,13 +160,14 @@ Parent-only read-only Git: `status`, `diff-stat`, `diff-names`, `diff-check`,
 ## Design specs
 
 - [v0.2 specification](docs/pi-planner-only-v0.2-spec.md) covers the core protocol and architecture.
-- [Evidence Authority specification](docs/pi-planner-only-evidence-authority-spec.md) proposes Root-owned delegation attribution semantics.
+- [Evidence Authority specification](docs/pi-planner-only-evidence-authority-spec.md) defines Root-owned delegation attribution.
 - [P0/P1 hardening specification](docs/pi-planner-only-p0-p1-hardening-spec.md) covers evidence, lifecycle, and trust-boundary hardening.
 
 ## Tests
 
 ```bash
 npm test          # unit + in-process integration (excludes the E2E suite)
+npm run typecheck # tsc --noEmit (Pi loads .ts directly; this is for local checking)
 npm run test:e2e  # real pi-subagents contracts (requires pi-subagents; otherwise loudly skips)
 ```
 
@@ -179,7 +188,7 @@ session), and the payload fields the planner mutates — without any model calls
 | `report.ts` | `WorkerReport` extraction, compaction, identity |
 | `review.ts` | verdicts, review loop, fresh-review packet |
 | `roles.ts` | TaskRole profiles and agent remapping |
-| `evidence.ts` | Git probe, freshness, review evidence packets |
+| `evidence.ts` | Git probe, A-to-C attribution, review evidence packets |
 | `git-audit.ts` | `git_audit` resolution and output bounds |
 | `orchestrate.ts` | delegation launch, review loop, Task store writes |
 | `index.ts` | hooks, tool, commands |

@@ -331,11 +331,11 @@ export function renderWorkerReport(
 	lines.push(...renderValidationResults(report.validation));
 	lines.push("");
 	lines.push(
-		"Evidence ref:",
+		"Evidence ref (Worker declaration; Root A-to-C attribution is in the comparison):",
 		`  cwd: ${report.evidence.cwd}`,
 		`  run: ${report.evidence.workerRunId}`,
 		`  base: ${report.evidence.baseGitRef ?? "(none)"}`,
-		`  head: ${report.evidence.finalGitRef ?? report.evidence.baseGitRef ?? "(none)"}`,
+		`  head: ${report.evidence.finalGitRef ?? "(none)"}`,
 		`  statusHash: ${report.evidence.gitStatusHash ?? "(none)"}`,
 		...(report.evidence.diffStat
 			? [`  diffStat: ${report.evidence.diffStat.split("\n").pop()?.trim()}`]

@@ -237,7 +237,7 @@ export function extractReviewRequest(text: string): ReviewRequest | undefined {
 		) {
 			continue;
 		}
-		if (validateReviewRequest(parsed).length === 0) return parsed as ReviewRequest;
+		if (validateReviewRequest(parsed).length === 0) return parsed as unknown as ReviewRequest;
 	}
 	return undefined;
 }

@@ -94,8 +94,9 @@ export interface ExpectedEvidence {
 /**
  * Point-in-time fingerprint of the workspace a worker report refers to.
  *
- * Git fields are optional: a non-Git directory degrades to changed paths and
- * validation output rather than failing the whole lifecycle.
+ * Git fields are optional: a Worker may omit `gitStatusHash` and `finalGitRef`.
+ * Root computes authoritative attribution from its own A and C samples; Worker
+ * Git fingerprints are declaration data for cross-checking only.
  */
 export interface EvidenceRef {
 	cwd: string;
@@ -161,6 +162,12 @@ export interface ReviewEvidencePacket {
 	changedFiles?: string[];
 	diffStat?: string;
 	diffCheck?: string;
+	/** Authoritative A-to-C paths when a Root comparison is available. */
+	attributedFiles?: string[];
+	/** truthPaths the Worker did not declare. */
+	undeclaredFiles?: string[];
+	/** Worker-declared paths absent from the A-to-C delta. */
+	extraDeclaredFiles?: string[];
 }
 
 /**

@@ -255,6 +255,7 @@ assert.equal(existsSync(userMarker), userMarkerWasPresent);
 // --------------------------------------------------------------------------
 
 const { hashStatus } = await import("./evidence.ts");
+const emptyStatus = "";
 // A fixture worktree whose changes are exactly what the worker will report.
 const cleanStatus = [
 	"1 .M N... 100644 100644 100644 1111111 2222222 src/parser.ts",
@@ -263,8 +264,8 @@ const cleanStatus = [
 ].join("\n");
 gitResponses.set("rev-parse --git-dir", { stdout: ".git\n", stderr: "", code: 0 });
 gitResponses.set("rev-parse HEAD", { stdout: "abc1234\n", stderr: "", code: 0 });
-gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
-gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
+gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
 const cleanHash = hashStatus(cleanStatus);
 
 // git_audit is a registered tool with bounded, read-only execution
@@ -319,6 +320,9 @@ await commands.get("planner-only").handler("task", ctx);
 assert.match(notices.at(-1).message, /Task: T-20260831-100/);
 assert.match(notices.at(-1).message, /State: executing/);
 assert.match(notices.at(-1).message, /Review mode: root/);
+
+gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
 
 // the worker returns a valid report wrapped in noise; the parent sees a bounded report
 const workerReport = {
@@ -519,13 +523,14 @@ gitResponses.delete("status --porcelain=v2 --branch");
 gitResponses.delete("diff HEAD --stat");
 
 // §P0-3 race: an external edit between the report and a Root PASS rejects the pass
-// (the drift case above deleted the shared status fixture; restore it first)
-gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
-gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
+gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
 await handlers.get("tool_call")(
 	{ toolCallId: "call-400", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260831-400")) } },
 	ctx,
 );
+gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
 const freshReport = {
 	...workerReport,
 	taskId: "T-20260831-400",

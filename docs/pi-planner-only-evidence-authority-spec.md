@@ -8,7 +8,7 @@
 
 ## Status
 
-**PROPOSED — not implemented as of commit `e840e9a`.**
+**IMPLEMENTED** — Root A-to-C attribution is the comparison denominator; Worker evidence is a declaration cross-check.
 
 ## 1. Summary
 

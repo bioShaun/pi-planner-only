@@ -191,7 +191,7 @@ export interface TaskRecord {
 	reportCorrections: number;
 	/** Workspace sample taken right before the worker was dispatched. */
 	baseEvidence?: EvidenceRef;
-	/** Result of the most recent freshness check. */
+	/** Result of the most recent Root A-to-C evidence comparison. */
 	lastComparison?: EvidenceComparison;
 	/** Reason for an operator-forced terminal state, when applicable. */
 	stateReason?: string;
@@ -378,6 +378,12 @@ export interface WriterConflict {
 
 /**
  * §14 — at most one writer per cwd at a time.
+ *
+ * Exact cwd equality only: a writer in `/repo` and another in
+ * `/repo/packages/a` do not conflict. Path-prefix / worktree overlap is a
+ * known limitation; the A-to-C evidence model attributes every change in its
+ * window to the delegation, so this lock is a precondition for correct
+ * attribution, not merely a convenience.
  *
  * Only enforced when the incoming task positively declares a writer role; an
  * unknown role must not block a read-only delegation.
