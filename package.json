@@ -4,6 +4,9 @@
   "description": "Planner-only guard and lightweight Pi orchestration layer",
   "type": "module",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.6.0"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/bioShaun/pi-planner-only.git"
@@ -14,7 +17,7 @@
     "planner",
     "reviewer"
   ],
-    "files": [
+  "files": [
       "index.ts",
       "types.ts",
       "policy.ts",

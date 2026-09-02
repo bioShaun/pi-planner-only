@@ -107,6 +107,11 @@ Review 状态：`planning → executing → reviewing → completed | changes_re
 
 仅父进程可用的只读 Git：`status`、`diff-stat`、`diff-names`、`diff-check`、`head`、`log`。固定 argv，不走 shell，mutating 子命令一律拒绝。
 
+## 设计规范
+
+- [v0.2 规范](docs/pi-planner-only-v0.2-spec.md)：核心协议与架构。
+- [P0/P1 加固规范](docs/pi-planner-only-p0-p1-hardening-spec.md)：证据、生命周期与信任边界加固。
+
 ## 测试
 
 ```bash

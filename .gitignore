@@ -1,3 +1,4 @@
 node_modules/
 .planner-only-test-*/
-.git-audit-test-/
+.git-audit-test-*/
+.planner-only-e2e-*/

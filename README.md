@@ -149,6 +149,11 @@ PASS. Root may override a reviewer; the override is recorded in memory.
 Parent-only read-only Git: `status`, `diff-stat`, `diff-names`, `diff-check`,
 `head`, `log`. Fixed argv, no shell, mutating subcommands rejected.
 
+## Design specs
+
+- [v0.2 specification](docs/pi-planner-only-v0.2-spec.md) covers the core protocol and architecture.
+- [P0/P1 hardening specification](docs/pi-planner-only-p0-p1-hardening-spec.md) covers evidence, lifecycle, and trust-boundary hardening.
+
 ## Tests
 
 ```bash
