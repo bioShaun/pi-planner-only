@@ -110,6 +110,7 @@ Review 状态：`planning → executing → reviewing → completed | changes_re
 ## 设计规范
 
 - [v0.2 规范](docs/pi-planner-only-v0.2-spec.md)：核心协议与架构。
+- [Evidence Authority 规范](docs/pi-planner-only-evidence-authority-spec.md)：提出由 Root 负责委派归因的证据语义。
 - [P0/P1 加固规范](docs/pi-planner-only-p0-p1-hardening-spec.md)：证据、生命周期与信任边界加固。
 
 ## 测试

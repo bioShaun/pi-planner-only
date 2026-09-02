@@ -152,6 +152,7 @@ Parent-only read-only Git: `status`, `diff-stat`, `diff-names`, `diff-check`,
 ## Design specs
 
 - [v0.2 specification](docs/pi-planner-only-v0.2-spec.md) covers the core protocol and architecture.
+- [Evidence Authority specification](docs/pi-planner-only-evidence-authority-spec.md) proposes Root-owned delegation attribution semantics.
 - [P0/P1 hardening specification](docs/pi-planner-only-p0-p1-hardening-spec.md) covers evidence, lifecycle, and trust-boundary hardening.
 
 ## Tests
