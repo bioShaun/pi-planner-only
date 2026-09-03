@@ -16,6 +16,8 @@ import {
 	extractReviewRequest,
 	validateReviewRequest,
 	applyReviewDecision,
+	REVIEWER_PROMPT,
+	reviewerPrompt,
 } from "./review.ts";
 import { compareEvidence } from "./evidence.ts";
 import { MAX_REVIEW_ROUNDS } from "./types.ts";
@@ -407,5 +409,23 @@ assert.match(
 	validateReviewResultIdentity(makeReview("pass"), "T-20260831-999").join(""),
 	/ReviewResult taskId mismatch: expected T-20260831-999, got T-20260831-001/,
 );
+
+// Reviewer prompt bounds inspection to packet evidence; missing scope is blocked.
+{
+	assert.match(REVIEWER_PROMPT, /taskSpec\.scope\.allowedPaths/);
+	assert.match(REVIEWER_PROMPT, /evidencePacket\.attributedFiles/);
+	assert.match(REVIEWER_PROMPT, /evidencePacket\.changedFiles|or changedFiles/);
+	assert.match(REVIEWER_PROMPT, /workerReport\.changedFiles/);
+	assert.match(REVIEWER_PROMPT, /Inspect attributed changed files first/);
+	assert.match(REVIEWER_PROMPT, /codebase health scan/);
+	assert.match(REVIEWER_PROMPT, /unbounded grep/);
+	assert.match(REVIEWER_PROMPT, /specific changed caller or contract/);
+	assert.match(REVIEWER_PROMPT, /After checking acceptance criteria, changed paths, and verification evidence, stop/);
+	assert.match(REVIEWER_PROMPT, /return verdict blocked/);
+	assert.match(REVIEWER_PROMPT, /Do not compensate with a repository-wide scan/);
+	const prompted = reviewerPrompt("T-20260831-001");
+	assert.match(prompted, /isolated reviewer for task T-20260831-001/);
+	assert.doesNotMatch(prompted, /\{TASK_ID\}/);
+}
 
 console.log("planner-only review: PASS");

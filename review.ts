@@ -125,6 +125,17 @@ Git evidence is supplied by Root in the review packet.
 Do not assume you can execute git or shell commands.
 You may not edit, write, or run shell commands, and you may not fix anything.
 
+Review only the candidate paths in this packet:
+- taskSpec.scope.allowedPaths
+- evidencePacket.attributedFiles or changedFiles
+- workerReport.changedFiles
+Inspect attributed changed files first.
+Do not run a codebase health scan or unbounded grep.
+Precise extra-path searches are allowed only to verify a specific changed caller or contract.
+After checking acceptance criteria, changed paths, and verification evidence, stop.
+If this packet lacks enough scope or evidence to locate the change, return verdict blocked.
+Do not compensate with a repository-wide scan.
+
 Return only a ReviewResult JSON object:
 
   {"taskId":"{TASK_ID}","verdict":"pass|request_changes|blocked",

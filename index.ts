@@ -12,7 +12,7 @@ import {
 } from "./policy.ts";
 import { GIT_AUDIT_OPERATIONS, runGitAudit } from "./git-audit.ts";
 import type { GitAuditRequest, GitRunner } from "./git-audit.ts";
-import { PlannerOrchestrator, isDelegationCall } from "./orchestrate.ts";
+import { PlannerOrchestrator, compositeWorkflowBlockReason, isDelegationCall } from "./orchestrate.ts";
 import { MAX_REVIEW_ROUNDS, WORKER_REPORT_VERSION } from "./types.ts";
 import type { ReviewMode, ReviewVerdict } from "./types.ts";
 
@@ -77,6 +77,11 @@ Before accepting work:
 5. PASS or REQUEST_CHANGES
 
 Role in TaskSpec is enforced at launch: explorer/reviewer remap to the builtin reviewer agent (read/grep/find/ls), validator remaps to oracle (bash, no edits), worker keeps its agent. Reviewer children always start with context=fresh and a bounded packet — never a fork of this session.
+
+Do not pre-compose worker→reviewer as a workflowScript, tasks array, or chain.
+Each subagent call may carry only one lifecycle invocation: a direct {agent, task}.
+Call the reviewer only after the worker returns, in a separate direct call, so it
+receives the latest TaskSpec, WorkerReport, and Root Git evidence.
 
 Use git_audit for read-only git inspection. It is the only git access you have.
 Never trust a worker that reports its own PASS; inspect the evidence yourself.
@@ -228,6 +233,11 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		});
 		if (!decision.block) {
 			if (event.toolName === "subagent" && !isDisabled() && isDelegationCall(event.input)) {
+				const composite = compositeWorkflowBlockReason(event.input);
+				if (composite) {
+					if (ctx.hasUI) ctx.ui.notify("Blocked composite subagent workflow", "warning");
+					return { block: true, reason: composite };
+				}
 				await orchestrator.prepareRoleDelegation(event.input);
 				const outcome = await orchestrator.beginDelegation(event, ctx.cwd || process.cwd());
 				if (outcome.block) {

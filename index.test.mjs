@@ -4,6 +4,9 @@ import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+const isolatedAgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
+
 delete process.env.PI_SUBAGENT_CHILD;
 const { default: plannerOnly, filterPlannerTools, restorePlannerTools } = await import("./index.ts");
 
@@ -124,6 +127,71 @@ assert.match(prompt.systemPrompt, /root orchestrator/);
 assert.match(prompt.systemPrompt, /WorkerReport/);
 assert.match(prompt.systemPrompt, /git_audit/);
 assert.match(prompt.systemPrompt, /Never fix rejected work yourself/);
+assert.match(prompt.systemPrompt, /Do not pre-compose worker.+reviewer as a workflowScript, tasks array, or chain/s);
+assert.match(prompt.systemPrompt, /one lifecycle invocation/);
+assert.match(prompt.systemPrompt, /direct \{agent, task\}/);
+assert.match(prompt.systemPrompt, /Call the reviewer only after the worker returns/);
+
+const compositeBlocked = await handlers.get("tool_call")(
+	{
+		toolName: "subagent",
+		input: {
+			agent: "worker",
+			task: "pre-composed worker then reviewer",
+			workflowScript: "await worker(); await reviewer();",
+		},
+	},
+	ctx,
+);
+assert.equal(compositeBlocked.block, true);
+assert.match(compositeBlocked.reason, /composite/i);
+assert.match(compositeBlocked.reason, /independent direct call \{agent, task\}/);
+assert.match(compositeBlocked.reason, /does not parse workflowScript/);
+
+const validateStillAllowed = await handlers.get("tool_call")(
+	{
+		toolName: "subagent",
+		input: { action: "validate", workflowScript: "await worker(); await reviewer();" },
+	},
+	ctx,
+);
+assert.equal(validateStillAllowed, undefined, "management/validate with action stays unblocked");
+
+const standaloneTasksBlocked = await handlers.get("tool_call")(
+	{
+		toolName: "subagent",
+		input: {
+			tasks: [
+				{ agent: "worker", task: "SECRET_TASK_BODY implement parser then review" },
+				{ agent: "reviewer", task: "SECRET_TASK_BODY rubber-stamp the worker" },
+			],
+		},
+	},
+	ctx,
+);
+assert.equal(standaloneTasksBlocked.block, true);
+assert.match(standaloneTasksBlocked.reason, /composite/i);
+assert.match(standaloneTasksBlocked.reason, /Detected: tasks/);
+assert.doesNotMatch(standaloneTasksBlocked.reason, /SECRET_TASK_BODY/);
+assert.doesNotMatch(standaloneTasksBlocked.reason, /rubber-stamp/);
+
+const standaloneChainBlocked = await handlers.get("tool_call")(
+	{
+		toolName: "subagent",
+		input: {
+			chain: [
+				{ agent: "worker", task: "SECRET_CHAIN_BODY wait for reviewer inside the script" },
+				{ agent: "reviewer", task: "SECRET_CHAIN_BODY scan the whole repo" },
+			],
+		},
+	},
+	ctx,
+);
+assert.equal(standaloneChainBlocked.block, true);
+assert.match(standaloneChainBlocked.reason, /composite/i);
+assert.match(standaloneChainBlocked.reason, /Detected: chain/);
+assert.doesNotMatch(standaloneChainBlocked.reason, /SECRET_CHAIN_BODY/);
+assert.doesNotMatch(standaloneChainBlocked.reason, /scan the whole repo/);
 
 await handlers.get("session_shutdown")({}, ctx);
 assert.deepEqual(activeTools, [
@@ -550,5 +618,7 @@ notices.length = 0;
 await commands.get("planner-only").handler("task T-20260831-400", ctx);
 assert.match(notices.at(-1).message, /State: changes_requested/);
 gitResponses.delete("rev-parse HEAD");
+
+rmSync(isolatedAgentDir, { recursive: true, force: true });
 
 console.log("planner-only extension: PASS");

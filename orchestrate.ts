@@ -118,13 +118,54 @@ export interface RootVerdictOutcome {
 	evidence?: string;
 }
 
+const COMPOSITE_SCALAR_KEYS = ["workflowScript", "workflowScriptPath", "workflow"] as const;
+const COMPOSITE_ARRAY_KEYS = ["tasks", "chain"] as const;
+
 export function isDelegationCall(input: unknown): boolean {
 	if (!input || typeof input !== "object") return false;
 	const value = input as Record<string, unknown>;
 	if (typeof value.action === "string" && value.action.trim()) return false;
-	return ["agent", "task", "workflowScript", "workflowScriptPath", "workflow"]
+	if (["agent", "task", "workflowScript", "workflowScriptPath", "workflow"]
 		.some((key) => key in value && value[key] !== undefined && value[key] !== null &&
-			(typeof value[key] !== "string" || value[key].trim() !== ""));
+			(typeof value[key] !== "string" || value[key].trim() !== ""))) {
+		return true;
+	}
+	return COMPOSITE_ARRAY_KEYS.some((key) => Array.isArray(value[key]) && value[key].length > 0);
+}
+
+function isNonEmptyCompositeScalar(value: unknown): boolean {
+	if (typeof value === "string") return value.trim() !== "";
+	if (value == null) return false;
+	if (Array.isArray(value)) return value.length > 0;
+	if (typeof value === "object") return Object.keys(value).length > 0;
+	return true;
+}
+
+/**
+ * Planner-only cannot audit or rewrite internal composite workflow steps.
+ * Execution calls fail closed; management/validate calls that carry `action`
+ * are left unchanged.
+ */
+export function compositeWorkflowBlockReason(input: unknown): string | undefined {
+	if (!input || typeof input !== "object") return undefined;
+	const value = input as Record<string, unknown>;
+	if (typeof value.action === "string" && value.action.trim()) return undefined;
+
+	const detected: string[] = [];
+	for (const key of COMPOSITE_SCALAR_KEYS) {
+		if (isNonEmptyCompositeScalar(value[key])) detected.push(key);
+	}
+	for (const key of COMPOSITE_ARRAY_KEYS) {
+		if (Array.isArray(value[key]) && value[key].length > 0) detected.push(key);
+	}
+	if (detected.length === 0) return undefined;
+	return [
+		"Planner-only guard: composite subagent workflow is rejected before launch.",
+		`Detected: ${detected.join(", ")}.`,
+		"Planner-only cannot audit or rewrite internal workflow steps and does not parse workflowScript.",
+		"Each lifecycle stage must use an independent direct call {agent, task}.",
+		"Wait for the worker WorkerReport, then call the reviewer directly so it receives the latest TaskSpec, WorkerReport, and Root Git evidence.",
+	].join("\n");
 }
 
 function resultText(event: { content?: readonly { type: string; text?: string }[] }): string {
@@ -184,6 +225,7 @@ export class PlannerOrchestrator {
 	 * packet: reviewer children have no `git_audit` of their own (§P1-2).
 	 */
 	async prepareRoleDelegation(rawInput: unknown): Promise<void> {
+		if (compositeWorkflowBlockReason(rawInput)) return;
 		const lookup = (taskId: string): TaskRecord | undefined => this.store.get(taskId);
 		const target = resolveDelegationTarget(rawInput, lookup);
 		const options: PrepareRoleDelegationOptions = {};
@@ -206,6 +248,10 @@ export class PlannerOrchestrator {
 		baseCwd: string,
 	): Promise<DelegationOutcome> {
 		const input = event.input ?? {};
+		const composite = compositeWorkflowBlockReason(input);
+		if (composite) {
+			return { block: { reason: composite } };
+		}
 		const rawCwd = (input as { cwd?: unknown }).cwd;
 		const cwd = typeof rawCwd === "string" && rawCwd.trim()
 			? resolve(baseCwd, rawCwd.trim())

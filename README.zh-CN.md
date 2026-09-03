@@ -105,6 +105,15 @@ Reviewer 没有 `git_audit`（子进程以 `--no-extensions` 启动，该工具�
 
 Review 状态：`planning → executing → reviewing → completed | changes_requested | blocked`。最多 3 轮修正（`MAX_REVIEW_ROUNDS`）。范围内 stale evidence 不能直接 PASS。Root 可以覆盖 reviewer，覆盖记录只留在内存。
 
+### 复合工作流
+
+执行型 `subagent` 调用若带有非空的 `workflowScript`、`workflowScriptPath`、
+`workflow`，或非空的 `tasks` / `chain` 数组，会在启动前被拒绝。planner-only
+无法审计或改写这些内部步骤，也不会解析 JavaScript `workflowScript`。每个生命
+周期阶段必须是独立的直接 `{agent, task}` 调用：先等待 worker 的
+`WorkerReport`，再直调 reviewer，确保它拿到最新的 TaskSpec、WorkerReport 和
+Root Git 证据。带 `action` 的管理或 `validate` 调用保持不变。
+
 ### git_audit
 
 仅父进程可用的只读 Git：`status`、`diff-stat`、`diff-names`、`diff-check`、`head`、`log`。固定 argv，不走 shell，mutating 子命令一律拒绝。

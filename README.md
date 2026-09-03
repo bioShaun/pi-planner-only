@@ -152,6 +152,17 @@ Review states: `planning → executing → reviewing → completed | changes_req
 At most three corrections (`MAX_REVIEW_ROUNDS`). Stale in-scope evidence cannot
 PASS. Root may override a reviewer; the override is recorded in memory.
 
+### Composite workflows
+
+Execution `subagent` calls that carry a non-empty `workflowScript`,
+`workflowScriptPath`, or `workflow`, or a non-empty `tasks` / `chain` array,
+are rejected before launch. Planner-only cannot audit or rewrite those
+internal steps and does not parse JavaScript `workflowScript`. Each lifecycle
+stage must be a separate direct `{agent, task}` call: wait for the worker
+`WorkerReport`, then call the reviewer so it receives the latest TaskSpec,
+WorkerReport, and Root Git evidence. Management or `validate` calls that
+include `action` are unchanged.
+
 ### git_audit
 
 Parent-only read-only Git: `status`, `diff-stat`, `diff-names`, `diff-check`,

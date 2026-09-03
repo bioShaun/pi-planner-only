@@ -113,6 +113,73 @@ assert.equal(isDelegationCall({ action: "status", id: "x" }), false);
 assert.equal(isDelegationCall({ agent: "worker", task: "..." }), true);
 assert.equal(isDelegationCall({ workflowScript: "..." }), true);
 assert.equal(isDelegationCall({ action: "validate", workflowScript: "..." }), false);
+assert.equal(isDelegationCall({ action: "validate", tasks: [{ agent: "worker" }] }), false);
+assert.equal(isDelegationCall({ action: "list", chain: [{ agent: "reviewer" }] }), false);
+assert.equal(isDelegationCall({ tasks: [{ agent: "worker" }] }), true);
+assert.equal(isDelegationCall({ chain: [{ agent: "reviewer" }] }), true);
+assert.equal(isDelegationCall({ tasks: [] }), false);
+assert.equal(isDelegationCall({ chain: [] }), false);
+assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }), false);
+
+// Composite execution workflows fail closed before launch. Do not parse the script.
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const cases = [
+		["workflowScript", { agent: "worker", task: JSON.stringify(specFor("T-20260903-801")), workflowScript: "await worker(); await reviewer();" }],
+		["workflowScriptPath", { agent: "worker", task: JSON.stringify(specFor("T-20260903-802")), workflowScriptPath: "./compose.js" }],
+		["workflow", { agent: "worker", task: JSON.stringify(specFor("T-20260903-803")), workflow: "worker-then-reviewer" }],
+		["tasks", { agent: "worker", task: JSON.stringify(specFor("T-20260903-804")), tasks: [{ agent: "worker" }, { agent: "reviewer" }] }],
+		["chain", { agent: "worker", task: JSON.stringify(specFor("T-20260903-805")), chain: [{ agent: "worker" }, { agent: "reviewer" }] }],
+	];
+	for (const [label, input] of cases) {
+		const blocked = await orch.beginDelegation({ toolCallId: `call-${label}`, input }, BASE);
+		assert.ok(blocked.block, `${label} must fail closed before launch`);
+		assert.match(blocked.block.reason, /composite/i);
+		assert.match(blocked.block.reason, /cannot audit or rewrite/);
+		assert.match(blocked.block.reason, /does not parse workflowScript/);
+		assert.match(blocked.block.reason, /independent direct call \{agent, task\}/);
+		assert.match(blocked.block.reason, /Wait for the worker WorkerReport/);
+		assert.match(blocked.block.reason, /latest TaskSpec, WorkerReport, and Root Git evidence/);
+		assert.match(blocked.block.reason, new RegExp(label));
+		assert.doesNotMatch(blocked.block.reason, /await worker\(\); await reviewer/);
+	}
+	assert.equal(orch.store.list().length, 0, "composite execution must not create a task");
+}
+
+// Empty composite fields do not block a direct {agent, task} call.
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const ok = await orch.beginDelegation(
+		{
+			toolCallId: "call-800",
+			input: {
+				agent: "worker",
+				task: JSON.stringify(specFor("T-20260903-800")),
+				workflowScript: "  ",
+				workflowScriptPath: "",
+				workflow: "",
+				tasks: [],
+				chain: [],
+			},
+		},
+		BASE,
+	);
+	assert.equal(ok.block, undefined);
+	assert.equal(ok.task.taskId, "T-20260903-800");
+}
+
+// Management/validate with action keeps current behavior even with composite fields.
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const outcome = await orch.beginDelegation(
+		{
+			toolCallId: "call-807",
+			input: { action: "validate", workflowScript: "await worker(); await reviewer();", tasks: [{ agent: "worker" }] },
+		},
+		BASE,
+	);
+	assert.equal(outcome.block, undefined, "validate with action must not use the composite execution block");
+}
 
 // Async launch receipts remain pending and do not spend correction or rounds.
 {
