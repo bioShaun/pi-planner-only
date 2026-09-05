@@ -1496,4 +1496,30 @@ function reportT3(taskId, toolCallId) {
 	assert.equal(orch.store.list().length, 1);
 }
 
+// R15/T4 finding: a worker that guesses gitStatusHash and workerRunId is accepted with fresh evidence
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260905-234";
+	await delegateWorker(orch, "call-t4-guess", taskId);
+	const base = reportFor(taskId, "call-t4-guess");
+	const guessed = {
+		...base,
+		evidence: {
+			...base.evidence,
+			workerRunId: "call-914-explore-unbound",
+			gitStatusHash: "uncommitted worktree changes only; nothing staged or committed",
+		},
+	};
+	const outcome = await orch.handleSubagentResult(workerResult("call-t4-guess", guessed));
+	const text = outcome.content[0].text;
+	assert.doesNotMatch(text, /failed the task identity check/);
+	assert.doesNotMatch(text, /working tree changed since the report/);
+	assert.match(text, /Report normalised: .*workerRunId "call-914-explore-unbound" → call-t4-guess/);
+	const task = orch.store.require(taskId);
+	assert.equal(task.reports.length, 1);
+	assert.equal(task.reports[0].evidence.workerRunId, "call-t4-guess");
+	assert.equal(task.reports[0].evidence.gitStatusHash, undefined);
+	assert.equal(task.state, "reviewing");
+}
+
 console.log("planner-only orchestration: PASS");

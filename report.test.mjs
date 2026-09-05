@@ -23,7 +23,7 @@ function makeReport(overrides = {}) {
 			taskId: "T-20260831-100",
 			workerRunId: "call-100",
 			finalGitRef: "abc1234",
-			gitStatusHash: "hash-one",
+			gitStatusHash: "0123456789abcdef",
 			changedPaths: ["src/parser.ts"],
 			gitAvailable: true,
 			generatedAt: "2026-08-31T10:00:00.000Z",
@@ -512,6 +512,44 @@ function assertRepaired(raw, expectedPatch, notePattern, context) {
 	const extracted = extractWorkerReport(`done:\n\`\`\`json\n${JSON.stringify(makeReport())}\n\`\`\``);
 	assert.deepEqual(extracted.report, makeReport());
 	assert.deepEqual(extracted.repairs, []);
+}
+
+// R15/T4 finding: worker-supplied Root-owned evidence fields are dropped or stamped
+{
+	const raw = {
+		version: 1, taskId: "T-1", status: "completed", summary: "", changedFiles: [], validation: [],
+		risks: [], unresolved: [],
+		evidence: {
+			taskId: "T-1",
+			workerRunId: "call-guessed",
+			baseGitRef: "4cb1ae55aed8be45128d590d382bd1d6a46ab905",
+			finalGitRef: "4cb1ae55aed8be45128d590d382bd1d6a46ab905",
+			gitStatusHash: "uncommitted worktree changes only; nothing staged or committed",
+		},
+	};
+	const { report, repairs } = normalizeWorkerReport(raw, { expectedTaskId: "T-1", expectedWorkerRunId: "call-real" });
+	assert.equal(report.evidence.gitStatusHash, undefined);
+	assert.equal(report.evidence.finalGitRef, "4cb1ae55aed8be45128d590d382bd1d6a46ab905");
+	assert.equal(report.evidence.workerRunId, "call-real");
+	assert.ok(repairs.some((n) => /gitStatusHash .* dropped \(not a Root hash\)/.test(n)));
+	assert.ok(repairs.some((n) => /workerRunId "call-guessed" → call-real/.test(n)));
+	assert.deepEqual(validateWorkerReport(report), []);
+	assert.deepEqual(validateWorkerReportIdentity(report, { taskId: "T-1", workerRunId: "call-real" }), []);
+
+	// A real-looking hash and a matching run id are left alone; a missing run id is stamped.
+	const ok = normalizeWorkerReport(
+		{ ...raw, evidence: { taskId: "T-1", gitStatusHash: "0123456789abcdef", finalGitRef: "abc1234" } },
+		{ expectedTaskId: "T-1", expectedWorkerRunId: "call-real" },
+	);
+	assert.equal(ok.report.evidence.gitStatusHash, "0123456789abcdef");
+	assert.equal(ok.report.evidence.finalGitRef, "abc1234");
+	assert.equal(ok.report.evidence.workerRunId, "call-real");
+	assert.deepEqual(ok.repairs, ["evidence.workerRunId missing → call-real"]);
+
+	// Without an expected run id nothing is stamped or replaced.
+	const none = normalizeWorkerReport({ ...raw, evidence: { taskId: "T-1", workerRunId: "call-guessed" } });
+	assert.equal(none.report.evidence.workerRunId, "call-guessed");
+	assert.deepEqual(none.repairs, []);
 }
 
 console.log("planner-only report: PASS");

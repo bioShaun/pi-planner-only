@@ -248,6 +248,38 @@ function repairValidationEntries(entries: unknown[], repairs: string[]): void {
 	});
 }
 
+const GIT_STATUS_HASH_RE = /^[0-9a-f]{16}$/;
+
+/**
+ * Root-owned evidence fields a worker cannot know. `gitStatusHash` is Root's
+ * own digest and `workerRunId` is the tool-call id minted at launch; a worker
+ * that fills them in is guessing, and a guess would fail freshness or identity
+ * on every round (observed 2026-09-05, re-measurement T4). Drop values that
+ * cannot be right and stamp the run id the orchestrator knows.
+ */
+function hardenEvidence(
+	evidence: Record<string, unknown>,
+	repairs: string[],
+	context?: { expectedWorkerRunId?: string },
+): void {
+	const hash = evidence.gitStatusHash;
+	if (hash !== undefined && !(typeof hash === "string" && GIT_STATUS_HASH_RE.test(hash))) {
+		delete evidence.gitStatusHash;
+		repairs.push(`evidence.gitStatusHash "${formatRaw(hash)}" dropped (not a Root hash)`);
+	}
+	const expected = context?.expectedWorkerRunId;
+	if (expected) {
+		const runId = evidence.workerRunId;
+		if (runId === undefined || runId === "") {
+			evidence.workerRunId = expected;
+			repairs.push(`evidence.workerRunId missing → ${expected}`);
+		} else if (runId !== expected) {
+			evidence.workerRunId = expected;
+			repairs.push(`evidence.workerRunId "${formatRaw(runId)}" → ${expected} (worker cannot know the run id)`);
+		}
+	}
+}
+
 /**
  * Mechanically repair cheap-worker WorkerReport shapes before schema validation.
  * Repairs are idempotent and applied in spec §3 table order, except alias
@@ -256,7 +288,7 @@ function repairValidationEntries(entries: unknown[], repairs: string[]): void {
  */
 export function normalizeWorkerReport(
 	value: unknown,
-	context?: { expectedTaskId?: string },
+	context?: { expectedTaskId?: string; expectedWorkerRunId?: string },
 ): NormalisedReport {
 	const report = cloneUnknown(value);
 	if (!isPlainObject(report)) return { report, repairs: [] };
@@ -332,6 +364,7 @@ export function normalizeWorkerReport(
 			repairs.push(`evidence.taskId copied from taskId`);
 		}
 	}
+	if (isPlainObject(report.evidence)) hardenEvidence(report.evidence, repairs, context);
 
 	return { report, repairs };
 }
@@ -432,7 +465,7 @@ function looksLikeReport(value: unknown): boolean {
  */
 export function extractWorkerReport(
 	text: string,
-	context?: { expectedTaskId?: string },
+	context?: { expectedTaskId?: string; expectedWorkerRunId?: string },
 ): ExtractedReport {
 	if (typeof text !== "string" || !text.trim()) {
 		return { error: "worker returned no output", repairs: [] };

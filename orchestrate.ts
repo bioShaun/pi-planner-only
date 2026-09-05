@@ -776,7 +776,7 @@ export class PlannerOrchestrator {
 		const delegation = this.delegations.get(event.toolCallId);
 		if (!delegation) return;
 		const text = resultText(event);
-		if (event.isError && !extractWorkerReport(text, { expectedTaskId: delegation.taskId }).report) {
+		if (event.isError && !extractWorkerReport(text, { expectedTaskId: delegation.taskId, expectedWorkerRunId: event.toolCallId }).report) {
 			this.delegations.delete(event.toolCallId);
 			const task = this.store.get(delegation.taskId);
 			const firstLine = (text.split(/\r?\n/, 1)[0] ?? "").trim();
@@ -971,7 +971,10 @@ export class PlannerOrchestrator {
 	): Promise<{ content: { type: "text"; text: string }[] }> {
 		const extracted = options.forceReportError
 			? { error: options.forceReportError, repairs: [] as string[] }
-			: extractWorkerReport(text, { expectedTaskId: task.taskId });
+			: extractWorkerReport(text, {
+				expectedTaskId: task.taskId,
+				...(toolCallId ? { expectedWorkerRunId: toolCallId } : {}),
+			});
 		let report: WorkerReport | undefined;
 		let compacted = false;
 		let identityErrors: string[] = [];
