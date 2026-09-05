@@ -129,9 +129,9 @@ export interface DelegationTarget {
 	namedTaskIds?: string[];
 }
 
-const TASK_ID_RE = /\bT-\d{8}-\d{3}\b/g;
+export const TASK_ID_RE = /\bT-\d{8}-\d{3}\b/g;
 
-function promptTaskIds(prompt: string): string[] {
+export function promptTaskIds(prompt: string): string[] {
 	return [...new Set(prompt.match(TASK_ID_RE) ?? [])];
 }
 

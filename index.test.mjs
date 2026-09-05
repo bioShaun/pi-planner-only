@@ -474,13 +474,13 @@ await handlers.get("tool_call")(
 	{
 		toolCallId: "call-100",
 		toolName: "subagent",
-		input: { agent: "worker", task: `Do this:\n\n\`\`\`json\n${JSON.stringify(delegationSpec("T-20260831-100"))}\n\`\`\`` },
+		input: { agent: "worker", task: `Do this:\n\n\`\`\`json\n${JSON.stringify(delegationSpec("T-20260905-100"))}\n\`\`\`` },
 	},
 	ctx,
 );
 notices.length = 0;
 await commands.get("planner-only").handler("task", ctx);
-assert.match(notices.at(-1).message, /Task: T-20260831-100/);
+assert.match(notices.at(-1).message, /Task: T-20260905-100/);
 assert.match(notices.at(-1).message, /State: executing/);
 assert.match(notices.at(-1).message, /Review mode: root/);
 
@@ -490,14 +490,14 @@ gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr
 // the worker returns a valid report wrapped in noise; the parent sees a bounded report
 const workerReport = {
 	version: 1,
-	taskId: "T-20260831-100",
+	taskId: "T-20260905-100",
 	status: "completed",
 	summary: "Implemented the parser and its tests.",
 	changedFiles: ["src/parser.ts", "src/parser.test.ts"],
 	validation: [{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "42 passed" }],
 	evidence: {
-		cwd: "/fixture/T-20260831-100",
-		taskId: "T-20260831-100",
+		cwd: "/fixture/T-20260905-100",
+		taskId: "T-20260905-100",
 		workerRunId: "call-100",
 		baseGitRef: "abc1234",
 		finalGitRef: "abc1234",
@@ -522,7 +522,7 @@ const workerResult = await handlers.get("tool_result")(
 );
 const workerText = workerResult.content[0].text;
 assert.match(workerText, /\[PLANNER-ONLY REVIEW STATE\]/);
-assert.match(workerText, /taskId: T-20260831-100/);
+assert.match(workerText, /taskId: T-20260905-100/);
 assert.match(workerText, /decision: review_pending/);
 assert.match(workerText, /evidence: fresh/);
 assert.match(workerText, /\[PLANNER-ONLY WORKER REPORT\]/);
@@ -532,7 +532,7 @@ assert.match(workerText, /Reviewer prompt template/);
 assert.doesNotMatch(workerText, /lots of raw noise/);
 
 // a fresh reviewer on the same task records a verdict and advances the state
-const reviewerSpec = delegationSpec("T-20260831-100", "reviewer");
+const reviewerSpec = delegationSpec("T-20260905-100", "reviewer");
 const reviewInput = {
 	agent: "worker",
 	context: "fork",
@@ -545,12 +545,12 @@ await handlers.get("tool_call")(
 assert.equal(reviewInput.agent, "reviewer");
 assert.equal(reviewInput.context, "fresh");
 assert.match(reviewInput.task, /\[PLANNER-ONLY FRESH REVIEW\]/);
-assert.match(reviewInput.task, /T-20260831-100/);
+assert.match(reviewInput.task, /T-20260905-100/);
 assert.match(reviewInput.task, /Implemented the parser/);
 assert.doesNotMatch(reviewInput.task, /rubber-stamp/);
 assert.doesNotMatch(reviewInput.task, /I already decided/);
 const reviewResult = {
-	taskId: "T-20260831-100",
+	taskId: "T-20260905-100",
 	verdict: "request_changes",
 	summary: "the parser has no test coverage",
 	evidenceFresh: true,
@@ -570,16 +570,16 @@ assert.match(reviewText, /\[major\] test: no test for empty input/);
 assert.doesNotMatch(reviewText, /decision: accept/);
 
 notices.length = 0;
-await commands.get("planner-only").handler(`review T-20260831-100`, ctx);
+await commands.get("planner-only").handler(`review T-20260905-100`, ctx);
 assert.match(notices.at(-1).message, /State: changes_requested/);
 assert.match(notices.at(-1).message, /Round: 1\/3/);
 
 // root accepts despite the reviewer; the override is recorded, not silent
 notices.length = 0;
-await commands.get("planner-only").handler("review T-20260831-100 pass finding was out of scope", ctx);
+await commands.get("planner-only").handler("review T-20260905-100 pass finding was out of scope", ctx);
 assert.match(notices.at(-1).message, /decision: accept/);
 notices.length = 0;
-await commands.get("planner-only").handler("task T-20260831-100", ctx);
+await commands.get("planner-only").handler("task T-20260905-100", ctx);
 assert.match(notices.at(-1).message, /State: completed/);
 assert.match(notices.at(-1).message, /Overrides: 1/);
 assert.match(notices.at(-1).message, /Changed files: 2/);
@@ -587,18 +587,18 @@ assert.match(notices.at(-1).message, /Changed files: 2/);
 // review mode switching
 notices.length = 0;
 await handlers.get("tool_call")(
-	{ toolCallId: "call-110", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260831-110")) } },
+	{ toolCallId: "call-110", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260905-110")) } },
 	ctx,
 );
-await commands.get("planner-only").handler("review T-20260831-110 fresh", ctx);
+await commands.get("planner-only").handler("review T-20260905-110 fresh", ctx);
 notices.length = 0;
-await commands.get("planner-only").handler("task T-20260831-110", ctx);
+await commands.get("planner-only").handler("task T-20260905-110", ctx);
 assert.match(notices.at(-1).message, /Review mode: fresh/);
-await commands.get("planner-only").handler("review T-20260831-110 root", ctx);
+await commands.get("planner-only").handler("review T-20260905-110 root", ctx);
 
 // malformed worker output triggers exactly one report-only correction
 await handlers.get("tool_call")(
-	{ toolCallId: "call-120", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260831-120")) } },
+	{ toolCallId: "call-120", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260905-120")) } },
 	ctx,
 );
 const malformed = await handlers.get("tool_result")(
@@ -614,7 +614,7 @@ await handlers.get("tool_call")(
 	{
 		toolCallId: "call-200",
 		toolName: "subagent",
-		input: { task: JSON.stringify(delegationSpec("T-20260831-200", "worker", "/fixture/shared")) },
+		input: { task: JSON.stringify(delegationSpec("T-20260905-200", "worker", "/fixture/shared")) },
 	},
 	ctx,
 );
@@ -622,27 +622,27 @@ const blockedWriter = await handlers.get("tool_call")(
 	{
 		toolCallId: "call-201",
 		toolName: "subagent",
-		input: { task: JSON.stringify(delegationSpec("T-20260831-201", "worker", "/fixture/shared")) },
+		input: { task: JSON.stringify(delegationSpec("T-20260905-201", "worker", "/fixture/shared")) },
 	},
 	ctx,
 );
 assert.equal(blockedWriter.block, true);
 assert.match(blockedWriter.reason, /write lock/);
-assert.match(blockedWriter.reason, /T-20260831-200/);
+assert.match(blockedWriter.reason, /T-20260905-200/);
 // readers never take the write lock
 const readerCall = await handlers.get("tool_call")(
-	{ toolCallId: "call-202", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260831-202", "explorer")) } },
+	{ toolCallId: "call-202", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260905-202", "explorer")) } },
 	ctx,
 );
 assert.equal(readerCall, undefined);
-const explorerInput = { agent: "worker", task: JSON.stringify(delegationSpec("T-20260831-203", "explorer")) };
+const explorerInput = { agent: "worker", task: JSON.stringify(delegationSpec("T-20260905-203", "explorer")) };
 await handlers.get("tool_call")(
 	{ toolCallId: "call-203", toolName: "subagent", input: explorerInput },
 	ctx,
 );
 assert.equal(explorerInput.agent, "reviewer");
 
-const workerInput = { agent: "worker", context: "fork", task: JSON.stringify(delegationSpec("T-20260831-204")) };
+const workerInput = { agent: "worker", context: "fork", task: JSON.stringify(delegationSpec("T-20260905-204")) };
 await handlers.get("tool_call")(
 	{ toolCallId: "call-204", toolName: "subagent", input: workerInput },
 	ctx,
@@ -652,7 +652,7 @@ assert.equal(workerInput.context, "fork");
 
 // evidence drift: an external edit after the report marks the evidence stale
 await handlers.get("tool_call")(
-	{ toolCallId: "call-300", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260831-300")) } },
+	{ toolCallId: "call-300", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260905-300")) } },
 	ctx,
 );
 gitResponses.set("status --porcelain=v2 --branch", {
@@ -670,8 +670,8 @@ const staleResult = await handlers.get("tool_result")(
 			type: "text",
 			text: JSON.stringify({
 				...workerReport,
-				taskId: "T-20260831-300",
-				evidence: { ...workerReport.evidence, taskId: "T-20260831-300", workerRunId: "call-300", cwd: "/fixture/T-20260831-300", gitStatusHash: cleanHash, changedPaths: ["src/parser.ts"] },
+				taskId: "T-20260905-300",
+				evidence: { ...workerReport.evidence, taskId: "T-20260905-300", workerRunId: "call-300", cwd: "/fixture/T-20260905-300", gitStatusHash: cleanHash, changedPaths: ["src/parser.ts"] },
 			}),
 		}],
 		isError: false,
@@ -689,15 +689,15 @@ gitResponses.delete("diff HEAD --stat");
 gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
 gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
 await handlers.get("tool_call")(
-	{ toolCallId: "call-400", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260831-400")) } },
+	{ toolCallId: "call-400", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260905-400")) } },
 	ctx,
 );
 gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
 gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
 const freshReport = {
 	...workerReport,
-	taskId: "T-20260831-400",
-	evidence: { ...workerReport.evidence, taskId: "T-20260831-400", workerRunId: "call-400", cwd: "/fixture/T-20260831-400", changedPaths: ["src/parser.ts"] },
+	taskId: "T-20260905-400",
+	evidence: { ...workerReport.evidence, taskId: "T-20260905-400", workerRunId: "call-400", cwd: "/fixture/T-20260905-400", changedPaths: ["src/parser.ts"] },
 };
 const raceWorker = await handlers.get("tool_result")(
 	{ toolCallId: "call-400", toolName: "subagent", input: {}, content: [{ type: "text", text: JSON.stringify(freshReport) }], isError: false },
@@ -706,11 +706,11 @@ const raceWorker = await handlers.get("tool_result")(
 assert.match(raceWorker.content[0].text, /decision: review_pending/);
 gitResponses.set("rev-parse HEAD", { stdout: "def5678\n", stderr: "", code: 0 });
 notices.length = 0;
-await commands.get("planner-only").handler("review T-20260831-400 pass accepting late", ctx);
+await commands.get("planner-only").handler("review T-20260905-400 pass accepting late", ctx);
 assert.match(notices.at(-1).message, /decision: revalidate/);
 assert.match(notices.at(-1).message, /evidence: stale/);
 notices.length = 0;
-await commands.get("planner-only").handler("task T-20260831-400", ctx);
+await commands.get("planner-only").handler("task T-20260905-400", ctx);
 assert.match(notices.at(-1).message, /State: changes_requested/);
 gitResponses.delete("rev-parse HEAD");
 
@@ -725,7 +725,7 @@ assert.equal(handlers.has("message_end"), true);
 }
 
 {
-	const taskId = "T-20260831-b6";
+	const taskId = "T-20260905-206";
 	const runId = "b6b6b6b6-0000-0000-0000-0000000000b6";
 	await handlers.get("tool_call")(
 		{
@@ -749,7 +749,7 @@ assert.equal(handlers.has("message_end"), true);
 		},
 		ctx,
 	);
-	assert.match(receipt.content[0].text, /Async delegation for task T-20260831-b6 has started/);
+	assert.match(receipt.content[0].text, /Async delegation for task T-20260905-206 has started/);
 
 	const asyncReport = {
 		...workerReport,
@@ -785,6 +785,7 @@ assert.equal(verdictTool.label, "Planner Verdict");
 assert.ok(PLANNER_PROMPT.length <= 2500, `PLANNER_PROMPT is ${PLANNER_PROMPT.length} chars`);
 assert.match(PLANNER_PROMPT, /5\. record PASS, REQUEST_CHANGES, or BLOCKED with planner_verdict/);
 assert.match(PLANNER_PROMPT, /Lifecycle state arrives in delegation results; the operator may override a verdict, you record yours with planner_verdict\./);
+assert.match(PLANNER_PROMPT, /The extension may replace the id; use the id from the delegation result afterwards\./);
 assert.doesNotMatch(PLANNER_PROMPT, /\/planner-only/);
 assert.doesNotMatch(PLANNER_PROMPT, /record a verdict or switch/);
 
@@ -803,7 +804,7 @@ assert.match(unknownVerdict.content[0].text, /planner_verdict/);
 // pass with no recorded WorkerReport -> refused, state unchanged
 const noReportVerdict = await verdictTool.execute(
 	"v-1",
-	{ verdict: "pass", summary: "nothing to judge", taskId: "T-20260831-110" },
+	{ verdict: "pass", summary: "nothing to judge", taskId: "T-20260905-110" },
 	undefined,
 	undefined,
 	ctx,
@@ -811,7 +812,7 @@ const noReportVerdict = await verdictTool.execute(
 assert.equal(noReportVerdict.isError, true);
 assert.match(noReportVerdict.content[0].text, /no recorded WorkerReport/);
 notices.length = 0;
-await commands.get("planner-only").handler("task T-20260831-110", ctx);
+await commands.get("planner-only").handler("task T-20260905-110", ctx);
 assert.match(notices.at(-1).message, /State: executing/, "a refused verdict changes nothing");
 
 // a worker task with a fresh report, then a pending reviewer run
@@ -819,15 +820,15 @@ gitResponses.set("rev-parse HEAD", { stdout: "abc1234\n", stderr: "", code: 0 })
 gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
 gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
 await handlers.get("tool_call")(
-	{ toolCallId: "call-v10", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260905-v10")) } },
+	{ toolCallId: "call-v10", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260905-510")) } },
 	ctx,
 );
 gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
 gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
 const v10Report = {
 	...workerReport,
-	taskId: "T-20260905-v10",
-	evidence: { ...workerReport.evidence, taskId: "T-20260905-v10", workerRunId: "call-v10", cwd: "/fixture/T-20260905-v10", changedPaths: ["src/parser.ts"] },
+	taskId: "T-20260905-510",
+	evidence: { ...workerReport.evidence, taskId: "T-20260905-510", workerRunId: "call-v10", cwd: "/fixture/T-20260905-510", changedPaths: ["src/parser.ts"] },
 };
 const v10Worker = await handlers.get("tool_result")(
 	{ toolCallId: "call-v10", toolName: "subagent", input: {}, content: [{ type: "text", text: JSON.stringify(v10Report) }], isError: false },
@@ -837,12 +838,12 @@ assert.match(v10Worker.content[0].text, /decision: review_pending/);
 
 // pass while a reviewer delegation is pending -> refused
 await handlers.get("tool_call")(
-	{ toolCallId: "call-v11", toolName: "subagent", input: { agent: "reviewer", task: JSON.stringify(delegationSpec("T-20260905-v10", "reviewer")) } },
+	{ toolCallId: "call-v11", toolName: "subagent", input: { agent: "reviewer", task: JSON.stringify(delegationSpec("T-20260905-510", "reviewer")) } },
 	ctx,
 );
 const pendingVerdict = await verdictTool.execute(
 	"v-2",
-	{ verdict: "pass", summary: "jumping the gun", taskId: "T-20260905-v10" },
+	{ verdict: "pass", summary: "jumping the gun", taskId: "T-20260905-510" },
 	undefined,
 	undefined,
 	ctx,
@@ -857,7 +858,7 @@ const v11Outcome = await handlers.get("tool_result")(
 		toolName: "subagent",
 		input: {},
 		content: [{ type: "text", text: JSON.stringify({
-			taskId: "T-20260905-v10",
+			taskId: "T-20260905-510",
 			verdict: "request_changes",
 			summary: "missing empty-input coverage",
 			evidenceFresh: true,
@@ -870,27 +871,27 @@ const v11Outcome = await handlers.get("tool_result")(
 assert.match(v11Outcome.content[0].text, /decision: request_changes/);
 const rootPass = await verdictTool.execute(
 	"v-3",
-	{ verdict: "pass", summary: "finding is out of scope for this task", taskId: "T-20260905-v10" },
+	{ verdict: "pass", summary: "finding is out of scope for this task", taskId: "T-20260905-510" },
 	undefined,
 	undefined,
 	ctx,
 );
 assert.equal(rootPass.isError, undefined);
-assert.equal(rootPass.details.taskId, "T-20260905-v10");
+assert.equal(rootPass.details.taskId, "T-20260905-510");
 assert.equal(rootPass.details.verdict, "pass");
 assert.equal(rootPass.details.action, "accept");
 assert.equal(rootPass.details.state, "completed");
 assert.match(rootPass.content[0].text, /^\[PLANNER-ONLY REVIEW STATE\]/);
 assert.match(rootPass.content[0].text, /decision: accept/);
 notices.length = 0;
-await commands.get("planner-only").handler("task T-20260905-v10", ctx);
+await commands.get("planner-only").handler("task T-20260905-510", ctx);
 assert.match(notices.at(-1).message, /State: completed/);
 assert.match(notices.at(-1).message, /Reviews: request_changes \(reviewer\), pass \(root\)/);
 assert.match(notices.at(-1).message, /Overrides: 1/);
 
 // blocked with no report is allowed (no delegation pending)
 await handlers.get("tool_call")(
-	{ toolCallId: "call-v12", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260905-v12")) } },
+	{ toolCallId: "call-v12", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260905-512")) } },
 	ctx,
 );
 await handlers.get("tool_result")(
@@ -899,7 +900,7 @@ await handlers.get("tool_result")(
 );
 const blockedVerdict = await verdictTool.execute(
 	"v-4",
-	{ verdict: "blocked", summary: "worker cannot proceed without credentials", taskId: "T-20260905-v12" },
+	{ verdict: "blocked", summary: "worker cannot proceed without credentials", taskId: "T-20260905-512" },
 	undefined,
 	undefined,
 	ctx,
@@ -911,25 +912,25 @@ assert.equal(blockedVerdict.details.state, "blocked");
 // §4: the operator override bypasses refusals (here: pending run, no report)
 // with a printed warning; the terminal-state refusal still holds
 await handlers.get("tool_call")(
-	{ toolCallId: "call-v13", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260905-v13")) } },
+	{ toolCallId: "call-v13", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260905-513")) } },
 	ctx,
 );
 notices.length = 0;
-await commands.get("planner-only").handler("review T-20260905-v13 pass forcing the issue", ctx);
+await commands.get("planner-only").handler("review T-20260905-513 pass forcing the issue", ctx);
 assert.ok(
 	notices.some((notice) => notice.type === "warning" && /bypassed refusal/i.test(notice.message)),
 	"the override prints which refusal it bypassed",
 );
 assert.match(notices.at(-1).message, /\[PLANNER-ONLY REVIEW STATE\]/);
 notices.length = 0;
-await commands.get("planner-only").handler("task T-20260905-v13", ctx);
+await commands.get("planner-only").handler("task T-20260905-513", ctx);
 assert.match(notices.at(-1).message, /Reviews: pass \(operator\)/);
 notices.length = 0;
-await commands.get("planner-only").handler("review T-20260905-v13 pass again", ctx);
+await commands.get("planner-only").handler("review T-20260905-513 pass again", ctx);
 assert.match(notices.at(-1).message, /already completed/);
 const terminalVerdict = await verdictTool.execute(
 	"v-5",
-	{ verdict: "pass", summary: "again", taskId: "T-20260905-v13" },
+	{ verdict: "pass", summary: "again", taskId: "T-20260905-513" },
 	undefined,
 	undefined,
 	ctx,
@@ -944,7 +945,7 @@ assert.match(
 
 // L-4: Task blocked with one report and fresh evidence: planner_verdict(pass) → completed, one usage line with completed
 {
-	const taskId = "T-20260905-l4u";
+	const taskId = "T-20260905-540";
 	gitResponses.set("rev-parse HEAD", { stdout: "abc1234\n", stderr: "", code: 0 });
 	gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
 	gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
@@ -1008,6 +1009,73 @@ assert.match(
 	assert.equal(completedLines.length, 1);
 }
 
+// L-5: usage.jsonl line uses the canonical id, not the model-chosen alias
+{
+	notices.length = 0;
+	gitResponses.set("rev-parse HEAD", { stdout: "abc1234\n", stderr: "", code: 0 });
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-l5u", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260220-099")) } },
+		ctx,
+	);
+	assert.ok(
+		notices.some((item) => /TaskSpec id T-20260220-099 replaced by T-20260905-\d{3} \(generated\)/.test(item.message)),
+		notices.map((item) => item.message).join(" | "),
+	);
+	notices.length = 0;
+	await commands.get("planner-only").handler("task", ctx);
+	const status = notices.at(-1).message;
+	assert.match(status, /^Task: T-20260905-\d{3}/m);
+	assert.match(status, /aliases: T-20260220-099/);
+	const canonical = status.match(/^Task: (T-20260905-\d{3})/m)[1];
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-l5u",
+			toolName: "subagent",
+			input: {},
+			content: [{ type: "text", text: JSON.stringify({
+				...workerReport,
+				taskId: "T-20260220-099",
+				evidence: {
+					...workerReport.evidence,
+					taskId: "T-20260220-099",
+					workerRunId: "call-l5u",
+					cwd: `/fixture/T-20260220-099`,
+				},
+			}) }],
+			isError: false,
+		},
+		ctx,
+	);
+	await handlers.get("message_end")({
+		message: {
+			role: "assistant",
+			id: "msg-l5u",
+			model: "tcuni-claude/claude-fable-5-1",
+			provider: "tcuni-claude",
+			usage: { input: 200, output: 50, cacheRead: 10, cacheWrite: 0, cost: 0.15 },
+			content: "alias usage",
+		},
+	}, ctx);
+	const passAlias = await verdictTool.execute(
+		"v-l5-pass",
+		{ verdict: "pass", summary: "close on canonical", taskId: canonical },
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.equal(passAlias.isError, undefined);
+	assert.equal(passAlias.details.state, "completed");
+	assert.equal(passAlias.details.taskId, canonical);
+	const logPath = join(isolatedAgentDir, "planner-only", "usage.jsonl");
+	const rows = readFileSync(logPath, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+	assert.ok(rows.some((row) => row.taskId === canonical && row.state === "completed"));
+	assert.equal(rows.some((row) => row.taskId === "T-20260220-099"), false);
+}
+
 // L-4: operator override still bypasses rules 2–4 and not rule 1 (covered above for pending/no-report vs completed)
 
 // --------------------------------------------------------------------------
@@ -1016,7 +1084,7 @@ assert.match(
 
 {
 	sessionEntries.length = 0;
-	const taskId = "T-20260905-u2";
+	const taskId = "T-20260905-520";
 	await handlers.get("tool_call")(
 		{ toolCallId: "call-u2", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
 		ctx,
@@ -1070,7 +1138,7 @@ assert.match(
 }
 
 {
-	const taskId = "T-20260905-leak";
+	const taskId = "T-20260905-521";
 	await handlers.get("tool_call")(
 		{ toolCallId: "call-leak", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
 		ctx,
@@ -1100,7 +1168,7 @@ assert.match(
 }
 
 {
-	const taskId = "T-20260905-bgw";
+	const taskId = "T-20260905-522";
 	const runId = "run-bgw-0001";
 	await handlers.get("tool_call")(
 		{
@@ -1147,7 +1215,7 @@ assert.match(
 }
 
 {
-	const taskId = "T-20260905-meta";
+	const taskId = "T-20260905-523";
 	const runId = "run-meta-async";
 	const artifacts = join(isolatedAgentDir, "sessions", "subagent-artifacts");
 	mkdirSync(artifacts, { recursive: true });
@@ -1196,7 +1264,7 @@ assert.match(
 }
 
 {
-	const taskId = "T-20260905-pend";
+	const taskId = "T-20260905-524";
 	const runId = "run-no-meta";
 	await handlers.get("tool_call")(
 		{
@@ -1235,7 +1303,7 @@ assert.match(
 }
 
 {
-	const taskId = "T-20260905-rf6i";
+	const taskId = "T-20260905-525";
 	await handlers.get("tool_call")(
 		{
 			toolCallId: "call-rf6i",
@@ -1285,7 +1353,7 @@ assert.match(
 }
 
 {
-	const taskId = "T-20260905-u5u";
+	const taskId = "T-20260905-526";
 	await handlers.get("tool_call")(
 		{ toolCallId: "call-u5-1", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
 		ctx,
@@ -1376,7 +1444,9 @@ assert.match(
 // Soft budget warning tests
 {
 	// Case 1: Above both thresholds (root share > 0.6 AND reviewLeakBytes > 8192) on review_pending
-	const taskId = "T-20260905-wboth";
+	const taskId = "T-20260905-527";
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
 	await handlers.get("tool_call")(
 		{ toolCallId: "call-wboth-1", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
 		ctx,
@@ -1461,7 +1531,9 @@ assert.match(
 
 {
 	// Case 2: Below leak threshold (leak <= 8192), root share > 0.6
-	const taskId = "T-20260905-wlowleak";
+	const taskId = "T-20260905-528";
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
 	await handlers.get("tool_call")(
 		{ toolCallId: "call-wll-1", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
 		ctx,
@@ -1534,7 +1606,9 @@ assert.match(
 
 {
 	// Case 3: Below root share threshold (root share <= 0.6), leak > 8192
-	const taskId = "T-20260905-wlowshare";
+	const taskId = "T-20260905-529";
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
 	await handlers.get("tool_call")(
 		{ toolCallId: "call-wls-1", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
 		ctx,

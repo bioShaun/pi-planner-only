@@ -117,6 +117,26 @@ assert.equal(
 	]);
 }
 
+// L-5: identity accepts the Task id or any alias
+{
+	const aliases = { taskId: "T-20260905-001", aliases: ["T-20260220-001"], workerRunId: "call-100" };
+	const echoing = {
+		...makeReport(),
+		taskId: "T-20260220-001",
+		evidence: { ...makeReport().evidence, taskId: "T-20260220-001" },
+	};
+	assert.deepEqual(validateWorkerReportIdentity(echoing, aliases), []);
+	const unrelated = {
+		...makeReport(),
+		taskId: "T-20260831-999",
+		evidence: { ...makeReport().evidence, taskId: "T-20260831-999" },
+	};
+	assert.deepEqual(validateWorkerReportIdentity(unrelated, aliases), [
+		"WorkerReport taskId mismatch: expected T-20260905-001, got T-20260831-999",
+		"WorkerReport evidence.taskId mismatch: expected T-20260905-001, got T-20260831-999",
+	]);
+}
+
 // --------------------------------------------------------------------------
 // Compaction keeps validation evidence
 // --------------------------------------------------------------------------

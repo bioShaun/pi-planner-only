@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { PlannerOrchestrator, isDelegationCall } from "./orchestrate.ts";
+import { TaskStore } from "./task.ts";
 import { hashStatus } from "./evidence.ts";
 
 // --------------------------------------------------------------------------
@@ -127,11 +128,11 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
 	const cases = [
-		["workflowScript", { agent: "worker", task: JSON.stringify(specFor("T-20260903-801")), workflowScript: "await worker(); await reviewer();" }],
-		["workflowScriptPath", { agent: "worker", task: JSON.stringify(specFor("T-20260903-802")), workflowScriptPath: "./compose.js" }],
-		["workflow", { agent: "worker", task: JSON.stringify(specFor("T-20260903-803")), workflow: "worker-then-reviewer" }],
-		["tasks", { agent: "worker", task: JSON.stringify(specFor("T-20260903-804")), tasks: [{ agent: "worker" }, { agent: "reviewer" }] }],
-		["chain", { agent: "worker", task: JSON.stringify(specFor("T-20260903-805")), chain: [{ agent: "worker" }, { agent: "reviewer" }] }],
+		["workflowScript", { agent: "worker", task: JSON.stringify(specFor("T-20260905-801")), workflowScript: "await worker(); await reviewer();" }],
+		["workflowScriptPath", { agent: "worker", task: JSON.stringify(specFor("T-20260905-802")), workflowScriptPath: "./compose.js" }],
+		["workflow", { agent: "worker", task: JSON.stringify(specFor("T-20260905-803")), workflow: "worker-then-reviewer" }],
+		["tasks", { agent: "worker", task: JSON.stringify(specFor("T-20260905-804")), tasks: [{ agent: "worker" }, { agent: "reviewer" }] }],
+		["chain", { agent: "worker", task: JSON.stringify(specFor("T-20260905-805")), chain: [{ agent: "worker" }, { agent: "reviewer" }] }],
 	];
 	for (const [label, input] of cases) {
 		const blocked = await orch.beginDelegation({ toolCallId: `call-${label}`, input }, BASE);
@@ -156,7 +157,7 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 			toolCallId: "call-800",
 			input: {
 				agent: "worker",
-				task: JSON.stringify(specFor("T-20260903-800")),
+				task: JSON.stringify(specFor("T-20260905-800")),
 				workflowScript: "  ",
 				workflowScriptPath: "",
 				workflow: "",
@@ -167,7 +168,7 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 		BASE,
 	);
 	assert.equal(ok.block, undefined);
-	assert.equal(ok.task.taskId, "T-20260903-800");
+	assert.equal(ok.task.taskId, "T-20260905-800");
 }
 
 // Management/validate with action keeps current behavior even with composite fields.
@@ -186,7 +187,7 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 // Async launch receipts remain pending and do not spend correction or rounds.
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	const taskId = "T-20260901-450";
+	const taskId = "T-20260905-450";
 	await orch.beginDelegation({
 		toolCallId: "call-450",
 		input: { async: true, task: JSON.stringify(specFor(taskId)) },
@@ -208,7 +209,7 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 // asyncByDefault prose receipts remain pending without an async input flag.
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	const taskId = "T-20260901-451";
+	const taskId = "T-20260905-451";
 	await orch.beginDelegation({ toolCallId: "call-451", input: { task: JSON.stringify(specFor(taskId)) } }, BASE);
 	const before = orch.store.require(taskId);
 	const receipt = [
@@ -243,19 +244,22 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 
 	// strict mode still accepts a structured worker delegation
 	const ok = await orch.beginDelegation(
-		{ toolCallId: "call-s2", input: { task: JSON.stringify(specFor("T-20260901-710")) } },
+		{ toolCallId: "call-s2", input: { task: JSON.stringify(specFor("T-20260905-710")) } },
 		BASE,
 	);
 	assert.equal(ok.block, undefined);
-	assert.equal(ok.task.taskId, "T-20260901-710");
+	assert.equal(ok.task.taskId, "T-20260905-710");
 
-	// validators are warned, not blocked, even in strict mode
+	// validators are invocations, not Tasks, even in strict mode
 	const validator = await orch.beginDelegation(
 		{ toolCallId: "call-s3", input: { agent: "oracle", task: "double-check the claim" } },
 		BASE,
 	);
 	assert.equal(validator.block, undefined);
-	assert.ok((validator.warnings ?? []).some((warning) => /without an embedded TaskSpec/.test(warning)));
+	assert.equal(validator.task, undefined);
+	assert.ok((validator.warnings ?? []).some((warning) =>
+		warning === "Planner-only: validator delegation names no Task under review; delegate the worker first, then re-delegate validation naming its taskId.",
+	));
 }
 
 // warn mode (the default) lets a spec-less worker through with a warning
@@ -287,45 +291,45 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	const original = specFor("T-20260901-500");
+	const original = specFor("T-20260905-500");
 	setCleanTree();
 	const delegated = await orch.beginDelegation(
 		{ toolCallId: "call-500", input: { task: JSON.stringify(original) } },
 		BASE,
 	);
-	assert.equal(delegated.task.taskId, "T-20260901-500");
+	assert.equal(delegated.task.taskId, "T-20260905-500");
 
 	setDirtyTree();
-	const workerOutcome = await orch.handleSubagentResult(workerResult("call-500", reportFor("T-20260901-500", "call-500")));
+	const workerOutcome = await orch.handleSubagentResult(workerResult("call-500", reportFor("T-20260905-500", "call-500")));
 	assert.match(workerOutcome.content[0].text, /decision: review_pending/);
 
 	// review via a reviewer TaskSpec payload and via a ReviewRequest packet
 	const specCall = await orch.beginDelegation(
-		{ toolCallId: "call-501", input: { agent: "reviewer", task: JSON.stringify(specFor("T-20260901-500", "reviewer")) } },
+		{ toolCallId: "call-501", input: { agent: "reviewer", task: JSON.stringify(specFor("T-20260905-500", "reviewer")) } },
 		BASE,
 	);
-	assert.equal(specCall.task.taskId, "T-20260901-500");
-	const specReview = await orch.handleSubagentResult(reviewerResult("call-501", "T-20260901-500", "request_changes"));
+	assert.equal(specCall.task.taskId, "T-20260905-500");
+	const specReview = await orch.handleSubagentResult(reviewerResult("call-501", "T-20260905-500", "request_changes"));
 	assert.match(specReview.content[0].text, /decision: request_changes/);
 
 	const packetCall = await orch.beginDelegation(
 		{ toolCallId: "call-502", input: { agent: "reviewer", task: JSON.stringify({
 			version: 1,
-			taskId: "T-20260901-500",
-			reportTaskId: "T-20260901-500",
+			taskId: "T-20260905-500",
+			reportTaskId: "T-20260905-500",
 			reviewMode: "fresh",
-			workerReport: reportFor("T-20260901-500", "call-500"),
+			workerReport: reportFor("T-20260905-500", "call-500"),
 		}) } },
 		BASE,
 	);
-	assert.equal(packetCall.task.taskId, "T-20260901-500");
-	await orch.handleSubagentResult(reviewerResult("call-502", "T-20260901-500", "pass"));
+	assert.equal(packetCall.task.taskId, "T-20260905-500");
+	await orch.handleSubagentResult(reviewerResult("call-502", "T-20260905-500", "pass"));
 
-	const task = orch.store.require("T-20260901-500");
+	const task = orch.store.require("T-20260905-500");
 	assert.equal(task.role, "worker");
 	assert.equal(task.spec.role, "worker");
 	assert.equal(task.spec.objective, original.objective);
-	assert.equal(task.spec.taskId, "T-20260901-500");
+	assert.equal(task.spec.taskId, "T-20260905-500");
 }
 
 // --------------------------------------------------------------------------
@@ -334,13 +338,13 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	await delegateWorker(orch, "call-600", "T-20260901-600");
-	const foreign = { ...reportFor("T-20260901-600", "call-600"), taskId: "T-20260901-999" };
-	foreign.evidence = { ...foreign.evidence, taskId: "T-20260901-999" };
+	await delegateWorker(orch, "call-600", "T-20260905-600");
+	const foreign = { ...reportFor("T-20260905-600", "call-600"), taskId: "T-20260905-999" };
+	foreign.evidence = { ...foreign.evidence, taskId: "T-20260905-999" };
 	const outcome = await orch.handleSubagentResult(workerResult("call-600", foreign));
 	assert.match(outcome.content[0].text, /failed the task identity check/);
 	assert.match(outcome.content[0].text, /report-only correction/);
-	assert.equal(orch.store.require("T-20260901-600").reports.length, 0, "the foreign report must not be stored");
+	assert.equal(orch.store.require("T-20260905-600").reports.length, 0, "the foreign report must not be stored");
 }
 
 // --------------------------------------------------------------------------
@@ -350,11 +354,11 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 // No race: a PASS right after a fresh report completes the task.
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	await delegateWorker(orch, "call-610", "T-20260901-610");
-	await orch.handleSubagentResult(workerResult("call-610", reportFor("T-20260901-610", "call-610")));
-	assert.equal(orch.store.require("T-20260901-610").state, "reviewing");
+	await delegateWorker(orch, "call-610", "T-20260905-610");
+	await orch.handleSubagentResult(workerResult("call-610", reportFor("T-20260905-610", "call-610")));
+	assert.equal(orch.store.require("T-20260905-610").state, "reviewing");
 
-	const outcome = await orch.recordRootVerdict(orch.store.require("T-20260901-610"), "pass", "verified locally");
+	const outcome = await orch.recordRootVerdict(orch.store.require("T-20260905-610"), "pass", "verified locally");
 	assert.equal(outcome.decision.action, "accept");
 	assert.equal(outcome.task.state, "completed");
 	assert.match(outcome.evidence, /^fresh/);
@@ -364,13 +368,13 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 // PASS must be rejected and the task forced back into validation.
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	await delegateWorker(orch, "call-611", "T-20260901-611");
-	await orch.handleSubagentResult(workerResult("call-611", reportFor("T-20260901-611", "call-611")));
+	await delegateWorker(orch, "call-611", "T-20260905-611");
+	await orch.handleSubagentResult(workerResult("call-611", reportFor("T-20260905-611", "call-611")));
 
 	// external edit: HEAD moves after the worker returned
 	gitOverrides.set("rev-parse HEAD", "def5678\n");
 	try {
-		const outcome = await orch.recordRootVerdict(orch.store.require("T-20260901-611"), "pass", "accepting late");
+		const outcome = await orch.recordRootVerdict(orch.store.require("T-20260905-611"), "pass", "accepting late");
 		assert.equal(outcome.decision.action, "revalidate");
 		assert.match(outcome.decision.reason, /evidence is stale/);
 		assert.match(outcome.evidence, /HEAD changed/);
@@ -386,19 +390,19 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 // forces revalidation instead of completion.
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	await delegateWorker(orch, "call-612", "T-20260901-612");
-	await orch.handleSubagentResult(workerResult("call-612", reportFor("T-20260901-612", "call-612")));
+	await delegateWorker(orch, "call-612", "T-20260905-612");
+	await orch.handleSubagentResult(workerResult("call-612", reportFor("T-20260905-612", "call-612")));
 
 	gitOverrides.set("rev-parse HEAD", "def5678\n");
 	try {
 		await orch.beginDelegation(
-			{ toolCallId: "call-612-r", input: { agent: "reviewer", task: JSON.stringify(specFor("T-20260901-612", "reviewer")) } },
+			{ toolCallId: "call-612-r", input: { agent: "reviewer", task: JSON.stringify(specFor("T-20260905-612", "reviewer")) } },
 			BASE,
 		);
-		const outcome = await orch.handleSubagentResult(reviewerResult("call-612-r", "T-20260901-612", "pass"));
+		const outcome = await orch.handleSubagentResult(reviewerResult("call-612-r", "T-20260905-612", "pass"));
 		assert.match(outcome.content[0].text, /decision: revalidate/);
-		assert.equal(orch.store.require("T-20260901-612").state, "changes_requested");
-		assert.notEqual(orch.store.require("T-20260901-612").state, "completed");
+		assert.equal(orch.store.require("T-20260905-612").state, "changes_requested");
+		assert.notEqual(orch.store.require("T-20260905-612").state, "completed");
 	} finally {
 		gitOverrides.delete("rev-parse HEAD");
 	}
@@ -408,16 +412,16 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 // on the strength of Root's own sample, not the reviewer's flag.
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	await delegateWorker(orch, "call-613", "T-20260901-613");
-	await orch.handleSubagentResult(workerResult("call-613", reportFor("T-20260901-613", "call-613")));
+	await delegateWorker(orch, "call-613", "T-20260905-613");
+	await orch.handleSubagentResult(workerResult("call-613", reportFor("T-20260905-613", "call-613")));
 
 	await orch.beginDelegation(
-		{ toolCallId: "call-613-r", input: { agent: "reviewer", task: JSON.stringify(specFor("T-20260901-613", "reviewer")) } },
+		{ toolCallId: "call-613-r", input: { agent: "reviewer", task: JSON.stringify(specFor("T-20260905-613", "reviewer")) } },
 		BASE,
 	);
-	const outcome = await orch.handleSubagentResult(reviewerResult("call-613-r", "T-20260901-613", "pass"));
+	const outcome = await orch.handleSubagentResult(reviewerResult("call-613-r", "T-20260905-613", "pass"));
 	assert.match(outcome.content[0].text, /decision: accept/);
-	assert.equal(orch.store.require("T-20260901-613").state, "completed");
+	assert.equal(orch.store.require("T-20260905-613").state, "completed");
 }
 
 // pi-subagents 0.65.1 formatSingleCompletion for a single run: no `Child runs:`
@@ -433,7 +437,7 @@ function truncatedPreview() {
 // B1. receipt with details.runId, then subagent-notify preview holds a valid WorkerReport
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	const taskId = "T-20260905-b1";
+	const taskId = "T-20260905-601";
 	const runId = "run-b1-00000000-0000-0000-000000000001";
 	await delegateWorker(orch, "call-b1", taskId);
 	const receipt = await orch.handleSubagentResult({
@@ -445,7 +449,7 @@ function truncatedPreview() {
 			text: `Async: worker [${runId}]\nThe async run is detached and running in the background.`,
 		}],
 	});
-	assert.match(receipt.content[0].text, /Async delegation for task T-20260905-b1 has started/);
+	assert.match(receipt.content[0].text, /Async delegation for task T-20260905-601 has started/);
 	assert.equal(orch.store.require(taskId).state, "executing");
 	assert.equal(orch.store.require(taskId).reports.length, 0);
 
@@ -460,7 +464,7 @@ function truncatedPreview() {
 // B2. truncated preview + fixture file under temp outputs/<runId>/ is parsed from the file
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	const taskId = "T-20260905-b2";
+	const taskId = "T-20260905-602";
 	const runId = "run-b2-00000000-0000-0000-000000000002";
 	const tmp = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
 	try {
@@ -490,7 +494,7 @@ function truncatedPreview() {
 // B3. truncated preview and no file → report-only correction, reason contains async preview truncated
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	const taskId = "T-20260905-b3";
+	const taskId = "T-20260905-603";
 	const runId = "run-b3-00000000-0000-0000-000000000003";
 	await delegateWorker(orch, "call-b3", taskId);
 	await orch.handleSubagentResult({
@@ -508,7 +512,7 @@ function truncatedPreview() {
 // B4. processing the same runId twice changes nothing on the second pass
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	const taskId = "T-20260905-b4";
+	const taskId = "T-20260905-604";
 	const runId = "run-b4-00000000-0000-0000-000000000004";
 	await delegateWorker(orch, "call-b4", taskId);
 	await orch.handleSubagentResult({
@@ -535,7 +539,7 @@ function truncatedPreview() {
 // must be handled as a result (here: malformed), not parked as a receipt.
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	const taskId = "T-20260905-fg";
+	const taskId = "T-20260905-605";
 	await delegateWorker(orch, "call-fg", taskId);
 	const outcome = await orch.handleSubagentResult({
 		toolCallId: "call-fg",
@@ -550,7 +554,7 @@ function truncatedPreview() {
 // Two pending async delegations and a notice without runId or taskId: no guess.
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	for (const [call, taskId, runId] of [["call-x1", "T-20260905-x1", "x1x1x1x1-0000-0000-0000-0000000000x1"], ["call-x2", "T-20260905-x2", "x2x2x2x2-0000-0000-0000-0000000000x2"]]) {
+	for (const [call, taskId, runId] of [["call-x1", "T-20260905-611", "x1x1x1x1-0000-0000-0000-0000000000x1"], ["call-x2", "T-20260905-612", "x2x2x2x2-0000-0000-0000-0000000000x2"]]) {
 		await delegateWorker(orch, call, taskId);
 		await orch.handleSubagentResult({
 			toolCallId: call,
@@ -562,8 +566,8 @@ function truncatedPreview() {
 	assert.equal(await orch.handleAsyncNotify(asyncNotify(undefined, "finished without a report")), undefined);
 	assert.equal(orch.pendingDelegationCount(), 2);
 	// A taskId in the preview disambiguates.
-	const outcome = await orch.handleAsyncNotify(asyncNotify(undefined, JSON.stringify(reportFor("T-20260905-x2", "call-x2"))));
-	assert.match(outcome.content[0].text, /taskId: T-20260905-x2/);
+	const outcome = await orch.handleAsyncNotify(asyncNotify(undefined, JSON.stringify(reportFor("T-20260905-612", "call-x2"))));
+	assert.match(outcome.content[0].text, /taskId: T-20260905-612/);
 	assert.equal(orch.pendingDelegationCount(), 1);
 }
 
@@ -574,9 +578,9 @@ function truncatedPreview() {
 // pass with fresh evidence records source "root" and accepts
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	await delegateWorker(orch, "call-614", "T-20260901-614");
-	await orch.handleSubagentResult(workerResult("call-614", reportFor("T-20260901-614", "call-614")));
-	const outcome = await orch.recordRootVerdict(orch.store.require("T-20260901-614"), "pass", "verified locally", { source: "root" });
+	await delegateWorker(orch, "call-614", "T-20260905-614");
+	await orch.handleSubagentResult(workerResult("call-614", reportFor("T-20260905-614", "call-614")));
+	const outcome = await orch.recordRootVerdict(orch.store.require("T-20260905-614"), "pass", "verified locally", { source: "root" });
 	assert.equal(outcome.decision.action, "accept");
 	assert.equal(outcome.task.state, "completed");
 	assert.equal(outcome.task.reviews.at(-1).source, "root");
@@ -585,13 +589,13 @@ function truncatedPreview() {
 // request_changes with findings: round increments, guidance lists the findings
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	await delegateWorker(orch, "call-615", "T-20260901-615");
-	await orch.handleSubagentResult(workerResult("call-615", reportFor("T-20260901-615", "call-615")));
+	await delegateWorker(orch, "call-615", "T-20260905-615");
+	await orch.handleSubagentResult(workerResult("call-615", reportFor("T-20260905-615", "call-615")));
 	const findings = [
 		{ severity: "major", category: "test", description: "no empty-input case", requestedChange: "add a case" },
 		{ severity: "minor", category: "maintainability", description: "naming is unclear" },
 	];
-	const outcome = await orch.recordRootVerdict(orch.store.require("T-20260901-615"), "request_changes", "coverage gap", { findings, source: "root" });
+	const outcome = await orch.recordRootVerdict(orch.store.require("T-20260905-615"), "request_changes", "coverage gap", { findings, source: "root" });
 	assert.equal(outcome.decision.action, "request_changes");
 	assert.equal(outcome.task.state, "changes_requested");
 	assert.equal(outcome.task.reviewRound, 1);
@@ -601,9 +605,9 @@ function truncatedPreview() {
 	assert.equal(stored.source, "root");
 	assert.equal(stored.findings.length, 2);
 	// Root revising its own verdict after the correction is not an override
-	await delegateWorker(orch, "call-615b", "T-20260901-615");
-	await orch.handleSubagentResult(workerResult("call-615b", reportFor("T-20260901-615", "call-615b")));
-	const second = await orch.recordRootVerdict(orch.store.require("T-20260901-615"), "pass", "fixed", { source: "root" });
+	await delegateWorker(orch, "call-615b", "T-20260905-615");
+	await orch.handleSubagentResult(workerResult("call-615b", reportFor("T-20260905-615", "call-615b")));
+	const second = await orch.recordRootVerdict(orch.store.require("T-20260905-615"), "pass", "fixed", { source: "root" });
 	assert.equal(second.task.state, "completed");
 	assert.equal(second.task.overrides.length, 0, "no override when the previous verdict was Root's own");
 }
@@ -611,8 +615,8 @@ function truncatedPreview() {
 // blocked with no report is allowed once no delegation is pending; pass is not
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	await delegateWorker(orch, "call-616", "T-20260901-616");
-	const pending = orch.store.require("T-20260901-616");
+	await delegateWorker(orch, "call-616", "T-20260905-616");
+	const pending = orch.store.require("T-20260905-616");
 	assert.match(orch.rootVerdictRefusal(pending, "pass"), /no recorded WorkerReport/);
 	assert.match(orch.rootVerdictRefusal(pending, "blocked"), /still pending/);
 	// malformed worker output consumes the delegation without recording a report
@@ -621,10 +625,10 @@ function truncatedPreview() {
 		toolName: "subagent",
 		content: [{ type: "text", text: "I tried but gave up." }],
 	});
-	assert.equal(orch.store.require("T-20260901-616").reports.length, 0);
-	assert.match(orch.rootVerdictRefusal(orch.store.require("T-20260901-616"), "pass"), /no recorded WorkerReport/);
-	assert.equal(orch.rootVerdictRefusal(orch.store.require("T-20260901-616"), "blocked"), undefined);
-	const outcome = await orch.recordRootVerdict(orch.store.require("T-20260901-616"), "blocked", "worker cannot proceed", { source: "root" });
+	assert.equal(orch.store.require("T-20260905-616").reports.length, 0);
+	assert.match(orch.rootVerdictRefusal(orch.store.require("T-20260905-616"), "pass"), /no recorded WorkerReport/);
+	assert.equal(orch.rootVerdictRefusal(orch.store.require("T-20260905-616"), "blocked"), undefined);
+	const outcome = await orch.recordRootVerdict(orch.store.require("T-20260905-616"), "blocked", "worker cannot proceed", { source: "root" });
 	assert.equal(outcome.decision.action, "blocked");
 	assert.equal(outcome.task.state, "blocked");
 }
@@ -632,29 +636,29 @@ function truncatedPreview() {
 // fresh mode: Root arbitrates, it does not pre-empt
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	await delegateWorker(orch, "call-617", "T-20260901-617");
-	await orch.handleSubagentResult(workerResult("call-617", reportFor("T-20260901-617", "call-617")));
-	orch.store.setReviewMode("T-20260901-617", "fresh");
-	assert.match(orch.rootVerdictRefusal(orch.store.require("T-20260901-617"), "pass"), /fresh review mode/);
+	await delegateWorker(orch, "call-617", "T-20260905-617");
+	await orch.handleSubagentResult(workerResult("call-617", reportFor("T-20260905-617", "call-617")));
+	orch.store.setReviewMode("T-20260905-617", "fresh");
+	assert.match(orch.rootVerdictRefusal(orch.store.require("T-20260905-617"), "pass"), /fresh review mode/);
 	// request_changes and blocked never widen acceptance and stay allowed
-	assert.equal(orch.rootVerdictRefusal(orch.store.require("T-20260901-617"), "request_changes"), undefined);
-	assert.equal(orch.rootVerdictRefusal(orch.store.require("T-20260901-617"), "blocked"), undefined);
+	assert.equal(orch.rootVerdictRefusal(orch.store.require("T-20260905-617"), "request_changes"), undefined);
+	assert.equal(orch.rootVerdictRefusal(orch.store.require("T-20260905-617"), "blocked"), undefined);
 
 	// while the reviewer run is pending, even arbitration must wait
 	await orch.beginDelegation(
-		{ toolCallId: "call-617-r", input: { agent: "reviewer", task: JSON.stringify(specFor("T-20260901-617", "reviewer")) } },
+		{ toolCallId: "call-617-r", input: { agent: "reviewer", task: JSON.stringify(specFor("T-20260905-617", "reviewer")) } },
 		BASE,
 	);
-	assert.match(orch.rootVerdictRefusal(orch.store.require("T-20260901-617"), "pass"), /still pending/);
+	assert.match(orch.rootVerdictRefusal(orch.store.require("T-20260905-617"), "pass"), /still pending/);
 
 	// the reviewer requests changes; Root's pass is then recorded as an override
-	const reviewerOutcome = await orch.handleSubagentResult(reviewerResult("call-617-r", "T-20260901-617", "request_changes"));
+	const reviewerOutcome = await orch.handleSubagentResult(reviewerResult("call-617-r", "T-20260905-617", "request_changes"));
 	assert.match(reviewerOutcome.content[0].text, /decision: request_changes/);
-	assert.equal(orch.store.require("T-20260901-617").reviews.at(-1).source, "reviewer");
-	assert.equal(orch.rootVerdictRefusal(orch.store.require("T-20260901-617"), "pass"), undefined);
-	const outcome = await orch.recordRootVerdict(orch.store.require("T-20260901-617"), "pass", "finding out of scope", { source: "root" });
+	assert.equal(orch.store.require("T-20260905-617").reviews.at(-1).source, "reviewer");
+	assert.equal(orch.rootVerdictRefusal(orch.store.require("T-20260905-617"), "pass"), undefined);
+	const outcome = await orch.recordRootVerdict(orch.store.require("T-20260905-617"), "pass", "finding out of scope", { source: "root" });
 	assert.equal(outcome.decision.action, "accept");
-	const task = orch.store.require("T-20260901-617");
+	const task = orch.store.require("T-20260905-617");
 	assert.equal(task.state, "completed");
 	assert.equal(task.overrides.at(-1).reviewerVerdict, "request_changes");
 	assert.equal(task.overrides.at(-1).rootVerdict, "pass");
@@ -667,7 +671,7 @@ function truncatedPreview() {
 
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	const taskId = "T-20260905-rf6a";
+	const taskId = "T-20260905-661";
 	await delegateWorker(orch, "call-rf6a", taskId);
 	const failed = await orch.handleSubagentResult({
 		toolCallId: "call-rf6a",
@@ -685,7 +689,7 @@ function truncatedPreview() {
 
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	const taskId = "T-20260905-rf6s";
+	const taskId = "T-20260905-662";
 	await delegateWorker(orch, "call-rf6s", taskId);
 	const failed = await orch.handleSubagentResult({
 		toolCallId: "call-rf6s",
@@ -701,7 +705,7 @@ function truncatedPreview() {
 
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	const taskId = "T-20260905-rf6ok";
+	const taskId = "T-20260905-663";
 	const runId = "run-rf6-ok";
 	await delegateWorker(orch, "call-rf6ok", taskId);
 	const receipt = await orch.handleSubagentResult({
@@ -916,42 +920,42 @@ function t1BaselineReport(taskId, toolCallId) {
 // L-1: T1 first-report fixture is accepted in one pass; Task reaches reviewing; decision contains Report normalised:
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	await delegateWorker(orch, "call-l1-t1", "T-20260905-l1a");
-	const outcome = await orch.handleSubagentResult(workerResult("call-l1-t1", t1BaselineReport("T-20260905-l1a", "call-l1-t1")));
+	await delegateWorker(orch, "call-l1-t1", "T-20260905-181");
+	const outcome = await orch.handleSubagentResult(workerResult("call-l1-t1", t1BaselineReport("T-20260905-181", "call-l1-t1")));
 	const text = outcome.content[0].text;
 	assert.match(text, /Report normalised:/);
-	const task = orch.store.require("T-20260905-l1a");
+	const task = orch.store.require("T-20260905-181");
 	assert.equal(task.state, "reviewing");
 	assert.equal(task.reports.length, 1);
 	assert.equal(task.reports[0].version, 1);
 	assert.deepEqual(task.reports[0].changedFiles, ["src/parser.ts"]);
 	assert.deepEqual(task.reports[0].unresolved, ["docs later"]);
 	assert.equal(task.reports[0].validation[0].type, "test");
-	assert.equal(task.reports[0].evidence.taskId, "T-20260905-l1a");
+	assert.equal(task.reports[0].evidence.taskId, "T-20260905-181");
 }
 
 // L-1: evidence.taskId mismatching taskId is still rejected and counts one report correction
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	await delegateWorker(orch, "call-l1-mm", "T-20260905-l1b");
+	await delegateWorker(orch, "call-l1-mm", "T-20260905-182");
 	const report = {
-		...reportFor("T-20260905-l1b", "call-l1-mm"),
-		evidence: { ...reportFor("T-20260905-l1b", "call-l1-mm").evidence, taskId: "T-OTHER" },
+		...reportFor("T-20260905-182", "call-l1-mm"),
+		evidence: { ...reportFor("T-20260905-182", "call-l1-mm").evidence, taskId: "T-OTHER" },
 	};
 	const outcome = await orch.handleSubagentResult(workerResult("call-l1-mm", report));
 	assert.match(outcome.content[0].text, /not a valid WorkerReport|evidence\.taskId must match/);
-	assert.equal(orch.store.require("T-20260905-l1b").reports.length, 0);
-	assert.equal(orch.store.require("T-20260905-l1b").reportCorrections, 1);
+	assert.equal(orch.store.require("T-20260905-182").reports.length, 0);
+	assert.equal(orch.store.require("T-20260905-182").reportCorrections, 1);
 }
 
 // L-1: already-valid report has repairs [] and the decision text has no Report normalised line
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	await delegateWorker(orch, "call-l1-ok", "T-20260905-l1c");
-	const outcome = await orch.handleSubagentResult(workerResult("call-l1-ok", reportFor("T-20260905-l1c", "call-l1-ok")));
+	await delegateWorker(orch, "call-l1-ok", "T-20260905-183");
+	const outcome = await orch.handleSubagentResult(workerResult("call-l1-ok", reportFor("T-20260905-183", "call-l1-ok")));
 	assert.doesNotMatch(outcome.content[0].text, /Report normalised:/);
-	assert.equal(orch.store.require("T-20260905-l1c").state, "reviewing");
-	assert.equal(orch.store.require("T-20260905-l1c").reports.length, 1);
+	assert.equal(orch.store.require("T-20260905-183").state, "reviewing");
+	assert.equal(orch.store.require("T-20260905-183").reports.length, 1);
 }
 
 // --------------------------------------------------------------------------
@@ -963,12 +967,12 @@ const ROOT_MAY_STILL_JUDGE = "Root may still judge the last recorded report and 
 // L-4: Task blocked with one report and fresh evidence: planner_verdict(pass) → completed
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	await delegateWorker(orch, "call-l4-fresh", "T-20260905-l4a");
-	await orch.handleSubagentResult(workerResult("call-l4-fresh", reportFor("T-20260905-l4a", "call-l4-fresh")));
-	const blocked = await orch.recordRootVerdict(orch.store.require("T-20260905-l4a"), "blocked", "stop for now", { source: "root" });
+	await delegateWorker(orch, "call-l4-fresh", "T-20260905-401");
+	await orch.handleSubagentResult(workerResult("call-l4-fresh", reportFor("T-20260905-401", "call-l4-fresh")));
+	const blocked = await orch.recordRootVerdict(orch.store.require("T-20260905-401"), "blocked", "stop for now", { source: "root" });
 	assert.equal(blocked.task.state, "blocked");
-	assert.equal(orch.rootVerdictRefusal(orch.store.require("T-20260905-l4a"), "pass"), undefined);
-	const outcome = await orch.recordRootVerdict(orch.store.require("T-20260905-l4a"), "pass", "looks good after all", { source: "root" });
+	assert.equal(orch.rootVerdictRefusal(orch.store.require("T-20260905-401"), "pass"), undefined);
+	const outcome = await orch.recordRootVerdict(orch.store.require("T-20260905-401"), "pass", "looks good after all", { source: "root" });
 	assert.equal(outcome.decision.action, "accept");
 	assert.equal(outcome.task.state, "completed");
 }
@@ -976,12 +980,12 @@ const ROOT_MAY_STILL_JUDGE = "Root may still judge the last recorded report and 
 // L-4: blocked with report but stale evidence: revalidate, not completed
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	await delegateWorker(orch, "call-l4-stale", "T-20260905-l4b");
-	await orch.handleSubagentResult(workerResult("call-l4-stale", reportFor("T-20260905-l4b", "call-l4-stale")));
-	await orch.recordRootVerdict(orch.store.require("T-20260905-l4b"), "blocked", "pause", { source: "root" });
+	await delegateWorker(orch, "call-l4-stale", "T-20260905-402");
+	await orch.handleSubagentResult(workerResult("call-l4-stale", reportFor("T-20260905-402", "call-l4-stale")));
+	await orch.recordRootVerdict(orch.store.require("T-20260905-402"), "blocked", "pause", { source: "root" });
 	gitOverrides.set("rev-parse HEAD", "def5678\n");
 	try {
-		const outcome = await orch.recordRootVerdict(orch.store.require("T-20260905-l4b"), "pass", "accepting late", { source: "root" });
+		const outcome = await orch.recordRootVerdict(orch.store.require("T-20260905-402"), "pass", "accepting late", { source: "root" });
 		assert.equal(outcome.decision.action, "revalidate");
 		assert.notEqual(outcome.task.state, "completed");
 	} finally {
@@ -992,14 +996,14 @@ const ROOT_MAY_STILL_JUDGE = "Root may still judge the last recorded report and 
 // L-4: blocked with no report: pass refused with no-WorkerReport text; blocked verdict accepted
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	await delegateWorker(orch, "call-l4-nr", "T-20260905-l4c");
+	await delegateWorker(orch, "call-l4-nr", "T-20260905-403");
 	await orch.handleSubagentResult({
 		toolCallId: "call-l4-nr",
 		toolName: "subagent",
 		content: [{ type: "text", text: "gave up" }],
 	});
-	orch.store.transition("T-20260905-l4c", "blocked");
-	const task = orch.store.require("T-20260905-l4c");
+	orch.store.transition("T-20260905-403", "blocked");
+	const task = orch.store.require("T-20260905-403");
 	assert.equal(task.reports.length, 0);
 	assert.match(orch.rootVerdictRefusal(task, "pass"), /no recorded WorkerReport/);
 	assert.equal(orch.rootVerdictRefusal(task, "blocked"), undefined);
@@ -1011,13 +1015,13 @@ const ROOT_MAY_STILL_JUDGE = "Root may still judge the last recorded report and 
 // L-4: completed Task refused with the new text; no rootVerdictRefusal string contains /planner-only
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	await delegateWorker(orch, "call-l4-done", "T-20260905-l4d");
-	await orch.handleSubagentResult(workerResult("call-l4-done", reportFor("T-20260905-l4d", "call-l4-done")));
-	await orch.recordRootVerdict(orch.store.require("T-20260905-l4d"), "pass", "done", { source: "root" });
-	const completed = orch.store.require("T-20260905-l4d");
+	await delegateWorker(orch, "call-l4-done", "T-20260905-404");
+	await orch.handleSubagentResult(workerResult("call-l4-done", reportFor("T-20260905-404", "call-l4-done")));
+	await orch.recordRootVerdict(orch.store.require("T-20260905-404"), "pass", "done", { source: "root" });
+	const completed = orch.store.require("T-20260905-404");
 	assert.equal(
 		orch.rootVerdictRefusal(completed, "pass"),
-		"Task T-20260905-l4d is already completed; verdicts are final. Start a new Task with a new TaskSpec for further work.",
+		"Task T-20260905-404 is already completed; verdicts are final. Start a new Task with a new TaskSpec for further work.",
 	);
 	const states = ["planning", "executing", "reviewing", "changes_requested", "blocked", "completed", "failed"];
 	const verdicts = ["pass", "request_changes", "blocked"];
@@ -1033,20 +1037,419 @@ const ROOT_MAY_STILL_JUDGE = "Root may still judge the last recorded report and 
 // L-4: exhausted report-corrections text that sends a Task to blocked ends with the Root-may-still-judge sentence
 {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	await delegateWorker(orch, "call-l4-ex1", "T-20260905-l4e");
+	await delegateWorker(orch, "call-l4-ex1", "T-20260905-405");
 	await orch.handleSubagentResult({
 		toolCallId: "call-l4-ex1",
 		toolName: "subagent",
 		content: [{ type: "text", text: "no report" }],
 	});
-	await delegateWorker(orch, "call-l4-ex2", "T-20260905-l4e");
+	await delegateWorker(orch, "call-l4-ex2", "T-20260905-405");
 	const second = await orch.handleSubagentResult({
 		toolCallId: "call-l4-ex2",
 		toolName: "subagent",
 		content: [{ type: "text", text: "still no report" }],
 	});
-	assert.equal(orch.store.require("T-20260905-l4e").state, "blocked");
+	assert.equal(orch.store.require("T-20260905-405").state, "blocked");
 	assert.ok(second.content[0].text.endsWith(ROOT_MAY_STILL_JUDGE), second.content[0].text.slice(-200));
+}
+
+// --------------------------------------------------------------------------
+// L-2 — base evidence is sampled once per Task
+// --------------------------------------------------------------------------
+
+const twoPathStatus = [
+	"1 .M N... 100644 100644 100644 1111111 2222222 src/parser.ts",
+	"1 .M N... 100644 100644 100644 1111111 3333333 src/parser.test.ts",
+	"",
+].join("\n");
+const twoPathHash = hashStatus(twoPathStatus);
+
+function specT3(taskId) {
+	return {
+		...specFor(taskId, "worker", BASE),
+		scope: { allowedPaths: ["src/parser.ts", "src/parser.test.ts"] },
+	};
+}
+
+function reportT3(taskId, toolCallId) {
+	return {
+		...reportFor(taskId, toolCallId),
+		changedFiles: ["src/parser.ts", "src/parser.test.ts"],
+		evidence: {
+			...reportFor(taskId, toolCallId).evidence,
+			cwd: BASE,
+			baseGitRef: "a1",
+			finalGitRef: "a1",
+			gitStatusHash: twoPathHash,
+			changedPaths: ["src/parser.ts", "src/parser.test.ts"],
+		},
+	};
+}
+
+// L-2 T3: first unrepairable report, correction keeps base A, both paths attributed, no over-reported
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260905-231";
+	gitOverrides.set("rev-parse HEAD", "a1\n");
+	try {
+		setCleanTree();
+		const first = await orch.beginDelegation(
+			{ toolCallId: "call-l2-t3a", input: { task: JSON.stringify(specT3(taskId)) } },
+			BASE,
+		);
+		assert.equal(first.task.baseEvidence?.finalGitRef, "a1");
+		gitOverrides.set("status --porcelain=v2 --branch", twoPathStatus);
+		gitOverrides.set("diff HEAD --stat", " src/parser.ts | 2 +-\n src/parser.test.ts | 2 +-\n");
+		const unrepairable = {
+			...reportT3(taskId, "call-l2-t3a"),
+			status: "unknown",
+		};
+		const rejected = await orch.handleSubagentResult(workerResult("call-l2-t3a", unrepairable));
+		assert.match(rejected.content[0].text, /not a valid WorkerReport/);
+		assert.equal(orch.store.require(taskId).reports.length, 0);
+
+		const correction = await orch.beginDelegation(
+			{ toolCallId: "call-l2-t3b", input: { task: JSON.stringify(specT3(taskId)) } },
+			BASE,
+		);
+		assert.equal(correction.task.taskId, taskId);
+		assert.equal(correction.task.baseEvidence?.finalGitRef, "a1", "correction must not resample the base");
+		const accepted = await orch.handleSubagentResult(workerResult("call-l2-t3b", reportT3(taskId, "call-l2-t3b")));
+		const comparison = orch.store.require(taskId).lastComparison;
+		assert.ok(comparison);
+		assert.equal(comparison.extraDeclaredPaths.length, 0);
+		assert.doesNotMatch(accepted.content[0].text, /over-reported/);
+		assert.equal(comparison.truthPaths.length, 2);
+		assert.match(accepted.content[0].text, /base a1/);
+	} finally {
+		gitOverrides.delete("rev-parse HEAD");
+		setCleanTree();
+	}
+}
+
+// L-2 (R13 review): a recorded report ends the round; the next worker delegation re-samples A
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260905-233";
+	const onePathStatus = [
+		"1 .M N... 100644 100644 100644 1111111 2222222 src/parser.ts",
+		"",
+	].join("\n");
+	gitOverrides.set("rev-parse HEAD", "a1\n");
+	try {
+		setCleanTree();
+		const first = await orch.beginDelegation(
+			{ toolCallId: "call-l2-r2a", input: { task: JSON.stringify(specT3(taskId)) } },
+			BASE,
+		);
+		assert.equal(first.task.baseEvidence?.finalGitRef, "a1");
+		assert.equal(first.task.baseReportCount, 0);
+		gitOverrides.set("status --porcelain=v2 --branch", onePathStatus);
+		gitOverrides.set("diff HEAD --stat", " src/parser.ts | 2 +-\n");
+		const roundOne = {
+			...reportT3(taskId, "call-l2-r2a"),
+			changedFiles: ["src/parser.ts"],
+			evidence: {
+				...reportT3(taskId, "call-l2-r2a").evidence,
+				gitStatusHash: hashStatus(onePathStatus),
+				changedPaths: ["src/parser.ts"],
+			},
+		};
+		const accepted = await orch.handleSubagentResult(workerResult("call-l2-r2a", roundOne));
+		assert.doesNotMatch(accepted.content[0].text, /not a valid WorkerReport/);
+		assert.equal(orch.store.require(taskId).reports.length, 1);
+		await orch.recordRootVerdict(orch.store.require(taskId), "request_changes", "add the test", { source: "root" });
+		assert.equal(orch.store.require(taskId).state, "changes_requested");
+		assert.equal(orch.store.baseRoundEnded(taskId), true);
+
+		// Round 2 starts on the tree that already carries round 1's edit.
+		gitOverrides.set("rev-parse HEAD", "a2\n");
+		const second = await orch.beginDelegation(
+			{ toolCallId: "call-l2-r2b", input: { task: JSON.stringify(specT3(taskId)) } },
+			BASE,
+		);
+		assert.equal(second.task.taskId, taskId);
+		assert.equal(second.task.baseEvidence?.finalGitRef, "a2", "a recorded report must end the round and re-sample the base");
+		assert.equal(second.task.baseReportCount, 1);
+		gitOverrides.set("status --porcelain=v2 --branch", twoPathStatus);
+		gitOverrides.set("diff HEAD --stat", " src/parser.ts | 2 +-\n src/parser.test.ts | 2 +-\n");
+		const roundTwo = {
+			...reportT3(taskId, "call-l2-r2b"),
+			changedFiles: ["src/parser.test.ts"],
+			evidence: {
+				...reportT3(taskId, "call-l2-r2b").evidence,
+				baseGitRef: "a2",
+				finalGitRef: "a2",
+				changedPaths: ["src/parser.test.ts"],
+			},
+		};
+		const outcome = await orch.handleSubagentResult(workerResult("call-l2-r2b", roundTwo));
+		assert.doesNotMatch(outcome.content[0].text, /in-scope paths changed after the report/);
+		assert.doesNotMatch(outcome.content[0].text, /over-reported/);
+		assert.match(outcome.content[0].text, /base a2/);
+	} finally {
+		gitOverrides.delete("rev-parse HEAD");
+		setCleanTree();
+	}
+}
+
+// L-2: decision evidence line contains base <sha7>
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	await delegateWorker(orch, "call-l2-sha", "T-20260905-232");
+	const outcome = await orch.handleSubagentResult(
+		workerResult("call-l2-sha", reportFor("T-20260905-232", "call-l2-sha")),
+	);
+	assert.match(outcome.content[0].text, /evidence: .* base abc1234/);
+}
+
+// L-2: abandon clears base; RF-6 failed-launch re-bind does not
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260905-233";
+	await delegateWorker(orch, "call-l2-rf6a", taskId);
+	const original = orch.store.require(taskId).baseEvidence?.finalGitRef;
+	assert.equal(original, "abc1234");
+	await orch.handleSubagentResult({
+		toolCallId: "call-l2-rf6a",
+		toolName: "subagent",
+		isError: true,
+		content: [{ type: "text", text: "launch failed: agent missing" }],
+	});
+	assert.equal(orch.store.require(taskId).state, "failed");
+	assert.equal(orch.store.require(taskId).baseEvidence?.finalGitRef, original);
+	const rebound = await orch.beginDelegation(
+		{ toolCallId: "call-l2-rf6b", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	assert.equal(rebound.task.taskId, taskId);
+	assert.equal(rebound.task.baseEvidence?.finalGitRef, original, "RF-6 re-bind must keep the original base");
+}
+
+// --------------------------------------------------------------------------
+// L-3 — validator is an invocation over the Task under review
+// --------------------------------------------------------------------------
+
+// L-3: validator + fresh TaskSpec id while T-…-001 (with a report) is active in cwd
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260905-301";
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-l3-w", input: { task: JSON.stringify(specFor(taskId, "worker", BASE)) } },
+		BASE,
+	);
+	setDirtyTree();
+	const workerReport = {
+		...reportFor(taskId, "call-l3-w"),
+		evidence: { ...reportFor(taskId, "call-l3-w").evidence, cwd: BASE },
+	};
+	await orch.handleSubagentResult(workerResult("call-l3-w", workerReport));
+	const before = orch.store.require(taskId);
+	const beforeLen = orch.store.list().length;
+	const beforeBase = before.baseEvidence?.finalGitRef;
+	const beforeState = before.state;
+	const freshId = "T-20260905-399";
+	const outcome = await orch.beginDelegation(
+		{
+			toolCallId: "call-l3-v",
+			input: {
+				agent: "oracle",
+				task: JSON.stringify(specFor(freshId, "worker", BASE)),
+			},
+		},
+		BASE,
+	);
+	assert.equal(orch.store.list().length, beforeLen, "validator must not create a Task");
+	assert.equal(outcome.task?.taskId, taskId);
+	assert.ok((outcome.warnings ?? []).some((warning) =>
+		warning === `Planner-only: validator TaskSpec id ${freshId} ignored; validating task ${taskId}`,
+	), outcome.warnings?.join(" | "));
+	const after = orch.store.require(taskId);
+	assert.equal(after.state, beforeState);
+	assert.equal(after.baseEvidence?.finalGitRef, beforeBase);
+	assert.equal(orch.getDelegation("call-l3-v")?.kind, "validator");
+}
+
+// L-3: valid validator WorkerReport appends validatorReports, not reports
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260905-302";
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-l3-w2", input: { task: JSON.stringify(specFor(taskId, "worker", BASE)) } },
+		BASE,
+	);
+	setDirtyTree();
+	const workerReport = {
+		...reportFor(taskId, "call-l3-w2"),
+		evidence: { ...reportFor(taskId, "call-l3-w2").evidence, cwd: BASE },
+	};
+	await orch.handleSubagentResult(workerResult("call-l3-w2", workerReport));
+	const reportsBefore = orch.store.require(taskId).reports.length;
+	await orch.beginDelegation(
+		{
+			toolCallId: "call-l3-v2",
+			input: { agent: "oracle", task: JSON.stringify({ ...specFor(taskId, "validator", BASE) }) },
+		},
+		BASE,
+	);
+	const validatorReport = reportFor(taskId, "call-l3-v2");
+	validatorReport.evidence = { ...validatorReport.evidence, cwd: BASE };
+	const result = await orch.handleSubagentResult(workerResult("call-l3-v2", validatorReport));
+	assert.ok(result.content[0].text.startsWith(`[PLANNER-ONLY] Validator result for task ${taskId}`));
+	assert.equal(orch.store.require(taskId).validatorReports.length, 1);
+	assert.equal(orch.store.require(taskId).reports.length, reportsBefore);
+	assert.equal(orch.store.require(taskId).reportCorrections, 0);
+}
+
+// L-3: no resolvable Task — warning only; later result is the unknown-task path
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const beforeLen = orch.store.list().length;
+	const outcome = await orch.beginDelegation(
+		{ toolCallId: "call-l3-none", input: { agent: "oracle", task: "validate the claim with no task named" } },
+		BASE,
+	);
+	assert.equal(outcome.task, undefined);
+	assert.equal(orch.store.list().length, beforeLen);
+	assert.equal(
+		outcome.warnings?.[0],
+		"Planner-only: validator delegation names no Task under review; delegate the worker first, then re-delegate validation naming its taskId.",
+	);
+	const later = await orch.handleSubagentResult({
+		toolCallId: "call-l3-none",
+		toolName: "subagent",
+		content: [{ type: "text", text: JSON.stringify(reportFor("T-20260905-none", "call-l3-none")) }],
+		isError: false,
+	});
+	assert.match(later.content[0].text, /no longer in the Task store/);
+	assert.match(later.content[0].text, /Nothing was recorded/);
+	assert.equal(orch.store.list().length, beforeLen);
+}
+
+// L-3: planner_verdict(pass) refused while validator pending; accepted after; completed on T-…-001
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260905-304";
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-l3-w4", input: { task: JSON.stringify(specFor(taskId, "worker", BASE)) } },
+		BASE,
+	);
+	setDirtyTree();
+	const workerReport = {
+		...reportFor(taskId, "call-l3-w4"),
+		evidence: { ...reportFor(taskId, "call-l3-w4").evidence, cwd: BASE },
+	};
+	await orch.handleSubagentResult(workerResult("call-l3-w4", workerReport));
+	await orch.beginDelegation(
+		{
+			toolCallId: "call-l3-v4",
+			input: { agent: "oracle", task: JSON.stringify(specFor(taskId, "validator", BASE)) },
+		},
+		BASE,
+	);
+	assert.match(
+		orch.rootVerdictRefusal(orch.store.require(taskId), "pass"),
+		/has a child run still pending/,
+	);
+	const validatorReport = reportFor(taskId, "call-l3-v4");
+	validatorReport.evidence = { ...validatorReport.evidence, cwd: BASE };
+	await orch.handleSubagentResult(workerResult("call-l3-v4", validatorReport));
+	assert.equal(orch.rootVerdictRefusal(orch.store.require(taskId), "pass"), undefined);
+	const closed = await orch.recordRootVerdict(orch.store.require(taskId), "pass", "validated", { source: "root" });
+	assert.equal(closed.task.state, "completed");
+	assert.equal(closed.task.taskId, taskId);
+}
+
+// --------------------------------------------------------------------------
+// L-5 — store issues Task id; model id is alias
+// --------------------------------------------------------------------------
+
+// L-5: TaskSpec dated 2026-02-20 on 2026-09-05 is replaced; alias resolves
+{
+	const store = new TaskStore({ now: () => new Date(2026, 8, 5) });
+	const orch = new PlannerOrchestrator({ store, gitRunner });
+	const outcome = await orch.beginDelegation(
+		{ toolCallId: "call-l5-date", input: { task: JSON.stringify(specFor("T-20260220-001", "worker", BASE)) } },
+		BASE,
+	);
+	assert.equal(outcome.task.taskId, "T-20260905-001");
+	assert.deepEqual(outcome.task.aliases, ["T-20260220-001"]);
+	assert.equal(orch.store.get("T-20260220-001")?.taskId, "T-20260905-001");
+	assert.equal(outcome.task.spec?.taskId, "T-20260905-001");
+	assert.ok((outcome.warnings ?? []).some((warning) =>
+		warning === "Planner-only: TaskSpec id T-20260220-001 replaced by T-20260905-001 (generated); T-20260220-001 is kept as an alias",
+	), outcome.warnings?.join(" | "));
+}
+
+// L-5: today's well-formed id is created verbatim, no alias, no warning
+{
+	const store = new TaskStore({ now: () => new Date(2026, 8, 5) });
+	const orch = new PlannerOrchestrator({ store, gitRunner });
+	const outcome = await orch.beginDelegation(
+		{ toolCallId: "call-l5-today", input: { task: JSON.stringify(specFor("T-20260905-042", "worker", BASE)) } },
+		BASE,
+	);
+	assert.equal(outcome.task.taskId, "T-20260905-042");
+	assert.deepEqual(outcome.task.aliases, []);
+	assert.equal(outcome.warnings, undefined);
+}
+
+// L-5: WorkerReport echoing the alias is stored with the canonical id; unrelated id fails
+{
+	const store = new TaskStore({ now: () => new Date(2026, 8, 5) });
+	const orch = new PlannerOrchestrator({ store, gitRunner });
+	await orch.beginDelegation(
+		{ toolCallId: "call-l5-alias", input: { task: JSON.stringify(specFor("T-20260220-010", "worker", BASE)) } },
+		BASE,
+	);
+	const canonical = "T-20260905-001";
+	assert.equal(orch.store.require("T-20260220-010").taskId, canonical);
+	setDirtyTree();
+	const aliased = reportFor("T-20260220-010", "call-l5-alias");
+	aliased.evidence = { ...aliased.evidence, cwd: BASE, taskId: "T-20260220-010" };
+	const accepted = await orch.handleSubagentResult(workerResult("call-l5-alias", aliased));
+	assert.match(accepted.content[0].text, /Report normalised: .*taskId T-20260220-010 → T-20260905-001/);
+	const stored = orch.store.require(canonical).reports[0];
+	assert.equal(stored.taskId, canonical);
+	assert.equal(stored.evidence.taskId, canonical);
+
+	await orch.beginDelegation(
+		{ toolCallId: "call-l5-bad", input: { task: JSON.stringify(specFor("T-20260905-043", "worker", BASE)) } },
+		BASE,
+	);
+	const foreign = reportFor("T-20260905-999", "call-l5-bad");
+	const rejected = await orch.handleSubagentResult(workerResult("call-l5-bad", foreign));
+	assert.match(rejected.content[0].text, /failed the task identity check/);
+	assert.equal(orch.store.require("T-20260905-043").reports.length, 0);
+}
+
+// L-5: correction prompt naming the alias re-binds to the canonical Task (RF-7)
+{
+	const store = new TaskStore({ now: () => new Date(2026, 8, 5) });
+	const orch = new PlannerOrchestrator({ store, gitRunner });
+	await orch.beginDelegation(
+		{ toolCallId: "call-l5-rf7a", input: { task: JSON.stringify(specFor("T-20260220-020", "worker", BASE)) } },
+		BASE,
+	);
+	const canonical = orch.store.require("T-20260220-020").taskId;
+	await orch.handleSubagentResult({
+		toolCallId: "call-l5-rf7a",
+		toolName: "subagent",
+		content: [{ type: "text", text: "not a report" }],
+	});
+	assert.equal(orch.store.require(canonical).state, "changes_requested");
+	const rebound = await orch.beginDelegation(
+		{
+			toolCallId: "call-l5-rf7b",
+			input: { agent: "worker", task: "Do not modify files. Return only a valid WorkerReport for task T-20260220-020." },
+		},
+		BASE,
+	);
+	assert.equal(rebound.task.taskId, canonical);
+	assert.equal(orch.store.list().length, 1);
 }
 
 console.log("planner-only orchestration: PASS");

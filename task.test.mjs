@@ -303,6 +303,59 @@ assert.equal(store.require(abandoned.taskId).state, "failed");
 assert.equal(store.require(abandoned.taskId).stateReason, "operator reset");
 assert.throws(() => store.abandon(abandoned.taskId), /terminal task/);
 
+// L-2: setBaseEvidence is write-once; clearBaseEvidence then set takes the new ref
+{
+	const once = new TaskStore();
+	const task = once.create(createTaskSpec({ objective: "base once", cwd }, "T-20260905-base"));
+	const first = {
+		cwd,
+		taskId: task.taskId,
+		workerRunId: "run-a",
+		finalGitRef: "aaaaaaa",
+		gitAvailable: true,
+		generatedAt: "2026-09-05T00:00:00.000Z",
+	};
+	const second = { ...first, workerRunId: "run-b", finalGitRef: "bbbbbbb" };
+	once.setBaseEvidence(task.taskId, first);
+	once.setBaseEvidence(task.taskId, second);
+	assert.equal(once.require(task.taskId).baseEvidence?.finalGitRef, "aaaaaaa");
+	once.clearBaseEvidence(task.taskId);
+	assert.equal(once.require(task.taskId).baseEvidence, undefined);
+	once.setBaseEvidence(task.taskId, second);
+	assert.equal(once.require(task.taskId).baseEvidence?.finalGitRef, "bbbbbbb");
+}
+
+// L-2: abandon clears baseEvidence
+{
+	const gone = new TaskStore();
+	const task = gone.create(createTaskSpec({ objective: "abandon base", cwd }, "T-20260905-ab"));
+	gone.transition(task.taskId, "executing");
+	gone.setBaseEvidence(task.taskId, {
+		cwd,
+		taskId: task.taskId,
+		workerRunId: "run-ab",
+		finalGitRef: "ccccccc",
+		gitAvailable: true,
+		generatedAt: "2026-09-05T00:00:00.000Z",
+	});
+	gone.abandon(task.taskId, "operator reset");
+	assert.equal(gone.require(task.taskId).baseEvidence, undefined);
+}
+
+// L-5: get/require resolve aliases; create accepts an optional alias
+{
+	const aliased = new TaskStore({ now: () => new Date(2026, 8, 5) });
+	const spec = createTaskSpec({ objective: "alias", cwd }, "T-20260905-001");
+	const task = aliased.create(spec, "T-20260220-001");
+	assert.equal(task.taskId, "T-20260905-001");
+	assert.deepEqual(task.aliases, ["T-20260220-001"]);
+	assert.equal(aliased.get("T-20260220-001")?.taskId, "T-20260905-001");
+	assert.equal(aliased.require("T-20260220-001").taskId, "T-20260905-001");
+	assert.equal(aliased.now().getFullYear(), 2026);
+	assert.equal(aliased.now().getMonth(), 8);
+	assert.equal(aliased.now().getDate(), 5);
+}
+
 {
 	const store = new TaskStore();
 	const spec = createTaskSpec({ objective: "bind", cwd, role: "explorer" }, "T-bind-001");

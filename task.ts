@@ -205,11 +205,17 @@ export interface TaskRecord {
 	reviewRound: number;
 	reviewMode: ReviewMode;
 	reports: WorkerReport[];
+	/** Validator (oracle) reports recorded against this Task; not Worker reports. */
+	validatorReports: WorkerReport[];
 	reviews: ReviewResult[];
 	overrides: ReviewOverride[];
+	/** Model-chosen ids that still resolve to this Task. */
+	aliases: string[];
 	reportCorrections: number;
 	/** Workspace sample taken right before the worker was dispatched. */
 	baseEvidence?: EvidenceRef;
+	/** `reports.length` when baseEvidence was sampled; a later recorded report ends that round. */
+	baseReportCount?: number;
 	/** Result of the most recent Root A-to-C evidence comparison. */
 	lastComparison?: EvidenceComparison;
 	/** Reason for an operator-forced terminal state, when applicable. */
@@ -226,11 +232,15 @@ export interface TaskStoreOptions {
 
 export class TaskStore {
 	private readonly tasks = new Map<string, TaskRecord>();
-	private readonly now: () => Date;
+	private readonly clock: () => Date;
 	private sequence = 0;
 
 	constructor(options: TaskStoreOptions = {}) {
-		this.now = options.now ?? (() => new Date());
+		this.clock = options.now ?? (() => new Date());
+	}
+
+	now(): Date {
+		return this.clock();
 	}
 
 	nextTaskId(): string {
@@ -238,10 +248,11 @@ export class TaskStore {
 		return createTaskId(this.now(), this.sequence);
 	}
 
-	create(spec?: TaskSpec): TaskRecord {
+	create(spec?: TaskSpec, alias?: string): TaskRecord {
 		const taskId = spec?.taskId?.trim() || this.nextTaskId();
 		if (this.tasks.has(taskId)) return this.tasks.get(taskId) as TaskRecord;
 		const timestamp = this.now().toISOString();
+		const aliases = alias && alias !== taskId ? [alias] : [];
 		const record: TaskRecord = {
 			taskId,
 			...(spec ? { spec } : {}),
@@ -251,8 +262,10 @@ export class TaskStore {
 			reviewRound: 0,
 			reviewMode: "root",
 			reports: [],
+			validatorReports: [],
 			reviews: [],
 			overrides: [],
+			aliases,
 			reportCorrections: 0,
 			usage: emptyTaskUsage(),
 			createdAt: timestamp,
@@ -263,11 +276,16 @@ export class TaskStore {
 	}
 
 	get(taskId: string): TaskRecord | undefined {
-		return this.tasks.get(taskId);
+		const direct = this.tasks.get(taskId);
+		if (direct) return direct;
+		for (const task of this.tasks.values()) {
+			if (task.aliases.includes(taskId)) return task;
+		}
+		return undefined;
 	}
 
 	require(taskId: string): TaskRecord {
-		const record = this.tasks.get(taskId);
+		const record = this.get(taskId);
 		if (!record) throw new Error(`unknown task: ${taskId}`);
 		return record;
 	}
@@ -314,8 +332,28 @@ export class TaskStore {
 
 	setBaseEvidence(taskId: string, evidence: EvidenceRef): TaskRecord {
 		const record = this.require(taskId);
+		if (record.baseEvidence) return record;
 		record.baseEvidence = evidence;
+		record.baseReportCount = record.reports.length;
 		return this.touch(record);
+	}
+
+	clearBaseEvidence(taskId: string): TaskRecord {
+		const record = this.require(taskId);
+		delete record.baseEvidence;
+		delete record.baseReportCount;
+		return this.touch(record);
+	}
+
+	/**
+	 * L-2 — the base sample belongs to a review round. It is kept across
+	 * corrections and re-binds (no report recorded since it was taken) and
+	 * re-sampled only once a WorkerReport has been recorded against it.
+	 */
+	baseRoundEnded(taskId: string): boolean {
+		const record = this.require(taskId);
+		return record.baseEvidence !== undefined
+			&& record.reports.length > (record.baseReportCount ?? 0);
 	}
 
 	setLastComparison(taskId: string, comparison: EvidenceComparison): TaskRecord {
@@ -327,6 +365,12 @@ export class TaskStore {
 	recordReport(taskId: string, report: WorkerReport): TaskRecord {
 		const record = this.require(taskId);
 		record.reports.push(report);
+		return this.touch(record);
+	}
+
+	recordValidatorReport(taskId: string, report: WorkerReport): TaskRecord {
+		const record = this.require(taskId);
+		record.validatorReports.push(report);
 		return this.touch(record);
 	}
 
@@ -382,6 +426,8 @@ export class TaskStore {
 		}
 		this.transition(taskId, "failed");
 		record.stateReason = reason;
+		delete record.baseEvidence;
+		delete record.baseReportCount;
 		return this.touch(record);
 	}
 }

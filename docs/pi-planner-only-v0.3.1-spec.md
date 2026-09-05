@@ -171,11 +171,19 @@ the PASS-boundary A-to-C delta is empty and every declared path is reported as
   the record has none, and otherwise returns without change. New `TaskStore.clearBaseEvidence(taskId)`
   exists for the reopen path below.
 - `beginDelegation` samples and sets the base only when `task.baseEvidence` is undefined, i.e.
-  on the first writer delegation of a Task's life. Corrections, RF-7 re-binds, re-delegations
-  after `failed`, and re-delegations after `blocked` keep the original sample. Reviewer,
-  validator (L-3), and explorer delegations never sample.
-- The base is cleared, so that the next delegation re-samples, in exactly one case: the operator
-  abandons the Task (`store.abandon`). A new Task always starts without a base.
+  on the first writer delegation of a review round. Corrections, RF-7 re-binds, re-delegations
+  after `failed`, and re-delegations after `blocked` keep the original sample as long as no
+  WorkerReport has been recorded against it. Reviewer, validator (L-3), and explorer delegations
+  never sample.
+- *(Annotation 2026-09-05, R13 review.)* The base belongs to a **review round**, not to the Task's
+  whole life. `setBaseEvidence` records `baseReportCount = reports.length`; when a later delegation
+  finds `reports.length > baseReportCount` (a report was recorded and judged against this base),
+  `beginDelegation` clears the base and re-samples. Otherwise a genuine second worker round after
+  `changes_requested` would see the first round's paths as `in-scope paths changed after the
+  report` and go stale. Report-only corrections never record a report, so the T3 case still keeps
+  its A.
+- The base is also cleared when the operator abandons the Task (`store.abandon`). A new Task
+  always starts without a base.
 - `describeComparison` output for a comparison whose base is older than the latest report gains no
   new wording; the existing `fresh`/`stale` labels apply as before. The decision block's evidence
   line shows the base's `finalGitRef` short SHA once (`base <sha7>`), so Root and the operator can
@@ -190,6 +198,9 @@ the PASS-boundary A-to-C delta is empty and every declared path is reported as
   both paths and no `over-reported` reason.
 - `setBaseEvidence` twice on the same Task keeps the first ref; `clearBaseEvidence` then
   `setBaseEvidence` takes the new one.
+- Second worker round: report recorded (base A1), `request_changes`, new worker delegation with
+  the tree now at A2 → the new base is A2 and the round-2 report declaring only its own paths is
+  attributed without an `in-scope paths changed` reason. *(Added at R13 review.)*
 - `abandon` clears `baseEvidence`; a re-bind after `failed` (RF-6 path) does not.
 - The evidence line in the decision text contains `base <sha7>`.
 

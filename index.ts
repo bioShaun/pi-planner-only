@@ -69,6 +69,7 @@ taskId:
    "validation":{"required":true,"commands":[]},
    "expectedEvidence":{"changedFiles":true,"tests":true},
    "stopConditions":[]}
+The extension may replace the id; use the id from the delegation result afterwards.
 
 Every worker must return a WorkerReport containing:
 - version: ${WORKER_REPORT_VERSION}

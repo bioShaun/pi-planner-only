@@ -194,6 +194,27 @@ assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root
 	assert.deepEqual(done.namedTaskIds, ["T-20260905-904"]);
 }
 
+// L-5: RF-7 named-id scanning resolves aliases through lookup
+{
+	const live = {
+		taskId: "T-20260905-001",
+		state: "changes_requested",
+		cwd: "/repo",
+		aliases: ["T-20260220-001"],
+		spec: { taskId: "T-20260905-001", role: "worker", objective: "implement", cwd: "/repo" },
+	};
+	const lookup = (id) => (id === live.taskId || live.aliases.includes(id) ? live : undefined);
+	const correction = {
+		agent: "worker",
+		task: "Do not modify files. Return only a valid WorkerReport for task T-20260220-001.",
+	};
+	const bound = resolveDelegationTarget(correction, lookup);
+	assert.equal(bound.role, "worker");
+	assert.equal(bound.task.taskId, "T-20260905-001");
+	assert.equal(bound.taskId, "T-20260220-001");
+	assert.deepEqual(bound.namedTaskIds, ["T-20260220-001"]);
+}
+
 {
 	const two = {
 		agent: "worker",

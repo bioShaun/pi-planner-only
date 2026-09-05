@@ -339,14 +339,19 @@ export function normalizeWorkerReport(
 /** The task identity a Worker result must claim: the delegated task and run. */
 export interface WorkerReportIdentity {
 	taskId: string;
+	aliases?: readonly string[];
 	workerRunId?: string;
+}
+
+function identityMatches(value: string, expected: WorkerReportIdentity): boolean {
+	return value === expected.taskId || (expected.aliases ?? []).includes(value);
 }
 
 /**
  * §P0-1 — a schema-valid WorkerReport may still belong to a different task.
  *
  * Identity is checked against the delegation, not the report itself:
- * `taskId`, `evidence.taskId` must match the delegated task, and
+ * `taskId`, `evidence.taskId` must match the delegated task or any alias, and
  * `evidence.workerRunId` must match the subagent call when both sides carry one.
  */
 export function validateWorkerReportIdentity(
@@ -354,12 +359,12 @@ export function validateWorkerReportIdentity(
 	expected: WorkerReportIdentity,
 ): string[] {
 	const errors: string[] = [];
-	if (report.taskId !== expected.taskId) {
+	if (!identityMatches(report.taskId, expected)) {
 		errors.push(
 			`WorkerReport taskId mismatch: expected ${expected.taskId}, got ${report.taskId}`,
 		);
 	}
-	if (report.evidence.taskId !== expected.taskId) {
+	if (!identityMatches(report.evidence.taskId, expected)) {
 		errors.push(
 			`WorkerReport evidence.taskId mismatch: expected ${expected.taskId}, got ${report.evidence.taskId}`,
 		);

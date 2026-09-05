@@ -12,10 +12,13 @@ import {
 } from "./evidence.ts";
 import type { GitRunner } from "./git-audit.ts";
 import {
+	inferRoleFromAgent,
+	delegationPrompt,
 	prepareRoleDelegation,
+	promptTaskIds,
 	resolveDelegationTarget,
 } from "./roles.ts";
-import type { PrepareRoleDelegationOptions } from "./roles.ts";
+import type { DelegationTarget, PrepareRoleDelegationOptions } from "./roles.ts";
 import {
 	ASYNC_PREVIEW_TRUNCATED_REASON,
 	PREVIEW_TRUNCATED_MARKER,
@@ -25,11 +28,13 @@ import {
 import {
 	compactWorkerReport,
 	extractWorkerReport,
+	renderValidationResults,
 	renderWorkerReport,
 	validateWorkerReportIdentity,
 } from "./report.ts";
 import {
 	advanceReview,
+	extractReviewRequest,
 	extractReviewResult,
 	reviewerPrompt,
 	summarizeFindings,
@@ -39,6 +44,7 @@ import type { ReviewDecision } from "./review.ts";
 import {
 	TaskStore,
 	createTaskSpec,
+	extractTaskSpec,
 	findWriterConflict,
 	isExecutingStale,
 } from "./task.ts";
@@ -63,6 +69,35 @@ import type {
 
 /** Worker output kept as a fallback when a report cannot be parsed at all. */
 const RAW_OUTPUT_FALLBACK_CHARS = 4000;
+const TASK_ID_SHAPE = /^T-(\d{8})-\d{3}$/;
+
+function localDateStamp(now: Date): string {
+	const year = String(now.getFullYear());
+	const month = String(now.getMonth() + 1).padStart(2, "0");
+	const day = String(now.getDate()).padStart(2, "0");
+	return `${year}${month}${day}`;
+}
+
+function shouldReplaceTaskId(taskId: string, now: Date): boolean {
+	const match = TASK_ID_SHAPE.exec(taskId);
+	if (!match) return true;
+	return match[1] !== localDateStamp(now);
+}
+
+function rewriteReportToCanonical(
+	report: WorkerReport,
+	task: TaskRecord,
+	repairs: string[],
+): WorkerReport {
+	if (report.taskId === task.taskId && report.evidence.taskId === task.taskId) return report;
+	const from = report.taskId;
+	repairs.push(`taskId ${from} → ${task.taskId}`);
+	return {
+		...report,
+		taskId: task.taskId,
+		evidence: { ...report.evidence, taskId: task.taskId },
+	};
+}
 
 function missingBaseEvidence(task: TaskRecord, workerRunId: string): EvidenceRef {
 	return {
@@ -370,6 +405,47 @@ export class PlannerOrchestrator {
 			};
 		}
 
+		// A Validator is an invocation over an existing Task: it must not create,
+		// rebind, transition, or sample.
+		if (target?.role === "validator" || inferRoleFromAgent(inputAgent(input)) === "validator") {
+			const reviewed = this.resolveValidatorReviewedTask(input, cwd, target);
+			if (!reviewed) {
+				const prompt = delegationPrompt(input);
+				const specId = (target?.spec ?? extractTaskSpec(prompt))?.taskId;
+				const named = promptTaskIds(prompt);
+				const placeholder = specId
+					?? (named.length === 1 ? named[0] : undefined)
+					?? `unbound-validator-${event.toolCallId}`;
+				this.delegations.set(event.toolCallId, {
+					taskId: placeholder,
+					kind: "validator",
+					asyncRequested: isAsyncInput(input),
+					...(inputAgent(input) ? { agent: inputAgent(input) } : {}),
+				});
+				return {
+					warnings: [
+						"Planner-only: validator delegation names no Task under review; delegate the worker first, then re-delegate validation naming its taskId.",
+					],
+				};
+			}
+			const specId = (target?.spec ?? extractTaskSpec(delegationPrompt(input)))?.taskId;
+			if (specId && specId !== reviewed.taskId) {
+				warnings.push(
+					`Planner-only: validator TaskSpec id ${specId} ignored; validating task ${reviewed.taskId}`,
+				);
+			}
+			this.delegations.set(event.toolCallId, {
+				taskId: reviewed.taskId,
+				kind: "validator",
+				asyncRequested: isAsyncInput(input),
+				...(inputAgent(input) ? { agent: inputAgent(input) } : {}),
+			});
+			return {
+				task: reviewed,
+				...(warnings.length ? { warnings } : {}),
+			};
+		}
+
 		if (!spec) {
 			const detail = `role ${role} delegated without an embedded TaskSpec; task identity, scope, acceptance criteria, and the WorkerReport contract are unverified.`;
 			if (role === "worker" && this.structuredDelegationMode === "strict") {
@@ -390,8 +466,24 @@ export class PlannerOrchestrator {
 
 		let task: TaskRecord;
 		if (spec) {
-			task = this.store.get(spec.taskId) ?? this.store.create(spec);
-			this.store.bindSpec(task.taskId, spec);
+			const existing = this.store.get(spec.taskId);
+			if (existing) {
+				task = existing;
+				this.store.bindSpec(
+					existing.taskId,
+					spec.taskId === existing.taskId ? spec : { ...spec, taskId: existing.taskId },
+				);
+			} else if (shouldReplaceTaskId(spec.taskId, this.store.now())) {
+				const generated = this.store.nextTaskId();
+				const storedSpec = { ...spec, taskId: generated };
+				task = this.store.create(storedSpec, spec.taskId);
+				warnings.push(
+					`Planner-only: TaskSpec id ${spec.taskId} replaced by ${generated} (generated); ${spec.taskId} is kept as an alias`,
+				);
+			} else {
+				task = this.store.create(spec);
+				this.store.bindSpec(task.taskId, spec);
+			}
 		} else {
 			const named = target?.namedTaskIds ?? [];
 			const liveNamed = target?.task && canRebindNamedTask(target.task.state)
@@ -450,12 +542,21 @@ export class PlannerOrchestrator {
 			this.store.transition(task.taskId, "executing");
 		}
 
-		const base: EvidenceRef = await captureEvidence(this.gitRunner, {
-			cwd: task.cwd,
-			taskId: task.taskId,
-			workerRunId: event.toolCallId,
-		});
-		this.store.setBaseEvidence(task.taskId, base);
+		task = this.store.require(task.taskId);
+		if (role !== "explorer" && this.store.baseRoundEnded(task.taskId)) {
+			// A report was recorded against the current base: that review round
+			// is over and the next one gets its own A.
+			this.store.clearBaseEvidence(task.taskId);
+			task = this.store.require(task.taskId);
+		}
+		if (role !== "explorer" && !task.baseEvidence) {
+			const base: EvidenceRef = await captureEvidence(this.gitRunner, {
+				cwd: task.cwd,
+				taskId: task.taskId,
+				workerRunId: event.toolCallId,
+			});
+			this.store.setBaseEvidence(task.taskId, base);
+		}
 		this.delegations.set(event.toolCallId, {
 			taskId: task.taskId,
 			kind: role,
@@ -466,6 +567,39 @@ export class PlannerOrchestrator {
 			task: this.store.require(task.taskId),
 			...(warnings.length ? { warnings } : {}),
 		};
+	}
+
+	/**
+	 * §5 — first match wins: ReviewRequest.taskId; an embedded TaskSpec whose
+	 * id (or alias) is an existing Task; exactly one distinct known Task named
+	 * in the prompt; otherwise the active Task in this cwd with a report.
+	 */
+	private resolveValidatorReviewedTask(
+		input: unknown,
+		cwd: string,
+		target: DelegationTarget | undefined,
+	): TaskRecord | undefined {
+		const prompt = delegationPrompt(input);
+		const request = extractReviewRequest(prompt);
+		const spec = target?.spec ?? extractTaskSpec(prompt);
+		if (request?.taskId) return this.store.get(request.taskId);
+		if (spec?.taskId) {
+			const existing = this.store.get(spec.taskId);
+			if (existing) return existing;
+		}
+		const unique: TaskRecord[] = [];
+		const seen = new Set<string>();
+		for (const id of promptTaskIds(prompt)) {
+			const found = this.store.get(id);
+			if (found && !seen.has(found.taskId)) {
+				seen.add(found.taskId);
+				unique.push(found);
+			}
+		}
+		if (unique.length === 1) return unique[0] as TaskRecord;
+		const active = this.store.active();
+		if (active && active.cwd === cwd && active.reports.length >= 1) return active;
+		return undefined;
 	}
 
 	renderDecisionBlock(
@@ -480,7 +614,10 @@ export class PlannerOrchestrator {
 		lines.push(`round: ${current.reviewRound}/${MAX_REVIEW_ROUNDS}`);
 		lines.push(`review mode: ${task.reviewMode}`);
 		lines.push(`decision: ${decision.action}`);
-		if (evidence) lines.push(`evidence: ${evidence}`);
+		if (evidence) {
+			const sha7 = current.baseEvidence?.finalGitRef?.slice(0, 7);
+			lines.push(`evidence: ${evidence}${sha7 ? ` base ${sha7}` : ""}`);
+		}
 		lines.push(`reason: ${decision.reason}`);
 		lines.push("");
 		lines.push(...decision.guidance);
@@ -498,6 +635,7 @@ export class PlannerOrchestrator {
 			`Evidence: ${report ? (task.lastComparison ? describeComparison(task.lastComparison) : "not compared") : "no report yet"}`,
 			`Changed files: ${report?.changedFiles.length ?? 0}`,
 		];
+		if (task.aliases.length > 0) lines.push(`aliases: ${task.aliases.join(", ")}`);
 		if (task.stateReason) lines.push(`State reason: ${task.stateReason}`);
 		if (task.reviews.length > 0) {
 			lines.push(`Reviews: ${task.reviews.map((review) => `${review.verdict} (${review.source ?? "reviewer"})`).join(", ")}`);
@@ -668,7 +806,9 @@ export class PlannerOrchestrator {
 
 		return delegation.kind === "reviewer"
 			? this.handleReviewerResult(task, text)
-			: this.handleWorkerResult(task, text, event.toolCallId);
+			: delegation.kind === "validator"
+				? this.handleValidatorResult(task, text)
+				: this.handleWorkerResult(task, text, event.toolCallId);
 	}
 
 	async handleAsyncNotify(
@@ -691,6 +831,10 @@ export class PlannerOrchestrator {
 				outcome = await this.handleWorkerResult(task, chosen, found.toolCallId, {
 					forceReportError: ASYNC_PREVIEW_TRUNCATED_REASON,
 				});
+				continue;
+			}
+			if (found.record.kind === "validator") {
+				outcome = await this.handleValidatorResult(task, chosen);
 				continue;
 			}
 			outcome = await this.handleWorkerResult(task, chosen, found.toolCallId);
@@ -821,10 +965,12 @@ export class PlannerOrchestrator {
 			// §P0-1 — a valid report for the wrong task is not a report.
 			identityErrors = validateWorkerReportIdentity(extracted.report, {
 				taskId: task.taskId,
+				...(task.aliases.length > 0 ? { aliases: task.aliases } : {}),
 				...(toolCallId ? { workerRunId: toolCallId } : {}),
 			});
 			if (identityErrors.length === 0) {
-				const result = compactWorkerReport(extracted.report, MAX_WORKER_REPORT_CHARS);
+				const canonical = rewriteReportToCanonical(extracted.report, task, extracted.repairs);
+				const result = compactWorkerReport(canonical, MAX_WORKER_REPORT_CHARS);
 				report = result.report;
 				compacted = result.compacted;
 				this.store.recordReport(task.taskId, report);
@@ -907,6 +1053,57 @@ export class PlannerOrchestrator {
 					"",
 					"Reviewer prompt template for an isolated fresh review:",
 					reviewerPrompt(task.taskId),
+				].join("\n"),
+			}],
+		};
+	}
+
+	private handleValidatorResult(
+		task: TaskRecord,
+		text: string,
+	): { content: { type: "text"; text: string }[] } {
+		const extracted = extractWorkerReport(text, { expectedTaskId: task.taskId });
+		let report: WorkerReport | undefined;
+		if (extracted.report) {
+			const identityErrors = validateWorkerReportIdentity(extracted.report, {
+				taskId: task.taskId,
+				...(task.aliases.length > 0 ? { aliases: task.aliases } : {}),
+			});
+			if (identityErrors.length === 0) {
+				report = rewriteReportToCanonical(extracted.report, task, extracted.repairs);
+				this.store.recordValidatorReport(task.taskId, report);
+			}
+		}
+
+		if (!report) {
+			return {
+				content: [{
+					type: "text",
+					text: [
+						`[PLANNER-ONLY] Validator output for task ${task.taskId} is not a WorkerReport; judge it directly.`,
+						truncate(text, RAW_OUTPUT_FALLBACK_CHARS),
+					].join("\n"),
+				}],
+			};
+		}
+
+		const passed = report.validation.filter((item) => item.status === "passed").length;
+		const failed = report.validation.filter((item) => item.status === "failed").length;
+		const notRun = report.validation.filter((item) => item.status === "not-run").length;
+		const latest = this.store.require(task.taskId);
+		return {
+			content: [{
+				type: "text",
+				text: [
+					`[PLANNER-ONLY] Validator result for task ${task.taskId} recorded: ${report.validation.length} validation entries, ${passed} passed, ${failed} failed, ${notRun} not-run.`,
+					...renderValidationResults(report.validation),
+					"",
+					"Verify task identity, evidence freshness, and acceptance criteria.",
+					"Inspect the changed files and git state with read/grep/git_audit.",
+					"Record the verdict with the planner_verdict tool: {verdict, summary, findings?}.",
+					latest.reviewMode === "fresh"
+						? "A fresh reviewer is expected: delegate the review first; call planner_verdict only to arbitrate its result."
+						: "Root review is active; record the verdict yourself with planner_verdict.",
 				].join("\n"),
 			}],
 		};
