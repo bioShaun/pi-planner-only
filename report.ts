@@ -354,6 +354,17 @@ export function normalizeWorkerReport(
 		repairValidationEntries(report.validation, repairs);
 	}
 
+	if (typeof report.evidence === "string") {
+		// Root samples its own evidence; a prose "evidence" carries nothing the
+		// comparison can use, so keep the text as a note and rebuild the object.
+		const prose = report.evidence.trim();
+		if (prose) {
+			const notes = Array.isArray(report.notes) ? report.notes : [];
+			report.notes = [...notes, `evidence (worker text): ${prose}`];
+		}
+		delete report.evidence;
+		repairs.push(`evidence string → { taskId } (text kept in notes)`);
+	}
 	if (report.evidence === undefined) {
 		const taskId = isNonEmptyString(report.taskId) ? report.taskId : "";
 		report.evidence = { taskId };

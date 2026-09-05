@@ -130,14 +130,15 @@ one. Nothing is recorded in the Task for a report that still fails validation af
 | `validation[].summary` | missing | `command` if present, else the raw `type` text, else `"(no summary)"` |
 | `validation[].exitCode` | numeric string | parse to integer |
 | `evidence` | missing | `{ taskId: <taskId> }` |
+| `evidence` | a string | `{ taskId: <taskId> }`; the trimmed text is appended to `notes` as `evidence (worker text): …`; note `evidence string → { taskId } (text kept in notes)`. *(Added 2026-09-05 after re-measurement T5: the second strike was a prose `evidence`, which cost a `blocked` ending and a re-delegation.)* |
 | `evidence.taskId` | missing | copy from `taskId` |
 | `evidence.taskId` | present and `!== taskId` | **no repair** (unrepairable: two different claims of identity); existing rejection stands |
 | `evidence.gitStatusHash` | anything but a 16-hex Root digest | drop the field; note `evidence.gitStatusHash "<raw>" dropped (not a Root hash)`. *(Added 2026-09-05 after re-measurement T4: the worker wrote a sentence there and every round went `working tree changed since the report`.)* |
 | `evidence.workerRunId` | missing, or differs from the delegation's tool-call id (`context.expectedWorkerRunId`) | set to the delegation's id; note `evidence.workerRunId "<raw>" → <id> (worker cannot know the run id)`. The worker structurally cannot know the id minted at launch, so the P0-1 run-id check only ever fired falsely. *(same addendum)* |
 
 Not repaired, by design: missing `taskId` with no `expectedTaskId`, unknown `status`, a
-`validation` entry that is not an object, `evidence` present but not an object. These stay
-rejections with the existing text.
+`validation` entry that is not an object, `evidence` present but neither an object nor a string
+(e.g. an array or a number). These stay rejections with the existing text.
 
 `compactWorkerReport` and rendering are unchanged; they receive the repaired report.
 

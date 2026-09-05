@@ -552,4 +552,22 @@ function assertRepaired(raw, expectedPatch, notePattern, context) {
 	assert.deepEqual(none.repairs, []);
 }
 
+// R15/T5 finding: a prose `evidence` string is rebuilt as { taskId } and kept as a note
+{
+	const raw = {
+		version: 1, taskId: "T-1", status: "completed", summary: "", changedFiles: [], validation: [],
+		risks: [], unresolved: [],
+		evidence: "HEAD 3c0bfa0, two files modified, nothing staged",
+	};
+	const { report, repairs } = normalizeWorkerReport(raw, { expectedTaskId: "T-1", expectedWorkerRunId: "call-1" });
+	assert.deepEqual(report.evidence, { taskId: "T-1", workerRunId: "call-1" });
+	assert.deepEqual(report.notes, ["evidence (worker text): HEAD 3c0bfa0, two files modified, nothing staged"]);
+	assert.ok(repairs.includes("evidence string → { taskId } (text kept in notes)"));
+	assert.deepEqual(validateWorkerReport(report), []);
+	// An empty string leaves no note.
+	const empty = normalizeWorkerReport({ ...raw, evidence: "  " }, { expectedTaskId: "T-1" });
+	assert.equal(empty.report.notes, undefined);
+	assert.deepEqual(empty.report.evidence, { taskId: "T-1" });
+}
+
 console.log("planner-only report: PASS");
