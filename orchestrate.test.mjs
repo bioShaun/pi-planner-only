@@ -1522,4 +1522,20 @@ function reportT3(taskId, toolCallId) {
 	assert.equal(task.state, "reviewing");
 }
 
+// renderTaskStatus lists validator reports when present, omits the line when absent
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260905-235";
+	await delegateWorker(orch, "call-validator-status", taskId);
+	const withoutValidator = orch.renderTaskStatus(orch.store.require(taskId));
+	assert.doesNotMatch(withoutValidator, /Validator reports:/);
+
+	await orch.store.recordValidatorReport(taskId, reportFor(taskId, "call-validator-status"));
+	const withValidator = orch.renderTaskStatus(orch.store.require(taskId));
+	assert.match(withValidator, /Validator reports: 1/);
+	const lines = withValidator.split("\n");
+	const changedIndex = lines.findIndex((line) => line.startsWith("Changed files:"));
+	assert.equal(lines[changedIndex + 1], "Validator reports: 1");
+}
+
 console.log("planner-only orchestration: PASS");

@@ -649,6 +649,7 @@ export class PlannerOrchestrator {
 			...(isExecutingStale(task) ? [`Lock: stale (executing for over ${Math.round(EXECUTING_STALE_MS / 60000)} minutes)`] : []),
 			`Evidence: ${report ? (task.lastComparison ? describeComparison(task.lastComparison) : "not compared") : "no report yet"}`,
 			`Changed files: ${report?.changedFiles.length ?? 0}`,
+			...(task.validatorReports.length > 0 ? [`Validator reports: ${task.validatorReports.length}`] : []),
 		];
 		if (task.aliases.length > 0) lines.push(`aliases: ${task.aliases.join(", ")}`);
 		if (task.stateReason) lines.push(`State reason: ${task.stateReason}`);
