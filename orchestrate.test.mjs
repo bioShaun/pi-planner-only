@@ -838,6 +838,36 @@ function truncatedPreview() {
 	assert.equal(orch.store.list().length, 1);
 }
 
+// Explorer delegation without a TaskSpec binds to the named live Task and
+// emits a STANDALONE attachment warning: explorers skip the "without an
+// embedded TaskSpec" base warning, so there is no warning to append the
+// suffix to.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, structuredDelegationMode: "warn" });
+	const taskId = "T-20260905-913";
+	await delegateWorker(orch, "call-913", taskId);
+	const before = orch.store.list().length;
+	const outcome = await orch.beginDelegation(
+		{
+			toolCallId: "call-913-explore",
+			input: { agent: "explorer", task: `Investigate task ${taskId} and report findings.` },
+		},
+		BASE,
+	);
+	assert.equal(outcome.task.taskId, taskId);
+	assert.ok(
+		(outcome.warnings ?? []).some((warning) =>
+			warning === `Planner-only: attached to task ${taskId} named in the prompt`,
+		),
+		outcome.warnings?.join(" | "),
+	);
+	assert.ok(
+		!(outcome.warnings ?? []).some((warning) => /without an embedded TaskSpec/.test(warning)),
+		outcome.warnings?.join(" | "),
+	);
+	assert.equal(orch.store.list().length, before);
+}
+
 {
 	const orch = new PlannerOrchestrator({ gitRunner, structuredDelegationMode: "warn" });
 	const outcome = await orch.beginDelegation(

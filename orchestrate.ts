@@ -399,8 +399,12 @@ export class PlannerOrchestrator {
 				: undefined;
 			if (liveNamed) {
 				task = liveNamed;
+				// Roles with no base warning (e.g. explorer) would silently lose
+				// the attachment notice, so emit it standalone in that case.
 				if (warnings.length > 0) {
 					warnings[warnings.length - 1] += `; attached to task ${liveNamed.taskId} named in the prompt`;
+				} else {
+					warnings.push(`Planner-only: attached to task ${liveNamed.taskId} named in the prompt`);
 				}
 			} else {
 				const active = this.store.active();
@@ -413,6 +417,8 @@ export class PlannerOrchestrator {
 					task = active;
 					if (warnings.length > 0) {
 						warnings[warnings.length - 1] += `; attached to active task ${active.taskId}`;
+					} else {
+						warnings.push(`Planner-only: attached to active task ${active.taskId}`);
 					}
 				} else {
 					task = this.store.create(createTaskSpec({

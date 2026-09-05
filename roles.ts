@@ -35,6 +35,7 @@ export const ROLE_AGENTS: Record<TaskRole, string | undefined> = {
 export const MUTATING_TOOLS = ["edit", "write", "bash"] as const;
 
 const AGENT_ROLES: Record<string, TaskRole> = {
+	explorer: "explorer",
 	reviewer: "reviewer",
 	oracle: "validator",
 	worker: "worker",
