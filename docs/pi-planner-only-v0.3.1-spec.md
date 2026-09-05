@@ -112,7 +112,7 @@ one. Nothing is recorded in the Task for a report that still fails validation af
 
 | Field | Accepted input | Repair |
 |---|---|---|
-| `version` | `1`, `"1"`, `1.0`, `"1.0"`, missing | set to `1`; note `version "<raw>" → 1` when not already the number `1` |
+| `version` | `1`, `"1"`, `1.0`, `"1.0"`, missing | set to `1`; note `version "<raw>" → 1` when not already the number `1` (`version missing → 1` when absent) |
 | `taskId` | missing or empty, `context.expectedTaskId` given | copy from `evidence.taskId` if present, else from `expectedTaskId`; note it |
 | `status` | `done`, `success`, `succeeded`, `complete`, `ok` (case-insensitive, trimmed) | `completed` |
 | `status` | `in_progress`, `in-progress`, `incomplete`, `partially_completed` | `partial` |
@@ -124,7 +124,7 @@ one. Nothing is recorded in the Task for a report that still fails validation af
 | `unresolvedItems`, `unresolved_items`, `changed_files`, `changedPaths` | present while the canonical key is missing | rename to the canonical key |
 | `validation` | missing or `null` | `[]` |
 | `validation` | a single object | wrap in an array |
-| `validation[].type` | free text | map by case-insensitive substring, first match wins: `typecheck`/`tsc`/`type-check`/`types` → `typecheck`; `test`/`spec`/`jest`/`vitest`/`pytest`/`mocha` → `test`; `lint`/`eslint`/`prettier`/`biome` → `lint`; `build`/`compile`/`bundle` → `build`; `manual`/`inspect`/`review` → `manual`; anything else, including missing → `other` |
+| `validation[].type` | free text | map by case-insensitive substring, first match wins: `typecheck`/`tsc`/`type-check`/`types` → `typecheck`; `manual`/`inspect`/`review` → `manual`; `test`/`spec`/`jest`/`vitest`/`pytest`/`mocha` → `test`; `lint`/`eslint`/`prettier`/`biome` → `lint`; `build`/`compile`/`bundle` → `build`; anything else, including missing → `other`. *(Annotation 2026-09-05, R12: the `manual` group was moved ahead of `test` because `inspect` contains `spec`.)* |
 | `validation[].status` | `pass`, `passed`, `ok`, `success`, `green`, `true` → `passed`; `fail`, `failed`, `error`, `red`, `false` → `failed`; `skipped`, `skip`, `not-run`, `not_run`, `not run`, `none`, `n/a` → `not-run` | canonical value |
 | `validation[].status` | missing | `passed` when `exitCode === 0`, `failed` when `exitCode` is a non-zero integer, else `not-run` |
 | `validation[].summary` | missing | `command` if present, else the raw `type` text, else `"(no summary)"` |
@@ -288,7 +288,7 @@ command would have failed the Task rather than reopened it.
 
 - Task `blocked` with one report and fresh evidence: `planner_verdict(pass)` → `completed`, one
   usage line with `completed`.
-- Same but stale evidence: decision is `revalidate`, state is `reviewing`, not `completed`.
+- Same but stale evidence: decision is `revalidate`, state is not `completed` (the existing `revalidate` decision lands in `changes_requested`; annotated 2026-09-05, R12).
 - Task `blocked` with no report: `pass` refused with the "no recorded WorkerReport" text;
   `blocked` verdict accepted.
 - `completed` Task: refused with the new text; assertion that no refusal string returned by

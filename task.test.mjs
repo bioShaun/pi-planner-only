@@ -121,7 +121,7 @@ assert.ok(validateWorkerReport({ ...report, taskId: undefined }).length > 0);
 // WorkerReport extraction
 // --------------------------------------------------------------------------
 
-assert.deepEqual(extractWorkerReport(""), { error: "worker returned no output" });
+assert.deepEqual(extractWorkerReport(""), { error: "worker returned no output", repairs: [] });
 assert.ok(extractWorkerReport("I finished the task").error);
 
 const fenced = `Here is the result:
@@ -204,6 +204,25 @@ assert.equal(canTransition("reviewing", "changes_requested"), true);
 assert.equal(canTransition("changes_requested", "executing"), true);
 assert.equal(canTransition("completed", "executing"), false);
 assert.equal(canTransition("executing", "completed"), false);
+
+// L-4: blocked → reviewing and failed → reviewing
+assert.equal(canTransition("blocked", "reviewing"), true);
+assert.equal(canTransition("failed", "reviewing"), true);
+assert.equal(canTransition("blocked", "executing"), true);
+assert.equal(canTransition("failed", "executing"), true);
+{
+	const hop = new TaskStore();
+	const blocked = hop.create(createTaskSpec({ objective: "blocked hop", cwd }, "T-20260905-hop-b"));
+	hop.transition(blocked.taskId, "executing");
+	hop.transition(blocked.taskId, "blocked");
+	hop.transition(blocked.taskId, "reviewing");
+	assert.equal(hop.require(blocked.taskId).state, "reviewing");
+	const failed = hop.create(createTaskSpec({ objective: "failed hop", cwd }, "T-20260905-hop-f"));
+	hop.transition(failed.taskId, "executing");
+	hop.transition(failed.taskId, "failed");
+	hop.transition(failed.taskId, "reviewing");
+	assert.equal(hop.require(failed.taskId).state, "reviewing");
+}
 
 const store = new TaskStore();
 const task = store.create(spec);

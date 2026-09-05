@@ -49,7 +49,7 @@ import {
 	MAX_REVIEW_ROUNDS,
 	MAX_WORKER_REPORT_CHARS,
 	canRebindNamedTask,
-	isTerminalTaskState,
+	isFinalTaskState,
 } from "./types.ts";
 import type {
 	DelegationKind,
@@ -515,14 +515,14 @@ export class PlannerOrchestrator {
 	 * terminal-state one; the `planner_verdict` tool honours them all.
 	 */
 	rootVerdictRefusal(task: TaskRecord, verdict: ReviewVerdict): string | undefined {
-		if (isTerminalTaskState(task.state)) {
-			return `Task ${task.taskId} is already ${task.state}; use /planner-only task reset to reopen.`;
+		if (task.state === "completed") {
+			return `Task ${task.taskId} is already completed; verdicts are final. Start a new Task with a new TaskSpec for further work.`;
 		}
 		if (verdict !== "blocked" && task.reports.length === 0) {
 			return `Task ${task.taskId} has no recorded WorkerReport; a pass or change request needs a report to judge.`;
 		}
 		if (this.hasPendingDelegation(task.taskId)) {
-			return `Task ${task.taskId} has a worker/reviewer run still pending; wait for its result before recording a verdict.`;
+			return `Task ${task.taskId} has a child run still pending; wait for its result before recording a verdict.`;
 		}
 		if (
 			verdict === "pass" &&
@@ -565,6 +565,10 @@ export class PlannerOrchestrator {
 				rootVerdict: verdict,
 				reason: summary,
 			});
+		}
+
+		if (task.state === "blocked" || task.state === "failed") {
+			this.store.transition(task.taskId, "reviewing");
 		}
 
 		const current = this.store.require(task.taskId);
@@ -619,11 +623,11 @@ export class PlannerOrchestrator {
 		const delegation = this.delegations.get(event.toolCallId);
 		if (!delegation) return;
 		const text = resultText(event);
-		if (event.isError && !extractWorkerReport(text).report) {
+		if (event.isError && !extractWorkerReport(text, { expectedTaskId: delegation.taskId }).report) {
 			this.delegations.delete(event.toolCallId);
 			const task = this.store.get(delegation.taskId);
 			const firstLine = (text.split(/\r?\n/, 1)[0] ?? "").trim();
-			if (task && !isTerminalTaskState(task.state)) {
+			if (task && !isFinalTaskState(task.state)) {
 				this.store.transition(task.taskId, "failed");
 				task.stateReason = `delegation launch failed: ${firstLine}`;
 			}
@@ -807,8 +811,8 @@ export class PlannerOrchestrator {
 		options: { forceReportError?: string } = {},
 	): Promise<{ content: { type: "text"; text: string }[] }> {
 		const extracted = options.forceReportError
-			? { error: options.forceReportError }
-			: extractWorkerReport(text);
+			? { error: options.forceReportError, repairs: [] as string[] }
+			: extractWorkerReport(text, { expectedTaskId: task.taskId });
 		let report: WorkerReport | undefined;
 		let compacted = false;
 		let identityErrors: string[] = [];
@@ -868,6 +872,9 @@ export class PlannerOrchestrator {
 						"",
 						"--- worker output ---",
 						truncate(text, RAW_OUTPUT_FALLBACK_CHARS),
+						...(decision.action === "blocked"
+							? ["Root may still judge the last recorded report and evidence with git_audit and record planner_verdict, or re-delegate with the same TaskSpec."]
+							: []),
 					].join("\n"),
 				}],
 			};
@@ -885,6 +892,9 @@ export class PlannerOrchestrator {
 				type: "text",
 				text: [
 					this.renderDecisionBlock(task, decision, evidenceLabel),
+					...(extracted.repairs.length > 0
+						? [`Report normalised: ${extracted.repairs.join("; ")}`]
+						: []),
 					"",
 					renderWorkerReport(report, {
 						round: latest.reviewRound,

@@ -245,10 +245,18 @@ export interface ReviewOverride {
 	at: string;
 }
 
-export const TERMINAL_TASK_STATES: readonly TaskState[] = ["completed", "blocked", "failed"];
+/** States that remain finished for store.active(), abandon, and usage flush. */
+export const FINAL_TASK_STATES: readonly TaskState[] = ["completed", "blocked", "failed"];
+
+/** Verdict-path terminal: only completed is closed to planner_verdict. */
+export const TERMINAL_TASK_STATES: readonly TaskState[] = ["completed"];
 
 export function isTerminalTaskState(state: TaskState): boolean {
 	return TERMINAL_TASK_STATES.includes(state);
+}
+
+export function isFinalTaskState(state: TaskState): boolean {
+	return FINAL_TASK_STATES.includes(state);
 }
 
 /**

@@ -886,4 +886,167 @@ function truncatedPreview() {
 	));
 }
 
+// --------------------------------------------------------------------------
+// L-1 — lenient WorkerReport normalisation
+// --------------------------------------------------------------------------
+
+function t1BaselineReport(taskId, toolCallId) {
+	return {
+		version: "1",
+		taskId,
+		status: "completed",
+		summary: "Implemented the change.",
+		changedFiles: [{ path: "src/parser.ts", change: "modified" }],
+		unresolvedItems: ["docs later"],
+		validation: [{ command: "npm test", type: "npm test", status: "passed", exitCode: 0, summary: "1 passed" }],
+		evidence: {
+			cwd: `/fixture/${taskId}`,
+			workerRunId: toolCallId,
+			baseGitRef: "abc1234",
+			finalGitRef: "abc1234",
+			gitStatusHash: cleanHash,
+			changedPaths: ["src/parser.ts"],
+			gitAvailable: true,
+			generatedAt: "2026-09-01T10:00:00.000Z",
+		},
+		risks: [],
+	};
+}
+
+// L-1: T1 first-report fixture is accepted in one pass; Task reaches reviewing; decision contains Report normalised:
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	await delegateWorker(orch, "call-l1-t1", "T-20260905-l1a");
+	const outcome = await orch.handleSubagentResult(workerResult("call-l1-t1", t1BaselineReport("T-20260905-l1a", "call-l1-t1")));
+	const text = outcome.content[0].text;
+	assert.match(text, /Report normalised:/);
+	const task = orch.store.require("T-20260905-l1a");
+	assert.equal(task.state, "reviewing");
+	assert.equal(task.reports.length, 1);
+	assert.equal(task.reports[0].version, 1);
+	assert.deepEqual(task.reports[0].changedFiles, ["src/parser.ts"]);
+	assert.deepEqual(task.reports[0].unresolved, ["docs later"]);
+	assert.equal(task.reports[0].validation[0].type, "test");
+	assert.equal(task.reports[0].evidence.taskId, "T-20260905-l1a");
+}
+
+// L-1: evidence.taskId mismatching taskId is still rejected and counts one report correction
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	await delegateWorker(orch, "call-l1-mm", "T-20260905-l1b");
+	const report = {
+		...reportFor("T-20260905-l1b", "call-l1-mm"),
+		evidence: { ...reportFor("T-20260905-l1b", "call-l1-mm").evidence, taskId: "T-OTHER" },
+	};
+	const outcome = await orch.handleSubagentResult(workerResult("call-l1-mm", report));
+	assert.match(outcome.content[0].text, /not a valid WorkerReport|evidence\.taskId must match/);
+	assert.equal(orch.store.require("T-20260905-l1b").reports.length, 0);
+	assert.equal(orch.store.require("T-20260905-l1b").reportCorrections, 1);
+}
+
+// L-1: already-valid report has repairs [] and the decision text has no Report normalised line
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	await delegateWorker(orch, "call-l1-ok", "T-20260905-l1c");
+	const outcome = await orch.handleSubagentResult(workerResult("call-l1-ok", reportFor("T-20260905-l1c", "call-l1-ok")));
+	assert.doesNotMatch(outcome.content[0].text, /Report normalised:/);
+	assert.equal(orch.store.require("T-20260905-l1c").state, "reviewing");
+	assert.equal(orch.store.require("T-20260905-l1c").reports.length, 1);
+}
+
+// --------------------------------------------------------------------------
+// L-4 — Root can close blocked/failed Tasks; refusals never name a slash
+// --------------------------------------------------------------------------
+
+const ROOT_MAY_STILL_JUDGE = "Root may still judge the last recorded report and evidence with git_audit and record planner_verdict, or re-delegate with the same TaskSpec.";
+
+// L-4: Task blocked with one report and fresh evidence: planner_verdict(pass) → completed
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	await delegateWorker(orch, "call-l4-fresh", "T-20260905-l4a");
+	await orch.handleSubagentResult(workerResult("call-l4-fresh", reportFor("T-20260905-l4a", "call-l4-fresh")));
+	const blocked = await orch.recordRootVerdict(orch.store.require("T-20260905-l4a"), "blocked", "stop for now", { source: "root" });
+	assert.equal(blocked.task.state, "blocked");
+	assert.equal(orch.rootVerdictRefusal(orch.store.require("T-20260905-l4a"), "pass"), undefined);
+	const outcome = await orch.recordRootVerdict(orch.store.require("T-20260905-l4a"), "pass", "looks good after all", { source: "root" });
+	assert.equal(outcome.decision.action, "accept");
+	assert.equal(outcome.task.state, "completed");
+}
+
+// L-4: blocked with report but stale evidence: revalidate, not completed
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	await delegateWorker(orch, "call-l4-stale", "T-20260905-l4b");
+	await orch.handleSubagentResult(workerResult("call-l4-stale", reportFor("T-20260905-l4b", "call-l4-stale")));
+	await orch.recordRootVerdict(orch.store.require("T-20260905-l4b"), "blocked", "pause", { source: "root" });
+	gitOverrides.set("rev-parse HEAD", "def5678\n");
+	try {
+		const outcome = await orch.recordRootVerdict(orch.store.require("T-20260905-l4b"), "pass", "accepting late", { source: "root" });
+		assert.equal(outcome.decision.action, "revalidate");
+		assert.notEqual(outcome.task.state, "completed");
+	} finally {
+		gitOverrides.delete("rev-parse HEAD");
+	}
+}
+
+// L-4: blocked with no report: pass refused with no-WorkerReport text; blocked verdict accepted
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	await delegateWorker(orch, "call-l4-nr", "T-20260905-l4c");
+	await orch.handleSubagentResult({
+		toolCallId: "call-l4-nr",
+		toolName: "subagent",
+		content: [{ type: "text", text: "gave up" }],
+	});
+	orch.store.transition("T-20260905-l4c", "blocked");
+	const task = orch.store.require("T-20260905-l4c");
+	assert.equal(task.reports.length, 0);
+	assert.match(orch.rootVerdictRefusal(task, "pass"), /no recorded WorkerReport/);
+	assert.equal(orch.rootVerdictRefusal(task, "blocked"), undefined);
+	const outcome = await orch.recordRootVerdict(task, "blocked", "cannot proceed", { source: "root" });
+	assert.equal(outcome.decision.action, "blocked");
+	assert.equal(outcome.task.state, "blocked");
+}
+
+// L-4: completed Task refused with the new text; no rootVerdictRefusal string contains /planner-only
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	await delegateWorker(orch, "call-l4-done", "T-20260905-l4d");
+	await orch.handleSubagentResult(workerResult("call-l4-done", reportFor("T-20260905-l4d", "call-l4-done")));
+	await orch.recordRootVerdict(orch.store.require("T-20260905-l4d"), "pass", "done", { source: "root" });
+	const completed = orch.store.require("T-20260905-l4d");
+	assert.equal(
+		orch.rootVerdictRefusal(completed, "pass"),
+		"Task T-20260905-l4d is already completed; verdicts are final. Start a new Task with a new TaskSpec for further work.",
+	);
+	const states = ["planning", "executing", "reviewing", "changes_requested", "blocked", "completed", "failed"];
+	const verdicts = ["pass", "request_changes", "blocked"];
+	for (const state of states) {
+		for (const verdict of verdicts) {
+			const probe = { ...completed, state, reports: state === "planning" ? [] : completed.reports };
+			const refusal = orch.rootVerdictRefusal(probe, verdict);
+			if (refusal) assert.doesNotMatch(refusal, /\/planner-only/, `${state} ${verdict}: ${refusal}`);
+		}
+	}
+}
+
+// L-4: exhausted report-corrections text that sends a Task to blocked ends with the Root-may-still-judge sentence
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	await delegateWorker(orch, "call-l4-ex1", "T-20260905-l4e");
+	await orch.handleSubagentResult({
+		toolCallId: "call-l4-ex1",
+		toolName: "subagent",
+		content: [{ type: "text", text: "no report" }],
+	});
+	await delegateWorker(orch, "call-l4-ex2", "T-20260905-l4e");
+	const second = await orch.handleSubagentResult({
+		toolCallId: "call-l4-ex2",
+		toolName: "subagent",
+		content: [{ type: "text", text: "still no report" }],
+	});
+	assert.equal(orch.store.require("T-20260905-l4e").state, "blocked");
+	assert.ok(second.content[0].text.endsWith(ROOT_MAY_STILL_JUDGE), second.content[0].text.slice(-200));
+}
+
 console.log("planner-only orchestration: PASS");

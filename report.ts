@@ -109,6 +109,231 @@ export function isWorkerReport(value: unknown): value is WorkerReport {
 export interface ExtractedReport {
 	report?: WorkerReport;
 	error?: string;
+	repairs: string[];
+}
+
+export interface NormalisedReport {
+	report: unknown;
+	repairs: string[];
+}
+
+const VERSION_ONE_STRINGS = new Set(["1", "1.0"]);
+const STATUS_TO_COMPLETED = new Set(["done", "success", "succeeded", "complete", "ok"]);
+const STATUS_TO_PARTIAL = new Set(["in_progress", "in-progress", "incomplete", "partially_completed"]);
+const STATUS_TO_FAILED = new Set(["error", "errored"]);
+const LIST_OBJECT_KEYS = ["path", "file", "filePath", "name", "text", "summary", "description", "message"] as const;
+const ALIAS_TO_CANONICAL: ReadonlyArray<readonly [string, "changedFiles" | "unresolved"]> = [
+	["unresolvedItems", "unresolved"],
+	["unresolved_items", "unresolved"],
+	["changed_files", "changedFiles"],
+	["changedPaths", "changedFiles"],
+];
+const TYPE_SUBSTRING_MAP: ReadonlyArray<readonly [readonly string[], ValidationType]> = [
+	[["typecheck", "tsc", "type-check", "types"], "typecheck"],
+	[["manual", "inspect", "review"], "manual"],
+	[["test", "spec", "jest", "vitest", "pytest", "mocha"], "test"],
+	[["lint", "eslint", "prettier", "biome"], "lint"],
+	[["build", "compile", "bundle"], "build"],
+];
+const VALIDATION_STATUS_PASSED = new Set(["pass", "passed", "ok", "success", "green", "true"]);
+const VALIDATION_STATUS_FAILED = new Set(["fail", "failed", "error", "red", "false"]);
+const VALIDATION_STATUS_NOT_RUN = new Set(["skipped", "skip", "not-run", "not_run", "not run", "none", "n/a"]);
+
+function cloneUnknown(value: unknown): unknown {
+	if (value === undefined) return undefined;
+	return JSON.parse(JSON.stringify(value));
+}
+
+function formatRaw(value: unknown): string {
+	if (value === undefined) return "";
+	if (typeof value === "string") return value;
+	return String(value);
+}
+
+function token(value: unknown): string {
+	if (typeof value === "boolean") return value ? "true" : "false";
+	if (typeof value === "string") return value.trim().toLowerCase();
+	return "";
+}
+
+function isAcceptedVersion(raw: unknown): boolean {
+	return raw === 1 || raw === undefined || (typeof raw === "string" && VERSION_ONE_STRINGS.has(raw));
+}
+
+function mapValidationType(raw: unknown): ValidationType {
+	const text = typeof raw === "string" ? raw.toLowerCase() : "";
+	for (const [needles, canonical] of TYPE_SUBSTRING_MAP) {
+		if (needles.some((needle) => text.includes(needle))) return canonical;
+	}
+	return "other";
+}
+
+function mapValidationStatusToken(raw: unknown): ValidationStatus | undefined {
+	const key = token(raw);
+	if (VALIDATION_STATUS_PASSED.has(key)) return "passed";
+	if (VALIDATION_STATUS_FAILED.has(key)) return "failed";
+	if (VALIDATION_STATUS_NOT_RUN.has(key)) return "not-run";
+	return undefined;
+}
+
+function mapListItem(item: unknown): unknown {
+	if (!isPlainObject(item)) return item;
+	for (const key of LIST_OBJECT_KEYS) {
+		if (isNonEmptyString(item[key])) return item[key];
+	}
+	return item;
+}
+
+function repairStringList(
+	target: Record<string, unknown>,
+	key: "changedFiles" | "risks" | "unresolved" | "notes",
+	repairs: string[],
+	missingToEmpty: boolean,
+): void {
+	const value = target[key];
+	if (typeof value === "string") {
+		target[key] = [value];
+		repairs.push(`${key} string wrapped in array`);
+		return;
+	}
+	if (Array.isArray(value) && value.some((item) => isPlainObject(item))) {
+		target[key] = value.map(mapListItem);
+		repairs.push(`${key} objects mapped to strings`);
+		return;
+	}
+	if (value === undefined && missingToEmpty) {
+		target[key] = [];
+		repairs.push(`${key} missing → []`);
+	}
+}
+
+function repairValidationEntries(entries: unknown[], repairs: string[]): void {
+	entries.forEach((item, index) => {
+		if (!isPlainObject(item)) return;
+		const label = `validation[${index}]`;
+		const rawType = item.type;
+		const mappedType = mapValidationType(rawType);
+		if (rawType !== mappedType) {
+			item.type = mappedType;
+			repairs.push(`${label}.type "${formatRaw(rawType)}" → ${mappedType}`);
+		}
+		if (item.status !== undefined && item.status !== null && item.status !== "") {
+			const mappedStatus = mapValidationStatusToken(item.status);
+			if (mappedStatus && item.status !== mappedStatus) {
+				const rawStatus = item.status;
+				item.status = mappedStatus;
+				repairs.push(`${label}.status "${formatRaw(rawStatus)}" → ${mappedStatus}`);
+			}
+		} else {
+			let inferred: ValidationStatus = "not-run";
+			if (item.exitCode === 0) inferred = "passed";
+			else if (Number.isInteger(item.exitCode) && item.exitCode !== 0) inferred = "failed";
+			item.status = inferred;
+			repairs.push(`${label}.status missing → ${inferred}`);
+		}
+		if (!isNonEmptyString(item.summary)) {
+			const fallback = isNonEmptyString(item.command)
+				? item.command
+				: typeof rawType === "string" && rawType.trim()
+					? rawType
+					: "(no summary)";
+			item.summary = fallback;
+			repairs.push(`${label}.summary missing → "${fallback}"`);
+		}
+		if (typeof item.exitCode === "string" && /^-?\d+$/.test(item.exitCode)) {
+			const parsed = Number.parseInt(item.exitCode, 10);
+			repairs.push(`${label}.exitCode "${item.exitCode}" → ${parsed}`);
+			item.exitCode = parsed;
+		}
+	});
+}
+
+/**
+ * Mechanically repair cheap-worker WorkerReport shapes before schema validation.
+ * Repairs are idempotent and applied in spec §3 table order, except alias
+ * rename runs immediately before missing-array defaults so unresolvedItems
+ * is not discarded by `unresolved missing → []`.
+ */
+export function normalizeWorkerReport(
+	value: unknown,
+	context?: { expectedTaskId?: string },
+): NormalisedReport {
+	const report = cloneUnknown(value);
+	if (!isPlainObject(report)) return { report, repairs: [] };
+	const repairs: string[] = [];
+
+	if (isAcceptedVersion(report.version) && report.version !== 1) {
+		repairs.push(report.version === undefined ? "version missing → 1" : `version "${formatRaw(report.version)}" → 1`);
+		report.version = 1;
+	}
+
+	const taskIdMissing = !isNonEmptyString(report.taskId);
+	if (taskIdMissing && context?.expectedTaskId) {
+		const evidenceId = isPlainObject(report.evidence) && isNonEmptyString(report.evidence.taskId)
+			? report.evidence.taskId
+			: undefined;
+		const copied = evidenceId ?? context.expectedTaskId;
+		report.taskId = copied;
+		repairs.push(
+			evidenceId
+				? `taskId copied from evidence.taskId`
+				: `taskId copied from expectedTaskId`,
+		);
+	}
+
+	const statusKey = typeof report.status === "string" ? report.status.trim().toLowerCase() : "";
+	if (STATUS_TO_COMPLETED.has(statusKey)) {
+		repairs.push(`status "${formatRaw(report.status)}" → completed`);
+		report.status = "completed";
+	} else if (STATUS_TO_PARTIAL.has(statusKey)) {
+		repairs.push(`status "${formatRaw(report.status)}" → partial`);
+		report.status = "partial";
+	} else if (STATUS_TO_FAILED.has(statusKey)) {
+		repairs.push(`status "${formatRaw(report.status)}" → failed`);
+		report.status = "failed";
+	}
+
+	if (report.summary === undefined) {
+		report.summary = "";
+		repairs.push(`summary missing → ""`);
+	}
+
+	for (const [alias, canonical] of ALIAS_TO_CANONICAL) {
+		if (report[canonical] === undefined && report[alias] !== undefined) {
+			report[canonical] = report[alias];
+			delete report[alias];
+			repairs.push(`${alias} renamed to ${canonical}`);
+		}
+	}
+
+	repairStringList(report, "changedFiles", repairs, true);
+	repairStringList(report, "risks", repairs, true);
+	repairStringList(report, "unresolved", repairs, true);
+	repairStringList(report, "notes", repairs, false);
+
+	if (report.validation === undefined || report.validation === null) {
+		repairs.push(report.validation === null ? `validation null → []` : `validation missing → []`);
+		report.validation = [];
+	} else if (isPlainObject(report.validation)) {
+		report.validation = [report.validation];
+		repairs.push(`validation object wrapped in array`);
+	}
+	if (Array.isArray(report.validation)) {
+		repairValidationEntries(report.validation, repairs);
+	}
+
+	if (report.evidence === undefined) {
+		const taskId = isNonEmptyString(report.taskId) ? report.taskId : "";
+		report.evidence = { taskId };
+		repairs.push(`evidence missing → { taskId }`);
+	} else if (isPlainObject(report.evidence)) {
+		if (!isNonEmptyString(report.evidence.taskId) && isNonEmptyString(report.taskId)) {
+			report.evidence.taskId = report.taskId;
+			repairs.push(`evidence.taskId copied from taskId`);
+		}
+	}
+
+	return { report, repairs };
 }
 
 /** The task identity a Worker result must claim: the delegated task and run. */
@@ -200,10 +425,16 @@ function looksLikeReport(value: unknown): boolean {
  * wrap it in prose. Only a schema-valid report is accepted; anything else must
  * trigger a report-only correction rather than silent acceptance.
  */
-export function extractWorkerReport(text: string): ExtractedReport {
-	if (typeof text !== "string" || !text.trim()) return { error: "worker returned no output" };
+export function extractWorkerReport(
+	text: string,
+	context?: { expectedTaskId?: string },
+): ExtractedReport {
+	if (typeof text !== "string" || !text.trim()) {
+		return { error: "worker returned no output", repairs: [] };
+	}
 
 	let bestErrors: string[] | undefined;
+	let bestRepairs: string[] = [];
 	let sawReportShape = false;
 
 	for (const candidate of jsonCandidates(text)) {
@@ -215,14 +446,20 @@ export function extractWorkerReport(text: string): ExtractedReport {
 		}
 		if (!looksLikeReport(parsed)) continue;
 		sawReportShape = true;
-		const errors = validateWorkerReport(parsed);
-		if (errors.length === 0) return { report: parsed as WorkerReport };
-		if (!bestErrors || errors.length < bestErrors.length) bestErrors = errors;
+		const normalised = normalizeWorkerReport(parsed, context);
+		const errors = validateWorkerReport(normalised.report);
+		if (errors.length === 0) {
+			return { report: normalised.report as WorkerReport, repairs: normalised.repairs };
+		}
+		if (!bestErrors || errors.length < bestErrors.length) {
+			bestErrors = errors;
+			bestRepairs = normalised.repairs;
+		}
 	}
 
-	if (bestErrors) return { error: `invalid WorkerReport: ${bestErrors.join("; ")}` };
-	if (sawReportShape) return { error: "invalid WorkerReport" };
-	return { error: "worker output did not contain a WorkerReport object" };
+	if (bestErrors) return { error: `invalid WorkerReport: ${bestErrors.join("; ")}`, repairs: bestRepairs };
+	if (sawReportShape) return { error: "invalid WorkerReport", repairs: bestRepairs };
+	return { error: "worker output did not contain a WorkerReport object", repairs: [] };
 }
 
 const COMPACTION_LEVELS = [

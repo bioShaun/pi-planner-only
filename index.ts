@@ -15,7 +15,7 @@ import type { GitAuditRequest, GitRunner } from "./git-audit.ts";
 import { PlannerOrchestrator, compositeWorkflowBlockReason, isDelegationCall } from "./orchestrate.ts";
 import type { DelegationRecord } from "./orchestrate.ts";
 import { parseSubagentNotify, readChildMeta, tempRootFromAsyncDir } from "./notify.ts";
-import { MAX_REVIEW_ROUNDS, WORKER_REPORT_VERSION, isTerminalTaskState } from "./types.ts";
+import { MAX_REVIEW_ROUNDS, WORKER_REPORT_VERSION, isFinalTaskState, isTerminalTaskState } from "./types.ts";
 import type { ChildUsage, DelegationKind, ReviewFinding, ReviewMode, ReviewVerdict, TaskState } from "./types.ts";
 import {
 	UsageLedger,
@@ -103,7 +103,7 @@ Never fix rejected work yourself. Delegate a bounded correction.
 Stop automatic correction after ${MAX_REVIEW_ROUNDS} review rounds; the loop
 reports blocked and asks the user how to proceed.
 
-Use /planner-only task to inspect lifecycle state. /planner-only review is the operator's override; you record verdicts with planner_verdict.`;
+Lifecycle state arrives in delegation results; the operator may override a verdict, you record yours with planner_verdict.`;
 
 function envForcesGuard(): boolean {
 	return new Set(["1", "true", "on"]).has(
@@ -259,7 +259,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			const childrenCost = usage.children.reduce((sum, c) => sum + (c.costUsd ?? 0), 0);
 			const totalCost = rootCost + childrenCost;
 			const threshold = rootShareWarnThreshold();
-			const warningLine = "warning: Root is reading the diff itself; consider /planner-only review fresh";
+			const warningLine = "warning: Root is reading the diff itself; consider a fresh reviewer";
 			if (totalCost > 0 && (rootCost / totalCost) > threshold && usage.root.reviewLeakBytes > 8192 && !enriched.includes(warningLine)) {
 				if (enriched.includes("\n\n[PLANNER-ONLY WORKER REPORT]")) {
 					enriched = enriched.replace("\n\n[PLANNER-ONLY WORKER REPORT]", `\n${warningLine}\n\n[PLANNER-ONLY WORKER REPORT]`);
@@ -378,8 +378,8 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	): Promise<void> {
 		if (!taskId) return;
 		const after = orchestrator.store.get(taskId);
-		if (!after || !isTerminalTaskState(after.state)) return;
-		if (before !== undefined && isTerminalTaskState(before)) return;
+		if (!after || !isFinalTaskState(after.state)) return;
+		if (before === after.state) return;
 		resolveTaskPending(taskId, ctx, asyncDir);
 		persistSessionEntries();
 		await writeUsageLog(taskId, ctx);

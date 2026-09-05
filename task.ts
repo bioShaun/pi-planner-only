@@ -10,7 +10,7 @@ import {
 	MAX_REPORT_CORRECTIONS,
 	MAX_REVIEW_ROUNDS,
 	EXECUTING_STALE_MS,
-	isTerminalTaskState,
+	isFinalTaskState,
 } from "./types.ts";
 import type {
 	EvidenceRef,
@@ -187,8 +187,8 @@ export const TASK_TRANSITIONS: Record<TaskState, readonly TaskState[]> = {
 	executing: ["reviewing", "blocked", "failed"],
 	reviewing: ["completed", "changes_requested", "blocked", "failed"],
 	changes_requested: ["executing", "blocked", "failed"],
-	blocked: ["executing"],
-	failed: ["executing"],
+	blocked: ["executing", "reviewing"],
+	failed: ["executing", "reviewing"],
 	completed: [],
 };
 
@@ -279,7 +279,7 @@ export class TaskStore {
 	/** Most recently updated task that is not in a terminal state. */
 	active(): TaskRecord | undefined {
 		return this.list()
-			.filter((task) => !isTerminalTaskState(task.state))
+			.filter((task) => !isFinalTaskState(task.state))
 			.sort((left, right) => (left.updatedAt < right.updatedAt ? 1 : -1))[0];
 	}
 
@@ -377,7 +377,7 @@ export class TaskStore {
 	/** Release a stuck task through the operator escape hatch. */
 	abandon(taskId: string, reason = "abandoned by operator"): TaskRecord {
 		const record = this.require(taskId);
-		if (isTerminalTaskState(record.state)) {
+		if (isFinalTaskState(record.state)) {
 			throw new Error(`cannot abandon terminal task: ${record.state}`);
 		}
 		this.transition(taskId, "failed");

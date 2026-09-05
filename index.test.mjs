@@ -781,10 +781,11 @@ const verdictTool = tools.get("planner_verdict");
 assert.equal(verdictTool.name, "planner_verdict");
 assert.equal(verdictTool.label, "Planner Verdict");
 
-// §4: the prompt is re-read every turn, so it stays under a hard size bound
+// §4 / L-4: the prompt is re-read every turn, so it stays under a hard size bound and names no slash command
 assert.ok(PLANNER_PROMPT.length <= 2500, `PLANNER_PROMPT is ${PLANNER_PROMPT.length} chars`);
 assert.match(PLANNER_PROMPT, /5\. record PASS, REQUEST_CHANGES, or BLOCKED with planner_verdict/);
-assert.match(PLANNER_PROMPT, /\/planner-only review is the operator's override; you record verdicts with planner_verdict\./);
+assert.match(PLANNER_PROMPT, /Lifecycle state arrives in delegation results; the operator may override a verdict, you record yours with planner_verdict\./);
+assert.doesNotMatch(PLANNER_PROMPT, /\/planner-only/);
 assert.doesNotMatch(PLANNER_PROMPT, /record a verdict or switch/);
 
 // unknown taskId -> isError, nothing recorded
@@ -935,6 +936,79 @@ const terminalVerdict = await verdictTool.execute(
 );
 assert.equal(terminalVerdict.isError, true);
 assert.match(terminalVerdict.content[0].text, /already completed/);
+assert.doesNotMatch(terminalVerdict.content[0].text, /\/planner-only/);
+assert.match(
+	terminalVerdict.content[0].text,
+	/verdicts are final\. Start a new Task with a new TaskSpec for further work\./,
+);
+
+// L-4: Task blocked with one report and fresh evidence: planner_verdict(pass) → completed, one usage line with completed
+{
+	const taskId = "T-20260905-l4u";
+	gitResponses.set("rev-parse HEAD", { stdout: "abc1234\n", stderr: "", code: 0 });
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-l4u", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
+		ctx,
+	);
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n src/parser.test.ts | 2 +-\n", stderr: "", code: 0 });
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-l4u",
+			toolName: "subagent",
+			input: {},
+			content: [{ type: "text", text: JSON.stringify({
+				...workerReport,
+				taskId,
+				evidence: {
+					...workerReport.evidence,
+					taskId,
+					workerRunId: "call-l4u",
+					cwd: `/fixture/${taskId}`,
+				},
+			}) }],
+			isError: false,
+		},
+		ctx,
+	);
+	await handlers.get("message_end")({
+		message: {
+			role: "assistant",
+			id: "msg-l4u",
+			model: "tcuni-claude/claude-fable-5-1",
+			provider: "tcuni-claude",
+			usage: { input: 200, output: 50, cacheRead: 10, cacheWrite: 0, cost: 0.15 },
+			content: "reconsidering",
+		},
+	}, ctx);
+	await verdictTool.execute(
+		"v-l4-block",
+		{ verdict: "blocked", summary: "pause", taskId },
+		undefined,
+		undefined,
+		ctx,
+	);
+	const passBlocked = await verdictTool.execute(
+		"v-l4-pass",
+		{ verdict: "pass", summary: "ok to close", taskId },
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.equal(passBlocked.isError, undefined);
+	assert.equal(passBlocked.details.state, "completed");
+	assert.match(passBlocked.content[0].text, /\nusage: /);
+	assert.match(passBlocked.content[0].text, /state: completed/);
+	const logPath = join(isolatedAgentDir, "planner-only", "usage.jsonl");
+	const completedLines = readFileSync(logPath, "utf8").trim().split("\n").filter(Boolean)
+		.map((line) => JSON.parse(line))
+		.filter((row) => row.taskId === taskId && row.state === "completed");
+	assert.equal(completedLines.length, 1);
+}
+
+// L-4: operator override still bypasses rules 2–4 and not rule 1 (covered above for pending/no-report vs completed)
 
 // --------------------------------------------------------------------------
 // U-2 / U-3 / U-4 / RF-6 — usage capture and failed launch through the adapter
@@ -1382,7 +1456,7 @@ assert.match(terminalVerdict.content[0].text, /already completed/);
 	);
 	assert.match(resReviewPending.content[0].text, /decision: review_pending/);
 	assert.match(resReviewPending.content[0].text, /evidence: .+\nusage: root .+\nreason: /);
-	assert.match(resReviewPending.content[0].text, /warning: Root is reading the diff itself; consider \/planner-only review fresh/);
+	assert.match(resReviewPending.content[0].text, /warning: Root is reading the diff itself; consider a fresh reviewer/);
 }
 
 {
