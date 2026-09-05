@@ -137,15 +137,16 @@ assert.equal(activeTools.includes("edit"), false);
 
 const prompt = await handlers.get("before_agent_start")({ systemPrompt: "BASE" });
 assert.match(prompt.systemPrompt, /^BASE/);
-assert.match(prompt.systemPrompt, /root orchestrator/);
+assert.match(prompt.systemPrompt, /plan, delegate, inspect read-only, review, and arbitrate/);
 assert.match(prompt.systemPrompt, /WorkerReport/);
 assert.match(prompt.systemPrompt, /git_audit/);
-assert.match(prompt.systemPrompt, /Never fix rejected work yourself/);
+assert.match(prompt.systemPrompt, /Never fix rejected work/);
 assert.match(prompt.systemPrompt, /Do not pre-compose worker.+reviewer as a workflowScript, tasks array, or chain/s);
-assert.match(prompt.systemPrompt, /one lifecycle invocation/);
+assert.match(prompt.systemPrompt, /canonical id returned by the extension/);
 assert.match(prompt.systemPrompt, /direct \{agent, task\}/);
 assert.match(prompt.systemPrompt, /Call the reviewer only after the worker returns/);
 assert.doesNotMatch(prompt.systemPrompt, /diffStat/);
+assert.doesNotMatch(prompt.systemPrompt, /\/planner-only/);
 
 const compositeBlocked = await handlers.get("tool_call")(
 	{
@@ -527,7 +528,9 @@ assert.match(workerText, /decision: review_pending/);
 assert.match(workerText, /evidence: fresh/);
 assert.match(workerText, /\[PLANNER-ONLY WORKER REPORT\]/);
 assert.match(workerText, /- \[passed\] test: npm test exit 0/);
-assert.match(workerText, /Reviewer prompt template/);
+assert.doesNotMatch(workerText, /Reviewer prompt template for an isolated fresh review:/);
+assert.doesNotMatch(workerText, /You are an isolated reviewer/);
+assert.doesNotMatch(workerText, /\[PLANNER-ONLY FRESH REVIEW\]/);
 // the raw worker transcript is replaced, not forwarded
 assert.doesNotMatch(workerText, /lots of raw noise/);
 
@@ -545,8 +548,11 @@ await handlers.get("tool_call")(
 assert.equal(reviewInput.agent, "reviewer");
 assert.equal(reviewInput.context, "fresh");
 assert.match(reviewInput.task, /\[PLANNER-ONLY FRESH REVIEW\]/);
+assert.match(reviewInput.task, /You are an isolated reviewer for task T-20260905-100/);
 assert.match(reviewInput.task, /T-20260905-100/);
 assert.match(reviewInput.task, /Implemented the parser/);
+assert.match(reviewInput.task, /You receive only the ReviewRequest below/);
+assert.match(reviewInput.task, /ReviewRequest:/);
 assert.doesNotMatch(reviewInput.task, /rubber-stamp/);
 assert.doesNotMatch(reviewInput.task, /I already decided/);
 const reviewResult = {
@@ -781,11 +787,25 @@ const verdictTool = tools.get("planner_verdict");
 assert.equal(verdictTool.name, "planner_verdict");
 assert.equal(verdictTool.label, "Planner Verdict");
 
-// §4 / L-4: the prompt is re-read every turn, so it stays under a hard size bound and names no slash command
-assert.ok(PLANNER_PROMPT.length <= 2500, `PLANNER_PROMPT is ${PLANNER_PROMPT.length} chars`);
-assert.match(PLANNER_PROMPT, /5\. record PASS, REQUEST_CHANGES, or BLOCKED with planner_verdict/);
+// I-1: PLANNER_PROMPT UTF-8 bound and §3.1 contracts (semantic fragments, not a snapshot)
+assert.ok(
+	Buffer.byteLength(PLANNER_PROMPT, "utf8") <= 1800,
+	`PLANNER_PROMPT is ${Buffer.byteLength(PLANNER_PROMPT, "utf8")} UTF-8 bytes`,
+);
+assert.match(PLANNER_PROMPT, /plan, delegate, inspect read-only, review, and arbitrate/);
+assert.match(PLANNER_PROMPT, /Do not edit or write files, run a general shell, or implement fixes/);
+assert.match(PLANNER_PROMPT, /one bounded TaskSpec embedded in one direct \{agent, task\}/);
+assert.match(PLANNER_PROMPT, /canonical id returned by the extension/);
+assert.match(PLANNER_PROMPT, /WorkerReport version 1/);
+assert.match(PLANNER_PROMPT, /changedFiles, validation plus exit codes, evidence, risks, and unresolved items/);
+assert.match(PLANNER_PROMPT, /record PASS, REQUEST_CHANGES, or BLOCKED with planner_verdict/);
+assert.match(PLANNER_PROMPT, /context=fresh/);
+assert.match(PLANNER_PROMPT, /validator → oracle/);
+assert.match(PLANNER_PROMPT, /workflowScript/);
+assert.match(PLANNER_PROMPT, /Never trust a worker PASS/);
+assert.match(PLANNER_PROMPT, /Never accept stale evidence/);
+assert.match(PLANNER_PROMPT, /Stop after 3 review rounds/);
 assert.match(PLANNER_PROMPT, /Lifecycle state arrives in delegation results; the operator may override a verdict, you record yours with planner_verdict\./);
-assert.match(PLANNER_PROMPT, /The extension may replace the id; use the id from the delegation result afterwards\./);
 assert.doesNotMatch(PLANNER_PROMPT, /\/planner-only/);
 assert.doesNotMatch(PLANNER_PROMPT, /record a verdict or switch/);
 

@@ -1585,4 +1585,93 @@ function reportT3(taskId, toolCallId) {
 	assert.equal(lines[changedIndex + 1], "Validator reports: 1");
 }
 
+// --------------------------------------------------------------------------
+// I-1 — compress Root-facing worker result; no reviewer template
+// --------------------------------------------------------------------------
+
+const t6TwoPathStatus = [
+	"1 .M N... 100644 100644 100644 1111111 2222222 orchestrate.ts",
+	"1 .M N... 100644 100644 100644 1111111 3333333 orchestrate.test.mjs",
+	"",
+].join("\n");
+
+function specT6(taskId) {
+	return {
+		...specFor(taskId, "worker", BASE),
+		scope: { allowedPaths: ["orchestrate.ts", "orchestrate.test.mjs"] },
+	};
+}
+
+function reportT6(taskId) {
+	return {
+		version: 1,
+		taskId,
+		status: "completed",
+		summary: "handleValidatorResult now echoes `Report normalised: <repairs joined by \"; \">` immediately after the recorded line when extracted.repairs is non-empty (mirroring handleWorkerResult); added one orchestrate.test.mjs block covering a version-\"1\" repaired validator report (line present) and an already-valid one (line absent).",
+		changedFiles: ["orchestrate.ts", "orchestrate.test.mjs"],
+		validation: [
+			{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "All 13 suites PASS including orchestration; new L-1 validator normalisation test passes." },
+			{ command: "npm run typecheck", type: "typecheck", status: "passed", exitCode: 0, summary: "tsc --noEmit clean." },
+		],
+		evidence: {
+			cwd: BASE,
+			taskId,
+			gitStatusHash: "uncommitted working tree: M orchestrate.ts, M orchestrate.test.mjs; nothing staged, nothing committed",
+			changedPaths: ["orchestrate.ts", "orchestrate.test.mjs"],
+			gitAvailable: true,
+			generatedAt: "2026-09-05T10:00:00.000Z",
+		},
+		risks: [
+			"Repair wording for version is `version \"1\" → 1` per report.ts normalizeWorkerReport (formatRaw leaves strings as-is); if repair phrasing changes, the regex must follow.",
+			"Test asserts validatorReports length grows to 2 across both sub-cases; harmless, but couples to store shape.",
+		],
+		unresolved: [],
+	};
+}
+
+// I-1: T6-shaped accepted worker result is ≤ 2300 UTF-8 bytes and has no reviewer template
+{
+	const store = new TaskStore({ now: () => new Date(2026, 8, 5) });
+	const orch = new PlannerOrchestrator({ store, gitRunner });
+	const embeddedId = "T-20260101-001";
+	const canonical = "T-20260905-001";
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-i1-t6", input: { task: JSON.stringify(specT6(embeddedId)) } },
+		BASE,
+	);
+	assert.equal(orch.store.require(embeddedId).taskId, canonical);
+	gitOverrides.set("status --porcelain=v2 --branch", t6TwoPathStatus);
+	gitOverrides.set("diff HEAD --stat", " orchestrate.ts | 2 +-\n orchestrate.test.mjs | 2 +-\n");
+	const outcome = await orch.handleSubagentResult(workerResult("call-i1-t6", reportT6(embeddedId)));
+	const text = outcome.content[0].text;
+	const bytes = Buffer.byteLength(text, "utf8");
+	assert.ok(bytes <= 2300, `T6-shaped worker result is ${bytes} UTF-8 bytes`);
+	assert.doesNotMatch(text, /Reviewer prompt template for an isolated fresh review:/);
+	assert.doesNotMatch(text, /You are an isolated reviewer/);
+	assert.doesNotMatch(text, /\[PLANNER-ONLY FRESH REVIEW\]/);
+	assert.match(text, /\[PLANNER-ONLY REVIEW STATE\]/);
+	assert.match(text, /decision: review_pending/);
+	assert.match(text, /evidence: fresh \(attributed 2 paths\)/);
+	assert.match(text, /Report normalised:/);
+	assert.match(text, /evidence\.gitStatusHash/);
+	assert.match(text, /evidence\.workerRunId missing/);
+	assert.match(text, /taskId T-20260101-001 → T-20260905-001/);
+	assert.match(text, /taskId: T-20260905-001/);
+	assert.match(text, /status: completed/);
+	assert.match(text, /Summary: handleValidatorResult now echoes/);
+	assert.match(text, /orchestrate\.ts/);
+	assert.match(text, /orchestrate\.test\.mjs/);
+	assert.match(text, /- \[passed\] test: npm test exit 0/);
+	assert.match(text, /- \[passed\] typecheck: npm run typecheck exit 0/);
+	assert.match(text, /Repair wording for version/);
+	assert.match(text, /Unresolved: \(none\)/);
+	const stored = orch.store.require(canonical).reports[0];
+	assert.equal(stored.taskId, canonical);
+	assert.equal(stored.changedFiles.length, 2);
+	assert.equal(stored.validation.length, 2);
+	assert.equal(stored.risks.length, 2);
+	setCleanTree();
+}
+
 console.log("planner-only orchestration: PASS");

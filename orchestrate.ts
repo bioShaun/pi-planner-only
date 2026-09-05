@@ -36,7 +36,6 @@ import {
 	advanceReview,
 	extractReviewRequest,
 	extractReviewResult,
-	reviewerPrompt,
 	summarizeFindings,
 	validateReviewResultIdentity,
 } from "./review.ts";
@@ -1069,9 +1068,6 @@ export class PlannerOrchestrator {
 						reviewMode: task.reviewMode,
 					}),
 					...(compacted ? ["", "Note: the report exceeded the parent context budget and was compacted. Re-inspect details with read/grep/git_audit if needed."] : []),
-					"",
-					"Reviewer prompt template for an isolated fresh review:",
-					reviewerPrompt(task.taskId),
 				].join("\n"),
 			}],
 		};
