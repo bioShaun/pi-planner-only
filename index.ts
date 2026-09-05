@@ -22,11 +22,11 @@ import {
 	childUsageFromValue,
 	emptyTaskUsage,
 	loadPricingTable,
-	modelIdForPricing,
+	lookupRates,
 	renderUsage,
 	renderUsageLine,
 } from "./usage.ts";
-import type { PiUsageLike, PricingRates, PricingTable, UsageEntry } from "./usage.ts";
+import type { PiUsageLike, UsageEntry } from "./usage.ts";
 
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
 	? resolve(process.env.PI_CODING_AGENT_DIR)
@@ -223,22 +223,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				// Session persistence must never break the lifecycle.
 			}
 		}
-	}
-
-	function findRates(table: PricingTable, model?: string, provider?: string): PricingRates | undefined {
-		if (!model) return undefined;
-		const stripped = modelIdForPricing(model);
-		const keys: string[] = [];
-		if (provider) keys.push(`${provider}/${stripped}`);
-		keys.push(stripped);
-		if (stripped.includes("/")) {
-			const bare = stripped.slice(stripped.indexOf("/") + 1);
-			if (bare) keys.push(bare);
-		}
-		for (const key of keys) {
-			if (key in table.rates) return table.rates[key];
-		}
-		return undefined;
 	}
 
 	function rootShareWarnThreshold(env: NodeJS.ProcessEnv = process.env): number {
@@ -993,7 +977,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					const u = ledger.taskUsage(tId);
 					if (!u) return undefined;
 					const t = store.get(tId);
-					const rootRates = findRates(pricing, u.rootModel);
+					const rootRates = lookupRates(pricing, undefined, u.rootModel);
 					return renderUsage(u, {
 						taskId: tId,
 						state: t?.state ?? "unknown (store not persisted)",

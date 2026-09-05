@@ -164,7 +164,7 @@ function piReportedCost(usage: PiUsageLike): number | undefined {
 	return undefined;
 }
 
-function lookupRates(pricing: PricingTable, provider: string | undefined, model: string | undefined): PricingRates | undefined {
+export function lookupRates(pricing: PricingTable, provider: string | undefined, model: string | undefined): PricingRates | undefined {
 	if (!model) return undefined;
 	const stripped = modelIdForPricing(model);
 	const keys: string[] = [];

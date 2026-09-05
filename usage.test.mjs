@@ -6,6 +6,7 @@ import {
 	childUsageFromValue,
 	emptyTaskUsage,
 	loadPricingTable,
+	lookupRates,
 	modelIdForPricing,
 	renderUsage,
 	renderUsageLine,
@@ -55,6 +56,24 @@ function piUsage(overrides = {}) {
 
 assert.equal(modelIdForPricing("qwen-local/qwen3.8-27b:high"), "qwen-local/qwen3.8-27b");
 assert.equal(modelIdForPricing("volcengine/glm-5-3"), "volcengine/glm-5-3");
+
+// --------------------------------------------------------------------------
+// lookupRates: provider/model key, bare model key, thinking suffix stripping
+// --------------------------------------------------------------------------
+
+{
+	const pricing = {
+		version: 1,
+		currency: "USD",
+		rates: {
+			"volcengine/glm-5-3": { input: 1, output: 2, cacheRead: 0.5, cacheWrite: 1.5 },
+			"bare-model": { input: 3, output: 4, cacheRead: 1, cacheWrite: 2 },
+		},
+	};
+	assert.equal(lookupRates(pricing, "volcengine", "glm-5-3"), pricing.rates["volcengine/glm-5-3"]);
+	assert.equal(lookupRates(pricing, undefined, "bare-model"), pricing.rates["bare-model"]);
+	assert.equal(lookupRates(pricing, "volcengine", "glm-5-3:high"), pricing.rates["volcengine/glm-5-3"]);
+}
 
 // --------------------------------------------------------------------------
 // Phase bucketing per state; untasked when no Task
