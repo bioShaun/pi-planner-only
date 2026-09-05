@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
-	AUDIT_TOOLS,
+	ROOT_TOOLS,
 	ORCHESTRATION_TOOLS,
 	READ_ONLY_TOOLS,
 	decidePolicy,
@@ -14,8 +14,8 @@ import { GIT_AUDIT_OPERATIONS, runGitAudit } from "./git-audit.ts";
 import type { GitAuditRequest, GitRunner } from "./git-audit.ts";
 import { PlannerOrchestrator, compositeWorkflowBlockReason, isDelegationCall } from "./orchestrate.ts";
 import { parseSubagentNotify } from "./notify.ts";
-import { MAX_REVIEW_ROUNDS, WORKER_REPORT_VERSION } from "./types.ts";
-import type { ReviewMode, ReviewVerdict } from "./types.ts";
+import { MAX_REVIEW_ROUNDS, WORKER_REPORT_VERSION, isTerminalTaskState } from "./types.ts";
+import type { ReviewFinding, ReviewMode, ReviewVerdict } from "./types.ts";
 
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
 	? resolve(process.env.PI_CODING_AGENT_DIR)
@@ -26,13 +26,13 @@ const IS_SUBAGENT = process.env.PI_SUBAGENT_CHILD === "1";
 const PLANNER_SAFE_TOOLS = new Set([
 	...READ_ONLY_TOOLS,
 	...ORCHESTRATION_TOOLS,
-	...AUDIT_TOOLS,
+	...ROOT_TOOLS,
 	"subagent",
 ]);
 
 const GIT_TIMEOUT_MS = 15_000;
 
-const PLANNER_PROMPT = `[PLANNER-ONLY MODE]
+export const PLANNER_PROMPT = `[PLANNER-ONLY MODE]
 
 You are the root orchestrator.
 
@@ -75,7 +75,7 @@ Before accepting work:
 2. verify evidence freshness
 3. inspect relevant files and git state with read/grep/find/ls/git_audit
 4. evaluate acceptance criteria
-5. PASS or REQUEST_CHANGES
+5. record PASS, REQUEST_CHANGES, or BLOCKED with planner_verdict
 
 Role in TaskSpec is enforced at launch: explorer/reviewer remap to the builtin reviewer agent (read/grep/find/ls), validator remaps to oracle (bash, no edits), worker keeps its agent. Reviewer children always start with context=fresh and a bounded packet — never a fork of this session.
 
@@ -92,8 +92,7 @@ Never fix rejected work yourself. Delegate a bounded correction.
 Stop automatic correction after ${MAX_REVIEW_ROUNDS} review rounds; the loop
 reports blocked and asks the user how to proceed.
 
-Use /planner-only task to inspect lifecycle state and /planner-only review to
-record a verdict or switch to an isolated fresh reviewer.`;
+Use /planner-only task to inspect lifecycle state. /planner-only review is the operator's override; you record verdicts with planner_verdict.`;
 
 function envForcesGuard(): boolean {
 	return new Set(["1", "true", "on"]).has(
@@ -232,6 +231,119 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				content: [{ type: "text", text: outcome.text }],
 				details: { operation: outcome.operation, ok: outcome.ok, code: outcome.code },
 			};
+		},
+	});
+
+	pi.registerTool({
+		name: "planner_verdict",
+		label: "Planner Verdict",
+		description: [
+			"Record Root's review verdict for a planner-only task: pass, request_changes, or blocked.",
+			"A pass re-samples the workspace at the acceptance boundary; stale evidence turns it into revalidate.",
+		].join(" "),
+		promptSnippet: "planner_verdict: record the root review verdict (pass | request_changes | blocked) for a task",
+		promptGuidelines: [
+			"After verifying the WorkerReport and evidence, record the verdict with planner_verdict; the slash command is the operator's override, not yours.",
+			"request_changes should carry findings so the correction guidance names what to fix.",
+		],
+		parameters: Type.Object({
+			verdict: Type.Union(
+				[Type.Literal("pass"), Type.Literal("request_changes"), Type.Literal("blocked")],
+				{ description: "Root's verdict over the Task." },
+			),
+			summary: Type.String({
+				minLength: 1,
+				maxLength: 2000,
+				description: "Why this verdict, in one or two sentences.",
+			}),
+			taskId: Type.Optional(
+				Type.String({ description: "Task to judge. Defaults to the active Task." }),
+			),
+			findings: Type.Optional(
+				Type.Array(
+					Type.Object({
+						severity: Type.Union([
+							Type.Literal("blocker"),
+							Type.Literal("major"),
+							Type.Literal("minor"),
+							Type.Literal("info"),
+						]),
+						category: Type.Union([
+							Type.Literal("correctness"),
+							Type.Literal("scope"),
+							Type.Literal("test"),
+							Type.Literal("safety"),
+							Type.Literal("regression"),
+							Type.Literal("maintainability"),
+							Type.Literal("other"),
+						]),
+						description: Type.String({ maxLength: 500 }),
+						requestedChange: Type.Optional(Type.String({ maxLength: 500 })),
+					}),
+					{ maxItems: 20, description: "Findings behind a request_changes verdict (at most 20)." },
+				),
+			),
+		}),
+		async execute(_toolCallId, params: {
+			verdict: ReviewVerdict;
+			summary: string;
+			taskId?: string;
+			findings?: ReviewFinding[];
+		}, _signal, _onUpdate, _ctx) {
+			const task = params.taskId
+				? orchestrator.store.get(params.taskId)
+				: orchestrator.store.active();
+			if (!task) {
+				return {
+					content: [{
+						type: "text",
+						text: [
+							params.taskId
+								? `planner_verdict: unknown task ${params.taskId}.`
+								: "planner_verdict: no active planner-only task.",
+							'Usage: planner_verdict({ verdict: "pass" | "request_changes" | "blocked", summary, taskId?, findings? }).',
+						].join(" "),
+					}],
+					details: { refused: "unknown-task" },
+					isError: true,
+				};
+			}
+			const refusal = orchestrator.rootVerdictRefusal(task, params.verdict);
+			if (refusal) {
+				return {
+					content: [{ type: "text", text: `planner_verdict refused: ${refusal}` }],
+					details: { refused: "lifecycle", taskId: task.taskId, verdict: params.verdict },
+					isError: true,
+				};
+			}
+			try {
+				const outcome = await orchestrator.recordRootVerdict(task, params.verdict, params.summary, {
+					...(params.findings ? { findings: params.findings } : {}),
+					source: "root",
+				});
+				return {
+					content: [{
+						type: "text",
+						text: orchestrator.renderDecisionBlock(outcome.task, outcome.decision, outcome.evidence),
+					}],
+					details: {
+						taskId: outcome.task.taskId,
+						verdict: params.verdict,
+						action: outcome.decision.action,
+						state: outcome.task.state,
+						round: outcome.task.reviewRound,
+					},
+				};
+			} catch (error) {
+				return {
+					content: [{
+						type: "text",
+						text: `planner_verdict refused: ${error instanceof Error ? error.message : String(error)}`,
+					}],
+					details: { refused: "store-error", taskId: task.taskId, verdict: params.verdict },
+					isError: true,
+				};
+			}
 		},
 	});
 
@@ -420,7 +532,17 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				}
 				const verdict = sub as ReviewVerdict;
 				const summary = rest.slice(1).join(" ").trim() || `root verdict: ${verdict}`;
-				const outcome = await orchestrator.recordRootVerdict(task, verdict, summary);
+				// The operator's override bypasses the §3 step-2 refusals except the
+				// terminal-state one, and says so out loud when it does.
+				const refusal = orchestrator.rootVerdictRefusal(task, verdict);
+				if (refusal) {
+					if (isTerminalTaskState(task.state)) {
+						notify(ctx, refusal, "warning");
+						return;
+					}
+					notify(ctx, `Operator override bypassed refusal: ${refusal}`, "warning");
+				}
+				const outcome = await orchestrator.recordRootVerdict(task, verdict, summary, { source: "operator" });
 				notify(ctx, orchestrator.renderDecisionBlock(outcome.task, outcome.decision, outcome.evidence));
 				return;
 			}

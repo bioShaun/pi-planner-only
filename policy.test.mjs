@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { decidePolicy, isSafeAuditCommand } from "./policy.ts";
+import { AUDIT_TOOLS, ROOT_TOOLS, decidePolicy, isSafeAuditCommand } from "./policy.ts";
 
 function blocked(toolName, input = undefined) {
 	return decidePolicy({ toolName, input, isChild: false, disabled: false }).block;
@@ -9,6 +9,16 @@ assert.equal(blocked("read", { path: "/tmp/a" }), false);
 assert.equal(blocked("contact_supervisor", {}), false);
 assert.equal(blocked("git_audit", { operation: "status" }), false);
 assert.equal(blocked("git_audit", { operation: "diff-stat", staged: true }), false);
+// v0.3 V-1: planner_verdict is a first-class Root tool; the policy never blocks it
+assert.ok(ROOT_TOOLS.has("git_audit"));
+assert.ok(ROOT_TOOLS.has("planner_verdict"));
+assert.equal(AUDIT_TOOLS, ROOT_TOOLS, "AUDIT_TOOLS stays as an alias export for one release");
+assert.equal(blocked("planner_verdict", { verdict: "pass", summary: "looks good" }), false);
+assert.equal(
+	decidePolicy({ toolName: "planner_verdict", input: { verdict: "blocked", summary: "x" }, isChild: false, disabled: true }).block,
+	false,
+	"planner_verdict stays unblocked when the guard is off",
+);
 assert.equal(blocked("functions.grep", { pattern: "x" }), true);
 assert.equal(blocked("subagent", { agent: "worker" }), false);
 assert.equal(blocked("subagent", { workflow: "review", args: { task: "Review" } }), true);

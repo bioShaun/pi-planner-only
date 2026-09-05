@@ -225,6 +225,8 @@ export interface ReviewResult {
 	findings: ReviewFinding[];
 	evidenceFresh: boolean;
 	reviewedEvidenceRef?: EvidenceRef;
+	/** Who recorded this verdict; records from before 0.3 read as "reviewer". */
+	source?: "reviewer" | "root" | "operator";
 }
 
 /** §12 — root arbitration over a disagreeing reviewer. In-memory only. */

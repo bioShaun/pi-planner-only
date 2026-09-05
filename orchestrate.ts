@@ -48,9 +48,11 @@ import {
 	EXECUTING_STALE_MS,
 	MAX_REVIEW_ROUNDS,
 	MAX_WORKER_REPORT_CHARS,
+	isTerminalTaskState,
 } from "./types.ts";
 import type {
 	EvidenceRef,
+	ReviewFinding,
 	ReviewResult,
 	ReviewVerdict,
 	StructuredDelegationMode,
@@ -457,12 +459,45 @@ export class PlannerOrchestrator {
 		];
 		if (task.stateReason) lines.push(`State reason: ${task.stateReason}`);
 		if (task.reviews.length > 0) {
-			lines.push(`Reviews: ${task.reviews.map((review) => review.verdict).join(", ")}`);
+			lines.push(`Reviews: ${task.reviews.map((review) => `${review.verdict} (${review.source ?? "reviewer"})`).join(", ")}`);
 		}
 		if (task.overrides.length > 0) {
 			lines.push(`Overrides: ${task.overrides.length}`);
 		}
 		return lines.join("\n");
+	}
+
+	/**
+	 * §3 step 2 — why Root may not record `verdict` on `task` right now.
+	 * Returns the refusal reason, or undefined when the verdict may proceed.
+	 * The operator's review slash command bypasses every refusal except the
+	 * terminal-state one; the `planner_verdict` tool honours them all.
+	 */
+	rootVerdictRefusal(task: TaskRecord, verdict: ReviewVerdict): string | undefined {
+		if (isTerminalTaskState(task.state)) {
+			return `Task ${task.taskId} is already ${task.state}; use /planner-only task reset to reopen.`;
+		}
+		if (verdict !== "blocked" && task.reports.length === 0) {
+			return `Task ${task.taskId} has no recorded WorkerReport; a pass or change request needs a report to judge.`;
+		}
+		if (this.hasPendingDelegation(task.taskId)) {
+			return `Task ${task.taskId} has a worker/reviewer run still pending; wait for its result before recording a verdict.`;
+		}
+		if (
+			verdict === "pass" &&
+			task.reviewMode === "fresh" &&
+			!task.reviews.some((review) => (review.source ?? "reviewer") === "reviewer")
+		) {
+			return `Task ${task.taskId} is in fresh review mode and no reviewer ReviewResult exists yet; delegate the review first — in fresh mode Root arbitrates, it does not pre-empt.`;
+		}
+		return undefined;
+	}
+
+	private hasPendingDelegation(taskId: string): boolean {
+		for (const record of this.delegations.values()) {
+			if (record.taskId === taskId) return true;
+		}
+		return false;
 	}
 
 	/**
@@ -478,9 +513,12 @@ export class PlannerOrchestrator {
 		task: TaskRecord,
 		verdict: ReviewVerdict,
 		summary: string,
+		options: { findings?: ReviewFinding[]; source?: ReviewResult["source"] } = {},
 	): Promise<RootVerdictOutcome> {
+		// §12 — an override is Root disagreeing with a *reviewer*; Root revising
+		// its own earlier verdict (or the operator's) is not one.
 		const previous = task.reviews.at(-1);
-		if (previous && previous.verdict !== verdict) {
+		if (previous && previous.verdict !== verdict && (previous.source ?? "reviewer") === "reviewer") {
 			this.store.recordOverride(task.taskId, {
 				reviewerVerdict: previous.verdict,
 				rootVerdict: verdict,
@@ -514,8 +552,9 @@ export class PlannerOrchestrator {
 			taskId: task.taskId,
 			verdict,
 			summary,
-			findings: [],
+			findings: options.findings ?? [],
 			evidenceFresh: comparison ? comparison.fresh : true,
+			...(options.source ? { source: options.source } : {}),
 		};
 		this.store.recordReview(task.taskId, review);
 		const latest = this.store.require(task.taskId);
@@ -647,7 +686,7 @@ export class PlannerOrchestrator {
 			};
 		}
 
-		const review = extracted.review;
+		const review: ReviewResult = { ...extracted.review, source: "reviewer" };
 		const identityErrors = validateReviewResultIdentity(review, task.taskId);
 		if (identityErrors.length > 0) {
 			return {

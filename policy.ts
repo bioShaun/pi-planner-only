@@ -19,11 +19,14 @@ export const ORCHESTRATION_TOOLS = new Set([
 ]);
 
 /**
- * Read-only Git inspection exposed to the parent instead of a general shell.
- * Unlike the leftover `bash` allowlist, this is a first-class tool: it is
- * present in the parent's schema, not just tolerated on a stale call.
+ * First-class tools this extension registers for Root itself.
+ * Unlike the leftover `bash` allowlist, these are present in the parent's
+ * schema, not just tolerated on a stale call.
  */
-export const AUDIT_TOOLS = new Set(["git_audit"]);
+export const ROOT_TOOLS = new Set(["git_audit", "planner_verdict"]);
+
+/** @deprecated Alias for ROOT_TOOLS, kept for one release. */
+export const AUDIT_TOOLS = ROOT_TOOLS;
 
 export interface PolicyInput {
 	toolName: string;
@@ -71,7 +74,7 @@ export function decidePolicy(policy: PolicyInput): PolicyDecision {
 	if (
 		READ_ONLY_TOOLS.has(toolName) ||
 		ORCHESTRATION_TOOLS.has(toolName) ||
-		AUDIT_TOOLS.has(toolName)
+		ROOT_TOOLS.has(toolName)
 	) {
 		return { block: false };
 	}

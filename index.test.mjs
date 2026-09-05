@@ -8,13 +8,13 @@ const isolatedAgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-"))
 process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
 
 delete process.env.PI_SUBAGENT_CHILD;
-const { default: plannerOnly, filterPlannerTools, restorePlannerTools } = await import("./index.ts");
+const { default: plannerOnly, filterPlannerTools, restorePlannerTools, PLANNER_PROMPT } = await import("./index.ts");
 
 const handlers = new Map();
 const commands = new Map();
 const tools = new Map();
 const gitResponses = new Map();
-let activeTools = ["read", "bash", "write", "subagent", "custom_mutator"];
+let activeTools = ["read", "bash", "write", "subagent", "custom_mutator", "git_audit", "planner_verdict"];
 const allTools = [
 	{ name: "read" },
 	{ name: "grep" },
@@ -67,6 +67,7 @@ assert.equal(handlers.has("before_agent_start"), true);
 assert.equal(handlers.has("tool_call"), true);
 assert.equal(commands.has("planner-only"), true);
 assert.equal(tools.has("git_audit"), true);
+assert.equal(tools.has("planner_verdict"), true);
 
 const ui = {
 	notify(message, type) {
@@ -81,6 +82,8 @@ await handlers.get("session_start")({}, ctx);
 assert.deepEqual(activeTools, [
 	"read",
 	"subagent",
+	"git_audit",
+	"planner_verdict",
 ]);
 assert.equal(activeTools.includes("grep"), false);
 assert.equal(activeTools.includes("bash"), false);
@@ -110,6 +113,11 @@ const auditAllowed = await handlers.get("tool_call")(
 	ctx,
 );
 assert.equal(auditAllowed, undefined);
+const verdictAllowed = await handlers.get("tool_call")(
+	{ toolName: "planner_verdict", input: { verdict: "pass", summary: "policy check" } },
+	ctx,
+);
+assert.equal(verdictAllowed, undefined, "the policy never blocks planner_verdict");
 
 activeTools.push("edit");
 await handlers.get("before_agent_start")({ systemPrompt: "BASE" });
@@ -192,6 +200,8 @@ await handlers.get("session_shutdown")({}, ctx);
 assert.deepEqual(activeTools, [
 	"read",
 	"subagent",
+	"git_audit",
+	"planner_verdict",
 	"bash",
 	"write",
 	"custom_mutator",
@@ -750,6 +760,169 @@ assert.equal(handlers.has("message_end"), true);
 	assert.equal(replaced.message.customType, "subagent-notify");
 	assert.equal(replaced.message.role, "custom");
 }
+
+// --------------------------------------------------------------------------
+// v0.3 V-1/V-2: planner_verdict tool, prompt bound, operator override
+// --------------------------------------------------------------------------
+
+const verdictTool = tools.get("planner_verdict");
+assert.equal(verdictTool.name, "planner_verdict");
+assert.equal(verdictTool.label, "Planner Verdict");
+
+// §4: the prompt is re-read every turn, so it stays under a hard size bound
+assert.ok(PLANNER_PROMPT.length <= 2500, `PLANNER_PROMPT is ${PLANNER_PROMPT.length} chars`);
+assert.match(PLANNER_PROMPT, /5\. record PASS, REQUEST_CHANGES, or BLOCKED with planner_verdict/);
+assert.match(PLANNER_PROMPT, /\/planner-only review is the operator's override; you record verdicts with planner_verdict\./);
+assert.doesNotMatch(PLANNER_PROMPT, /record a verdict or switch/);
+
+// unknown taskId -> isError, nothing recorded
+const unknownVerdict = await verdictTool.execute(
+	"v-0",
+	{ verdict: "pass", summary: "no such task", taskId: "T-20260905-nope" },
+	undefined,
+	undefined,
+	ctx,
+);
+assert.equal(unknownVerdict.isError, true);
+assert.match(unknownVerdict.content[0].text, /unknown task T-20260905-nope/);
+assert.match(unknownVerdict.content[0].text, /planner_verdict/);
+
+// pass with no recorded WorkerReport -> refused, state unchanged
+const noReportVerdict = await verdictTool.execute(
+	"v-1",
+	{ verdict: "pass", summary: "nothing to judge", taskId: "T-20260831-110" },
+	undefined,
+	undefined,
+	ctx,
+);
+assert.equal(noReportVerdict.isError, true);
+assert.match(noReportVerdict.content[0].text, /no recorded WorkerReport/);
+notices.length = 0;
+await commands.get("planner-only").handler("task T-20260831-110", ctx);
+assert.match(notices.at(-1).message, /State: executing/, "a refused verdict changes nothing");
+
+// a worker task with a fresh report, then a pending reviewer run
+gitResponses.set("rev-parse HEAD", { stdout: "abc1234\n", stderr: "", code: 0 });
+gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
+gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
+await handlers.get("tool_call")(
+	{ toolCallId: "call-v10", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260905-v10")) } },
+	ctx,
+);
+gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+const v10Report = {
+	...workerReport,
+	taskId: "T-20260905-v10",
+	evidence: { ...workerReport.evidence, taskId: "T-20260905-v10", workerRunId: "call-v10", cwd: "/fixture/T-20260905-v10", changedPaths: ["src/parser.ts"] },
+};
+const v10Worker = await handlers.get("tool_result")(
+	{ toolCallId: "call-v10", toolName: "subagent", input: {}, content: [{ type: "text", text: JSON.stringify(v10Report) }], isError: false },
+	ctx,
+);
+assert.match(v10Worker.content[0].text, /decision: review_pending/);
+
+// pass while a reviewer delegation is pending -> refused
+await handlers.get("tool_call")(
+	{ toolCallId: "call-v11", toolName: "subagent", input: { agent: "reviewer", task: JSON.stringify(delegationSpec("T-20260905-v10", "reviewer")) } },
+	ctx,
+);
+const pendingVerdict = await verdictTool.execute(
+	"v-2",
+	{ verdict: "pass", summary: "jumping the gun", taskId: "T-20260905-v10" },
+	undefined,
+	undefined,
+	ctx,
+);
+assert.equal(pendingVerdict.isError, true);
+assert.match(pendingVerdict.content[0].text, /still pending/);
+
+// the reviewer requests changes; Root's pass is then accepted as an override
+const v11Outcome = await handlers.get("tool_result")(
+	{
+		toolCallId: "call-v11",
+		toolName: "subagent",
+		input: {},
+		content: [{ type: "text", text: JSON.stringify({
+			taskId: "T-20260905-v10",
+			verdict: "request_changes",
+			summary: "missing empty-input coverage",
+			evidenceFresh: true,
+			findings: [{ severity: "major", category: "test", description: "no empty-input case", requestedChange: "add a case" }],
+		}) }],
+		isError: false,
+	},
+	ctx,
+);
+assert.match(v11Outcome.content[0].text, /decision: request_changes/);
+const rootPass = await verdictTool.execute(
+	"v-3",
+	{ verdict: "pass", summary: "finding is out of scope for this task", taskId: "T-20260905-v10" },
+	undefined,
+	undefined,
+	ctx,
+);
+assert.equal(rootPass.isError, undefined);
+assert.equal(rootPass.details.taskId, "T-20260905-v10");
+assert.equal(rootPass.details.verdict, "pass");
+assert.equal(rootPass.details.action, "accept");
+assert.equal(rootPass.details.state, "completed");
+assert.match(rootPass.content[0].text, /^\[PLANNER-ONLY REVIEW STATE\]/);
+assert.match(rootPass.content[0].text, /decision: accept/);
+notices.length = 0;
+await commands.get("planner-only").handler("task T-20260905-v10", ctx);
+assert.match(notices.at(-1).message, /State: completed/);
+assert.match(notices.at(-1).message, /Reviews: request_changes \(reviewer\), pass \(root\)/);
+assert.match(notices.at(-1).message, /Overrides: 1/);
+
+// blocked with no report is allowed (no delegation pending)
+await handlers.get("tool_call")(
+	{ toolCallId: "call-v12", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260905-v12")) } },
+	ctx,
+);
+await handlers.get("tool_result")(
+	{ toolCallId: "call-v12", toolName: "subagent", input: {}, content: [{ type: "text", text: "I could not produce a report." }], isError: false },
+	ctx,
+);
+const blockedVerdict = await verdictTool.execute(
+	"v-4",
+	{ verdict: "blocked", summary: "worker cannot proceed without credentials", taskId: "T-20260905-v12" },
+	undefined,
+	undefined,
+	ctx,
+);
+assert.equal(blockedVerdict.isError, undefined);
+assert.equal(blockedVerdict.details.action, "blocked");
+assert.equal(blockedVerdict.details.state, "blocked");
+
+// §4: the operator override bypasses refusals (here: pending run, no report)
+// with a printed warning; the terminal-state refusal still holds
+await handlers.get("tool_call")(
+	{ toolCallId: "call-v13", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260905-v13")) } },
+	ctx,
+);
+notices.length = 0;
+await commands.get("planner-only").handler("review T-20260905-v13 pass forcing the issue", ctx);
+assert.ok(
+	notices.some((notice) => notice.type === "warning" && /bypassed refusal/i.test(notice.message)),
+	"the override prints which refusal it bypassed",
+);
+assert.match(notices.at(-1).message, /\[PLANNER-ONLY REVIEW STATE\]/);
+notices.length = 0;
+await commands.get("planner-only").handler("task T-20260905-v13", ctx);
+assert.match(notices.at(-1).message, /Reviews: pass \(operator\)/);
+notices.length = 0;
+await commands.get("planner-only").handler("review T-20260905-v13 pass again", ctx);
+assert.match(notices.at(-1).message, /already completed/);
+const terminalVerdict = await verdictTool.execute(
+	"v-5",
+	{ verdict: "pass", summary: "again", taskId: "T-20260905-v13" },
+	undefined,
+	undefined,
+	ctx,
+);
+assert.equal(terminalVerdict.isError, true);
+assert.match(terminalVerdict.content[0].text, /already completed/);
 
 rmSync(isolatedAgentDir, { recursive: true, force: true });
 

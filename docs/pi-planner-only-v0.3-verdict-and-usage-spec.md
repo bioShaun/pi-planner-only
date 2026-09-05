@@ -206,7 +206,8 @@ records created before 0.3.
 4. `renderWorkerReport` footer and `reviewerPrompt` text: any remaining mention of
    `/planner-only review` as the model's action is replaced by `planner_verdict`.
    `grep -n "planner-only review" *.ts` after the round must only hit the slash handler, the
-   status help line, and README.
+   status help line, and the `PLANNER_PROMPT` closing sentence mandated in item 2 (annotated
+   2026-09-05 after R9: the original wording forgot its own mandated text).
 
 ## Tests
 
@@ -569,3 +570,81 @@ nothing from Pi (R10).
    revisit after U-6.
 3. **Cross-session log defaults on** (`usage.jsonl`, local, append-only; `PI_PLANNER_ONLY_USAGE_LOG=0`
    disables).
+
+---
+
+# 11. Addendum 2026-09-05 — findings from the U-0 probe
+
+The probe (§5) ran twice in an isolated scratch repository with Root on `volcengine/glm-5-3`
+(raw records: `.handoff/probe/usage-probe.jsonl`, logs beside it). Answers to the §5 table:
+
+| Question | Answer |
+|---|---|
+| Root `usage.input/output` non-zero? | Yes on `volcengine` (input, output, cacheRead, reasoning all reported). |
+| Root `usage.cost.total` zero? | No longer: after `cost` was added to `models.json` the same day, Pi priced every Root turn itself. |
+| Sync `subagent` result carries `details.results[0].usage` and `.model`? | Yes (`usage` in pi-subagents shape with `turns`; `model` like `qwen-local/qwen3.8-27b:high` — note the `:<thinking>` suffix, strip it before a pricing lookup). |
+| `_meta.json` after a run? | Yes, under `<sessionDir>/subagent-artifacts/`. Sync (foreground) runs write `<runId>_<agent>_0_meta.json`; async runs write `<runId>_<agent>_meta.json` (no index). Fields: `runId`, `agent`, `model`, `usage`, `attemptedModels`, `durationMs`. Search the bare name first for async, `_0` for sync, and accept either. An async worker on `volcengine/glm-5-3` reported non-zero `usage` with `cost` priced from `models.json`. |
+| `bg_wait` completions? | Exercised in the second run: Root called `bg_wait({all:true})` after every async launch. `details.mode` was `management` and `completions` was absent every time, because ordinary async runs deliver natively through `subagent-notify` and `bg_wait` only reports the wake. §6.3 branch 2 stays for provider/detached work but is not the async source of truth; the `_meta.json` path is. |
+| Children on `qwen-local` | `usage` is all zeros with `turns` counted: that provider declares `supportsUsageInStreaming: false`. `tokensUnknown` handling (§6.1) is required, not theoretical. |
+
+The async path itself worked end to end in non-interactive mode (launch receipt, `bg_wait` wake, `subagent-notify` consumed by Orchestration, WorkerReport recorded). RF-7 reproduced on that path as well.
+
+Two lifecycle defects surfaced in the same runs. They are in scope for 0.3.0 because usage
+attribution keys on Task identity and on delegations reaching a terminal state.
+
+## RF-6 — A failed async launch is reported as "has started"
+
+`isAsyncLaunchReceipt()` in `orchestrate.ts` returns true whenever `delegation.asyncRequested`
+is set, without looking at the tool result's error flag. In the probe the launch failed with
+`Unknown subagent model 'volcengine/glm-5-3-flash'`, the result had `isError: true`, and Root
+was told `[PLANNER-ONLY] Async delegation for task … has started. Await the run result`. The
+delegation then sits in `delegations` until `EXECUTING_STALE_MS`.
+
+Required behaviour:
+- `SubagentEvent` gains `isError?: boolean`; `index.ts` passes `event.isError` through.
+- In `handleSubagentResult`, when `event.isError` is true and the text is not a WorkerReport, the
+  delegation is removed, the Task transitions to `failed` with `stateReason: "delegation launch
+  failed: <first line of the tool text>"`, and the returned text is
+  `[PLANNER-ONLY] Delegation for task <id> failed to launch.` followed by the original tool text
+  (bounded by `RAW_OUTPUT_FALLBACK_CHARS`) and the guidance `Fix the delegation input and
+  re-delegate with the same TaskSpec.` `failed → executing` is already a legal transition.
+- Tests: async launch with `isError: true` → Task `failed`, no pending delegation, text says
+  "failed to launch"; sync launch with `isError: true` and no report → same; a genuine async
+  receipt without `isError` → unchanged behaviour.
+
+## RF-7 — A correction delegation without a TaskSpec creates a new Task
+
+Root followed the guidance literally: `"Do not modify files. Return only a valid WorkerReport for
+task T-20260905-902."` That prompt embeds no TaskSpec, so `beginDelegation` created
+`T-20260905-001` and every later identity check compared the worker's `T-20260905-902` against
+the wrong Task. The probe then spent three more rounds and one oracle run on the mismatch.
+
+Required behaviour, in `resolveDelegationTarget()` (`roles.ts`) or `beginDelegation()`:
+1. When the prompt embeds no TaskSpec and no ReviewRequest, scan it for Task ids
+   (`/\bT-\d{8}-\d{3}\b/g`). If exactly one distinct id is found and `lookup(id)` returns a
+   non-terminal Task, bind the delegation to it (`kind` from the inferred role, spec untouched,
+   no `bindSpec`). Emit the existing "delegated without an embedded TaskSpec" warning with the
+   suffix `; attached to task <id> named in the prompt`.
+2. If no id is found, but `store.active()` is a non-terminal Task whose `cwd` equals the
+   delegation cwd and whose state is `changes_requested` or `reviewing`, bind to it with the
+   warning suffix `; attached to active task <id>`. Any other state → create a new Task as today.
+3. Two or more distinct ids, or an id that is terminal or unknown → create a new Task as today
+   and add the warning `Planner-only: prompt names task <ids> but no single live Task matched`.
+- Tests (`roles.test.mjs`, `orchestrate.test.mjs`): the correction prompt above binds to the
+  existing Task and the subsequent WorkerReport for that id is accepted; an unknown id creates a
+  new Task with the warning; two ids → new Task; `active()` fallback only in the two states.
+
+## Round impact
+
+RF-6 and RF-7 join R10 (cursor) because that round already owns `orchestrate.ts` for U-3; they
+get their own tests and their own paragraph in the R10 report. The V-1 refusal "a delegation for
+this Task is still pending" (§3) depends on RF-6, otherwise a failed launch would refuse every
+verdict for 30 minutes.
+
+## Configuration finding (user action)
+
+`~/.pi/agent/settings.json` sets every pi-subagents role to `volcengine/glm-5-3-flash`, which is
+not in the model registry (`pi --list-models glm` shows only `volcengine/glm-5-3`). Every
+worker launch fails until Root manually overrides `model`. This is outside the plugin; the user
+picks the replacement (`volcengine/glm-5-3` or another cheap model) and, once chosen, that
+model's rate must exist in `pricing.json` / `models.json`.

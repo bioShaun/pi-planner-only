@@ -123,6 +123,47 @@ assert.deepEqual(summarizeFindings([]), ["Findings: (none)"]);
 assert.match(summarizeFindings([finding("major", "test")]).join("\n"), /\[major\] test: major finding → requested: fix it/);
 
 // --------------------------------------------------------------------------
+// v0.3 V-2: review_pending guidance names the planner_verdict tool
+// --------------------------------------------------------------------------
+
+{
+	const store = newTask();
+	const pending = decideReview({ task: store.require("T-20260831-001"), report: makeReport() });
+	assert.equal(pending.action, "review_pending");
+	assert.match(pending.guidance.join("\n"), /Record the verdict with the planner_verdict tool: \{verdict, summary, findings\?\}\./);
+	assert.doesNotMatch(pending.guidance.join("\n"), /planner-only review/);
+
+	const freshTask = { ...store.require("T-20260831-001"), reviewMode: "fresh" };
+	const freshPending = decideReview({ task: freshTask, report: makeReport() });
+	assert.equal(freshPending.action, "review_pending");
+	assert.match(freshPending.guidance.join("\n"), /delegate the review first; call planner_verdict only to arbitrate its result/);
+	assert.doesNotMatch(freshPending.guidance.join("\n"), /planner-only review/);
+}
+
+// An explicit verdict with no WorkerReport still lands (blocked ruling, or the
+// operator's override); only a *missing* verdict goes to report correction.
+{
+	const store = newTask();
+	const blocked = decideReview({
+		task: store.require("T-20260831-001"),
+		review: makeReview("blocked", [], "worker cannot proceed"),
+	});
+	assert.equal(blocked.action, "blocked");
+	assert.equal(apply(store, "T-20260831-001", blocked).state, "blocked");
+
+	const passStore = newTask();
+	const accepted = decideReview({
+		task: passStore.require("T-20260831-001"),
+		review: makeReview("pass"),
+	});
+	assert.equal(accepted.action, "accept");
+
+	const bareStore = newTask();
+	const noVerdict = decideReview({ task: bareStore.require("T-20260831-001"), reportError: "no WorkerReport was returned" });
+	assert.equal(noVerdict.action, "report_correction", "no report and no verdict still corrects the report");
+}
+
+// --------------------------------------------------------------------------
 // Happy path: pass on the first review
 // --------------------------------------------------------------------------
 

@@ -567,4 +567,98 @@ function truncatedPreview() {
 	assert.equal(orch.pendingDelegationCount(), 1);
 }
 
+// --------------------------------------------------------------------------
+// v0.3 V-1: recordRootVerdict provenance, findings, and §3 step-2 refusals
+// --------------------------------------------------------------------------
+
+// pass with fresh evidence records source "root" and accepts
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	await delegateWorker(orch, "call-614", "T-20260901-614");
+	await orch.handleSubagentResult(workerResult("call-614", reportFor("T-20260901-614", "call-614")));
+	const outcome = await orch.recordRootVerdict(orch.store.require("T-20260901-614"), "pass", "verified locally", { source: "root" });
+	assert.equal(outcome.decision.action, "accept");
+	assert.equal(outcome.task.state, "completed");
+	assert.equal(outcome.task.reviews.at(-1).source, "root");
+}
+
+// request_changes with findings: round increments, guidance lists the findings
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	await delegateWorker(orch, "call-615", "T-20260901-615");
+	await orch.handleSubagentResult(workerResult("call-615", reportFor("T-20260901-615", "call-615")));
+	const findings = [
+		{ severity: "major", category: "test", description: "no empty-input case", requestedChange: "add a case" },
+		{ severity: "minor", category: "maintainability", description: "naming is unclear" },
+	];
+	const outcome = await orch.recordRootVerdict(orch.store.require("T-20260901-615"), "request_changes", "coverage gap", { findings, source: "root" });
+	assert.equal(outcome.decision.action, "request_changes");
+	assert.equal(outcome.task.state, "changes_requested");
+	assert.equal(outcome.task.reviewRound, 1);
+	assert.match(outcome.decision.guidance.join("\n"), /\[major\] test: no empty-input case → requested: add a case/);
+	assert.match(outcome.decision.guidance.join("\n"), /\[minor\] maintainability: naming is unclear/);
+	const stored = outcome.task.reviews.at(-1);
+	assert.equal(stored.source, "root");
+	assert.equal(stored.findings.length, 2);
+	// Root revising its own verdict after the correction is not an override
+	await delegateWorker(orch, "call-615b", "T-20260901-615");
+	await orch.handleSubagentResult(workerResult("call-615b", reportFor("T-20260901-615", "call-615b")));
+	const second = await orch.recordRootVerdict(orch.store.require("T-20260901-615"), "pass", "fixed", { source: "root" });
+	assert.equal(second.task.state, "completed");
+	assert.equal(second.task.overrides.length, 0, "no override when the previous verdict was Root's own");
+}
+
+// blocked with no report is allowed once no delegation is pending; pass is not
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	await delegateWorker(orch, "call-616", "T-20260901-616");
+	const pending = orch.store.require("T-20260901-616");
+	assert.match(orch.rootVerdictRefusal(pending, "pass"), /no recorded WorkerReport/);
+	assert.match(orch.rootVerdictRefusal(pending, "blocked"), /still pending/);
+	// malformed worker output consumes the delegation without recording a report
+	await orch.handleSubagentResult({
+		toolCallId: "call-616",
+		toolName: "subagent",
+		content: [{ type: "text", text: "I tried but gave up." }],
+	});
+	assert.equal(orch.store.require("T-20260901-616").reports.length, 0);
+	assert.match(orch.rootVerdictRefusal(orch.store.require("T-20260901-616"), "pass"), /no recorded WorkerReport/);
+	assert.equal(orch.rootVerdictRefusal(orch.store.require("T-20260901-616"), "blocked"), undefined);
+	const outcome = await orch.recordRootVerdict(orch.store.require("T-20260901-616"), "blocked", "worker cannot proceed", { source: "root" });
+	assert.equal(outcome.decision.action, "blocked");
+	assert.equal(outcome.task.state, "blocked");
+}
+
+// fresh mode: Root arbitrates, it does not pre-empt
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	await delegateWorker(orch, "call-617", "T-20260901-617");
+	await orch.handleSubagentResult(workerResult("call-617", reportFor("T-20260901-617", "call-617")));
+	orch.store.setReviewMode("T-20260901-617", "fresh");
+	assert.match(orch.rootVerdictRefusal(orch.store.require("T-20260901-617"), "pass"), /fresh review mode/);
+	// request_changes and blocked never widen acceptance and stay allowed
+	assert.equal(orch.rootVerdictRefusal(orch.store.require("T-20260901-617"), "request_changes"), undefined);
+	assert.equal(orch.rootVerdictRefusal(orch.store.require("T-20260901-617"), "blocked"), undefined);
+
+	// while the reviewer run is pending, even arbitration must wait
+	await orch.beginDelegation(
+		{ toolCallId: "call-617-r", input: { agent: "reviewer", task: JSON.stringify(specFor("T-20260901-617", "reviewer")) } },
+		BASE,
+	);
+	assert.match(orch.rootVerdictRefusal(orch.store.require("T-20260901-617"), "pass"), /still pending/);
+
+	// the reviewer requests changes; Root's pass is then recorded as an override
+	const reviewerOutcome = await orch.handleSubagentResult(reviewerResult("call-617-r", "T-20260901-617", "request_changes"));
+	assert.match(reviewerOutcome.content[0].text, /decision: request_changes/);
+	assert.equal(orch.store.require("T-20260901-617").reviews.at(-1).source, "reviewer");
+	assert.equal(orch.rootVerdictRefusal(orch.store.require("T-20260901-617"), "pass"), undefined);
+	const outcome = await orch.recordRootVerdict(orch.store.require("T-20260901-617"), "pass", "finding out of scope", { source: "root" });
+	assert.equal(outcome.decision.action, "accept");
+	const task = orch.store.require("T-20260901-617");
+	assert.equal(task.state, "completed");
+	assert.equal(task.overrides.at(-1).reviewerVerdict, "request_changes");
+	assert.equal(task.overrides.at(-1).rootVerdict, "pass");
+	assert.equal(task.reviews.at(-1).source, "root");
+}
+
 console.log("planner-only orchestration: PASS");

@@ -335,7 +335,9 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 	const { task } = input;
 	const round = task.reviewRound;
 
-	if (!input.report) {
+	// An explicit verdict with no report (a blocked ruling, or the operator's
+	// override) still lands; only a *missing* verdict goes to report correction.
+	if (!input.report && !input.review) {
 		const reason = input.reportError ?? "no WorkerReport was returned";
 		if (task.reportCorrections < MAX_REPORT_CORRECTIONS) {
 			return {
@@ -355,7 +357,7 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 		return blockedDecision(`worker report could not be obtained: ${reason}`, round);
 	}
 
-	if (input.report.status === "blocked") {
+	if (input.report && input.report.status === "blocked") {
 		return {
 			action: "blocked",
 			nextState: "blocked",
@@ -370,7 +372,7 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 		};
 	}
 
-	if (input.report.status === "failed") {
+	if (input.report && input.report.status === "failed") {
 		if (round < MAX_REVIEW_ROUNDS) {
 			return {
 				action: "request_changes",
@@ -385,7 +387,7 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 				],
 			};
 		}
-		return blockedDecision(`worker failed repeatedly: ${input.report.summary}`, round);
+		return blockedDecision(`worker failed repeatedly: ${input.report?.summary ?? "no summary"}`, round);
 	}
 
 	if (input.comparison && evidenceAction(input.comparison) === "revalidate") {
@@ -417,10 +419,10 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 			guidance: [
 				"Verify task identity, evidence freshness, and acceptance criteria.",
 				"Inspect the changed files and git state with read/grep/git_audit.",
-				`Record the verdict with: /planner-only review ${REVIEW_VERDICTS.join("|")} <summary>`,
+				"Record the verdict with the planner_verdict tool: {verdict, summary, findings?}.",
 				task.reviewMode === "fresh"
-					? "A fresh reviewer is expected: delegate review to an isolated reviewer subagent first."
-					: "Root review is active. Use /planner-only review fresh for an independent reviewer.",
+					? "A fresh reviewer is expected: delegate the review first; call planner_verdict only to arbitrate its result."
+					: "Root review is active; record the verdict yourself with planner_verdict.",
 			],
 		};
 	}
