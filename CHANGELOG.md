@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1 - 2026-09-05
+
+- **L-1**: Lenient WorkerReport normalisation. Automatically repairs common schema deviations (e.g. `version: "1"`, `changedFiles` as object arrays, alias keys like `unresolvedItems`, free-text validation types, missing defaults) before validation and echoes applied fixes in a `Report normalised:` line.
+- **L-2**: Review-round base evidence sampling. Scopes base evidence to each review round so that report-only corrections, re-bindings, and re-delegations keep the baseline without false `over-reported / unreliable declaration` warnings, and echoes `base <sha7>` in decision evidence.
+- **L-3**: Validator delegations as task invocations. Binds `validator` (`oracle`) delegations directly to the task under review instead of creating new tasks; records output in `validatorReports`, attributes usage to the reviewed task, and allows Root verdicts to land on the implementation task.
+- **L-4**: Root verdict lifecycle and prompt cleanup. Treats `completed` as the sole terminal state so that `blocked` or `failed` tasks with recorded reports can pass directly via `planner_verdict`; removes slash-command references from Root verdict refusal messages and planner prompts.
+- **L-5**: Store-issued Task IDs and alias preservation. Automatically replaces missing, malformed, or non-today Task IDs in TaskSpecs with generated canonical IDs while keeping the original ID as an alias, notifying Root in delegation results and resolving aliases in subsequent delegations and reports.
+
 ## 0.3.0 - 2026-09-05
 
 - **V-1**: Root verdict tool (`planner_verdict`). Enables Root to record pass, request_changes, or blocked directly with evidence re-check at acceptance boundary, lifecycle refusal guards, and review findings.

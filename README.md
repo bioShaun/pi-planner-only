@@ -97,7 +97,9 @@ The parent embeds a `TaskSpec` JSON object in the subagent task:
 
 `subagent` calls are intercepted: the task is registered, the workspace is
 sampled, and a second declared `worker` for the same cwd is blocked (one writer
-per cwd). Restricted roles remap onto builtin agents:
+per cwd). If `taskId` is missing, malformed, or not today's date, the extension
+replaces it with a generated id, keeps the original id as an alias, and notifies
+Root in the delegation result. Restricted roles remap onto builtin agents:
 
 | Role | Builtin agent | Child tools |
 |---|---|---|
@@ -109,12 +111,15 @@ A `reviewer` child always launches with `context: "fresh"` and a packet of
 TaskSpec + WorkerReport + evidence refs — not a fork of the parent session.
 The packet is a `ReviewRequest`: an invocation over the Task, never a new
 TaskSpec. The Task's original role, objective, and spec stay unchanged through
-worker, reviewer, and validation runs.
+worker, reviewer, and validation runs. A `validator` delegation is an invocation
+over the task under review rather than creating a new Task; its report is recorded
+in that Task's `validatorReports`.
 
 Workers must return a versioned `WorkerReport`. The parent extracts it,
 compacts anything over 12k characters, checks evidence freshness, and appends
-the next review action. Malformed output gets one report-only correction, then
-blocks.
+the next review action. Common deviations are automatically normalised, with
+applied repairs echoed in a `Report normalised:` line. Malformed output gets
+one report-only correction, then blocks.
 
 ### Task identity and the PASS boundary
 
@@ -151,7 +156,7 @@ in the `ReviewRequest`; reviewers work with `read`/`grep`/`find`/`ls` only.
 No full diff crosses the seam by default.
 
 Review states: `planning → executing → reviewing → completed | changes_requested | blocked`.
-At most three corrections (`MAX_REVIEW_ROUNDS`). Stale in-scope evidence cannot
+Root records verdicts with `planner_verdict`: tasks in `blocked` or `failed` state can directly pass as long as they have a recorded report; `completed` is the sole terminal state. At most three corrections (`MAX_REVIEW_ROUNDS`). Stale in-scope evidence cannot
 PASS. Root may override a reviewer; the override is recorded in memory.
 
 ### Composite workflows
