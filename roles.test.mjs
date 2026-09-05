@@ -167,6 +167,33 @@ assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root
 	assert.deepEqual(bound.namedTaskIds, ["T-20260905-902"]);
 }
 
+// Blocked and failed Tasks stay bindable for a prompt that names exactly one
+// Task id: TASK_TRANSITIONS lets them return to executing. Only completed is
+// excluded from rebinding.
+{
+	const makeTask = (state) => ({
+		taskId: "T-20260905-904",
+		state,
+		cwd: "/repo",
+		spec: { taskId: "T-20260905-904", role: "worker", objective: "implement", cwd: "/repo" },
+	});
+	const resume = {
+		agent: "worker",
+		task: "Resume task T-20260905-904 and unblock it.",
+	};
+	for (const state of ["blocked", "failed"]) {
+		const bound = resolveDelegationTarget(resume, () => makeTask(state));
+		assert.equal(bound.taskId, "T-20260905-904", state);
+		assert.equal(bound.task.state, state);
+		assert.equal(bound.spec, undefined);
+		assert.deepEqual(bound.namedTaskIds, ["T-20260905-904"]);
+	}
+	const done = resolveDelegationTarget(resume, () => makeTask("completed"));
+	assert.equal(done.taskId, undefined);
+	assert.equal(done.task, undefined);
+	assert.deepEqual(done.namedTaskIds, ["T-20260905-904"]);
+}
+
 {
 	const two = {
 		agent: "worker",

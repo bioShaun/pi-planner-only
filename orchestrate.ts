@@ -48,6 +48,7 @@ import {
 	EXECUTING_STALE_MS,
 	MAX_REVIEW_ROUNDS,
 	MAX_WORKER_REPORT_CHARS,
+	canRebindNamedTask,
 	isTerminalTaskState,
 } from "./types.ts";
 import type {
@@ -393,7 +394,7 @@ export class PlannerOrchestrator {
 			this.store.bindSpec(task.taskId, spec);
 		} else {
 			const named = target?.namedTaskIds ?? [];
-			const liveNamed = target?.task && !isTerminalTaskState(target.task.state)
+			const liveNamed = target?.task && canRebindNamedTask(target.task.state)
 				? target.task
 				: undefined;
 			if (liveNamed) {

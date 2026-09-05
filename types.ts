@@ -251,6 +251,16 @@ export function isTerminalTaskState(state: TaskState): boolean {
 	return TERMINAL_TASK_STATES.includes(state);
 }
 
+/**
+ * Whether a TaskSpec-less delegation prompt naming exactly one Task id may
+ * bind to that Task. Blocked and failed Tasks stay re-bindable because
+ * TASK_TRANSITIONS lets them transition back to executing (task.ts); only
+ * completed is a true end of work.
+ */
+export function canRebindNamedTask(state: TaskState): boolean {
+	return state !== "completed";
+}
+
 export interface TokenCounts {
 	input: number;
 	output: number;

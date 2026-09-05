@@ -747,6 +747,78 @@ function truncatedPreview() {
 	assert.equal(orch.store.list().length, 1);
 }
 
+// Blocked and failed Tasks named in a TaskSpec-less prompt re-bind; the
+// delegation moves them back to executing. A completed Task stays excluded:
+// a new Task is created instead of attaching.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, structuredDelegationMode: "warn" });
+	const taskId = "T-20260905-910";
+	await delegateWorker(orch, "call-910", taskId);
+	orch.store.transition(taskId, "blocked");
+	const outcome = await orch.beginDelegation(
+		{
+			toolCallId: "call-910-fix",
+			input: { agent: "worker", task: `Unblock and continue task ${taskId}.` },
+		},
+		BASE,
+	);
+	assert.equal(outcome.task.taskId, taskId);
+	assert.equal(orch.store.require(taskId).state, "executing");
+	assert.ok(
+		(outcome.warnings ?? []).some((warning) =>
+			/without an embedded TaskSpec/.test(warning)
+			&& /attached to task T-20260905-910 named in the prompt/.test(warning),
+		),
+		outcome.warnings?.join(" | "),
+	);
+	assert.equal(orch.store.list().length, 1);
+}
+
+{
+	const orch = new PlannerOrchestrator({ gitRunner, structuredDelegationMode: "warn" });
+	const taskId = "T-20260905-911";
+	await delegateWorker(orch, "call-911", taskId);
+	orch.store.transition(taskId, "failed");
+	const outcome = await orch.beginDelegation(
+		{
+			toolCallId: "call-911-fix",
+			input: { agent: "worker", task: `Retry the failed task ${taskId}.` },
+		},
+		BASE,
+	);
+	assert.equal(outcome.task.taskId, taskId);
+	assert.equal(orch.store.require(taskId).state, "executing");
+	assert.ok(
+		(outcome.warnings ?? []).some((warning) =>
+			/without an embedded TaskSpec/.test(warning)
+			&& /attached to task T-20260905-911 named in the prompt/.test(warning),
+		),
+		outcome.warnings?.join(" | "),
+	);
+	assert.equal(orch.store.list().length, 1);
+}
+
+{
+	const orch = new PlannerOrchestrator({ gitRunner, structuredDelegationMode: "warn" });
+	const taskId = "T-20260905-912";
+	await delegateWorker(orch, "call-912", taskId);
+	orch.store.transition(taskId, "reviewing");
+	orch.store.transition(taskId, "completed");
+	const outcome = await orch.beginDelegation(
+		{
+			toolCallId: "call-912-next",
+			input: { agent: "worker", task: `Follow up on task ${taskId}.` },
+		},
+		BASE,
+	);
+	assert.notEqual(outcome.task.taskId, taskId);
+	assert.equal(orch.store.require(taskId).state, "completed");
+	assert.equal(orch.store.list().length, 2);
+	assert.ok((outcome.warnings ?? []).some((warning) =>
+		/prompt names task T-20260905-912 but no single live Task matched/.test(warning),
+	), outcome.warnings?.join(" | "));
+}
+
 {
 	const orch = new PlannerOrchestrator({ gitRunner, structuredDelegationMode: "warn" });
 	const taskId = "T-20260905-903";

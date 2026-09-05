@@ -1,5 +1,5 @@
 import type { ReviewEvidencePacket, TaskRole, TaskSpec } from "./types.ts";
-import { isTerminalTaskState } from "./types.ts";
+import { canRebindNamedTask } from "./types.ts";
 import { extractTaskSpec } from "./task.ts";
 import type { TaskRecord } from "./task.ts";
 import { buildFreshReviewerTask, extractReviewRequest } from "./review.ts";
@@ -160,7 +160,7 @@ export function resolveDelegationTarget(
 	let task = taskId ? lookup(taskId) : undefined;
 	if (!taskId && namedTaskIds.length === 1) {
 		const found = lookup(namedTaskIds[0] as string);
-		if (found && !isTerminalTaskState(found.state)) {
+		if (found && canRebindNamedTask(found.state)) {
 			taskId = namedTaskIds[0];
 			task = found;
 		}
