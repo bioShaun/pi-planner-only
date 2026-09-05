@@ -119,7 +119,10 @@ Workers must return a versioned `WorkerReport`. The parent extracts it,
 compacts anything over 12k characters, checks evidence freshness, and appends
 the next review action. Common deviations are automatically normalised, with
 applied repairs echoed in a `Report normalised:` line. Malformed output gets
-one report-only correction, then blocks.
+one report-only correction, then blocks. If the first result is prose with no
+report JSON at all, that correction also includes one compact JSON shape
+reminder. Accepted results do not repeat the fresh-reviewer prompt; the full
+packet is generated only when a reviewer is actually delegated.
 
 ### Task identity and the PASS boundary
 
@@ -210,6 +213,8 @@ The pricing table format:
 - [v0.2 specification](docs/pi-planner-only-v0.2-spec.md) covers the core protocol and architecture.
 - [Evidence Authority specification](docs/pi-planner-only-evidence-authority-spec.md) defines Root-owned delegation attribution.
 - [P0/P1 hardening specification](docs/pi-planner-only-p0-p1-hardening-spec.md) covers evidence, lifecycle, and trust-boundary hardening.
+- [v0.3.1 specification](docs/pi-planner-only-v0.3.1-spec.md) covers fewer Root turns and lenient WorkerReport normalisation.
+- [v0.3.2 specification](docs/pi-planner-only-v0.3.2-spec.md) covers compressed repeated Root input and reactive JSON guidance.
 
 ## Tests
 

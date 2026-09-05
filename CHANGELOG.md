@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2 - 2026-09-05
+
+- **I-1**: Compressed extension-controlled Root input. Reduced `PLANNER_PROMPT` to 1,469 UTF-8 bytes while retaining every planner/reviewer contract, and stopped appending the full fresh-reviewer template to accepted worker results. Fresh reviewer delegations still receive the complete generated packet when launched.
+- **I-2**: Reactive JSON reminder. A first prose-only WorkerReport strike now adds one compact JSON shape to the existing report-only correction; empty, parseable-invalid, identity-rejected, exhausted, validator, and reviewer paths remain unchanged.
+- Folded in the 0.3.1 re-measurement follow-ups: unbound explorers no longer create placeholder Tasks; worker-guessed Git hashes are dropped and delegation run ids are stamped by Root; task status reports validator counts; prose `evidence` is preserved in notes and repaired; validator normalisation repairs are echoed to Root.
+
 ## 0.3.1 - 2026-09-05
 
 - **L-1**: Lenient WorkerReport normalisation. Automatically repairs common schema deviations (e.g. `version: "1"`, `changedFiles` as object arrays, alias keys like `unresolvedItems`, free-text validation types, missing defaults) before validation and echoes applied fixes in a `Report normalised:` line.

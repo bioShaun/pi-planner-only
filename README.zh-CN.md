@@ -88,7 +88,7 @@ pi -e .
 
 `reviewer` 子进程一律 `context: "fresh"`，任务包只有 TaskSpec + WorkerReport + evidence，不会 fork 父会话。任务包是 `ReviewRequest`：对 Task 的一次调用，绝不是新的 TaskSpec。Task 的原始 role、objective、spec 在 worker / reviewer / validation 各轮中保持不变。validator 委派是对被审 Task 的调用，不会新建 Task，其报告记录在该 Task 的 validatorReports。
 
-Worker 必须返回带 version 的 `WorkerReport`。父进程抽取、超过 12k 字符则压缩、检查 evidence 新鲜度，并附上下一步 review 动作。常见偏差会被自动规范化，修补项以 `Report normalised:` 行回显。畸形输出只允许一次 report-only 修正，第二次直接 blocked。
+Worker 必须返回带 version 的 `WorkerReport`。父进程抽取、超过 12k 字符则压缩、检查 evidence 新鲜度，并附上下一步 review 动作。常见偏差会被自动规范化，修补项以 `Report normalised:` 行回显。畸形输出只允许一次 report-only 修正，第二次直接 blocked。若第一次结果完全是 prose、没有 report JSON，这次修正还会附上一行紧凑 JSON 形状提醒。已接受的结果不再重复 Fresh Reviewer prompt；只有真正委派 reviewer 时才生成完整任务包。
 
 ### 任务身份与 PASS 边界
 
@@ -155,6 +155,8 @@ Token 数为准，美元/人民币金额是推导值。扩展跟踪 Root 各生�
 - [v0.2 规范](docs/pi-planner-only-v0.2-spec.md)：核心协议与架构。
 - [Evidence Authority 规范](docs/pi-planner-only-evidence-authority-spec.md)：Root 负责委派归因的证据语义。
 - [P0/P1 加固规范](docs/pi-planner-only-p0-p1-hardening-spec.md)：证据、生命周期与信任边界加固。
+- [v0.3.1 规范](docs/pi-planner-only-v0.3.1-spec.md)：减少 Root turns 与宽松 WorkerReport 规范化。
+- [v0.3.2 规范](docs/pi-planner-only-v0.3.2-spec.md)：压缩重复 Root 输入与按需 JSON 提醒。
 
 ## 测试
 
