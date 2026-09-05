@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
 	captureEvidence,
 	captureReviewEvidencePacket,
@@ -283,9 +285,11 @@ assert.deepEqual(dirtyBaseline.unrelatedPaths, []);
 assert.deepEqual(dirtyBaseline.undeclaredPaths, []);
 
 // 11. declared path that was already dirty in A is over-reporting, not attribution
+//     (RF-1 A3 — rewritten: with the blob hash *equal* at A and C, the
+//     over-reported expectation still holds)
 const overReported = compareEvidence(
-	makeBase({ changedPaths: ["src/legacy.ts"] }),
-	makeCurrent({ changedPaths: ["src/legacy.ts", "src/a.ts"] }),
+	makeBase({ changedPaths: ["src/legacy.ts"], dirtyPathHashes: { "src/legacy.ts": "hash-same" } }),
+	makeCurrent({ changedPaths: ["src/legacy.ts", "src/a.ts"], dirtyPathHashes: { "src/legacy.ts": "hash-same" } }),
 	makeReport({ finalGitRef: "abc1234", gitStatusHash: "hash-one", changedPaths: ["src/a.ts", "src/legacy.ts"] }),
 );
 assert.deepEqual(overReported.truthPaths, ["/repo/src/a.ts"]);
@@ -293,6 +297,188 @@ assert.deepEqual(overReported.extraDeclaredPaths, ["/repo/src/legacy.ts"]);
 assert.equal(overReported.fresh, false);
 assert.equal(evidenceAction(overReported), "revalidate");
 assert.match(describeComparison(overReported), /over-reported|unreliable/);
+
+// --------------------------------------------------------------------------
+// RF-1 — committed delta (T2) and content-changed baseline (T3)
+// --------------------------------------------------------------------------
+
+function rf1Runner(responses, calls) {
+	return async (args) => {
+		calls.push(args.join(" "));
+		return responses[args.join(" ")] ?? { stdout: "", code: 128 };
+	};
+}
+
+const RF1_DIFF_KEY = "diff --name-only --no-ext-diff --no-textconv abc1234 def5678";
+
+function callsInclude(aCalls, cCalls, key) {
+	return cCalls.includes(key) && !aCalls.includes(key);
+}
+
+// A1. worker commits between A and C: the committed delta (T2) is attributed
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+	try {
+		const aCalls = [];
+		const base = await captureEvidence(rf1Runner({
+			"rev-parse --git-dir": { stdout: ".git\n", code: 0 },
+			"rev-parse HEAD": { stdout: "abc1234\n", code: 0 },
+			"status --porcelain=v2 --branch": { stdout: "", code: 0 },
+			"diff HEAD --stat": { stdout: "", code: 0 },
+		}, aCalls), { cwd: dir, taskId: "T-1", workerRunId: "call-1" });
+		assert.equal(base.finalGitRef, "abc1234");
+		assert.equal(base.dirtyPathHashes, undefined);
+		assert.equal(base.committedPaths, undefined);
+
+		const cCalls = [];
+		const current = await captureEvidence(rf1Runner({
+			"rev-parse --git-dir": { stdout: ".git\n", code: 0 },
+			"rev-parse HEAD": { stdout: "def5678\n", code: 0 },
+			"status --porcelain=v2 --branch": { stdout: "", code: 0 },
+			"diff HEAD --stat": { stdout: "", code: 0 },
+			[RF1_DIFF_KEY]: { stdout: "a.txt\nb.txt\n", code: 0 },
+		}, cCalls), { cwd: dir, taskId: "T-1", workerRunId: "call-1", baseGitRef: "abc1234" });
+		assert.equal(current.baseGitRef, "abc1234");
+		assert.equal(current.finalGitRef, "def5678");
+		assert.deepEqual(current.committedPaths, ["a.txt", "b.txt"]);
+		assert.ok(callsInclude(aCalls, cCalls, RF1_DIFF_KEY));
+
+		const committed = compareEvidence(base, current, makeReport({
+			cwd: dir,
+			finalGitRef: "def5678",
+			changedPaths: ["a.txt", "b.txt"],
+		}));
+		assert.equal(committed.fresh, true);
+		assert.deepEqual(committed.reasons, []);
+		assert.deepEqual(committed.truthPaths, [join(dir, "a.txt"), join(dir, "b.txt")]);
+		assert.deepEqual(committed.missingPaths, []);
+		assert.deepEqual(committed.extraDeclaredPaths, []);
+		assert.equal(evidenceAction(committed), "review");
+		assert.equal(isEvidenceStale(base, current, makeReport({
+			cwd: dir,
+			finalGitRef: "def5678",
+			changedPaths: ["a.txt", "b.txt"],
+		})), false);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// A2. baseline-dirty path whose blob hash differs at C is attributed (T3)
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+	try {
+		writeFileSync(join(dir, "legacy.ts"), "v1\n");
+		const porcelain = [
+			"# branch.oid abc1234",
+			"# branch.head main",
+			"1 .M N... 100644 100644 100644 1111111 2222222 legacy.ts",
+		].join("\n");
+		const common = {
+			"rev-parse --git-dir": { stdout: ".git\n", code: 0 },
+			"rev-parse HEAD": { stdout: "abc1234\n", code: 0 },
+			"status --porcelain=v2 --branch": { stdout: porcelain, code: 0 },
+			"diff HEAD --stat": { stdout: " legacy.ts | 2 +-\n", code: 0 },
+		};
+		const aCalls = [];
+		const base = await captureEvidence(rf1Runner({
+			...common,
+			"hash-object -- legacy.ts": { stdout: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n", code: 0 },
+		}, aCalls), { cwd: dir, taskId: "T-1", workerRunId: "call-1" });
+		assert.deepEqual(base.dirtyPathHashes, { "legacy.ts": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" });
+		assert.ok(aCalls.includes("hash-object -- legacy.ts"));
+
+		writeFileSync(join(dir, "legacy.ts"), "v2 with worker edits\n");
+		const cCalls = [];
+		const current = await captureEvidence(rf1Runner({
+			...common,
+			"hash-object -- legacy.ts": { stdout: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n", code: 0 },
+		}, cCalls), { cwd: dir, taskId: "T-1", workerRunId: "call-1", baseGitRef: "abc1234" });
+		assert.deepEqual(current.dirtyPathHashes, { "legacy.ts": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" });
+		assert.deepEqual(current.committedPaths, []);
+		assert.ok(!cCalls.some((call) => call.startsWith("diff --name-only")));
+
+		const contentChanged = compareEvidence(base, current, makeReport({
+			cwd: dir,
+			finalGitRef: "abc1234",
+			gitStatusHash: hashStatus(porcelain),
+			changedPaths: ["legacy.ts"],
+		}));
+		assert.equal(contentChanged.fresh, true);
+		assert.deepEqual(contentChanged.truthPaths, [join(dir, "legacy.ts")]);
+		assert.deepEqual(contentChanged.undeclaredPaths, []);
+		assert.deepEqual(contentChanged.extraDeclaredPaths, []);
+		assert.deepEqual(contentChanged.missingPaths, []);
+		assert.equal(evidenceAction(contentChanged), "review");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// T3 edge: a path deleted at A hashes to null and counts as changed when C has a hash
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+	try {
+		const base = await captureEvidence(rf1Runner({
+			"rev-parse --git-dir": { stdout: ".git\n", code: 0 },
+			"rev-parse HEAD": { stdout: "abc1234\n", code: 0 },
+			"status --porcelain=v2 --branch": {
+				stdout: "# branch.oid abc1234\n# branch.head main\n1 .D N... 100644 100644 100644 1111111 0000000 gone.txt\n",
+				code: 0,
+			},
+			"diff HEAD --stat": { stdout: "", code: 0 },
+		}, []), { cwd: dir, taskId: "T-1", workerRunId: "call-1" });
+		assert.deepEqual(base.dirtyPathHashes, { "gone.txt": null });
+
+		writeFileSync(join(dir, "gone.txt"), "restored\n");
+		const current = await captureEvidence(rf1Runner({
+			"rev-parse --git-dir": { stdout: ".git\n", code: 0 },
+			"rev-parse HEAD": { stdout: "abc1234\n", code: 0 },
+			"status --porcelain=v2 --branch": {
+				stdout: "# branch.oid abc1234\n# branch.head main\n1 .M N... 100644 100644 100644 1111111 2222222 gone.txt\n",
+				code: 0,
+			},
+			"diff HEAD --stat": { stdout: "", code: 0 },
+			"hash-object -- gone.txt": { stdout: "cccccccccccccccccccccccccccccccccccccccc\n", code: 0 },
+		}, []), { cwd: dir, taskId: "T-1", workerRunId: "call-1", baseGitRef: "abc1234" });
+		assert.deepEqual(current.dirtyPathHashes, { "gone.txt": "cccccccccccccccccccccccccccccccccccccccc" });
+
+		const restored = compareEvidence(base, current, makeReport({
+			cwd: dir,
+			finalGitRef: "abc1234",
+			changedPaths: ["gone.txt"],
+		}));
+		assert.equal(restored.fresh, true);
+		assert.deepEqual(restored.truthPaths, [join(dir, "gone.txt")]);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// A4. 201 dirty paths at A: the baseline hash list is capped and the omission is visible
+{
+	const paths = Array.from({ length: 201 }, (_, index) => `dirty/p${String(index).padStart(3, "0")}.txt`);
+	const porcelain201 = paths.map((path) => `? ${path}`).join("\n");
+	const aCalls = [];
+	const base = await captureEvidence(rf1Runner({
+		"rev-parse --git-dir": { stdout: ".git\n", code: 0 },
+		"rev-parse HEAD": { stdout: "abc1234\n", code: 0 },
+		"status --porcelain=v2 --branch": { stdout: porcelain201, code: 0 },
+		"diff HEAD --stat": { stdout: "", code: 0 },
+	}, aCalls), { cwd: "/repo", taskId: "T-1", workerRunId: "call-1" });
+	assert.equal(base.changedPaths.length, 201);
+	assert.equal(base.dirtyPathHashes, undefined);
+	assert.ok(!aCalls.some((call) => call.startsWith("hash-object")));
+
+	const skipped = compareEvidence(
+		base,
+		makeCurrent({ changedPaths: ["dirty/p000.txt", "src/a.ts"] }),
+		makeReport({ finalGitRef: "abc1234", changedPaths: ["src/a.ts", "dirty/p000.txt"] }),
+	);
+	assert.ok(skipped.reasons.some((reason) => reason === "baseline hash skipped (201 dirty paths)"));
+	// T3 stays empty above the cap: the baseline-dirty path is not attributed
+	assert.deepEqual(skipped.truthPaths, ["/repo/src/a.ts"]);
+}
 
 // --------------------------------------------------------------------------
 // Phase 2 — rendering distinguishes attribution, mismatch, unverifiable

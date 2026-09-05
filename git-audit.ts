@@ -33,7 +33,15 @@ export const GIT_READ_ARGV = {
 	// Reviewer evidence packet only. git_audit's diff-* operations build their
 	// own argv because they also support the staged variant.
 	diffCheck: ["diff", "--check"],
+	// RF-1 Evidence probe rows only — never reachable through the git_audit tool.
+	// diffNamesBetween takes the two refs as trailing argv elements, each
+	// validated against GIT_REF_PATTERN; hashObject takes dirty paths after `--`.
+	diffNamesBetween: ["diff", "--name-only", "--no-ext-diff", "--no-textconv"],
+	hashObject: ["hash-object", "--"],
 } as const;
+
+/** RF-1 — commit SHAs accepted as diff endpoints by the Evidence probe (full or abbreviated). */
+export const GIT_REF_PATTERN = /^[0-9a-f]{7,40}$/;
 export const GIT_AUDIT_OPERATIONS = [
 	"status",
 	"diff-stat",

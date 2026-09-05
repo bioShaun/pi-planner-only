@@ -35,6 +35,9 @@ export const MAX_GIT_AUDIT_ENTRIES = 200;
 export const DEFAULT_GIT_AUDIT_ENTRIES = 20;
 export const MAX_GIT_AUDIT_OUTPUT_CHARS = 20000;
 
+/** RF-1 — cap on dirty paths hashed per Evidence sample for the T3 baseline comparison. */
+export const MAX_BASELINE_HASH_PATHS = 200;
+
 export type TaskRole = "worker" | "explorer" | "validator" | "reviewer";
 
 export type WorkerStatus = "completed" | "partial" | "blocked" | "failed";
@@ -106,6 +109,14 @@ export interface EvidenceRef {
 	finalGitRef?: string;
 	gitStatusHash?: string;
 	changedPaths?: string[];
+	/**
+	 * Working-tree blob hashes for paths dirty at sample time, keyed by the
+	 * `changedPaths` entry. Sampled once per A/C endpoint (≤ MAX_BASELINE_HASH_PATHS);
+	 * deleted or unreadable paths hash to `null`.
+	 */
+	dirtyPathHashes?: Record<string, string | null>;
+	/** Paths changed between baseGitRef and finalGitRef (C only; empty when refs are equal). */
+	committedPaths?: string[];
 	diffStat?: string;
 	gitAvailable?: boolean;
 	generatedAt: string;

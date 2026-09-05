@@ -9,9 +9,11 @@
  */
 
 import { createHash } from "node:crypto";
+import { statSync } from "node:fs";
 import { resolve } from "node:path";
-import { GIT_READ_ARGV } from "./git-audit.ts";
+import { GIT_READ_ARGV, GIT_REF_PATTERN } from "./git-audit.ts";
 import type { GitRunner } from "./git-audit.ts";
+import { MAX_BASELINE_HASH_PATHS } from "./types.ts";
 import type { EvidenceRef, ReviewEvidencePacket, TaskScope, WorkerReport } from "./types.ts";
 
 export type { GitRunner };
@@ -115,6 +117,78 @@ export interface CaptureEvidenceOptions {
 	baseGitRef?: string;
 }
 
+function isHashableFilePath(path: string): boolean {
+	try {
+		return statSync(path).isFile();
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * RF-1 — one `git hash-object -- <paths…>` call (no `-w`) over the sample's
+ * dirty paths. Deleted, unreadable, or non-file paths hash to `null` without
+ * entering the argv (git aborts the whole call on the first unreadable path).
+ * Above MAX_BASELINE_HASH_PATHS the call is skipped and the map is omitted;
+ * a failing call also omits the map so T3 stays empty rather than
+ * mis-attributing.
+ */
+async function hashDirtyPaths(
+	run: GitRunner,
+	cwd: string,
+	paths: readonly string[],
+): Promise<Record<string, string | null> | undefined> {
+	if (paths.length === 0 || paths.length > MAX_BASELINE_HASH_PATHS) return undefined;
+	const hashes: Record<string, string | null> = {};
+	const hashable: string[] = [];
+	for (const path of paths) {
+		if (isHashableFilePath(resolve(cwd, path))) hashable.push(path);
+		else hashes[path] = null;
+	}
+	if (hashable.length > 0) {
+		let result: { stdout: string; code: number };
+		try {
+			result = await run([...GIT_READ_ARGV.hashObject, ...hashable], cwd);
+		} catch {
+			return undefined;
+		}
+		const lines = result.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+		if (result.code !== 0 || lines.length !== hashable.length) return undefined;
+		hashable.forEach((path, index) => {
+			hashes[path] = lines[index] ?? null;
+		});
+	}
+	return hashes;
+}
+
+function parseDiffNames(stdout: string): string[] {
+	return [...new Set(stdout.split("\n").map((line) => line.trim()).filter(Boolean))].sort();
+}
+
+/**
+ * RF-1 — T2 input: paths changed between the delegation-time ref and the
+ * current HEAD. Runs only at the C sample, when both refs exist; equal refs
+ * yield `[]` without a git call. Refs must each match GIT_REF_PATTERN before
+ * they are appended to the argv. A failing call returns `undefined` (no T2
+ * data) rather than an empty delta.
+ */
+async function diffNamesBetweenRefs(
+	run: GitRunner,
+	cwd: string,
+	baseGitRef: string,
+	head: string,
+): Promise<string[] | undefined> {
+	if (!GIT_REF_PATTERN.test(baseGitRef) || !GIT_REF_PATTERN.test(head)) return undefined;
+	if (baseGitRef === head) return [];
+	let result: { stdout: string; code: number };
+	try {
+		result = await run([...GIT_READ_ARGV.diffNamesBetween, baseGitRef, head], cwd);
+	} catch {
+		return undefined;
+	}
+	return result.code === 0 ? parseDiffNames(result.stdout) : undefined;
+}
+
 /**
  * Snapshot the workspace. Non-Git directories degrade to a cwd-only ref rather
  * than failing the lifecycle (spec §19.4).
@@ -136,6 +210,14 @@ export async function captureEvidence(
 		return { cwd, taskId: options.taskId, workerRunId: options.workerRunId, gitAvailable: false, generatedAt };
 	}
 
+	// RF-1 — every sample (A and C) hashes its own dirty paths so compareEvidence
+	// can detect content changes on paths that were already dirty at A (T3).
+	const dirtyPathHashes = await hashDirtyPaths(run, cwd, probe.changedPaths);
+	// RF-1 — only the C sample carries a baseGitRef to diff against (T2).
+	const committedPaths = options.baseGitRef && probe.head
+		? await diffNamesBetweenRefs(run, cwd, options.baseGitRef, probe.head)
+		: undefined;
+
 	return {
 		cwd,
 		taskId: options.taskId,
@@ -144,6 +226,8 @@ export async function captureEvidence(
 		...(probe.head ? { finalGitRef: probe.head } : {}),
 		...(probe.statusHash ? { gitStatusHash: probe.statusHash } : {}),
 		changedPaths: probe.changedPaths,
+		...(dirtyPathHashes ? { dirtyPathHashes } : {}),
+		...(committedPaths ? { committedPaths } : {}),
 		...(probe.diffStat ? { diffStat: probe.diffStat } : {}),
 		gitAvailable: true,
 		generatedAt,
@@ -258,19 +342,32 @@ function sorted(paths: readonly string[]): string[] {
 	return [...paths].sort();
 }
 
+/** RF-1 — normalize a dirtyPathHashes record into absolute-path keys. */
+function normalizedDirtyHashes(
+	hashes: Record<string, string | null> | undefined,
+	cwd: string,
+): Map<string, string | null> {
+	const normalized = new Map<string, string | null>();
+	if (!hashes) return normalized;
+	for (const [path, hash] of Object.entries(hashes)) {
+		normalized.set(normalizeEvidencePaths([path], cwd)[0], hash ?? null);
+	}
+	return normalized;
+}
+
 /**
  * Compare Root's delegation-time sample (A) with Root's result-time sample (C),
  * then cross-check the Worker declaration (B) against that delta.
  *
- * `truthPaths` is the scope denominator. Worker `changedFiles` / evidence
- * paths are declaration data only: mismatches are findings and must not hide
- * attributed paths from scope or PASS decisions.
+ * `truthPaths` is the scope denominator: the union of newly-dirty paths (T1),
+ * paths committed between the A and C refs (T2), and baseline-dirty paths
+ * whose working-tree blob hash changed between the samples (T3). Worker
+ * `changedFiles` / evidence paths are declaration data only: mismatches are
+ * findings and must not hide attributed paths from scope or PASS decisions.
  *
- * Path sets alone cannot detect every overlap: an external edit to a file
- * already in both A and C leaves the path set unchanged. A Worker status-hash
- * is only an optional freshness cross-check; when present, a hash change is
- * excused only when every undeclared attributed path falls outside the task's
- * scope (spec §10.2).
+ * A Worker status-hash is only an optional freshness cross-check; when present,
+ * a hash change is excused only when every undeclared attributed path falls
+ * outside the task's scope (spec §10.2).
  */
 export function compareEvidence(
 	base: EvidenceRef,
@@ -310,8 +407,34 @@ export function compareEvidence(
 	const pathCwd = current.cwd || reported.cwd || base.cwd;
 	const basePaths = new Set(normalizeEvidencePaths(base.changedPaths ?? [], base.cwd || pathCwd));
 	const currentPaths = new Set(normalizeEvidencePaths(current.changedPaths ?? [], current.cwd || pathCwd));
-	const truthPaths = [...currentPaths].filter((path) => !basePaths.has(path));
-	const truthSet = new Set(truthPaths);
+	// RF-1 — truthPaths is the union of three Root-derived sets:
+	//   T1 = current.changedPaths − base.changedPaths                       (newly dirty)
+	//   T2 = paths committed between base.finalGitRef and current.finalGitRef
+	//   T3 = baseline-dirty paths whose working-tree blob hash changed A→C
+	const t1 = [...currentPaths].filter((path) => !basePaths.has(path));
+	const committedPaths = new Set(
+		normalizeEvidencePaths(current.committedPaths ?? [], current.cwd || pathCwd),
+	);
+	const t2 = [...committedPaths];
+	const t3: string[] = [];
+	const baselineDirtyCount = base.changedPaths?.length ?? 0;
+	if (baselineDirtyCount > MAX_BASELINE_HASH_PATHS) {
+		// Above the cap the A sample carries no hashes; T3 stays empty and the
+		// omission is visible in reasons.
+		reasons.push(`baseline hash skipped (${baselineDirtyCount} dirty paths)`);
+	} else {
+		const baselineHashes = normalizedDirtyHashes(base.dirtyPathHashes, base.cwd || pathCwd);
+		const resultHashes = normalizedDirtyHashes(current.dirtyPathHashes, current.cwd || pathCwd);
+		for (const path of basePaths) {
+			if (!currentPaths.has(path)) continue;
+			const baseHash = baselineHashes.get(path);
+			const currentHash = resultHashes.get(path);
+			if (baseHash === undefined || currentHash === undefined) continue;
+			if (baseHash !== currentHash) t3.push(path);
+		}
+	}
+	const t3Set = new Set(t3);
+	const truthSet = new Set([...t1, ...t2, ...t3]);
 
 	const declaredPaths = new Set(
 		normalizeEvidencePaths(reported.changedPaths ?? report.changedFiles ?? [], reported.cwd || pathCwd),
@@ -340,7 +463,11 @@ export function compareEvidence(
 	const missingPaths: string[] = [];
 	if (verifiable && !headChanged) {
 		for (const path of declaredPaths) {
-			if (!currentPaths.has(path)) missingPaths.push(path);
+			if (currentPaths.has(path)) continue;
+			// RF-1 — paths committed (T2) or content-changed on a baseline-dirty
+			// path (T3) are still present as far as attribution is concerned.
+			if (committedPaths.has(path) || t3Set.has(path)) continue;
+			missingPaths.push(path);
 		}
 	}
 	if (missingPaths.length > 0) {
@@ -376,7 +503,7 @@ export function compareEvidence(
 		verifiable,
 		fresh: reasons.length === 0,
 		reasons,
-		truthPaths: sorted(truthPaths),
+		truthPaths: sorted([...truthSet]),
 		undeclaredPaths: sorted(undeclaredPaths),
 		extraDeclaredPaths: sorted(extraDeclaredPaths),
 		overlappingPaths: sorted(overlappingPaths),

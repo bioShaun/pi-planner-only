@@ -56,6 +56,20 @@ for (const operation of GIT_AUDIT_OPERATIONS) {
 	}
 }
 
+// A5. RF-1 Evidence probe rows are argv-only: fixed, shell-free, and never
+// reachable through the git_audit tool.
+assert.deepEqual(GIT_READ_ARGV.diffNamesBetween, ["diff", "--name-only", "--no-ext-diff", "--no-textconv"]);
+assert.deepEqual(GIT_READ_ARGV.hashObject, ["hash-object", "--"]);
+for (const arg of [...GIT_READ_ARGV.diffNamesBetween, ...GIT_READ_ARGV.hashObject]) {
+	// no shell metacharacters, no embedded whitespace
+	assert.doesNotMatch(arg, /[;&|`$><\\]/);
+	assert.doesNotMatch(arg, /\s/);
+}
+assert.equal(GIT_AUDIT_OPERATIONS.includes("hash-object"), false);
+assert.equal(resolveGitAudit({ operation: "hash-object" }).ok, false);
+assert.equal(resolveGitAudit({ operation: "diff --name-only" }).ok, false);
+assert.equal(resolveGitAudit({ operation: "diff --name-only abc1234 def5678" }).ok, false);
+
 // --------------------------------------------------------------------------
 // Entry bounds
 // --------------------------------------------------------------------------
