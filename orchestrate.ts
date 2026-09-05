@@ -68,6 +68,7 @@ import type {
 
 /** Worker output kept as a fallback when a report cannot be parsed at all. */
 const RAW_OUTPUT_FALLBACK_CHARS = 4000;
+const PROSE_ONLY_REPORT_ERROR = "worker output did not contain a WorkerReport object";
 const TASK_ID_SHAPE = /^T-(\d{8})-\d{3}$/;
 
 function localDateStamp(now: Date): string {
@@ -1033,6 +1034,9 @@ export class PlannerOrchestrator {
 							: []),
 						"Do not accept it. Delegate exactly one report-only correction:",
 						`"Do not modify files. Return only a valid WorkerReport for task ${task.taskId}."`,
+						...(reportError === PROSE_ONLY_REPORT_ERROR && decision.action === "report_correction"
+							? [`JSON only: {"version":1,"taskId":"${task.taskId}","status":"completed|partial|blocked|failed","summary":"...","changedFiles":[],"validation":[],"evidence":{"taskId":"${task.taskId}"},"risks":[],"unresolved":[]}`]
+							: []),
 						"",
 						"--- worker output ---",
 						truncate(text, RAW_OUTPUT_FALLBACK_CHARS),

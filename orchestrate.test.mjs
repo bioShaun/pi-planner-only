@@ -1674,4 +1674,109 @@ function reportT6(taskId) {
 	setCleanTree();
 }
 
+// --------------------------------------------------------------------------
+// I-2 — reactive JSON reminder after the first prose-only report strike
+// --------------------------------------------------------------------------
+
+const jsonReminder = (taskId) =>
+	`JSON only: {"version":1,"taskId":"${taskId}","status":"completed|partial|blocked|failed","summary":"...","changedFiles":[],"validation":[],"evidence":{"taskId":"${taskId}"},"risks":[],"unresolved":[]}`;
+const rawResult = (toolCallId, text) => ({
+	toolCallId,
+	toolName: "subagent",
+	input: {},
+	content: [{ type: "text", text }],
+	isError: false,
+});
+
+// First prose-only strike gets the exact reminder; a valid correction is accepted normally.
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260905-601";
+	await delegateWorker(orch, "call-i2-prose", taskId);
+	const first = await orch.handleSubagentResult(rawResult("call-i2-prose", "Implemented and tested successfully."));
+	assert.match(first.content[0].text, /worker output did not contain a WorkerReport object/);
+	assert.ok(first.content[0].text.includes(jsonReminder(taskId)));
+	assert.equal(first.content[0].text.split("JSON only:").length - 1, 1);
+	assert.equal(orch.store.require(taskId).reportCorrections, 1);
+
+	await orch.beginDelegation(
+		{
+			toolCallId: "call-i2-corrected",
+			input: { agent: "worker", task: `Do not modify files. Return only a valid WorkerReport for task ${taskId}.` },
+		},
+		BASE,
+	);
+	const corrected = reportFor(taskId, "call-i2-corrected");
+	const accepted = await orch.handleSubagentResult(workerResult("call-i2-corrected", corrected));
+	assert.match(accepted.content[0].text, /decision: review_pending/);
+	assert.equal(orch.store.require(taskId).reports.length, 1);
+}
+
+// Empty output and parseable-but-invalid JSON do not get the prose-only reminder.
+for (const [suffix, output] of [
+	["empty", ""],
+	["invalid", JSON.stringify({ taskId: "T-20260905-603", status: "unknown" })],
+]) {
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = suffix === "empty" ? "T-20260905-602" : "T-20260905-603";
+	const callId = `call-i2-${suffix}`;
+	await delegateWorker(orch, callId, taskId);
+	const outcome = await orch.handleSubagentResult(rawResult(callId, output));
+	assert.doesNotMatch(outcome.content[0].text, /JSON only:/);
+}
+
+// Identity rejection is not a prose-only strike.
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260905-604";
+	await delegateWorker(orch, "call-i2-identity", taskId);
+	const report = reportFor(taskId, "call-i2-identity");
+	report.evidence.taskId = "T-OTHER";
+	const outcome = await orch.handleSubagentResult(workerResult("call-i2-identity", report));
+	assert.match(outcome.content[0].text, /identity|evidence\.taskId/);
+	assert.doesNotMatch(outcome.content[0].text, /JSON only:/);
+}
+
+// A second prose-only strike has exhausted the correction budget and gets no reminder.
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260905-605";
+	await delegateWorker(orch, "call-i2-first", taskId);
+	await orch.handleSubagentResult(rawResult("call-i2-first", "first prose result"));
+	await orch.beginDelegation(
+		{
+			toolCallId: "call-i2-second",
+			input: { agent: "worker", task: `Do not modify files. Return only a valid WorkerReport for task ${taskId}.` },
+		},
+		BASE,
+	);
+	const second = await orch.handleSubagentResult(rawResult("call-i2-second", "second prose result"));
+	assert.equal(orch.store.require(taskId).state, "blocked");
+	assert.doesNotMatch(second.content[0].text, /JSON only:/);
+}
+
+// Validator and reviewer malformed output retain their own paths and never get the worker reminder.
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260905-606";
+	await delegateWorker(orch, "call-i2-base", taskId);
+	await orch.handleSubagentResult(workerResult("call-i2-base", reportFor(taskId, "call-i2-base")));
+
+	await orch.beginDelegation(
+		{ toolCallId: "call-i2-validator", input: { agent: "oracle", task: `Validate task ${taskId}` } },
+		BASE,
+	);
+	const validator = await orch.handleSubagentResult(rawResult("call-i2-validator", "validator prose"));
+	assert.match(validator.content[0].text, /Validator output/);
+	assert.doesNotMatch(validator.content[0].text, /JSON only:/);
+
+	await orch.beginDelegation(
+		{ toolCallId: "call-i2-reviewer", input: { agent: "reviewer", task: `Review task ${taskId}` } },
+		BASE,
+	);
+	const reviewer = await orch.handleSubagentResult(rawResult("call-i2-reviewer", "reviewer prose"));
+	assert.match(reviewer.content[0].text, /Reviewer output/);
+	assert.doesNotMatch(reviewer.content[0].text, /JSON only:/);
+}
+
 console.log("planner-only orchestration: PASS");
