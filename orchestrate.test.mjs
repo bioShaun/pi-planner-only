@@ -1699,6 +1699,19 @@ const rawResult = (toolCallId, text) => ({
 	assert.equal(first.content[0].text.split("JSON only:").length - 1, 1);
 	assert.equal(orch.store.require(taskId).reportCorrections, 1);
 
+	// Immediately follows the existing report-only correction instruction
+	const lines = first.content[0].text.split("\n");
+	const instructionIdx = lines.findIndex((l) => l.includes(`Return only a valid WorkerReport for task ${taskId}`));
+	assert.ok(instructionIdx >= 0, "instruction line present");
+	assert.equal(lines[instructionIdx + 1], jsonReminder(taskId), "reminder immediately follows instruction");
+
+	// Injected bytes accounted for in returned text
+	const reminderBytes = Buffer.byteLength(jsonReminder(taskId), "utf8");
+	const textBytes = Buffer.byteLength(first.content[0].text, "utf8");
+	assert.ok(textBytes >= reminderBytes, `returned text must account for ${reminderBytes} reminder bytes`);
+	const withoutReminder = first.content[0].text.replace(`\n${jsonReminder(taskId)}`, "");
+	assert.equal(textBytes - Buffer.byteLength(withoutReminder, "utf8"), reminderBytes + 1);
+
 	await orch.beginDelegation(
 		{
 			toolCallId: "call-i2-corrected",
@@ -1712,13 +1725,62 @@ const rawResult = (toolCallId, text) => ({
 	assert.equal(orch.store.require(taskId).reports.length, 1);
 }
 
-// Empty output and parseable-but-invalid JSON do not get the prose-only reminder.
+// Canonical task ID is substituted when task was delegated with an alias
+{
+	const store = new TaskStore({ now: () => new Date(2026, 8, 5) });
+	const orch = new PlannerOrchestrator({ store, gitRunner });
+	const aliasId = "T-20260101-001";
+	const canonical = "T-20260905-001";
+	await orch.beginDelegation(
+		{ toolCallId: "call-i2-alias", input: { task: JSON.stringify(specFor(aliasId)) } },
+		BASE,
+	);
+	assert.equal(orch.store.require(aliasId).taskId, canonical);
+	const outcome = await orch.handleSubagentResult(rawResult("call-i2-alias", "done implement"));
+	assert.ok(outcome.content[0].text.includes(jsonReminder(canonical)));
+	assert.doesNotMatch(outcome.content[0].text, new RegExp(aliasId));
+}
+
+// Subsequent valid JSON report requiring normalisation is accepted in one pass
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260905-607";
+	await delegateWorker(orch, "call-i2-norm-prose", taskId);
+	await orch.handleSubagentResult(rawResult("call-i2-norm-prose", "Prose strike 1"));
+	await orch.beginDelegation(
+		{
+			toolCallId: "call-i2-norm-fix",
+			input: { agent: "worker", task: `Do not modify files. Return only a valid WorkerReport for task ${taskId}.` },
+		},
+		BASE,
+	);
+	const normalisable = {
+		version: "1",
+		taskId,
+		status: "done",
+		summary: "Normalized fix",
+		changed_files: ["src/parser.ts"],
+		validation: [],
+		evidence: { taskId },
+		risks: [],
+		unresolved: [],
+	};
+	const outcome = await orch.handleSubagentResult(workerResult("call-i2-norm-fix", normalisable));
+	assert.match(outcome.content[0].text, /Report normalised:/);
+	assert.match(outcome.content[0].text, /status "done" → completed/);
+	assert.match(outcome.content[0].text, /decision: review_pending/);
+	assert.equal(orch.store.require(taskId).reports.length, 1);
+}
+
+// Empty output, whitespace, and parseable-but-invalid JSON do not get the prose-only reminder.
 for (const [suffix, output] of [
 	["empty", ""],
+	["whitespace", "   \n\t  "],
 	["invalid", JSON.stringify({ taskId: "T-20260905-603", status: "unknown" })],
+	["invalid-schema", JSON.stringify({ taskId: "T-20260905-603", status: "completed", validation: "not-array" })],
 ]) {
 	const orch = new PlannerOrchestrator({ gitRunner });
-	const taskId = suffix === "empty" ? "T-20260905-602" : "T-20260905-603";
+	const taskId = suffix.startsWith("empty") || suffix === "whitespace" ? "T-20260905-602" : "T-20260905-603";
 	const callId = `call-i2-${suffix}`;
 	await delegateWorker(orch, callId, taskId);
 	const outcome = await orch.handleSubagentResult(rawResult(callId, output));
