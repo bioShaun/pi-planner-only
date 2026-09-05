@@ -503,7 +503,7 @@ function assertRepaired(raw, expectedPatch, notePattern, context) {
 	const badEntry = normalizeWorkerReport(validShape({ validation: ["not-an-object"] }));
 	assert.ok(validateWorkerReport(badEntry.report).includes("validation[0] must be an object"));
 
-	const badEvidence = normalizeWorkerReport(validShape({ evidence: "nope" }));
+	const badEvidence = normalizeWorkerReport(validShape({ evidence: [1] }));
 	assert.ok(validateWorkerReport(badEvidence.report).includes("evidence must be an object"));
 }
 
