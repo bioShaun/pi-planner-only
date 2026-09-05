@@ -66,7 +66,7 @@ _Avoid_: review pipeline, arbitration service
 Root's recorded judgment over a Task through `planner_verdict`; the operator's `/planner-only review` is an override, not a second verdict.
 
 **Usage**:
-Token and derived-cost accounting attributed to a Task; Root turns by phase, children by run.
+Token and derived-cost accounting attributed to a Task; Root turns by phase, children by run. Injected text and review leak are tracked separately.
 
 **Orchestration**:
 The in-process lifecycle coordinator. The Pi host is an adapter; Orchestration is the module behind that seam.
