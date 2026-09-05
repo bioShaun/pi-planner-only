@@ -45,6 +45,7 @@ pi -e .
 - `/planner-only task [taskId]` — 任务生命周期
 - `/planner-only task abandon|reset <taskId>` — 放弃活跃或指定任务
 - `/planner-only review [taskId] [root|fresh|pass|request_changes|blocked] [summary]`
+- `/planner-only usage [taskId | session | reload]`
 
 单次会话覆盖：`PI_PLANNER_ONLY=1`（亦支持 `true`、`on`）无论是否存在标记均强制开启；`PI_PLANNER_ONLY=0`（`false`、`off`）禁用。持久关闭标记：`~/.pi/agent/planner-only.off`。
 
@@ -52,7 +53,7 @@ pi -e .
 
 ## 父进程可用工具
 
-存在则保留：`read`、`grep`、`find`、`ls`、`git_audit`、`subagent`、`bg_wait`、`subagent_wait`、`subagent_supervisor`、`contact_supervisor`、`question`、`questionnaire`。
+存在则保留：`read`、`grep`、`find`、`ls`、`git_audit`、`planner_verdict`、`subagent`、`bg_wait`、`subagent_wait`、`subagent_supervisor`、`contact_supervisor`、`question`、`questionnaire`。
 
 拦截：`edit`、`write`、通用 `bash`、未知 mutator，以及 `subagent` 的宿主机命令路径（如 `workflow: "run-ci"`、`gate`）。
 
@@ -119,6 +120,36 @@ Root Git 证据。带 `action` 的管理或 `validate` 调用保持不变。
 
 仅父进程可用的只读 Git：`status`、`diff-stat`、`diff-names`、`diff-check`、`head`、`log`。固定 argv，不走 shell，mutating 子命令一律拒绝。
 
+### 用量核算
+
+Token 数为准，美元/人民币金额是推导值。扩展跟踪 Root 各生命周期阶段（`planning`、`executing`、`reviewing`）的轮次与 Token、子进程各委派运行的消耗、审核期间只读工具产生的审查泄漏字节（review leak bytes），以及注入 prompt 的字节数。
+
+成本按以下优先级解析：
+1. 模型供应商/平台原生上报（Pi core 的 `usage.cost` 或 `pi-subagents` 的 `cost`）；
+2. 插件定价表 `~/.pi/agent/planner-only/pricing.json`（可通过 `PI_PLANNER_ONLY_PRICING` 覆盖）；
+3. 若均无对应费率，则标记为成本未知（`cost unknown`，绝不展示为 `$0.00`）。
+
+定价表格式：
+
+```json
+{
+  "version": 1,
+  "currency": "USD",
+  "rates": {
+    "example-provider/expensive-root-model": { "input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 3.75 },
+    "example-provider/cheap-worker-model":   { "input": null, "output": null, "cacheRead": null, "cacheWrite": null }
+  }
+}
+```
+
+- 键为 `provider/model` 或单独的 `model` 名称。
+- 费率为 `currency`（`USD` 或 `CNY`）下每百万 Token 的价格。
+- 费率为 `null` 表示费率未知（展示为 `cost unknown`）；`0` 表示免费。
+- 以 `_` 开头的键会被忽略（可用于注释）。
+- 可在会话内通过 `/planner-only usage reload` 重新加载费率表。
+
+**替代方案：** 推荐直接在 `~/.pi/agent/models.json` 里配置 `cost`。这样 Pi 和 `pi-subagents` 的原生命令（如 `/subagent-cost`）都能直接计价。插件自带的定价表仅作为不需要改动 `models.json` 时的备用与覆盖机制。
+
 ## 设计规范
 
 - [v0.2 规范](docs/pi-planner-only-v0.2-spec.md)：核心协议与架构。
@@ -151,6 +182,8 @@ E2E 套件针对已安装的 `pi-subagents` 包运行——builtin agent 工具�
 | `evidence.ts` | Git 探测、A-to-C 归因、review 证据包 |
 | `git-audit.ts` | `git_audit` 解析与输出上限 |
 | `orchestrate.ts` | 委派启动、review 循环、Task 存储写入 |
+| `notify.ts` | 异步 subagent 通知与子进程元数据解析 |
+| `usage.ts` | 纯用量账本、Token 与成本核算、报告渲染 |
 | `index.ts` | hook、工具、命令 |
 
 不做后台 Advisor、持久化、队列或 telemetry。

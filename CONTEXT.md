@@ -62,6 +62,12 @@ _Avoid_: spawn, dispatch (the host mechanism)
 Decide the next lifecycle step from a report, evidence comparison, and optional ReviewResult, then apply it to the Task.
 _Avoid_: review pipeline, arbitration service
 
+**Verdict**:
+Root's recorded judgment over a Task through `planner_verdict`; the operator's `/planner-only review` is an override, not a second verdict.
+
+**Usage**:
+Token and derived-cost accounting attributed to a Task; Root turns by phase, children by run.
+
 **Orchestration**:
 The in-process lifecycle coordinator. The Pi host is an adapter; Orchestration is the module behind that seam.
 _Avoid_: extension, framework

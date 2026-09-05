@@ -134,6 +134,23 @@ export function validateTaskSpec(value: unknown): string[] {
 			}
 		}
 	}
+	if (value.budget !== undefined) {
+		if (!isPlainObject(value.budget)) {
+			errors.push("budget must be an object when present");
+		} else {
+			const budget = value.budget as Record<string, unknown>;
+			if (budget.tokens !== undefined) {
+				if (typeof budget.tokens !== "number" || !Number.isFinite(budget.tokens) || budget.tokens <= 0) {
+					errors.push("budget.tokens must be a positive finite number");
+				}
+			}
+			if (budget.costUsd !== undefined) {
+				if (typeof budget.costUsd !== "number" || !Number.isFinite(budget.costUsd) || budget.costUsd <= 0) {
+					errors.push("budget.costUsd must be a positive finite number");
+				}
+			}
+		}
+	}
 	return errors;
 }
 

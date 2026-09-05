@@ -54,6 +54,7 @@ export function inferRoleFromAgent(agent: string | undefined): TaskRole | undefi
 export interface ApplyRoleDelegationOptions {
 	role: TaskRole;
 	packet?: string;
+	budget?: TaskSpec["budget"];
 }
 
 export interface ApplyRoleDelegationResult {
@@ -82,6 +83,19 @@ export function applyRoleDelegation(
 		}
 		if (options.packet !== undefined && input.task !== options.packet) {
 			input.task = options.packet;
+			mutated = true;
+		}
+	}
+	if (options.budget && input.usageBudget === undefined) {
+		const usageBudget: Record<string, unknown> = {};
+		if (typeof options.budget.tokens === "number" && Number.isFinite(options.budget.tokens) && options.budget.tokens > 0) {
+			usageBudget.tokens = { hard: options.budget.tokens };
+		}
+		if (typeof options.budget.costUsd === "number" && Number.isFinite(options.budget.costUsd) && options.budget.costUsd > 0) {
+			usageBudget.costUsd = { hard: options.budget.costUsd };
+		}
+		if (Object.keys(usageBudget).length > 0) {
+			input.usageBudget = usageBudget;
 			mutated = true;
 		}
 	}
@@ -197,5 +211,9 @@ export function prepareRoleDelegation(
 			...(options.git ? { git: options.git } : {}),
 		})
 		: undefined;
-	applyRoleDelegation(input, { role: target.role, ...(packet ? { packet } : {}) });
+	applyRoleDelegation(input, {
+		role: target.role,
+		...(packet ? { packet } : {}),
+		...(packetSpec?.budget ? { budget: packetSpec.budget } : {}),
+	});
 }

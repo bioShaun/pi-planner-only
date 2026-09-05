@@ -80,6 +80,20 @@ assert.ok(validateTaskSpec({ ...spec, objective: "  " }).length > 0);
 assert.ok(validateTaskSpec({ ...spec, constraints: [1] }).length > 0);
 assert.ok(validateTaskSpec("not an object").length > 0);
 
+// TaskSpec.budget validation (U-5)
+assert.deepEqual(validateTaskSpec({ ...spec, budget: { tokens: 50_000, costUsd: 1.5 } }), []);
+assert.deepEqual(validateTaskSpec({ ...spec, budget: { tokens: 10_000 } }), []);
+assert.deepEqual(validateTaskSpec({ ...spec, budget: { costUsd: 0.25 } }), []);
+assert.ok(validateTaskSpec({ ...spec, budget: "not-an-object" }).some((e) => /budget must be an object/.test(e)));
+assert.ok(validateTaskSpec({ ...spec, budget: { tokens: 0 } }).some((e) => /budget\.tokens must be a positive finite number/.test(e)));
+assert.ok(validateTaskSpec({ ...spec, budget: { tokens: -100 } }).some((e) => /budget\.tokens must be a positive finite number/.test(e)));
+assert.ok(validateTaskSpec({ ...spec, budget: { tokens: Number.POSITIVE_INFINITY } }).some((e) => /budget\.tokens must be a positive finite number/.test(e)));
+assert.ok(validateTaskSpec({ ...spec, budget: { tokens: "5000" } }).some((e) => /budget\.tokens must be a positive finite number/.test(e)));
+assert.ok(validateTaskSpec({ ...spec, budget: { costUsd: 0 } }).some((e) => /budget\.costUsd must be a positive finite number/.test(e)));
+assert.ok(validateTaskSpec({ ...spec, budget: { costUsd: -0.05 } }).some((e) => /budget\.costUsd must be a positive finite number/.test(e)));
+assert.ok(validateTaskSpec({ ...spec, budget: { costUsd: Number.NaN } }).some((e) => /budget\.costUsd must be a positive finite number/.test(e)));
+
+
 // --------------------------------------------------------------------------
 // WorkerReport validation
 // --------------------------------------------------------------------------

@@ -1198,6 +1198,340 @@ assert.match(terminalVerdict.content[0].text, /already completed/);
 	assert.ok(parsed.root);
 }
 
+// --------------------------------------------------------------------------
+// U-5 — Usage reporting, decision block usage line, and soft budget warning
+// --------------------------------------------------------------------------
+
+{
+	// /planner-only status includes usage log path and enabled state
+	notices.length = 0;
+	await commands.get("planner-only").handler("status", ctx);
+	assert.match(notices.at(-1).message, /Planner-only mode is on/);
+	assert.match(notices.at(-1).message, /Usage log: .*usage\.jsonl \(enabled\)/);
+}
+
+{
+	const taskId = "T-20260905-u5u";
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-u5-1", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
+		ctx,
+	);
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+
+	// Worker completes before any Root turn has occurred
+	const firstSync = await handlers.get("tool_result")(
+		{
+			toolCallId: "call-u5-1",
+			toolName: "subagent",
+			details: {
+				results: [{
+					agent: "worker",
+					model: "volcengine/glm-5-3",
+					usage: { input: 50, output: 8, cacheRead: 0, cacheWrite: 0, cost: 0.02, turns: 2 },
+				}],
+			},
+			content: [{ type: "text", text: JSON.stringify({
+				...workerReport,
+				taskId,
+				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-u5-1", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+			}) }],
+			isError: false,
+		},
+		ctx,
+	);
+	// Decision block before first Root turn: NO usage line
+	assert.match(firstSync.content[0].text, /\[PLANNER-ONLY REVIEW STATE\]/);
+	assert.doesNotMatch(firstSync.content[0].text, /\nusage: /);
+
+	// Root turn occurs
+	await handlers.get("message_end")({
+		message: {
+			role: "assistant",
+			id: "msg-u5-1",
+			model: "tcuni-claude/claude-fable-5-1",
+			provider: "tcuni-claude",
+			usage: { input: 200, output: 50, cacheRead: 10, cacheWrite: 0, cost: 0.15 },
+			content: "evaluating evidence",
+		},
+	}, ctx);
+
+	// Root records verdict with planner_verdict -> decision block now HAS usage line
+	const verdictResult = await tools.get("planner_verdict").execute(
+		"v-call-1",
+		{ verdict: "request_changes", summary: "fix edge case", taskId },
+		undefined,
+		undefined,
+		ctx,
+	);
+	const verdictText = verdictResult.content[0].text;
+	assert.match(verdictText, /\[PLANNER-ONLY REVIEW STATE\]/);
+	assert.match(verdictText, /\nusage: /);
+	// In verdict without evidence, usage line is placed before reason:
+	assert.match(verdictText, /\nusage: root .+\nreason: /);
+
+	// /planner-only usage command tests
+	notices.length = 0;
+	await commands.get("planner-only").handler(`usage ${taskId}`, ctx);
+	assert.match(notices.at(-1).message, new RegExp(`Usage for ${taskId}`));
+	assert.match(notices.at(-1).message, /Root/);
+	assert.match(notices.at(-1).message, /Child/);
+
+	// /planner-only usage without args when active task exists
+	notices.length = 0;
+	await commands.get("planner-only").handler("usage", ctx);
+	assert.match(notices.at(-1).message, new RegExp(`Usage for ${taskId}`));
+
+	// /planner-only usage session
+	notices.length = 0;
+	await commands.get("planner-only").handler("usage session", ctx);
+	assert.match(notices.at(-1).message, /Usage for session/);
+	assert.match(notices.at(-1).message, /untasked:/);
+
+	// /planner-only usage reload
+	notices.length = 0;
+	await commands.get("planner-only").handler("usage reload", ctx);
+	assert.match(notices.at(-1).message, /reloaded pricing table/);
+
+	// /planner-only usage unknown task
+	notices.length = 0;
+	await commands.get("planner-only").handler("usage T-nonexistent-000", ctx);
+	assert.match(notices.at(-1).message, /Unknown planner-only task: T-nonexistent-000/);
+}
+
+// Soft budget warning tests
+{
+	// Case 1: Above both thresholds (root share > 0.6 AND reviewLeakBytes > 8192) on review_pending
+	const taskId = "T-20260905-wboth";
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-wboth-1", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
+		ctx,
+	);
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-wboth-1",
+			toolName: "subagent",
+			details: {
+				results: [{
+					agent: "worker",
+					model: "volcengine/glm-5-3",
+					usage: { input: 100, output: 20, cost: 0.10 },
+				}],
+			},
+			content: [{ type: "text", text: JSON.stringify({
+				...workerReport,
+				taskId,
+				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-wboth-1", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+			}) }],
+			isError: false,
+		},
+		ctx,
+	);
+
+	// Root turn with high cost (1.0 vs child 0.10 -> root share = 1.0/1.10 = 90.9% > 0.6):
+	await handlers.get("message_end")({
+		message: {
+			role: "assistant",
+			id: "msg-wboth-1",
+			model: "tcuni-claude/claude-fable-5-1",
+			provider: "tcuni-claude",
+			usage: { input: 5000, output: 1000, cost: 1.0 },
+			content: "reading diff",
+		},
+	}, ctx);
+
+	// Review leak > 8192 bytes:
+	const leakPayload = "x".repeat(10_000);
+	await handlers.get("tool_result")(
+		{ toolCallId: "read-wboth", toolName: "read", content: [{ type: "text", text: leakPayload }] },
+		ctx,
+	);
+
+	// Next round / correction delegation triggers review_pending:
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-wboth-2", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
+		ctx,
+	);
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+	const resReviewPending = await handlers.get("tool_result")(
+		{
+			toolCallId: "call-wboth-2",
+			toolName: "subagent",
+			details: {
+				results: [{
+					agent: "worker",
+					model: "volcengine/glm-5-3",
+					usage: { input: 50, output: 10, cost: 0.05 },
+				}],
+			},
+			content: [{ type: "text", text: JSON.stringify({
+				...workerReport,
+				taskId,
+				changedFiles: ["src/parser.ts"],
+				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-wboth-2", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+			}) }],
+			isError: false,
+		},
+		ctx,
+	);
+	assert.match(resReviewPending.content[0].text, /decision: review_pending/);
+	assert.match(resReviewPending.content[0].text, /evidence: .+\nusage: root .+\nreason: /);
+	assert.match(resReviewPending.content[0].text, /warning: Root is reading the diff itself; consider \/planner-only review fresh/);
+}
+
+{
+	// Case 2: Below leak threshold (leak <= 8192), root share > 0.6
+	const taskId = "T-20260905-wlowleak";
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-wll-1", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
+		ctx,
+	);
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-wll-1",
+			toolName: "subagent",
+			details: {
+				results: [{ agent: "worker", model: "volcengine/glm-5-3", usage: { input: 100, output: 20, cost: 0.10 } }],
+			},
+			content: [{ type: "text", text: JSON.stringify({
+				...workerReport,
+				taskId,
+				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-wll-1", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+			}) }],
+			isError: false,
+		},
+		ctx,
+	);
+
+	await handlers.get("message_end")({
+		message: {
+			role: "assistant",
+			id: "msg-wll-1",
+			model: "tcuni-claude/claude-fable-5-1",
+			provider: "tcuni-claude",
+			usage: { input: 5000, output: 1000, cost: 1.0 },
+			content: "reading diff",
+		},
+	}, ctx);
+
+	// Review leak only 1000 bytes (<= 8192):
+	await handlers.get("tool_result")(
+		{ toolCallId: "read-wll", toolName: "read", content: [{ type: "text", text: "x".repeat(1000) }] },
+		ctx,
+	);
+
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-wll-2", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
+		ctx,
+	);
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+	const resLowLeak = await handlers.get("tool_result")(
+		{
+			toolCallId: "call-wll-2",
+			toolName: "subagent",
+			details: {
+				results: [{ agent: "worker", model: "volcengine/glm-5-3", usage: { input: 50, output: 10, cost: 0.05 } }],
+			},
+			content: [{ type: "text", text: JSON.stringify({
+				...workerReport,
+				taskId,
+				changedFiles: ["src/parser.ts"],
+				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-wll-2", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+			}) }],
+			isError: false,
+		},
+		ctx,
+	);
+	assert.match(resLowLeak.content[0].text, /decision: review_pending/);
+	assert.doesNotMatch(resLowLeak.content[0].text, /warning: Root is reading the diff itself/);
+}
+
+{
+	// Case 3: Below root share threshold (root share <= 0.6), leak > 8192
+	const taskId = "T-20260905-wlowshare";
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-wls-1", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
+		ctx,
+	);
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-wls-1",
+			toolName: "subagent",
+			details: {
+				results: [{ agent: "worker", model: "volcengine/glm-5-3", usage: { input: 10000, output: 2000, cost: 5.0 } }],
+			},
+			content: [{ type: "text", text: JSON.stringify({
+				...workerReport,
+				taskId,
+				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-wls-1", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+			}) }],
+			isError: false,
+		},
+		ctx,
+	);
+
+	// Root cost 0.10 vs child 5.0 -> root share = 0.10/5.10 = ~2% < 0.6:
+	await handlers.get("message_end")({
+		message: {
+			role: "assistant",
+			id: "msg-wls-1",
+			model: "tcuni-claude/claude-fable-5-1",
+			provider: "tcuni-claude",
+			usage: { input: 100, output: 20, cost: 0.10 },
+			content: "reading diff",
+		},
+	}, ctx);
+
+	// Review leak > 8192 bytes:
+	await handlers.get("tool_result")(
+		{ toolCallId: "read-wls", toolName: "read", content: [{ type: "text", text: "x".repeat(10000) }] },
+		ctx,
+	);
+
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-wls-2", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
+		ctx,
+	);
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+	const resLowShare = await handlers.get("tool_result")(
+		{
+			toolCallId: "call-wls-2",
+			toolName: "subagent",
+			details: {
+				results: [{ agent: "worker", model: "volcengine/glm-5-3", usage: { input: 50, output: 10, cost: 0.05 } }],
+			},
+			content: [{ type: "text", text: JSON.stringify({
+				...workerReport,
+				taskId,
+				changedFiles: ["src/parser.ts"],
+				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-wls-2", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+			}) }],
+			isError: false,
+		},
+		ctx,
+	);
+	assert.match(resLowShare.content[0].text, /decision: review_pending/);
+	assert.doesNotMatch(resLowShare.content[0].text, /warning: Root is reading the diff itself/);
+}
+
 rmSync(isolatedAgentDir, { recursive: true, force: true });
 
 console.log("planner-only extension: PASS");

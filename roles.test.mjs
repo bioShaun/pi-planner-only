@@ -177,4 +177,80 @@ assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root
 	assert.deepEqual(target.namedTaskIds, ["T-20260905-001", "T-20260905-002"]);
 }
 
+// U-5: TaskSpec.budget -> usageBudget passthrough and input priority
+{
+	const input = { agent: "worker", task: "implement" };
+	const res = applyRoleDelegation(input, {
+		role: "worker",
+		budget: { tokens: 100_000, costUsd: 2.5 },
+	});
+	assert.equal(res.mutated, true);
+	assert.deepEqual(input.usageBudget, {
+		tokens: { hard: 100_000 },
+		costUsd: { hard: 2.5 },
+	});
+}
+
+{
+	const input = { agent: "worker", task: "implement" };
+	applyRoleDelegation(input, {
+		role: "worker",
+		budget: { tokens: 50_000 },
+	});
+	assert.deepEqual(input.usageBudget, {
+		tokens: { hard: 50_000 },
+	});
+}
+
+{
+	const input = { agent: "worker", task: "implement" };
+	applyRoleDelegation(input, {
+		role: "worker",
+		budget: { costUsd: 0.75 },
+	});
+	assert.deepEqual(input.usageBudget, {
+		costUsd: { hard: 0.75 },
+	});
+}
+
+// Explicit usageBudget in the input wins
+{
+	const input = {
+		agent: "worker",
+		task: "implement",
+		usageBudget: { tokens: { hard: 10_000 } },
+	};
+	const res = applyRoleDelegation(input, {
+		role: "worker",
+		budget: { tokens: 100_000, costUsd: 5.0 },
+	});
+	assert.equal(res.mutated, false);
+	assert.deepEqual(input.usageBudget, {
+		tokens: { hard: 10_000 },
+	});
+}
+
+// prepareRoleDelegation passes TaskSpec.budget through
+{
+	const specWithBudget = {
+		taskId: "T-20260905-b01",
+		objective: "budgeted task",
+		cwd: "/repo",
+		role: "worker",
+		scope: {},
+		constraints: [],
+		acceptanceCriteria: [],
+		validation: { required: false },
+		expectedEvidence: {},
+		stopConditions: [],
+		budget: { tokens: 42_000, costUsd: 1.25 },
+	};
+	const payload = { agent: "worker", task: JSON.stringify(specWithBudget) };
+	prepareRoleDelegation(payload, () => undefined);
+	assert.deepEqual(payload.usageBudget, {
+		tokens: { hard: 42_000 },
+		costUsd: { hard: 1.25 },
+	});
+}
+
 console.log("planner-only roles: PASS");

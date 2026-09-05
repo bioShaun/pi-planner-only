@@ -138,6 +138,10 @@ export interface TaskSpec {
 	expectedEvidence: ExpectedEvidence;
 	stopConditions: string[];
 	parentEvidenceRef?: EvidenceRef;
+	budget?: {
+		tokens?: number;
+		costUsd?: number;
+	};
 }
 
 export interface ValidationResult {

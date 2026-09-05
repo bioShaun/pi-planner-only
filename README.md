@@ -56,6 +56,7 @@ already bundles them. Do not add them to `dependencies`.
 - `/planner-only task [taskId]` — lifecycle state
 - `/planner-only task abandon|reset <taskId>` — abandon active or specified task
 - `/planner-only review [taskId] [root|fresh|pass|request_changes|blocked] [summary]`
+- `/planner-only usage [taskId | session | reload]`
 
 Per-session override: `PI_PLANNER_ONLY=1` (also `true`, `on`) forces the guard on regardless of the marker; `PI_PLANNER_ONLY=0` (`false`, `off`) disables it. Persistent off marker:
 `~/.pi/agent/planner-only.off`.
@@ -65,7 +66,7 @@ restored on `session_shutdown` so reload can recapture the full tool list.
 
 ## What the parent may use
 
-Kept when present: `read`, `grep`, `find`, `ls`, `git_audit`, `subagent`,
+Kept when present: `read`, `grep`, `find`, `ls`, `git_audit`, `planner_verdict`, `subagent`,
 `bg_wait`, `subagent_wait`, `subagent_supervisor`, `contact_supervisor`,
 `question`, `questionnaire`.
 
@@ -169,6 +170,36 @@ include `action` are unchanged.
 Parent-only read-only Git: `status`, `diff-stat`, `diff-names`, `diff-check`,
 `head`, `log`. Fixed argv, no shell, mutating subcommands rejected.
 
+### Usage accounting
+
+Token counts are authoritative; dollar costs are derived values. The plugin tracks Root turns by lifecycle phase (`planning`, `executing`, `reviewing`), child turns by delegation run, review leakage bytes from read-only tool inspection, and injected prompt bytes.
+
+Pricing rates are resolved in priority order:
+1. Provider-reported costs (`usage.cost` from Pi core or `pi-subagents`);
+2. Local pricing table configured in `~/.pi/agent/planner-only/pricing.json` (overridable with `PI_PLANNER_ONLY_PRICING`);
+3. Otherwise cost is marked unknown (never rendered as `$0.00`).
+
+The pricing table format:
+
+```json
+{
+  "version": 1,
+  "currency": "USD",
+  "rates": {
+    "example-provider/expensive-root-model": { "input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 3.75 },
+    "example-provider/cheap-worker-model":   { "input": null, "output": null, "cacheRead": null, "cacheWrite": null }
+  }
+}
+```
+
+- Keys are `provider/model` or bare `model` names.
+- Rates are expressed per million tokens in `currency` (`USD` or `CNY`).
+- A `null` rate means the rate is unknown (yields `cost unknown`); `0` indicates free.
+- Keys starting with `_` are ignored (useful for comments).
+- Reload rates in-session with `/planner-only usage reload`.
+
+**Alternative:** The preferred approach is to specify `cost` directly in `~/.pi/agent/models.json`. This enables native cost calculation across both Pi and `pi-subagents` (e.g. `/subagent-cost`). The plugin table serves as a fallback or override when you prefer not to modify `models.json`.
+
 ## Design specs
 
 - [v0.2 specification](docs/pi-planner-only-v0.2-spec.md) covers the core protocol and architecture.
@@ -205,6 +236,8 @@ outside the declared range prints a SKIP line and exits 0.
 | `evidence.ts` | Git probe, A-to-C attribution, review evidence packets |
 | `git-audit.ts` | `git_audit` resolution and output bounds |
 | `orchestrate.ts` | delegation launch, review loop, Task store writes |
+| `notify.ts` | async subagent notifications and child metadata |
+| `usage.ts` | pure usage ledger, cost resolution, report rendering |
 | `index.ts` | hooks, tool, commands |
 
-No background advisor, persistence, queues, or telemetry.
+No background advisor, queues, or telemetry. The only persistence is usage: session custom entries and a local append-only `usage.jsonl`.

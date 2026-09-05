@@ -20,9 +20,13 @@ import type { ChildUsage, DelegationKind, ReviewFinding, ReviewMode, ReviewVerdi
 import {
 	UsageLedger,
 	childUsageFromValue,
+	emptyTaskUsage,
 	loadPricingTable,
+	modelIdForPricing,
+	renderUsage,
+	renderUsageLine,
 } from "./usage.ts";
-import type { PiUsageLike, UsageEntry } from "./usage.ts";
+import type { PiUsageLike, PricingRates, PricingTable, UsageEntry } from "./usage.ts";
 
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
 	? resolve(process.env.PI_CODING_AGENT_DIR)
@@ -183,7 +187,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	};
 
 	const orchestrator = new PlannerOrchestrator({ gitRunner });
-	const ledger = new UsageLedger({ pricing: loadPricingTable() });
+	let pricing = loadPricingTable();
+	let ledger = new UsageLedger({ pricing });
+	const allSessionEntries: UsageEntry[] = [];
 	let usageLogWriteFailed = false;
 
 	const REVIEW_LEAK_TOOLS = new Set(["read", "grep", "find", "ls", "git_audit"]);
@@ -205,14 +211,83 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	}
 
 	function persistSessionEntries(): void {
+		const drained = ledger.drain();
+		for (const entry of drained) {
+			allSessionEntries.push(entry);
+		}
 		if (typeof pi.appendEntry !== "function") return;
-		for (const entry of ledger.drain()) {
+		for (const entry of drained) {
 			try {
 				pi.appendEntry("planner-only-usage", entry);
 			} catch {
 				// Session persistence must never break the lifecycle.
 			}
 		}
+	}
+
+	function findRates(table: PricingTable, model?: string, provider?: string): PricingRates | undefined {
+		if (!model) return undefined;
+		const stripped = modelIdForPricing(model);
+		const keys: string[] = [];
+		if (provider) keys.push(`${provider}/${stripped}`);
+		keys.push(stripped);
+		if (stripped.includes("/")) {
+			const bare = stripped.slice(stripped.indexOf("/") + 1);
+			if (bare) keys.push(bare);
+		}
+		for (const key of keys) {
+			if (key in table.rates) return table.rates[key];
+		}
+		return undefined;
+	}
+
+	function rootShareWarnThreshold(env: NodeJS.ProcessEnv = process.env): number {
+		const raw = env.PI_PLANNER_ONLY_ROOT_SHARE_WARN;
+		if (raw !== undefined && raw.trim()) {
+			const parsed = Number.parseFloat(raw.trim());
+			if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+		}
+		return 0.6;
+	}
+
+	function enrichDecisionText(text: string, taskId?: string): string {
+		if (!text.includes("[PLANNER-ONLY REVIEW STATE]")) return text;
+		const targetId = taskId || text.match(/\btaskId:\s*(T-\d{8}-\d{3})\b/)?.[1];
+		if (!targetId) return text;
+		const usage = ledger.taskUsage(targetId);
+		let enriched = text;
+
+		if (usage && usage.root.turns > 0 && !enriched.includes("\nusage: ")) {
+			const usageLine = renderUsageLine(usage, pricing.currency);
+			const evidenceRe = /^evidence: .*$/m;
+			if (evidenceRe.test(enriched)) {
+				enriched = enriched.replace(evidenceRe, (m) => `${m}\n${usageLine}`);
+			} else {
+				const reasonRe = /^reason: .*$/m;
+				if (reasonRe.test(enriched)) {
+					enriched = enriched.replace(reasonRe, `${usageLine}\n$&`);
+				}
+			}
+		}
+
+		if (enriched.includes("decision: review_pending") && usage && usage.root.costUsd !== undefined) {
+			const rootCost = usage.root.costUsd;
+			const childrenCost = usage.children.reduce((sum, c) => sum + (c.costUsd ?? 0), 0);
+			const totalCost = rootCost + childrenCost;
+			const threshold = rootShareWarnThreshold();
+			const warningLine = "warning: Root is reading the diff itself; consider /planner-only review fresh";
+			if (totalCost > 0 && (rootCost / totalCost) > threshold && usage.root.reviewLeakBytes > 8192 && !enriched.includes(warningLine)) {
+				if (enriched.includes("\n\n[PLANNER-ONLY WORKER REPORT]")) {
+					enriched = enriched.replace("\n\n[PLANNER-ONLY WORKER REPORT]", `\n${warningLine}\n\n[PLANNER-ONLY WORKER REPORT]`);
+				} else if (enriched.includes("\n\n[PLANNER-ONLY REVIEW RESULT]")) {
+					enriched = enriched.replace("\n\n[PLANNER-ONLY REVIEW RESULT]", `\n${warningLine}\n\n[PLANNER-ONLY REVIEW RESULT]`);
+				} else {
+					enriched = `${enriched.trimEnd()}\n${warningLine}`;
+				}
+			}
+		}
+
+		return enriched;
 	}
 
 	function sessionFileOf(ctx: ExtensionContext): string | undefined {
@@ -419,7 +494,11 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		for (const entry of entries) {
 			const rec = asRecord(entry);
 			if (!rec || rec.type !== "custom" || rec.customType !== "planner-only-usage") continue;
-			if (rec.data && typeof rec.data === "object") records.push(rec.data as UsageEntry);
+			if (rec.data && typeof rec.data === "object") {
+				const uEntry = rec.data as UsageEntry;
+				records.push(uEntry);
+				allSessionEntries.push(uEntry);
+			}
 		}
 		ledger.load(records);
 	}
@@ -569,7 +648,8 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					...(params.findings ? { findings: params.findings } : {}),
 					source: "root",
 				});
-				const text = orchestrator.renderDecisionBlock(outcome.task, outcome.decision, outcome.evidence);
+				let text = orchestrator.renderDecisionBlock(outcome.task, outcome.decision, outcome.evidence);
+				text = enrichDecisionText(text, outcome.task.taskId);
 				recordInjectedText(outcome.task.taskId, text);
 				persistSessionEntries();
 				await flushIfTerminal(outcome.task.taskId, before, _ctx);
@@ -681,8 +761,12 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		});
 		if (delegation) {
 			recordSyncChildren(event, delegation);
-			const text = result?.content?.[0]?.text ?? "";
+			let text = result?.content?.[0]?.text ?? "";
 			if (text && !text.includes("has started") && !text.includes("failed to launch")) {
+				text = enrichDecisionText(text, delegation.taskId);
+				if (result?.content?.[0]) {
+					result.content[0].text = text;
+				}
 				recordInjectedText(delegation.taskId, text);
 			}
 			persistSessionEntries();
@@ -727,8 +811,14 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		for (const item of snapshot) {
 			if (remaining.has(item.toolCallId)) continue;
 			recordAsyncChild(item.record, host, parsed?.agent);
-			const text = outcome?.content[0]?.text ?? "";
-			if (text) recordInjectedText(item.record.taskId, text);
+			let text = outcome?.content[0]?.text ?? "";
+			if (text) {
+				text = enrichDecisionText(text, item.record.taskId);
+				if (outcome?.content[0]) {
+					outcome.content[0].text = text;
+				}
+				recordInjectedText(item.record.taskId, text);
+			}
 			persistSessionEntries();
 			await flushIfTerminal(item.record.taskId, beforeByTask.get(item.record.taskId), host, item.record.asyncDir);
 		}
@@ -758,8 +848,10 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				next.push(entry);
 				continue;
 			}
+			let content = outcome.content[0]?.text ?? "";
+			content = enrichDecisionText(content);
 			for (const id of runIds) seen.add(id);
-			next.push({ ...entry, content: outcome.content[0]?.text ?? "" } as typeof entry);
+			next.push({ ...entry, content } as typeof entry);
 			changed = true;
 		}
 		if (changed) return { messages: next };
@@ -777,7 +869,12 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			const store = orchestrator.store;
 
 			if (action === "status") {
-				notify(ctx, `Planner-only mode is ${isDisabled() ? "off" : "on"} (source: ${guardDecisionSource()}).`);
+				const log = usageLogPath();
+				const logStatus = log ? `${log} (enabled)` : "disabled";
+				notify(ctx, [
+					`Planner-only mode is ${isDisabled() ? "off" : "on"} (source: ${guardDecisionSource()}).`,
+					`Usage log: ${logStatus}`,
+				].join("\n"));
 				return;
 			}
 			if (action === "on") {
@@ -872,12 +969,83 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				}
 				const before = task.state;
 				const outcome = await orchestrator.recordRootVerdict(task, verdict, summary, { source: "operator" });
-				notify(ctx, orchestrator.renderDecisionBlock(outcome.task, outcome.decision, outcome.evidence));
+				notify(ctx, enrichDecisionText(orchestrator.renderDecisionBlock(outcome.task, outcome.decision, outcome.evidence), outcome.task.taskId));
 				persistSessionEntries();
 				await flushIfTerminal(outcome.task.taskId, before, ctx);
 				return;
 			}
-				notify(ctx, "Usage: /planner-only [status|on|off|task [abandon|reset <taskId>]|review] [args]", "warning");
+			if (action === "usage") {
+				const sub = (parts[1] ?? "").trim();
+				if (sub.toLowerCase() === "reload") {
+					persistSessionEntries();
+					pricing = loadPricingTable();
+					ledger = new UsageLedger({ pricing });
+					ledger.load(allSessionEntries);
+					for (const task of store.list()) {
+						syncUsage(task.taskId);
+					}
+					notify(ctx, `Planner-only: reloaded pricing table (${Object.keys(pricing.rates).length} rates, currency: ${pricing.currency}).`);
+					return;
+				}
+
+				const renderTaskBlock = (tId: string): string | undefined => {
+					resolveTaskPending(tId, ctx);
+					const u = ledger.taskUsage(tId);
+					if (!u) return undefined;
+					const t = store.get(tId);
+					const rootRates = findRates(pricing, u.rootModel);
+					return renderUsage(u, {
+						taskId: tId,
+						state: t?.state ?? "unknown (store not persisted)",
+						rounds: t?.reviewRound ?? 0,
+						currency: pricing.currency,
+						rootRates,
+					});
+				};
+
+				const renderSessionView = (): string => {
+					const session = ledger.sessionUsage();
+					const lines: string[] = [`Usage for session (${session.tasks.length} task${session.tasks.length === 1 ? "" : "s"}):`];
+					for (const tId of session.tasks) {
+						resolveTaskPending(tId, ctx);
+						const u = ledger.taskUsage(tId);
+						if (!u) continue;
+						const t = store.get(tId);
+						const state = t ? t.state : "unknown";
+						lines.push(`${tId} (${state}): ${renderUsageLine(u, pricing.currency)}`);
+					}
+					lines.push(`untasked: ${renderUsageLine({ root: session.untasked, children: [], costUnknown: session.untasked.costUsd === undefined && session.untasked.turns > 0 }, pricing.currency)}`);
+					return lines.join("\n");
+				};
+
+				if (sub.toLowerCase() === "session") {
+					notify(ctx, renderSessionView());
+					return;
+				}
+
+				if (sub) {
+					const output = renderTaskBlock(sub);
+					if (!output) {
+						notify(ctx, `Unknown planner-only task: ${sub}`, "warning");
+						return;
+					}
+					notify(ctx, output);
+					return;
+				}
+
+				const active = store.active();
+				if (active) {
+					const output = renderTaskBlock(active.taskId);
+					if (output) {
+						notify(ctx, output);
+						return;
+					}
+				}
+
+				notify(ctx, renderSessionView());
+				return;
+			}
+			notify(ctx, "Usage: /planner-only [status|on|off|task [abandon|reset <taskId>]|review|usage] [args]", "warning");
 		},
 	});
 }
