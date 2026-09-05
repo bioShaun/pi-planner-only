@@ -512,6 +512,21 @@ export class PlannerOrchestrator {
 					} else {
 						warnings.push(`Planner-only: attached to active task ${active.taskId}`);
 					}
+				} else if (role === "explorer") {
+					// An explorer binds to no Task: it is read-only and needs no
+					// writer contract, so mirror the unbound-validator placeholder
+					// instead of creating a placeholder Task for a read-only pass.
+					this.delegations.set(event.toolCallId, {
+						taskId: `unbound-explorer-${event.toolCallId}`,
+						kind: "explorer",
+						asyncRequested: isAsyncInput(input),
+						...(inputAgent(input) ? { agent: inputAgent(input) } : {}),
+					});
+					return {
+						warnings: [
+							"Planner-only: explorer delegation is not attached to any Task; its output is returned as-is.",
+						],
+					};
 				} else {
 					task = this.store.create(createTaskSpec({
 						objective: "(unspecified — parent did not embed a TaskSpec)",

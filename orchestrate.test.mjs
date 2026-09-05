@@ -890,6 +890,50 @@ function truncatedPreview() {
 	));
 }
 
+// Unbound explorer delegation creates no Task at all: it is recorded as the
+// `unbound-explorer-` placeholder (mirroring `unbound-validator-`) and returns
+// only the standalone warning, with no evidence sampling.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, structuredDelegationMode: "warn" });
+	const before = orch.store.list().length;
+	const outcome = await orch.beginDelegation(
+		{
+			toolCallId: "call-914-explore-unbound",
+			input: { agent: "explorer", task: "Survey the repo and report findings." },
+		},
+		BASE,
+	);
+	assert.equal(outcome.task, undefined);
+	assert.deepEqual(outcome.warnings, [
+		"Planner-only: explorer delegation is not attached to any Task; its output is returned as-is.",
+	]);
+	assert.equal(orch.store.list().length, before);
+	assert.deepEqual(orch.getDelegation("call-914-explore-unbound"), {
+		taskId: "unbound-explorer-call-914-explore-unbound",
+		kind: "explorer",
+		asyncRequested: false,
+		agent: "explorer",
+	});
+}
+
+// An explorer delegation that names an existing Task id still binds to it.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, structuredDelegationMode: "warn" });
+	const taskId = "T-20260905-915";
+	await delegateWorker(orch, "call-915", taskId);
+	const before = orch.store.list().length;
+	const outcome = await orch.beginDelegation(
+		{
+			toolCallId: "call-915-explore",
+			input: { agent: "explorer", task: `Investigate task ${taskId} and report findings.` },
+		},
+		BASE,
+	);
+	assert.equal(outcome.task?.taskId, taskId);
+	assert.equal(orch.store.list().length, before);
+	assert.equal(orch.getDelegation("call-915-explore")?.taskId, taskId);
+}
+
 // --------------------------------------------------------------------------
 // L-1 — lenient WorkerReport normalisation
 // --------------------------------------------------------------------------
