@@ -17,6 +17,12 @@ import {
 } from "./roles.ts";
 import type { PrepareRoleDelegationOptions } from "./roles.ts";
 import {
+	ASYNC_PREVIEW_TRUNCATED_REASON,
+	PREVIEW_TRUNCATED_MARKER,
+	parseSubagentNotify,
+	readLargestRunOutput,
+} from "./notify.ts";
+import {
 	compactWorkerReport,
 	extractWorkerReport,
 	renderWorkerReport,
@@ -82,6 +88,7 @@ export interface SubagentEvent {
 	toolName?: string;
 	input?: unknown;
 	content?: readonly { type: string; text?: string }[];
+	details?: unknown;
 }
 
 export interface OrchestratorDeps {
@@ -101,6 +108,10 @@ export interface DelegationRecord {
 	taskId: string;
 	kind: DelegationKind;
 	asyncRequested?: boolean;
+	runId?: string;
+	asyncDir?: string;
+	/** Child agent named in the delegation input; used to match single-run notices that carry no runId. */
+	agent?: string;
 }
 
 export interface DelegationOutcome {
@@ -185,10 +196,44 @@ function isAsyncInput(input: unknown): boolean {
 	return Boolean(input && typeof input === "object" && (input as Record<string, unknown>).async === true);
 }
 
+function inputAgent(input: unknown): string | undefined {
+	if (!input || typeof input !== "object") return undefined;
+	const agent = (input as { agent?: unknown }).agent;
+	return typeof agent === "string" && agent.trim() ? agent.trim().toLowerCase() : undefined;
+}
+
+function eventDetails(event: SubagentEvent): Record<string, unknown> {
+	const details = event.details;
+	return details !== null && typeof details === "object" && !Array.isArray(details)
+		? details as Record<string, unknown>
+		: {};
+}
+
+function detailString(details: Record<string, unknown>, key: string): string | undefined {
+	const value = details[key];
+	return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function looksLikeWorkerReport(text: string): boolean {
+	return text.includes('"version"') && text.includes('"taskId"');
+}
+
+/**
+ * pi-subagents marks both launch receipts (background single/workflow and
+ * detached foreground) with `details.asyncId`; completed foreground results
+ * carry `runId` but never `asyncId`.
+ */
+function receiptRunId(event: SubagentEvent): string | undefined {
+	const details = eventDetails(event);
+	return detailString(details, "asyncId") ?? detailString(details, "runId");
+}
+
 function isAsyncLaunchReceipt(event: SubagentEvent, delegation: DelegationRecord): boolean {
 	const text = resultText(event).trim();
+	if (looksLikeWorkerReport(text)) return false;
+	if (detailString(eventDetails(event), "asyncId")) return true;
 	if (delegation.asyncRequested) return true;
-	if (!text || text.includes('"version"') || text.includes('"taskId"')) return false;
+	if (!text) return false;
 	try {
 		const value = JSON.parse(text) as Record<string, unknown>;
 		return Boolean(value && typeof value === "object" &&
@@ -205,18 +250,40 @@ function isAsyncLaunchReceipt(event: SubagentEvent, delegation: DelegationRecord
 	return markers.filter((marker) => marker.test(text)).length >= 2;
 }
 
+function runIdFromReceipt(event: SubagentEvent): string | undefined {
+	const fromDetails = receiptRunId(event);
+	if (fromDetails) return fromDetails;
+	const text = resultText(event).trim();
+	try {
+		const value = JSON.parse(text) as Record<string, unknown>;
+		for (const key of ["runId", "run_id", "asyncId"] as const) {
+			if (typeof value[key] === "string" && value[key].trim()) return value[key].trim();
+		}
+	} catch {
+		const match = text.match(/^Async:\s+\S+\s+\[([^\]]+)\]/m);
+		if (match?.[1]) return match[1];
+	}
+	return undefined;
+}
+
 export class PlannerOrchestrator {
 	readonly store: TaskStore;
 	readonly structuredDelegationMode: StructuredDelegationMode;
 	private readonly gitRunner: GitRunner;
 	/** toolCallId -> delegated task + invocation kind. */
 	private readonly delegations = new Map<string, DelegationRecord>();
+	/** runIds whose subagent-notify (or sync result) has already been consumed. */
+	private readonly processedRunIds = new Set<string>();
 
 	constructor(deps: OrchestratorDeps) {
 		this.store = deps.store ?? new TaskStore();
 		this.gitRunner = deps.gitRunner;
 		this.structuredDelegationMode =
 			deps.structuredDelegationMode ?? readStructuredDelegationMode();
+	}
+
+	pendingDelegationCount(): number {
+		return this.delegations.size;
 	}
 
 	/**
@@ -283,7 +350,12 @@ export class PlannerOrchestrator {
 					`Planner-only: ReviewRequest reportTaskId ${target.request.reportTaskId} does not match task ${taskId}.`,
 				);
 			}
-			this.delegations.set(event.toolCallId, { taskId, kind: "reviewer", asyncRequested: isAsyncInput(input) });
+			this.delegations.set(event.toolCallId, {
+				taskId,
+				kind: "reviewer",
+				asyncRequested: isAsyncInput(input),
+				...(inputAgent(input) ? { agent: inputAgent(input) } : {}),
+			});
 			return {
 				...(task ? { task } : {}),
 				...(warnings.length ? { warnings } : {}),
@@ -341,7 +413,12 @@ export class PlannerOrchestrator {
 			workerRunId: event.toolCallId,
 		});
 		this.store.setBaseEvidence(task.taskId, base);
-		this.delegations.set(event.toolCallId, { taskId: task.taskId, kind: role, asyncRequested: isAsyncInput(event.input) });
+		this.delegations.set(event.toolCallId, {
+			taskId: task.taskId,
+			kind: role,
+			asyncRequested: isAsyncInput(event.input),
+			...(inputAgent(event.input) ? { agent: inputAgent(event.input) } : {}),
+		});
 		return {
 			task: this.store.require(task.taskId),
 			...(warnings.length ? { warnings } : {}),
@@ -462,10 +539,15 @@ export class PlannerOrchestrator {
 		const delegation = this.delegations.get(event.toolCallId);
 		if (!delegation) return;
 		if (isAsyncLaunchReceipt(event, delegation)) {
+			const runId = runIdFromReceipt(event);
+			const asyncDir = detailString(eventDetails(event), "asyncDir");
+			if (runId) delegation.runId = runId;
+			if (asyncDir) delegation.asyncDir = asyncDir;
 			const task = this.store.get(delegation.taskId);
 			return task ? { content: [{ type: "text", text: `[PLANNER-ONLY] Async delegation for task ${task.taskId} has started. Await the run result before reviewing.` }] } : undefined;
 		}
 		this.delegations.delete(event.toolCallId);
+		if (delegation.runId) this.processedRunIds.add(delegation.runId);
 
 		const task = this.store.get(delegation.taskId);
 		if (!task) {
@@ -484,6 +566,65 @@ export class PlannerOrchestrator {
 		return delegation.kind === "reviewer"
 			? this.handleReviewerResult(task, text)
 			: this.handleWorkerResult(task, text, event.toolCallId);
+	}
+
+	async handleAsyncNotify(
+		content: string,
+	): Promise<{ content: { type: "text"; text: string }[] } | undefined> {
+		const parsed = parseSubagentNotify(content);
+		if (!parsed) return;
+		let outcome: { content: { type: "text"; text: string }[] } | undefined;
+		for (const found of this.matchAsyncDelegations(parsed)) {
+			const runId = found.record.runId;
+			if (runId) this.processedRunIds.add(runId);
+			this.delegations.delete(found.toolCallId);
+			const task = this.store.get(found.record.taskId);
+			if (!task) continue;
+			const fileText = runId ? readLargestRunOutput(found.record.asyncDir, runId) : undefined;
+			const chosen = fileText ?? parsed.preview;
+			const truncatedWithoutFile = !fileText &&
+				(parsed.truncated || chosen.includes(PREVIEW_TRUNCATED_MARKER));
+			if (truncatedWithoutFile) {
+				outcome = await this.handleWorkerResult(task, chosen, found.toolCallId, {
+					forceReportError: ASYNC_PREVIEW_TRUNCATED_REASON,
+				});
+				continue;
+			}
+			outcome = await this.handleWorkerResult(task, chosen, found.toolCallId);
+		}
+		return outcome;
+	}
+
+	/**
+	 * Resolve which pending async delegations a `subagent-notify` notice
+	 * answers. pi-subagents only prints `Child runs:` for workflow children, so
+	 * a single-run notice is matched by the WorkerReport's own `taskId`, then
+	 * by agent name when that leaves exactly one candidate. Ambiguity yields no
+	 * match: the notice is left untouched rather than attributed by guess.
+	 */
+	private matchAsyncDelegations(parsed: {
+		runIds: readonly string[];
+		agent: string;
+		taskIdHint?: string;
+	}): { toolCallId: string; record: DelegationRecord }[] {
+		const pending = [...this.delegations]
+			.map(([toolCallId, record]) => ({ toolCallId, record }))
+			.filter(({ record }) => record.runId && !this.processedRunIds.has(record.runId));
+
+		const byRunId = parsed.runIds
+			.map((runId) => pending.find(({ record }) => record.runId === runId))
+			.filter((found): found is { toolCallId: string; record: DelegationRecord } => Boolean(found));
+		if (byRunId.length > 0) return byRunId;
+
+		if (parsed.taskIdHint) {
+			const byTask = pending.filter(({ record }) => record.taskId === parsed.taskIdHint);
+			if (byTask.length === 1) return byTask;
+			if (byTask.length > 1) return [];
+		}
+
+		const agent = parsed.agent.trim().toLowerCase();
+		const byAgent = pending.filter(({ record }) => !record.agent || !agent || record.agent === agent);
+		return byAgent.length === 1 ? byAgent : [];
 	}
 
 	private async handleReviewerResult(
@@ -564,8 +705,11 @@ export class PlannerOrchestrator {
 		task: TaskRecord,
 		text: string,
 		toolCallId: string,
+		options: { forceReportError?: string } = {},
 	): Promise<{ content: { type: "text"; text: string }[] }> {
-		const extracted = extractWorkerReport(text);
+		const extracted = options.forceReportError
+			? { error: options.forceReportError }
+			: extractWorkerReport(text);
 		let report: WorkerReport | undefined;
 		let compacted = false;
 		let identityErrors: string[] = [];

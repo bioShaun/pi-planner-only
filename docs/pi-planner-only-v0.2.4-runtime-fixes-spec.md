@@ -168,9 +168,27 @@ exact strings produced by `formatSingleCompletion` and `formatGroupedCompletion`
 0.65.1; fixtures are copied verbatim into `notify.test.mjs`. Anything unparseable returns
 `undefined` and is left untouched (never rewritten, never consumed).
 
+## Annotations
+
+- 2026-09-05 (R5 review): three of the "facts" above were wrong and are corrected here; the
+  implementation follows the corrected facts.
+  1. A **single-run** completion has no `Child runs:` line: `buildCompletionDetails` derives
+     `childRuns` from `results[].runId`, which the runner sets for workflow children only. The
+     notice therefore carries no runId. Matching order is: runIds in the text (workflows) →
+     the first complete `"taskId": "…"` in the preview → agent name when exactly one pending
+     async delegation remains. Ambiguity leaves the notice untouched.
+  2. Launch receipts are recognised by `details.asyncId` (present on background and detached
+     foreground receipts); completed foreground results carry `details.runId` but never
+     `asyncId`, so `runId` alone must not mark a receipt.
+  3. Saved outputs live at `<tempRoot>/artifacts/outputs/<runId>/`, where `asyncDir` is
+     `<tempRoot>/async-subagent-runs/<runId>` (or `<tempRoot>/nested-subagent-runs/<root>/<runId>`);
+     the temp root is found by walking up from `asyncDir` to the run-root directory. Note that a
+     saved output file exists only when the run was launched with an `output` target.
+- Parser contract amendment: `runIds` may be empty; `taskIdHint` is added.
+
 ## Acceptance (mechanical)
 
-- B1. `orchestrate.test.mjs`: receipt with `details.runId`, then a `subagent-notify` message whose
+- B1. `orchestrate.test.mjs`: receipt with `details.asyncId`, then a `subagent-notify` message whose
   preview holds a valid WorkerReport → `reports.length === 1`, state leaves `executing`, delegation
   map is empty.
 - B2. Same, but the preview is truncated and a fixture output file exists under a temp

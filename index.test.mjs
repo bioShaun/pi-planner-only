@@ -619,6 +619,65 @@ await commands.get("planner-only").handler("task T-20260831-400", ctx);
 assert.match(notices.at(-1).message, /State: changes_requested/);
 gitResponses.delete("rev-parse HEAD");
 
+// B6. message_end with a subagent-notify custom message returns a replaced
+// message whose text starts with [PLANNER-ONLY REVIEW STATE]; a non-matching
+// custom message is returned untouched.
+assert.equal(handlers.has("message_end"), true);
+{
+	const foreign = { role: "custom", customType: "other-notify", content: "not a subagent-notify", display: "keep-display" };
+	const foreignOut = await handlers.get("message_end")({ message: foreign });
+	assert.equal(foreignOut, undefined);
+}
+
+{
+	const taskId = "T-20260831-b6";
+	const runId = "b6b6b6b6-0000-0000-0000-0000000000b6";
+	await handlers.get("tool_call")(
+		{
+			toolCallId: "call-b6",
+			toolName: "subagent",
+			input: { agent: "worker", async: true, task: JSON.stringify(delegationSpec(taskId)) },
+		},
+		ctx,
+	);
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+	const receipt = await handlers.get("tool_result")(
+		{
+			toolCallId: "call-b6",
+			toolName: "subagent",
+			details: { asyncId: runId, runId, asyncDir: "/no-such-async-dir" },
+			content: [{
+				type: "text",
+				text: `Async: worker [${runId}]\nThe async run is detached and running in the background.`,
+			}],
+		},
+		ctx,
+	);
+	assert.match(receipt.content[0].text, /Async delegation for task T-20260831-b6 has started/);
+
+	const asyncReport = {
+		...workerReport,
+		taskId,
+		evidence: {
+			...workerReport.evidence,
+			taskId,
+			workerRunId: "call-b6",
+			cwd: `/fixture/${taskId}`,
+			changedPaths: ["src/parser.ts"],
+		},
+	};
+	const notifyText = `Background task completed: **worker**\n\n${JSON.stringify(asyncReport)}\n\nChild runs: ${runId}`;
+	const display = "Background task completed: worker";
+	const replaced = await handlers.get("message_end")({
+		message: { role: "custom", customType: "subagent-notify", content: notifyText, display },
+	});
+	assert.match(replaced.message.content, /^\[PLANNER-ONLY REVIEW STATE\]/);
+	assert.equal(replaced.message.display, display);
+	assert.equal(replaced.message.customType, "subagent-notify");
+	assert.equal(replaced.message.role, "custom");
+}
+
 rmSync(isolatedAgentDir, { recursive: true, force: true });
 
 console.log("planner-only extension: PASS");

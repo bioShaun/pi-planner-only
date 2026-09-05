@@ -13,6 +13,7 @@ import {
 import { GIT_AUDIT_OPERATIONS, runGitAudit } from "./git-audit.ts";
 import type { GitAuditRequest, GitRunner } from "./git-audit.ts";
 import { PlannerOrchestrator, compositeWorkflowBlockReason, isDelegationCall } from "./orchestrate.ts";
+import { parseSubagentNotify } from "./notify.ts";
 import { MAX_REVIEW_ROUNDS, WORKER_REPORT_VERSION } from "./types.ts";
 import type { ReviewMode, ReviewVerdict } from "./types.ts";
 
@@ -102,6 +103,26 @@ function envDisablesGuard(): boolean {
 
 function isDisabled(): boolean {
 	return envDisablesGuard() || existsSync(OFF_MARKER);
+}
+
+const SUBAGENT_NOTIFY_TYPE = "subagent-notify";
+
+function isSubagentNotifyMessage(message: unknown): boolean {
+	if (!message || typeof message !== "object") return false;
+	const value = message as { role?: unknown; customType?: unknown };
+	return value.role === "custom" && value.customType === SUBAGENT_NOTIFY_TYPE;
+}
+
+function customMessageText(message: unknown): string {
+	if (!message || typeof message !== "object") return "";
+	const content = (message as { content?: unknown }).content;
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.filter((part): part is { type: string; text?: string } =>
+			Boolean(part && typeof part === "object" && (part as { type?: string }).type === "text"))
+		.map((part) => (typeof part.text === "string" ? part.text : ""))
+		.join("\n");
 }
 
 function updateStatus(ctx: ExtensionContext): void {
@@ -261,6 +282,43 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	pi.on("tool_result", async (event) => {
 		if (isDisabled() || event.toolName !== "subagent") return;
 		return orchestrator.handleSubagentResult(event);
+	});
+
+	pi.on("message_end", async (event) => {
+		if (isDisabled()) return;
+		if (!isSubagentNotifyMessage(event.message)) return;
+		const outcome = await orchestrator.handleAsyncNotify(customMessageText(event.message));
+		if (!outcome) return;
+		return { message: { ...event.message, content: outcome.content[0]?.text ?? "" } as typeof event.message };
+	});
+
+	pi.on("context", async (event) => {
+		if (isDisabled()) return;
+		const seen = new Set<string>();
+		let changed = false;
+		const next = [];
+		for (const entry of event.messages) {
+			if (!isSubagentNotifyMessage(entry)) {
+				next.push(entry);
+				continue;
+			}
+			const text = customMessageText(entry);
+			const parsed = parseSubagentNotify(text);
+			const runIds = parsed?.runIds ?? [];
+			if (runIds.length > 0 && runIds.every((id) => seen.has(id))) {
+				next.push(entry);
+				continue;
+			}
+			const outcome = await orchestrator.handleAsyncNotify(text);
+			if (!outcome) {
+				next.push(entry);
+				continue;
+			}
+			for (const id of runIds) seen.add(id);
+			next.push({ ...entry, content: outcome.content[0]?.text ?? "" } as typeof entry);
+			changed = true;
+		}
+		if (changed) return { messages: next };
 	});
 
 	const notify = (ctx: ExtensionContext, message: string, type: "info" | "warning" = "info"): void => {

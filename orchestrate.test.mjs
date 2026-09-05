@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { PlannerOrchestrator, isDelegationCall } from "./orchestrate.ts";
 import { hashStatus } from "./evidence.ts";
 
@@ -416,6 +418,153 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 	const outcome = await orch.handleSubagentResult(reviewerResult("call-613-r", "T-20260901-613", "pass"));
 	assert.match(outcome.content[0].text, /decision: accept/);
 	assert.equal(orch.store.require("T-20260901-613").state, "completed");
+}
+
+// pi-subagents 0.65.1 formatSingleCompletion for a single run: no `Child runs:`
+// line (that only exists for workflow children), so the runId never appears.
+function asyncNotify(_runId, preview) {
+	return `Background task completed: **worker**\n\n${preview}`;
+}
+
+function truncatedPreview() {
+	return `{"version":1,"taskId":"partial ...[preview truncated]`;
+}
+
+// B1. receipt with details.runId, then subagent-notify preview holds a valid WorkerReport
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260905-b1";
+	const runId = "run-b1-00000000-0000-0000-000000000001";
+	await delegateWorker(orch, "call-b1", taskId);
+	const receipt = await orch.handleSubagentResult({
+		toolCallId: "call-b1",
+		toolName: "subagent",
+		details: { asyncId: runId, runId, asyncDir: "/no-such-async-dir" },
+		content: [{
+			type: "text",
+			text: `Async: worker [${runId}]\nThe async run is detached and running in the background.`,
+		}],
+	});
+	assert.match(receipt.content[0].text, /Async delegation for task T-20260905-b1 has started/);
+	assert.equal(orch.store.require(taskId).state, "executing");
+	assert.equal(orch.store.require(taskId).reports.length, 0);
+
+	const outcome = await orch.handleAsyncNotify(asyncNotify(runId, JSON.stringify(reportFor(taskId, "call-b1"))));
+	assert.match(outcome.content[0].text, /\[PLANNER-ONLY REVIEW STATE\]/);
+	const task = orch.store.require(taskId);
+	assert.equal(task.reports.length, 1);
+	assert.notEqual(task.state, "executing");
+	assert.equal(orch.pendingDelegationCount(), 0);
+}
+
+// B2. truncated preview + fixture file under temp outputs/<runId>/ is parsed from the file
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260905-b2";
+	const runId = "run-b2-00000000-0000-0000-000000000002";
+	const tmp = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+	try {
+		// Real pi-subagents layout: asyncDir = <root>/async-subagent-runs/<id>,
+		// saved output = <root>/artifacts/outputs/<id>/…
+		const asyncDir = join(tmp, "async-subagent-runs", runId);
+		mkdirSync(asyncDir, { recursive: true });
+		mkdirSync(join(tmp, "artifacts", "outputs", runId), { recursive: true });
+		writeFileSync(join(tmp, "artifacts", "outputs", runId, "result.json"), JSON.stringify(reportFor(taskId, "call-b2")));
+		await delegateWorker(orch, "call-b2", taskId);
+		await orch.handleSubagentResult({
+			toolCallId: "call-b2",
+			toolName: "subagent",
+			details: { asyncId: runId, runId, asyncDir },
+			content: [{ type: "text", text: `Async: worker [${runId}]\nThe async run is detached and running in the background.` }],
+		});
+		const outcome = await orch.handleAsyncNotify(asyncNotify(runId, truncatedPreview()));
+		assert.match(outcome.content[0].text, /\[PLANNER-ONLY REVIEW STATE\]/);
+		assert.doesNotMatch(outcome.content[0].text, /async preview truncated/);
+		assert.equal(orch.store.require(taskId).reports.length, 1);
+		assert.notEqual(orch.store.require(taskId).state, "executing");
+	} finally {
+		rmSync(tmp, { recursive: true, force: true });
+	}
+}
+
+// B3. truncated preview and no file → report-only correction, reason contains async preview truncated
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260905-b3";
+	const runId = "run-b3-00000000-0000-0000-000000000003";
+	await delegateWorker(orch, "call-b3", taskId);
+	await orch.handleSubagentResult({
+		toolCallId: "call-b3",
+		toolName: "subagent",
+		details: { asyncId: runId, runId, asyncDir: join(process.cwd(), ".planner-only-test-missing-async") },
+		content: [{ type: "text", text: `Async: worker [${runId}]\nThe async run is detached and running in the background.` }],
+	});
+	const outcome = await orch.handleAsyncNotify(asyncNotify(runId, truncatedPreview()));
+	assert.match(outcome.content[0].text, /report-only correction/);
+	assert.match(outcome.content[0].text, /async preview truncated/);
+	assert.equal(orch.store.require(taskId).reports.length, 0);
+}
+
+// B4. processing the same runId twice changes nothing on the second pass
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260905-b4";
+	const runId = "run-b4-00000000-0000-0000-000000000004";
+	await delegateWorker(orch, "call-b4", taskId);
+	await orch.handleSubagentResult({
+		toolCallId: "call-b4",
+		toolName: "subagent",
+		details: { asyncId: runId, runId, asyncDir: "/no-such-async-dir" },
+		content: [{ type: "text", text: `Async: worker [${runId}]\nThe async run is detached and running in the background.` }],
+	});
+	const notify = asyncNotify(runId, JSON.stringify(reportFor(taskId, "call-b4")));
+	await orch.handleAsyncNotify(notify);
+	const afterFirst = orch.store.require(taskId);
+	const reports = afterFirst.reports.length;
+	const state = afterFirst.state;
+	const corrections = afterFirst.reportCorrections;
+	const second = await orch.handleAsyncNotify(notify);
+	assert.equal(second, undefined);
+	const afterSecond = orch.store.require(taskId);
+	assert.equal(afterSecond.reports.length, reports);
+	assert.equal(afterSecond.state, state);
+	assert.equal(afterSecond.reportCorrections, corrections);
+}
+
+// A completed foreground result carries details.runId but never asyncId; it
+// must be handled as a result (here: malformed), not parked as a receipt.
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260905-fg";
+	await delegateWorker(orch, "call-fg", taskId);
+	const outcome = await orch.handleSubagentResult({
+		toolCallId: "call-fg",
+		toolName: "subagent",
+		details: { mode: "single", runId: "fg-run-1", results: [] },
+		content: [{ type: "text", text: "done, no report" }],
+	});
+	assert.match(outcome.content[0].text, /not a valid WorkerReport/);
+	assert.equal(orch.pendingDelegationCount(), 0);
+}
+
+// Two pending async delegations and a notice without runId or taskId: no guess.
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	for (const [call, taskId, runId] of [["call-x1", "T-20260905-x1", "x1x1x1x1-0000-0000-0000-0000000000x1"], ["call-x2", "T-20260905-x2", "x2x2x2x2-0000-0000-0000-0000000000x2"]]) {
+		await delegateWorker(orch, call, taskId);
+		await orch.handleSubagentResult({
+			toolCallId: call,
+			toolName: "subagent",
+			details: { asyncId: runId, runId, asyncDir: "/no-such-async-dir" },
+			content: [{ type: "text", text: `Async: worker [${runId}]\nThe async run is detached and running in the background.` }],
+		});
+	}
+	assert.equal(await orch.handleAsyncNotify(asyncNotify(undefined, "finished without a report")), undefined);
+	assert.equal(orch.pendingDelegationCount(), 2);
+	// A taskId in the preview disambiguates.
+	const outcome = await orch.handleAsyncNotify(asyncNotify(undefined, JSON.stringify(reportFor("T-20260905-x2", "call-x2"))));
+	assert.match(outcome.content[0].text, /taskId: T-20260905-x2/);
+	assert.equal(orch.pendingDelegationCount(), 1);
 }
 
 console.log("planner-only orchestration: PASS");
