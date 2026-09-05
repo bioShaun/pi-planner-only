@@ -1347,6 +1347,53 @@ function reportT3(taskId, toolCallId) {
 	assert.equal(orch.store.require(taskId).reportCorrections, 0);
 }
 
+// L-1: lenient normalisation on the validator path echoes Report normalised:
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260905-303";
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-l3-w3", input: { task: JSON.stringify(specFor(taskId, "worker", BASE)) } },
+		BASE,
+	);
+	setDirtyTree();
+	const workerReport = {
+		...reportFor(taskId, "call-l3-w3"),
+		evidence: { ...reportFor(taskId, "call-l3-w3").evidence, cwd: BASE },
+	};
+	await orch.handleSubagentResult(workerResult("call-l3-w3", workerReport));
+	await orch.beginDelegation(
+		{
+			toolCallId: "call-l3-v3",
+			input: { agent: "oracle", task: JSON.stringify(specFor(taskId, "validator", BASE)) },
+		},
+		BASE,
+	);
+	// version "1" is accepted but repaired to 1 by the lenient normaliser
+	const validatorReport = reportFor(taskId, "call-l3-v3");
+	validatorReport.version = "1";
+	validatorReport.evidence = { ...validatorReport.evidence, cwd: BASE };
+	const repaired = await orch.handleSubagentResult(workerResult("call-l3-v3", validatorReport));
+	assert.ok(repaired.content[0].text.startsWith(`[PLANNER-ONLY] Validator result for task ${taskId}`));
+	assert.match(repaired.content[0].text, /Report normalised: version "1" → 1/);
+	assert.equal(orch.store.require(taskId).validatorReports.length, 1);
+
+	// an already-valid validator report gets no Report normalised: line
+	await orch.beginDelegation(
+		{
+			toolCallId: "call-l3-v3b",
+			input: { agent: "oracle", task: JSON.stringify(specFor(taskId, "validator", BASE)) },
+		},
+		BASE,
+	);
+	const validReport = reportFor(taskId, "call-l3-v3b");
+	validReport.evidence = { ...validReport.evidence, cwd: BASE };
+	const clean = await orch.handleSubagentResult(workerResult("call-l3-v3b", validReport));
+	assert.ok(clean.content[0].text.startsWith(`[PLANNER-ONLY] Validator result for task ${taskId}`));
+	assert.doesNotMatch(clean.content[0].text, /Report normalised:/);
+	assert.equal(orch.store.require(taskId).validatorReports.length, 2);
+}
+
 // L-3: no resolvable Task — warning only; later result is the unknown-task path
 {
 	const orch = new PlannerOrchestrator({ gitRunner });

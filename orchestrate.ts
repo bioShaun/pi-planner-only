@@ -1115,6 +1115,9 @@ export class PlannerOrchestrator {
 				type: "text",
 				text: [
 					`[PLANNER-ONLY] Validator result for task ${task.taskId} recorded: ${report.validation.length} validation entries, ${passed} passed, ${failed} failed, ${notRun} not-run.`,
+					...(extracted.repairs.length > 0
+						? [`Report normalised: ${extracted.repairs.join("; ")}`]
+						: []),
 					...renderValidationResults(report.validation),
 					"",
 					"Verify task identity, evidence freshness, and acceptance criteria.",
