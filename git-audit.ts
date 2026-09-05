@@ -7,7 +7,7 @@
  */
 
 import { statSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import {
 	DEFAULT_GIT_AUDIT_ENTRIES,
 	MAX_GIT_AUDIT_ENTRIES,
@@ -146,11 +146,23 @@ export function resolveGitAudit(request: GitAuditRequest): ResolvedGitAudit {
 		case "status":
 			return { ok: true, operation, argv: [...GIT_READ_ARGV.status] };
 		case "diff-stat":
-			return { ok: true, operation, argv: ["diff", ...(staged ? ["--cached"] : []), "--stat"] };
+			return {
+				ok: true,
+				operation,
+				argv: ["diff", ...(staged ? ["--cached"] : []), "--stat", "--no-ext-diff", "--no-textconv"],
+			};
 		case "diff-names":
-			return { ok: true, operation, argv: ["diff", ...(staged ? ["--cached"] : []), "--name-status"] };
+			return {
+				ok: true,
+				operation,
+				argv: ["diff", ...(staged ? ["--cached"] : []), "--name-status", "--no-ext-diff", "--no-textconv"],
+			};
 		case "diff-check":
-			return { ok: true, operation, argv: ["diff", ...(staged ? ["--cached"] : []), "--check"] };
+			return {
+				ok: true,
+				operation,
+				argv: ["diff", ...(staged ? ["--cached"] : []), "--check", "--no-ext-diff", "--no-textconv"],
+			};
 		case "head":
 			return { ok: true, operation, argv: [...GIT_READ_ARGV.head] };
 		case "log":
@@ -221,6 +233,15 @@ export async function runGitAudit(
 	if (!resolved.ok) return { ok: false, operation: request.operation, text: resolved.error, code: 1 };
 
 	const target = resolve(baseCwd, request.cwd ?? ".");
+	const rel = relative(baseCwd, target);
+	if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+		return {
+			ok: false,
+			operation: resolved.operation,
+			text: "git_audit cwd must stay inside the working directory",
+			code: 1,
+		};
+	}
 	const cwdCheck = validateGitAuditCwd(target);
 	if (!cwdCheck.ok) return { ok: false, operation: resolved.operation, text: cwdCheck.error, code: 1 };
 

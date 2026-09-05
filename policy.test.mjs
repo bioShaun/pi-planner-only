@@ -11,7 +11,7 @@ assert.equal(blocked("git_audit", { operation: "status" }), false);
 assert.equal(blocked("git_audit", { operation: "diff-stat", staged: true }), false);
 assert.equal(blocked("functions.grep", { pattern: "x" }), true);
 assert.equal(blocked("subagent", { agent: "worker" }), false);
-assert.equal(blocked("subagent", { workflow: "review", args: { task: "Review" } }), false);
+assert.equal(blocked("subagent", { workflow: "review", args: { task: "Review" } }), true);
 assert.equal(blocked("subagent", { workflow: "run-ci", args: { command: "npm test" } }), true);
 assert.equal(blocked("subagent", { agent: "worker", gate: "npm test" }), true);
 assert.equal(blocked("write", { path: "/tmp/a" }), true);

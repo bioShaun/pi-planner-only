@@ -56,7 +56,7 @@ taskId:
   {"taskId":"T-YYYYMMDD-NNN","objective":"...","cwd":"...","role":"worker",
    "scope":{},"constraints":[],"acceptanceCriteria":[],
    "validation":{"required":true,"commands":[]},
-   "expectedEvidence":{"changedFiles":true,"diffStat":true,"tests":true},
+   "expectedEvidence":{"changedFiles":true,"tests":true},
    "stopConditions":[]}
 
 Every worker must return a WorkerReport containing:
@@ -95,6 +95,12 @@ reports blocked and asks the user how to proceed.
 Use /planner-only task to inspect lifecycle state and /planner-only review to
 record a verdict or switch to an isolated fresh reviewer.`;
 
+function envForcesGuard(): boolean {
+	return new Set(["1", "true", "on"]).has(
+		(process.env.PI_PLANNER_ONLY || "").trim().toLowerCase(),
+	);
+}
+
 function envDisablesGuard(): boolean {
 	return new Set(["0", "false", "off"]).has(
 		(process.env.PI_PLANNER_ONLY || "").trim().toLowerCase(),
@@ -102,7 +108,14 @@ function envDisablesGuard(): boolean {
 }
 
 function isDisabled(): boolean {
-	return envDisablesGuard() || existsSync(OFF_MARKER);
+	const force = envForcesGuard();
+	return !force && (envDisablesGuard() || existsSync(OFF_MARKER));
+}
+
+function guardDecisionSource(): "env" | "marker" | "default" {
+	if (envForcesGuard() || envDisablesGuard()) return "env";
+	if (existsSync(OFF_MARKER)) return "marker";
+	return "default";
 }
 
 const SUBAGENT_NOTIFY_TYPE = "subagent-notify";
@@ -135,15 +148,9 @@ function updateStatus(ctx: ExtensionContext): void {
 	);
 }
 
-export function filterPlannerTools(
-	activeTools: readonly string[],
-	allTools: readonly string[],
-): string[] {
+export function filterPlannerTools(activeTools: readonly string[]): string[] {
 	const allowed = (name: string): boolean => PLANNER_SAFE_TOOLS.has(name);
-	return [...new Set([
-		...activeTools.filter(allowed),
-		...allTools.filter(allowed),
-	])];
+	return [...new Set(activeTools.filter(allowed))];
 }
 
 export function restorePlannerTools(
@@ -176,12 +183,11 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	const restrictActiveTools = (): void => {
 		if (isDisabled()) return;
 		const activeTools = pi.getActiveTools();
-		const allTools = pi.getAllTools().map((tool) => tool.name);
 		suppressedTools = [...new Set([
 			...suppressedTools,
 			...activeTools.filter((name) => !PLANNER_SAFE_TOOLS.has(name)),
 		])];
-		const nextTools = filterPlannerTools(activeTools, allTools);
+		const nextTools = filterPlannerTools(activeTools);
 		if (!sameToolOrder(activeTools, nextTools)) pi.setActiveTools(nextTools);
 	};
 
@@ -334,7 +340,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			const store = orchestrator.store;
 
 			if (action === "status") {
-				notify(ctx, `Planner-only mode is ${isDisabled() ? "off" : "on"}.`);
+				notify(ctx, `Planner-only mode is ${isDisabled() ? "off" : "on"} (source: ${guardDecisionSource()}).`);
 				return;
 			}
 			if (action === "on") {

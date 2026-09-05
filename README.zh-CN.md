@@ -43,9 +43,10 @@ pi -e .
 - `/planner-only on`
 - `/planner-only off`
 - `/planner-only task [taskId]` — 任务生命周期
+- `/planner-only task abandon|reset <taskId>` — 放弃活跃或指定任务
 - `/planner-only review [taskId] [root|fresh|pass|request_changes|blocked] [summary]`
 
-非交互关闭：`PI_PLANNER_ONLY=0 pi`。持久关闭标记：`~/.pi/agent/planner-only.off`。
+单次会话覆盖：`PI_PLANNER_ONLY=1`（亦支持 `true`、`on`）无论是否存在标记均强制开启；`PI_PLANNER_ONLY=0`（`false`、`off`）禁用。持久关闭标记：`~/.pi/agent/planner-only.off`。
 
 `/planner-only off` 只恢复本扩展拿掉的工具。`session_shutdown` 时会还原工具集，方便 reload 重新采集完整列表。
 

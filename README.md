@@ -54,9 +54,10 @@ already bundles them. Do not add them to `dependencies`.
 - `/planner-only on`
 - `/planner-only off`
 - `/planner-only task [taskId]` — lifecycle state
+- `/planner-only task abandon|reset <taskId>` — abandon active or specified task
 - `/planner-only review [taskId] [root|fresh|pass|request_changes|blocked] [summary]`
 
-Non-interactive override: `PI_PLANNER_ONLY=0 pi`. Persistent off marker:
+Per-session override: `PI_PLANNER_ONLY=1` (also `true`, `on`) forces the guard on regardless of the marker; `PI_PLANNER_ONLY=0` (`false`, `off`) disables it. Persistent off marker:
 `~/.pi/agent/planner-only.off`.
 
 `/planner-only off` restores only tools this extension removed. The set is

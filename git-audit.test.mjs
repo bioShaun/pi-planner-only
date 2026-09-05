@@ -18,17 +18,31 @@ import { DEFAULT_GIT_AUDIT_ENTRIES, MAX_GIT_AUDIT_ENTRIES, MAX_GIT_AUDIT_OUTPUT_
 
 assert.deepEqual(resolveGitAudit({ operation: "status" }).argv, [...GIT_READ_ARGV.status]);
 assert.deepEqual(resolveGitAudit({ operation: "head" }).argv, [...GIT_READ_ARGV.head]);
-assert.deepEqual(resolveGitAudit({ operation: "diff-stat" }).argv, ["diff", "--stat"]);
+assert.deepEqual(resolveGitAudit({ operation: "diff-stat" }).argv, [
+	"diff",
+	"--stat",
+	"--no-ext-diff",
+	"--no-textconv",
+]);
 assert.deepEqual(resolveGitAudit({ operation: "diff-names", staged: true }).argv, [
 	"diff",
 	"--cached",
 	"--name-status",
+	"--no-ext-diff",
+	"--no-textconv",
 ]);
-assert.deepEqual(resolveGitAudit({ operation: "diff-check" }).argv, ["diff", "--check"]);
+assert.deepEqual(resolveGitAudit({ operation: "diff-check" }).argv, [
+	"diff",
+	"--check",
+	"--no-ext-diff",
+	"--no-textconv",
+]);
 assert.deepEqual(resolveGitAudit({ operation: "diff-check", staged: true }).argv, [
 	"diff",
 	"--cached",
 	"--check",
+	"--no-ext-diff",
+	"--no-textconv",
 ]);
 assert.deepEqual(resolveGitAudit({ operation: "head" }).argv, [...GIT_READ_ARGV.head]);
 assert.deepEqual(resolveGitAudit({ operation: "log" }).argv, [
@@ -196,6 +210,24 @@ try {
 	const missing = await runGitAudit(runner, { operation: "status", cwd: "nope" }, fixtureRoot);
 	assert.equal(missing.ok, false);
 	assert.match(missing.text, /does not exist/);
+
+	// E4: cwd resolving outside baseCwd is refused with exact message
+	const beforeOutside = seen.length;
+	const outsideParent = await runGitAudit(runner, { operation: "status", cwd: ".." }, dir);
+	assert.equal(outsideParent.ok, false);
+	assert.equal(outsideParent.code, 1);
+	assert.equal(outsideParent.text, "git_audit cwd must stay inside the working directory");
+
+	const outsideRelative = await runGitAudit(runner, { operation: "status", cwd: "../outside" }, dir);
+	assert.equal(outsideRelative.ok, false);
+	assert.equal(outsideRelative.code, 1);
+	assert.equal(outsideRelative.text, "git_audit cwd must stay inside the working directory");
+
+	const outsideAbsolute = await runGitAudit(runner, { operation: "status", cwd: "/etc" }, dir);
+	assert.equal(outsideAbsolute.ok, false);
+	assert.equal(outsideAbsolute.code, 1);
+	assert.equal(outsideAbsolute.text, "git_audit cwd must stay inside the working directory");
+	assert.equal(seen.length, beforeOutside);
 
 	// non-zero exit surfaces stderr and reports the code
 	const failing = await runGitAudit(

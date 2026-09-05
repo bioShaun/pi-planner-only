@@ -81,14 +81,8 @@ await handlers.get("session_start")({}, ctx);
 assert.deepEqual(activeTools, [
 	"read",
 	"subagent",
-	"grep",
-	"find",
-	"ls",
-	"bg_wait",
-	"subagent_wait",
-	"contact_supervisor",
-	"git_audit",
 ]);
+assert.equal(activeTools.includes("grep"), false);
 assert.equal(activeTools.includes("bash"), false);
 assert.equal(activeTools.includes("write"), false);
 assert.equal(activeTools.includes("custom_mutator"), false);
@@ -131,6 +125,7 @@ assert.match(prompt.systemPrompt, /Do not pre-compose worker.+reviewer as a work
 assert.match(prompt.systemPrompt, /one lifecycle invocation/);
 assert.match(prompt.systemPrompt, /direct \{agent, task\}/);
 assert.match(prompt.systemPrompt, /Call the reviewer only after the worker returns/);
+assert.doesNotMatch(prompt.systemPrompt, /diffStat/);
 
 const compositeBlocked = await handlers.get("tool_call")(
 	{
@@ -197,13 +192,6 @@ await handlers.get("session_shutdown")({}, ctx);
 assert.deepEqual(activeTools, [
 	"read",
 	"subagent",
-	"grep",
-	"find",
-	"ls",
-	"bg_wait",
-	"subagent_wait",
-	"contact_supervisor",
-	"git_audit",
 	"bash",
 	"write",
 	"custom_mutator",
@@ -211,18 +199,12 @@ assert.deepEqual(activeTools, [
 ]);
 
 assert.deepEqual(
-	filterPlannerTools(["bash", "read", "write"], allTools.map((tool) => tool.name)),
-	[
-		"read",
-		"grep",
-		"find",
-		"ls",
-		"subagent",
-		"bg_wait",
-		"subagent_wait",
-		"contact_supervisor",
-		"git_audit",
-	],
+	filterPlannerTools(["bash", "read", "write"]),
+	["read"],
+);
+assert.equal(
+	filterPlannerTools(["bash", "read", "write"]).includes("grep"),
+	false,
 );
 const suppressed = ["bash", "write", "edit"];
 assert.deepEqual(
@@ -286,18 +268,20 @@ try {
 
 			plannerOnly(pi);
 			await handlers.get("session_start")({}, ctx);
-			assert.deepEqual(activeTools, ["read", "subagent", "grep", "find", "ls"]);
+			assert.deepEqual(activeTools, ["read", "subagent"]);
+			assert.equal(activeTools.includes("grep"), false);
 
 			activeTools.push("other_extension_tool");
 			await commands.get("planner-only").handler("off", ctx);
 			assert.equal(existsSync(join(process.env.PI_CODING_AGENT_DIR, "planner-only.off")), true);
 			assert.deepEqual(activeTools, [
-				"read", "subagent", "grep", "find", "ls", "other_extension_tool", "bash", "write",
+				"read", "subagent", "other_extension_tool", "bash", "write",
 			]);
 
 			await commands.get("planner-only").handler("on", ctx);
 			assert.equal(existsSync(join(process.env.PI_CODING_AGENT_DIR, "planner-only.off")), false);
-			assert.deepEqual(activeTools, ["read", "subagent", "grep", "find", "ls"]);
+			assert.deepEqual(activeTools, ["read", "subagent"]);
+			assert.equal(activeTools.includes("grep"), false);
 			console.log("planner-only toggle: PASS");`,
 		],
 		{
@@ -317,6 +301,95 @@ try {
 }
 assert.equal(existsSync(fixtureAgentDir), false);
 assert.equal(existsSync(userMarker), userMarkerWasPresent);
+
+// --------------------------------------------------------------------------
+// RF-4: D1 & D2 per-session force-on and status source reporting
+// --------------------------------------------------------------------------
+
+const rf4AgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-rf4-"));
+try {
+	const rf4Probe = spawnSync(
+		process.execPath,
+		[
+			"--input-type=module",
+			"--eval",
+			`import assert from "node:assert/strict";
+			import { rmSync, writeFileSync } from "node:fs";
+			import { join } from "node:path";
+			import plannerOnly from ${JSON.stringify(new URL("./index.ts", import.meta.url).href)};
+
+			function makePi(initialActive) {
+				const handlers = new Map();
+				const commands = new Map();
+				let active = [...initialActive];
+				return {
+					handlers,
+					commands,
+					getActive() { return active; },
+					pi: {
+						on(name, h) { handlers.set(name, h); },
+						registerCommand(name, def) { commands.set(name, def); },
+						registerTool() {},
+						getActiveTools() { return [...active]; },
+						getAllTools() { return [{ name: "read" }, { name: "bash" }, { name: "write" }, { name: "subagent" }]; },
+						setActiveTools(names) { active = [...names]; },
+						async exec() { return { stdout: "", stderr: "", code: 0 }; },
+					},
+				};
+			}
+
+			const markerPath = join(process.env.PI_CODING_AGENT_DIR, "planner-only.off");
+
+			// D1: marker present + PI_PLANNER_ONLY=1 -> tools restricted, status source: env
+			process.env.PI_PLANNER_ONLY = "1";
+			writeFileSync(markerPath, "Disabled\\n");
+			const d1 = makePi(["read", "bash", "subagent", "write"]);
+			plannerOnly(d1.pi);
+			const notices1 = [];
+			const ctx1 = { hasUI: true, ui: { notify(msg) { notices1.push(msg); }, setStatus() {}, theme: { fg(_c, t) { return t; } } } };
+			await d1.handlers.get("session_start")({}, ctx1);
+			assert.deepEqual(d1.getActive(), ["read", "subagent"]);
+			await d1.commands.get("planner-only").handler("status", ctx1);
+			assert.match(notices1.at(-1), /Planner-only mode is on \\(source: env\\)/);
+
+			// D2: marker present + env unset -> tools unrestricted, status source: marker
+			delete process.env.PI_PLANNER_ONLY;
+			const d2 = makePi(["read", "bash", "subagent", "write"]);
+			plannerOnly(d2.pi);
+			const notices2 = [];
+			const ctx2 = { hasUI: true, ui: { notify(msg) { notices2.push(msg); }, setStatus() {}, theme: { fg(_c, t) { return t; } } } };
+			await d2.handlers.get("session_start")({}, ctx2);
+			assert.deepEqual(d2.getActive(), ["read", "bash", "subagent", "write"]);
+			await d2.commands.get("planner-only").handler("status", ctx2);
+			assert.match(notices2.at(-1), /Planner-only mode is off \\(source: marker\\)/);
+
+			// Default: no marker + env unset -> tools restricted, status source: default
+			rmSync(markerPath);
+			const d3 = makePi(["read", "bash", "subagent", "write"]);
+			plannerOnly(d3.pi);
+			const notices3 = [];
+			const ctx3 = { hasUI: true, ui: { notify(msg) { notices3.push(msg); }, setStatus() {}, theme: { fg(_c, t) { return t; } } } };
+			await d3.handlers.get("session_start")({}, ctx3);
+			assert.deepEqual(d3.getActive(), ["read", "subagent"]);
+			await d3.commands.get("planner-only").handler("status", ctx3);
+			assert.match(notices3.at(-1), /Planner-only mode is on \\(source: default\\)/);
+
+			console.log("planner-only rf4: PASS");`,
+		],
+		{
+			env: {
+				...process.env,
+				PI_CODING_AGENT_DIR: rf4AgentDir,
+				PI_SUBAGENT_CHILD: "0",
+			},
+			encoding: "utf8",
+		},
+	);
+	assert.equal(rf4Probe.status, 0, rf4Probe.stderr || rf4Probe.stdout);
+	assert.match(rf4Probe.stdout, /planner-only rf4: PASS/);
+} finally {
+	rmSync(rf4AgentDir, { recursive: true, force: true });
+}
 
 // --------------------------------------------------------------------------
 // v0.2 lifecycle: git_audit, delegation, worker reports, review commands

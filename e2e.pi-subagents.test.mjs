@@ -132,11 +132,11 @@ try {
 	// §A — Root tool surface
 	// ------------------------------------------------------------------
 
-	const rootTools = filterPlannerTools(
-		["bash", "read", "write", "edit"],
-		["read", "grep", "find", "ls", "bash", "write", "edit", "subagent", "git_audit"],
-	);
+	const rootTools = filterPlannerTools([
+		"read", "grep", "find", "ls", "subagent", "git_audit", "bash", "write", "edit",
+	]);
 	assert.deepEqual(rootTools, ["read", "grep", "find", "ls", "subagent", "git_audit"]);
+	assert.equal(filterPlannerTools(["bash", "read", "write", "edit"]).includes("grep"), false);
 
 	// ------------------------------------------------------------------
 	// §B — the Worker child retains its editing capabilities

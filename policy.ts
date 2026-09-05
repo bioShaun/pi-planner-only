@@ -47,7 +47,7 @@ function subagentDelegatesToChildren(input: unknown): boolean {
 	if (!input || typeof input !== "object") return true;
 	const params = input as { gate?: unknown; workflow?: unknown };
 	if (typeof params.gate === "string" && params.gate.trim()) return false;
-	if (typeof params.workflow === "string" && params.workflow !== "review") return false;
+	if (typeof params.workflow === "string" && params.workflow.trim()) return false;
 	return true;
 }
 
