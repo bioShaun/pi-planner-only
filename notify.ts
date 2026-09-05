@@ -8,11 +8,12 @@
  * back to the agent name. `runIds` is populated when the text has them.
  */
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 const PREVIEW_TRUNCATED_MARKER = "...[preview truncated]";
 const MAX_OUTPUT_BYTES = 1024 * 1024;
+const MAX_META_BYTES = 2 * 1024 * 1024;
 /** pi-subagents run-directory roots whose parent is the temp root. */
 const RUN_ROOT_DIR_NAMES = new Set(["async-subagent-runs", "nested-subagent-runs"]);
 
@@ -199,3 +200,65 @@ export function readLargestRunOutput(asyncDir: string | undefined, runId: string
 
 export const ASYNC_PREVIEW_TRUNCATED_REASON = "async preview truncated";
 export { PREVIEW_TRUNCATED_MARKER };
+
+function childMetaNames(runId: string, agent: string): string[] {
+	const safe = `${runId}_${agent.replace(/[^\w.-]/g, "_")}`;
+	return [`${safe}_meta.json`, `${safe}_0_meta.json`];
+}
+
+function tryReadChildMetaFile(
+	path: string,
+	runId: string,
+	agent: string,
+): { runId: string; agent: string; model?: string; usage?: unknown } | undefined {
+	let st;
+	try {
+		st = lstatSync(path);
+	} catch {
+		return undefined;
+	}
+	if (!st.isFile() || st.size > MAX_META_BYTES) return undefined;
+	let raw: string;
+	try {
+		raw = readFileSync(path, "utf8");
+	} catch {
+		return undefined;
+	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		return undefined;
+	}
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+	const rec = parsed as Record<string, unknown>;
+	if (rec.runId !== runId || rec.agent !== agent) return undefined;
+	return {
+		runId,
+		agent,
+		...(typeof rec.model === "string" ? { model: rec.model } : {}),
+		...("usage" in rec ? { usage: rec.usage } : {}),
+	};
+}
+
+/**
+ * Read a child run's `_meta.json` from artifact directories, in order.
+ * Async runs write `<runId>_<agent>_meta.json`; sync writes `_0_meta.json`.
+ * Both names are tried. Size cap 2 MiB; no symlink following; must echo runId and agent.
+ */
+export function readChildMeta(
+	artifactDirs: readonly string[],
+	runId: string,
+	agent: string,
+): { runId: string; agent: string; model?: string; usage?: unknown } | undefined {
+	if (isUnsafeRunId(runId) || !agent) return undefined;
+	const names = childMetaNames(runId, agent);
+	for (const dir of artifactDirs) {
+		if (!dir) continue;
+		for (const name of names) {
+			const found = tryReadChildMetaFile(join(dir, name), runId, agent);
+			if (found) return found;
+		}
+	}
+	return undefined;
+}

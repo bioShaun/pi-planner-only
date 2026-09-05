@@ -12,8 +12,6 @@ import {
 	EXECUTING_STALE_MS,
 	isTerminalTaskState,
 } from "./types.ts";
-import type { EvidenceComparison } from "./evidence.ts";
-import { jsonCandidates } from "./report.ts";
 import type {
 	EvidenceRef,
 	ExpectedEvidence,
@@ -24,9 +22,13 @@ import type {
 	TaskScope,
 	TaskSpec,
 	TaskState,
+	TaskUsage,
 	TaskValidation,
 	WorkerReport,
 } from "./types.ts";
+import type { EvidenceComparison } from "./evidence.ts";
+import { jsonCandidates } from "./report.ts";
+import { emptyTaskUsage } from "./usage.ts";
 
 const TASK_ROLES: readonly TaskRole[] = ["worker", "explorer", "validator", "reviewer"];
 
@@ -195,6 +197,8 @@ export interface TaskRecord {
 	lastComparison?: EvidenceComparison;
 	/** Reason for an operator-forced terminal state, when applicable. */
 	stateReason?: string;
+	/** Per-task usage snapshot; live totals live in UsageLedger. Initialised empty. */
+	usage: TaskUsage;
 	createdAt: string;
 	updatedAt: string;
 }
@@ -233,6 +237,7 @@ export class TaskStore {
 			reviews: [],
 			overrides: [],
 			reportCorrections: 0,
+			usage: emptyTaskUsage(),
 			createdAt: timestamp,
 			updatedAt: timestamp,
 		};

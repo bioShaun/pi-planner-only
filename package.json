@@ -29,6 +29,7 @@
       "git-audit.ts",
       "orchestrate.ts",
       "notify.ts",
+      "usage.ts",
       "CONTEXT.md",
       "README.md",
       "README.zh-CN.md"
@@ -42,7 +43,7 @@
     "piSubagents": ">=0.65 <0.70"
   },
   "scripts": {
-    "test": "node --experimental-strip-types policy.test.mjs && node --experimental-strip-types roles.test.mjs && node --experimental-strip-types task.test.mjs && node --experimental-strip-types report.test.mjs && node --experimental-strip-types review.test.mjs && node --experimental-strip-types notify.test.mjs && node --experimental-strip-types orchestrate.test.mjs && node --experimental-strip-types evidence.test.mjs && node --experimental-strip-types git-audit.test.mjs && node --experimental-strip-types index.test.mjs && node --experimental-strip-types architecture.test.mjs && node --experimental-strip-types naming.test.mjs",
+    "test": "node --experimental-strip-types policy.test.mjs && node --experimental-strip-types roles.test.mjs && node --experimental-strip-types task.test.mjs && node --experimental-strip-types report.test.mjs && node --experimental-strip-types review.test.mjs && node --experimental-strip-types notify.test.mjs && node --experimental-strip-types usage.test.mjs && node --experimental-strip-types orchestrate.test.mjs && node --experimental-strip-types evidence.test.mjs && node --experimental-strip-types git-audit.test.mjs && node --experimental-strip-types index.test.mjs && node --experimental-strip-types architecture.test.mjs && node --experimental-strip-types naming.test.mjs",
     "test:e2e": "node --experimental-strip-types e2e.pi-subagents.test.mjs",
     "typecheck": "tsc --noEmit"
   },

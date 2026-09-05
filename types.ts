@@ -40,6 +40,9 @@ export const MAX_BASELINE_HASH_PATHS = 200;
 
 export type TaskRole = "worker" | "explorer" | "validator" | "reviewer";
 
+/** What a delegation *is*: the role of the child invocation, not the Task's role. */
+export type DelegationKind = "worker" | "reviewer" | "explorer" | "validator";
+
 export type WorkerStatus = "completed" | "partial" | "blocked" | "failed";
 
 export type ValidationType =
@@ -242,4 +245,46 @@ export const TERMINAL_TASK_STATES: readonly TaskState[] = ["completed", "blocked
 
 export function isTerminalTaskState(state: TaskState): boolean {
 	return TERMINAL_TASK_STATES.includes(state);
+}
+
+export interface TokenCounts {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	reasoning?: number;
+}
+
+export type UsagePhase = "planning" | "executing" | "reviewing";
+
+export interface RootUsage extends TokenCounts {
+	turns: number;
+	/** Turns whose provider returned all-zero token counts. */
+	tokensUnknownTurns: number;
+	costUsd?: number;          // undefined when no rate was resolvable for ≥1 turn
+	byPhase: Record<UsagePhase, TokenCounts & { turns: number }>;
+	/** Bytes of read/grep/find/ls/git_audit tool results Root consumed while the Task was reviewing. */
+	reviewLeakBytes: number;
+	/** Bytes Orchestration injected into Root (decision blocks, rendered reports, reviewer template). */
+	injectedBytes: number;
+}
+
+export interface ChildUsage extends TokenCounts {
+	runId?: string;            // async runs; sync runs use toolCallId
+	toolCallId?: string;
+	kind: DelegationKind;      // worker | reviewer | explorer | validator
+	agent?: string;
+	model?: string;
+	turns?: number;
+	costUsd?: number;
+	/** Usage not yet resolvable (async run, metadata file absent at consume time). */
+	pending: boolean;
+	source: "sync-details" | "bg-wait" | "meta-file" | "unavailable";
+}
+
+export interface TaskUsage {
+	root: RootUsage;
+	children: ChildUsage[];
+	rootModel?: string;        // last Root model seen while this Task was active
+	costUnknown: boolean;      // any component lacked a rate
 }

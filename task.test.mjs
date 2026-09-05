@@ -196,6 +196,9 @@ const task = store.create(spec);
 assert.equal(task.state, "planning");
 assert.equal(task.reviewRound, 0);
 assert.equal(task.reviewMode, "root");
+assert.equal(task.usage.root.turns, 0);
+assert.deepEqual(task.usage.children, []);
+assert.equal(task.usage.costUnknown, false);
 
 store.transition(task.taskId, "executing");
 store.transition(task.taskId, "reviewing");

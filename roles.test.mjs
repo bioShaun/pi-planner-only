@@ -147,4 +147,34 @@ assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root
 	assert.equal(target.taskId, "T-20260831-009");
 }
 
+// RF-7: a correction prompt that names one live Task binds to it
+{
+	const live = {
+		taskId: "T-20260905-902",
+		state: "changes_requested",
+		cwd: "/repo",
+		spec: { taskId: "T-20260905-902", role: "worker", objective: "implement", cwd: "/repo" },
+	};
+	const correction = {
+		agent: "worker",
+		task: "Do not modify files. Return only a valid WorkerReport for task T-20260905-902.",
+	};
+	const bound = resolveDelegationTarget(correction, (id) => id === live.taskId ? live : undefined);
+	assert.equal(bound.role, "worker");
+	assert.equal(bound.taskId, "T-20260905-902");
+	assert.equal(bound.task.taskId, "T-20260905-902");
+	assert.equal(bound.spec, undefined);
+	assert.deepEqual(bound.namedTaskIds, ["T-20260905-902"]);
+}
+
+{
+	const two = {
+		agent: "worker",
+		task: "Look at T-20260905-001 and T-20260905-002 then continue.",
+	};
+	const target = resolveDelegationTarget(two, () => undefined);
+	assert.equal(target.taskId, undefined);
+	assert.deepEqual(target.namedTaskIds, ["T-20260905-001", "T-20260905-002"]);
+}
+
 console.log("planner-only roles: PASS");

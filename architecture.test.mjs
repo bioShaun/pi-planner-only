@@ -11,6 +11,8 @@ const review = src("review.ts");
 const evidence = src("evidence.ts");
 const policy = src("policy.ts");
 const roles = src("roles.ts");
+const usage = src("usage.ts");
+const orchestrate = src("orchestrate.ts");
 const pkg = JSON.parse(src("package.json"));
 
 // Pi package contract (https://pi.dev/docs — packages.md).
@@ -54,5 +56,15 @@ assert.match(roles, /export function delegationPrompt/);
 assert.match(index, /from "\.\/orchestrate\.ts"/);
 assert.doesNotMatch(index, /const beginDelegation/);
 assert.doesNotMatch(index, /const prepareRoleDelegation/);
+
+// usage.ts is a pure module: no Pi host, no adapter.
+assert.doesNotMatch(usage, /from "\.\/index\.ts"/);
+assert.doesNotMatch(usage, /@earendil-works/);
+assert.equal(pkg.files.includes("usage.ts"), true, "usage.ts must ship in the package files list");
+
+// Orchestration records no ledger mutations; the adapter owns capture.
+assert.doesNotMatch(orchestrate, /UsageLedger/);
+assert.doesNotMatch(orchestrate, /recordRootTurn/);
+assert.doesNotMatch(orchestrate, /recordChild/);
 
 console.log("planner-only architecture: PASS");

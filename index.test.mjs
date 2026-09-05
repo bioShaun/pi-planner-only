@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -33,6 +33,7 @@ const allTools = [
 const setActiveCalls = [];
 const notices = [];
 const execCalls = [];
+const sessionEntries = [];
 const pi = {
 	on(name, handler) {
 		handlers.set(name, handler);
@@ -52,6 +53,9 @@ const pi = {
 	setActiveTools(names) {
 		activeTools = [...names];
 		setActiveCalls.push([...names]);
+	},
+	appendEntry(customType, data) {
+		sessionEntries.push({ type: "custom", customType, data });
 	},
 	async exec(command, args) {
 		execCalls.push([command, [...args]]);
@@ -76,7 +80,15 @@ const ui = {
 	setStatus() {},
 	theme: { fg(_color, text) { return text; } },
 };
-const ctx = { hasUI: true, ui, cwd: process.cwd() };
+const ctx = {
+	hasUI: true,
+	ui,
+	cwd: process.cwd(),
+	sessionManager: {
+		getEntries() { return sessionEntries; },
+		getSessionFile() { return join(isolatedAgentDir, "sessions", "test.jsonl"); },
+	},
+};
 
 await handlers.get("session_start")({}, ctx);
 assert.deepEqual(activeTools, [
@@ -923,6 +935,268 @@ const terminalVerdict = await verdictTool.execute(
 );
 assert.equal(terminalVerdict.isError, true);
 assert.match(terminalVerdict.content[0].text, /already completed/);
+
+// --------------------------------------------------------------------------
+// U-2 / U-3 / U-4 / RF-6 — usage capture and failed launch through the adapter
+// --------------------------------------------------------------------------
+
+{
+	sessionEntries.length = 0;
+	const taskId = "T-20260905-u2";
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-u2", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
+		ctx,
+	);
+	const rootTurn = await handlers.get("message_end")({
+		message: {
+			role: "assistant",
+			id: "msg-u2",
+			model: "tcuni-claude/claude-fable-5-1",
+			provider: "tcuni-claude",
+			usage: { input: 100, output: 20, cacheRead: 10, cacheWrite: 0, cost: { total: 0 } },
+			content: "delegating",
+		},
+	}, ctx);
+	assert.equal(rootTurn, undefined);
+	assert.ok(
+		sessionEntries.some((entry) => entry.customType === "planner-only-usage" && entry.data.kind === "root-turn"),
+		"assistant message_end persists a root-turn entry",
+	);
+
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+	const sync = await handlers.get("tool_result")(
+		{
+			toolCallId: "call-u2",
+			toolName: "subagent",
+			details: {
+				results: [{
+					agent: "worker",
+					model: "volcengine/glm-5-3",
+					usage: { input: 50, output: 8, cacheRead: 0, cacheWrite: 0, cost: 0.02, turns: 2 },
+				}],
+			},
+			content: [{ type: "text", text: JSON.stringify({
+				...workerReport,
+				taskId,
+				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-u2", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+			}) }],
+			isError: false,
+		},
+		ctx,
+	);
+	assert.match(sync.content[0].text, /\[PLANNER-ONLY REVIEW STATE\]/);
+	assert.ok(sessionEntries.some((entry) =>
+		entry.customType === "planner-only-usage"
+		&& entry.data.kind === "child"
+		&& entry.data.child?.source === "sync-details"
+		&& entry.data.child?.pending === false,
+	));
+	assert.ok(sessionEntries.some((entry) => entry.data.kind === "injected"));
+}
+
+{
+	const taskId = "T-20260905-leak";
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-leak", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
+		ctx,
+	);
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-leak",
+			toolName: "subagent",
+			content: [{ type: "text", text: JSON.stringify({
+				...workerReport,
+				taskId,
+				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-leak", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+			}) }],
+			isError: false,
+		},
+		ctx,
+	);
+	sessionEntries.length = 0;
+	const beforeLeak = sessionEntries.length;
+	await handlers.get("tool_result")(
+		{ toolCallId: "read-1", toolName: "read", content: [{ type: "text", text: "diff contents here" }] },
+		ctx,
+	);
+	assert.ok(sessionEntries.some((entry) => entry.data.kind === "leak" && entry.data.bytes === Buffer.byteLength("diff contents here")));
+	assert.equal(beforeLeak, 0);
+}
+
+{
+	const taskId = "T-20260905-bgw";
+	const runId = "run-bgw-0001";
+	await handlers.get("tool_call")(
+		{
+			toolCallId: "call-bgw",
+			toolName: "subagent",
+			input: { agent: "worker", async: true, task: JSON.stringify(delegationSpec(taskId)) },
+		},
+		ctx,
+	);
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-bgw",
+			toolName: "subagent",
+			details: { asyncId: runId, runId, asyncDir: "/no-such-async-dir" },
+			content: [{ type: "text", text: `Async: worker [${runId}]\nThe async run is detached and running in the background.` }],
+			isError: false,
+		},
+		ctx,
+	);
+	sessionEntries.length = 0;
+	const bg = await handlers.get("tool_result")(
+		{
+			toolCallId: "wait-1",
+			toolName: "bg_wait",
+			details: {
+				completions: [{
+					runId,
+					agent: "worker",
+					results: [{ usage: { input: 9, output: 3, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1 }, model: "volcengine/glm-5-3" }],
+				}],
+			},
+			content: [{ type: "text", text: "waited" }],
+		},
+		ctx,
+	);
+	assert.equal(bg, undefined, "bg_wait must not rewrite content");
+	assert.ok(sessionEntries.some((entry) =>
+		entry.data.kind === "child" && entry.data.child?.source === "bg-wait" && entry.data.child?.pending === false,
+	));
+	// Task stays executing: WorkerReport still comes from notify, not bg_wait
+	notices.length = 0;
+	await commands.get("planner-only").handler(`task ${taskId}`, ctx);
+	assert.match(notices.at(-1).message, /State: executing/);
+}
+
+{
+	const taskId = "T-20260905-meta";
+	const runId = "run-meta-async";
+	const artifacts = join(isolatedAgentDir, "sessions", "subagent-artifacts");
+	mkdirSync(artifacts, { recursive: true });
+	writeFileSync(join(artifacts, `${runId}_worker_meta.json`), JSON.stringify({
+		runId,
+		agent: "worker",
+		model: "volcengine/glm-5-3",
+		usage: { input: 21, output: 4, cacheRead: 0, cacheWrite: 0, cost: 0.03, turns: 1 },
+	}));
+	await handlers.get("tool_call")(
+		{
+			toolCallId: "call-meta",
+			toolName: "subagent",
+			input: { agent: "worker", async: true, task: JSON.stringify(delegationSpec(taskId)) },
+		},
+		ctx,
+	);
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-meta",
+			toolName: "subagent",
+			details: { asyncId: runId, runId, asyncDir: "/no-such-async-dir" },
+			content: [{ type: "text", text: `Async: worker [${runId}]\nThe async run is detached and running in the background.` }],
+			isError: false,
+		},
+		ctx,
+	);
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+	sessionEntries.length = 0;
+	const replaced = await handlers.get("message_end")({
+		message: {
+			role: "custom",
+			customType: "subagent-notify",
+			content: `Background task completed: **worker**\n\n${JSON.stringify({
+				...workerReport,
+				taskId,
+				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-meta", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+			})}`,
+		},
+	}, ctx);
+	assert.match(replaced.message.content, /\[PLANNER-ONLY REVIEW STATE\]/);
+	assert.ok(sessionEntries.some((entry) =>
+		entry.data.kind === "child" && entry.data.child?.source === "meta-file" && entry.data.child?.pending === false,
+	));
+}
+
+{
+	const taskId = "T-20260905-pend";
+	const runId = "run-no-meta";
+	await handlers.get("tool_call")(
+		{
+			toolCallId: "call-pend",
+			toolName: "subagent",
+			input: { agent: "worker", async: true, task: JSON.stringify(delegationSpec(taskId)) },
+		},
+		ctx,
+	);
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-pend",
+			toolName: "subagent",
+			details: { asyncId: runId, runId, asyncDir: "/no-such-async-dir" },
+			content: [{ type: "text", text: `Async: worker [${runId}]\nThe async run is detached and running in the background.` }],
+			isError: false,
+		},
+		ctx,
+	);
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	sessionEntries.length = 0;
+	await handlers.get("message_end")({
+		message: {
+			role: "custom",
+			customType: "subagent-notify",
+			content: `Background task completed: **worker**\n\n${JSON.stringify({
+				...workerReport,
+				taskId,
+				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-pend", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+			})}`,
+		},
+	}, ctx);
+	assert.ok(sessionEntries.some((entry) =>
+		entry.data.kind === "child" && entry.data.child?.source === "unavailable" && entry.data.child?.pending === true,
+	));
+}
+
+{
+	const taskId = "T-20260905-rf6i";
+	await handlers.get("tool_call")(
+		{
+			toolCallId: "call-rf6i",
+			toolName: "subagent",
+			input: { agent: "worker", async: true, task: JSON.stringify(delegationSpec(taskId)) },
+		},
+		ctx,
+	);
+	const failed = await handlers.get("tool_result")(
+		{
+			toolCallId: "call-rf6i",
+			toolName: "subagent",
+			isError: true,
+			details: { asyncId: "run-rf6i", runId: "run-rf6i" },
+			content: [{ type: "text", text: "Unknown subagent model 'volcengine/glm-5-3-flash'" }],
+		},
+		ctx,
+	);
+	assert.match(failed.content[0].text, /failed to launch/);
+	notices.length = 0;
+	await commands.get("planner-only").handler(`task ${taskId}`, ctx);
+	assert.match(notices.at(-1).message, /State: failed/);
+	assert.match(notices.at(-1).message, /delegation launch failed/);
+}
+
+{
+	const logPath = join(isolatedAgentDir, "planner-only", "usage.jsonl");
+	assert.equal(existsSync(logPath), true, "terminal tasks append usage.jsonl");
+	const lines = readFileSync(logPath, "utf8").trim().split("\n").filter(Boolean);
+	assert.ok(lines.length >= 1);
+	const parsed = JSON.parse(lines[0]);
+	assert.ok(parsed.taskId);
+	assert.ok(parsed.state);
+	assert.ok(parsed.root);
+}
 
 rmSync(isolatedAgentDir, { recursive: true, force: true });
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { parseSubagentNotify, tempRootFromAsyncDir } from "./notify.ts";
+import { parseSubagentNotify, readChildMeta, tempRootFromAsyncDir } from "./notify.ts";
 
 // Fixtures generated 2026-09-05 by copying pi-subagents 0.65.1 out of node_modules
 // (Node refuses --experimental-strip-types under node_modules) into
@@ -71,6 +71,60 @@ const GROUPED_FIXTURE = "Background tasks completed (2): **worker**, **reviewer*
 	assert.equal(parseSubagentNotify("hello from an unrelated custom message"), undefined);
 	assert.equal(parseSubagentNotify(""), undefined);
 	assert.equal(parseSubagentNotify("Async: worker [abcdef12]\nThe async run is detached and running in the background."), undefined);
+}
+
+// U-3 readChildMeta: async name, sync _0 name, size cap, runId/agent echo, malformed
+{
+	const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+	const { join } = await import("node:path");
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+	try {
+		const artifacts = join(dir, "subagent-artifacts");
+		mkdirSync(artifacts, { recursive: true });
+		const runId = "run-meta-1";
+		const agent = "worker";
+		const asyncName = `${runId}_${agent}_meta.json`;
+		writeFileSync(join(artifacts, asyncName), JSON.stringify({
+			runId,
+			agent,
+			model: "volcengine/glm-5-3",
+			usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1 },
+		}));
+		const hit = readChildMeta([artifacts], runId, agent);
+		assert.ok(hit);
+		assert.equal(hit.model, "volcengine/glm-5-3");
+		assert.equal(hit.usage.input, 10);
+
+		const syncRun = "run-meta-sync";
+		writeFileSync(join(artifacts, `${syncRun}_${agent}_0_meta.json`), JSON.stringify({
+			runId: syncRun,
+			agent,
+			model: "qwen-local/qwen3.8-27b:high",
+			usage: { input: 3, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 2 },
+		}));
+		const syncHit = readChildMeta([artifacts], syncRun, agent);
+		assert.ok(syncHit);
+		assert.equal(syncHit.runId, syncRun);
+
+		assert.equal(readChildMeta([artifacts], runId, "other-agent"), undefined);
+		assert.equal(readChildMeta([artifacts], "missing-run", agent), undefined);
+
+		writeFileSync(join(artifacts, "run-bad_worker_meta.json"), "{not json");
+		assert.equal(readChildMeta([artifacts], "run-bad", agent), undefined);
+
+		const huge = join(artifacts, "run-huge_worker_meta.json");
+		writeFileSync(huge, `${"x".repeat(2 * 1024 * 1024 + 8)}`);
+		assert.equal(readChildMeta([artifacts], "run-huge", agent), undefined);
+
+		writeFileSync(join(artifacts, "run-mismatch_worker_meta.json"), JSON.stringify({
+			runId: "other",
+			agent,
+			usage: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0 },
+		}));
+		assert.equal(readChildMeta([artifacts], "run-mismatch", agent), undefined);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 }
 
 console.log("planner-only notify: PASS");

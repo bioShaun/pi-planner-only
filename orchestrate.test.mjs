@@ -661,4 +661,127 @@ function truncatedPreview() {
 	assert.equal(task.reviews.at(-1).source, "root");
 }
 
+// --------------------------------------------------------------------------
+// RF-6 — failed launch is not "has started"
+// --------------------------------------------------------------------------
+
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260905-rf6a";
+	await delegateWorker(orch, "call-rf6a", taskId);
+	const failed = await orch.handleSubagentResult({
+		toolCallId: "call-rf6a",
+		toolName: "subagent",
+		isError: true,
+		details: { asyncId: "run-rf6a", runId: "run-rf6a" },
+		content: [{ type: "text", text: "Unknown subagent model 'volcengine/glm-5-3-flash'" }],
+	});
+	assert.match(failed.content[0].text, /failed to launch/);
+	assert.doesNotMatch(failed.content[0].text, /has started/);
+	assert.equal(orch.store.require(taskId).state, "failed");
+	assert.match(orch.store.require(taskId).stateReason, /delegation launch failed: Unknown subagent model/);
+	assert.equal(orch.pendingDelegationCount(), 0);
+}
+
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260905-rf6s";
+	await delegateWorker(orch, "call-rf6s", taskId);
+	const failed = await orch.handleSubagentResult({
+		toolCallId: "call-rf6s",
+		toolName: "subagent",
+		isError: true,
+		content: [{ type: "text", text: "spawn failed\nmore detail" }],
+	});
+	assert.match(failed.content[0].text, /failed to launch/);
+	assert.match(failed.content[0].text, /Fix the delegation input and re-delegate with the same TaskSpec/);
+	assert.equal(orch.store.require(taskId).state, "failed");
+	assert.equal(orch.pendingDelegationCount(), 0);
+}
+
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	const taskId = "T-20260905-rf6ok";
+	const runId = "run-rf6-ok";
+	await delegateWorker(orch, "call-rf6ok", taskId);
+	const receipt = await orch.handleSubagentResult({
+		toolCallId: "call-rf6ok",
+		toolName: "subagent",
+		details: { asyncId: runId, runId, asyncDir: "/no-such-async-dir" },
+		content: [{
+			type: "text",
+			text: `Async: worker [${runId}]\nThe async run is detached and running in the background.`,
+		}],
+	});
+	assert.match(receipt.content[0].text, /has started/);
+	assert.equal(orch.store.require(taskId).state, "executing");
+	assert.equal(orch.pendingDelegationCount(), 1);
+}
+
+// --------------------------------------------------------------------------
+// RF-7 — correction prompt without TaskSpec binds to the named live Task
+// --------------------------------------------------------------------------
+
+{
+	const orch = new PlannerOrchestrator({ gitRunner, structuredDelegationMode: "warn" });
+	const taskId = "T-20260905-902";
+	await delegateWorker(orch, "call-902", taskId);
+	const outcome = await orch.beginDelegation(
+		{
+			toolCallId: "call-902-fix",
+			input: {
+				agent: "worker",
+				task: "Do not modify files. Return only a valid WorkerReport for task T-20260905-902.",
+			},
+		},
+		BASE,
+	);
+	assert.equal(outcome.task.taskId, taskId);
+	assert.ok(
+		(outcome.warnings ?? []).some((warning) =>
+			/without an embedded TaskSpec/.test(warning)
+			&& /attached to task T-20260905-902 named in the prompt/.test(warning),
+		),
+		outcome.warnings?.join(" | "),
+	);
+	assert.equal(orch.store.list().length, 1);
+}
+
+{
+	const orch = new PlannerOrchestrator({ gitRunner, structuredDelegationMode: "warn" });
+	const taskId = "T-20260905-903";
+	await delegateWorker(orch, "call-903", taskId);
+	await orch.handleSubagentResult(workerResult("call-903", reportFor(taskId, "call-903")));
+	await orch.recordRootVerdict(orch.store.require(taskId), "request_changes", "needs a fix", { source: "root" });
+	assert.equal(orch.store.require(taskId).state, "changes_requested");
+	const outcome = await orch.beginDelegation(
+		{
+			toolCallId: "call-903-fix",
+			input: { agent: "worker", task: "please address the findings", cwd: `/fixture/${taskId}` },
+		},
+		BASE,
+	);
+	assert.equal(outcome.task.taskId, taskId);
+	assert.ok((outcome.warnings ?? []).some((warning) => /attached to active task T-20260905-903/.test(warning)));
+	assert.equal(orch.store.list().length, 1);
+}
+
+{
+	const orch = new PlannerOrchestrator({ gitRunner, structuredDelegationMode: "warn" });
+	const outcome = await orch.beginDelegation(
+		{
+			toolCallId: "call-two-ids",
+			input: {
+				agent: "worker",
+				task: "Compare T-20260905-001 with T-20260905-002 and continue.",
+			},
+		},
+		BASE,
+	);
+	assert.ok(outcome.task);
+	assert.ok((outcome.warnings ?? []).some((warning) =>
+		/prompt names task T-20260905-001, T-20260905-002 but no single live Task matched/.test(warning),
+	));
+}
+
 console.log("planner-only orchestration: PASS");

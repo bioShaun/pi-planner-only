@@ -1,4 +1,5 @@
 import type { ReviewEvidencePacket, TaskRole, TaskSpec } from "./types.ts";
+import { isTerminalTaskState } from "./types.ts";
 import { extractTaskSpec } from "./task.ts";
 import type { TaskRecord } from "./task.ts";
 import { buildFreshReviewerTask, extractReviewRequest } from "./review.ts";
@@ -109,6 +110,14 @@ export interface DelegationTarget {
 	spec?: TaskSpec;
 	/** ReviewRequest embedded in a reviewer packet. */
 	request?: ReviewRequest;
+	/** Task ids named in the prompt when no TaskSpec/ReviewRequest was embedded. */
+	namedTaskIds?: string[];
+}
+
+const TASK_ID_RE = /\bT-\d{8}-\d{3}\b/g;
+
+function promptTaskIds(prompt: string): string[] {
+	return [...new Set(prompt.match(TASK_ID_RE) ?? [])];
 }
 
 /**
@@ -132,14 +141,23 @@ export function resolveDelegationTarget(
 			inferRoleFromAgent(typeof input.agent === "string" ? input.agent : undefined);
 	if (!role) return undefined;
 
-	const taskId = request?.taskId ?? spec?.taskId;
-	const task = taskId ? lookup(taskId) : undefined;
+	const namedTaskIds = !spec && !request ? promptTaskIds(prompt) : [];
+	let taskId = request?.taskId ?? spec?.taskId;
+	let task = taskId ? lookup(taskId) : undefined;
+	if (!taskId && namedTaskIds.length === 1) {
+		const found = lookup(namedTaskIds[0] as string);
+		if (found && !isTerminalTaskState(found.state)) {
+			taskId = namedTaskIds[0];
+			task = found;
+		}
+	}
 	return {
 		role,
 		...(taskId ? { taskId } : {}),
 		...(task ? { task } : {}),
 		...(spec ? { spec } : {}),
 		...(request ? { request } : {}),
+		...(namedTaskIds.length ? { namedTaskIds } : {}),
 	};
 }
 

@@ -51,6 +51,7 @@ import {
 	isTerminalTaskState,
 } from "./types.ts";
 import type {
+	DelegationKind,
 	EvidenceRef,
 	ReviewFinding,
 	ReviewResult,
@@ -91,6 +92,7 @@ export interface SubagentEvent {
 	input?: unknown;
 	content?: readonly { type: string; text?: string }[];
 	details?: unknown;
+	isError?: boolean;
 }
 
 export interface OrchestratorDeps {
@@ -99,12 +101,7 @@ export interface OrchestratorDeps {
 	structuredDelegationMode?: StructuredDelegationMode;
 }
 
-/**
- * What a delegation *is*: the role of the child invocation, not the role of the
- * Task. A Task keeps the role it was created with through worker, reviewer, and
- * validation runs (§P1-1).
- */
-export type DelegationKind = "worker" | "reviewer" | "explorer" | "validator";
+export type { DelegationKind };
 
 export interface DelegationRecord {
 	taskId: string;
@@ -288,6 +285,14 @@ export class PlannerOrchestrator {
 		return this.delegations.size;
 	}
 
+	getDelegation(toolCallId: string): DelegationRecord | undefined {
+		return this.delegations.get(toolCallId);
+	}
+
+	listDelegations(): { toolCallId: string; record: DelegationRecord }[] {
+		return [...this.delegations.entries()].map(([toolCallId, record]) => ({ toolCallId, record }));
+	}
+
 	/**
 	 * Remap the child agent and, for reviewers, replace the payload with a
 	 * ReviewRequest packet. Async because Root samples Git evidence for the
@@ -387,10 +392,39 @@ export class PlannerOrchestrator {
 			task = this.store.get(spec.taskId) ?? this.store.create(spec);
 			this.store.bindSpec(task.taskId, spec);
 		} else {
-			task = this.store.create(createTaskSpec({
-				objective: "(unspecified — parent did not embed a TaskSpec)",
-				cwd,
-			}));
+			const named = target?.namedTaskIds ?? [];
+			const liveNamed = target?.task && !isTerminalTaskState(target.task.state)
+				? target.task
+				: undefined;
+			if (liveNamed) {
+				task = liveNamed;
+				if (warnings.length > 0) {
+					warnings[warnings.length - 1] += `; attached to task ${liveNamed.taskId} named in the prompt`;
+				}
+			} else {
+				const active = this.store.active();
+				if (
+					named.length === 0
+					&& active
+					&& active.cwd === cwd
+					&& (active.state === "changes_requested" || active.state === "reviewing")
+				) {
+					task = active;
+					if (warnings.length > 0) {
+						warnings[warnings.length - 1] += `; attached to active task ${active.taskId}`;
+					}
+				} else {
+					task = this.store.create(createTaskSpec({
+						objective: "(unspecified — parent did not embed a TaskSpec)",
+						cwd,
+					}));
+					if (named.length >= 1) {
+						warnings.push(
+							`Planner-only: prompt names task ${named.join(", ")} but no single live Task matched`,
+						);
+					}
+				}
+			}
 		}
 		this.store.ensureCwd(task.taskId, cwd);
 		task = this.store.require(task.taskId);
@@ -577,6 +611,26 @@ export class PlannerOrchestrator {
 	): Promise<{ content: { type: "text"; text: string }[] } | undefined> {
 		const delegation = this.delegations.get(event.toolCallId);
 		if (!delegation) return;
+		const text = resultText(event);
+		if (event.isError && !extractWorkerReport(text).report) {
+			this.delegations.delete(event.toolCallId);
+			const task = this.store.get(delegation.taskId);
+			const firstLine = (text.split(/\r?\n/, 1)[0] ?? "").trim();
+			if (task && !isTerminalTaskState(task.state)) {
+				this.store.transition(task.taskId, "failed");
+				task.stateReason = `delegation launch failed: ${firstLine}`;
+			}
+			return {
+				content: [{
+					type: "text",
+					text: [
+						`[PLANNER-ONLY] Delegation for task ${delegation.taskId} failed to launch.`,
+						truncate(text, RAW_OUTPUT_FALLBACK_CHARS),
+						"Fix the delegation input and re-delegate with the same TaskSpec.",
+					].join("\n"),
+				}],
+			};
+		}
 		if (isAsyncLaunchReceipt(event, delegation)) {
 			const runId = runIdFromReceipt(event);
 			const asyncDir = detailString(eventDetails(event), "asyncDir");
@@ -601,7 +655,6 @@ export class PlannerOrchestrator {
 			};
 		}
 
-		const text = resultText(event);
 		return delegation.kind === "reviewer"
 			? this.handleReviewerResult(task, text)
 			: this.handleWorkerResult(task, text, event.toolCallId);
