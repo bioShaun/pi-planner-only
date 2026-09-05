@@ -7,8 +7,8 @@ reviewer. All file edits, shell, and tests go to subagents.
 
 While the guard is on, the parent never sees `bash`, `edit`, or `write` in its
 tool schema. `tool_call` policy is a second gate for stale or resumed calls.
-Child sessions start with `--no-extensions`; the extension also no-ops when
-`PI_SUBAGENT_CHILD=1`.
+Foreground children do not load ambient extensions. Background children may;
+this extension no-ops when `PI_SUBAGENT_CHILD=1`.
 
 v0.2 adds a thin orchestration layer on top of that guard: structured
 `TaskSpec` / `WorkerReport`, a bounded review loop, read-only `git_audit`,
@@ -141,8 +141,8 @@ By default a worker delegation without an embedded `TaskSpec` is allowed with a
 warning. Set `PI_PLANNER_ONLY_STRUCTURED_DELEGATION=strict` to block it
 instead. Explorers stay permissive; validators are warned in both modes.
 
-Reviewers have no `git_audit` (children run with `--no-extensions`, and that
-tool belongs to the parent extension). Root samples Git itself and ships a
+Reviewers have no `git_audit` (foreground children do not load ambient
+extensions, and that tool belongs to the parent extension). Root samples Git itself and ships a
 bounded evidence packet — HEAD, status, current changed files, A-to-C
 attributed / undeclared / extra-declared paths, diff stat, diff check —
 in the `ReviewRequest`; reviewers work with `read`/`grep`/`find`/`ls` only.
@@ -186,8 +186,10 @@ npm run test:e2e  # real pi-subagents contracts (requires pi-subagents; otherwis
 only exercised by `test:e2e`, and is unverified when `pi-subagents` is absent.
 
 The E2E suite runs against the installed `pi-subagents` package — its builtin
-agent allowlists, child launch argv (`--no-extensions`, tool ceiling, fresh
-session), and the payload fields the planner mutates — without any model calls.
+agent allowlists, the public `child-tool-plan` mapping (tool ceiling,
+foreground isolation from ambient extensions), and the payload fields the
+planner mutates — without any model calls. A missing package or a version
+outside the declared range prints a SKIP line and exits 0.
 
 ## Layout
 

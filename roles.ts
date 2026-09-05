@@ -7,11 +7,13 @@ import type { ReviewRequest } from "./types.ts";
 /**
  * §13 — capability profiles. Worker is unbounded (the selected agent keeps its
  * own tools). Restricted roles are enforced by remapping to a builtin agent
- * whose allowlist matches the profile; children launch with `--no-extensions`,
- * so this is the per-child tool ceiling the parent can actually apply.
+ * whose allowlist matches the profile. Foreground children do not load
+ * ambient extensions, so this is the per-child tool ceiling the parent
+ * can actually apply. Background children may load ambient extensions;
+ * this extension no-ops when PI_SUBAGENT_CHILD=1.
  *
- * Reviewer children therefore have no `git_audit`: that tool is registered by
- * this extension and `--no-extensions` keeps it out of the child. Root passes
+ * Reviewer children therefore have no `git_audit`: that tool is registered
+ * by this extension and is not on the reviewer allowlist. Root passes
  * a bounded Git evidence packet instead (§P1-2).
  */
 export const ROLE_TOOL_PROFILES: Record<TaskRole, readonly string[] | undefined> = {

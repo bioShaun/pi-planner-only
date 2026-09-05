@@ -4,7 +4,7 @@
 
 [Pi](https://pi.dev) 扩展：把 **root 会话** 限制为规划与审核。改文件、跑 shell、跑测试一律交给 subagent。
 
-守卫开启时，父进程的工具 schema 里不会出现 `bash`、`edit`、`write`。`tool_call` 策略是第二道门，挡住过期或恢复会话里的调用。子进程以 `--no-extensions` 启动；扩展在 `PI_SUBAGENT_CHILD=1` 时直接 no-op。
+守卫开启时，父进程的工具 schema 里不会出现 `bash`、`edit`、`write`。`tool_call` 策略是第二道门，挡住过期或恢复会话里的调用。前台子进程不加载 ambient 扩展；后台子进程可能会加载。本扩展在 `PI_SUBAGENT_CHILD=1` 时直接 no-op。
 
 v0.2 在守卫之上加了一层薄编排：结构化 `TaskSpec` / `WorkerReport`、有界 review 循环、只读 `git_audit`、evidence 新鲜度，以及隔离的 Fresh Reviewer。v0.2.x 加固序列收紧了生命周期接缝：两份子契约都做任务身份校验、每次 PASS 在接受边界由 Root 重新采样证据、reviewer 调用不再改写 Task、可选的严格委派模式。
 
@@ -101,7 +101,7 @@ Worker 必须返回带 version 的 `WorkerReport`。父进程抽取、超过 12k
 
 默认允许没有内嵌 `TaskSpec` 的 worker 委派，但会告警。设 `PI_PLANNER_ONLY_STRUCTURED_DELEGATION=strict` 则直接阻断。explorer 始终宽松；validator 两种模式都只告警。
 
-Reviewer 没有 `git_audit`（子进程以 `--no-extensions` 启动，该工具属于父扩展）。Root 自己采样 Git，把有界证据包——HEAD、status、当前变更文件、A-to-C 归因/漏报/多报路径、diff stat、diff check——放进 `ReviewRequest`；reviewer 只用 `read`/`grep`/`find`/`ls`。默认不传全量 diff。
+Reviewer 没有 `git_audit`（前台子进程不加载 ambient 扩展，该工具属于父扩展）。Root 自己采样 Git，把有界证据包——HEAD、status、当前变更文件、A-to-C 归因/漏报/多报路径、diff stat、diff check——放进 `ReviewRequest`；reviewer 只用 `read`/`grep`/`find`/`ls`。默认不传全量 diff。
 
 Review 状态：`planning → executing → reviewing → completed | changes_requested | blocked`。最多 3 轮修正（`MAX_REVIEW_ROUNDS`）。范围内 stale evidence 不能直接 PASS。Root 可以覆盖 reviewer，覆盖记录只留在内存。
 
@@ -135,7 +135,7 @@ npm run test:e2e  # 真实 pi-subagents 契约（需要已安装，否则会明�
 `npm test` 不验证运行时角色降权映射。该覆盖仅由 `test:e2e` 执行；未安装
 `pi-subagents` 时，角色降权仍未验证。
 
-E2E 套件针对已安装的 `pi-subagents` 包运行——builtin agent 工具面、子进程启动 argv（`--no-extensions`、工具上限、fresh 会话）、以及 planner 改写的负载字段——不发起任何模型调用。
+E2E 套件针对已安装的 `pi-subagents` 包运行——builtin agent 工具面、公开子路径 `child-tool-plan` 的启动映射（工具上限、前台子进程与 ambient 扩展隔离）、以及 planner 改写的负载字段——不发起任何模型调用。缺包或版本不在声明范围内会打印 SKIP 行并以 0 退出。
 
 ## 模块
 

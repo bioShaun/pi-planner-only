@@ -158,9 +158,10 @@ function sameToolOrder(left: readonly string[], right: readonly string[]): boole
 }
 
 export default function plannerOnly(pi: ExtensionAPI): void {
-	// Current pi-subagents launches children with --no-extensions. Keep the child
-	// marker check as a second seam if a future launcher explicitly includes
-	// this extension; workers must retain their configured tool access.
+	// Foreground children do not load ambient extensions. Background children
+	// may; this extension no-ops when PI_SUBAGENT_CHILD=1 so it cannot
+	// recurse into a child that loaded it. Workers must retain their
+	// configured tool access.
 	if (IS_SUBAGENT) return;
 
 	const gitRunner: GitRunner = async (args, cwd) => {
