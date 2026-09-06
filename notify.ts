@@ -210,7 +210,7 @@ function tryReadChildMetaFile(
 	path: string,
 	runId: string,
 	agent: string,
-): { runId: string; agent: string; model?: string; usage?: unknown } | undefined {
+): { runId: string; agent: string; exitCode?: number; model?: string; usage?: unknown } | undefined {
 	let st;
 	try {
 		st = lstatSync(path);
@@ -236,6 +236,9 @@ function tryReadChildMetaFile(
 	return {
 		runId,
 		agent,
+		// A numeric exitCode marks the run as terminal even when the completion
+		// notice was lost; its absence means the run state is unknown.
+		...(typeof rec.exitCode === "number" ? { exitCode: rec.exitCode } : {}),
 		...(typeof rec.model === "string" ? { model: rec.model } : {}),
 		...("usage" in rec ? { usage: rec.usage } : {}),
 	};
@@ -245,12 +248,13 @@ function tryReadChildMetaFile(
  * Read a child run's `_meta.json` from artifact directories, in order.
  * Async runs write `<runId>_<agent>_meta.json`; sync writes `_0_meta.json`.
  * Both names are tried. Size cap 2 MiB; no symlink following; must echo runId and agent.
+ * A numeric `exitCode` on the meta marks the run terminal.
  */
 export function readChildMeta(
 	artifactDirs: readonly string[],
 	runId: string,
 	agent: string,
-): { runId: string; agent: string; model?: string; usage?: unknown } | undefined {
+): { runId: string; agent: string; exitCode?: number; model?: string; usage?: unknown } | undefined {
 	if (isUnsafeRunId(runId) || !agent) return undefined;
 	const names = childMetaNames(runId, agent);
 	for (const dir of artifactDirs) {

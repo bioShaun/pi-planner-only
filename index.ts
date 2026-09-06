@@ -141,7 +141,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", code: result.code };
 	};
 
-	const orchestrator = new PlannerOrchestrator({ gitRunner });
+	// Most recent host context, kept so reconcile can find session artifact
+	// directories even when it runs from planner_verdict.
+	let latestCtx: ExtensionContext | undefined;
+	const orchestrator = new PlannerOrchestrator({
+		gitRunner,
+		artifactDirs: () => artifactDirsFor(latestCtx ?? ({ hasUI: false, cwd: process.cwd() } as ExtensionContext)),
+	});
 	let pricing = loadPricingTable();
 	let ledger = new UsageLedger({ pricing });
 	const allSessionEntries: UsageEntry[] = [];
@@ -573,6 +579,10 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					isError: true,
 				};
 			}
+			latestCtx = _ctx;
+			// A child run that already finished must be consumed before the
+			// refusal check, or a lost notice would deadlock every verdict.
+			await orchestrator.reconcilePendingDelegations(task.taskId);
 			const refusal = orchestrator.rootVerdictRefusal(task, params.verdict);
 			if (refusal) {
 				return {
@@ -672,6 +682,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 
 	pi.on("tool_result", async (event, ctx) => {
 		if (isDisabled()) return;
+		latestCtx = ctx;
 		const host = ctx ?? ({ hasUI: false, cwd: process.cwd() } as ExtensionContext);
 		if (event.toolName === "bg_wait") {
 			recordBgWaitChildren(event);
@@ -716,6 +727,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 
 	pi.on("message_end", async (event, ctx) => {
 		if (isDisabled()) return;
+		latestCtx = ctx;
 		const host = ctx ?? ({ hasUI: false, cwd: process.cwd() } as ExtensionContext);
 		const message = event.message as {
 			role?: string;

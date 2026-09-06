@@ -3,7 +3,7 @@
  * Delegation launch, the Review loop, and Task memory writes.
  */
 
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
 import {
 	captureEvidence,
 	captureReviewEvidencePacket,
@@ -23,7 +23,9 @@ import {
 	ASYNC_PREVIEW_TRUNCATED_REASON,
 	PREVIEW_TRUNCATED_MARKER,
 	parseSubagentNotify,
+	readChildMeta,
 	readLargestRunOutput,
+	tempRootFromAsyncDir,
 } from "./notify.ts";
 import {
 	compactWorkerReport,
@@ -135,6 +137,12 @@ export interface OrchestratorDeps {
 	store?: TaskStore;
 	gitRunner: GitRunner;
 	structuredDelegationMode?: StructuredDelegationMode;
+	/**
+	 * Where child-run artifacts (`<runId>_<agent>_meta.json`, saved outputs)
+	 * live. The Pi adapter supplies session/cwd-derived directories; reconcile
+	 * needs them to detect runs that finished without delivering a notice.
+	 */
+	artifactDirs?: () => readonly string[];
 }
 
 export type { DelegationKind };
@@ -166,6 +174,14 @@ export interface RootVerdictOutcome {
 
 const COMPOSITE_SCALAR_KEYS = ["workflowScript", "workflowScriptPath", "workflow"] as const;
 const COMPOSITE_ARRAY_KEYS = ["tasks", "chain"] as const;
+
+/** The subagent agent name each delegation kind launches by default. */
+const KIND_DEFAULT_AGENTS: Record<DelegationKind, string> = {
+	worker: "worker",
+	reviewer: "reviewer",
+	explorer: "explorer",
+	validator: "oracle",
+};
 
 export function isDelegationCall(input: unknown): boolean {
 	if (!input || typeof input !== "object") return false;
@@ -305,6 +321,7 @@ export class PlannerOrchestrator {
 	readonly store: TaskStore;
 	readonly structuredDelegationMode: StructuredDelegationMode;
 	private readonly gitRunner: GitRunner;
+	private readonly artifactDirs: () => readonly string[];
 	/** toolCallId -> delegated task + invocation kind. */
 	private readonly delegations = new Map<string, DelegationRecord>();
 	/** runIds whose subagent-notify (or sync result) has already been consumed. */
@@ -313,6 +330,7 @@ export class PlannerOrchestrator {
 	constructor(deps: OrchestratorDeps) {
 		this.store = deps.store ?? new TaskStore();
 		this.gitRunner = deps.gitRunner;
+		this.artifactDirs = deps.artifactDirs ?? (() => []);
 		this.structuredDelegationMode =
 			deps.structuredDelegationMode ?? readStructuredDelegationMode();
 	}
@@ -667,6 +685,9 @@ export class PlannerOrchestrator {
 	 * Returns the refusal reason, or undefined when the verdict may proceed.
 	 * The operator's review slash command bypasses every refusal except the
 	 * terminal-state one; the `planner_verdict` tool honours them all.
+	 *
+	 * A live pending child blocks pass/request_changes, but never `blocked`:
+	 * the escape hatch must stay open even when a completion notice was lost.
 	 */
 	rootVerdictRefusal(task: TaskRecord, verdict: ReviewVerdict): string | undefined {
 		if (task.state === "completed") {
@@ -675,7 +696,7 @@ export class PlannerOrchestrator {
 		if (verdict !== "blocked" && task.reports.length === 0) {
 			return `Task ${task.taskId} has no recorded WorkerReport; a pass or change request needs a report to judge.`;
 		}
-		if (this.hasPendingDelegation(task.taskId)) {
+		if (verdict !== "blocked" && this.hasPendingDelegation(task.taskId)) {
 			return `Task ${task.taskId} has a child run still pending; wait for its result before recording a verdict.`;
 		}
 		if (
@@ -695,6 +716,59 @@ export class PlannerOrchestrator {
 		return false;
 	}
 
+	private delegationArtifactDirs(record: DelegationRecord): string[] {
+		const dirs = [...this.artifactDirs()];
+		if (record.asyncDir) {
+			const root = tempRootFromAsyncDir(record.asyncDir);
+			if (root) dirs.push(join(root, "artifacts"));
+		}
+		return dirs;
+	}
+
+	/**
+	 * Consume one pending Delegation whose child run is already terminal
+	 * (numeric exitCode in its meta file) but whose completion notice never
+	 * arrived. The saved output is fed through the normal result path, so a
+	 * finished run records its WorkerReport / validator result instead of
+	 * deadlocking the Task. Idempotent: the runId is marked processed first.
+	 * Returns true when the delegation was consumed.
+	 */
+	private async reconcileDelegation(toolCallId: string, record: DelegationRecord): Promise<boolean> {
+		if (!record.runId || this.processedRunIds.has(record.runId)) return false;
+		const dirs = this.delegationArtifactDirs(record);
+		const agents = [...new Set([record.agent, KIND_DEFAULT_AGENTS[record.kind]]
+			.filter((name): name is string => Boolean(name)))];
+		let meta: ReturnType<typeof readChildMeta> = undefined;
+		for (const agent of agents) {
+			meta = readChildMeta(dirs, record.runId, agent);
+			if (meta?.exitCode !== undefined) break;
+		}
+		if (!meta || meta.exitCode === undefined) return false;
+		this.processedRunIds.add(record.runId);
+		this.delegations.delete(toolCallId);
+		const task = this.store.get(record.taskId);
+		if (!task) return true;
+		const text = readLargestRunOutput(record.asyncDir, record.runId) ?? "";
+		if (record.kind === "validator") await this.handleValidatorResult(task, text);
+		else if (record.kind === "reviewer") await this.handleReviewerResult(task, text);
+		else await this.handleWorkerResult(task, text, toolCallId);
+		return true;
+	}
+
+	/**
+	 * Reconcile pending Delegations (optionally one Task's) against child-run
+	 * artifacts. Terminal runs are consumed; live or artifact-less runs stay
+	 * pending. Returns how many delegations were consumed.
+	 */
+	async reconcilePendingDelegations(taskId?: string): Promise<number> {
+		let reconciled = 0;
+		for (const [toolCallId, record] of [...this.delegations]) {
+			if (taskId && record.taskId !== taskId) continue;
+			if (await this.reconcileDelegation(toolCallId, record)) reconciled += 1;
+		}
+		return reconciled;
+	}
+
 	/**
 	 * Record Root's verdict.
 	 *
@@ -710,6 +784,10 @@ export class PlannerOrchestrator {
 		summary: string,
 		options: { findings?: ReviewFinding[]; source?: ReviewResult["source"] } = {},
 	): Promise<RootVerdictOutcome> {
+		// A finished child run whose notice was lost must be consumed before any
+		// verdict, so the newest WorkerReport is what Root actually judges.
+		await this.reconcilePendingDelegations(task.taskId);
+
 		// §12 — an override is Root disagreeing with a *reviewer*; Root revising
 		// its own earlier verdict (or the operator's) is not one.
 		const previous = task.reviews.at(-1);

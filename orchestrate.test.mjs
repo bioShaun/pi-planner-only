@@ -617,13 +617,14 @@ function truncatedPreview() {
 	assert.equal(second.task.overrides.length, 0, "no override when the previous verdict was Root's own");
 }
 
-// blocked with no report is allowed once no delegation is pending; pass is not
+// blocked with no report is allowed even while a child is pending (escape
+// hatch); pass is not
 {
 	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	await delegateWorker(orch, "call-616", "T-20260905-616");
 	const pending = orch.store.require("T-20260905-616");
 	assert.match(orch.rootVerdictRefusal(pending, "pass"), /no recorded WorkerReport/);
-	assert.match(orch.rootVerdictRefusal(pending, "blocked"), /still pending/);
+	assert.equal(orch.rootVerdictRefusal(pending, "blocked"), undefined, "blocked must stay available while a child is pending");
 	// malformed worker output consumes the delegation without recording a report
 	await orch.handleSubagentResult({
 		toolCallId: "call-616",
@@ -1847,3 +1848,185 @@ for (const [suffix, output] of [
 }
 
 console.log("planner-only orchestration: PASS");
+
+// --------------------------------------------------------------------------
+// Ticket 01 — a lost child completion no longer deadlocks Task verdicts
+// --------------------------------------------------------------------------
+
+// Real pi-subagents layout: asyncDir = <root>/async-subagent-runs/<id>, saved
+// output = <root>/artifacts/outputs/<id>/…, meta = <root>/artifacts/<id>_<agent>_meta.json.
+function artifactLayout(runId, agent, exitCode, report) {
+	const tmp = mkdtempSync(join(process.cwd(), ".planner-only-reconcile-"));
+	const asyncDir = join(tmp, "async-subagent-runs", runId);
+	mkdirSync(asyncDir, { recursive: true });
+	mkdirSync(join(tmp, "artifacts", "outputs", runId), { recursive: true });
+	if (report) writeFileSync(join(tmp, "artifacts", "outputs", runId, "result.json"), JSON.stringify(report));
+	writeFileSync(join(tmp, "artifacts", `${runId}_${agent}_meta.json`), JSON.stringify({ runId, agent, exitCode }));
+	return { tmp, asyncDir };
+}
+
+function receiptFor(toolCallId, runId, asyncDir) {
+	return {
+		toolCallId,
+		toolName: "subagent",
+		details: { asyncId: runId, runId, asyncDir },
+		content: [{ type: "text", text: `Async: worker [${runId}]\nThe async run is detached and running in the background.` }],
+	};
+}
+
+// A terminal child run is consumed at the verdict boundary instead of refusing forever.
+{
+	const taskId = "T-20260905-950";
+	const runId = "run-rec-1";
+	const layout = artifactLayout(runId, "worker", 0, reportFor(taskId, "call-rec-1"));
+	const orch = new PlannerOrchestrator({
+		gitRunner,
+		store: pinnedStore(),
+		artifactDirs: () => [join(layout.tmp, "artifacts")],
+	});
+	try {
+		await delegateWorker(orch, "call-rec-1", taskId);
+		await orch.handleSubagentResult(workerResult("call-rec-1", reportFor(taskId, "call-rec-1")));
+		// a re-delegation goes async; its completion notice is never delivered
+		setCleanTree();
+		await orch.beginDelegation(
+			{ toolCallId: "call-rec-1b", input: { task: JSON.stringify(specFor(taskId)) } },
+			BASE,
+		);
+		await orch.handleSubagentResult(receiptFor("call-rec-1b", runId, layout.asyncDir));
+		assert.equal(orch.pendingDelegationCount(), 1);
+		const pending = orch.store.require(taskId);
+		assert.match(orch.rootVerdictRefusal(pending, "pass"), /still pending/);
+
+		// the child finishes its work and exits; only the notice is lost
+		setDirtyTree();
+		assert.equal(await orch.reconcilePendingDelegations(), 1);
+		assert.equal(orch.pendingDelegationCount(), 0);
+		assert.equal(orch.store.require(taskId).reports.length, 2);
+		assert.equal(orch.store.require(taskId).state, "reviewing");
+
+		// idempotent: a second reconcile pass does not double-apply the run
+		assert.equal(await orch.reconcilePendingDelegations(), 0);
+		assert.equal(orch.store.require(taskId).reports.length, 2);
+
+		const outcome = await orch.recordRootVerdict(orch.store.require(taskId), "pass", "reconciled then accepted");
+		assert.equal(outcome.task.state, "completed");
+	} finally {
+		rmSync(layout.tmp, { recursive: true, force: true });
+	}
+}
+
+// recordRootVerdict reconciles on its own: a blocked verdict consumes a finished
+// run first (its WorkerReport is kept), then closes the Task as blocked.
+{
+	const taskId = "T-20260905-953";
+	const runId = "run-rec-4";
+	const layout = artifactLayout(runId, "worker", 0, reportFor(taskId, "call-rec-4"));
+	const orch = new PlannerOrchestrator({
+		gitRunner,
+		store: pinnedStore(),
+		artifactDirs: () => [join(layout.tmp, "artifacts")],
+	});
+	try {
+		await delegateWorker(orch, "call-rec-4", taskId);
+		await orch.handleSubagentResult(receiptFor("call-rec-4", runId, layout.asyncDir));
+		const outcome = await orch.recordRootVerdict(orch.store.require(taskId), "blocked", "close it out");
+		assert.equal(outcome.task.state, "blocked");
+		assert.equal(orch.store.require(taskId).reports.length, 1, "the finished run is consumed, not discarded");
+		assert.equal(orch.pendingDelegationCount(), 0);
+	} finally {
+		rmSync(layout.tmp, { recursive: true, force: true });
+	}
+}
+
+// A live pending child with no terminal artifacts: pass/request_changes still
+// refuse; blocked is accepted as the escape hatch.
+{
+	const taskId = "T-20260905-951";
+	const runId = "run-rec-2";
+	const tmp = mkdtempSync(join(process.cwd(), ".planner-only-reconcile-"));
+	const asyncDir = join(tmp, "async-subagent-runs", runId);
+	mkdirSync(asyncDir, { recursive: true });
+	const orch = new PlannerOrchestrator({
+		gitRunner,
+		store: pinnedStore(),
+		artifactDirs: () => [join(tmp, "artifacts")],
+	});
+	try {
+		await delegateWorker(orch, "call-rec-2", taskId);
+		await orch.handleSubagentResult(workerResult("call-rec-2", reportFor(taskId, "call-rec-2")));
+		setCleanTree();
+		await orch.beginDelegation(
+			{ toolCallId: "call-rec-2b", input: { task: JSON.stringify(specFor(taskId)) } },
+			BASE,
+		);
+		await orch.handleSubagentResult(receiptFor("call-rec-2b", runId, asyncDir));
+		const pending = orch.store.require(taskId);
+		assert.match(orch.rootVerdictRefusal(pending, "pass"), /still pending/);
+		assert.match(orch.rootVerdictRefusal(pending, "request_changes"), /still pending/);
+		assert.equal(orch.rootVerdictRefusal(pending, "blocked"), undefined);
+		assert.equal(await orch.reconcilePendingDelegations(), 0, "nothing terminal to reconcile");
+		const outcome = await orch.recordRootVerdict(orch.store.require(taskId), "blocked", "child never reported");
+		assert.equal(outcome.task.state, "blocked");
+	} finally {
+		rmSync(tmp, { recursive: true, force: true });
+	}
+}
+
+// A subagent-notify that does arrive after a reconcile is not double-applied.
+{
+	const taskId = "T-20260905-954";
+	const runId = "run-rec-3";
+	const layout = artifactLayout(runId, "worker", 0, reportFor(taskId, "call-rec-3"));
+	const orch = new PlannerOrchestrator({
+		gitRunner,
+		store: pinnedStore(),
+		artifactDirs: () => [join(layout.tmp, "artifacts")],
+	});
+	try {
+		await delegateWorker(orch, "call-rec-3", taskId);
+		await orch.handleSubagentResult(receiptFor("call-rec-3", runId, layout.asyncDir));
+		assert.equal(await orch.reconcilePendingDelegations(), 1);
+		const before = orch.store.require(taskId);
+		const outcome = await orch.handleAsyncNotify(asyncNotify(runId, JSON.stringify(reportFor(taskId, "call-rec-3"))));
+		assert.equal(outcome, undefined);
+		const after = orch.store.require(taskId);
+		assert.equal(after.reports.length, before.reports.length);
+		assert.equal(after.state, before.state);
+	} finally {
+		rmSync(layout.tmp, { recursive: true, force: true });
+	}
+}
+
+// A terminal validator run reconciles into validatorReports.
+{
+	const taskId = "T-20260905-952";
+	const runId = "run-rec-5";
+	const validatorReport = reportFor(taskId, "call-rec-5");
+	const layout = artifactLayout(runId, "oracle", 0, validatorReport);
+	const orch = new PlannerOrchestrator({
+		gitRunner,
+		store: pinnedStore(),
+		artifactDirs: () => [join(layout.tmp, "artifacts")],
+	});
+	try {
+		setCleanTree();
+		await orch.beginDelegation(
+			{ toolCallId: "call-rec-5w", input: { task: JSON.stringify(specFor(taskId, "worker", BASE)) } },
+			BASE,
+		);
+		setDirtyTree();
+		await orch.handleSubagentResult(workerResult("call-rec-5w", { ...reportFor(taskId, "call-rec-5w"), evidence: { ...reportFor(taskId, "call-rec-5w").evidence, cwd: BASE } }));
+		await orch.beginDelegation(
+			{ toolCallId: "call-rec-5", input: { agent: "oracle", task: JSON.stringify(specFor(taskId, "validator", BASE)) } },
+			BASE,
+		);
+		await orch.handleSubagentResult(receiptFor("call-rec-5", runId, layout.asyncDir));
+		assert.equal(orch.pendingDelegationCount(), 1);
+		assert.equal(await orch.reconcilePendingDelegations(), 1);
+		assert.equal(orch.store.require(taskId).validatorReports.length, 1);
+		assert.equal(orch.pendingDelegationCount(), 0);
+	} finally {
+		rmSync(layout.tmp, { recursive: true, force: true });
+	}
+}
