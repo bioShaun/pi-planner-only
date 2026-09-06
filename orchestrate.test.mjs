@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, wri
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { PlannerOrchestrator, isDelegationCall } from "./orchestrate.ts";
-import { createTaskSpec, isExecutingStale } from "./task.ts";
+import { createTaskSpec, isExecutingStale, isHolderStale } from "./task.ts";
 import { TaskStore } from "./task.ts";
 import { hashStatus, workspaceSummaryDigest } from "./evidence.ts";
 
@@ -2102,7 +2102,7 @@ function realGitRunnerOf(dir) {
 	// the needs-reconcile note is recorded through the Task store, not in place
 	assert.match(
 		orch.store.require("T-20260905-980").stateReason ?? "",
-		/needs reconcile: executing past the stale duration/,
+		/needs reconcile:.*stale duration/,
 		"the stale holder's needs-reconcile note is recorded on the holder Task",
 	);
 
@@ -2991,9 +2991,10 @@ function receiptFor(toolCallId, runId, asyncDir) {
 		const outcome = await orch.handleSubagentResult(
 			reviewerResult("call-b2-rs2", "T-20260905-831", "pass", { workspaceDigest: boundDigest }),
 		);
-		assert.match(outcome.content[0].text, /decision: revalidate/);
-		assert.equal(orch.store.require("T-20260905-831").state, "changes_requested");
-		assert.notEqual(orch.store.require("T-20260905-831").state, "completed");
+		assert.match(outcome.content[0].text, /Reviewer verdict was rejected/);
+		assert.match(outcome.content[0].text, /workspace snapshot changed since the report/);
+		assert.equal(orch.store.require("T-20260905-831").reviews.length, 0, "the mismatched PASS is not recorded");
+		assert.equal(orch.store.require("T-20260905-831").state, "reviewing", "Task state is unchanged");
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
@@ -3041,8 +3042,9 @@ function receiptFor(toolCallId, runId, asyncDir) {
 		const outcome = await orch.handleSubagentResult(
 			reviewerResult("call-b2-un2", "T-20260905-832", "pass", { workspaceDigest: boundDigest }),
 		);
-		assert.match(outcome.content[0].text, /decision: revalidate/);
-		assert.notEqual(orch.store.require("T-20260905-832").state, "completed");
+		assert.match(outcome.content[0].text, /Reviewer verdict was rejected/);
+		assert.equal(orch.store.require("T-20260905-832").reviews.length, 0, "the unknown-sample PASS is not recorded");
+		assert.equal(orch.store.require("T-20260905-832").state, "reviewing", "Task state is unchanged");
 	} finally {
 		chmodSync(secret, 0o755);
 		rmSync(dir, { recursive: true, force: true });
@@ -3061,12 +3063,14 @@ function receiptFor(toolCallId, runId, asyncDir) {
 		{ toolCallId: "call-b2-ps2", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) } },
 		BASE,
 	);
+	const before = store.require(taskId).state;
 	const outcome = await orch.handleSubagentResult(
 		reviewerResult("call-b2-ps2", taskId, "pass", { workspaceDigest: "0123456789abcdef" }),
 	);
-	assert.match(outcome.content[0].text, /decision: revalidate/);
+	assert.match(outcome.content[0].text, /Reviewer verdict was rejected/);
 	assert.match(outcome.content[0].text, /pre-snapshot report/);
-	assert.notEqual(store.require(taskId).state, "completed");
+	assert.equal(store.require(taskId).reviews.length, 0, "the pre-snapshot PASS is not recorded");
+	assert.equal(store.require(taskId).state, before, "Task state is unchanged");
 }
 
 // A Reviewer PASS with no recorded WorkerReport is refused outright: there is
@@ -3128,4 +3132,133 @@ function receiptFor(toolCallId, runId, asyncDir) {
 	assert.match(requestChanges.content[0].text, /decision: request_changes/);
 	assert.equal(orch.store.require(taskId).reviews.length, 1);
 	assert.equal(orch.store.require(taskId).state, "changes_requested");
+}
+
+// --------------------------------------------------------------------------
+// Hardening-gaps residuals — Validator refuse notes, unbound reconcile,
+// stale lock follows the live writer, snapshot-mismatch PASS is refused
+// --------------------------------------------------------------------------
+
+// A stale holder refused by a bound Validator still gets the needs-reconcile
+// note through the Task store (story 36), not only on the Worker refuse path.
+{
+	let clock = new Date(2026, 8, 5, 12, 0, 0);
+	const store = new TaskStore({ now: () => clock });
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-gap-v1", input: { task: JSON.stringify(specFor("T-20260906-101", "worker", BASE)) } },
+		BASE,
+	);
+	clock = new Date(2026, 8, 5, 13, 0, 0);
+	const validator = await orch.beginDelegation(
+		{ toolCallId: "call-gap-v2", input: { agent: "oracle", task: JSON.stringify(specFor("T-20260906-101", "validator", BASE)) } },
+		BASE,
+	);
+	assert.equal(validator.conflict?.conflict, true, "a validator is refused beside a live writer");
+	assert.match(
+		store.require("T-20260906-101").stateReason ?? "",
+		/needs reconcile:.*stale duration/,
+		"the stale holder's needs-reconcile note is recorded when a Validator is refused",
+	);
+	assert.equal(orch.pendingDelegationCount(), 1, "the refused validator is not registered");
+}
+
+// An unbound Validator is refused the same way, and the holder still gets the note.
+{
+	let clock = new Date(2026, 8, 5, 12, 0, 0);
+	const store = new TaskStore({ now: () => clock });
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-gap-uv1", input: { task: JSON.stringify(specFor("T-20260906-102", "worker", BASE)) } },
+		BASE,
+	);
+	clock = new Date(2026, 8, 5, 13, 0, 0);
+	const unbound = await orch.beginDelegation(
+		{ toolCallId: "call-gap-uv2", input: { agent: "oracle", task: "double-check the claim" } },
+		BASE,
+	);
+	assert.equal(unbound.conflict?.conflict, true, "an unbound validator contends for the same lock");
+	assert.match(
+		store.require("T-20260906-102").stateReason ?? "",
+		/needs reconcile:.*stale duration/,
+		"unbound validator refuse also records the note through the Task store",
+	);
+	assert.equal(orch.pendingDelegationCount(), 1);
+}
+
+// An unbound Validator reconciles a finished leftover on the worktree before
+// taking the lock, so a lost-notify Worker with terminal artifacts is not
+// mistaken for a live writer (steps 1–4 on the tree it will write).
+{
+	const taskId = "T-20260906-103";
+	const runId = "run-gap-uv-ln";
+	const layout = artifactLayout(runId, "worker", 0, reportFor(taskId, "call-gap-uv-ln"));
+	const orch = new PlannerOrchestrator({
+		gitRunner,
+		store: pinnedStore(),
+		artifactDirs: () => [join(layout.tmp, "artifacts")],
+	});
+	try {
+		setCleanTree();
+		await orch.beginDelegation(
+			{ toolCallId: "call-gap-uv-ln", input: { task: JSON.stringify(specFor(taskId, "worker", BASE)) } },
+			BASE,
+		);
+		await orch.handleSubagentResult(receiptFor("call-gap-uv-ln", runId, layout.asyncDir));
+		assert.equal(orch.pendingDelegationCount(), 1);
+		setDirtyTree();
+		const next = await orch.beginDelegation(
+			{ toolCallId: "call-gap-uv-v", input: { agent: "oracle", task: "double-check the claim" } },
+			BASE,
+		);
+		assert.equal(next.conflict, undefined, "a finished leftover is consumed, not refused as a live writer");
+		assert.ok((next.warnings ?? []).some((warning) => /had already finished/.test(warning)), next.warnings?.join(" | "));
+		assert.equal(orch.store.require(taskId).reports.length, 1, "the finished Worker run is recorded");
+		assert.equal(orch.getDelegation("call-gap-uv-v")?.kind, "validator");
+		assert.equal(orch.pendingDelegationCount(), 1, "the validator is the remaining waiter");
+	} finally {
+		rmSync(layout.tmp, { recursive: true, force: true });
+	}
+}
+
+// A Worker started from reviewing holds the lock without entering executing.
+// Past the stale duration, a second writable begin still records needs-reconcile
+// on that holder (story 11/36) — stale follows the live writer, not Task.state.
+{
+	let clock = new Date(2026, 8, 5, 12, 0, 0);
+	const store = new TaskStore({ now: () => clock });
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const taskId = "T-20260906-104";
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-gap-st1", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	setDirtyTree();
+	await orch.handleSubagentResult(workerResult("call-gap-st1", reportFor(taskId, "call-gap-st1")));
+	assert.equal(store.require(taskId).state, "reviewing");
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-gap-st2", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	assert.equal(store.require(taskId).state, "reviewing", "a writer from reviewing does not take executing");
+	assert.equal(orch.pendingDelegationCount(), 1);
+	clock = new Date(2026, 8, 5, 13, 0, 0);
+	assert.equal(isExecutingStale(store.require(taskId), clock.getTime()), false, "the Task is not executing");
+	assert.equal(isHolderStale(store.require(taskId), clock.getTime()), true, "the live writer is past the stale duration");
+	const refused = await orch.beginDelegation(
+		{ toolCallId: "call-gap-st3", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	assert.equal(refused.conflict?.conflict, true);
+	assert.match(refused.conflict.reason ?? "", /not been confirmed exited/, refused.conflict.reason);
+	assert.match(refused.conflict.reason ?? "", /not been confirmed exited/, refused.conflict.reason);
+	assert.match(
+		store.require(taskId).stateReason ?? "",
+		/needs reconcile:.*stale duration/,
+		"needs-reconcile is recorded for a reviewing Task that still holds a live writer",
+	);
 }

@@ -54,6 +54,7 @@ import {
 	executingStaleMinutes,
 	extractTaskSpec,
 	isExecutingStale,
+	isHolderStale,
 	isWriterRole,
 	normalizeWorkspaceIdentity,
 } from "./task.ts";
@@ -199,6 +200,8 @@ export interface DelegationRecord {
 	 * live Delegation, not by the Task's executing state.
 	 */
 	worktrees?: readonly string[];
+	/** ISO timestamp when this invocation acquired the write lock. */
+	lockedAt?: string;
 	/** The ReviewRequest packet this reviewer invocation carries was truncated; a PASS over it is ineligible. */
 	packetTruncated?: boolean;
 }
@@ -496,9 +499,9 @@ export class PlannerOrchestrator {
 				const placeholder = specId
 					?? (named.length === 1 ? named[0] : undefined)
 					?? `unbound-validator-${event.toolCallId}`;
-				const unboundConflict = this.writerConflict(cwd, "validator");
+				const unboundConflict = await this.refuseOrClearWriteLock(cwd, "validator", warnings);
 				if (unboundConflict.conflict) {
-					return { conflict: unboundConflict };
+					return { conflict: unboundConflict, ...(warnings.length ? { warnings } : {}) };
 				}
 				this.delegations.set(event.toolCallId, {
 					taskId: placeholder,
@@ -508,12 +511,12 @@ export class PlannerOrchestrator {
 					// An unbound validator can still run a general shell: it holds
 					// the write lock for the worktree it was pointed at.
 					worktrees: [normalizeWorkspaceIdentity(cwd)],
+					lockedAt: this.store.now().toISOString(),
 				});
-				return {
-					warnings: [
-						"Planner-only: validator delegation names no Task under review; delegate the worker first, then re-delegate validation naming its taskId.",
-					],
-				};
+				warnings.push(
+					"Planner-only: validator delegation names no Task under review; delegate the worker first, then re-delegate validation naming its taskId.",
+				);
+				return { warnings };
 			}
 			const specId = (target?.spec ?? extractTaskSpec(delegationPrompt(input)))?.taskId;
 			if (specId && specId !== reviewed.taskId) {
@@ -526,10 +529,11 @@ export class PlannerOrchestrator {
 			// is reconciled from child-run artifacts before contending for the
 			// lock, so a finished run is never mistaken for a live writer.
 			await this.reconcileBeforeLock(reviewed.taskId, warnings);
-			const validatorConflict =
-				this.writerConflict(cwd, "validator").conflict
-					? this.writerConflict(cwd, "validator")
-					: this.writerConflict(reviewed.cwd, "validator");
+			let validatorConflict = await this.refuseOrClearWriteLock(cwd, "validator", warnings, reviewed.taskId);
+			if (!validatorConflict.conflict
+				&& normalizeWorkspaceIdentity(cwd) !== normalizeWorkspaceIdentity(reviewed.cwd)) {
+				validatorConflict = await this.refuseOrClearWriteLock(reviewed.cwd, "validator", warnings, reviewed.taskId);
+			}
 			if (validatorConflict.conflict) {
 				return { task: reviewed, conflict: validatorConflict, ...(warnings.length ? { warnings } : {}) };
 			}
@@ -543,6 +547,7 @@ export class PlannerOrchestrator {
 					normalizeWorkspaceIdentity(cwd),
 					normalizeWorkspaceIdentity(reviewed.cwd),
 				])],
+				lockedAt: this.store.now().toISOString(),
 			});
 			return {
 				task: reviewed,
@@ -655,18 +660,8 @@ export class PlannerOrchestrator {
 		// FR-04 — write coordination follows actual write ability, not the
 		// presence of a TaskSpec: a warn-mode unstructured worker and a
 		// shell-capable validator take the same lock as a structured worker.
-		const conflict = this.writerConflict(task.cwd, role);
+		const conflict = await this.refuseOrClearWriteLock(task.cwd, role, warnings, task.taskId);
 		if (conflict.conflict) {
-			// D07 — a stale holder gets an explicit recorded note that its child
-			// must be reconciled; the lock itself never auto-releases. The note
-			// is written through the Task store, never in place.
-			const holder = conflict.taskId ? this.store.get(conflict.taskId) : undefined;
-			if (holder && isExecutingStale(holder, this.store.now().getTime()) && !holder.stateReason) {
-				this.store.setStateReason(
-					holder.taskId,
-					`needs reconcile: executing past the stale duration without a confirmed child exit (lock held against task ${task.taskId})`,
-				);
-			}
 			return { task, conflict, ...(warnings.length ? { warnings } : {}) };
 		}
 
@@ -699,7 +694,10 @@ export class PlannerOrchestrator {
 			...(inputAgent(event.input) ? { agent: inputAgent(event.input) } : {}),
 			// Writable invocations become the lock holder for the Task's
 			// worktree; explorers hold nothing.
-			...(isWriterRole(role) ? { worktrees: [normalizeWorkspaceIdentity(task.cwd)] } : {}),
+			...(isWriterRole(role) ? {
+				worktrees: [normalizeWorkspaceIdentity(task.cwd)],
+				lockedAt: this.store.now().toISOString(),
+			} : {}),
 		});
 		return {
 			task: this.store.require(task.taskId),
@@ -815,6 +813,37 @@ export class PlannerOrchestrator {
 	}
 
 	/**
+	 * D07 / story 36 — a stale lock surfaces as a recorded needs-reconcile
+	 * reason on the holder, written through the Task store. Every writable
+	 * refuse path (Worker, bound Validator, unbound Validator) must call this;
+	 * the lock itself never auto-releases.
+	 */
+	private noteStaleHolder(conflict: WriterConflict, againstTaskId?: string): void {
+		if (!conflict.conflict || !conflict.taskId) return;
+		const holder = this.store.get(conflict.taskId);
+		if (!holder || holder.stateReason) return;
+		if (!this.isLiveWriterStale(conflict.taskId)) return;
+		this.store.setStateReason(
+			holder.taskId,
+			`needs reconcile: write lock held past the stale duration without a confirmed child exit (lock held against ${againstTaskId ? `task ${againstTaskId}` : "a new writer"})`,
+		);
+	}
+
+	/** Stale follows the live writer's lock age, not Task.updatedAt / executing. */
+	private isLiveWriterStale(taskId: string): boolean {
+		const now = this.store.now().getTime();
+		for (const record of this.delegations.values()) {
+			if (record.taskId !== taskId || !isWriterRole(record.kind)) continue;
+			if (record.lockedAt) {
+				const held = Date.parse(record.lockedAt);
+				return Number.isFinite(held) && now - held >= EXECUTING_STALE_MS;
+			}
+		}
+		const holder = this.store.get(taskId);
+		return Boolean(holder && isHolderStale(holder, now));
+	}
+
+	/**
 	 * The write-lock check every writable delegation goes through (FR-04).
 	 *
 	 * The lock is owned by the live writable Delegation, not by the Task's
@@ -838,8 +867,8 @@ export class PlannerOrchestrator {
 				taskId: record.taskId,
 				reason: [
 					`Planner-only guard: task ${record.taskId} already holds the write lock for ${target}.`,
-					holder && isExecutingStale(holder, this.store.now().getTime())
-						? `That task has been executing for over ${executingStaleMinutes()} minutes and its child run has not been confirmed exited; reconcile the run (or abandon the task) before starting another writer.`
+					holder && this.isLiveWriterStale(record.taskId)
+						? `That lock has been held for over ${executingStaleMinutes()} minutes and its child run has not been confirmed exited; reconcile the run (or abandon the task) before starting another writer.`
 						: "Keep one writable invocation per worktree; even a second call on the same Task must wait.",
 					"Wait for that run's result to release the lock, or delegate this one into a separate worktree.",
 				].join("\n"),
@@ -849,9 +878,29 @@ export class PlannerOrchestrator {
 	}
 
 	/**
-	 * Consume same-Task pending children whose runs already finished (terminal
-	 * child-run meta) before the write lock is taken, so a lost completion
-	 * notice with a recorded result is not refused as a live writer.
+	 * Reconcile a conflicting worktree holder from artifacts, then refuse if
+	 * a live writer remains. Used by every writable begin (Worker, bound and
+	 * unbound Validator) so a finished leftover is never mistaken for a live
+	 * writer, and a stale refuse always records needs-reconcile.
+	 */
+	private async refuseOrClearWriteLock(
+		cwd: string,
+		role: DelegationKind,
+		warnings: string[],
+		againstTaskId?: string,
+	): Promise<WriterConflict> {
+		let conflict = this.writerConflict(cwd, role);
+		if (conflict.conflict && conflict.taskId) {
+			await this.reconcileBeforeLock(conflict.taskId, warnings);
+			conflict = this.writerConflict(cwd, role);
+		}
+		if (conflict.conflict) this.noteStaleHolder(conflict, againstTaskId);
+		return conflict;
+	}
+
+	/**
+	 * Consume same-Task pending children from child-run artifacts before the
+	 * write lock is taken, so a finished leftover is not refused as a live writer.
 	 */
 	private async reconcileBeforeLock(taskId: string, warnings: string[]): Promise<void> {
 		for (const [toolCallId, record] of [...this.delegations]) {
@@ -1334,7 +1383,6 @@ export class PlannerOrchestrator {
 			};
 		}
 
-		this.store.recordReview(task.taskId, review);
 		const report = task.reports.at(-1);
 		let comparison: EvidenceComparison | undefined;
 		if (report) {
@@ -1346,18 +1394,36 @@ export class PlannerOrchestrator {
 			});
 			comparison = compareWithRootSamples(task, currentSample, report);
 			if (review.verdict === "pass") {
-				// Ticket 02 — mirror the Root acceptance boundary: the workspace is
-				// sampled again right here, and the PASS only completes when the fresh
-				// sample's digest still matches the snapshot bound to the report under
-				// review. A reviewer's evidenceFresh flag never overrides this.
-				comparison = this.foldSnapshotBindingIntoComparison(
-					task,
-					currentSample,
-					comparison,
-					`review-${report.evidence.workerRunId}`,
-				);
+				// Ticket 02 / story 26 — accept re-samples the workspace. A PASS
+				// whose digest does not match (or is unknown / pre-snapshot) is
+				// refused the same way a truncated packet is: not recorded, Task
+				// state unchanged. request_changes and blocked still record.
+				const snapshot = captureWorkspaceSnapshot({
+					cwd: task.cwd,
+					taskId: task.taskId,
+					invocationId: `review-${report.evidence.workerRunId}`,
+					paths: snapshotPathsFor(task, currentSample),
+				});
+				const binding = compareSnapshotBinding(task.snapshot, snapshot, task.reports.length);
+				if (binding.state !== "fresh") {
+					const reason = binding.reason ?? "the workspace snapshot at accept time is not fresh";
+					return {
+						content: [{
+							type: "text",
+							text: [
+								`[PLANNER-ONLY] Reviewer verdict was rejected: ${reason}.`,
+								"The verdict was not recorded and no task state changed.",
+								`Re-delegate review for task ${task.taskId} after the workspace matches the bound snapshot, or return request_changes or blocked.`,
+								"",
+								truncate(text, RAW_OUTPUT_FALLBACK_CHARS),
+							].join("\n"),
+						}],
+					};
+				}
 			}
 		}
+
+		this.store.recordReview(task.taskId, review);
 		if (comparison) this.store.setLastComparison(task.taskId, comparison);
 		const { decision } = advanceReview({
 			store: this.store,

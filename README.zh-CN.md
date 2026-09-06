@@ -182,13 +182,13 @@ E2E 套件针对已安装的 `pi-subagents` 包运行——builtin agent 工具�
 |---|---|
 | `types.ts` | `TaskSpec`、`WorkerReport`、`EvidenceRef`、`ReviewResult`、`ReviewRequest` |
 | `policy.ts` | 父进程工具白名单与 `tool_call` 决策 |
-| `task.ts` | 校验、压缩、状态机、写锁 |
+| `task.ts` | 校验、压缩、状态机 |
 | `report.ts` | `WorkerReport` 抽取、压缩、身份校验 |
 | `review.ts` | 裁决、review 循环、fresh-review 任务包 |
 | `roles.ts` | TaskRole 画像与 agent remap |
 | `evidence.ts` | Git 探测、A-to-C 归因、review 证据包 |
 | `git-audit.ts` | `git_audit` 解析与输出上限 |
-| `orchestrate.ts` | 委派启动、review 循环、Task 存储写入 |
+| `orchestrate.ts` | 委派启动、写锁、review 循环、Task 存储写入 |
 | `notify.ts` | 异步 subagent 通知与子进程元数据解析 |
 | `usage.ts` | 纯用量账本、Token 与成本核算、报告渲染 |
 | `index.ts` | hook、工具、命令 |

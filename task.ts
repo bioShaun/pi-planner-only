@@ -1,8 +1,8 @@
 /**
  * TaskSpec construction/validation and the Task lifecycle store.
  *
- * WorkerReport protocol lives in report.ts. This module owns identity, the
- * state machine, and the one-writer-per-cwd lock.
+ * WorkerReport protocol lives in report.ts. This module owns identity and the
+ * state machine. Live write-lock ownership lives in Orchestration.
  */
 
 import { realpathSync } from "node:fs";
@@ -353,7 +353,8 @@ export class TaskStore {
 
 	ensureCwd(taskId: string, cwd: string): TaskRecord {
 		const record = this.require(taskId);
-		if (!record.cwd) record.cwd = cwd;
+		if (record.cwd) return record;
+		record.cwd = cwd;
 		return this.touch(record);
 	}
 
@@ -489,6 +490,13 @@ export function isExecutingStale(task: TaskRecord, now = Date.now()): boolean {
 	return Number.isFinite(updated) && now - updated >= EXECUTING_STALE_MS;
 }
 
+/** A live lock holder is stale by age, independent of Task.state. */
+export function isHolderStale(task: TaskRecord, now = Date.now()): boolean {
+	if (isFinalTaskState(task.state)) return false;
+	const updated = Date.parse(task.updatedAt);
+	return Number.isFinite(updated) && now - updated >= EXECUTING_STALE_MS;
+}
+
 export interface WriterConflict {
 	conflict: boolean;
 	reason?: string;
@@ -498,10 +506,12 @@ export interface WriterConflict {
 /**
  * FR-04 / D07 — at most one writable invocation per worktree at a time.
  *
- * This store-level helper keys on Task records; live lock ownership is
- * decided by Orchestration over its pending Delegations (a live writable
- * Delegation holds the lock even while its Task is reviewing or blocked).
- * Orchestration uses this helper's refusal shape and stale-holder policy.
+ * This store-level helper keys on Task records and is not the live lock.
+ * Live lock ownership is decided by Orchestration over its pending Delegations
+ * (a live writable Delegation holds the lock even while its Task is reviewing
+ * or blocked). The helper keeps the refusal-copy shape and cwd-alias policy
+ * for unit tests of those pieces; do not treat `state === "executing"` here
+ * as product behaviour.
  *
  * The lock follows actual write ability (`isWriterRole`), not the presence of
  * a TaskSpec or the worker role name: a warn-mode unstructured worker and a

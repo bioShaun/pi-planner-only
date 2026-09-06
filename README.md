@@ -263,13 +263,13 @@ outside the declared range prints a SKIP line and exits 0.
 |---|---|
 | `types.ts` | `TaskSpec`, `WorkerReport`, `EvidenceRef`, `ReviewResult`, `ReviewRequest` |
 | `policy.ts` | parent tool allowlist and `tool_call` decisions |
-| `task.ts` | validation, compaction, state machine, writer lock |
+| `task.ts` | validation, compaction, state machine |
 | `report.ts` | `WorkerReport` extraction, compaction, identity |
 | `review.ts` | verdicts, review loop, fresh-review packet |
 | `roles.ts` | TaskRole profiles and agent remapping |
 | `evidence.ts` | Git probe, A-to-C attribution, review evidence packets |
 | `git-audit.ts` | `git_audit` resolution and output bounds |
-| `orchestrate.ts` | delegation launch, review loop, Task store writes |
+| `orchestrate.ts` | delegation launch, write lock, review loop, Task store writes |
 | `notify.ts` | async subagent notifications and child metadata |
 | `usage.ts` | pure usage ledger, cost resolution, report rendering |
 | `index.ts` | hooks, tool, commands |

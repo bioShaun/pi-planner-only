@@ -292,7 +292,7 @@ const shellValidator = { ...writerA, taskId: "V", role: "validator" };
 assert.equal(findWriterConflict([writerA], cwd, "validator").conflict, true);
 assert.equal(findWriterConflict([shellValidator], cwd, "worker").conflict, true);
 assert.equal(findWriterConflict([shellValidator], cwd, "explorer").conflict, false);
-// only executing tasks hold it
+// store-level helper still keys on executing; live lock is Orchestration
 assert.equal(
 	findWriterConflict([{ ...writerA, state: "reviewing" }], cwd, "worker").conflict,
 	false,
