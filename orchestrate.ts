@@ -460,7 +460,11 @@ export class PlannerOrchestrator {
 					`Planner-only: ReviewRequest reportTaskId ${target.request.reportTaskId} does not match task ${taskId}.`,
 				);
 			}
-			if (task) await this.supersedePendingDelegations(task.taskId, event.toolCallId, warnings);
+			// A reviewer begin holds no writer-conflict guard, so supersede must not
+			// drop a live writable waiter beside it (ticket 01).
+			if (task) {
+				await this.supersedePendingDelegations(task.taskId, event.toolCallId, warnings, { protectWriters: true });
+			}
 			// Ticket 02 — a PASS over a truncated review packet is ineligible. Root
 			// knows the packet it sent, so the truncation facts are captured here
 			// and enforced when the verdict returns.
@@ -685,7 +689,9 @@ export class PlannerOrchestrator {
 			});
 			this.store.setBaseEvidence(task.taskId, base);
 		}
-		await this.supersedePendingDelegations(task.taskId, event.toolCallId, warnings);
+		// A writable begin was gated by writerConflict above; a read-only role
+		// was not, so protect live writable waiters from supersede (ticket 01).
+		await this.supersedePendingDelegations(task.taskId, event.toolCallId, warnings, isWriterRole(role) ? {} : { protectWriters: true });
 		this.delegations.set(event.toolCallId, {
 			taskId: task.taskId,
 			kind: role,
@@ -956,11 +962,18 @@ export class PlannerOrchestrator {
 	 * of an ambiguous crowd. A superseded record whose run already finished is
 	 * reconciled first (its report is kept); the rest are dropped, and a late
 	 * notice for them matches nothing and records nothing.
+	 *
+	 * A writable waiter whose run is not known stopped is never dropped when the
+	 * begin holds no writer-conflict guard (reviewer, explorer): the child may
+	 * still be writing, and supersede is the last thing that could release the
+	 * write lock beside a live writer (ticket 01, stories 9/19). Writable begins
+	 * are already gated by writerConflict, so they supersede as before.
 	 */
 	private async supersedePendingDelegations(
 		taskId: string,
 		keepToolCallId: string,
 		warnings: string[],
+		options: { protectWriters?: boolean } = {},
 	): Promise<void> {
 		for (const [toolCallId, record] of [...this.delegations]) {
 			if (toolCallId === keepToolCallId || record.taskId !== taskId) continue;
@@ -969,6 +982,19 @@ export class PlannerOrchestrator {
 					`Planner-only: the previous pending child for task ${taskId} had already finished; its saved result was consumed before this delegation started.`,
 				);
 				continue;
+			}
+			if (options.protectWriters && isWriterRole(record.kind)) {
+				// Mirror writerConflict's known-stop semantics: operator abandon or
+				// another final Task state is a confirmed stop and releases the
+				// waiter; anything else (including an unbound placeholder holder)
+				// keeps the lock (ticket 01, stories 12/15/19).
+				const holder = this.store.get(record.taskId);
+				if (!holder || !isFinalTaskState(holder.state)) {
+					warnings.push(
+						`Planner-only: the pending child run ${record.runId ?? toolCallId} for task ${taskId} is not known stopped; it keeps the write lock and is not superseded. Reconcile or abandon the Task before re-delegating writes.`,
+					);
+					continue;
+				}
 			}
 			this.delegations.delete(toolCallId);
 			warnings.push(

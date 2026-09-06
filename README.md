@@ -148,8 +148,9 @@ when a delegation starts (A) and again when the result is handled or a Root
 authoritative. Missing Worker `gitStatusHash` / `finalGitRef` does not disable
 Root attribution. Stale or unverifiable evidence forces `revalidate` instead
 of completion, and a fresh reviewer's `evidenceFresh: true` never bypasses
-that Root-side check. The per-cwd writer lock is exact-path only: overlapping
-worktrees are a known attribution limitation.
+that Root-side check. The writer lock follows the worktree's real path:
+aliases of one worktree (relative path, symlink) share the lock, while
+independent worktrees stay independent.
 
 ### Strict delegation (optional)
 

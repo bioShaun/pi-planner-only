@@ -2296,6 +2296,56 @@ function realGitRunnerOf(dir) {
 	);
 }
 
+// Ticket 01 — a reviewer begin holds no writer-conflict guard, so supersede is
+// the only thing standing between a review delegation and a live writer's
+// lock: a non-writable begin must never drop a writable waiter whose child is
+// not known stopped.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-993";
+	await delegateWorker(orch, "call-t7-rw1", taskId);
+	await orch.handleSubagentResult(workerResult("call-t7-rw1", reportFor(taskId, "call-t7-rw1")));
+
+	// a re-delegation goes async and its notice is lost: a zombie writable waiter
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-t7-rw2", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	await orch.handleSubagentResult(receiptFor("call-t7-rw2", "run-t7-rw-zombie", "/no-such-async-dir"));
+	assert.equal(orch.pendingDelegationCount(), 1);
+
+	// a reviewer begin for the same Task must not delete the live writable waiter
+	const review = await orch.beginDelegation(
+		{ toolCallId: "call-t7-rw3", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) } },
+		BASE,
+	);
+	assert.equal(review.conflict, undefined, "a reviewer begin stays useful beside a pending writer");
+	assert.ok(
+		(review.warnings ?? []).some((warning) => /not known stopped/.test(warning)),
+		review.warnings?.join(" | "),
+	);
+	assert.ok(orch.getDelegation("call-t7-rw2"), "the writable waiter is kept, not superseded");
+	assert.equal(orch.pendingDelegationCount(), 2, "writer and reviewer waiters both survive");
+
+	// the lock still holds: a worker begin is refused before launch
+	const refused = await orch.beginDelegation(
+		{ toolCallId: "call-t7-rw4", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	assert.equal(refused.conflict?.conflict, true, "the live writer keeps blocking writable begins");
+	assert.match(refused.conflict.reason, new RegExp(taskId), "the refusal names the holder Task");
+	assert.equal(orch.pendingDelegationCount(), 2, "no second child is registered beside the live writer");
+
+	// the lost notice for the writer run still records its report
+	setDirtyTree();
+	const late = await orch.handleAsyncNotify(asyncNotify(undefined, JSON.stringify(reportFor(taskId, "call-t7-rw2"))));
+	assert.ok(late, "the single-run notice matches the surviving writer waiter");
+	assert.match(late.content[0].text, /\[PLANNER-ONLY REVIEW STATE\]/);
+	assert.ok(orch.store.require(taskId).reports.length >= 2, "the writer's late report is kept, not discarded");
+	assert.equal(orch.pendingDelegationCount(), 1, "only the reviewer waiter remains");
+}
+
 // --------------------------------------------------------------------------
 // Ticket 04 — the reviewer packet carries the bounded baseline patch
 // --------------------------------------------------------------------------

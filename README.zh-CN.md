@@ -99,7 +99,7 @@ Worker 必须返回带 version 的 `WorkerReport`。父进程抽取、超过 12k
 - `WorkerReport` 只有在 `taskId`、`evidence.taskId` 以及（存在时的）`evidence.workerRunId` 与被委派任务和 subagent 调用一致时才被接受。结构合法但属于别的任务的报告按畸形处理：不存储，只给一次 report-only 修正。
 - `ReviewResult` 只有在 `taskId` 与被评审任务一致时才被记录；不匹配的裁决不落库、任何状态都不变。
 
-证据只在接受边界权威。Root 在委派开始时采样 Git（A），在结果处理或 Root `pass` 时再采一次（C）。A 到 C 的差集是 scope 分母；Worker 的 `changedFiles` 和 Git 指纹只是声明，交叉核对但不作权威。Worker 缺 `gitStatusHash` / `finalGitRef` 不会关掉 Root 归因。证据过期或不可验证则强制 `revalidate` 而非完成；fresh reviewer 的 `evidenceFresh: true` 永远绕不过这道 Root 侧检查。cwd 写锁只做精确路径相等：重叠 worktree 是已知的归因限制。
+证据只在接受边界权威。Root 在委派开始时采样 Git（A），在结果处理或 Root `pass` 时再采一次（C）。A 到 C 的差集是 scope 分母；Worker 的 `changedFiles` 和 Git 指纹只是声明，交叉核对但不作权威。Worker 缺 `gitStatusHash` / `finalGitRef` 不会关掉 Root 归因。证据过期或不可验证则强制 `revalidate` 而非完成；fresh reviewer 的 `evidenceFresh: true` 永远绕不过这道 Root 侧检查。写锁按 worktree 的真实路径生效：同一 worktree 的别名（相对路径、符号链接）共享同一把锁，独立 worktree 互不影响。
 
 ### 严格委派（可选）
 
