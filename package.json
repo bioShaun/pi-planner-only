@@ -18,21 +18,22 @@
     "reviewer"
   ],
   "files": [
+    "CONTEXT.md",
+    "README.md",
+    "README.zh-CN.md",
+    "evidence.ts",
+    "git-audit.ts",
     "index.ts",
-    "types.ts",
+    "notify.ts",
+    "orchestrate.ts",
     "policy.ts",
-    "task.ts",
     "report.ts",
     "review.ts",
     "roles.ts",
-    "evidence.ts",
-    "git-audit.ts",
-    "orchestrate.ts",
-    "notify.ts",
+    "task.ts",
+    "types.ts",
     "usage.ts",
-    "CONTEXT.md",
-    "README.md",
-    "README.zh-CN.md"
+    "workspace-snapshot.ts"
   ],
   "pi": {
     "extensions": [
@@ -44,7 +45,7 @@
     "piHost": ">=0.84 <1"
   },
   "scripts": {
-    "test": "node --experimental-strip-types policy.test.mjs && node --experimental-strip-types roles.test.mjs && node --experimental-strip-types task.test.mjs && node --experimental-strip-types report.test.mjs && node --experimental-strip-types review.test.mjs && node --experimental-strip-types notify.test.mjs && node --experimental-strip-types usage.test.mjs && node --experimental-strip-types orchestrate.test.mjs && node --experimental-strip-types evidence.test.mjs && node --experimental-strip-types git-audit.test.mjs && node --experimental-strip-types index.test.mjs && node --experimental-strip-types architecture.test.mjs && node --experimental-strip-types naming.test.mjs",
+    "test": "node --experimental-strip-types policy.test.mjs && node --experimental-strip-types roles.test.mjs && node --experimental-strip-types task.test.mjs && node --experimental-strip-types report.test.mjs && node --experimental-strip-types review.test.mjs && node --experimental-strip-types notify.test.mjs && node --experimental-strip-types usage.test.mjs && node --experimental-strip-types orchestrate.test.mjs && node --experimental-strip-types evidence.test.mjs && node --experimental-strip-types git-audit.test.mjs && node --experimental-strip-types index.test.mjs && node --experimental-strip-types workspace-snapshot.test.mjs && node --experimental-strip-types architecture.test.mjs && node --experimental-strip-types naming.test.mjs",
     "test:e2e": "node --experimental-strip-types e2e.pi-subagents.test.mjs",
     "typecheck": "tsc --noEmit",
     "test:release": "npm run typecheck && npm test && PI_PLANNER_ONLY_REQUIRE_CONTRACT=1 npm run test:e2e"

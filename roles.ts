@@ -206,7 +206,9 @@ export function prepareRoleDelegation(
 			// D09 — the reviewer is told which report revision and workspace
 			// summary it is reviewing, so its verdict can be bound to them.
 			reportRevision: target.task?.reports.length ?? 0,
-			...(report ? { workspaceDigest: workspaceSummaryDigest(report) } : {}),
+			...(report
+				? { workspaceDigest: target.task?.snapshot?.digest ?? workspaceSummaryDigest(report) }
+				: {}),
 			...(options.evidence ? { evidence: options.evidence } : {}),
 			...(options.git ? { git: options.git } : {}),
 		})

@@ -628,7 +628,7 @@ try {
 // v0.2 lifecycle: git_audit, delegation, worker reports, review commands
 // --------------------------------------------------------------------------
 
-const { hashStatus, workspaceSummaryDigest } = await import("./evidence.ts");
+const { hashStatus } = await import("./evidence.ts");
 const emptyStatus = "";
 // A fixture worktree whose changes are exactly what the worker will report.
 const cleanStatus = [
@@ -748,6 +748,7 @@ const workerResult = await handlers.get("tool_result")(
 	ctx,
 );
 const workerText = workerResult.content[0].text;
+const SNAPSHOT_DIGEST_RE = /workspaceDigest: ([0-9a-f]{16})/;
 assert.match(workerText, /\[PLANNER-ONLY REVIEW STATE\]/);
 assert.ok(workerText.includes(`taskId: ${CANON100}`));
 assert.match(workerText, /decision: review_pending/);
@@ -787,7 +788,8 @@ const reviewResult = {
 	summary: "the parser has no test coverage",
 	evidenceFresh: true,
 	reportRevision: 1,
-	workspaceDigest: digestOfFixture(workerReport),
+	// D09 — echo the workspace snapshot digest the rendered report carries.
+	workspaceDigest: SNAPSHOT_DIGEST_RE.exec(workerText)?.[1],
 	findings: [
 		{ severity: "major", category: "test", description: "no test for empty input", requestedChange: "add a case" },
 		{ severity: "minor", category: "maintainability", description: "naming" },
@@ -1092,6 +1094,8 @@ const v10Worker = await handlers.get("tool_result")(
 );
 assert.match(v10Worker.content[0].text, /decision: review_pending/);
 const CANON510 = /taskId: (T-\d{8}-\d{3})/.exec(v10Worker.content[0].text)?.[1];
+const digest510 = SNAPSHOT_DIGEST_RE.exec(v10Worker.content[0].text)?.[1];
+assert.ok(digest510, "the rendered report must carry the workspace snapshot digest");
 assert.ok(CANON510, "decision block must print the canonical task id");
 
 // pass while a reviewer delegation is pending -> refused
@@ -1121,9 +1125,7 @@ const v11Outcome = await handlers.get("tool_result")(
 			summary: "missing empty-input coverage",
 			evidenceFresh: true,
 			reportRevision: 1,
-			// Root hashes the porcelain's paths (parser.ts + parser.test.ts), not the
-			// report's declared changedPaths.
-			workspaceDigest: digestOfFixture(v10Report, ["src/parser.ts", "src/parser.test.ts"]),
+			workspaceDigest: digest510,
 			findings: [{ severity: "major", category: "test", description: "no empty-input case", requestedChange: "add a case" }],
 		}) }],
 		isError: false,

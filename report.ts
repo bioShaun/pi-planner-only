@@ -604,7 +604,7 @@ export function renderValidationResults(values: readonly ValidationResult[]): st
 
 export function renderWorkerReport(
 	report: WorkerReport,
-	context: { round?: number; maxRounds?: number; state?: TaskState; evidence?: string; reviewMode?: ReviewMode } = {},
+	context: { round?: number; maxRounds?: number; state?: TaskState; evidence?: string; reviewMode?: ReviewMode; workspaceDigest?: string } = {},
 ): string {
 	const lines: string[] = ["[PLANNER-ONLY WORKER REPORT]"];
 	lines.push(`taskId: ${report.taskId}`);
@@ -629,6 +629,7 @@ export function renderWorkerReport(
 		`  base: ${report.evidence.baseGitRef ?? "(none)"}`,
 		`  head: ${report.evidence.finalGitRef ?? "(none)"}`,
 		`  statusHash: ${report.evidence.gitStatusHash ?? "(none)"}`,
+		`  workspaceDigest: ${context.workspaceDigest ?? "(none)"}`,
 		...(report.evidence.diffStat
 			? [`  diffStat: ${report.evidence.diffStat.split("\n").pop()?.trim()}`]
 			: []),

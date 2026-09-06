@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { PlannerOrchestrator, isDelegationCall } from "./orchestrate.ts";
-import { isExecutingStale } from "./task.ts";
+import { createTaskSpec, isExecutingStale } from "./task.ts";
 import { TaskStore } from "./task.ts";
-import { hashStatus, workspaceSummaryDigest } from "./evidence.ts";
+import { hashStatus } from "./evidence.ts";
 
 // Fixture ids are stamped 2026-09-05; pin the store clock so id replacement
 // never depends on the wall clock of the machine running the suite.
@@ -107,18 +107,10 @@ function reviewerResult(toolCallId, taskId, verdict = "pass", overrides = {}) {
 				summary: `${verdict} from reviewer`,
 				evidenceFresh: true,
 				findings: [],
-				// D09 — echo what the ReviewRequest packet said: revision 1 and the
-				// workspace summary of the report the reviewer saw. Root stamps the
-				// report with its own sample; fixture paths never exist on disk, so
-				// each changed path hashes to null in that sample.
+				// D09 — echo what the ReviewRequest packet said: the report revision
+				// plus the workspace snapshot digest the reviewer was shown. Call
+				// sites pass the Task's current snapshot digest via overrides.
 				reportRevision: 1,
-				workspaceDigest: workspaceSummaryDigest({
-					...reportFor(taskId, toolCallId),
-					evidence: {
-						...reportFor(taskId, toolCallId).evidence,
-						dirtyPathHashes: Object.fromEntries((reportFor(taskId, toolCallId).evidence.changedPaths ?? []).map((p) => [p, null])),
-					},
-				}),
 				...overrides,
 			}),
 		}],
@@ -335,7 +327,7 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 		BASE,
 	);
 	assert.equal(specCall.task.taskId, "T-20260905-500");
-	const specReview = await orch.handleSubagentResult(reviewerResult("call-501", "T-20260905-500", "request_changes"));
+	const specReview = await orch.handleSubagentResult(reviewerResult("call-501", "T-20260905-500", "request_changes", { workspaceDigest: orch.store.require("T-20260905-500").snapshot?.digest }));
 	assert.match(specReview.content[0].text, /decision: request_changes/);
 
 	const packetCall = await orch.beginDelegation(
@@ -349,7 +341,7 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 		BASE,
 	);
 	assert.equal(packetCall.task.taskId, "T-20260905-500");
-	await orch.handleSubagentResult(reviewerResult("call-502", "T-20260905-500", "pass"));
+	await orch.handleSubagentResult(reviewerResult("call-502", "T-20260905-500", "pass", { workspaceDigest: orch.store.require("T-20260905-500").snapshot?.digest }));
 
 	const task = orch.store.require("T-20260905-500");
 	assert.equal(task.role, "worker");
@@ -425,7 +417,7 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 			{ toolCallId: "call-612-r", input: { agent: "reviewer", task: JSON.stringify(specFor("T-20260905-612", "reviewer")) } },
 			BASE,
 		);
-		const outcome = await orch.handleSubagentResult(reviewerResult("call-612-r", "T-20260905-612", "pass"));
+		const outcome = await orch.handleSubagentResult(reviewerResult("call-612-r", "T-20260905-612", "pass", { workspaceDigest: orch.store.require("T-20260905-612").snapshot?.digest }));
 		assert.match(outcome.content[0].text, /decision: revalidate/);
 		assert.equal(orch.store.require("T-20260905-612").state, "changes_requested");
 		assert.notEqual(orch.store.require("T-20260905-612").state, "completed");
@@ -445,7 +437,7 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 		{ toolCallId: "call-613-r", input: { agent: "reviewer", task: JSON.stringify(specFor("T-20260905-613", "reviewer")) } },
 		BASE,
 	);
-	const outcome = await orch.handleSubagentResult(reviewerResult("call-613-r", "T-20260905-613", "pass"));
+	const outcome = await orch.handleSubagentResult(reviewerResult("call-613-r", "T-20260905-613", "pass", { workspaceDigest: orch.store.require("T-20260905-613").snapshot?.digest }));
 	assert.match(outcome.content[0].text, /decision: accept/);
 	assert.equal(orch.store.require("T-20260905-613").state, "completed");
 }
@@ -679,7 +671,7 @@ function truncatedPreview() {
 	assert.match(orch.rootVerdictRefusal(orch.store.require("T-20260905-617"), "pass"), /still pending/);
 
 	// the reviewer requests changes; Root's pass is then recorded as an override
-	const reviewerOutcome = await orch.handleSubagentResult(reviewerResult("call-617-r", "T-20260905-617", "request_changes"));
+	const reviewerOutcome = await orch.handleSubagentResult(reviewerResult("call-617-r", "T-20260905-617", "request_changes", { workspaceDigest: orch.store.require("T-20260905-617").snapshot?.digest }));
 	assert.match(reviewerOutcome.content[0].text, /decision: request_changes/);
 	assert.equal(orch.store.require("T-20260905-617").reviews.at(-1).source, "reviewer");
 	assert.equal(orch.rootVerdictRefusal(orch.store.require("T-20260905-617"), "pass"), undefined);
@@ -2248,7 +2240,7 @@ function realGitRunnerOf(dir) {
 	assert.equal(orch.pendingDelegationCount(), 1, "one reviewer waiter remains");
 	assert.equal(orch.getDelegation("call-t7-8"), undefined);
 
-	const staleVerdict = await orch.handleSubagentResult(reviewerResult("call-t7-8", taskId, "pass"));
+	const staleVerdict = await orch.handleSubagentResult(reviewerResult("call-t7-8", taskId, "pass", { workspaceDigest: orch.store.require(taskId).snapshot?.digest }));
 	assert.equal(staleVerdict, undefined, "the superseded invocation records nothing");
 	await orch.beginDelegation(
 		{ toolCallId: "call-t7-10", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) } },
@@ -2325,7 +2317,7 @@ function realGitRunnerOf(dir) {
 		BASE,
 	);
 	const stale = await orch.handleSubagentResult(
-		reviewerResult("call-t8-1r", taskId, "pass", { reportRevision: 1 }),
+		reviewerResult("call-t8-1r", taskId, "pass", { reportRevision: 1, workspaceDigest: orch.store.require(taskId).snapshot?.digest }),
 	);
 	assert.match(stale.content[0].text, /reportRevision mismatch/);
 	assert.equal(orch.store.require(taskId).reviews.length, 0, "the stale PASS is not recorded");
@@ -2387,10 +2379,118 @@ function realGitRunnerOf(dir) {
 		{ toolCallId: "call-t8-5r", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) } },
 		BASE,
 	);
-	const outcome = await orch.handleSubagentResult(reviewerResult("call-t8-5r", taskId, "pass"));
+	const outcome = await orch.handleSubagentResult(reviewerResult("call-t8-5r", taskId, "pass", { workspaceDigest: orch.store.require(taskId).snapshot?.digest }));
 	assert.match(outcome.content[0].text, /decision: accept/);
 	assert.equal(orch.store.require(taskId).state, "completed");
 	assert.equal(orch.store.require(taskId).reviews.at(-1).reportRevision, 1);
+}
+
+// --------------------------------------------------------------------------
+// Ticket 10 — the workspace snapshot is the freshness basis for PASS
+// --------------------------------------------------------------------------
+
+// A pre-snapshot report (no snapshot bound) cannot complete via PASS.
+{
+	const store = new TaskStore({ now: () => new Date(2026, 8, 5) });
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const taskId = "T-20260905-994";
+	const task = store.create(createTaskSpec({ objective: "legacy", cwd: BASE }), undefined);
+	store.transition(task.taskId, "executing");
+	store.recordReport(task.taskId, reportFor(taskId, "call-t10-0"));
+	const outcome = await orch.recordRootVerdict(store.require(task.taskId), "pass", "accepting legacy");
+	assert.equal(outcome.decision.action, "revalidate");
+	assert.match(outcome.decision.reason, /pre-snapshot report/);
+	assert.match(outcome.decision.reason, /a new report is required/);
+	assert.notEqual(outcome.task.state, "completed");
+}
+
+// A ReviewResult naming a stale workspace digest cannot complete the Task.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-993";
+	await delegateWorker(orch, "call-t10-1", taskId);
+	await orch.handleSubagentResult(workerResult("call-t10-1", reportFor(taskId, "call-t10-1")));
+	await orch.beginDelegation(
+		{ toolCallId: "call-t10-1r", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) } },
+		BASE,
+	);
+	const staleDigest = await orch.handleSubagentResult(
+		reviewerResult("call-t10-1r", taskId, "pass", { workspaceDigest: "ffffffffffffffff" }),
+	);
+	assert.match(staleDigest.content[0].text, /workspaceDigest mismatch/);
+	assert.equal(orch.store.require(taskId).state, "reviewing");
+	assert.equal(orch.store.require(taskId).reviews.length, 0);
+}
+
+// In a real repo: an mtime-only touch does not block PASS; deleting an
+// in-scope file after the report does.
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-snapbound-"));
+	const git = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+	try {
+		git("init", "-q");
+		git("config", "user.email", "test@example.com");
+		git("config", "user.name", "Test");
+		writeFileSync(join(dir, "tracked.txt"), "base\n");
+		git("add", ".");
+		git("commit", "-m", "base", "-q");
+
+		const runner = realGitRunnerOf(dir);
+		const orch = new PlannerOrchestrator({ gitRunner: runner, store: pinnedStore() });
+		const spec = { ...specFor("T-20260905-989"), cwd: dir, scope: { allowedPaths: ["tracked.txt"] } };
+		await orch.beginDelegation(
+			{ toolCallId: "call-t10-2", input: { task: JSON.stringify(spec) } },
+			BASE,
+		);
+		writeFileSync(join(dir, "tracked.txt"), "worker edit\n");
+		await orch.handleSubagentResult(workerResult("call-t10-2", {
+			version: 1,
+			taskId: "T-20260905-989",
+			status: "completed",
+			summary: "edited tracked.txt",
+			changedFiles: ["tracked.txt"],
+			validation: [{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "ok" }],
+			evidence: { cwd: dir, taskId: "T-20260905-989", workerRunId: "call-t10-2", changedPaths: ["tracked.txt"], gitAvailable: true, generatedAt: new Date().toISOString() },
+			risks: [],
+			unresolved: [],
+		}));
+
+		// mtime-only change: the snapshot digest holds, PASS accepts
+		const later = new Date(Date.now() + 60_000);
+		utimesSync(join(dir, "tracked.txt"), later, later);
+		const freshVerdict = await orch.recordRootVerdict(orch.store.require("T-20260905-989"), "pass", "mtime only");
+		assert.equal(freshVerdict.decision.action, "accept", "mtime-only drift must not block PASS");
+		assert.equal(freshVerdict.task.state, "completed");
+
+		// start over: a new report, then an in-scope file disappears before PASS
+		await orch.beginDelegation(
+			{ toolCallId: "call-t10-3", input: { task: JSON.stringify({ ...spec, taskId: "T-20260905-988" }) } },
+			BASE,
+		);
+		writeFileSync(join(dir, "tracked.txt"), "worker edit again\n");
+		await orch.handleSubagentResult(workerResult("call-t10-3", {
+			version: 1,
+			taskId: "T-20260905-988",
+			status: "completed",
+			summary: "edited tracked.txt",
+			changedFiles: ["tracked.txt"],
+			validation: [{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "ok" }],
+			evidence: { cwd: dir, taskId: "T-20260905-988", workerRunId: "call-t10-3", changedPaths: ["tracked.txt"], gitAvailable: true, generatedAt: new Date().toISOString() },
+			risks: [],
+			unresolved: [],
+		}));
+		rmSync(join(dir, "tracked.txt"));
+		const staleVerdict = await orch.recordRootVerdict(orch.store.require("T-20260905-988"), "pass", "accepting a deletion");
+		assert.equal(staleVerdict.decision.action, "revalidate");
+		assert.ok(
+			staleVerdict.decision.reason.includes("workspace snapshot changed since the report")
+			|| staleVerdict.decision.reason.includes("content changed since the report"),
+			staleVerdict.decision.reason,
+		);
+		assert.notEqual(staleVerdict.task.state, "completed");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 }
 
 console.log("planner-only orchestration: PASS");

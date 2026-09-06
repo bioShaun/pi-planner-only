@@ -11,6 +11,10 @@ import {
 	describeComparison,
 	workspaceSummaryDigest,
 } from "./evidence.ts";
+import {
+	captureWorkspaceSnapshot,
+	compareSnapshotBinding,
+} from "./workspace-snapshot.ts";
 import type { GitRunner } from "./git-audit.ts";
 import {
 	inferRoleFromAgent,
@@ -130,6 +134,17 @@ function bindReportToSample(report: WorkerReport, sample: EvidenceRef): WorkerRe
 			...(sample.dirtyPathHashes ? { dirtyPathHashes: sample.dirtyPathHashes } : {}),
 		},
 	};
+}
+
+/**
+ * Ticket 10 — the snapshot's verification inputs: the task's exact scope
+ * paths plus every path Git reports changed in the sample window.
+ */
+function snapshotPathsFor(task: TaskRecord, sample: EvidenceRef): string[] {
+	const paths = new Set<string>();
+	for (const path of task.spec?.scope?.allowedPaths ?? []) paths.add(path);
+	for (const path of sample.changedPaths ?? []) paths.add(path);
+	return [...paths];
 }
 
 function compareWithRootSamples(
@@ -870,18 +885,32 @@ export class PlannerOrchestrator {
 		let evidence: string | undefined;
 
 		if (verdict === "pass" && report) {
-			comparison = compareWithRootSamples(
-				current,
-				await captureEvidence(this.gitRunner, {
-					cwd: current.cwd,
-					taskId: current.taskId,
-					workerRunId: report.evidence.workerRunId,
-					...(current.baseEvidence?.finalGitRef
-						? { baseGitRef: current.baseEvidence.finalGitRef }
-						: {}),
-				}),
-				report,
-			);
+			const currentSample = await captureEvidence(this.gitRunner, {
+				cwd: current.cwd,
+				taskId: current.taskId,
+				workerRunId: report.evidence.workerRunId,
+				...(current.baseEvidence?.finalGitRef
+					? { baseGitRef: current.baseEvidence.finalGitRef }
+					: {}),
+			});
+			comparison = compareWithRootSamples(current, currentSample, report);
+			// Ticket 10 — acceptance compares the workspace snapshot digest, not
+			// HEAD/status hashes. Unknown or stale bindings refuse the PASS.
+			const snapshot = captureWorkspaceSnapshot({
+				cwd: current.cwd,
+				taskId: current.taskId,
+				invocationId: `verdict-${report.evidence.workerRunId}`,
+				paths: snapshotPathsFor(current, currentSample),
+			});
+			const binding = compareSnapshotBinding(current.snapshot, snapshot, current.reports.length);
+			if (binding.state !== "fresh" && binding.reason) {
+				comparison = {
+					...comparison,
+					fresh: false,
+					unexplained: true,
+					reasons: [...comparison.reasons, binding.reason],
+				};
+			}
 			this.store.setLastComparison(current.taskId, comparison);
 			evidence = describeComparison(comparison);
 		}
@@ -1101,7 +1130,9 @@ export class PlannerOrchestrator {
 		const latestReport = task.reports.at(-1);
 		const bindingErrors = validateReviewResultBinding(review, {
 			reportRevision: task.reports.length,
-			...(latestReport ? { workspaceDigest: workspaceSummaryDigest(latestReport) } : {}),
+			...(latestReport
+				? { workspaceDigest: task.snapshot?.digest ?? workspaceSummaryDigest(latestReport) }
+				: {}),
 		});
 		if (bindingErrors.length > 0) {
 			return {
@@ -1203,6 +1234,22 @@ export class PlannerOrchestrator {
 			// report-time content hashes for the acceptance-boundary comparison.
 			report = bindReportToSample(report, current);
 			this.store.recordReport(task.taskId, report);
+			// Ticket 10 — bind the workspace snapshot that validated this report.
+			const revision = this.store.require(task.taskId).reports.length;
+			const snapshot = captureWorkspaceSnapshot({
+				cwd: task.cwd,
+				taskId: task.taskId,
+				invocationId: toolCallId,
+				paths: snapshotPathsFor(task, current),
+			});
+			if (snapshot.state === "fresh" && snapshot.digest) {
+				this.store.setSnapshot(task.taskId, {
+					version: 1,
+					digest: snapshot.digest,
+					reportRevision: revision,
+					capturedAt: snapshot.capturedAt,
+				});
+			}
 		}
 		const comparison = report
 			? compareWithRootSamples(task, current, report)
@@ -1266,6 +1313,7 @@ export class PlannerOrchestrator {
 						state: latest.state,
 						evidence: evidenceLabel,
 						reviewMode: task.reviewMode,
+						workspaceDigest: latest.snapshot?.digest,
 					}),
 					...(compacted ? ["", "Note: the report exceeded the parent context budget and was compacted. Re-inspect details with read/grep/git_audit if needed."] : []),
 				].join("\n"),

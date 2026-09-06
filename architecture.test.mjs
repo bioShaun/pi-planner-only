@@ -37,6 +37,7 @@ for (const leak of [
 	"task.cwd =",
 	"task.baseEvidence =",
 	"task.lastComparison =",
+	"task.snapshot =",
 ]) {
 	assert.equal(index.includes(leak), false, `Pi adapter leaks across the Task store seam: ${leak}`);
 }

@@ -28,6 +28,7 @@ import type {
 	WorkerReport,
 } from "./types.ts";
 import type { EvidenceComparison } from "./evidence.ts";
+import type { WorkspaceSnapshotBinding } from "./workspace-snapshot.ts";
 import { jsonCandidates } from "./report.ts";
 import { emptyTaskUsage } from "./usage.ts";
 
@@ -241,6 +242,8 @@ export interface TaskRecord {
 	baseReportCount?: number;
 	/** Result of the most recent Root A-to-C evidence comparison. */
 	lastComparison?: EvidenceComparison;
+	/** Workspace snapshot bound to the latest recorded report (ticket 10). */
+	snapshot?: WorkspaceSnapshotBinding;
 	/** Reason for an operator-forced terminal state, when applicable. */
 	stateReason?: string;
 	/** Per-task usage snapshot; live totals live in UsageLedger. Initialised empty. */
@@ -385,6 +388,13 @@ export class TaskStore {
 		return this.touch(record);
 	}
 
+	/** Bind the workspace snapshot that validated the latest report (ticket 10). */
+	setSnapshot(taskId: string, binding: WorkspaceSnapshotBinding): TaskRecord {
+		const record = this.require(taskId);
+		record.snapshot = binding;
+		return this.touch(record);
+	}
+
 	recordReport(taskId: string, report: WorkerReport): TaskRecord {
 		const record = this.require(taskId);
 		record.reports.push(report);
@@ -451,6 +461,7 @@ export class TaskStore {
 		record.stateReason = reason;
 		delete record.baseEvidence;
 		delete record.baseReportCount;
+		delete record.snapshot;
 		return this.touch(record);
 	}
 }
