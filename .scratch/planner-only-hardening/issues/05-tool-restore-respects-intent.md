@@ -4,13 +4,15 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done (implemented in 00adf70)
 
-- [ ] on → off → on restores only tools this extension suppressed that are still registered; it does not re-enable a safe tool the operator had disabled before first on.
-- [ ] While on, another extension (or the operator) disables a tool; a later off/on does not unconditionally restore that tool.
-- [ ] Environment-forced off: executing on reports that the effective state remains off and names the environment source.
-- [ ] Status output includes effective on/off and source (environment, persisted mark, or session) in a form that works without UI.
+- [x] on → off → on restores only tools this extension suppressed that are still registered; it does not re-enable a safe tool the operator had disabled before first on.
+- [x] While on, another extension (or the operator) disables a tool; a later off/on does not unconditionally restore that tool.
+- [x] Environment-forced off: executing on reports that the effective state remains off and names the environment source.
+- [x] Status output includes effective on/off and source (environment, persisted mark, or session) in a form that works without UI.
 
 ## Comments
 
 Parent: hardening FR-06 / T02–T04. Default intersection filter is already in place (T01).
+
+- Implemented in 00adf70; acceptance criteria covered by the suite described in the commit message.

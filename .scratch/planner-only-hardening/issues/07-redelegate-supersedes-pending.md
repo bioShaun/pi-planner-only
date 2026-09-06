@@ -4,13 +4,15 @@
 
 **Blocked by:** 01: Lost child completion no longer deadlocks Task verdicts
 
-**Status:** ready-for-agent
+**Status:** done (implemented in ce93b21)
 
-- [ ] Re-delegating Worker (or Reviewer / Validator) on a Task that still has a pending child leaves at most one pending Delegation for that Task; the older one is superseded, not kept beside the new one.
-- [ ] A single-run completion notice with that Task’s id matches the remaining waiter; two same-role leftovers no longer cause “match nothing”.
-- [ ] A late notice for the superseded runId does not record a second report or move the Task backwards.
-- [ ] Ticket 01’s reconcile still runs on the superseded record if its artifacts are already terminal, so a finished older run is not silently discarded when it still has a usable WorkerReport.
+- [x] Re-delegating Worker (or Reviewer / Validator) on a Task that still has a pending child leaves at most one pending Delegation for that Task; the older one is superseded, not kept beside the new one.
+- [x] A single-run completion notice with that Task’s id matches the remaining waiter; two same-role leftovers no longer cause “match nothing”.
+- [x] A late notice for the superseded runId does not record a second report or move the Task backwards.
+- [x] Ticket 01’s reconcile still runs on the superseded record if its artifacts are already terminal, so a finished older run is not silently discarded when it still has a usable WorkerReport.
 
 ## Comments
 
 Parent: pending-delegation-blocker (plugin defects 2–3 and match ambiguity) and hardening D08 (late/duplicate completion).
+
+- Implemented in ce93b21; acceptance criteria covered by the suite described in the commit message.

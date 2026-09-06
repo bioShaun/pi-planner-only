@@ -4,14 +4,16 @@
 
 **Blocked by:** 03: All writable Delegations share one write lock
 
-**Status:** ready-for-agent
+**Status:** done (implemented in 9fd96b3)
 
-- [ ] An executing Task that is past the stale-duration still blocks a second writable Delegation on that worktree if the child has not been confirmed exited.
-- [ ] Cancel or report-parse failure does not drop the lock until the child is known stopped (or never started).
-- [ ] Timeout moves the Task into an explicit blocked / needs-reconcile state rather than unlocking for the next writer.
-- [ ] Confirmed start failure (no process) does unlock and does not leave a phantom holder.
-- [ ] Unlock after confirmed exit is idempotent if completion and cancel both fire.
+- [x] An executing Task that is past the stale-duration still blocks a second writable Delegation on that worktree if the child has not been confirmed exited.
+- [x] Cancel or report-parse failure does not drop the lock until the child is known stopped (or never started).
+- [x] Timeout moves the Task into an explicit blocked / needs-reconcile state rather than unlocking for the next writer.
+- [x] Confirmed start failure (no process) does unlock and does not leave a phantom holder.
+- [x] Unlock after confirmed exit is idempotent if completion and cancel both fire.
 
 ## Comments
 
 Parent: hardening FR-04 / D07, plus pending-delegation-blocker suggestion to distrust a launch receipt that the host is not actually tracking as background.
+
+- Implemented in 9fd96b3; acceptance criteria covered by the suite described in the commit message.

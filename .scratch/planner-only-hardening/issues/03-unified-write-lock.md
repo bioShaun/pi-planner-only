@@ -4,14 +4,16 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done (implemented in acc5f82)
 
-- [ ] Two concurrent writable Delegations on the same worktree: only one obtains the lock; the other is blocked before launch and no executing state is created for the loser.
-- [ ] A second writable Delegation for the same Task still goes through invocation-level conflict detection (same-Task is not a free pass).
-- [ ] Warn-mode Worker without a TaskSpec still takes the write lock.
-- [ ] Validator with bash (or any general shell) is treated as writable and takes the same lock; absence of edit/write tools is not enough to skip it.
-- [ ] Relative-path and symlink aliases of the same worktree are recognized as one tree for conflict.
+- [x] Two concurrent writable Delegations on the same worktree: only one obtains the lock; the other is blocked before launch and no executing state is created for the loser.
+- [x] A second writable Delegation for the same Task still goes through invocation-level conflict detection (same-Task is not a free pass).
+- [x] Warn-mode Worker without a TaskSpec still takes the write lock.
+- [x] Validator with bash (or any general shell) is treated as writable and takes the same lock; absence of edit/write tools is not enough to skip it.
+- [x] Relative-path and symlink aliases of the same worktree are recognized as one tree for conflict.
 
 ## Comments
 
 Parent: hardening FR-04 / D02–D06. Process-lifetime of the lock is ticket 09.
+
+- Implemented in acc5f82; acceptance criteria covered by the suite described in the commit message.

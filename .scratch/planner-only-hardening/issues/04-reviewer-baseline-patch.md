@@ -4,13 +4,15 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done (implemented in c479be6)
 
-- [ ] A Worker that only staged whitespace-breaking changes: Reviewer packet diff-check reports the problem and retains the non-zero exit.
-- [ ] Deleting a required check is visible as a patch against the Task baseline, not only as a path name.
-- [ ] Worker commits the Task’s changes: Reviewer still sees a patch relative to the Task baseline, not “empty because HEAD moved”.
-- [ ] When the patch exceeds size or file budget, the packet marks omitted paths and truncated totals; a Reviewer must request more or return incomplete, not PASS as if the packet were whole.
+- [x] A Worker that only staged whitespace-breaking changes: Reviewer packet diff-check reports the problem and retains the non-zero exit.
+- [x] Deleting a required check is visible as a patch against the Task baseline, not only as a path name.
+- [x] Worker commits the Task’s changes: Reviewer still sees a patch relative to the Task baseline, not “empty because HEAD moved”.
+- [x] When the patch exceeds size or file budget, the packet marks omitted paths and truncated totals; a Reviewer must request more or return incomplete, not PASS as if the packet were whole.
 
 ## Comments
 
 Parent: hardening FR-05 / R01–R04.
+
+- Implemented in c479be6; acceptance criteria covered by the suite described in the commit message.

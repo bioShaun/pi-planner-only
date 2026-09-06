@@ -4,13 +4,15 @@
 
 **Blocked by:** 02: Evidence comparison refuses fake-fresh
 
-**Status:** ready-for-agent
+**Status:** done (implemented in c066332)
 
-- [ ] After report revision N is reviewed PASS, a new WorkerReport N+1 is recorded: applying the stored N PASS does not complete the Task.
-- [ ] A ReviewResult whose report revision or workspace summary does not match the latest report is refused; Task state is unchanged.
-- [ ] A well-formed ReviewResult that matches Task id, report revision, and current summary is still recorded as today.
-- [ ] Root `planner_verdict` does not inherit a stale Reviewer’s `evidenceFresh` as proof of the new report.
+- [x] After report revision N is reviewed PASS, a new WorkerReport N+1 is recorded: applying the stored N PASS does not complete the Task.
+- [x] A ReviewResult whose report revision or workspace summary does not match the latest report is refused; Task state is unchanged.
+- [x] A well-formed ReviewResult that matches Task id, report revision, and current summary is still recorded as today.
+- [x] Root `planner_verdict` does not inherit a stale Reviewer’s `evidenceFresh` as proof of the new report.
 
 ## Comments
 
 Parent: hardening FR-03 / D09 (reportRevision binding). WorkspaceSnapshot digest as the sole freshness key is ticket 10.
+
+- Implemented in c066332; acceptance criteria covered by the suite described in the commit message.

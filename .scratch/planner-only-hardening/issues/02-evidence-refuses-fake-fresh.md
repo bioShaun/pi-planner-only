@@ -4,14 +4,16 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done (implemented in 3408664)
 
-- [ ] Changing a dirty file’s contents without changing porcelain status makes compare-evidence stale; `decideReview` with PASS does not accept.
-- [ ] Changing an untracked in-scope file’s contents makes compare-evidence stale; PASS does not accept.
-- [ ] A non-zero or timed-out Git status probe yields unknown (not available-with-empty-status); PASS does not accept.
-- [ ] A report missing required HEAD / status / content-binding fields yields unknown and asks for re-validation; it does not default to fresh.
-- [ ] Regression tests cover these four cases in a real temporary Git repo, not only synthetic fixtures.
+- [x] Changing a dirty file’s contents without changing porcelain status makes compare-evidence stale; `decideReview` with PASS does not accept.
+- [x] Changing an untracked in-scope file’s contents makes compare-evidence stale; PASS does not accept.
+- [x] A non-zero or timed-out Git status probe yields unknown (not available-with-empty-status); PASS does not accept.
+- [x] A report missing required HEAD / status / content-binding fields yields unknown and asks for re-validation; it does not default to fresh.
+- [x] Regression tests cover these four cases in a real temporary Git repo, not only synthetic fixtures.
 
 ## Comments
 
 Parent: hardening FR-01 core (E01, E02) and FR-02 (E06, E07). Full WorkspaceSnapshot is ticket 10.
+
+- Implemented in 3408664; acceptance criteria covered by the suite described in the commit message.
