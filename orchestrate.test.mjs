@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { PlannerOrchestrator, isDelegationCall } from "./orchestrate.ts";
@@ -1950,6 +1950,94 @@ function realGitRunnerOf(dir) {
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
+}
+
+// --------------------------------------------------------------------------
+// Ticket 03 — all writable Delegations share one write lock
+// --------------------------------------------------------------------------
+
+// Two concurrent writable delegations on the same worktree (one via a symlink
+// alias): only one obtains the lock; the loser never reaches executing and
+// registers no delegation.
+{
+	const real = mkdtempSync(join(process.cwd(), ".planner-only-wlock-"));
+	const aliasParent = mkdtempSync(join(process.cwd(), ".planner-only-wlock-"));
+	const alias = join(aliasParent, "wt");
+	symlinkSync(real, alias);
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	try {
+		setCleanTree();
+		const first = await orch.beginDelegation(
+			{ toolCallId: "call-wl-1", input: { task: JSON.stringify(specFor("T-20260905-970", "worker", real)) } },
+			BASE,
+		);
+		assert.equal(first.conflict, undefined);
+		assert.equal(orch.store.require("T-20260905-970").state, "executing");
+
+		const second = await orch.beginDelegation(
+			{ toolCallId: "call-wl-2", input: { task: JSON.stringify(specFor("T-20260905-971", "worker", alias)) } },
+			BASE,
+		);
+		assert.equal(second.conflict?.conflict, true, "symlink alias of a locked worktree must conflict");
+		assert.match(second.conflict.reason, /T-20260905-970/);
+		assert.equal(orch.store.get("T-20260905-971")?.state, "planning", "no executing state for the loser");
+		assert.equal(orch.pendingDelegationCount(), 1, "the loser registers no delegation");
+	} finally {
+		rmSync(real, { recursive: true, force: true });
+		rmSync(aliasParent, { recursive: true, force: true });
+	}
+}
+
+// A second writable delegation for the same Task while the first is live still
+// goes through invocation-level conflict detection.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-wl-3", input: { task: JSON.stringify(specFor("T-20260905-972")) } },
+		BASE,
+	);
+	const again = await orch.beginDelegation(
+		{ toolCallId: "call-wl-4", input: { task: JSON.stringify(specFor("T-20260905-972")) } },
+		BASE,
+	);
+	assert.equal(again.conflict?.conflict, true, "same-Task re-entry is not a free pass");
+	assert.equal(orch.pendingDelegationCount(), 1);
+}
+
+// Warn-mode workers without a TaskSpec still take the write lock.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	setCleanTree();
+	const first = await orch.beginDelegation(
+		{ toolCallId: "call-wl-5", input: { agent: "worker", task: "no spec attached" } },
+		BASE,
+	);
+	assert.ok(first.task);
+	assert.equal(first.task.state, "executing");
+	const second = await orch.beginDelegation(
+		{ toolCallId: "call-wl-6", input: { agent: "worker", task: "also no spec" } },
+		BASE,
+	);
+	assert.equal(second.conflict?.conflict, true, "unstructured workers contend for the lock");
+	assert.equal(orch.pendingDelegationCount(), 1);
+}
+
+// A validator (general shell) is writable: it is refused while a worker holds
+// the same worktree, even though it carries no edit/write tools.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-wl-7", input: { task: JSON.stringify(specFor("T-20260905-973")) } },
+		BASE,
+	);
+	const validator = await orch.beginDelegation(
+		{ toolCallId: "call-wl-8", input: { agent: "oracle", task: JSON.stringify(specFor("T-20260905-973", "validator")) } },
+		BASE,
+	);
+	assert.equal(validator.conflict?.conflict, true, "shell-capable validators take the write lock");
+	assert.equal(orch.pendingDelegationCount(), 1);
 }
 
 console.log("planner-only orchestration: PASS");

@@ -443,7 +443,8 @@ export class PlannerOrchestrator {
 		}
 
 		// A Validator is an invocation over an existing Task: it must not create,
-		// rebind, transition, or sample.
+		// rebind, transition, or sample. It can run a general shell, so it is
+		// writable and contends for the same write lock (FR-04).
 		if (target?.role === "validator" || inferRoleFromAgent(inputAgent(input)) === "validator") {
 			const reviewed = this.resolveValidatorReviewedTask(input, cwd, target);
 			if (!reviewed) {
@@ -453,6 +454,10 @@ export class PlannerOrchestrator {
 				const placeholder = specId
 					?? (named.length === 1 ? named[0] : undefined)
 					?? `unbound-validator-${event.toolCallId}`;
+				const unboundConflict = findWriterConflict(this.store.list(), cwd, "validator", this.store.now().getTime());
+				if (unboundConflict.conflict) {
+					return { conflict: unboundConflict };
+				}
 				this.delegations.set(event.toolCallId, {
 					taskId: placeholder,
 					kind: "validator",
@@ -470,6 +475,10 @@ export class PlannerOrchestrator {
 				warnings.push(
 					`Planner-only: validator TaskSpec id ${specId} ignored; validating task ${reviewed.taskId}`,
 				);
+			}
+			const validatorConflict = findWriterConflict(this.store.list(), reviewed.cwd, "validator", this.store.now().getTime());
+			if (validatorConflict.conflict) {
+				return { task: reviewed, conflict: validatorConflict, ...(warnings.length ? { warnings } : {}) };
 			}
 			this.delegations.set(event.toolCallId, {
 				taskId: reviewed.taskId,
@@ -580,12 +589,10 @@ export class PlannerOrchestrator {
 		this.store.ensureCwd(task.taskId, cwd);
 		task = this.store.require(task.taskId);
 
-		// Only enforce the write lock when the parent positively declared a
-		// writer role via an embedded TaskSpec. An inferred role must not wedge
-		// a session that simply delegates twice in the same cwd.
-		const conflict = spec
-			? findWriterConflict(this.store.list(), task.cwd, task.role, task.taskId)
-			: { conflict: false };
+		// FR-04 — write coordination follows actual write ability, not the
+		// presence of a TaskSpec: a warn-mode unstructured worker and a
+		// shell-capable validator take the same lock as a structured worker.
+		const conflict = findWriterConflict(this.store.list(), task.cwd, role, this.store.now().getTime());
 		if (conflict.conflict) {
 			return { task, conflict, ...(warnings.length ? { warnings } : {}) };
 		}

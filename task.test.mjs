@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { mkdtempSync, symlinkSync } from "node:fs";
 import {
 	TaskStore,
 	createTaskId,
@@ -276,26 +277,44 @@ const writerA = {
 const writerB = { ...writerA, taskId: "B" };
 const readerC = { ...writerA, taskId: "C", role: "explorer" };
 
-assert.equal(findWriterConflict([writerA], cwd, "worker", "A").conflict, false);
-const clash = findWriterConflict([writerA], cwd, "worker", "B");
+// FR-04 — the lock follows write ability; same-Task re-entry is not a free pass
+assert.equal(findWriterConflict([writerA], cwd, "worker").conflict, true);
+assert.equal(findWriterConflict([writerA], cwd, "worker").taskId, "A");
+const clash = findWriterConflict([writerA], cwd, "worker");
 assert.equal(clash.conflict, true);
 assert.equal(clash.taskId, "A");
 assert.match(clash.reason, /write lock/);
 // readers never take the lock and never conflict
-assert.equal(findWriterConflict([writerA], cwd, "explorer", "C").conflict, false);
-assert.equal(findWriterConflict([readerC], cwd, "worker", "D").conflict, false);
+assert.equal(findWriterConflict([writerA], cwd, "explorer").conflict, false);
+assert.equal(findWriterConflict([readerC], cwd, "worker").conflict, false);
+// a shell-capable validator is writable and contends; explorers do not
+const shellValidator = { ...writerA, taskId: "V", role: "validator" };
+assert.equal(findWriterConflict([writerA], cwd, "validator").conflict, true);
+assert.equal(findWriterConflict([shellValidator], cwd, "worker").conflict, true);
+assert.equal(findWriterConflict([shellValidator], cwd, "explorer").conflict, false);
 // only executing tasks hold it
 assert.equal(
-	findWriterConflict([{ ...writerA, state: "reviewing" }], cwd, "worker", "B").conflict,
+	findWriterConflict([{ ...writerA, state: "reviewing" }], cwd, "worker").conflict,
 	false,
 );
 // different cwd is fine
-assert.equal(findWriterConflict([writerA], "/elsewhere", "worker", "B").conflict, false);
+assert.equal(findWriterConflict([writerA], "/elsewhere", "worker").conflict, false);
+// relative and symlink aliases of one worktree collide
+{
+	const real = mkdtempSync(join(process.cwd(), ".planner-only-lock-"));
+	const aliasParent = mkdtempSync(join(process.cwd(), ".planner-only-lock-"));
+	const alias = join(aliasParent, "alias");
+	symlinkSync(real, alias);
+	const holder = { ...writerA, cwd: real };
+	assert.equal(findWriterConflict([holder], alias, "worker").conflict, true, "symlink alias collides");
+	assert.equal(findWriterConflict([holder], `${real}/sub/..`, "worker").conflict, true, "relative alias collides");
+	assert.equal(findWriterConflict([holder], alias, "explorer").conflict, false);
+}
 
 const staleWriter = { ...writerA, updatedAt: new Date(Date.now() - EXECUTING_STALE_MS - 1).toISOString() };
 assert.equal(isExecutingStale(staleWriter), true);
-assert.equal(findWriterConflict([staleWriter], cwd, "worker", "B").conflict, false);
-assert.equal(findWriterConflict([writerA], cwd, "worker", "B").conflict, true);
+assert.equal(findWriterConflict([staleWriter], cwd, "worker").conflict, false);
+assert.equal(findWriterConflict([writerA], cwd, "worker").conflict, true);
 const abandoned = store.create(createTaskSpec({ objective: "stuck", cwd }, "T-abandon-001"));
 store.transition(abandoned.taskId, "executing");
 store.abandon(abandoned.taskId, "operator reset");

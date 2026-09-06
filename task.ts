@@ -5,6 +5,7 @@
  * state machine, and the one-writer-per-cwd lock.
  */
 
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import {
 	MAX_REPORT_CORRECTIONS,
@@ -32,8 +33,27 @@ import { emptyTaskUsage } from "./usage.ts";
 
 const TASK_ROLES: readonly TaskRole[] = ["worker", "explorer", "validator", "reviewer"];
 
-/** Roles that may mutate the working tree. Only these take the write lock. */
-const WRITER_ROLES: readonly TaskRole[] = ["worker"];
+/**
+ * FR-04 — capability profiles per role. The write lock follows actual write
+ * ability, not the role's name: a validator with a general shell can mutate
+ * the tree, and an unbounded worker keeps its own tools. roles.ts re-exports
+ * this table so agent remapping and write coordination cannot drift apart.
+ */
+export const ROLE_TOOL_PROFILES: Record<TaskRole, readonly string[] | undefined> = {
+	explorer: ["read", "grep", "find", "ls"],
+	reviewer: ["read", "grep", "find", "ls"],
+	validator: ["read", "grep", "find", "ls", "bash"],
+	worker: undefined,
+};
+
+/** Tools that can mutate the working tree or execute arbitrary programs. */
+export const MUTATING_TOOLS = ["edit", "write", "bash"] as const;
+
+export function roleAllowsMutatingTools(role: TaskRole): boolean {
+	const tools = ROLE_TOOL_PROFILES[role];
+	if (tools === undefined) return true;
+	return tools.some((tool) => (MUTATING_TOOLS as readonly string[]).includes(tool));
+}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -177,9 +197,12 @@ export function extractTaskSpec(text: string): TaskSpec | undefined {
 	return undefined;
 }
 
-/** Roles the spec says a reviewer may never hold mutating tools in. */
+/**
+ * Roles whose tool ceiling lets them mutate the working tree. Only these
+ * contend for the write lock.
+ */
 export function isWriterRole(role: TaskRole): boolean {
-	return WRITER_ROLES.includes(role);
+	return roleAllowsMutatingTools(role);
 }
 
 export const TASK_TRANSITIONS: Record<TaskState, readonly TaskState[]> = {
@@ -445,33 +468,41 @@ export interface WriterConflict {
 }
 
 /**
- * §14 — at most one writer per cwd at a time.
+ * FR-04 — at most one writable invocation per worktree at a time.
  *
- * Exact cwd equality only: a writer in `/repo` and another in
- * `/repo/packages/a` do not conflict. Path-prefix / worktree overlap is a
- * known limitation; the A-to-C evidence model attributes every change in its
- * window to the delegation, so this lock is a precondition for correct
- * attribution, not merely a convenience.
+ * The lock follows actual write ability (`isWriterRole`), not the presence of
+ * a TaskSpec or the worker role name: a warn-mode unstructured worker and a
+ * shell-capable validator contend just the same, and a second call on the
+ * *same* Task is not a free pass — re-entry goes through this check too.
  *
- * Only enforced when the incoming task positively declares a writer role; an
- * unknown role must not block a read-only delegation.
+ * cwd identity is normalized through `realpath` so relative paths and symlink
+ * aliases of one worktree collide; independent worktrees stay independent.
  */
+export function normalizeWorkspaceIdentity(cwd: string): string {
+	const absolute = resolve(cwd);
+	try {
+		return realpathSync(absolute);
+	} catch {
+		// Unrenamed/uncreated paths still collide by resolved text.
+		return absolute;
+	}
+}
+
 export function findWriterConflict(
 	tasks: readonly TaskRecord[],
 	cwd: string,
 	role: TaskRole,
-	selfTaskId?: string,
+	now: number = Date.now(),
 ): WriterConflict {
 	if (!isWriterRole(role)) return { conflict: false };
-	const target = resolve(cwd);
+	const target = normalizeWorkspaceIdentity(cwd);
 	const holder = tasks.find(
 		(task) =>
-			task.taskId !== selfTaskId &&
 			isWriterRole(task.role) &&
 			task.state === "executing" &&
 			task.cwd !== "" &&
-			!isExecutingStale(task) &&
-			resolve(task.cwd) === target,
+			!isExecutingStale(task, now) &&
+			normalizeWorkspaceIdentity(task.cwd) === target,
 	);
 	if (!holder) return { conflict: false };
 	return {
@@ -479,8 +510,8 @@ export function findWriterConflict(
 		taskId: holder.taskId,
 		reason: [
 			`Planner-only guard: task ${holder.taskId} already holds the write lock for ${target}.`,
-			"Keep one writer per cwd. Use isolated worktrees for concurrent writers.",
-			"Wait for that task to finish, or delegate this one into a separate worktree.",
+			"Keep one writable invocation per worktree; even a second call on the same Task must wait.",
+			"Wait for that run's result to release the lock, or delegate this one into a separate worktree.",
 		].join("\n"),
 	};
 }

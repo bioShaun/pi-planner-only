@@ -5,24 +5,24 @@ import type { TaskRecord } from "./task.ts";
 import { buildFreshReviewerTask, extractReviewRequest } from "./review.ts";
 import type { ReviewRequest } from "./types.ts";
 
+// The capability table is owned by task.ts so the write lock and the agent
+// remapping share one source of truth; re-exported here for consumers.
+export { ROLE_TOOL_PROFILES, MUTATING_TOOLS, roleAllowsMutatingTools } from "./task.ts";
+
 /**
- * §13 — capability profiles. Worker is unbounded (the selected agent keeps its
- * own tools). Restricted roles are enforced by remapping to a builtin agent
- * whose allowlist matches the profile. Foreground children do not load
- * ambient extensions, so this is the per-child tool ceiling the parent
- * can actually apply. Background children may load ambient extensions;
- * this extension no-ops when PI_SUBAGENT_CHILD=1.
+ * §13 — capability profiles live in task.ts (the write-lock owner) so agent
+ * remapping and write coordination share one source of truth; re-exported
+ * above. Worker is unbounded (the selected agent keeps its own tools).
+ * Restricted roles are enforced by remapping to a builtin agent whose
+ * allowlist matches the profile. Foreground children do not load ambient
+ * extensions, so this is the per-child tool ceiling the parent can actually
+ * apply. Background children may load ambient extensions; this extension
+ * no-ops when PI_SUBAGENT_CHILD=1.
  *
  * Reviewer children therefore have no `git_audit`: that tool is registered
  * by this extension and is not on the reviewer allowlist. Root passes
  * a bounded Git evidence packet instead (§P1-2).
  */
-export const ROLE_TOOL_PROFILES: Record<TaskRole, readonly string[] | undefined> = {
-	explorer: ["read", "grep", "find", "ls"],
-	reviewer: ["read", "grep", "find", "ls"],
-	validator: ["read", "grep", "find", "ls", "bash"],
-	worker: undefined,
-};
 
 /** Builtin pi-subagents agents whose declared tools match the role profile. */
 export const ROLE_AGENTS: Record<TaskRole, string | undefined> = {
@@ -32,20 +32,12 @@ export const ROLE_AGENTS: Record<TaskRole, string | undefined> = {
 	worker: undefined,
 };
 
-export const MUTATING_TOOLS = ["edit", "write", "bash"] as const;
-
 const AGENT_ROLES: Record<string, TaskRole> = {
 	explorer: "explorer",
 	reviewer: "reviewer",
 	oracle: "validator",
 	worker: "worker",
 };
-
-export function roleAllowsMutatingTools(role: TaskRole): boolean {
-	const tools = ROLE_TOOL_PROFILES[role];
-	if (tools === undefined) return true;
-	return tools.some((tool) => (MUTATING_TOOLS as readonly string[]).includes(tool));
-}
 
 export function inferRoleFromAgent(agent: string | undefined): TaskRole | undefined {
 	if (!agent) return undefined;
