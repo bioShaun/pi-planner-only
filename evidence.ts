@@ -14,6 +14,7 @@ import { resolve } from "node:path";
 import { GIT_READ_ARGV, GIT_REF_PATTERN } from "./git-audit.ts";
 import type { GitRunner } from "./git-audit.ts";
 import { MAX_BASELINE_HASH_PATHS } from "./types.ts";
+import { stableStringify } from "./report.ts";
 import type {
 	BinaryChange,
 	DiffCheckResult,
@@ -709,6 +710,24 @@ export function isEvidenceStale(
 	options: CompareEvidenceOptions = {},
 ): boolean {
 	return !compareEvidence(base, current, report, options).fresh;
+}
+
+/**
+ * FR-03 / D09 — the workspace summary a report revision was validated
+ * against. Reviews name this digest so a reviewer PASS can only be applied to
+ * the workspace it actually saw. Ticket 10's WorkspaceSnapshot digest will
+ * replace the inputs; the binding point stays the same.
+ */
+export function workspaceSummaryDigest(report: WorkerReport): string {
+	const evidence = report.evidence;
+	return createHash("sha256")
+		.update(stableStringify({
+			finalGitRef: evidence.finalGitRef ?? null,
+			gitStatusHash: evidence.gitStatusHash ?? null,
+			dirtyPathHashes: evidence.dirtyPathHashes ?? null,
+		}))
+		.digest("hex")
+		.slice(0, 16);
 }
 
 /**

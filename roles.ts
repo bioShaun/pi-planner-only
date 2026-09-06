@@ -3,6 +3,7 @@ import { canRebindNamedTask } from "./types.ts";
 import { extractTaskSpec } from "./task.ts";
 import type { TaskRecord } from "./task.ts";
 import { buildFreshReviewerTask, extractReviewRequest } from "./review.ts";
+import { workspaceSummaryDigest } from "./evidence.ts";
 import type { ReviewRequest } from "./types.ts";
 
 // The capability table is owned by task.ts so the write lock and the agent
@@ -202,6 +203,10 @@ export function prepareRoleDelegation(
 			taskId: target.task?.taskId ?? target.taskId ?? "unknown",
 			...(packetSpec ? { spec: packetSpec } : {}),
 			...(report ? { report } : {}),
+			// D09 — the reviewer is told which report revision and workspace
+			// summary it is reviewing, so its verdict can be bound to them.
+			reportRevision: target.task?.reports.length ?? 0,
+			...(report ? { workspaceDigest: workspaceSummaryDigest(report) } : {}),
 			...(options.evidence ? { evidence: options.evidence } : {}),
 			...(options.git ? { git: options.git } : {}),
 		})

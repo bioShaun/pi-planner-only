@@ -9,6 +9,7 @@ import {
 	captureReviewEvidencePacket,
 	compareEvidence,
 	describeComparison,
+	workspaceSummaryDigest,
 } from "./evidence.ts";
 import type { GitRunner } from "./git-audit.ts";
 import {
@@ -39,6 +40,7 @@ import {
 	extractReviewRequest,
 	extractReviewResult,
 	summarizeFindings,
+	validateReviewResultBinding,
 	validateReviewResultIdentity,
 } from "./review.ts";
 import type { ReviewDecision } from "./review.ts";
@@ -1086,6 +1088,29 @@ export class PlannerOrchestrator {
 						`[PLANNER-ONLY] Reviewer verdict was rejected: ${identityErrors.join("; ")}.`,
 						"The verdict was not recorded and no task state changed.",
 						`Re-delegate review for task ${task.taskId} with a ReviewResult whose taskId is ${task.taskId}.`,
+						"",
+						truncate(text, RAW_OUTPUT_FALLBACK_CHARS),
+					].join("\n"),
+				}],
+			};
+		}
+
+		// FR-03 / D09 — the verdict is bound to the report revision and
+		// workspace summary it reviewed. A stale PASS cannot complete a Task
+		// that has a newer report, and an unbound pass is refused outright.
+		const latestReport = task.reports.at(-1);
+		const bindingErrors = validateReviewResultBinding(review, {
+			reportRevision: task.reports.length,
+			...(latestReport ? { workspaceDigest: workspaceSummaryDigest(latestReport) } : {}),
+		});
+		if (bindingErrors.length > 0) {
+			return {
+				content: [{
+					type: "text",
+					text: [
+						`[PLANNER-ONLY] Reviewer verdict was rejected: ${bindingErrors.join("; ")}.`,
+						"The verdict was not recorded and no task state changed.",
+						`Re-delegate review for task ${task.taskId} so the reviewer receives the current ReviewRequest, and echo its reportRevision and workspaceDigest.`,
 						"",
 						truncate(text, RAW_OUTPUT_FALLBACK_CHARS),
 					].join("\n"),

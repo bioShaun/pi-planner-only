@@ -628,7 +628,7 @@ try {
 // v0.2 lifecycle: git_audit, delegation, worker reports, review commands
 // --------------------------------------------------------------------------
 
-const { hashStatus } = await import("./evidence.ts");
+const { hashStatus, workspaceSummaryDigest } = await import("./evidence.ts");
 const emptyStatus = "";
 // A fixture worktree whose changes are exactly what the worker will report.
 const cleanStatus = [
@@ -664,6 +664,18 @@ const truncatedAudit = await audit.execute(
 	ctx,
 );
 assert.equal(truncatedAudit.details.ok, true);
+
+// Root stamps stored reports with its own sample; fixture paths never exist on
+// disk, so each changed path hashes to null in that sample.
+function digestOfFixture(report, paths = report.evidence.changedPaths ?? []) {
+	return workspaceSummaryDigest({
+		...report,
+		evidence: {
+			...report.evidence,
+			dirtyPathHashes: Object.fromEntries(paths.map((p) => [p, null])),
+		},
+	});
+}
 
 function delegationSpec(taskId, role = "worker", cwd = `/fixture/${taskId}`) {
 	return {
@@ -774,6 +786,8 @@ const reviewResult = {
 	verdict: "request_changes",
 	summary: "the parser has no test coverage",
 	evidenceFresh: true,
+	reportRevision: 1,
+	workspaceDigest: digestOfFixture(workerReport),
 	findings: [
 		{ severity: "major", category: "test", description: "no test for empty input", requestedChange: "add a case" },
 		{ severity: "minor", category: "maintainability", description: "naming" },
@@ -1106,6 +1120,10 @@ const v11Outcome = await handlers.get("tool_result")(
 			verdict: "request_changes",
 			summary: "missing empty-input coverage",
 			evidenceFresh: true,
+			reportRevision: 1,
+			// Root hashes the porcelain's paths (parser.ts + parser.test.ts), not the
+			// report's declared changedPaths.
+			workspaceDigest: digestOfFixture(v10Report, ["src/parser.ts", "src/parser.test.ts"]),
 			findings: [{ severity: "major", category: "test", description: "no empty-input case", requestedChange: "add a case" }],
 		}) }],
 		isError: false,

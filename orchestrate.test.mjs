@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { PlannerOrchestrator, isDelegationCall } from "./orchestrate.ts";
 import { isExecutingStale } from "./task.ts";
 import { TaskStore } from "./task.ts";
-import { hashStatus } from "./evidence.ts";
+import { hashStatus, workspaceSummaryDigest } from "./evidence.ts";
 
 // Fixture ids are stamped 2026-09-05; pin the store clock so id replacement
 // never depends on the wall clock of the machine running the suite.
@@ -94,14 +94,33 @@ function workerResult(toolCallId, report, wrapped = false) {
 	return { toolCallId, toolName: "subagent", input: {}, content: [{ type: "text", text }], isError: false };
 }
 
-function reviewerResult(toolCallId, taskId, verdict = "pass") {
+function reviewerResult(toolCallId, taskId, verdict = "pass", overrides = {}) {
 	return {
 		toolCallId,
 		toolName: "subagent",
 		input: {},
 		content: [{
 			type: "text",
-			text: JSON.stringify({ taskId, verdict, summary: `${verdict} from reviewer`, evidenceFresh: true, findings: [] }),
+			text: JSON.stringify({
+				taskId,
+				verdict,
+				summary: `${verdict} from reviewer`,
+				evidenceFresh: true,
+				findings: [],
+				// D09 — echo what the ReviewRequest packet said: revision 1 and the
+				// workspace summary of the report the reviewer saw. Root stamps the
+				// report with its own sample; fixture paths never exist on disk, so
+				// each changed path hashes to null in that sample.
+				reportRevision: 1,
+				workspaceDigest: workspaceSummaryDigest({
+					...reportFor(taskId, toolCallId),
+					evidence: {
+						...reportFor(taskId, toolCallId).evidence,
+						dirtyPathHashes: Object.fromEntries((reportFor(taskId, toolCallId).evidence.changedPaths ?? []).map((p) => [p, null])),
+					},
+				}),
+				...overrides,
+			}),
 		}],
 		isError: false,
 	};
@@ -2274,6 +2293,104 @@ function realGitRunnerOf(dir) {
 		gitOverrides.delete("diff --patch --no-ext-diff --no-textconv abc1234");
 		gitOverrides.delete("diff --numstat --no-ext-diff --no-textconv abc1234");
 	}
+}
+
+// --------------------------------------------------------------------------
+// Ticket 08 — a reviewer PASS cannot accept a newer WorkerReport
+// --------------------------------------------------------------------------
+
+// A stale reviewer PASS (revision N while N+1 exists) is refused, not recorded,
+// and Root's fresh-mode arbitration does not inherit it.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-996";
+	await delegateWorker(orch, "call-t8-1", taskId);
+	await orch.handleSubagentResult(workerResult("call-t8-1", reportFor(taskId, "call-t8-1")));
+	orch.store.setReviewMode(taskId, "fresh");
+
+	// a new WorkerReport N+1 is recorded
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-t8-2", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	setDirtyTree();
+	await orch.handleSubagentResult(workerResult("call-t8-2", reportFor(taskId, "call-t8-2")));
+	assert.equal(orch.store.require(taskId).reports.length, 2);
+
+	// the review is delegated against N+1, but the reviewer returns a PASS for
+	// the stored revision N: it must not complete the Task
+	await orch.beginDelegation(
+		{ toolCallId: "call-t8-1r", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) } },
+		BASE,
+	);
+	const stale = await orch.handleSubagentResult(
+		reviewerResult("call-t8-1r", taskId, "pass", { reportRevision: 1 }),
+	);
+	assert.match(stale.content[0].text, /reportRevision mismatch/);
+	assert.equal(orch.store.require(taskId).reviews.length, 0, "the stale PASS is not recorded");
+	assert.equal(orch.store.require(taskId).state, "reviewing", "the Task does not complete");
+	assert.match(
+		orch.rootVerdictRefusal(orch.store.require(taskId), "pass"),
+		/no reviewer ReviewResult exists yet/,
+		"Root does not inherit the stale reviewer PASS as current",
+	);
+}
+
+// A ReviewResult whose workspace digest does not match the latest report is refused.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-997";
+	await delegateWorker(orch, "call-t8-3", taskId);
+	await orch.handleSubagentResult(workerResult("call-t8-3", reportFor(taskId, "call-t8-3")));
+	await orch.beginDelegation(
+		{ toolCallId: "call-t8-3r", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) } },
+		BASE,
+	);
+	const mismatched = await orch.handleSubagentResult(
+		reviewerResult("call-t8-3r", taskId, "pass", { workspaceDigest: "0123456789abcdef" }),
+	);
+	assert.match(mismatched.content[0].text, /workspaceDigest mismatch/);
+	assert.equal(orch.store.require(taskId).reviews.length, 0);
+	assert.equal(orch.store.require(taskId).state, "reviewing");
+}
+
+// A pass that names no revision or digest at all is refused, not defaulted.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-998";
+	await delegateWorker(orch, "call-t8-4", taskId);
+	await orch.handleSubagentResult(workerResult("call-t8-4", reportFor(taskId, "call-t8-4")));
+	await orch.beginDelegation(
+		{ toolCallId: "call-t8-4r", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) } },
+		BASE,
+	);
+	const unbound = await orch.handleSubagentResult({
+		toolCallId: "call-t8-4r",
+		toolName: "subagent",
+		input: {},
+		content: [{ type: "text", text: JSON.stringify({ taskId, verdict: "pass", summary: "unbound pass", evidenceFresh: true, findings: [] }) }],
+		isError: false,
+	});
+	assert.match(unbound.content[0].text, /missing reportRevision/);
+	assert.match(unbound.content[0].text, /missing workspaceDigest/);
+	assert.equal(orch.store.require(taskId).reviews.length, 0);
+}
+
+// A well-formed ReviewResult matching task, revision, and digest is still recorded.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-999";
+	await delegateWorker(orch, "call-t8-5", taskId);
+	await orch.handleSubagentResult(workerResult("call-t8-5", reportFor(taskId, "call-t8-5")));
+	await orch.beginDelegation(
+		{ toolCallId: "call-t8-5r", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) } },
+		BASE,
+	);
+	const outcome = await orch.handleSubagentResult(reviewerResult("call-t8-5r", taskId, "pass"));
+	assert.match(outcome.content[0].text, /decision: accept/);
+	assert.equal(orch.store.require(taskId).state, "completed");
+	assert.equal(orch.store.require(taskId).reviews.at(-1).reportRevision, 1);
 }
 
 console.log("planner-only orchestration: PASS");

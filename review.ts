@@ -169,11 +169,55 @@ export function validateReviewResultIdentity(
 	];
 }
 
+/**
+ * FR-03 / D09 — a ReviewResult is only meaningful for the report revision and
+ * workspace summary it was shown. A stale reviewer PASS must never complete a
+ * Task that has a newer report, and a pass that does not name its bindings is
+ * refused rather than defaulted to current.
+ */
+export function validateReviewResultBinding(
+	review: ReviewResult,
+	expected: { reportRevision: number; workspaceDigest?: string },
+): string[] {
+	const errors: string[] = [];
+	if (review.reportRevision !== undefined && review.reportRevision !== expected.reportRevision) {
+		errors.push(
+			`ReviewResult reportRevision mismatch: it reviewed revision ${review.reportRevision}, but the latest report is revision ${expected.reportRevision}`,
+		);
+	}
+	if (
+		review.workspaceDigest !== undefined &&
+		expected.workspaceDigest !== undefined &&
+		review.workspaceDigest !== expected.workspaceDigest
+	) {
+		errors.push(
+			"ReviewResult workspaceDigest mismatch: the reviewed workspace summary does not match the latest report",
+		);
+	}
+	if (review.verdict === "pass") {
+		if (review.reportRevision === undefined) {
+			errors.push(
+				"ReviewResult is missing reportRevision; a pass must name the report revision it reviewed",
+			);
+		}
+		if (review.workspaceDigest === undefined) {
+			errors.push(
+				"ReviewResult is missing workspaceDigest; a pass must name the workspace summary it reviewed",
+			);
+		}
+	}
+	return errors;
+}
+
 export interface FreshReviewerTaskInput {
 	taskId: string;
 	/** The Task's original spec, shown read-only. Never a reviewer spec. */
 	spec?: TaskSpec;
 	report?: WorkerReport;
+	/** Report revision shown to the reviewer (task.reports.length at packet time). */
+	reportRevision?: number;
+	/** Workspace summary digest of the shown report. */
+	workspaceDigest?: string;
 	/** Freshness summary of the last Root-side evidence comparison. */
 	evidence?: string;
 	/** Bounded Git-read sample taken by Root (reviewer children have no git). */
@@ -194,6 +238,8 @@ export function buildReviewRequest(input: FreshReviewerTaskInput): ReviewRequest
 		reviewMode: "fresh",
 		...(input.spec ? { taskSpec: input.spec } : {}),
 		...(input.report ? { workerReport: input.report } : {}),
+		...(input.reportRevision !== undefined ? { reportRevision: input.reportRevision } : {}),
+		...(input.workspaceDigest ? { workspaceDigest: input.workspaceDigest } : {}),
 		...(input.evidence ? { evidenceSummary: input.evidence } : {}),
 		...(input.git ? { evidencePacket: input.git } : {}),
 	};

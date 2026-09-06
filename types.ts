@@ -235,6 +235,10 @@ export interface ReviewRequest {
 	reportTaskId: string;
 	reviewMode: "fresh";
 	workerReport?: WorkerReport;
+	/** Report revision the reviewer is shown (task.reports.length at packet time). */
+	reportRevision?: number;
+	/** Workspace summary digest of the report the reviewer is shown. */
+	workspaceDigest?: string;
 	taskSpec?: TaskSpec;
 	evidenceSummary?: string;
 	evidencePacket?: ReviewEvidencePacket;
@@ -263,6 +267,10 @@ export interface ReviewResult {
 	summary: string;
 	findings: ReviewFinding[];
 	evidenceFresh: boolean;
+	/** Report revision this verdict reviewed; a pass must name it (FR-03 D09). */
+	reportRevision?: number;
+	/** Workspace summary the reviewed report was validated against. */
+	workspaceDigest?: string;
 	reviewedEvidenceRef?: EvidenceRef;
 	/** Who recorded this verdict; records from before 0.3 read as "reviewer". */
 	source?: "reviewer" | "root" | "operator";
