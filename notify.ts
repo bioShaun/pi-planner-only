@@ -206,11 +206,21 @@ function childMetaNames(runId: string, agent: string): string[] {
 	return [`${safe}_meta.json`, `${safe}_0_meta.json`];
 }
 
+/** What a child-run `_meta.json` yields: identity, terminal state, cost. */
+export interface ChildRunMeta {
+	runId: string;
+	agent: string;
+	/** Numeric exit code marks the run terminal; absent means state unknown. */
+	exitCode?: number;
+	model?: string;
+	usage?: unknown;
+}
+
 function tryReadChildMetaFile(
 	path: string,
 	runId: string,
 	agent: string,
-): { runId: string; agent: string; exitCode?: number; model?: string; usage?: unknown } | undefined {
+): ChildRunMeta | undefined {
 	let st;
 	try {
 		st = lstatSync(path);
@@ -254,7 +264,7 @@ export function readChildMeta(
 	artifactDirs: readonly string[],
 	runId: string,
 	agent: string,
-): { runId: string; agent: string; exitCode?: number; model?: string; usage?: unknown } | undefined {
+): ChildRunMeta | undefined {
 	if (isUnsafeRunId(runId) || !agent) return undefined;
 	const names = childMetaNames(runId, agent);
 	for (const dir of artifactDirs) {

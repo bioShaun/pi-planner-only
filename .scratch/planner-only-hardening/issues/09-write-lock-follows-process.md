@@ -17,3 +17,7 @@
 Parent: hardening FR-04 / D07, plus pending-delegation-blocker suggestion to distrust a launch receipt that the host is not actually tracking as background.
 
 - Implemented in 9fd96b3; acceptance criteria covered by the suite described in the commit message.
+
+## Implementation notes
+
+- The safety half of the timeout bullet is implemented (a stale holder keeps blocking and the lock never auto-releases); the "explicit state" is surfaced as recorded `stateReason` on the holder plus the stale-lock status line, not an automatic `blocked` transition, because child process state is unknowable without host support. Operator exits: `blocked` verdict (ticket 01 reconcile) or `task abandon`.

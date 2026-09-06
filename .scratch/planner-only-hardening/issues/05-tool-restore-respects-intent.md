@@ -16,3 +16,7 @@
 Parent: hardening FR-06 / T02–T04. Default intersection filter is already in place (T01).
 
 - Implemented in 00adf70; acceptance criteria covered by the suite described in the commit message.
+
+## Implementation notes
+
+- Known limitation, recorded per FR-06 §9.2: the host exposes no tool-change source, so a suppressed tool the operator explicitly re-disables mid-`on` cannot be distinguished from our own suppression and is restored at `off`. Tools the extension never suppressed are never touched.

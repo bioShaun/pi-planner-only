@@ -124,9 +124,12 @@ export function filterPlannerTools(activeTools: readonly string[]): string[] {
 
 /**
  * Restore what this extension suppressed. Only suppressed tools that are
- * still registered come back: a tool the operator or another extension
- * disabled in the meantime is not ours to re-enable, and tools this
- * extension never touched are left exactly as the session has them.
+ * still registered come back, and tools this extension never touched are
+ * left exactly as the session has them. Known limitation (the host exposes
+ * no tool-change source): if the operator explicitly disables one of *our*
+ * suppressed tools again mid-`on`, off/on cannot tell that apart from our
+ * own suppression and re-enables it — recorded here rather than claimed
+ * perfect (FR-06 §9.2).
  */
 export function restorePlannerTools(
 	activeTools: readonly string[],

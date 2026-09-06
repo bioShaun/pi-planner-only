@@ -231,6 +231,10 @@ npm run test:e2e  # real pi-subagents contracts (requires pi-subagents; otherwis
 npm run test:release  # release gate: typecheck + unit + e2e; a skipped contract suite fails here
 ```
 
+The PASS-boundary workspace snapshot covers the task's exact scope paths plus
+the paths Git reports changed; dependency, config, or lockfile inputs outside
+those sets are not freshness-bound unless you list them in the TaskSpec scope.
+
 `npm test` does not verify the runtime role downgrade mapping. That coverage is
 only exercised by `test:e2e`, and is unverified when `pi-subagents` is absent.
 

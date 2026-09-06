@@ -50,6 +50,7 @@ export const ROLE_TOOL_PROFILES: Record<TaskRole, readonly string[] | undefined>
 /** Tools that can mutate the working tree or execute arbitrary programs. */
 export const MUTATING_TOOLS = ["edit", "write", "bash"] as const;
 
+/** Whether the role's tool ceiling includes anything that can mutate the tree. */
 export function roleAllowsMutatingTools(role: TaskRole): boolean {
 	const tools = ROLE_TOOL_PROFILES[role];
 	if (tools === undefined) return true;
@@ -464,6 +465,11 @@ export class TaskStore {
 		delete record.snapshot;
 		return this.touch(record);
 	}
+}
+
+/** The stale-duration in whole minutes, for human-readable lock messages. */
+export function executingStaleMinutes(): number {
+	return Math.round(EXECUTING_STALE_MS / 60000);
 }
 
 export function isExecutingStale(task: TaskRecord, now = Date.now()): boolean {

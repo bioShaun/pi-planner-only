@@ -17,3 +17,7 @@
 Parent: hardening FR-01 core (E01, E02) and FR-02 (E06, E07). Full WorkspaceSnapshot is ticket 10.
 
 - Implemented in 3408664; acceptance criteria covered by the suite described in the commit message.
+
+## Implementation notes
+
+- The "missing required fields" rule is two-tier: a report with no Git binding at all, or no HEAD binding (`finalGitRef`) while Git is verifiable, is unknown. Status/content bindings are enforced by Root stamping its own sample into every recorded report (`bindReportToSample`) plus the ticket-10 snapshot gate, so a report missing what Root would have bound is exactly one Root never validated.

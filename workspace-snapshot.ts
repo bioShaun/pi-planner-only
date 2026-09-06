@@ -14,9 +14,10 @@
  */
 
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
+import { lstatSync, readFileSync, readdirSync, readlinkSync } from "node:fs";
 import { relative, resolve, sep } from "node:path";
 import { stableStringify } from "./report.ts";
+import { normalizeWorkspaceIdentity } from "./task.ts";
 
 export type EvidenceState = "fresh" | "stale" | "unknown";
 
@@ -79,13 +80,8 @@ export function snapshotDigest(entries: readonly SnapshotEntry[]): string {
 }
 
 function workspaceIdOf(cwd: string): string {
-	const absolute = resolve(cwd);
-	try {
-		// Match the write lock's worktree identity (realpath aliases collide).
-		return realpathSync(absolute);
-	} catch {
-		return absolute;
-	}
+	// The write lock's worktree identity: realpath aliases collide.
+	return normalizeWorkspaceIdentity(cwd);
 }
 
 function toWorkspacePath(cwd: string, input: string): string {

@@ -278,6 +278,16 @@ assert.equal(noFingerprints.verifiable, false);
 assert.equal(evidenceAction(noFingerprints), "revalidate");
 assert.match(describeComparison(noFingerprints), /report evidence incomplete/);
 
+// 9c. a report with status/content data but no HEAD binding is unknown (E07)
+const noHeadBinding = compareEvidence(
+	makeBase(),
+	makeCurrent(),
+	makeReport({ gitStatusHash: "hash-one", changedPaths: ["src/a.ts"] }),
+);
+assert.equal(noHeadBinding.verifiable, false);
+assert.equal(evidenceAction(noHeadBinding), "revalidate");
+assert.match(describeComparison(noHeadBinding), /no HEAD binding/);
+
 // 9b. partial bindings still verify: a report carrying HEAD + status binds fine
 const partialBinding = compareEvidence(
 	makeBase(),

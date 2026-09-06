@@ -2052,6 +2052,30 @@ function realGitRunnerOf(dir) {
 	assert.equal(orch.pendingDelegationCount(), 1);
 }
 
+// A validator delegated through an alias of the locked worktree collides too (D06).
+{
+	const real = mkdtempSync(join(process.cwd(), ".planner-only-wlock-"));
+	const aliasParent = mkdtempSync(join(process.cwd(), ".planner-only-wlock-"));
+	const alias = join(aliasParent, "wt");
+	symlinkSync(real, alias);
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	try {
+		setCleanTree();
+		await orch.beginDelegation(
+			{ toolCallId: "call-wl-9", input: { task: JSON.stringify(specFor("T-20260905-974", "worker", real)) } },
+			BASE,
+		);
+		const validator = await orch.beginDelegation(
+			{ toolCallId: "call-wl-10", input: { agent: "oracle", cwd: alias, task: JSON.stringify(specFor("T-20260905-974", "validator")) } },
+			BASE,
+		);
+		assert.equal(validator.conflict?.conflict, true, "an alias of the locked worktree collides for the invocation cwd");
+	} finally {
+		rmSync(real, { recursive: true, force: true });
+		rmSync(aliasParent, { recursive: true, force: true });
+	}
+}
+
 // --------------------------------------------------------------------------
 // Ticket 09 — the write lock outlives stale executing until the child is known stopped
 // --------------------------------------------------------------------------

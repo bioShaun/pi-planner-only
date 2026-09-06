@@ -614,9 +614,16 @@ export function compareEvidence(
 		unexplained = true;
 	}
 
-	// FR-02 — a report that carries no Git binding evidence at all cannot be
-	// called fresh: there is nothing to verify the validated content against.
-	if (
+	// FR-02 — required binding fields. Without HEAD binding, HEAD drift between
+	// the report and this comparison is undetectable; with no Git binding at
+	// all there is nothing to verify the validated content against. Either way
+	// the comparison is unknown, never defaulted to fresh. (Root stamps these
+	// fields from its own sample when it records a report, so reports missing
+	// them are exactly the ones Root never validated.)
+	if (verifiable && reported.finalGitRef === undefined) {
+		verifiable = false;
+		reasons.push("report evidence incomplete — no HEAD binding (finalGitRef) to verify");
+	} else if (
 		verifiable &&
 		reported.finalGitRef === undefined &&
 		reported.gitStatusHash === undefined &&

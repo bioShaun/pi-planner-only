@@ -52,6 +52,7 @@ import {
 	TaskStore,
 	createTaskSpec,
 	extractTaskSpec,
+	executingStaleMinutes,
 	findWriterConflict,
 	isExecutingStale,
 } from "./task.ts";
@@ -475,7 +476,7 @@ export class PlannerOrchestrator {
 				const placeholder = specId
 					?? (named.length === 1 ? named[0] : undefined)
 					?? `unbound-validator-${event.toolCallId}`;
-				const unboundConflict = findWriterConflict(this.store.list(), cwd, "validator", this.store.now().getTime());
+				const unboundConflict = this.writerConflict(cwd, "validator");
 				if (unboundConflict.conflict) {
 					return { conflict: unboundConflict };
 				}
@@ -497,7 +498,12 @@ export class PlannerOrchestrator {
 					`Planner-only: validator TaskSpec id ${specId} ignored; validating task ${reviewed.taskId}`,
 				);
 			}
-			const validatorConflict = findWriterConflict(this.store.list(), reviewed.cwd, "validator", this.store.now().getTime());
+			// The validator writes in its own cwd, but the work under review is
+			// also locked: collide on either (D02/D06).
+			const validatorConflict =
+				this.writerConflict(cwd, "validator").conflict
+					? this.writerConflict(cwd, "validator")
+					: this.writerConflict(reviewed.cwd, "validator");
 			if (validatorConflict.conflict) {
 				return { task: reviewed, conflict: validatorConflict, ...(warnings.length ? { warnings } : {}) };
 			}
@@ -614,8 +620,14 @@ export class PlannerOrchestrator {
 		// FR-04 — write coordination follows actual write ability, not the
 		// presence of a TaskSpec: a warn-mode unstructured worker and a
 		// shell-capable validator take the same lock as a structured worker.
-		const conflict = findWriterConflict(this.store.list(), task.cwd, role, this.store.now().getTime());
+		const conflict = this.writerConflict(task.cwd, role);
 		if (conflict.conflict) {
+			// D07 — a stale holder gets an explicit recorded note that its child
+			// must be reconciled; the lock itself never auto-releases.
+			const holder = conflict.taskId ? this.store.get(conflict.taskId) : undefined;
+			if (holder && isExecutingStale(holder, this.store.now().getTime()) && !holder.stateReason) {
+				holder.stateReason = `needs reconcile: executing past the stale duration without a confirmed child exit (lock held against task ${task.taskId})`;
+			}
 			return { task, conflict, ...(warnings.length ? { warnings } : {}) };
 		}
 
@@ -713,7 +725,7 @@ export class PlannerOrchestrator {
 			`State: ${task.state}`,
 			`Worker round: ${task.reviewRound}/${MAX_REVIEW_ROUNDS}`,
 			`Review mode: ${task.reviewMode}`,
-			...(isExecutingStale(task) ? [`Lock: stale (executing for over ${Math.round(EXECUTING_STALE_MS / 60000)} minutes; the child has not been confirmed exited — reconcile or abandon before writing)`] : []),
+			...(isExecutingStale(task) ? [`Lock: stale (executing for over ${executingStaleMinutes()} minutes; the child has not been confirmed exited — reconcile or abandon before writing)`] : []),
 			`Evidence: ${report ? (task.lastComparison ? describeComparison(task.lastComparison) : "not compared") : "no report yet"}`,
 			`Changed files: ${report?.changedFiles.length ?? 0}`,
 			...(task.validatorReports.length > 0 ? [`Validator reports: ${task.validatorReports.length}`] : []),
@@ -756,6 +768,11 @@ export class PlannerOrchestrator {
 			return `Task ${task.taskId} is in fresh review mode and no reviewer ReviewResult exists yet; delegate the review first — in fresh mode Root arbitrates, it does not pre-empt.`;
 		}
 		return undefined;
+	}
+
+	/** The write-lock check every writable delegation goes through (FR-04). */
+	private writerConflict(cwd: string, role: DelegationKind): WriterConflict {
+		return findWriterConflict(this.store.list(), cwd, role, this.store.now().getTime());
 	}
 
 	private hasPendingDelegation(taskId: string): boolean {

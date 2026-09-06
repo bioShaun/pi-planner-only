@@ -18,3 +18,7 @@
 Parent: hardening FR-01 remainder (E03–E05, E08–E11) and D09 digest binding. Largest ticket; if scope explodes during implementation, split only after 02 and 08 have landed, do not start this in parallel with them.
 
 - Implemented in 07099f8; acceptance criteria covered by the suite described in the commit message.
+
+## Implementation notes
+
+- Verification-input scope (parent FR-01 §4.2): the snapshot covers the task's exact scope paths plus Git-reported changes. Dependency/config/lockfile inputs outside those sets are not covered and are disclosed here rather than claimed: include them in `scope.allowedPaths` when they must be freshness-bound. Ignored files are not swept; `.git` is skipped in directory walks.
