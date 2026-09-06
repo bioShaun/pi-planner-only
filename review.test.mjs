@@ -464,6 +464,8 @@ assert.match(
 	assert.match(REVIEWER_PROMPT, /After checking acceptance criteria, changed paths, and verification evidence, stop/);
 	assert.match(REVIEWER_PROMPT, /return verdict blocked/);
 	assert.match(REVIEWER_PROMPT, /Do not compensate with a repository-wide scan/);
+	assert.match(REVIEWER_PROMPT, /ReviewRequest is your only input/);
+	assert.match(REVIEWER_PROMPT, /Do not git log, do not npm test/);
 	const prompted = reviewerPrompt("T-20260831-001");
 	assert.match(prompted, /isolated reviewer for task T-20260831-001/);
 	assert.doesNotMatch(prompted, /\{TASK_ID\}/);

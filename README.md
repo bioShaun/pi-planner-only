@@ -127,8 +127,17 @@ the next review action. Common deviations are automatically normalised, with
 applied repairs echoed in a `Report normalised:` line. Malformed output gets
 one report-only correction, then blocks. If the first result is prose with no
 report JSON at all, that correction also includes one compact JSON shape
-reminder. Accepted results do not repeat the fresh-reviewer prompt; the full
-packet is generated only when a reviewer is actually delegated.
+reminder. Every worker task also receives that same compact JSON shape up
+front, plus an instruction not to run `/code-review` — review is the plugin
+Reviewer's job. Accepted results do not repeat the fresh-reviewer prompt; the
+full packet is generated only when a reviewer is actually delegated. A
+reviewer works only from that packet (spec, report, digest, bounded patch):
+it must not `git log`, run `npm test`, or re-probe the tree.
+
+Validators (`oracle`) default to a bounded check when the worker's validation
+already exited 0: `git rev-parse HEAD`, `git status --porcelain`, and that
+named tests exist. Set `PI_PLANNER_ONLY_ORACLE=full` to re-run the full
+suite. Failed worker validation still re-runs the listed commands.
 
 ### Task identity and the PASS boundary
 

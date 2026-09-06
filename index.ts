@@ -48,6 +48,7 @@ Root: plan, delegate, inspect read-only, review, and arbitrate.
 Do not edit or write files, run a general shell, or implement fixes.
 
 Executable work uses one bounded TaskSpec embedded in one direct {agent, task} subagent call.
+One ticket per TaskSpec. Do not instruct workers to /code-review; the plugin reviewer is the only review.
 Embed the TaskSpec JSON so the worker can echo taskId. The extension may replace the id; use the canonical id returned by the extension afterwards.
 
 Every worker returns WorkerReport version ${WORKER_REPORT_VERSION} with taskId, status (completed|partial|blocked|failed), summary, changedFiles, validation plus exit codes, evidence, risks, and unresolved items.
@@ -57,7 +58,7 @@ Before acceptance: verify identity, evidence freshness, inspect relevant files a
 Role remapping: explorer/reviewer → builtin reviewer (read/grep/find/ls; context=fresh; bounded packet; never a fork of this session); validator → oracle (bash, no edits); worker keeps its agent.
 Do not pre-compose worker→reviewer as a workflowScript, tasks array, or chain. Call the reviewer only after the worker returns, in a separate direct call.
 
-Use git_audit. Never trust a worker PASS. Never accept stale evidence; re-delegate validation. Never fix rejected work; delegate a bounded correction. Stop after ${MAX_REVIEW_ROUNDS} review rounds (blocked).
+Use git_audit. Never trust a worker PASS. Never accept stale evidence; re-delegate validation (bounded oracle: HEAD/status + named tests; full suite only if PI_PLANNER_ONLY_ORACLE=full). Never fix rejected work; delegate a bounded correction. Stop after ${MAX_REVIEW_ROUNDS} review rounds (blocked).
 Lifecycle state arrives in delegation results; the operator may override a verdict, you record yours with planner_verdict.`;
 
 function envForcesGuard(): boolean {
@@ -294,6 +295,45 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		};
 	}
 
+	const CHILD_META_AGENTS = ["worker", "oracle", "reviewer", "explorer"] as const;
+
+	function runIdFromDetails(details: Record<string, unknown> | undefined): string | undefined {
+		if (!details) return undefined;
+		if (typeof details.runId === "string" && details.runId.trim()) return details.runId;
+		if (typeof details.asyncId === "string" && details.asyncId.trim()) return details.asyncId;
+		return undefined;
+	}
+
+	function harvestMetaUsage(
+		taskId: string,
+		kind: DelegationKind,
+		runId: string | undefined,
+		preferredAgent: string | undefined,
+		ctx: ExtensionContext,
+		asyncDir?: string,
+	): boolean {
+		if (!runId) return false;
+		const dirs = artifactDirsFor(ctx, asyncDir);
+		const agents = [...new Set([preferredAgent, ...CHILD_META_AGENTS].filter((name): name is string => Boolean(name)))];
+		for (const agent of agents) {
+			const meta = readChildMeta(dirs, runId, agent);
+			if (!meta?.usage) continue;
+			const child = childUsageFromValue(meta.usage, kind, {
+				runId,
+				agent: meta.agent,
+				...(meta.model ? { model: meta.model } : {}),
+				source: "meta-file",
+				pending: false,
+			});
+			if (child) {
+				ledger.recordChild(taskId, child);
+				syncUsage(taskId);
+				return true;
+			}
+		}
+		return false;
+	}
+
 	function syncUsage(taskId?: string): void {
 		if (!taskId) return;
 		const usage = ledger.taskUsage(taskId);
@@ -304,7 +344,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	function resolveTaskPending(taskId: string, ctx: ExtensionContext, asyncDir?: string): void {
 		ledger.resolvePending(taskId, (child) => {
 			if (!child.runId) return undefined;
-			const agents = [child.agent].filter((name): name is string => Boolean(name));
+			const agents = [...new Set([child.agent, ...CHILD_META_AGENTS].filter((name): name is string => Boolean(name)))];
 			for (const agent of agents) {
 				const meta = readChildMeta(artifactDirsFor(ctx, asyncDir), child.runId, agent);
 				if (!meta) continue;
@@ -366,6 +406,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	function recordSyncChildren(event: { toolCallId: string; details?: unknown }, delegation: DelegationRecord): void {
 		const details = asRecord(event.details);
 		const results = details && Array.isArray(details.results) ? details.results : [];
+		const runId = runIdFromDetails(details);
 		for (const item of results) {
 			const rec = asRecord(item);
 			if (!rec) continue;
@@ -373,12 +414,23 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				toolCallId: event.toolCallId,
 				source: "sync-details",
 				pending: false,
+				...(runId ? { runId } : {}),
 				...(typeof rec.agent === "string" ? { agent: rec.agent } : delegation.agent ? { agent: delegation.agent } : {}),
 				...(typeof rec.model === "string" ? { model: rec.model } : {}),
 			});
 			if (child) ledger.recordChild(delegation.taskId, child);
 		}
-		if (results.length === 0) return;
+		if (results.length === 0 || !results.some((item) => asRecord(item)?.usage)) {
+			harvestMetaUsage(
+				delegation.taskId,
+				delegation.kind,
+				runId,
+				delegation.agent,
+				latestCtx ?? ({ hasUI: false, cwd: process.cwd() } as ExtensionContext),
+				typeof details?.asyncDir === "string" ? details.asyncDir : undefined,
+			);
+		}
+		if (results.length === 0 && !runId) return;
 		syncUsage(delegation.taskId);
 	}
 
@@ -419,8 +471,12 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			syncUsage(record.taskId);
 			return;
 		}
-		const agents = [...new Set([agent, record.agent].filter((name): name is string => Boolean(name)))];
-		for (const name of agents.length ? agents : ["worker"]) {
+		const agents = [...new Set([
+			agent,
+			record.agent,
+			...CHILD_META_AGENTS,
+		].filter((name): name is string => Boolean(name)))];
+		for (const name of agents) {
 			const meta = readChildMeta(artifactDirsFor(ctx, record.asyncDir), runId, name);
 			if (!meta) continue;
 			const child = childUsageFromValue(meta.usage, record.kind, {

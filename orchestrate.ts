@@ -38,6 +38,7 @@ import {
 	renderValidationResults,
 	renderWorkerReport,
 	validateWorkerReportIdentity,
+	workerReportShapeReminder,
 } from "./report.ts";
 import {
 	advanceReview,
@@ -1539,7 +1540,7 @@ export class PlannerOrchestrator {
 						"Do not accept it. Delegate exactly one report-only correction:",
 						`"Do not modify files. Return only a valid WorkerReport for task ${task.taskId}."`,
 						...(reportError === PROSE_ONLY_REPORT_ERROR && decision.action === "report_correction"
-							? [`JSON only: {"version":1,"taskId":"${task.taskId}","status":"completed|partial|blocked|failed","summary":"...","changedFiles":[],"validation":[],"evidence":{"taskId":"${task.taskId}"},"risks":[],"unresolved":[]}`]
+							? [`JSON only: ${workerReportShapeReminder(task.taskId)}`]
 							: []),
 						"",
 						"--- worker output ---",

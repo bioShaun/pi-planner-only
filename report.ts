@@ -360,6 +360,15 @@ export function normalizeWorkerReport(
 		repairValidationEntries(report.validation, repairs);
 	}
 
+	if (Array.isArray(report.evidence)) {
+		const kept = report.evidence.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+		if (kept.length) {
+			const notes = Array.isArray(report.notes) ? report.notes : [];
+			report.notes = [...notes, ...kept.map((item) => `evidence (worker list): ${item}`)];
+		}
+		delete report.evidence;
+		repairs.push("evidence array → { taskId } (items kept in notes)");
+	}
 	if (typeof report.evidence === "string") {
 		// Root samples its own evidence; a prose "evidence" carries nothing the
 		// comparison can use, so keep the text as a note and rebuild the object.
@@ -429,6 +438,11 @@ export function validateWorkerReportIdentity(
 		);
 	}
 	return errors;
+}
+
+/** Compact JSON shape shown to workers so a report-only round is not the first time they see it. */
+export function workerReportShapeReminder(taskId: string): string {
+	return `{"version":1,"taskId":"${taskId}","status":"completed|partial|blocked|failed","summary":"...","changedFiles":[],"validation":[],"evidence":{"taskId":"${taskId}"},"risks":[],"unresolved":[]}`;
 }
 
 /** Scan for top-level `{...}` objects while ignoring braces inside strings. */

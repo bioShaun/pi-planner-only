@@ -1043,6 +1043,9 @@ assert.match(PLANNER_PROMPT, /workflowScript/);
 assert.match(PLANNER_PROMPT, /Never trust a worker PASS/);
 assert.match(PLANNER_PROMPT, /Never accept stale evidence/);
 assert.match(PLANNER_PROMPT, /Stop after 3 review rounds/);
+assert.match(PLANNER_PROMPT, /One ticket per TaskSpec/);
+assert.match(PLANNER_PROMPT, /Do not instruct workers to \/code-review/);
+assert.match(PLANNER_PROMPT, /PI_PLANNER_ONLY_ORACLE=full/);
 assert.match(PLANNER_PROMPT, /Lifecycle state arrives in delegation results; the operator may override a verdict, you record yours with planner_verdict\./);
 assert.doesNotMatch(PLANNER_PROMPT, /\/planner-only/);
 assert.doesNotMatch(PLANNER_PROMPT, /record a verdict or switch/);
@@ -1527,6 +1530,85 @@ assert.match(
 	assert.ok(sessionEntries.some((entry) =>
 		entry.data.kind === "child" && entry.data.child?.source === "meta-file" && entry.data.child?.pending === false,
 	));
+}
+
+{
+	const taskId = "T-20260905-530";
+	const runId = "run-oracle-usage";
+	const artifacts = join(isolatedAgentDir, "sessions", "subagent-artifacts");
+	mkdirSync(artifacts, { recursive: true });
+	writeFileSync(join(artifacts, `${runId}_oracle_meta.json`), JSON.stringify({
+		runId,
+		agent: "oracle",
+		model: "volcengine/glm-5-3-flash:medium",
+		usage: { input: 100, output: 20, cacheRead: 0, cacheWrite: 0, cost: 0.04, turns: 3 },
+	}));
+	gitResponses.set("rev-parse HEAD", { stdout: "abc1234\n", stderr: "", code: 0 });
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-ou-w", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
+		ctx,
+	);
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-ou-w",
+			toolName: "subagent",
+			details: {
+				results: [{
+					agent: "worker",
+					model: "volcengine/glm-5-3-flash:high",
+					usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1 },
+				}],
+			},
+			content: [{ type: "text", text: JSON.stringify({
+				...workerReport,
+				taskId,
+				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-ou-w", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+			}) }],
+			isError: false,
+		},
+		ctx,
+	);
+	await handlers.get("tool_call")(
+		{
+			toolCallId: "call-ou-o",
+			toolName: "subagent",
+			input: { agent: "oracle", task: JSON.stringify(delegationSpec(taskId, "validator")) },
+		},
+		ctx,
+	);
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-ou-o",
+			toolName: "subagent",
+			details: { runId, results: [] },
+			content: [{ type: "text", text: "HEAD matches; named tests exist." }],
+			isError: false,
+		},
+		ctx,
+	);
+	const passed = await verdictTool.execute(
+		"v-oracle-usage",
+		{ verdict: "pass", summary: "oracle usage must land", taskId },
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.equal(passed.details?.state, "completed", passed.content?.[0]?.text);
+	const logPath = join(isolatedAgentDir, "planner-only", "usage.jsonl");
+	const canon = passed.details.taskId;
+	const completed = readFileSync(logPath, "utf8").trim().split("\n").filter(Boolean)
+		.map((line) => JSON.parse(line))
+		.filter((row) => row.taskId === canon && row.state === "completed");
+	assert.ok(completed.length >= 1);
+	const last = completed.at(-1);
+	assert.ok(
+		last.children.some((child) => child.agent === "oracle" && child.costUsd === 0.04),
+		JSON.stringify(last.children),
+	);
 }
 
 {

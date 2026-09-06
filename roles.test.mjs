@@ -5,9 +5,12 @@ import {
 	ROLE_TOOL_PROFILES,
 	applyRoleDelegation,
 	inferRoleFromAgent,
+	oracleSuiteMode,
 	prepareRoleDelegation,
 	resolveDelegationTarget,
 	roleAllowsMutatingTools,
+	wrapOracleContract,
+	wrapWorkerContract,
 } from "./roles.ts";
 import { reviewerPrompt } from "./review.ts";
 
@@ -40,10 +43,13 @@ assert.equal(inferRoleFromAgent("worker"), "worker");
 assert.equal(inferRoleFromAgent("delegate"), undefined);
 
 const worker = { agent: "worker", task: "implement it", context: "fork" };
-assert.equal(applyRoleDelegation(worker, { role: "worker" }).mutated, false);
+assert.equal(applyRoleDelegation(worker, { role: "worker", taskId: "T-20260831-001" }).mutated, true);
 assert.equal(worker.agent, "worker");
 assert.equal(worker.context, "fork");
-assert.equal(worker.task, "implement it");
+assert.match(worker.task, /\[PLANNER-ONLY WORKER CONTRACT\]/);
+assert.match(worker.task, /Do not run \/code-review/);
+assert.match(worker.task, /"taskId":"T-20260831-001"/);
+assert.equal(applyRoleDelegation(worker, { role: "worker", taskId: "T-20260831-001" }).mutated, false, "already wrapped");
 
 const explorer = { agent: "worker", task: "find the parser" };
 assert.equal(applyRoleDelegation(explorer, { role: "explorer" }).mutated, true);
@@ -54,6 +60,10 @@ assert.equal("context" in explorer, false);
 const validator = { agent: "worker", task: "run tests" };
 assert.equal(applyRoleDelegation(validator, { role: "validator" }).mutated, true);
 assert.equal(validator.agent, "oracle");
+assert.match(validator.task, /\[PLANNER-ONLY ORACLE\]/);
+assert.match(validator.task, /ORACLE_SUITE=bounded/);
+assert.doesNotMatch(validator.task, /ORACLE_SUITE=full/);
+assert.match(validator.task, /Do not run npm test/);
 
 const reviewer = {
 	agent: "worker",
@@ -272,10 +282,11 @@ assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root
 		role: "worker",
 		budget: { tokens: 100_000, costUsd: 5.0 },
 	});
-	assert.equal(res.mutated, false);
+	assert.equal(res.mutated, true);
 	assert.deepEqual(input.usageBudget, {
 		tokens: { hard: 10_000 },
 	});
+	assert.match(input.task, /\[PLANNER-ONLY WORKER CONTRACT\]/);
 }
 
 // prepareRoleDelegation passes TaskSpec.budget through
@@ -299,6 +310,90 @@ assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root
 		tokens: { hard: 42_000 },
 		costUsd: { hard: 1.25 },
 	});
+	assert.match(payload.task, /\[PLANNER-ONLY WORKER CONTRACT\]/);
+	assert.match(payload.task, /budgeted task/);
+}
+
+{
+	assert.equal(oracleSuiteMode({}), "bounded");
+	assert.equal(oracleSuiteMode({ PI_PLANNER_ONLY_ORACLE: "full" }), "full");
+	assert.equal(oracleSuiteMode({ PI_PLANNER_ONLY_ORACLE: "FULL" }), "full");
+	assert.equal(oracleSuiteMode({ PI_PLANNER_ONLY_ORACLE: "bounded" }), "bounded");
+}
+
+{
+	const bounded = wrapOracleContract("run tests", "bounded", true);
+	assert.match(bounded, /\[PLANNER-ONLY ORACLE\]/);
+	assert.match(bounded, /ORACLE_SUITE=bounded/);
+	assert.match(bounded, /Do not run npm test/);
+	assert.doesNotMatch(bounded, /ORACLE_SUITE=full/);
+	assert.equal(wrapOracleContract(bounded, "bounded", true), bounded);
+
+	const full = wrapOracleContract("run tests", "full", true);
+	assert.match(full, /ORACLE_SUITE=full/);
+	assert.doesNotMatch(full, /Do not run npm test/);
+
+	const failed = wrapOracleContract("run tests", "bounded", false);
+	assert.match(failed, /ORACLE_SUITE=full/);
+}
+
+{
+	const workerWrap = wrapWorkerContract("implement it", "T-20260831-001");
+	assert.match(workerWrap, /\[PLANNER-ONLY WORKER CONTRACT\]/);
+	assert.match(workerWrap, /Do not run \/code-review/);
+	assert.match(workerWrap, /"taskId":"T-20260831-001"/);
+	assert.equal(wrapWorkerContract(workerWrap, "T-20260831-001"), workerWrap);
+}
+
+{
+	const fullOracle = { agent: "oracle", task: "run tests" };
+	applyRoleDelegation(fullOracle, { role: "validator", oracleMode: "full" });
+	assert.match(fullOracle.task, /ORACLE_SUITE=full/);
+}
+
+{
+	const failedWorker = {
+		taskId: "T-20260905-b02",
+		spec: {
+			taskId: "T-20260905-b02",
+			objective: "implement",
+			cwd: "/repo",
+			role: "worker",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: true, commands: ["npm test"] },
+			expectedEvidence: {},
+			stopConditions: [],
+		},
+		reports: [{
+			version: 1,
+			taskId: "T-20260905-b02",
+			status: "completed",
+			summary: "done",
+			changedFiles: ["src/a.ts"],
+			validation: [{ type: "test", status: "failed", summary: "npm test", exitCode: 1 }],
+			evidence: { taskId: "T-20260905-b02" },
+			risks: [],
+			unresolved: [],
+		}],
+		reviews: [],
+		overrides: [],
+	};
+	const payload = { agent: "oracle", task: JSON.stringify({
+		taskId: "T-20260905-b02",
+		objective: "validate",
+		cwd: "/repo",
+		role: "validator",
+		scope: {},
+		constraints: [],
+		acceptanceCriteria: [],
+		validation: { required: true, commands: ["npm test"] },
+		expectedEvidence: {},
+		stopConditions: [],
+	}) };
+	prepareRoleDelegation(payload, () => failedWorker);
+	assert.match(payload.task, /ORACLE_SUITE=full/);
 }
 
 console.log("planner-only roles: PASS");

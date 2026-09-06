@@ -133,6 +133,8 @@ The packet may include a bounded patch against the task's start baseline.
 If evidencePacket.patchTruncated is true or patchOmittedPaths is non-empty,
 the packet is partial: request more evidence or return verdict blocked.
 Never treat a partial packet as a complete review.
+The ReviewRequest is your only input: spec, WorkerReport, snapshot digest, and bounded patch.
+Do not git log, do not npm test, do not re-probe the repository tree.
 Inspect attributed changed files first.
 Do not run a codebase health scan or unbounded grep.
 Precise extra-path searches are allowed only to verify a specific changed caller or contract.
@@ -451,7 +453,7 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 				guidance: [
 					"Stale evidence must not be accepted.",
 					"Inspect the current state with read/grep/git_audit, then re-delegate validation for the affected paths.",
-					"The correction must re-run validation, not re-implement the change.",
+					"A bounded oracle check is enough when the worker's validation already exited 0; do not re-run the full suite unless PI_PLANNER_ONLY_ORACLE=full.",
 					`This is correction ${round + 1} of ${MAX_REVIEW_ROUNDS}.`,
 				],
 			};

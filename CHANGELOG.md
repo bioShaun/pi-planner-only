@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.3 - 2026-09-07
+
+- Worker tasks now receive a compact WorkerReport JSON shape up front and are told not to run `/code-review`; review stays on the plugin Reviewer.
+- Validators (`oracle`) default to a bounded HEAD/status/named-test check when worker validation already exited 0. Set `PI_PLANNER_ONLY_ORACLE=full` to re-run the full suite.
+- Reviewer packets now forbid `git log`, `npm test`, and repository-wide re-probes; Root is told one ticket per TaskSpec.
+- Completed `usage.jsonl` snapshots harvest oracle/reviewer `_meta.json` even when sync `details.results` is empty, so child cost is not dropped at PASS.
+- `evidence` arrays in WorkerReports are repaired to `{ taskId }` instead of forcing a report-only round.
+
 ## 0.3.2 - 2026-09-05
 
 - **I-1**: Compressed extension-controlled Root input. Reduced `PLANNER_PROMPT` to 1,469 UTF-8 bytes while retaining every planner/reviewer contract, and stopped appending the full fresh-reviewer template to accepted worker results. Fresh reviewer delegations still receive the complete generated packet when launched.

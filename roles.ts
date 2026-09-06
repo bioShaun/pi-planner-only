@@ -1,9 +1,10 @@
-import type { ReviewEvidencePacket, TaskRole, TaskSpec } from "./types.ts";
+import type { ReviewEvidencePacket, TaskRole, TaskSpec, WorkerReport } from "./types.ts";
 import { canRebindNamedTask } from "./types.ts";
 import { extractTaskSpec } from "./task.ts";
 import type { TaskRecord } from "./task.ts";
 import { buildFreshReviewerTask, extractReviewRequest } from "./review.ts";
 import type { ReviewRequest } from "./types.ts";
+import { workerReportShapeReminder } from "./report.ts";
 
 // The capability table is owned by task.ts so the write lock and the agent
 // remapping share one source of truth; re-exported here for consumers.
@@ -44,10 +45,49 @@ export function inferRoleFromAgent(agent: string | undefined): TaskRole | undefi
 	return AGENT_ROLES[agent.trim().toLowerCase()];
 }
 
+export const WORKER_CONTRACT_MARKER = "[PLANNER-ONLY WORKER CONTRACT]";
+export const ORACLE_CONTRACT_MARKER = "[PLANNER-ONLY ORACLE]";
+
+export function oracleSuiteMode(env: NodeJS.ProcessEnv = process.env): "bounded" | "full" {
+	return (env.PI_PLANNER_ONLY_ORACLE ?? "").trim().toLowerCase() === "full" ? "full" : "bounded";
+}
+
+export function wrapWorkerContract(task: string, taskId: string): string {
+	if (task.includes(WORKER_CONTRACT_MARKER)) return task;
+	return [
+		task,
+		"",
+		WORKER_CONTRACT_MARKER,
+		"Do not run /code-review or spawn a reviewer. Return only a WorkerReport JSON object:",
+		workerReportShapeReminder(taskId),
+	].join("\n");
+}
+
+export function wrapOracleContract(
+	task: string,
+	mode: "bounded" | "full",
+	workerValidationPassed: boolean,
+): string {
+	if (task.includes(ORACLE_CONTRACT_MARKER)) return task;
+	const suite = mode === "full" || !workerValidationPassed
+		? "ORACLE_SUITE=full. Re-run the listed validation commands."
+		: "ORACLE_SUITE=bounded. Do not run npm test, npm run test:e2e, or the full suite. Check git rev-parse HEAD, git status --porcelain, and that WorkerReport-named tests exist (read/grep).";
+	return `${ORACLE_CONTRACT_MARKER}\n${suite}\n\n${task}`;
+}
+
+function lastWorkerValidationPassed(report: WorkerReport | undefined): boolean {
+	if (!report) return true;
+	if (!report.validation.length) return report.status !== "failed";
+	return report.validation.every((item) => item.status === "passed" || item.exitCode === 0);
+}
+
 export interface ApplyRoleDelegationOptions {
 	role: TaskRole;
 	packet?: string;
 	budget?: TaskSpec["budget"];
+	taskId?: string;
+	oracleMode?: "bounded" | "full";
+	workerValidationPassed?: boolean;
 }
 
 export interface ApplyRoleDelegationResult {
@@ -76,6 +116,24 @@ export function applyRoleDelegation(
 		}
 		if (options.packet !== undefined && input.task !== options.packet) {
 			input.task = options.packet;
+			mutated = true;
+		}
+	}
+	if (options.role === "worker" && typeof input.task === "string") {
+		const wrapped = wrapWorkerContract(input.task, options.taskId ?? "<id>");
+		if (wrapped !== input.task) {
+			input.task = wrapped;
+			mutated = true;
+		}
+	}
+	if (options.role === "validator" && typeof input.task === "string") {
+		const wrapped = wrapOracleContract(
+			input.task,
+			options.oracleMode ?? "bounded",
+			options.workerValidationPassed ?? true,
+		);
+		if (wrapped !== input.task) {
+			input.task = wrapped;
 			mutated = true;
 		}
 	}
@@ -173,6 +231,8 @@ export interface PrepareRoleDelegationOptions {
 	git?: ReviewEvidencePacket;
 	/** Freshness summary of the last Root-side evidence comparison. */
 	evidence?: string;
+	/** Override oracle suite mode; defaults to PI_PLANNER_ONLY_ORACLE. */
+	oracleMode?: "bounded" | "full";
 }
 
 /**
@@ -218,5 +278,12 @@ export function prepareRoleDelegation(
 		role: target.role,
 		...(packet ? { packet } : {}),
 		...(packetSpec?.budget ? { budget: packetSpec.budget } : {}),
+		...(target.task?.taskId ?? target.taskId ? { taskId: target.task?.taskId ?? target.taskId } : {}),
+		...(target.role === "validator"
+			? {
+				oracleMode: options.oracleMode ?? oracleSuiteMode(),
+				workerValidationPassed: lastWorkerValidationPassed(target.task?.reports.at(-1)),
+			}
+			: {}),
 	});
 }

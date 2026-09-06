@@ -6,6 +6,7 @@ import {
 	renderWorkerReport,
 	validateWorkerReport,
 	validateWorkerReportIdentity,
+	workerReportShapeReminder,
 } from "./report.ts";
 
 const CWD = "/repo";
@@ -503,8 +504,25 @@ function assertRepaired(raw, expectedPatch, notePattern, context) {
 	const badEntry = normalizeWorkerReport(validShape({ validation: ["not-an-object"] }));
 	assert.ok(validateWorkerReport(badEntry.report).includes("validation[0] must be an object"));
 
-	const badEvidence = normalizeWorkerReport(validShape({ evidence: [1] }));
+	const badEvidence = normalizeWorkerReport(validShape({ evidence: 1 }));
 	assert.ok(validateWorkerReport(badEvidence.report).includes("evidence must be an object"));
+}
+
+{
+	assert.equal(
+		workerReportShapeReminder("T-20260831-100"),
+		`{"version":1,"taskId":"T-20260831-100","status":"completed|partial|blocked|failed","summary":"...","changedFiles":[],"validation":[],"evidence":{"taskId":"T-20260831-100"},"risks":[],"unresolved":[]}`,
+	);
+}
+
+{
+	const { report, repairs } = normalizeWorkerReport(validShape({
+		evidence: ["HEAD abc1234", "status clean"],
+	}));
+	assert.equal(report.evidence.taskId, "T-20260831-100");
+	assert.ok(repairs.some((note) => /evidence array/.test(note)));
+	assert.ok(report.notes.some((note) => /HEAD abc1234/.test(note)));
+	assert.equal(validateWorkerReport(report).length, 0);
 }
 
 // L-1: extractWorkerReport calls normalize before validate; repairs is [] for an already-valid report

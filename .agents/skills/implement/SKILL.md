@@ -10,6 +10,6 @@ Use /tdd where possible, at pre-agreed seams.
 
 Run typechecking regularly, single test files regularly, and the full test suite once at the end.
 
-Once done, use /code-review to review the work.
+Do not run /code-review. Review belongs to the planner-only Reviewer child after you return a WorkerReport.
 
 Commit your work to the current branch.
