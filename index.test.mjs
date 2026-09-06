@@ -415,6 +415,145 @@ try {
 }
 
 // --------------------------------------------------------------------------
+// T02-T04: restore keeps operator/extension/environment intent; headless status
+// --------------------------------------------------------------------------
+
+const t05AgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-t05-"));
+try {
+	const t05Probe = spawnSync(
+		process.execPath,
+		[
+			"--input-type=module",
+			"--eval",
+			`import assert from "node:assert/strict";
+			import { join } from "node:path";
+			import plannerOnly from ${JSON.stringify(new URL("./index.ts", import.meta.url).href)};
+
+			const handlers = new Map();
+			const commands = new Map();
+			let registered = ["read", "bash", "write", "edit", "custom_mutator", "subagent"];
+			let active = ["read", "bash", "write", "custom_mutator", "subagent"];
+			const sent = [];
+			const pi = {
+				on(name, h) { handlers.set(name, h); },
+				registerCommand(name, def) { commands.set(name, def); },
+				registerTool() {},
+				getActiveTools() { return [...active]; },
+				getAllTools() { return registered.map((name) => ({ name })); },
+				setActiveTools(names) { active = [...names]; },
+				sendMessage(message) { sent.push(message); },
+				async exec() { return { stdout: "", stderr: "", code: 0 }; },
+			};
+			const ctx = { hasUI: false, ui: { notify() {}, setStatus() {}, theme: { fg(_c, t) { return t; } } } };
+
+			plannerOnly(pi);
+			await handlers.get("session_start")({}, ctx);
+			assert.deepEqual([...active].sort(), ["read", "subagent"], "session start suppresses non-safe tools");
+			assert.equal(active.includes("edit"), false, "a tool the operator disabled before on stays disabled");
+
+			// while on, another extension disables a currently-active safe tool
+			active = active.filter((name) => name !== "read");
+
+			// and custom_mutator is unregistered entirely
+			registered = registered.filter((name) => name !== "custom_mutator");
+
+			await commands.get("planner-only").handler("off", ctx);
+			assert.deepEqual([...active].sort(), ["bash", "subagent", "write"],
+				"off restores only what this extension suppressed and that is still registered");
+			assert.equal(active.includes("read"), false, "another extension's disable is not reverted");
+			assert.equal(active.includes("custom_mutator"), false, "unregistered tools are not restored");
+			assert.equal(active.includes("edit"), false);
+
+			await commands.get("planner-only").handler("on", ctx);
+			assert.deepEqual([...active].sort(), ["subagent"], "on re-applies the intersection");
+
+			console.log("planner-only t05 restore: PASS");`,
+		],
+		{
+			env: {
+				...process.env,
+				PI_CODING_AGENT_DIR: t05AgentDir,
+				PI_SUBAGENT_CHILD: "0",
+			},
+			encoding: "utf8",
+		},
+	);
+	assert.equal(t05Probe.status, 0, t05Probe.stderr || t05Probe.stdout);
+	assert.match(t05Probe.stdout, /planner-only t05 restore: PASS/);
+} finally {
+	rmSync(t05AgentDir, { recursive: true, force: true });
+}
+
+const t05bAgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-t05b-"));
+try {
+	const t05bProbe = spawnSync(
+		process.execPath,
+		[
+			"--input-type=module",
+			"--eval",
+			`import assert from "node:assert/strict";
+			import { existsSync, writeFileSync } from "node:fs";
+			import { join } from "node:path";
+			import plannerOnly from ${JSON.stringify(new URL("./index.ts", import.meta.url).href)};
+
+			const handlers = new Map();
+			const commands = new Map();
+			let active = ["read", "bash", "subagent"];
+			const sent = [];
+			const pi = {
+				on(name, h) { handlers.set(name, h); },
+				registerCommand(name, def) { commands.set(name, def); },
+				registerTool() {},
+				getActiveTools() { return [...active]; },
+				getAllTools() { return ["read", "bash", "subagent"].map((name) => ({ name })); },
+				setActiveTools(names) { active = [...names]; },
+				sendMessage(message) { sent.push(message); },
+				async exec() { return { stdout: "", stderr: "", code: 0 }; },
+			};
+			const ctx = { hasUI: false, ui: { notify() {}, setStatus() {}, theme: { fg(_c, t) { return t; } } } };
+
+			plannerOnly(pi);
+
+			// T04: environment-forced off — on must say it stays off and name the source
+			process.env.PI_PLANNER_ONLY = "0";
+			await commands.get("planner-only").handler("on", ctx);
+			const onNotice = sent.at(-1);
+			assert.match(onNotice.content, /remains off/);
+			assert.match(onNotice.content, /PI_PLANNER_ONLY=0 forces planner-only off/);
+			assert.deepEqual(active, ["read", "bash", "subagent"], "forced-off on must not restrict tools");
+
+			// headless status names the effective state and its source
+			await commands.get("planner-only").handler("status", ctx);
+			assert.match(sent.at(-1).content, /Planner-only mode is off \\(source: env\\)/);
+			assert.match(sent.at(-1).content, /PI_PLANNER_ONLY=0 forces planner-only off/);
+
+			// marker source is reported headless too
+			delete process.env.PI_PLANNER_ONLY;
+			const markerPath = join(process.env.PI_CODING_AGENT_DIR, "planner-only.off");
+			writeFileSync(markerPath, "off\\n");
+			await commands.get("planner-only").handler("status", ctx);
+			assert.match(sent.at(-1).content, /Planner-only mode is off \\(source: marker\\)/);
+			assert.ok(existsSync(markerPath));
+
+			console.log("planner-only t05 env: PASS");`,
+		],
+		{
+			env: {
+				...process.env,
+				PI_CODING_AGENT_DIR: t05bAgentDir,
+				PI_PLANNER_ONLY: "0",
+				PI_SUBAGENT_CHILD: "0",
+			},
+			encoding: "utf8",
+		},
+	);
+	assert.equal(t05bProbe.status, 0, t05bProbe.stderr || t05bProbe.stdout);
+	assert.match(t05bProbe.stdout, /planner-only t05 env: PASS/);
+} finally {
+	rmSync(t05bAgentDir, { recursive: true, force: true });
+}
+
+// --------------------------------------------------------------------------
 // v0.2 lifecycle: git_audit, delegation, worker reports, review commands
 // --------------------------------------------------------------------------
 

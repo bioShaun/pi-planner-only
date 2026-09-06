@@ -83,6 +83,10 @@ function guardDecisionSource(): "env" | "marker" | "default" {
 	return "default";
 }
 
+function envForcingValue(): string | undefined {
+	return envForcesGuard() || envDisablesGuard() ? (process.env.PI_PLANNER_ONLY ?? "").trim() : undefined;
+}
+
 const SUBAGENT_NOTIFY_TYPE = "subagent-notify";
 
 function isSubagentNotifyMessage(message: unknown): boolean {
@@ -118,11 +122,21 @@ export function filterPlannerTools(activeTools: readonly string[]): string[] {
 	return [...new Set(activeTools.filter(allowed))];
 }
 
+/**
+ * Restore what this extension suppressed. Only suppressed tools that are
+ * still registered come back: a tool the operator or another extension
+ * disabled in the meantime is not ours to re-enable, and tools this
+ * extension never touched are left exactly as the session has them.
+ */
 export function restorePlannerTools(
 	activeTools: readonly string[],
 	suppressedTools: readonly string[],
+	registeredTools?: readonly string[],
 ): string[] {
-	return [...new Set([...activeTools, ...suppressedTools])];
+	const restore = registeredTools
+		? suppressedTools.filter((name) => registeredTools.includes(name))
+		: suppressedTools;
+	return [...new Set([...activeTools, ...restore])];
 }
 
 function sameToolOrder(left: readonly string[], right: readonly string[]): boolean {
@@ -464,7 +478,10 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	const restoreSuppressedTools = (): void => {
 		if (suppressedTools.length === 0) return;
 		const activeTools = pi.getActiveTools();
-		const nextTools = restorePlannerTools(activeTools, suppressedTools);
+		const registered = typeof pi.getAllTools === "function"
+			? pi.getAllTools().map((tool) => tool.name)
+			: undefined;
+		const nextTools = restorePlannerTools(activeTools, suppressedTools, registered);
 		suppressedTools = [];
 		if (!sameToolOrder(activeTools, nextTools)) pi.setActiveTools(nextTools);
 	};
@@ -809,7 +826,15 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	});
 
 	const notify = (ctx: ExtensionContext, message: string, type: "info" | "warning" = "info"): void => {
-		if (ctx.hasUI) ctx.ui.notify(message, type);
+		if (ctx.hasUI) {
+			ctx.ui.notify(message, type);
+			return;
+		}
+		// Headless: there is no UI toast, so the notice must land somewhere
+		// readable in the session itself (FR-06 §9.3).
+		if (typeof pi.sendMessage === "function") {
+			pi.sendMessage({ customType: "planner-only-notice", content: message, display: true });
+		}
 	};
 
 	pi.registerCommand("planner-only", {
@@ -822,14 +847,31 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			if (action === "status") {
 				const log = usageLogPath();
 				const logStatus = log ? `${log} (enabled)` : "disabled";
-				notify(ctx, [
+				const lines = [
 					`Planner-only mode is ${isDisabled() ? "off" : "on"} (source: ${guardDecisionSource()}).`,
-					`Usage log: ${logStatus}`,
-				].join("\n"));
+				];
+				const forcing = envForcingValue();
+				if (forcing !== undefined) {
+					lines.push(`Environment: PI_PLANNER_ONLY=${forcing} forces planner-only ${envForcesGuard() ? "on" : "off"}.`);
+				} else if (existsSync(OFF_MARKER)) {
+					lines.push(`Marker: ${OFF_MARKER}`);
+				}
+				lines.push(`Usage log: ${logStatus}`);
+				notify(ctx, lines.join("\n"));
 				return;
 			}
 			if (action === "on") {
 				await rm(OFF_MARKER, { force: true });
+				if (envDisablesGuard()) {
+					// The environment overrides the operator: report the truth
+					// instead of claiming an enable that did not happen (T04).
+					updateStatus(ctx);
+					notify(ctx, [
+						"Planner-only mode remains off.",
+						`Environment: PI_PLANNER_ONLY=${process.env.PI_PLANNER_ONLY} forces planner-only off; clear the variable to enable it.`,
+					].join("\n"), "warning");
+					return;
+				}
 				restrictActiveTools();
 				updateStatus(ctx);
 				notify(ctx, "Planner-only mode enabled.");
