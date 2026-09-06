@@ -37,6 +37,8 @@ pi -e .
 
 `typebox` 和 `@earendil-works/pi-coding-agent` 是 peerDependencies：由 Pi 运行时提供，不要放进 `dependencies`。
 
+支持的主机范围：`@earendil-works/pi-coding-agent` `>=0.84 <1`、`pi-subagents` `>=0.65 <0.70`（声明见 `package.json`）。发布必须运行 `npm run test:release`：类型检查、单元测试与真实契约测试全部通过才允许发布——在发布环境下契约测试若被跳过（对端缺失或版本不符）会直接判失败，而不是以 0 退出。
+
 ## 命令
 
 - `/planner-only status`
@@ -164,6 +166,7 @@ Token 数为准，美元/人民币金额是推导值。扩展跟踪 Root 各生�
 npm test          # 单元 + 进程内集成（不包含 E2E）
 npm run typecheck # tsc --noEmit（Pi 直接加载 .ts；这是本地类型检查）
 npm run test:e2e  # 真实 pi-subagents 契约（需要已安装，否则会明确跳过）
+npm run test:release  # 发布门禁：typecheck + 单元 + e2e；契约测试被跳过即判失败
 ```
 
 `npm test` 不验证运行时角色降权映射。该覆盖仅由 `test:e2e` 执行；未安装

@@ -326,6 +326,77 @@ assert.equal(existsSync(fixtureAgentDir), false);
 assert.equal(existsSync(userMarker), userMarkerWasPresent);
 
 // --------------------------------------------------------------------------
+// C01: the release gate fails closed when contract coverage would skip
+// --------------------------------------------------------------------------
+
+const e2ePath = new URL("./e2e.pi-subagents.test.mjs", import.meta.url).pathname;
+
+// Local run without the peer: skip is visible, exit 0
+{
+	const emptyAgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-e2e-"));
+	try {
+		const local = spawnSync(process.execPath, [e2ePath], {
+			env: { ...process.env, PI_CODING_AGENT_DIR: emptyAgentDir, PI_SUBAGENT_CHILD: "0" },
+			encoding: "utf8",
+		});
+		assert.equal(local.status, 0, local.stderr || local.stdout);
+		assert.match(local.stdout, /SKIP — .*pi-subagents is not installed/);
+	} finally {
+		rmSync(emptyAgentDir, { recursive: true, force: true });
+	}
+}
+
+// Release-gate run: the same skip condition fails the job
+{
+	const emptyAgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-e2e-"));
+	try {
+		const gated = spawnSync(process.execPath, [e2ePath], {
+			env: {
+				...process.env,
+				PI_CODING_AGENT_DIR: emptyAgentDir,
+				PI_SUBAGENT_CHILD: "0",
+				PI_PLANNER_ONLY_REQUIRE_CONTRACT: "1",
+			},
+			encoding: "utf8",
+		});
+		assert.notEqual(gated.status, 0, "a skipped contract suite must fail the release gate");
+		assert.match(gated.stderr, /FAIL — release gate requires contract coverage/);
+	} finally {
+		rmSync(emptyAgentDir, { recursive: true, force: true });
+	}
+}
+
+// Out-of-range peer: skip locally, fail under the gate
+{
+	const fakeAgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-e2e-"));
+	try {
+		const fakePkgDir = join(fakeAgentDir, "npm", "node_modules", "pi-subagents");
+		mkdirSync(fakePkgDir, { recursive: true });
+		writeFileSync(join(fakePkgDir, "package.json"), JSON.stringify({ name: "pi-subagents", version: "0.99.0" }));
+		const local = spawnSync(process.execPath, [e2ePath], {
+			env: { ...process.env, PI_CODING_AGENT_DIR: fakeAgentDir, PI_SUBAGENT_CHILD: "0" },
+			encoding: "utf8",
+		});
+		assert.equal(local.status, 0, local.stderr || local.stdout);
+		assert.match(local.stdout, /SKIP — .*outside >=0\.65 <0\.70/);
+
+		const gated = spawnSync(process.execPath, [e2ePath], {
+			env: {
+				...process.env,
+				PI_CODING_AGENT_DIR: fakeAgentDir,
+				PI_SUBAGENT_CHILD: "0",
+				PI_PLANNER_ONLY_REQUIRE_CONTRACT: "1",
+			},
+			encoding: "utf8",
+		});
+		assert.notEqual(gated.status, 0, "an out-of-range peer must fail the release gate");
+		assert.match(gated.stderr, /outside >=0\.65 <0\.70/);
+	} finally {
+		rmSync(fakeAgentDir, { recursive: true, force: true });
+	}
+}
+
+// --------------------------------------------------------------------------
 // RF-4: D1 & D2 per-session force-on and status source reporting
 // --------------------------------------------------------------------------
 

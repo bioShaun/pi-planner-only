@@ -19,7 +19,14 @@ const pkg = JSON.parse(src("package.json"));
 assert.equal(pkg.keywords.includes("pi-package"), true, "keywords must include pi-package");
 assert.deepEqual(pkg.pi?.extensions, ["./index.ts"], "manifest must name the factory file, not glob helper modules");
 assert.equal(pkg.peerDependencies?.typebox, "*");
-assert.equal(pkg.peerDependencies?.["@earendil-works/pi-coding-agent"], "*");
+// C01 — the Pi host peer is a bounded compatibility range, not any-version.
+const hostPeer = pkg.peerDependencies?.["@earendil-works/pi-coding-agent"];
+assert.equal(typeof hostPeer, "string", "the Pi host peer must be declared");
+assert.notEqual(hostPeer.trim(), "*", "the Pi host peer must not claim every version");
+assert.match(hostPeer, /^>=/, "the Pi host peer must be a bounded range");
+assert.equal(typeof pkg["pi-planner-only"]?.piHost, "string", "package.json must declare a Pi host compatibility range");
+assert.match(pkg.scripts?.["test:release"] ?? "", /typecheck/, "the release gate must run typecheck");
+assert.match(pkg.scripts?.["test:release"] ?? "", /PI_PLANNER_ONLY_REQUIRE_CONTRACT=1/, "the release gate must require contract coverage");
 assert.equal(pkg.dependencies?.typebox, undefined, "typebox is bundled by Pi; do not ship a second copy");
 assert.equal(pkg.dependencies?.["@earendil-works/pi-coding-agent"], undefined);
 

@@ -10,9 +10,12 @@
  * node_modules, so the package is copied to a temp tree (with its sibling
  * dependencies linked) and the public export `./child-tool-plan` is imported
  * from that copy. Missing package or a version outside the declared range
- * prints a SKIP line and exits 0; any other import failure is a test failure.
+ * prints a SKIP line and exits 0 for local runs; with
+ * PI_PLANNER_ONLY_REQUIRE_CONTRACT=1 (the release gate) the same conditions
+ * exit non-zero — a skipped contract test must never read as a pass (C01).
  *
  * Run separately: npm run test:e2e
+ * Release gate: npm run test:release
  */
 
 import assert from "node:assert/strict";
@@ -62,6 +65,10 @@ function versionInRange(version, range) {
 }
 
 function skip(reason) {
+	if (process.env.PI_PLANNER_ONLY_REQUIRE_CONTRACT === "1") {
+		console.error(`planner-only pi-subagents E2E: FAIL — release gate requires contract coverage: ${reason}`);
+		process.exit(1);
+	}
 	console.log(`${SKIP_PREFIX} ${reason}`);
 	process.exit(0);
 }

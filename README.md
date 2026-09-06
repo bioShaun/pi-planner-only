@@ -48,6 +48,12 @@ pi -e .
 `typebox` and `@earendil-works/pi-coding-agent` are peer dependencies: Pi
 already bundles them. Do not add them to `dependencies`.
 
+Supported host range: `@earendil-works/pi-coding-agent` `>=0.84 <1` and
+`pi-subagents` `>=0.65 <0.70` (declared in `package.json`). Releases must run
+`npm run test:release`, which requires typecheck, the unit suite, and real
+contract coverage — a contract suite that would skip (peer missing or
+out of range) fails the release gate instead of exiting 0.
+
 ## Commands
 
 - `/planner-only status`
@@ -222,6 +228,7 @@ The pricing table format:
 npm test          # unit + in-process integration (excludes the E2E suite)
 npm run typecheck # tsc --noEmit (Pi loads .ts directly; this is for local checking)
 npm run test:e2e  # real pi-subagents contracts (requires pi-subagents; otherwise loudly skips)
+npm run test:release  # release gate: typecheck + unit + e2e; a skipped contract suite fails here
 ```
 
 `npm test` does not verify the runtime role downgrade mapping. That coverage is
