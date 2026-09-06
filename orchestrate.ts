@@ -430,6 +430,7 @@ export class PlannerOrchestrator {
 					`Planner-only: ReviewRequest reportTaskId ${target.request.reportTaskId} does not match task ${taskId}.`,
 				);
 			}
+			if (task) await this.supersedePendingDelegations(task.taskId, event.toolCallId, warnings);
 			this.delegations.set(event.toolCallId, {
 				taskId,
 				kind: "reviewer",
@@ -480,6 +481,7 @@ export class PlannerOrchestrator {
 			if (validatorConflict.conflict) {
 				return { task: reviewed, conflict: validatorConflict, ...(warnings.length ? { warnings } : {}) };
 			}
+			await this.supersedePendingDelegations(reviewed.taskId, event.toolCallId, warnings);
 			this.delegations.set(event.toolCallId, {
 				taskId: reviewed.taskId,
 				kind: "validator",
@@ -616,6 +618,7 @@ export class PlannerOrchestrator {
 			});
 			this.store.setBaseEvidence(task.taskId, base);
 		}
+		await this.supersedePendingDelegations(task.taskId, event.toolCallId, warnings);
 		this.delegations.set(event.toolCallId, {
 			taskId: task.taskId,
 			kind: role,
@@ -793,6 +796,33 @@ export class PlannerOrchestrator {
 			if (await this.reconcileDelegation(toolCallId, record)) reconciled += 1;
 		}
 		return reconciled;
+	}
+
+	/**
+	 * A new delegation for a Task replaces that Task's leftover pending
+	 * children, so a completion notice always has exactly one waiter instead
+	 * of an ambiguous crowd. A superseded record whose run already finished is
+	 * reconciled first (its report is kept); the rest are dropped, and a late
+	 * notice for them matches nothing and records nothing.
+	 */
+	private async supersedePendingDelegations(
+		taskId: string,
+		keepToolCallId: string,
+		warnings: string[],
+	): Promise<void> {
+		for (const [toolCallId, record] of [...this.delegations]) {
+			if (toolCallId === keepToolCallId || record.taskId !== taskId) continue;
+			if (await this.reconcileDelegation(toolCallId, record)) {
+				warnings.push(
+					`Planner-only: the previous pending child for task ${taskId} had already finished; its saved result was consumed before this delegation started.`,
+				);
+				continue;
+			}
+			this.delegations.delete(toolCallId);
+			warnings.push(
+				`Planner-only: this re-delegation supersedes the pending child run ${record.runId ?? toolCallId} for task ${taskId}; a late notice for it will be ignored.`,
+			);
+		}
 	}
 
 	/**

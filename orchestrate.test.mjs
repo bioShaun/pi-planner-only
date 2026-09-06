@@ -2136,6 +2136,107 @@ function realGitRunnerOf(dir) {
 	assert.equal(orch.store.require(taskId).state, "reviewing");
 }
 
+// --------------------------------------------------------------------------
+// Ticket 07 — same-Task re-delegation supersedes leftover pending children
+// --------------------------------------------------------------------------
+
+// A re-delegation leaves one waiter; the older pending record is superseded,
+// a late notice for it is ignored, and the new run's notice still matches.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-990";
+	await delegateWorker(orch, "call-t7-1", taskId);
+	await orch.handleSubagentResult(workerResult("call-t7-1", reportFor(taskId, "call-t7-1")));
+
+	// first re-delegation goes async; its notice is lost (zombie waiter)
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-t7-2", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	await orch.handleSubagentResult(receiptFor("call-t7-2", "run-t7-zombie", "/no-such-async-dir"));
+	assert.equal(orch.pendingDelegationCount(), 1);
+
+	// the next re-delegation supersedes the zombie instead of joining it
+	const redo = await orch.beginDelegation(
+		{ toolCallId: "call-t7-3", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	assert.ok((redo.warnings ?? []).some((warning) => /supersedes the pending child run/.test(warning)), redo.warnings?.join(" | "));
+	assert.equal(orch.pendingDelegationCount(), 1, "at most one waiter per Task");
+	assert.equal(orch.getDelegation("call-t7-2"), undefined);
+
+	// a late notice for the superseded run records nothing
+	const beforeReports = orch.store.require(taskId).reports.length;
+	const beforeState = orch.store.require(taskId).state;
+	const late = await orch.handleAsyncNotify(asyncNotify("run-t7-zombie", JSON.stringify(reportFor(taskId, "call-t7-2"))));
+	assert.equal(late, undefined);
+	assert.equal(orch.store.require(taskId).reports.length, beforeReports);
+	assert.equal(orch.store.require(taskId).state, beforeState);
+
+	// a single-run completion notice naming the Task matches the one waiter
+	setDirtyTree();
+	await orch.handleSubagentResult(receiptFor("call-t7-3", "run-t7-3", "/no-such-async-dir"));
+	const outcome = await orch.handleAsyncNotify(asyncNotify(undefined, JSON.stringify(reportFor(taskId, "call-t7-3"))));
+	assert.match(outcome.content[0].text, /\[PLANNER-ONLY REVIEW STATE\]/);
+	assert.equal(orch.store.require(taskId).reports.length, beforeReports + 1);
+	assert.equal(orch.pendingDelegationCount(), 0);
+}
+
+// A superseded record whose run already finished is reconciled, not discarded.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-991";
+	await delegateWorker(orch, "call-t7-4", taskId);
+	await orch.handleSubagentResult(workerResult("call-t7-4", reportFor(taskId, "call-t7-4")));
+
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-t7-5", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	const runId = "run-t7-5";
+	const layout = artifactLayout(runId, "worker", 0, reportFor(taskId, "call-t7-5"));
+	await orch.handleSubagentResult(receiptFor("call-t7-5", runId, layout.asyncDir));
+
+	// the older run finished; the re-delegation must consume its report first
+	const redo = await orch.beginDelegation(
+		{ toolCallId: "call-t7-6", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	assert.ok((redo.warnings ?? []).some((warning) => /had already finished/.test(warning)), redo.warnings?.join(" | "));
+	assert.equal(orch.store.require(taskId).reports.length, 2, "the finished older run is consumed, not discarded");
+	assert.equal(orch.pendingDelegationCount(), 1);
+	rmSync(layout.tmp, { recursive: true, force: true });
+}
+
+// Reviewer re-delegation supersedes a pending reviewer; a late verdict for the
+// superseded invocation is not applied.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-992";
+	await delegateWorker(orch, "call-t7-7", taskId);
+	await orch.handleSubagentResult(workerResult("call-t7-7", reportFor(taskId, "call-t7-7")));
+
+	await orch.beginDelegation(
+		{ toolCallId: "call-t7-8", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) } },
+		BASE,
+	);
+	await orch.beginDelegation(
+		{ toolCallId: "call-t7-9", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) } },
+		BASE,
+	);
+	assert.equal(orch.pendingDelegationCount(), 1, "one reviewer waiter remains");
+	assert.equal(orch.getDelegation("call-t7-8"), undefined);
+
+	const staleVerdict = await orch.handleSubagentResult(reviewerResult("call-t7-8", taskId, "pass"));
+	assert.equal(staleVerdict, undefined, "the superseded invocation records nothing");
+	await orch.beginDelegation(
+		{ toolCallId: "call-t7-10", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) } },
+		BASE,
+	);
+}
+
 console.log("planner-only orchestration: PASS");
 
 // --------------------------------------------------------------------------
