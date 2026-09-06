@@ -481,7 +481,11 @@ await handlers.get("tool_call")(
 );
 notices.length = 0;
 await commands.get("planner-only").handler("task", ctx);
-assert.match(notices.at(-1).message, /Task: T-20260905-100/);
+// Fixture ids are stamped 2026-09-05; the store canonicalises past-dated ids,
+// so read the canonical id from the status render instead of assuming it.
+const CANON100 = /Task: (T-\d{8}-\d{3})/.exec(notices.at(-1).message)?.[1];
+assert.ok(CANON100, `status must print a canonical task id: ${notices.at(-1).message}`);
+assert.match(notices.at(-1).message, /aliases: T-20260905-100/);
 assert.match(notices.at(-1).message, /State: executing/);
 assert.match(notices.at(-1).message, /Review mode: root/);
 
@@ -523,7 +527,7 @@ const workerResult = await handlers.get("tool_result")(
 );
 const workerText = workerResult.content[0].text;
 assert.match(workerText, /\[PLANNER-ONLY REVIEW STATE\]/);
-assert.match(workerText, /taskId: T-20260905-100/);
+assert.ok(workerText.includes(`taskId: ${CANON100}`));
 assert.match(workerText, /decision: review_pending/);
 assert.match(workerText, /evidence: fresh/);
 assert.match(workerText, /\[PLANNER-ONLY WORKER REPORT\]/);
@@ -548,15 +552,15 @@ await handlers.get("tool_call")(
 assert.equal(reviewInput.agent, "reviewer");
 assert.equal(reviewInput.context, "fresh");
 assert.match(reviewInput.task, /\[PLANNER-ONLY FRESH REVIEW\]/);
-assert.match(reviewInput.task, /You are an isolated reviewer for task T-20260905-100/);
-assert.match(reviewInput.task, /T-20260905-100/);
+assert.ok(reviewInput.task.includes(`You are an isolated reviewer for task ${CANON100}`));
+assert.ok(reviewInput.task.includes(CANON100));
 assert.match(reviewInput.task, /Implemented the parser/);
 assert.match(reviewInput.task, /You receive only the ReviewRequest below/);
 assert.match(reviewInput.task, /ReviewRequest:/);
 assert.doesNotMatch(reviewInput.task, /rubber-stamp/);
 assert.doesNotMatch(reviewInput.task, /I already decided/);
 const reviewResult = {
-	taskId: "T-20260905-100",
+	taskId: CANON100,
 	verdict: "request_changes",
 	summary: "the parser has no test coverage",
 	evidenceFresh: true,
@@ -624,6 +628,10 @@ await handlers.get("tool_call")(
 	},
 	ctx,
 );
+notices.length = 0;
+await commands.get("planner-only").handler("task T-20260905-200", ctx);
+const CANON200 = /Task: (T-\d{8}-\d{3})/.exec(notices.at(-1).message)?.[1];
+assert.ok(CANON200, "task status must print the canonical holder id");
 const blockedWriter = await handlers.get("tool_call")(
 	{
 		toolCallId: "call-201",
@@ -634,7 +642,7 @@ const blockedWriter = await handlers.get("tool_call")(
 );
 assert.equal(blockedWriter.block, true);
 assert.match(blockedWriter.reason, /write lock/);
-assert.match(blockedWriter.reason, /T-20260905-200/);
+assert.ok(blockedWriter.reason.includes(CANON200), blockedWriter.reason);
 // readers never take the write lock
 const readerCall = await handlers.get("tool_call")(
 	{ toolCallId: "call-202", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260905-202", "explorer")) } },
@@ -741,6 +749,10 @@ assert.equal(handlers.has("message_end"), true);
 		},
 		ctx,
 	);
+	notices.length = 0;
+	await commands.get("planner-only").handler(`task ${taskId}`, ctx);
+	const CANON206 = /Task: (T-\d{8}-\d{3})/.exec(notices.at(-1).message)?.[1];
+	assert.ok(CANON206, "task status must print the canonical async task id");
 	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
 	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
 	const receipt = await handlers.get("tool_result")(
@@ -755,7 +767,7 @@ assert.equal(handlers.has("message_end"), true);
 		},
 		ctx,
 	);
-	assert.match(receipt.content[0].text, /Async delegation for task T-20260905-206 has started/);
+	assert.ok(receipt.content[0].text.includes(`Async delegation for task ${CANON206} has started`), receipt.content[0].text);
 
 	const asyncReport = {
 		...workerReport,
@@ -855,6 +867,8 @@ const v10Worker = await handlers.get("tool_result")(
 	ctx,
 );
 assert.match(v10Worker.content[0].text, /decision: review_pending/);
+const CANON510 = /taskId: (T-\d{8}-\d{3})/.exec(v10Worker.content[0].text)?.[1];
+assert.ok(CANON510, "decision block must print the canonical task id");
 
 // pass while a reviewer delegation is pending -> refused
 await handlers.get("tool_call")(
@@ -878,7 +892,7 @@ const v11Outcome = await handlers.get("tool_result")(
 		toolName: "subagent",
 		input: {},
 		content: [{ type: "text", text: JSON.stringify({
-			taskId: "T-20260905-510",
+			taskId: CANON510,
 			verdict: "request_changes",
 			summary: "missing empty-input coverage",
 			evidenceFresh: true,
@@ -897,7 +911,7 @@ const rootPass = await verdictTool.execute(
 	ctx,
 );
 assert.equal(rootPass.isError, undefined);
-assert.equal(rootPass.details.taskId, "T-20260905-510");
+assert.equal(rootPass.details.taskId, CANON510);
 assert.equal(rootPass.details.verdict, "pass");
 assert.equal(rootPass.details.action, "accept");
 assert.equal(rootPass.details.state, "completed");
@@ -1023,9 +1037,11 @@ assert.match(
 	assert.match(passBlocked.content[0].text, /\nusage: /);
 	assert.match(passBlocked.content[0].text, /state: completed/);
 	const logPath = join(isolatedAgentDir, "planner-only", "usage.jsonl");
+	// The usage log uses the store's canonical id; the fixture alias only resolves to it.
+	const canon540 = passBlocked.details.taskId;
 	const completedLines = readFileSync(logPath, "utf8").trim().split("\n").filter(Boolean)
 		.map((line) => JSON.parse(line))
-		.filter((row) => row.taskId === taskId && row.state === "completed");
+		.filter((row) => row.taskId === canon540 && row.state === "completed");
 	assert.equal(completedLines.length, 1);
 }
 
@@ -1040,15 +1056,15 @@ assert.match(
 		ctx,
 	);
 	assert.ok(
-		notices.some((item) => /TaskSpec id T-20260220-099 replaced by T-20260905-\d{3} \(generated\)/.test(item.message)),
+		notices.some((item) => /TaskSpec id T-20260220-099 replaced by T-\d{8}-\d{3} \(generated\)/.test(item.message)),
 		notices.map((item) => item.message).join(" | "),
 	);
 	notices.length = 0;
 	await commands.get("planner-only").handler("task", ctx);
 	const status = notices.at(-1).message;
-	assert.match(status, /^Task: T-20260905-\d{3}/m);
+	assert.match(status, /^Task: T-\d{8}-\d{3}/m);
 	assert.match(status, /aliases: T-20260220-099/);
-	const canonical = status.match(/^Task: (T-20260905-\d{3})/m)[1];
+	const canonical = status.match(/^Task: (T-\d{8}-\d{3})/m)[1];
 	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
 	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
 	await handlers.get("tool_result")(
@@ -1427,6 +1443,7 @@ assert.match(
 		ctx,
 	);
 	const verdictText = verdictResult.content[0].text;
+	const canon526 = verdictResult.details.taskId;
 	assert.match(verdictText, /\[PLANNER-ONLY REVIEW STATE\]/);
 	assert.match(verdictText, /\nusage: /);
 	// In verdict without evidence, usage line is placed before reason:
@@ -1435,14 +1452,14 @@ assert.match(
 	// /planner-only usage command tests
 	notices.length = 0;
 	await commands.get("planner-only").handler(`usage ${taskId}`, ctx);
-	assert.match(notices.at(-1).message, new RegExp(`Usage for ${taskId}`));
+	assert.match(notices.at(-1).message, new RegExp(`Usage for ${canon526}`));
 	assert.match(notices.at(-1).message, /Root/);
 	assert.match(notices.at(-1).message, /Child/);
 
 	// /planner-only usage without args when active task exists
 	notices.length = 0;
 	await commands.get("planner-only").handler("usage", ctx);
-	assert.match(notices.at(-1).message, new RegExp(`Usage for ${taskId}`));
+	assert.match(notices.at(-1).message, new RegExp(`Usage for ${canon526}`));
 
 	// /planner-only usage session
 	notices.length = 0;

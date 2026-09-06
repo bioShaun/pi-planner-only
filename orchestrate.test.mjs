@@ -5,6 +5,11 @@ import { PlannerOrchestrator, isDelegationCall } from "./orchestrate.ts";
 import { TaskStore } from "./task.ts";
 import { hashStatus } from "./evidence.ts";
 
+// Fixture ids are stamped 2026-09-05; pin the store clock so id replacement
+// never depends on the wall clock of the machine running the suite.
+const FIXED_NOW = () => new Date(2026, 8, 5);
+const pinnedStore = () => new TaskStore({ now: FIXED_NOW });
+
 // --------------------------------------------------------------------------
 // Fixture: a GitRunner seam whose responses tests can override mid-flight, so
 // an "external edit" can happen between a worker report and a Root verdict.
@@ -126,7 +131,7 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 
 // Composite execution workflows fail closed before launch. Do not parse the script.
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const cases = [
 		["workflowScript", { agent: "worker", task: JSON.stringify(specFor("T-20260905-801")), workflowScript: "await worker(); await reviewer();" }],
 		["workflowScriptPath", { agent: "worker", task: JSON.stringify(specFor("T-20260905-802")), workflowScriptPath: "./compose.js" }],
@@ -151,7 +156,7 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 
 // Empty composite fields do not block a direct {agent, task} call.
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const ok = await orch.beginDelegation(
 		{
 			toolCallId: "call-800",
@@ -173,7 +178,7 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 
 // Management/validate with action keeps current behavior even with composite fields.
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const outcome = await orch.beginDelegation(
 		{
 			toolCallId: "call-807",
@@ -186,7 +191,7 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 
 // Async launch receipts remain pending and do not spend correction or rounds.
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-450";
 	await orch.beginDelegation({
 		toolCallId: "call-450",
@@ -208,7 +213,7 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 
 // asyncByDefault prose receipts remain pending without an async input flag.
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-451";
 	await orch.beginDelegation({ toolCallId: "call-451", input: { task: JSON.stringify(specFor(taskId)) } }, BASE);
 	const before = orch.store.require(taskId);
@@ -232,7 +237,7 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 
 // strict mode blocks a worker delegation that carries no TaskSpec
 {
-	const orch = new PlannerOrchestrator({ gitRunner, structuredDelegationMode: "strict" });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "strict" });
 	const blocked = await orch.beginDelegation(
 		{ toolCallId: "call-s1", input: { agent: "worker", task: "just do it, no spec attached" } },
 		BASE,
@@ -264,7 +269,7 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 
 // warn mode (the default) lets a spec-less worker through with a warning
 {
-	const orch = new PlannerOrchestrator({ gitRunner, structuredDelegationMode: "warn" });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
 	const outcome = await orch.beginDelegation(
 		{ toolCallId: "call-w1", input: { agent: "worker", task: "no spec here either" } },
 		BASE,
@@ -276,12 +281,12 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 	// the default constructor reads the environment override
 	process.env.PI_PLANNER_ONLY_STRUCTURED_DELEGATION = "strict";
 	try {
-		const fromEnv = new PlannerOrchestrator({ gitRunner });
+		const fromEnv = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 		assert.equal(fromEnv.structuredDelegationMode, "strict");
 	} finally {
 		delete process.env.PI_PLANNER_ONLY_STRUCTURED_DELEGATION;
 	}
-	const defaults = new PlannerOrchestrator({ gitRunner });
+	const defaults = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	assert.equal(defaults.structuredDelegationMode, "warn");
 }
 
@@ -290,7 +295,7 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 // --------------------------------------------------------------------------
 
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const original = specFor("T-20260905-500");
 	setCleanTree();
 	const delegated = await orch.beginDelegation(
@@ -337,7 +342,7 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 // --------------------------------------------------------------------------
 
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	await delegateWorker(orch, "call-600", "T-20260905-600");
 	const foreign = { ...reportFor("T-20260905-600", "call-600"), taskId: "T-20260905-999" };
 	foreign.evidence = { ...foreign.evidence, taskId: "T-20260905-999" };
@@ -353,7 +358,7 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 
 // No race: a PASS right after a fresh report completes the task.
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	await delegateWorker(orch, "call-610", "T-20260905-610");
 	await orch.handleSubagentResult(workerResult("call-610", reportFor("T-20260905-610", "call-610")));
 	assert.equal(orch.store.require("T-20260905-610").state, "reviewing");
@@ -367,7 +372,7 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 // Race: an external edit lands between the report and the Root PASS, so the
 // PASS must be rejected and the task forced back into validation.
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	await delegateWorker(orch, "call-611", "T-20260905-611");
 	await orch.handleSubagentResult(workerResult("call-611", reportFor("T-20260905-611", "call-611")));
 
@@ -389,7 +394,7 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 // Root still samples the workspace at acceptance, and stale evidence there
 // forces revalidation instead of completion.
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	await delegateWorker(orch, "call-612", "T-20260905-612");
 	await orch.handleSubagentResult(workerResult("call-612", reportFor("T-20260905-612", "call-612")));
 
@@ -411,7 +416,7 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 // When the workspace really is fresh, a Fresh Reviewer pass completes the task
 // on the strength of Root's own sample, not the reviewer's flag.
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	await delegateWorker(orch, "call-613", "T-20260905-613");
 	await orch.handleSubagentResult(workerResult("call-613", reportFor("T-20260905-613", "call-613")));
 
@@ -436,7 +441,7 @@ function truncatedPreview() {
 
 // B1. receipt with details.runId, then subagent-notify preview holds a valid WorkerReport
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-601";
 	const runId = "run-b1-00000000-0000-0000-000000000001";
 	await delegateWorker(orch, "call-b1", taskId);
@@ -463,7 +468,7 @@ function truncatedPreview() {
 
 // B2. truncated preview + fixture file under temp outputs/<runId>/ is parsed from the file
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-602";
 	const runId = "run-b2-00000000-0000-0000-000000000002";
 	const tmp = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
@@ -493,7 +498,7 @@ function truncatedPreview() {
 
 // B3. truncated preview and no file → report-only correction, reason contains async preview truncated
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-603";
 	const runId = "run-b3-00000000-0000-0000-000000000003";
 	await delegateWorker(orch, "call-b3", taskId);
@@ -511,7 +516,7 @@ function truncatedPreview() {
 
 // B4. processing the same runId twice changes nothing on the second pass
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-604";
 	const runId = "run-b4-00000000-0000-0000-000000000004";
 	await delegateWorker(orch, "call-b4", taskId);
@@ -538,7 +543,7 @@ function truncatedPreview() {
 // A completed foreground result carries details.runId but never asyncId; it
 // must be handled as a result (here: malformed), not parked as a receipt.
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-605";
 	await delegateWorker(orch, "call-fg", taskId);
 	const outcome = await orch.handleSubagentResult({
@@ -553,7 +558,7 @@ function truncatedPreview() {
 
 // Two pending async delegations and a notice without runId or taskId: no guess.
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	for (const [call, taskId, runId] of [["call-x1", "T-20260905-611", "x1x1x1x1-0000-0000-0000-0000000000x1"], ["call-x2", "T-20260905-612", "x2x2x2x2-0000-0000-0000-0000000000x2"]]) {
 		await delegateWorker(orch, call, taskId);
 		await orch.handleSubagentResult({
@@ -577,7 +582,7 @@ function truncatedPreview() {
 
 // pass with fresh evidence records source "root" and accepts
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	await delegateWorker(orch, "call-614", "T-20260905-614");
 	await orch.handleSubagentResult(workerResult("call-614", reportFor("T-20260905-614", "call-614")));
 	const outcome = await orch.recordRootVerdict(orch.store.require("T-20260905-614"), "pass", "verified locally", { source: "root" });
@@ -588,7 +593,7 @@ function truncatedPreview() {
 
 // request_changes with findings: round increments, guidance lists the findings
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	await delegateWorker(orch, "call-615", "T-20260905-615");
 	await orch.handleSubagentResult(workerResult("call-615", reportFor("T-20260905-615", "call-615")));
 	const findings = [
@@ -614,7 +619,7 @@ function truncatedPreview() {
 
 // blocked with no report is allowed once no delegation is pending; pass is not
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	await delegateWorker(orch, "call-616", "T-20260905-616");
 	const pending = orch.store.require("T-20260905-616");
 	assert.match(orch.rootVerdictRefusal(pending, "pass"), /no recorded WorkerReport/);
@@ -635,7 +640,7 @@ function truncatedPreview() {
 
 // fresh mode: Root arbitrates, it does not pre-empt
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	await delegateWorker(orch, "call-617", "T-20260905-617");
 	await orch.handleSubagentResult(workerResult("call-617", reportFor("T-20260905-617", "call-617")));
 	orch.store.setReviewMode("T-20260905-617", "fresh");
@@ -670,7 +675,7 @@ function truncatedPreview() {
 // --------------------------------------------------------------------------
 
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-661";
 	await delegateWorker(orch, "call-rf6a", taskId);
 	const failed = await orch.handleSubagentResult({
@@ -688,7 +693,7 @@ function truncatedPreview() {
 }
 
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-662";
 	await delegateWorker(orch, "call-rf6s", taskId);
 	const failed = await orch.handleSubagentResult({
@@ -704,7 +709,7 @@ function truncatedPreview() {
 }
 
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-663";
 	const runId = "run-rf6-ok";
 	await delegateWorker(orch, "call-rf6ok", taskId);
@@ -727,7 +732,7 @@ function truncatedPreview() {
 // --------------------------------------------------------------------------
 
 {
-	const orch = new PlannerOrchestrator({ gitRunner, structuredDelegationMode: "warn" });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
 	const taskId = "T-20260905-902";
 	await delegateWorker(orch, "call-902", taskId);
 	const outcome = await orch.beginDelegation(
@@ -755,7 +760,7 @@ function truncatedPreview() {
 // delegation moves them back to executing. A completed Task stays excluded:
 // a new Task is created instead of attaching.
 {
-	const orch = new PlannerOrchestrator({ gitRunner, structuredDelegationMode: "warn" });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
 	const taskId = "T-20260905-910";
 	await delegateWorker(orch, "call-910", taskId);
 	orch.store.transition(taskId, "blocked");
@@ -779,7 +784,7 @@ function truncatedPreview() {
 }
 
 {
-	const orch = new PlannerOrchestrator({ gitRunner, structuredDelegationMode: "warn" });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
 	const taskId = "T-20260905-911";
 	await delegateWorker(orch, "call-911", taskId);
 	orch.store.transition(taskId, "failed");
@@ -803,7 +808,7 @@ function truncatedPreview() {
 }
 
 {
-	const orch = new PlannerOrchestrator({ gitRunner, structuredDelegationMode: "warn" });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
 	const taskId = "T-20260905-912";
 	await delegateWorker(orch, "call-912", taskId);
 	orch.store.transition(taskId, "reviewing");
@@ -824,7 +829,7 @@ function truncatedPreview() {
 }
 
 {
-	const orch = new PlannerOrchestrator({ gitRunner, structuredDelegationMode: "warn" });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
 	const taskId = "T-20260905-903";
 	await delegateWorker(orch, "call-903", taskId);
 	await orch.handleSubagentResult(workerResult("call-903", reportFor(taskId, "call-903")));
@@ -847,7 +852,7 @@ function truncatedPreview() {
 // embedded TaskSpec" base warning, so there is no warning to append the
 // suffix to.
 {
-	const orch = new PlannerOrchestrator({ gitRunner, structuredDelegationMode: "warn" });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
 	const taskId = "T-20260905-913";
 	await delegateWorker(orch, "call-913", taskId);
 	const before = orch.store.list().length;
@@ -873,7 +878,7 @@ function truncatedPreview() {
 }
 
 {
-	const orch = new PlannerOrchestrator({ gitRunner, structuredDelegationMode: "warn" });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
 	const outcome = await orch.beginDelegation(
 		{
 			toolCallId: "call-two-ids",
@@ -894,7 +899,7 @@ function truncatedPreview() {
 // `unbound-explorer-` placeholder (mirroring `unbound-validator-`) and returns
 // only the standalone warning, with no evidence sampling.
 {
-	const orch = new PlannerOrchestrator({ gitRunner, structuredDelegationMode: "warn" });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
 	const before = orch.store.list().length;
 	const outcome = await orch.beginDelegation(
 		{
@@ -918,7 +923,7 @@ function truncatedPreview() {
 
 // An explorer delegation that names an existing Task id still binds to it.
 {
-	const orch = new PlannerOrchestrator({ gitRunner, structuredDelegationMode: "warn" });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
 	const taskId = "T-20260905-915";
 	await delegateWorker(orch, "call-915", taskId);
 	const before = orch.store.list().length;
@@ -963,7 +968,7 @@ function t1BaselineReport(taskId, toolCallId) {
 
 // L-1: T1 first-report fixture is accepted in one pass; Task reaches reviewing; decision contains Report normalised:
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	await delegateWorker(orch, "call-l1-t1", "T-20260905-181");
 	const outcome = await orch.handleSubagentResult(workerResult("call-l1-t1", t1BaselineReport("T-20260905-181", "call-l1-t1")));
 	const text = outcome.content[0].text;
@@ -980,7 +985,7 @@ function t1BaselineReport(taskId, toolCallId) {
 
 // L-1: evidence.taskId mismatching taskId is still rejected and counts one report correction
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	await delegateWorker(orch, "call-l1-mm", "T-20260905-182");
 	const report = {
 		...reportFor("T-20260905-182", "call-l1-mm"),
@@ -994,7 +999,7 @@ function t1BaselineReport(taskId, toolCallId) {
 
 // L-1: already-valid report has repairs [] and the decision text has no Report normalised line
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	await delegateWorker(orch, "call-l1-ok", "T-20260905-183");
 	const outcome = await orch.handleSubagentResult(workerResult("call-l1-ok", reportFor("T-20260905-183", "call-l1-ok")));
 	assert.doesNotMatch(outcome.content[0].text, /Report normalised:/);
@@ -1010,7 +1015,7 @@ const ROOT_MAY_STILL_JUDGE = "Root may still judge the last recorded report and 
 
 // L-4: Task blocked with one report and fresh evidence: planner_verdict(pass) → completed
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	await delegateWorker(orch, "call-l4-fresh", "T-20260905-401");
 	await orch.handleSubagentResult(workerResult("call-l4-fresh", reportFor("T-20260905-401", "call-l4-fresh")));
 	const blocked = await orch.recordRootVerdict(orch.store.require("T-20260905-401"), "blocked", "stop for now", { source: "root" });
@@ -1023,7 +1028,7 @@ const ROOT_MAY_STILL_JUDGE = "Root may still judge the last recorded report and 
 
 // L-4: blocked with report but stale evidence: revalidate, not completed
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	await delegateWorker(orch, "call-l4-stale", "T-20260905-402");
 	await orch.handleSubagentResult(workerResult("call-l4-stale", reportFor("T-20260905-402", "call-l4-stale")));
 	await orch.recordRootVerdict(orch.store.require("T-20260905-402"), "blocked", "pause", { source: "root" });
@@ -1039,7 +1044,7 @@ const ROOT_MAY_STILL_JUDGE = "Root may still judge the last recorded report and 
 
 // L-4: blocked with no report: pass refused with no-WorkerReport text; blocked verdict accepted
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	await delegateWorker(orch, "call-l4-nr", "T-20260905-403");
 	await orch.handleSubagentResult({
 		toolCallId: "call-l4-nr",
@@ -1058,7 +1063,7 @@ const ROOT_MAY_STILL_JUDGE = "Root may still judge the last recorded report and 
 
 // L-4: completed Task refused with the new text; no rootVerdictRefusal string contains /planner-only
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	await delegateWorker(orch, "call-l4-done", "T-20260905-404");
 	await orch.handleSubagentResult(workerResult("call-l4-done", reportFor("T-20260905-404", "call-l4-done")));
 	await orch.recordRootVerdict(orch.store.require("T-20260905-404"), "pass", "done", { source: "root" });
@@ -1080,7 +1085,7 @@ const ROOT_MAY_STILL_JUDGE = "Root may still judge the last recorded report and 
 
 // L-4: exhausted report-corrections text that sends a Task to blocked ends with the Root-may-still-judge sentence
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	await delegateWorker(orch, "call-l4-ex1", "T-20260905-405");
 	await orch.handleSubagentResult({
 		toolCallId: "call-l4-ex1",
@@ -1132,7 +1137,7 @@ function reportT3(taskId, toolCallId) {
 
 // L-2 T3: first unrepairable report, correction keeps base A, both paths attributed, no over-reported
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-231";
 	gitOverrides.set("rev-parse HEAD", "a1\n");
 	try {
@@ -1173,7 +1178,7 @@ function reportT3(taskId, toolCallId) {
 
 // L-2 (R13 review): a recorded report ends the round; the next worker delegation re-samples A
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-233";
 	const onePathStatus = [
 		"1 .M N... 100644 100644 100644 1111111 2222222 src/parser.ts",
@@ -1239,7 +1244,7 @@ function reportT3(taskId, toolCallId) {
 
 // L-2: decision evidence line contains base <sha7>
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	await delegateWorker(orch, "call-l2-sha", "T-20260905-232");
 	const outcome = await orch.handleSubagentResult(
 		workerResult("call-l2-sha", reportFor("T-20260905-232", "call-l2-sha")),
@@ -1249,7 +1254,7 @@ function reportT3(taskId, toolCallId) {
 
 // L-2: abandon clears base; RF-6 failed-launch re-bind does not
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-233";
 	await delegateWorker(orch, "call-l2-rf6a", taskId);
 	const original = orch.store.require(taskId).baseEvidence?.finalGitRef;
@@ -1276,7 +1281,7 @@ function reportT3(taskId, toolCallId) {
 
 // L-3: validator + fresh TaskSpec id while T-…-001 (with a report) is active in cwd
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-301";
 	setCleanTree();
 	await orch.beginDelegation(
@@ -1317,7 +1322,7 @@ function reportT3(taskId, toolCallId) {
 
 // L-3: valid validator WorkerReport appends validatorReports, not reports
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-302";
 	setCleanTree();
 	await orch.beginDelegation(
@@ -1349,7 +1354,7 @@ function reportT3(taskId, toolCallId) {
 
 // L-1: lenient normalisation on the validator path echoes Report normalised:
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-303";
 	setCleanTree();
 	await orch.beginDelegation(
@@ -1396,7 +1401,7 @@ function reportT3(taskId, toolCallId) {
 
 // L-3: no resolvable Task — warning only; later result is the unknown-task path
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const beforeLen = orch.store.list().length;
 	const outcome = await orch.beginDelegation(
 		{ toolCallId: "call-l3-none", input: { agent: "oracle", task: "validate the claim with no task named" } },
@@ -1421,7 +1426,7 @@ function reportT3(taskId, toolCallId) {
 
 // L-3: planner_verdict(pass) refused while validator pending; accepted after; completed on T-…-001
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-304";
 	setCleanTree();
 	await orch.beginDelegation(
@@ -1545,7 +1550,7 @@ function reportT3(taskId, toolCallId) {
 
 // R15/T4 finding: a worker that guesses gitStatusHash and workerRunId is accepted with fresh evidence
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-234";
 	await delegateWorker(orch, "call-t4-guess", taskId);
 	const base = reportFor(taskId, "call-t4-guess");
@@ -1571,7 +1576,7 @@ function reportT3(taskId, toolCallId) {
 
 // renderTaskStatus lists validator reports when present, omits the line when absent
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-235";
 	await delegateWorker(orch, "call-validator-status", taskId);
 	const withoutValidator = orch.renderTaskStatus(orch.store.require(taskId));
@@ -1690,7 +1695,7 @@ const rawResult = (toolCallId, text) => ({
 
 // First prose-only strike gets the exact reminder; a valid correction is accepted normally.
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-601";
 	await delegateWorker(orch, "call-i2-prose", taskId);
 	const first = await orch.handleSubagentResult(rawResult("call-i2-prose", "Implemented and tested successfully."));
@@ -1743,7 +1748,7 @@ const rawResult = (toolCallId, text) => ({
 
 // Subsequent valid JSON report requiring normalisation is accepted in one pass
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-607";
 	await delegateWorker(orch, "call-i2-norm-prose", taskId);
 	await orch.handleSubagentResult(rawResult("call-i2-norm-prose", "Prose strike 1"));
@@ -1779,7 +1784,7 @@ for (const [suffix, output] of [
 	["invalid", JSON.stringify({ taskId: "T-20260905-603", status: "unknown" })],
 	["invalid-schema", JSON.stringify({ taskId: "T-20260905-603", status: "completed", validation: "not-array" })],
 ]) {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = suffix.startsWith("empty") || suffix === "whitespace" ? "T-20260905-602" : "T-20260905-603";
 	const callId = `call-i2-${suffix}`;
 	await delegateWorker(orch, callId, taskId);
@@ -1789,7 +1794,7 @@ for (const [suffix, output] of [
 
 // Identity rejection is not a prose-only strike.
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-604";
 	await delegateWorker(orch, "call-i2-identity", taskId);
 	const report = reportFor(taskId, "call-i2-identity");
@@ -1801,7 +1806,7 @@ for (const [suffix, output] of [
 
 // A second prose-only strike has exhausted the correction budget and gets no reminder.
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-605";
 	await delegateWorker(orch, "call-i2-first", taskId);
 	await orch.handleSubagentResult(rawResult("call-i2-first", "first prose result"));
@@ -1819,7 +1824,7 @@ for (const [suffix, output] of [
 
 // Validator and reviewer malformed output retain their own paths and never get the worker reminder.
 {
-	const orch = new PlannerOrchestrator({ gitRunner });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-606";
 	await delegateWorker(orch, "call-i2-base", taskId);
 	await orch.handleSubagentResult(workerResult("call-i2-base", reportFor(taskId, "call-i2-base")));

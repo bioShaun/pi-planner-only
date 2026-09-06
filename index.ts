@@ -963,7 +963,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				}
 
 				if (sub) {
-					const output = renderTaskBlock(sub);
+					// The operator may name a model-chosen alias; usage is keyed by
+					// the store's canonical id.
+					const output = renderTaskBlock(store.get(sub)?.taskId ?? sub);
 					if (!output) {
 						notify(ctx, `Unknown planner-only task: ${sub}`, "warning");
 						return;

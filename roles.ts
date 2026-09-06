@@ -205,7 +205,9 @@ export function prepareRoleDelegation(
 	const report = target.task?.reports.at(-1);
 	const packet = target.role === "reviewer" && (packetSpec || report || options.git)
 		? buildFreshReviewerTask({
-			taskId: target.taskId ?? "unknown",
+			// The reviewer must echo the store's canonical id: a model-chosen id
+			// kept only as an alias would fail ReviewResult identity checks.
+			taskId: target.task?.taskId ?? target.taskId ?? "unknown",
 			...(packetSpec ? { spec: packetSpec } : {}),
 			...(report ? { report } : {}),
 			...(options.evidence ? { evidence: options.evidence } : {}),

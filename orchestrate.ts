@@ -880,7 +880,10 @@ export class PlannerOrchestrator {
 		if (byRunId.length > 0) return byRunId;
 
 		if (parsed.taskIdHint) {
-			const byTask = pending.filter(({ record }) => record.taskId === parsed.taskIdHint);
+			// A worker echoes the id it was delegated, which may be a model-chosen
+			// alias; resolve it through the store before comparing.
+			const hintId = this.store.get(parsed.taskIdHint)?.taskId ?? parsed.taskIdHint;
+			const byTask = pending.filter(({ record }) => record.taskId === hintId);
 			if (byTask.length === 1) return byTask;
 			if (byTask.length > 1) return [];
 		}
