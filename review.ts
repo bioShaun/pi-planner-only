@@ -129,6 +129,10 @@ Review only the candidate paths in this packet:
 - taskSpec.scope.allowedPaths
 - evidencePacket.attributedFiles or changedFiles
 - workerReport.changedFiles
+The packet may include a bounded patch against the task's start baseline.
+If evidencePacket.patchTruncated is true or patchOmittedPaths is non-empty,
+the packet is partial: request more evidence or return verdict blocked.
+Never treat a partial packet as a complete review.
 Inspect attributed changed files first.
 Do not run a codebase health scan or unbounded grep.
 Precise extra-path searches are allowed only to verify a specific changed caller or contract.

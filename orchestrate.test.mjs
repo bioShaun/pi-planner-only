@@ -2237,6 +2237,45 @@ function realGitRunnerOf(dir) {
 	);
 }
 
+// --------------------------------------------------------------------------
+// Ticket 04 — the reviewer packet carries the bounded baseline patch
+// --------------------------------------------------------------------------
+
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-995";
+	await delegateWorker(orch, "call-t4-packet", taskId);
+	await orch.handleSubagentResult(workerResult("call-t4-packet", reportFor(taskId, "call-t4-packet")));
+
+	// the baseline is the delegation-time A sample (abc1234); give the packet a patch
+	gitOverrides.set(
+		"diff --patch --no-ext-diff --no-textconv abc1234",
+		[
+			"diff --git a/src/parser.ts b/src/parser.ts",
+			"index 1111111..2222222 100644",
+			"--- a/src/parser.ts",
+			"+++ b/src/parser.ts",
+			"@@ -1,2 +1,2 @@",
+			"-const old = 1;",
+			"+const fresh = 1;",
+			"",
+		].join("\n"),
+	);
+	gitOverrides.set("diff --numstat --no-ext-diff --no-textconv abc1234", "1\t1\tsrc/parser.ts\n");
+	const reviewerInput = { agent: "worker", task: JSON.stringify(specFor(taskId, "reviewer")) };
+	try {
+		await orch.prepareRoleDelegation(reviewerInput);
+		assert.equal(reviewerInput.agent, "reviewer");
+		assert.ok(reviewerInput.task.includes("+const fresh = 1;"), "the reviewer sees the patch content");
+		assert.ok(reviewerInput.task.includes('"baselineRef": "abc1234"'), "the packet names the Task baseline");
+		assert.ok(reviewerInput.task.includes('"patchReturnedFiles": 1'), "completeness counts travel with the packet");
+		assert.ok(reviewerInput.task.includes("Never treat a partial packet as a complete review"), "the prompt carries the truncation duty");
+	} finally {
+		gitOverrides.delete("diff --patch --no-ext-diff --no-textconv abc1234");
+		gitOverrides.delete("diff --numstat --no-ext-diff --no-textconv abc1234");
+	}
+}
+
 console.log("planner-only orchestration: PASS");
 
 // --------------------------------------------------------------------------

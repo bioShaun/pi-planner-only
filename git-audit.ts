@@ -31,8 +31,14 @@ export const GIT_READ_ARGV = {
 	status: ["status", "--porcelain=v2", "--branch"],
 	evidenceDiffStat: ["diff", "HEAD", "--stat"],
 	// Reviewer evidence packet only. git_audit's diff-* operations build their
-	// own argv because they also support the staged variant.
-	diffCheck: ["diff", "--check"],
+	// own argv because they also support the staged variant. The check rows
+	// disable external diff/textconv so no repo config can execute programs.
+	diffCheck: ["diff", "--check", "--no-ext-diff", "--no-textconv"],
+	diffCheckStaged: ["diff", "--cached", "--check", "--no-ext-diff", "--no-textconv"],
+	// FR-05 reviewer packet rows — the baseline ref is appended as a trailing
+	// argv element after validation against GIT_REF_PATTERN.
+	patchBetween: ["diff", "--patch", "--no-ext-diff", "--no-textconv"],
+	numstatBetween: ["diff", "--numstat", "--no-ext-diff", "--no-textconv"],
 	// RF-1 Evidence probe rows only — never reachable through the git_audit tool.
 	// diffNamesBetween takes the two refs as trailing argv elements, each
 	// validated against GIT_REF_PATTERN; hashObject takes dirty paths after `--`.

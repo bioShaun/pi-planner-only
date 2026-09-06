@@ -538,6 +538,12 @@ function realGitRunnerOf(dir) {
 	};
 }
 
+
+function patchNames(patch) {
+	if (!patch) return [];
+	return [...patch.matchAll(/^diff --git a\/(.*) b\/(.*)$/gm)].map((match) => match[2]);
+}
+
 function realGit(dir, ...args) {
 	const result = spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
 	if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
@@ -671,6 +677,112 @@ function boundReport(taskId, toolCallId, sample, cwd, changedPaths) {
 		assert.equal(comparison.verifiable, false);
 		assert.equal(evidenceAction(comparison), "revalidate");
 		assert.ok(comparison.reasons.some((reason) => /report evidence incomplete/.test(reason)), comparison.reasons.join("; "));
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// --------------------------------------------------------------------------
+// FR-05 — bounded reviewer patch against the Task baseline (ticket 04)
+// --------------------------------------------------------------------------
+
+// R01: only staged whitespace-breaking changes -> the staged diff-check keeps
+// its non-zero exit and the problem text.
+{
+	const dir = initRealRepo();
+	try {
+		writeFileSync(join(dir, "style.txt"), "trailing whitespace here \n");
+		realGit(dir, "add", "style.txt");
+		const packet = await captureReviewEvidencePacket(realGitRunnerOf(dir), dir, undefined, { baselineRef: realGit(dir, "rev-parse", "HEAD").trim() });
+		assert.equal(packet.gitAvailable, true);
+		assert.ok(packet.diffCheckStaged, "staged diff-check must run");
+		assert.notEqual(packet.diffCheckStaged.exitCode, 0, "staged whitespace error must keep the non-zero exit");
+		assert.match(packet.diffCheckStaged.stdout ?? "", /trailing whitespace/);
+		assert.equal(packet.diffCheck.exitCode, 0, "unstaged check stays clean");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// R02: deleting a required check is visible as patch content, not just a path.
+{
+	const dir = initRealRepo();
+	try {
+		realGit(dir, "mv", "tracked.txt", "checks.ts");
+		writeFileSync(join(dir, "checks.ts"), "function requiredCheck() {\n  return true;\n}\n");
+		realGit(dir, "add", ".");
+		realGit(dir, "commit", "-m", "add check", "-q");
+		const baseline = realGit(dir, "rev-parse", "HEAD").trim();
+		writeFileSync(join(dir, "checks.ts"), "function requiredCheck() {\n  return false;\n}\n");
+
+		const packet = await captureReviewEvidencePacket(realGitRunnerOf(dir), dir, undefined, { baselineRef: baseline });
+		assert.ok(packet.patch, "the packet must carry a patch");
+		assert.ok(packet.patch.includes("-  return true;"), "the deleted line is visible in the patch");
+		assert.ok(packet.patch.includes("+  return false;"));
+		assert.equal(patchNames(packet.patch).includes("checks.ts"), true);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// R03: the worker commits the Task's changes — the patch stays relative to the
+// Task baseline instead of becoming empty because HEAD moved.
+{
+	const dir = initRealRepo();
+	try {
+		const baseline = realGit(dir, "rev-parse", "HEAD").trim();
+		writeFileSync(join(dir, "tracked.txt"), "task change\n");
+		realGit(dir, "add", ".");
+		realGit(dir, "commit", "-m", "worker commits", "-q");
+
+		const packet = await captureReviewEvidencePacket(realGitRunnerOf(dir), dir, undefined, { baselineRef: baseline });
+		assert.ok(packet.patch, "committed task changes must still produce a patch");
+		assert.ok(packet.patch.includes("+task change"), "the committed change is in the patch");
+		assert.equal(packet.baselineRef, baseline);
+		assert.notEqual(packet.head, baseline, "HEAD moved, the patch baseline did not");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// R04: a patch over budget marks omitted paths and truncated totals.
+{
+	const dir = initRealRepo();
+	try {
+		const baseline = realGit(dir, "rev-parse", "HEAD").trim();
+		const lines = Array.from({ length: 200 }, (_, i) => `line ${i} ${"x".repeat(60)}`);
+		writeFileSync(join(dir, "big.txt"), `${lines.join("\n")}\n`);
+		writeFileSync(join(dir, "small.txt"), "tiny\n");
+		realGit(dir, "add", ".");
+
+		const packet = await captureReviewEvidencePacket(realGitRunnerOf(dir), dir, undefined, { baselineRef: baseline });
+		assert.equal(packet.patchTruncated, true, "the oversized file must be omitted");
+		assert.deepEqual(packet.patchOmittedPaths, ["big.txt"]);
+		assert.equal(patchNames(packet.patch).includes("small.txt"), true, "the small file still makes it in");
+		assert.equal(patchNames(packet.patch).includes("big.txt"), false);
+		assert.equal(packet.patchTotalFiles, 2);
+		assert.equal(packet.patchReturnedFiles, 1);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// Binary changes keep a fingerprint, never a fake text patch.
+{
+	const dir = initRealRepo();
+	try {
+		const baseline = realGit(dir, "rev-parse", "HEAD").trim();
+		writeFileSync(join(dir, "asset.bin"), Buffer.from([0, 1, 2, 0, 3]));
+		realGit(dir, "add", "asset.bin");
+		realGit(dir, "commit", "-m", "asset", "-q");
+		writeFileSync(join(dir, "asset.bin"), Buffer.from([9, 8, 7, 0, 6]));
+
+		const packet = await captureReviewEvidencePacket(realGitRunnerOf(dir), dir, undefined, { baselineRef: baseline });
+		assert.deepEqual(packet.binaryFiles?.map((entry) => entry.path), ["asset.bin"]);
+		assert.match(packet.binaryFiles?.[0]?.fingerprint ?? "", /^[0-9a-f]{40}$/, "the binary blob has a content fingerprint");
+		if (packet.patch) {
+			assert.doesNotMatch(packet.patch, /\x00/, "no binary bytes are smuggled into the text patch");
+		}
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

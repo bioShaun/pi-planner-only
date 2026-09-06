@@ -168,12 +168,27 @@ export interface WorkerReport {
 	notes?: string[];
 }
 
+/** One `git diff --check` invocation with its outcome kept intact (FR-05 §8.3). */
+export interface DiffCheckResult {
+	exitCode: number;
+	stdout?: string;
+	stderr?: string;
+}
+
+/** A binary change Root saw in the task window: fingerprint, never a text patch. */
+export interface BinaryChange {
+	path: string;
+	/** Working-tree blob hash, when it could be sampled. */
+	fingerprint?: string;
+}
+
 /**
  * Bounded Git evidence Root samples for a Fresh Reviewer.
  *
  * Reviewer children launch with `--no-extensions`, so they cannot run
  * `git_audit`. Root is the repository-state authority and passes this packet
- * instead. Full diffs are never sent.
+ * instead. The patch is bounded against the Task's start baseline; a truncated
+ * packet is never presented as complete.
  */
 export interface ReviewEvidencePacket {
 	gitAvailable: boolean;
@@ -181,7 +196,22 @@ export interface ReviewEvidencePacket {
 	status?: string;
 	changedFiles?: string[];
 	diffStat?: string;
-	diffCheck?: string;
+	/** Whitespace/conflict-marker check over the working tree (unstaged). */
+	diffCheck?: DiffCheckResult;
+	/** Same check over the index (staged). */
+	diffCheckStaged?: DiffCheckResult;
+	/** Task start ref the patch is computed against, when known. */
+	baselineRef?: string;
+	/** Bounded patch covering staged, unstaged, added, deleted, renamed, and committed Task changes. */
+	patch?: string;
+	/** Why no patch is included despite a verifiable tree. */
+	patchUnavailable?: string;
+	/** Files left out of the patch by the size/file budget. */
+	patchOmittedPaths?: string[];
+	patchTruncated?: boolean;
+	patchReturnedFiles?: number;
+	patchTotalFiles?: number;
+	binaryFiles?: BinaryChange[];
 	/** Authoritative A-to-C paths when a Root comparison is available. */
 	attributedFiles?: string[];
 	/** truthPaths the Worker did not declare. */

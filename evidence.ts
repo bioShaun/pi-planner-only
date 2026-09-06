@@ -14,7 +14,14 @@ import { resolve } from "node:path";
 import { GIT_READ_ARGV, GIT_REF_PATTERN } from "./git-audit.ts";
 import type { GitRunner } from "./git-audit.ts";
 import { MAX_BASELINE_HASH_PATHS } from "./types.ts";
-import type { EvidenceRef, ReviewEvidencePacket, TaskScope, WorkerReport } from "./types.ts";
+import type {
+	BinaryChange,
+	DiffCheckResult,
+	EvidenceRef,
+	ReviewEvidencePacket,
+	TaskScope,
+	WorkerReport,
+} from "./types.ts";
 
 export type { GitRunner };
 
@@ -35,6 +42,10 @@ const MAX_DIFF_STAT_CHARS = 2000;
 const MAX_REVIEW_PACKET_STATUS_CHARS = 4000;
 const MAX_REVIEW_PACKET_FILES = 100;
 const MAX_REVIEW_PACKET_DIFF_CHARS = 2000;
+/** FR-05 §8.3 — patch budgets: total bytes, per-file bytes, and file count. */
+const MAX_REVIEW_PACKET_PATCH_CHARS = 8000;
+const MAX_REVIEW_PACKET_PATCH_FILE_CHARS = 4000;
+const MAX_REVIEW_PACKET_PATCH_FILES = 50;
 
 export function hashStatus(porcelain: string): string {
 	const entries = porcelain
@@ -251,14 +262,23 @@ function clip(value: string | null | undefined, limit: number): string | undefin
 }
 
 /**
- * §P1-2 — Root is the repository-state authority. Reviewer children launch
- * with `--no-extensions`, so they have no `git_audit`; Root samples the tree
- * and passes this bounded packet instead. No full diff ever crosses the seam.
+ * §P1-2 / FR-05 — Root is the repository-state authority. Reviewer children
+ * launch with `--no-extensions`, so they have no `git_audit`; Root samples the
+ * tree and passes this bounded packet instead. The patch is computed against
+ * the Task's start baseline (not HEAD) so staged, unstaged, and already
+ * committed Task changes all stay reviewable. Omissions are explicit: a
+ * truncated packet is never presented as complete.
  */
+export interface ReviewPacketOptions {
+	/** Task start ref the patch is computed against (the delegation-time A sample). */
+	baselineRef?: string;
+}
+
 export async function captureReviewEvidencePacket(
 	run: GitRunner,
 	cwd: string,
 	comparison?: EvidenceComparison,
+	options: ReviewPacketOptions = {},
 ): Promise<ReviewEvidencePacket> {
 	const target = resolve(cwd);
 	let probe: GitProbe;
@@ -271,13 +291,9 @@ export async function captureReviewEvidencePacket(
 	const attribution = attributionFields(comparison);
 	if (!probe.available) return { gitAvailable: false, ...attribution };
 
-	let diffCheck: string | undefined;
-	try {
-		const result = await run([...GIT_READ_ARGV.diffCheck], target);
-		diffCheck = clip(result.stdout, MAX_REVIEW_PACKET_DIFF_CHARS);
-	} catch {
-		diffCheck = undefined;
-	}
+	const diffCheck = await boundedDiffCheck(run, target, GIT_READ_ARGV.diffCheck);
+	const diffCheckStaged = await boundedDiffCheck(run, target, GIT_READ_ARGV.diffCheckStaged);
+	const patch = await boundedPatchAgainstBaseline(run, target, options.baselineRef);
 
 	return {
 		gitAvailable: true,
@@ -289,8 +305,139 @@ export async function captureReviewEvidencePacket(
 			? { changedFiles: probe.changedPaths.slice(0, MAX_REVIEW_PACKET_FILES) }
 			: {}),
 		...(probe.diffStat ? { diffStat: clip(probe.diffStat, MAX_REVIEW_PACKET_DIFF_CHARS) } : {}),
-		...(diffCheck ? { diffCheck } : {}),
+		diffCheck,
+		diffCheckStaged,
+		...(options.baselineRef ? { baselineRef: options.baselineRef } : {}),
+		...patch,
 		...attribution,
+	};
+}
+
+/** Run one `diff --check` variant and keep exit code plus output (FR-05 §8.3). */
+async function boundedDiffCheck(
+	run: GitRunner,
+	cwd: string,
+	argv: readonly string[],
+): Promise<DiffCheckResult> {
+	try {
+		const result = await run([...argv], cwd);
+		const stdout = clip(result.stdout, MAX_REVIEW_PACKET_DIFF_CHARS);
+		const stderr = clip(result.stderr ?? "", 400);
+		return {
+			exitCode: result.code,
+			...(stdout ? { stdout } : {}),
+			...(stderr ? { stderr } : {}),
+		};
+	} catch (error) {
+		return { exitCode: -1, stderr: error instanceof Error ? error.message : String(error) };
+	}
+}
+
+/** Split a unified diff into per-file chunks on `diff --git` boundaries. */
+function splitPatchChunks(patch: string): { path: string; text: string }[] {
+	const chunks: { path: string; text: string }[] = [];
+	const lines = patch.split("\n");
+	let current: string[] | undefined;
+	let path: string | undefined;
+	for (const line of lines) {
+		if (line.startsWith("diff --git ")) {
+			if (current && path) chunks.push({ path, text: current.join("\n") });
+			// `diff --git a/<path> b/<path>`; the b/ side is the post-image name.
+			const match = line.match(/^diff --git a\/(.*) b\/(.*)$/);
+			path = match?.[2] ?? line.slice("diff --git ".length);
+			current = [line];
+			continue;
+		}
+		if (current) current.push(line);
+	}
+	if (current && path) chunks.push({ path, text: current.join("\n") });
+	return chunks.filter((chunk) => chunk.text.trim());
+}
+
+/**
+ * Bounded patch against the Task baseline. Oversized or over-budget files are
+ * omitted by name (never silently), binary changes become fingerprints, and
+ * the returned/total counts say whether the packet is whole.
+ */
+async function boundedPatchAgainstBaseline(
+	run: GitRunner,
+	cwd: string,
+	baselineRef: string | undefined,
+): Promise<Partial<ReviewEvidencePacket>> {
+	if (!baselineRef) return {};
+	if (!GIT_REF_PATTERN.test(baselineRef)) {
+		return { patchUnavailable: "task baseline ref is not a valid commit ref" };
+	}
+
+	let patchText: string;
+	try {
+		const result = await run([...GIT_READ_ARGV.patchBetween, baselineRef], cwd);
+		if (result.code !== 0) {
+			return {
+				patchUnavailable: `git diff ${baselineRef} failed (exit ${result.code})${
+					result.stderr ? `: ${clip(result.stderr, 200) ?? ""}` : ""
+				}`,
+			};
+		}
+		patchText = result.stdout;
+	} catch (error) {
+		return { patchUnavailable: `git diff failed: ${error instanceof Error ? error.message : String(error)}` };
+	}
+
+	const binaryPaths: string[] = [];
+	try {
+		const numstat = await run([...GIT_READ_ARGV.numstatBetween, baselineRef], cwd);
+		if (numstat.code === 0) {
+			for (const line of numstat.stdout.split("\n")) {
+				// Binary entries are `-\t-\t<path>` in numstat output.
+				if (line.startsWith("-\t")) {
+					const path = line.split("\t")[2]?.trim();
+					if (path) binaryPaths.push(path);
+				}
+			}
+		}
+	} catch {
+		// Fingerprints are best-effort; the patch itself stays honest.
+	}
+
+	const chunks = splitPatchChunks(patchText);
+	const total = chunks.length;
+	const omittedPaths: string[] = [];
+	const included: string[] = [];
+	let used = 0;
+	for (const chunk of chunks) {
+		if (
+			included.length >= MAX_REVIEW_PACKET_PATCH_FILES ||
+			used + chunk.text.length > MAX_REVIEW_PACKET_PATCH_CHARS ||
+			chunk.text.length > MAX_REVIEW_PACKET_PATCH_FILE_CHARS
+		) {
+			omittedPaths.push(chunk.path);
+			continue;
+		}
+		included.push(chunk.path);
+		used += chunk.text.length;
+	}
+	const patch = chunks
+		.filter((chunk) => !omittedPaths.includes(chunk.path))
+		.map((chunk) => chunk.text)
+		.join("\n");
+
+	const fingerprints: BinaryChange[] = [];
+	if (binaryPaths.length > 0) {
+		const hashes = await hashDirtyPaths(run, cwd, binaryPaths.slice(0, MAX_REVIEW_PACKET_FILES));
+		if (hashes) {
+			for (const [path, hash] of Object.entries(hashes)) {
+				fingerprints.push({ path, ...(hash ? { fingerprint: hash } : {}) });
+			}
+		}
+	}
+
+	return {
+		...(patch.trim() ? { patch: patch.trimEnd() } : {}),
+		...(omittedPaths.length > 0 ? { patchOmittedPaths: omittedPaths, patchTruncated: true } : {}),
+		patchReturnedFiles: included.length,
+		patchTotalFiles: total,
+		...(fingerprints.length > 0 ? { binaryFiles: fingerprints } : {}),
 	};
 }
 

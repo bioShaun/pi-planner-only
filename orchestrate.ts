@@ -382,6 +382,9 @@ export class PlannerOrchestrator {
 				this.gitRunner,
 				cwd,
 				target.task?.lastComparison,
+				// The patch is bounded against the Task's start baseline, not the
+				// current HEAD, so committed Task changes stay reviewable (R03).
+				{ ...(target.task?.baseEvidence?.finalGitRef ? { baselineRef: target.task.baseEvidence.finalGitRef } : {}) },
 			);
 			if (target.task?.lastComparison) {
 				options.evidence = describeComparison(target.task.lastComparison);
