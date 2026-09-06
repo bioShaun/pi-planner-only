@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { PlannerOrchestrator, isDelegationCall } from "./orchestrate.ts";
+import { isExecutingStale } from "./task.ts";
 import { TaskStore } from "./task.ts";
 import { hashStatus } from "./evidence.ts";
 
@@ -2038,6 +2039,101 @@ function realGitRunnerOf(dir) {
 	);
 	assert.equal(validator.conflict?.conflict, true, "shell-capable validators take the write lock");
 	assert.equal(orch.pendingDelegationCount(), 1);
+}
+
+// --------------------------------------------------------------------------
+// Ticket 09 — the write lock outlives stale executing until the child is known stopped
+// --------------------------------------------------------------------------
+
+// A stale executing holder still blocks a second writable delegation, and the
+// conflict reason demands reconciliation; after the run reconciles, the lock frees.
+{
+	let clock = new Date(2026, 8, 5, 12, 0, 0);
+	const store = new TaskStore({ now: () => clock });
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-t9-1", input: { task: JSON.stringify(specFor("T-20260905-980")) } },
+		BASE,
+	);
+	clock = new Date(2026, 8, 5, 13, 0, 0); // one hour later: past EXECUTING_STALE_MS
+	assert.equal(isExecutingStale(orch.store.require("T-20260905-980"), clock.getTime()), true);
+	const second = await orch.beginDelegation(
+		{ toolCallId: "call-t9-2", input: { task: JSON.stringify(specFor("T-20260905-981", "worker", "/fixture/T-20260905-980")) } },
+		BASE,
+	);
+	assert.equal(second.conflict?.conflict, true, "stale executing must keep blocking");
+	assert.match(second.conflict.reason, /not been confirmed exited/);
+
+	// the child run turns out terminal: reconcile consumes it and the lock frees
+	const runId = "run-t9-1";
+	const layout = artifactLayout(runId, "worker", 0, reportFor("T-20260905-980", "call-t9-1"));
+	await orch.handleSubagentResult(receiptFor("call-t9-1", runId, layout.asyncDir));
+	setDirtyTree();
+	const consumed = await orch.reconcilePendingDelegations("T-20260905-980");
+	assert.equal(consumed, 1);
+	assert.equal(orch.store.require("T-20260905-980").state, "reviewing");
+	const third = await orch.beginDelegation(
+		{ toolCallId: "call-t9-3", input: { task: JSON.stringify(specFor("T-20260905-981", "worker", "/fixture/T-20260905-980")) } },
+		BASE,
+	);
+	assert.equal(third.conflict, undefined, "a reconciled holder no longer blocks");
+	rmSync(layout.tmp, { recursive: true, force: true });
+}
+
+// An error event for a live async child keeps the lock; only artifacts (or the
+// blocked escape hatch) move things forward. Confirmed start failure still unlocks.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-982";
+	const runId = "run-t9-2";
+	const tmp = mkdtempSync(join(process.cwd(), ".planner-only-t9-"));
+	const asyncDir = join(tmp, "async-subagent-runs", runId);
+	mkdirSync(asyncDir, { recursive: true });
+	try {
+		await delegateWorker(orch, "call-t9-4", taskId);
+		await orch.handleSubagentResult(receiptFor("call-t9-4", runId, asyncDir));
+		const outcome = await orch.handleSubagentResult({
+			toolCallId: "call-t9-4",
+			toolName: "subagent",
+			isError: true,
+			content: [{ type: "text", text: "child crashed, maybe" }],
+		});
+		assert.match(outcome.content[0].text, /not been confirmed stopped/);
+		assert.equal(orch.pendingDelegationCount(), 1, "lock stays held for the unconfirmed child");
+		assert.equal(orch.store.require(taskId).state, "executing");
+		// blocked stays available as the escape hatch
+		assert.equal(orch.rootVerdictRefusal(orch.store.require(taskId), "blocked"), undefined);
+
+		// artifacts later show a terminal exit: reconcile consumes the run
+		writeFileSync(join(tmp, "artifacts-meta.json"), JSON.stringify({ runId, agent: "worker", exitCode: 0 }));
+		mkdirSync(join(tmp, "artifacts"), { recursive: true });
+		rmSync(join(tmp, "artifacts-meta.json"));
+		writeFileSync(join(tmp, "artifacts", `${runId}_worker_meta.json`), JSON.stringify({ runId, agent: "worker", exitCode: 1 }));
+		mkdirSync(join(tmp, "artifacts", "outputs", runId), { recursive: true });
+		writeFileSync(join(tmp, "artifacts", "outputs", runId, "result.json"), "no report here");
+		assert.equal(await orch.reconcilePendingDelegations(), 1);
+		assert.equal(orch.pendingDelegationCount(), 0);
+	} finally {
+		rmSync(tmp, { recursive: true, force: true });
+	}
+}
+
+// Unlock is idempotent when completion and an error both arrive.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-983";
+	await delegateWorker(orch, "call-t9-5", taskId);
+	await orch.handleSubagentResult(workerResult("call-t9-5", reportFor(taskId, "call-t9-5")));
+	assert.equal(orch.pendingDelegationCount(), 0);
+	const late = await orch.handleSubagentResult({
+		toolCallId: "call-t9-5",
+		toolName: "subagent",
+		isError: true,
+		content: [{ type: "text", text: "late cancel signal" }],
+	});
+	assert.equal(late, undefined, "a second event for a consumed delegation is a no-op");
+	assert.equal(orch.store.require(taskId).state, "reviewing");
 }
 
 console.log("planner-only orchestration: PASS");

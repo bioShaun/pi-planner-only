@@ -690,7 +690,7 @@ export class PlannerOrchestrator {
 			`State: ${task.state}`,
 			`Worker round: ${task.reviewRound}/${MAX_REVIEW_ROUNDS}`,
 			`Review mode: ${task.reviewMode}`,
-			...(isExecutingStale(task) ? [`Lock: stale (executing for over ${Math.round(EXECUTING_STALE_MS / 60000)} minutes)`] : []),
+			...(isExecutingStale(task) ? [`Lock: stale (executing for over ${Math.round(EXECUTING_STALE_MS / 60000)} minutes; the child has not been confirmed exited — reconcile or abandon before writing)`] : []),
 			`Evidence: ${report ? (task.lastComparison ? describeComparison(task.lastComparison) : "not compared") : "no report yet"}`,
 			`Changed files: ${report?.changedFiles.length ?? 0}`,
 			...(task.validatorReports.length > 0 ? [`Validator reports: ${task.validatorReports.length}`] : []),
@@ -882,6 +882,32 @@ export class PlannerOrchestrator {
 		if (!delegation) return;
 		const text = resultText(event);
 		if (event.isError && !extractWorkerReport(text, { expectedTaskId: delegation.taskId, expectedWorkerRunId: event.toolCallId }).report) {
+			// D07 — an async child with a known runId is not confirmed stopped by
+			// an error event alone. Consume a run the artifacts already show
+			// terminal; otherwise keep the delegation (and its write lock) until
+			// reconcile can prove the run exited. A launch that never produced a
+			// run (no receipt, no runId) is a confirmed start failure and unlocks.
+			if (delegation.runId) {
+				if (await this.reconcileDelegation(event.toolCallId, delegation)) {
+					return {
+						content: [{
+							type: "text",
+							text: `[PLANNER-ONLY] Run ${delegation.runId} for task ${delegation.taskId} errored after launch, but its artifacts show a terminal exit; the saved output was consumed.`,
+						}],
+					};
+				}
+				return {
+					content: [{
+						type: "text",
+						text: [
+							`[PLANNER-ONLY] Error for the async run ${delegation.runId} of task ${delegation.taskId}:`,
+							truncate(text, RAW_OUTPUT_FALLBACK_CHARS),
+							"The run has not been confirmed stopped, so the write lock stays held and the task stays executing.",
+							"Wait for the completion notice or the run artifacts; until then Root may record a blocked verdict.",
+						].join("\n"),
+					}],
+				};
+			}
 			this.delegations.delete(event.toolCallId);
 			const task = this.store.get(delegation.taskId);
 			const firstLine = (text.split(/\r?\n/, 1)[0] ?? "").trim();

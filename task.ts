@@ -468,7 +468,7 @@ export interface WriterConflict {
 }
 
 /**
- * FR-04 — at most one writable invocation per worktree at a time.
+ * FR-04 / D07 — at most one writable invocation per worktree at a time.
  *
  * The lock follows actual write ability (`isWriterRole`), not the presence of
  * a TaskSpec or the worker role name: a warn-mode unstructured worker and a
@@ -477,6 +477,10 @@ export interface WriterConflict {
  *
  * cwd identity is normalized through `realpath` so relative paths and symlink
  * aliases of one worktree collide; independent worktrees stay independent.
+ *
+ * A stale-looking holder still blocks: timeout is not exit. The lock is
+ * released only when the child run is consumed (result, notice, or artifact
+ * reconcile) or the operator abandons the Task.
  */
 export function normalizeWorkspaceIdentity(cwd: string): string {
 	const absolute = resolve(cwd);
@@ -501,16 +505,18 @@ export function findWriterConflict(
 			isWriterRole(task.role) &&
 			task.state === "executing" &&
 			task.cwd !== "" &&
-			!isExecutingStale(task, now) &&
 			normalizeWorkspaceIdentity(task.cwd) === target,
 	);
 	if (!holder) return { conflict: false };
+	const stale = isExecutingStale(holder, now);
 	return {
 		conflict: true,
 		taskId: holder.taskId,
 		reason: [
 			`Planner-only guard: task ${holder.taskId} already holds the write lock for ${target}.`,
-			"Keep one writable invocation per worktree; even a second call on the same Task must wait.",
+			stale
+				? `That task has been executing for over ${Math.round(EXECUTING_STALE_MS / 60000)} minutes and its child run has not been confirmed exited; reconcile the run (or abandon the task) before starting another writer.`
+				: "Keep one writable invocation per worktree; even a second call on the same Task must wait.",
 			"Wait for that run's result to release the lock, or delegate this one into a separate worktree.",
 		].join("\n"),
 	};

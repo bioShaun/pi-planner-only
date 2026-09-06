@@ -311,9 +311,12 @@ assert.equal(findWriterConflict([writerA], "/elsewhere", "worker").conflict, fal
 	assert.equal(findWriterConflict([holder], alias, "explorer").conflict, false);
 }
 
+// D07 — a stale-looking holder still blocks: timeout is not exit
 const staleWriter = { ...writerA, updatedAt: new Date(Date.now() - EXECUTING_STALE_MS - 1).toISOString() };
 assert.equal(isExecutingStale(staleWriter), true);
-assert.equal(findWriterConflict([staleWriter], cwd, "worker").conflict, false);
+const staleClash = findWriterConflict([staleWriter], cwd, "worker");
+assert.equal(staleClash.conflict, true, "stale executing must keep blocking until the child is confirmed stopped");
+assert.match(staleClash.reason, /not been confirmed exited/);
 assert.equal(findWriterConflict([writerA], cwd, "worker").conflict, true);
 const abandoned = store.create(createTaskSpec({ objective: "stuck", cwd }, "T-abandon-001"));
 store.transition(abandoned.taskId, "executing");
