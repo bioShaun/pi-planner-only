@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { PlannerOrchestrator, isDelegationCall } from "./orchestrate.ts";
 import { TaskStore } from "./task.ts";
@@ -1571,7 +1572,8 @@ function reportT3(taskId, toolCallId) {
 	const task = orch.store.require(taskId);
 	assert.equal(task.reports.length, 1);
 	assert.equal(task.reports[0].evidence.workerRunId, "call-t4-guess");
-	assert.equal(task.reports[0].evidence.gitStatusHash, undefined);
+	// the guessed hash is dropped; the stored binding is Root's own report-time sample
+	assert.equal(task.reports[0].evidence.gitStatusHash, cleanHash);
 	assert.equal(task.state, "reviewing");
 }
 
@@ -1845,6 +1847,109 @@ for (const [suffix, output] of [
 	const reviewer = await orch.handleSubagentResult(rawResult("call-i2-reviewer", "reviewer prose"));
 	assert.match(reviewer.content[0].text, /Reviewer output/);
 	assert.doesNotMatch(reviewer.content[0].text, /JSON only:/);
+}
+
+// --------------------------------------------------------------------------
+// Ticket 02 — the PASS boundary refuses content drift, in a real Git repo
+// --------------------------------------------------------------------------
+
+function realGitRunnerOf(dir) {
+	return async (args, cwd) => {
+		const r = spawnSync("git", ["-C", cwd || dir, ...args], { encoding: "utf8" });
+		return { stdout: r.stdout ?? "", stderr: r.stderr ?? "", code: r.status ?? 1 };
+	};
+}
+
+// E01 at the acceptance boundary: dirty file content changes after the report
+// with identical status/HEAD — PASS must revalidate, not complete.
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-passbound-"));
+	const git = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+	try {
+		git("init", "-q");
+		git("config", "user.email", "test@example.com");
+		git("config", "user.name", "Test");
+		writeFileSync(join(dir, "tracked.txt"), "base\n");
+		git("add", ".");
+		git("commit", "-m", "base", "-q");
+
+		const runner = realGitRunnerOf(dir);
+		const orch = new PlannerOrchestrator({ gitRunner: runner, store: pinnedStore() });
+		const spec = { ...specFor("T-20260905-960"), cwd: dir };
+		await orch.beginDelegation(
+			{ toolCallId: "call-pb-1", input: { task: JSON.stringify(spec) } },
+			BASE,
+		);
+		writeFileSync(join(dir, "tracked.txt"), "worker edit\n");
+		const outcome = await orch.handleSubagentResult(workerResult("call-pb-1", {
+			version: 1,
+			taskId: "T-20260905-960",
+			status: "completed",
+			summary: "edited tracked.txt",
+			changedFiles: ["tracked.txt"],
+			validation: [{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "ok" }],
+			evidence: { cwd: dir, taskId: "T-20260905-960", workerRunId: "call-pb-1", changedPaths: ["tracked.txt"], gitAvailable: true, generatedAt: new Date().toISOString() },
+			risks: [],
+			unresolved: [],
+		}));
+		assert.match(outcome.content[0].text, /decision: review_pending/);
+
+		// same porcelain status, different bytes: a fake-fresh PASS must not accept
+		writeFileSync(join(dir, "tracked.txt"), "external edit\n");
+		const verdict = await orch.recordRootVerdict(orch.store.require("T-20260905-960"), "pass", "accepting");
+		assert.equal(verdict.decision.action, "revalidate");
+		assert.match(verdict.decision.reason, /content changed since the report/);
+		assert.equal(verdict.task.state, "changes_requested");
+		assert.notEqual(verdict.task.state, "completed");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// E06 at the acceptance boundary: a status probe failure is unknown — PASS revalidates.
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-passbound-"));
+	const git = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+	try {
+		git("init", "-q");
+		git("config", "user.email", "test@example.com");
+		git("config", "user.name", "Test");
+		writeFileSync(join(dir, "tracked.txt"), "base\n");
+		git("add", ".");
+		git("commit", "-m", "base", "-q");
+
+		let failStatus = false;
+		const runner = async (args, cwd) => {
+			if (failStatus && args[0] === "status") return { stdout: "", stderr: "fatal: hung", code: 128 };
+			return realGitRunnerOf(dir)(args, cwd);
+		};
+		const orch = new PlannerOrchestrator({ gitRunner: runner, store: pinnedStore() });
+		const spec = { ...specFor("T-20260905-961"), cwd: dir };
+		await orch.beginDelegation(
+			{ toolCallId: "call-pb-2", input: { task: JSON.stringify(spec) } },
+			BASE,
+		);
+		writeFileSync(join(dir, "tracked.txt"), "worker edit\n");
+		await orch.handleSubagentResult(workerResult("call-pb-2", {
+			version: 1,
+			taskId: "T-20260905-961",
+			status: "completed",
+			summary: "edited tracked.txt",
+			changedFiles: ["tracked.txt"],
+			validation: [{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "ok" }],
+			evidence: { cwd: dir, taskId: "T-20260905-961", workerRunId: "call-pb-2", changedPaths: ["tracked.txt"], gitAvailable: true, generatedAt: new Date().toISOString() },
+			risks: [],
+			unresolved: [],
+		}));
+
+		failStatus = true;
+		const verdict = await orch.recordRootVerdict(orch.store.require("T-20260905-961"), "pass", "accepting");
+		assert.equal(verdict.decision.action, "revalidate");
+		assert.match(verdict.decision.reason, /git status probe failed/);
+		assert.equal(verdict.task.state, "changes_requested");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 }
 
 console.log("planner-only orchestration: PASS");

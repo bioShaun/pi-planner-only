@@ -25,6 +25,8 @@ export interface GitProbe {
 	statusHash: string | null;
 	changedPaths: string[];
 	diffStat: string | null;
+	/** True when the status command itself failed; empty output is then unknown, not clean. */
+	statusFailed: boolean;
 }
 
 const MAX_DIFF_STAT_CHARS = 2000;
@@ -78,6 +80,7 @@ function unavailableProbe(): GitProbe {
 		statusHash: null,
 		changedPaths: [],
 		diffStat: null,
+		statusFailed: false,
 	};
 }
 
@@ -95,18 +98,22 @@ export async function probeGit(run: GitRunner, cwd: string): Promise<GitProbe> {
 	const head = await run([...GIT_READ_ARGV.head], cwd);
 	const status = await run([...GIT_READ_ARGV.status], cwd);
 	const diffStat = await run([...GIT_READ_ARGV.evidenceDiffStat], cwd);
-	const porcelain = status.code === 0 ? status.stdout : "";
+	// A failed status probe must not be folded into an empty (clean) tree:
+	// empty output is only a valid result when the command succeeded (FR-02).
+	const statusFailed = status.code !== 0;
+	const porcelain = statusFailed ? null : status.stdout;
 
 	return {
 		available: true,
 		head: head.code === 0 ? head.stdout.trim() || null : null,
 		statusPorcelain: porcelain,
-		statusHash: hashStatus(porcelain),
-		changedPaths: parseChangedPaths(porcelain),
+		statusHash: porcelain === null ? null : hashStatus(porcelain),
+		changedPaths: porcelain === null ? [] : parseChangedPaths(porcelain),
 		diffStat:
 			diffStat.code === 0 && diffStat.stdout.trim()
 				? diffStat.stdout.trim().slice(-MAX_DIFF_STAT_CHARS)
 				: null,
+		statusFailed,
 	};
 }
 
@@ -225,6 +232,7 @@ export async function captureEvidence(
 		...(options.baseGitRef ? { baseGitRef: options.baseGitRef } : {}),
 		...(probe.head ? { finalGitRef: probe.head } : {}),
 		...(probe.statusHash ? { gitStatusHash: probe.statusHash } : {}),
+		...(probe.statusFailed ? { statusProbeFailed: true } : {}),
 		changedPaths: probe.changedPaths,
 		...(dirtyPathHashes ? { dirtyPathHashes } : {}),
 		...(committedPaths ? { committedPaths } : {}),
@@ -394,8 +402,14 @@ export function compareEvidence(
 
 	const baseGit = base.gitAvailable !== false;
 	const currentGit = current.gitAvailable !== false;
-	const verifiable = baseGit && currentGit;
+	let verifiable = baseGit && currentGit;
 	if (!verifiable) reasons.push("git evidence unavailable — freshness cannot be verified");
+	// FR-02 — a failed status probe means the workspace state is unknown, never
+	// an implicitly clean tree.
+	if (base.statusProbeFailed || current.statusProbeFailed) {
+		verifiable = false;
+		reasons.push("git status probe failed — workspace state unknown");
+	}
 
 	let headChanged = false;
 	if (verifiable && reported.finalGitRef && current.finalGitRef && reported.finalGitRef !== current.finalGitRef) {
@@ -435,6 +449,34 @@ export function compareEvidence(
 	}
 	const t3Set = new Set(t3);
 	const truthSet = new Set([...t1, ...t2, ...t3]);
+
+	// FR-01 — content binding between the sample the report was validated
+	// against and the sample Root is comparing now: an unchanged porcelain
+	// status must not hide content drift on paths both samples hashed.
+	const reportedHashes = normalizedDirtyHashes(reported.dirtyPathHashes, reported.cwd || pathCwd);
+	const currentHashes = normalizedDirtyHashes(current.dirtyPathHashes, current.cwd || pathCwd);
+	const contentDrift: string[] = [];
+	for (const [path, hash] of reportedHashes) {
+		const nowHash = currentHashes.get(path);
+		if (nowHash === undefined) continue;
+		if (hash !== nowHash) contentDrift.push(path);
+	}
+	if (contentDrift.length > 0) {
+		reasons.push(`content changed since the report: ${sorted(contentDrift).join(", ")}`);
+		unexplained = true;
+	}
+
+	// FR-02 — a report that carries no Git binding evidence at all cannot be
+	// called fresh: there is nothing to verify the validated content against.
+	if (
+		verifiable &&
+		reported.finalGitRef === undefined &&
+		reported.gitStatusHash === undefined &&
+		reported.dirtyPathHashes === undefined
+	) {
+		verifiable = false;
+		reasons.push("report evidence incomplete — no HEAD/status/content binding to verify");
+	}
 
 	const declaredPaths = new Set(
 		normalizeEvidencePaths(reported.changedPaths ?? report.changedFiles ?? [], reported.cwd || pathCwd),

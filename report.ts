@@ -267,6 +267,12 @@ function hardenEvidence(
 		delete evidence.gitStatusHash;
 		repairs.push(`evidence.gitStatusHash "${formatRaw(hash)}" dropped (not a Root hash)`);
 	}
+	if (evidence.dirtyPathHashes !== undefined) {
+		// Content binding is Root's own sample; a worker-supplied map would let
+		// the report vouch for itself.
+		delete evidence.dirtyPathHashes;
+		repairs.push("evidence.dirtyPathHashes dropped (Root-owned binding)");
+	}
 	const expected = context?.expectedWorkerRunId;
 	if (expected) {
 		const runId = evidence.workerRunId;

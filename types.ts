@@ -120,6 +120,8 @@ export interface EvidenceRef {
 	dirtyPathHashes?: Record<string, string | null>;
 	/** Paths changed between baseGitRef and finalGitRef (C only; empty when refs are equal). */
 	committedPaths?: string[];
+	/** True when the status probe itself failed at sample time; state is unknown, not clean. */
+	statusProbeFailed?: boolean;
 	diffStat?: string;
 	gitAvailable?: boolean;
 	generatedAt: string;

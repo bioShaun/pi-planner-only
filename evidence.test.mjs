@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import {
 	captureEvidence,
@@ -252,25 +253,39 @@ assert.equal(noGit.verifiable, false);
 assert.equal(evidenceAction(noGit), "revalidate");
 assert.match(describeComparison(noGit), /unverifiable/);
 
-// Worker gitAvailable=false must not disable Root A-to-C attribution
+// Worker gitAvailable=false must not disable Root A-to-C attribution, but a
+// report with no binding evidence at all cannot be fresh (FR-01/FR-02)
 const workerUnverifiable = compareEvidence(
 	makeBase(),
 	makeCurrent(),
 	makeReport({ gitAvailable: false, changedPaths: ["src/a.ts"] }),
 );
-assert.equal(workerUnverifiable.verifiable, true);
 assert.deepEqual(workerUnverifiable.truthPaths, ["/repo/src/a.ts"]);
+assert.equal(workerUnverifiable.fresh, false);
+assert.equal(evidenceAction(workerUnverifiable), "revalidate");
+assert.match(describeComparison(workerUnverifiable), /report evidence incomplete/);
 
-// 9. omitted Worker Git fingerprints do not prevent Root attribution
+// 9. omitted Worker Git fingerprints: attribution survives, but a report with
+//    no HEAD/status/content binding at all is unknown and asks for re-validation
 const noFingerprints = compareEvidence(
 	makeBase(),
 	makeCurrent(),
 	makeReport({ changedPaths: ["src/a.ts"] }),
 );
-assert.equal(noFingerprints.verifiable, true);
-assert.equal(noFingerprints.fresh, true);
 assert.deepEqual(noFingerprints.truthPaths, ["/repo/src/a.ts"]);
-assert.deepEqual(noFingerprints.undeclaredPaths, []);
+assert.equal(noFingerprints.fresh, false);
+assert.equal(noFingerprints.verifiable, false);
+assert.equal(evidenceAction(noFingerprints), "revalidate");
+assert.match(describeComparison(noFingerprints), /report evidence incomplete/);
+
+// 9b. partial bindings still verify: a report carrying HEAD + status binds fine
+const partialBinding = compareEvidence(
+	makeBase(),
+	makeCurrent(),
+	makeReport({ finalGitRef: "abc1234", gitStatusHash: "hash-one", changedPaths: ["src/a.ts"] }),
+);
+assert.equal(partialBinding.verifiable, true);
+assert.equal(partialBinding.fresh, true);
 
 // 10. pre-existing dirty paths in A are excluded from the delegation delta
 const dirtyBaseline = compareEvidence(
@@ -510,5 +525,155 @@ const unverifiablePacket = await captureReviewEvidencePacket(
 );
 assert.equal(unverifiablePacket.gitAvailable, false);
 assert.equal(unverifiablePacket.attributedFiles, undefined);
+
+// --------------------------------------------------------------------------
+// FR-01/FR-02 regressions in a real temporary Git repository (ticket 02)
+// --------------------------------------------------------------------------
+
+
+function realGitRunnerOf(dir) {
+	return async (args, cwd) => {
+		const result = spawnSync("git", ["-C", cwd || dir, ...args], { encoding: "utf8" });
+		return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", code: result.status ?? 1 };
+	};
+}
+
+function realGit(dir, ...args) {
+	const result = spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+	if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
+	return result.stdout;
+}
+
+function initRealRepo() {
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-realgit-"));
+	realGit(dir, "init", "-q");
+	realGit(dir, "config", "user.email", "test@example.com");
+	realGit(dir, "config", "user.name", "Test");
+	realGit(dir, "config", "commit.gpgsign", "false");
+	writeFileSync(join(dir, "tracked.txt"), "base\n");
+	realGit(dir, "add", ".");
+	realGit(dir, "commit", "-m", "base", "-q");
+	return dir;
+}
+
+/** A report whose evidence is bound to Root's sample, as the orchestrator records it. */
+function boundReport(taskId, toolCallId, sample, cwd, changedPaths) {
+	return {
+		version: 1,
+		taskId,
+		status: "completed",
+		summary: "done",
+		changedFiles: changedPaths,
+		validation: [{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "ok" }],
+		evidence: {
+			cwd,
+			taskId,
+			workerRunId: toolCallId,
+			...(sample.finalGitRef ? { finalGitRef: sample.finalGitRef } : {}),
+			...(sample.gitStatusHash ? { gitStatusHash: sample.gitStatusHash } : {}),
+			...(sample.dirtyPathHashes ? { dirtyPathHashes: sample.dirtyPathHashes } : {}),
+			changedPaths,
+			gitAvailable: true,
+			generatedAt: new Date().toISOString(),
+		},
+		risks: [],
+		unresolved: [],
+	};
+}
+
+// E01: dirty file content changes after the report with identical porcelain status -> stale
+{
+	const dir = initRealRepo();
+	try {
+		const base = await captureEvidence(realGitRunnerOf(dir), { cwd: dir, taskId: "T-1", workerRunId: "call-1" });
+		writeFileSync(join(dir, "tracked.txt"), "worker edit\n");
+		const reportSample = await captureEvidence(realGitRunnerOf(dir), { cwd: dir, taskId: "T-1", workerRunId: "call-1", baseGitRef: base.finalGitRef });
+		const report = boundReport("T-1", "call-1", reportSample, dir, ["tracked.txt"]);
+
+		// external edit between the report and acceptance: same status, different bytes
+		writeFileSync(join(dir, "tracked.txt"), "external edit\n");
+		const acceptance = await captureEvidence(realGitRunnerOf(dir), { cwd: dir, taskId: "T-1", workerRunId: "call-1", baseGitRef: base.finalGitRef });
+		assert.equal(acceptance.gitStatusHash, reportSample.gitStatusHash, "porcelain status must be unchanged");
+		assert.notDeepEqual(acceptance.dirtyPathHashes, reportSample.dirtyPathHashes, "content must have changed");
+
+		const comparison = compareEvidence(base, acceptance, report);
+		assert.equal(comparison.fresh, false);
+		assert.equal(evidenceAction(comparison), "revalidate");
+		assert.ok(comparison.reasons.some((reason) => /content changed since the report/.test(reason)), comparison.reasons.join("; "));
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// E02: untracked in-scope file content change after the report -> stale
+{
+	const dir = initRealRepo();
+	try {
+		const base = await captureEvidence(realGitRunnerOf(dir), { cwd: dir, taskId: "T-1", workerRunId: "call-1" });
+		writeFileSync(join(dir, "notes.md"), "v1\n");
+		const reportSample = await captureEvidence(realGitRunnerOf(dir), { cwd: dir, taskId: "T-1", workerRunId: "call-1", baseGitRef: base.finalGitRef });
+		const report = boundReport("T-1", "call-1", reportSample, dir, ["notes.md"]);
+
+		writeFileSync(join(dir, "notes.md"), "v2 changed\n");
+		const acceptance = await captureEvidence(realGitRunnerOf(dir), { cwd: dir, taskId: "T-1", workerRunId: "call-1", baseGitRef: base.finalGitRef });
+		assert.equal(acceptance.gitStatusHash, reportSample.gitStatusHash, "untracked status entry must be unchanged");
+
+		const comparison = compareEvidence(base, acceptance, report);
+		assert.equal(comparison.fresh, false);
+		assert.equal(evidenceAction(comparison), "revalidate");
+		assert.ok(comparison.reasons.some((reason) => /content changed since the report/.test(reason)), comparison.reasons.join("; "));
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// E06: a non-zero (or timed-out) status probe is unknown, not an empty clean tree
+{
+	const dir = initRealRepo();
+	try {
+		const base = await captureEvidence(realGitRunnerOf(dir), { cwd: dir, taskId: "T-1", workerRunId: "call-1" });
+		writeFileSync(join(dir, "tracked.txt"), "dirty\n");
+		const healthy = await captureEvidence(realGitRunnerOf(dir), { cwd: dir, taskId: "T-1", workerRunId: "call-1", baseGitRef: base.finalGitRef });
+		const report = boundReport("T-1", "call-1", healthy, dir, ["tracked.txt"]);
+		assert.equal(healthy.statusProbeFailed, undefined);
+
+		// a hung/killed status command: non-zero exit on the acceptance sample only
+		const failingStatus = async (args) => {
+			if (args[0] === "status") return { stdout: "", stderr: "fatal: unable to read tree", code: 128 };
+			return realGitRunnerOf(dir)(args, dir);
+		};
+		const probe = await probeGit(failingStatus, dir);
+		assert.equal(probe.available, true);
+		assert.equal(probe.statusFailed, true);
+		const acceptance = await captureEvidence(failingStatus, { cwd: dir, taskId: "T-1", workerRunId: "call-1", baseGitRef: base.finalGitRef });
+		assert.equal(acceptance.statusProbeFailed, true);
+		assert.equal(acceptance.gitStatusHash, undefined, "no fake clean-tree hash");
+
+		const comparison = compareEvidence(base, acceptance, report);
+		assert.equal(comparison.verifiable, false, "probe failure must be unknown, not verifiable");
+		assert.equal(comparison.fresh, false);
+		assert.equal(evidenceAction(comparison), "revalidate");
+		assert.ok(comparison.reasons.some((reason) => /git status probe failed/.test(reason)), comparison.reasons.join("; "));
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// E07: a report with no Git binding evidence at all is unknown at the boundary
+{
+	const dir = initRealRepo();
+	try {
+		const base = await captureEvidence(realGitRunnerOf(dir), { cwd: dir, taskId: "T-1", workerRunId: "call-1" });
+		writeFileSync(join(dir, "tracked.txt"), "dirty\n");
+		const acceptance = await captureEvidence(realGitRunnerOf(dir), { cwd: dir, taskId: "T-1", workerRunId: "call-1", baseGitRef: base.finalGitRef });
+		const unbound = boundReport("T-1", "call-1", { finalGitRef: undefined, gitStatusHash: undefined, dirtyPathHashes: undefined }, dir, ["tracked.txt"]);
+		const comparison = compareEvidence(base, acceptance, unbound);
+		assert.equal(comparison.verifiable, false);
+		assert.equal(evidenceAction(comparison), "revalidate");
+		assert.ok(comparison.reasons.some((reason) => /report evidence incomplete/.test(reason)), comparison.reasons.join("; "));
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
 
 console.log("planner-only evidence: PASS");

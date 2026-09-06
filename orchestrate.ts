@@ -111,6 +111,25 @@ function missingBaseEvidence(task: TaskRecord, workerRunId: string): EvidenceRef
 	};
 }
 
+/**
+ * FR-01 — bind a recorded report to the Root sample taken when it was
+ * validated. These fields are Root-owned: at the acceptance boundary
+ * compareEvidence re-samples and detects content drift the worker could never
+ * declare (same status/HEAD, different bytes).
+ */
+function bindReportToSample(report: WorkerReport, sample: EvidenceRef): WorkerReport {
+	if (sample.gitAvailable === false) return report;
+	return {
+		...report,
+		evidence: {
+			...report.evidence,
+			...(sample.finalGitRef ? { finalGitRef: sample.finalGitRef } : {}),
+			...(sample.gitStatusHash ? { gitStatusHash: sample.gitStatusHash } : {}),
+			...(sample.dirtyPathHashes ? { dirtyPathHashes: sample.dirtyPathHashes } : {}),
+		},
+	};
+}
+
 function compareWithRootSamples(
 	task: TaskRecord,
 	current: EvidenceRef,
@@ -1073,7 +1092,6 @@ export class PlannerOrchestrator {
 				const result = compactWorkerReport(canonical, MAX_WORKER_REPORT_CHARS);
 				report = result.report;
 				compacted = result.compacted;
-				this.store.recordReport(task.taskId, report);
 			}
 		}
 
@@ -1089,6 +1107,12 @@ export class PlannerOrchestrator {
 			workerRunId: toolCallId,
 			...(task.baseEvidence?.finalGitRef ? { baseGitRef: task.baseEvidence.finalGitRef } : {}),
 		});
+		if (report) {
+			// Bind before recording so the stored report carries Root's own
+			// report-time content hashes for the acceptance-boundary comparison.
+			report = bindReportToSample(report, current);
+			this.store.recordReport(task.taskId, report);
+		}
 		const comparison = report
 			? compareWithRootSamples(task, current, report)
 			: undefined;
