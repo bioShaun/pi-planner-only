@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { PlannerOrchestrator, isDelegationCall } from "./orchestrate.ts";
 import { createTaskSpec, isExecutingStale } from "./task.ts";
 import { TaskStore } from "./task.ts";
-import { hashStatus } from "./evidence.ts";
+import { hashStatus, workspaceSummaryDigest } from "./evidence.ts";
 
 // Fixture ids are stamped 2026-09-05; pin the store clock so id replacement
 // never depends on the wall clock of the machine running the suite.
@@ -2099,6 +2099,12 @@ function realGitRunnerOf(dir) {
 	);
 	assert.equal(second.conflict?.conflict, true, "stale executing must keep blocking");
 	assert.match(second.conflict.reason, /not been confirmed exited/);
+	// the needs-reconcile note is recorded through the Task store, not in place
+	assert.match(
+		orch.store.require("T-20260905-980").stateReason ?? "",
+		/needs reconcile: executing past the stale duration/,
+		"the stale holder's needs-reconcile note is recorded on the holder Task",
+	);
 
 	// the child run turns out terminal: reconcile consumes it and the lock frees
 	const runId = "run-t9-1";
@@ -2175,8 +2181,10 @@ function realGitRunnerOf(dir) {
 // Ticket 07 — same-Task re-delegation supersedes leftover pending children
 // --------------------------------------------------------------------------
 
-// A re-delegation leaves one waiter; the older pending record is superseded,
-// a late notice for it is ignored, and the new run's notice still matches.
+// A re-delegation while a leftover waiter's child is not known stopped is
+// refused (the waiter keeps the lock); once the operator abandons the Task, the
+// next delegation supersedes the leftover, a late notice for it is ignored, and
+// the new run's notice still matches.
 {
 	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-990";
@@ -2192,12 +2200,28 @@ function realGitRunnerOf(dir) {
 	await orch.handleSubagentResult(receiptFor("call-t7-2", "run-t7-zombie", "/no-such-async-dir"));
 	assert.equal(orch.pendingDelegationCount(), 1);
 
-	// the next re-delegation supersedes the zombie instead of joining it
+	// the next re-delegation is refused: the leftover waiter's child is not
+	// known stopped, so supersede must not launch a second live writer
 	const redo = await orch.beginDelegation(
 		{ toolCallId: "call-t7-3", input: { task: JSON.stringify(specFor(taskId)) } },
 		BASE,
 	);
-	assert.ok((redo.warnings ?? []).some((warning) => /supersedes the pending child run/.test(warning)), redo.warnings?.join(" | "));
+	assert.equal(redo.conflict?.conflict, true, "a leftover waiter that is not known stopped keeps the lock");
+	assert.match(redo.conflict.reason, /T-20260905-990/, "the refusal names the holder Task");
+	assert.equal(orch.pendingDelegationCount(), 1, "no second waiter beside a live writer");
+	assert.ok(orch.getDelegation("call-t7-2"), "the leftover waiter is kept, not superseded");
+
+	// the operator's escape hatch stays open while the child is unconfirmed;
+	// abandoning the Task is a known stop and releases the lock, after which
+	// the next delegation supersedes the leftover so notices stay unambiguous
+	assert.equal(orch.rootVerdictRefusal(orch.store.require(taskId), "blocked"), undefined);
+	orch.store.abandon(taskId, "operator abandon");
+	const retry = await orch.beginDelegation(
+		{ toolCallId: "call-t7-4", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	assert.equal(retry.conflict, undefined, "operator abandon releases the lock");
+	assert.ok((retry.warnings ?? []).some((warning) => /supersedes the pending child run/.test(warning)), retry.warnings?.join(" | "));
 	assert.equal(orch.pendingDelegationCount(), 1, "at most one waiter per Task");
 	assert.equal(orch.getDelegation("call-t7-2"), undefined);
 
@@ -2211,8 +2235,8 @@ function realGitRunnerOf(dir) {
 
 	// a single-run completion notice naming the Task matches the one waiter
 	setDirtyTree();
-	await orch.handleSubagentResult(receiptFor("call-t7-3", "run-t7-3", "/no-such-async-dir"));
-	const outcome = await orch.handleAsyncNotify(asyncNotify(undefined, JSON.stringify(reportFor(taskId, "call-t7-3"))));
+	await orch.handleSubagentResult(receiptFor("call-t7-4", "run-t7-4", "/no-such-async-dir"));
+	const outcome = await orch.handleAsyncNotify(asyncNotify(undefined, JSON.stringify(reportFor(taskId, "call-t7-4"))));
 	assert.match(outcome.content[0].text, /\[PLANNER-ONLY REVIEW STATE\]/);
 	assert.equal(orch.store.require(taskId).reports.length, beforeReports + 1);
 	assert.equal(orch.pendingDelegationCount(), 0);
@@ -2699,4 +2723,359 @@ function receiptFor(toolCallId, runId, asyncDir) {
 	} finally {
 		rmSync(layout.tmp, { recursive: true, force: true });
 	}
+}
+
+// --------------------------------------------------------------------------
+// Ticket A2 — the write lock is held by live writable Delegations
+// --------------------------------------------------------------------------
+
+// Two validators on one worktree: the second begin is refused before launch
+// and no second child is registered; a worker cannot start beside it either.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-820";
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-a2-w", input: { task: JSON.stringify(specFor(taskId, "worker", BASE)) } },
+		BASE,
+	);
+	setDirtyTree();
+	await orch.handleSubagentResult(workerResult("call-a2-w", {
+		...reportFor(taskId, "call-a2-w"),
+		evidence: { ...reportFor(taskId, "call-a2-w").evidence, cwd: BASE },
+	}));
+	await orch.beginDelegation(
+		{ toolCallId: "call-a2-v1", input: { agent: "oracle", task: JSON.stringify(specFor(taskId, "validator", BASE)) } },
+		BASE,
+	);
+	assert.equal(orch.getDelegation("call-a2-v1")?.kind, "validator");
+	const second = await orch.beginDelegation(
+		{ toolCallId: "call-a2-v2", input: { agent: "oracle", task: JSON.stringify(specFor(taskId, "validator", BASE)) } },
+		BASE,
+	);
+	assert.equal(second.conflict?.conflict, true, "a second validator is refused before launch");
+	assert.match(second.conflict.reason, /already holds the write lock/);
+	assert.equal(orch.pendingDelegationCount(), 1, "no second child is registered");
+	const beside = await orch.beginDelegation(
+		{ toolCallId: "call-a2-w2", input: { task: JSON.stringify(specFor("T-20260905-821", "worker", BASE)) } },
+		BASE,
+	);
+	assert.equal(beside.conflict?.conflict, true, "a worker cannot start beside the validator");
+	assert.equal(orch.store.get("T-20260905-821")?.state, "planning", "no executing state for the loser");
+}
+
+// A Worker begin while the Task is reviewing and a writable Delegation is
+// still pending is refused; `blocked` stays recordable (lost-notify, no
+// terminal artifacts: the leftover waiter keeps the lock).
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-822";
+	await delegateWorker(orch, "call-a2-r1", taskId);
+	await orch.handleSubagentResult(workerResult("call-a2-r1", reportFor(taskId, "call-a2-r1")));
+	assert.equal(orch.store.require(taskId).state, "reviewing");
+
+	// an async re-delegation whose completion notice is lost: a waiter with a
+	// runId and no terminal artifacts — a live writer as far as anyone knows
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-a2-r2", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	await orch.handleSubagentResult(receiptFor("call-a2-r2", "run-a2-r2", "/no-such-async-dir"));
+	assert.equal(orch.pendingDelegationCount(), 1);
+
+	const refused = await orch.beginDelegation(
+		{ toolCallId: "call-a2-r3", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	assert.equal(refused.conflict?.conflict, true, "a writable begin beside a pending writer is refused");
+	assert.match(refused.conflict.reason, new RegExp(taskId), "the refusal names the holder Task");
+	assert.equal(orch.pendingDelegationCount(), 1, "the refusal happens before launch");
+	assert.equal(await orch.reconcilePendingDelegations(), 0, "no terminal artifacts to reconcile");
+
+	// the escape hatch stays open while the child is unconfirmed
+	assert.equal(orch.rootVerdictRefusal(orch.store.require(taskId), "blocked"), undefined);
+	const blocked = await orch.recordRootVerdict(orch.store.require(taskId), "blocked", "child never reported");
+	assert.equal(blocked.task.state, "blocked");
+}
+
+// A Worker begin while the Task is reviewing and only a Reviewer is live is
+// allowed: reviewers hold no write lock, so inspection does not stall writers.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-823";
+	await delegateWorker(orch, "call-a2-s1", taskId);
+	await orch.handleSubagentResult(workerResult("call-a2-s1", reportFor(taskId, "call-a2-s1")));
+	await orch.beginDelegation(
+		{ toolCallId: "call-a2-s2", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) } },
+		BASE,
+	);
+	assert.equal(orch.pendingDelegationCount(), 1);
+	setCleanTree();
+	const next = await orch.beginDelegation(
+		{ toolCallId: "call-a2-s3", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	assert.equal(next.conflict, undefined, "a live reviewer must not block a writer");
+	assert.equal(orch.pendingDelegationCount(), 1, "the new worker supersedes the reviewer waiter");
+	assert.equal(orch.getDelegation("call-a2-s2"), undefined);
+}
+
+// Relative-path aliases of one worktree share the lock.
+{
+	const real = mkdtempSync(join(process.cwd(), ".planner-only-wlock-"));
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	try {
+		setCleanTree();
+		const first = await orch.beginDelegation(
+			{ toolCallId: "call-a2-p1", input: { task: JSON.stringify(specFor("T-20260905-824", "worker", real)) } },
+			BASE,
+		);
+		assert.equal(first.conflict, undefined);
+		const alias = await orch.beginDelegation(
+			{ toolCallId: "call-a2-p2", input: { task: JSON.stringify(specFor("T-20260905-825", "worker", `${real}/sub/..`)) } },
+			BASE,
+		);
+		assert.equal(alias.conflict?.conflict, true, "a relative-path alias of the locked worktree collides");
+		assert.equal(orch.store.get("T-20260905-825")?.state, "planning", "no executing state for the loser");
+	} finally {
+		rmSync(real, { recursive: true, force: true });
+	}
+}
+
+// Lost-notify Worker still executing with terminal artifacts: the next
+// same-Task begin consumes the finished run, then starts — it is not a hard
+// lock refuse with two waiters.
+{
+	const taskId = "T-20260905-826";
+	const runId = "run-a2-ln";
+	const layout = artifactLayout(runId, "worker", 0, reportFor(taskId, "call-a2-ln"));
+	const orch = new PlannerOrchestrator({
+		gitRunner,
+		store: pinnedStore(),
+		artifactDirs: () => [join(layout.tmp, "artifacts")],
+	});
+	try {
+		await delegateWorker(orch, "call-a2-ln", taskId);
+		await orch.handleSubagentResult(receiptFor("call-a2-ln", runId, layout.asyncDir));
+		assert.equal(orch.store.require(taskId).state, "executing");
+		assert.equal(orch.pendingDelegationCount(), 1);
+		setCleanTree();
+		const next = await orch.beginDelegation(
+			{ toolCallId: "call-a2-ln2", input: { task: JSON.stringify(specFor(taskId)) } },
+			BASE,
+		);
+		assert.equal(next.conflict, undefined, "a finished leftover is consumed, not refused as a live writer");
+		assert.ok((next.warnings ?? []).some((warning) => /had already finished/.test(warning)), next.warnings?.join(" | "));
+		assert.equal(orch.store.require(taskId).reports.length, 1, "the finished run's report is kept");
+		assert.equal(orch.pendingDelegationCount(), 1, "exactly one waiter — the new delegation");
+	} finally {
+		rmSync(layout.tmp, { recursive: true, force: true });
+	}
+}
+
+// --------------------------------------------------------------------------
+// Ticket B2 — a Reviewer PASS is snapshot-bound; truncated packets cannot PASS
+// --------------------------------------------------------------------------
+
+// A PASS naming a HEAD/status fallback digest instead of the bound snapshot
+// digest is refused: those hashes never stand in as PASS identity.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-830";
+	await delegateWorker(orch, "call-b2-hd1", taskId);
+	await orch.handleSubagentResult(workerResult("call-b2-hd1", reportFor(taskId, "call-b2-hd1")));
+	await orch.beginDelegation(
+		{ toolCallId: "call-b2-hd2", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) } },
+		BASE,
+	);
+	const fallback = await orch.handleSubagentResult(
+		reviewerResult("call-b2-hd2", taskId, "pass", {
+			workspaceDigest: workspaceSummaryDigest(orch.store.require(taskId).reports.at(-1)),
+		}),
+	);
+	assert.match(fallback.content[0].text, /workspaceDigest mismatch/);
+	assert.equal(orch.store.require(taskId).reviews.length, 0, "the fallback PASS is not recorded");
+	assert.equal(orch.store.require(taskId).state, "reviewing");
+}
+
+// A PASS whose re-sampled snapshot does not match the bound digest does not
+// complete the Task (real Git repo, in-scope content changes after the report).
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-revsnap-"));
+	const git = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+	try {
+		git("init", "-q");
+		git("config", "user.email", "test@example.com");
+		git("config", "user.name", "Test");
+		writeFileSync(join(dir, "tracked.txt"), "base\n");
+		git("add", ".");
+		git("commit", "-m", "base", "-q");
+
+		const runner = realGitRunnerOf(dir);
+		const orch = new PlannerOrchestrator({ gitRunner: runner, store: pinnedStore() });
+		const spec = { ...specFor("T-20260905-831"), cwd: dir, scope: { allowedPaths: ["tracked.txt"] } };
+		await orch.beginDelegation({ toolCallId: "call-b2-rs1", input: { task: JSON.stringify(spec) } }, BASE);
+		writeFileSync(join(dir, "tracked.txt"), "worker edit\n");
+		await orch.handleSubagentResult(workerResult("call-b2-rs1", {
+			version: 1,
+			taskId: "T-20260905-831",
+			status: "completed",
+			summary: "edited tracked.txt",
+			changedFiles: ["tracked.txt"],
+			validation: [{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "ok" }],
+			evidence: { cwd: dir, taskId: "T-20260905-831", workerRunId: "call-b2-rs1", changedPaths: ["tracked.txt"], gitAvailable: true, generatedAt: new Date().toISOString() },
+			risks: [],
+			unresolved: [],
+		}));
+		const boundDigest = orch.store.require("T-20260905-831").snapshot?.digest;
+		assert.ok(boundDigest, "the report must bind a workspace snapshot");
+
+		// an external edit lands after the report; the reviewer echoes the
+		// digest it was shown, but accept re-samples and refuses to complete
+		writeFileSync(join(dir, "tracked.txt"), "external edit\n");
+		await orch.beginDelegation(
+			{ toolCallId: "call-b2-rs2", input: { agent: "reviewer", task: JSON.stringify({ ...spec, role: "reviewer" }) } },
+			BASE,
+		);
+		const outcome = await orch.handleSubagentResult(
+			reviewerResult("call-b2-rs2", "T-20260905-831", "pass", { workspaceDigest: boundDigest }),
+		);
+		assert.match(outcome.content[0].text, /decision: revalidate/);
+		assert.equal(orch.store.require("T-20260905-831").state, "changes_requested");
+		assert.notEqual(orch.store.require("T-20260905-831").state, "completed");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// A PASS over an unknown accept-time snapshot sample (unreadable in-scope
+// file) does not complete the Task: truncated sampling cannot look fresh.
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-revsnap-"));
+	const git = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+	const secret = join(dir, "secret.txt");
+	try {
+		git("init", "-q");
+		git("config", "user.email", "test@example.com");
+		git("config", "user.name", "Test");
+		writeFileSync(join(dir, "tracked.txt"), "base\n");
+		git("add", ".");
+		git("commit", "-m", "base", "-q");
+
+		const runner = realGitRunnerOf(dir);
+		const orch = new PlannerOrchestrator({ gitRunner: runner, store: pinnedStore() });
+		const spec = { ...specFor("T-20260905-832"), cwd: dir, scope: { allowedPaths: ["tracked.txt", "secret.txt"] } };
+		await orch.beginDelegation({ toolCallId: "call-b2-un1", input: { task: JSON.stringify(spec) } }, BASE);
+		writeFileSync(join(dir, "tracked.txt"), "worker edit\n");
+		await orch.handleSubagentResult(workerResult("call-b2-un1", {
+			version: 1,
+			taskId: "T-20260905-832",
+			status: "completed",
+			summary: "edited tracked.txt",
+			changedFiles: ["tracked.txt"],
+			validation: [{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "ok" }],
+			evidence: { cwd: dir, taskId: "T-20260905-832", workerRunId: "call-b2-un1", changedPaths: ["tracked.txt"], gitAvailable: true, generatedAt: new Date().toISOString() },
+			risks: [],
+			unresolved: [],
+		}));
+		const boundDigest = orch.store.require("T-20260905-832").snapshot?.digest;
+		assert.ok(boundDigest, "the report must bind a workspace snapshot");
+
+		writeFileSync(secret, "secret\n");
+		chmodSync(secret, 0o000);
+		await orch.beginDelegation(
+			{ toolCallId: "call-b2-un2", input: { agent: "reviewer", task: JSON.stringify({ ...spec, role: "reviewer" }) } },
+			BASE,
+		);
+		const outcome = await orch.handleSubagentResult(
+			reviewerResult("call-b2-un2", "T-20260905-832", "pass", { workspaceDigest: boundDigest }),
+		);
+		assert.match(outcome.content[0].text, /decision: revalidate/);
+		assert.notEqual(orch.store.require("T-20260905-832").state, "completed");
+	} finally {
+		chmodSync(secret, 0o755);
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// A pre-snapshot WorkerReport cannot complete via a Reviewer PASS.
+{
+	const store = pinnedStore();
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const taskId = "T-20260905-833";
+	const task = store.create(createTaskSpec({ objective: "legacy", cwd: BASE, taskId }), undefined);
+	store.transition(task.taskId, "executing");
+	store.recordReport(task.taskId, reportFor(taskId, "call-b2-ps1"));
+	await orch.beginDelegation(
+		{ toolCallId: "call-b2-ps2", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) } },
+		BASE,
+	);
+	const outcome = await orch.handleSubagentResult(
+		reviewerResult("call-b2-ps2", taskId, "pass", { workspaceDigest: "0123456789abcdef" }),
+	);
+	assert.match(outcome.content[0].text, /decision: revalidate/);
+	assert.match(outcome.content[0].text, /pre-snapshot report/);
+	assert.notEqual(store.require(taskId).state, "completed");
+}
+
+// A Reviewer PASS with no recorded WorkerReport is refused outright: there is
+// no report revision or snapshot digest for it to bind to.
+{
+	const store = pinnedStore();
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const taskId = "T-20260905-834";
+	store.create(createTaskSpec({ objective: "nothing yet", cwd: BASE, taskId }), undefined);
+	await orch.beginDelegation(
+		{ toolCallId: "call-b2-nr1", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) } },
+		BASE,
+	);
+	const outcome = await orch.handleSubagentResult(
+		reviewerResult("call-b2-nr1", taskId, "pass", { reportRevision: 0, workspaceDigest: "0123456789abcdef" }),
+	);
+	assert.match(outcome.content[0].text, /no recorded WorkerReport/);
+	assert.equal(store.require(taskId).reviews.length, 0);
+	assert.notEqual(store.require(taskId).state, "completed");
+}
+
+// A PASS over a truncated packet is refused and Task state is unchanged;
+// request_changes still records over the partial evidence.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-835";
+	await delegateWorker(orch, "call-b2-tp1", taskId);
+	await orch.handleSubagentResult(workerResult("call-b2-tp1", reportFor(taskId, "call-b2-tp1")));
+	const boundDigest = orch.store.require(taskId).snapshot?.digest;
+	const packet = {
+		version: 1,
+		taskId,
+		reportTaskId: taskId,
+		reviewMode: "fresh",
+		workerReport: reportFor(taskId, "call-b2-tp1"),
+		reportRevision: 1,
+		workspaceDigest: boundDigest,
+		evidencePacket: { patchTruncated: true, patchOmittedPaths: ["big.txt"], patchReturnedFiles: 1 },
+	};
+	await orch.beginDelegation(
+		{ toolCallId: "call-b2-tp2", input: { agent: "reviewer", task: JSON.stringify(packet) } },
+		BASE,
+	);
+	const pass = await orch.handleSubagentResult(
+		reviewerResult("call-b2-tp2", taskId, "pass", { workspaceDigest: boundDigest }),
+	);
+	assert.match(pass.content[0].text, /truncated/);
+	assert.equal(orch.store.require(taskId).reviews.length, 0, "the truncated PASS is not recorded");
+	assert.equal(orch.store.require(taskId).state, "reviewing", "Task state is unchanged");
+
+	// non-pass verdicts are unchanged by truncation
+	await orch.beginDelegation(
+		{ toolCallId: "call-b2-tp3", input: { agent: "reviewer", task: JSON.stringify(packet) } },
+		BASE,
+	);
+	const requestChanges = await orch.handleSubagentResult(
+		reviewerResult("call-b2-tp3", taskId, "request_changes", { workspaceDigest: boundDigest }),
+	);
+	assert.match(requestChanges.content[0].text, /decision: request_changes/);
+	assert.equal(orch.store.require(taskId).reviews.length, 1);
+	assert.equal(orch.store.require(taskId).state, "changes_requested");
 }

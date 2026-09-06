@@ -9,8 +9,8 @@ import {
 	captureReviewEvidencePacket,
 	compareEvidence,
 	describeComparison,
-	workspaceSummaryDigest,
 } from "./evidence.ts";
+import type { EvidenceComparison } from "./evidence.ts";
 import {
 	captureWorkspaceSnapshot,
 	compareSnapshotBinding,
@@ -51,10 +51,11 @@ import type { ReviewDecision } from "./review.ts";
 import {
 	TaskStore,
 	createTaskSpec,
-	extractTaskSpec,
 	executingStaleMinutes,
-	findWriterConflict,
+	extractTaskSpec,
 	isExecutingStale,
+	isWriterRole,
+	normalizeWorkspaceIdentity,
 } from "./task.ts";
 import type { TaskRecord, WriterConflict } from "./task.ts";
 import {
@@ -192,6 +193,14 @@ export interface DelegationRecord {
 	asyncDir?: string;
 	/** Child agent named in the delegation input; used to match single-run notices that carry no runId. */
 	agent?: string;
+	/**
+	 * Normalized worktree identities this invocation holds the write lock for.
+	 * Set only for writable kinds (worker, validator): the lock is owned by the
+	 * live Delegation, not by the Task's executing state.
+	 */
+	worktrees?: readonly string[];
+	/** The ReviewRequest packet this reviewer invocation carries was truncated; a PASS over it is ineligible. */
+	packetTruncated?: boolean;
 }
 
 export interface DelegationOutcome {
@@ -452,11 +461,18 @@ export class PlannerOrchestrator {
 				);
 			}
 			if (task) await this.supersedePendingDelegations(task.taskId, event.toolCallId, warnings);
+			// Ticket 02 — a PASS over a truncated review packet is ineligible. Root
+			// knows the packet it sent, so the truncation facts are captured here
+			// and enforced when the verdict returns.
+			const packet = extractReviewRequest(delegationPrompt(input));
+			const packetTruncated = packet?.evidencePacket?.patchTruncated === true
+				|| (packet?.evidencePacket?.patchOmittedPaths?.length ?? 0) > 0;
 			this.delegations.set(event.toolCallId, {
 				taskId,
 				kind: "reviewer",
 				asyncRequested: isAsyncInput(input),
 				...(inputAgent(input) ? { agent: inputAgent(input) } : {}),
+				...(packetTruncated ? { packetTruncated: true } : {}),
 			});
 			return {
 				...(task ? { task } : {}),
@@ -485,6 +501,9 @@ export class PlannerOrchestrator {
 					kind: "validator",
 					asyncRequested: isAsyncInput(input),
 					...(inputAgent(input) ? { agent: inputAgent(input) } : {}),
+					// An unbound validator can still run a general shell: it holds
+					// the write lock for the worktree it was pointed at.
+					worktrees: [normalizeWorkspaceIdentity(cwd)],
 				});
 				return {
 					warnings: [
@@ -499,7 +518,10 @@ export class PlannerOrchestrator {
 				);
 			}
 			// The validator writes in its own cwd, but the work under review is
-			// also locked: collide on either (D02/D06).
+			// also locked: collide on either (D02/D06). A lost completion notice
+			// is reconciled from child-run artifacts before contending for the
+			// lock, so a finished run is never mistaken for a live writer.
+			await this.reconcileBeforeLock(reviewed.taskId, warnings);
 			const validatorConflict =
 				this.writerConflict(cwd, "validator").conflict
 					? this.writerConflict(cwd, "validator")
@@ -513,6 +535,10 @@ export class PlannerOrchestrator {
 				kind: "validator",
 				asyncRequested: isAsyncInput(input),
 				...(inputAgent(input) ? { agent: inputAgent(input) } : {}),
+				worktrees: [...new Set([
+					normalizeWorkspaceIdentity(cwd),
+					normalizeWorkspaceIdentity(reviewed.cwd),
+				])],
 			});
 			return {
 				task: reviewed,
@@ -617,16 +643,25 @@ export class PlannerOrchestrator {
 		this.store.ensureCwd(task.taskId, cwd);
 		task = this.store.require(task.taskId);
 
+		// Reconcile same-Task pending children from child-run artifacts before
+		// contending for the lock: a finished run whose notice was lost is
+		// consumed and recorded, never mistaken for a live writer.
+		await this.reconcileBeforeLock(task.taskId, warnings);
+
 		// FR-04 — write coordination follows actual write ability, not the
 		// presence of a TaskSpec: a warn-mode unstructured worker and a
 		// shell-capable validator take the same lock as a structured worker.
 		const conflict = this.writerConflict(task.cwd, role);
 		if (conflict.conflict) {
 			// D07 — a stale holder gets an explicit recorded note that its child
-			// must be reconciled; the lock itself never auto-releases.
+			// must be reconciled; the lock itself never auto-releases. The note
+			// is written through the Task store, never in place.
 			const holder = conflict.taskId ? this.store.get(conflict.taskId) : undefined;
 			if (holder && isExecutingStale(holder, this.store.now().getTime()) && !holder.stateReason) {
-				holder.stateReason = `needs reconcile: executing past the stale duration without a confirmed child exit (lock held against task ${task.taskId})`;
+				this.store.setStateReason(
+					holder.taskId,
+					`needs reconcile: executing past the stale duration without a confirmed child exit (lock held against task ${task.taskId})`,
+				);
 			}
 			return { task, conflict, ...(warnings.length ? { warnings } : {}) };
 		}
@@ -656,6 +691,9 @@ export class PlannerOrchestrator {
 			kind: role,
 			asyncRequested: isAsyncInput(event.input),
 			...(inputAgent(event.input) ? { agent: inputAgent(event.input) } : {}),
+			// Writable invocations become the lock holder for the Task's
+			// worktree; explorers hold nothing.
+			...(isWriterRole(role) ? { worktrees: [normalizeWorkspaceIdentity(task.cwd)] } : {}),
 		});
 		return {
 			task: this.store.require(task.taskId),
@@ -770,9 +808,86 @@ export class PlannerOrchestrator {
 		return undefined;
 	}
 
-	/** The write-lock check every writable delegation goes through (FR-04). */
+	/**
+	 * The write-lock check every writable delegation goes through (FR-04).
+	 *
+	 * The lock is owned by the live writable Delegation, not by the Task's
+	 * executing state: holder lookup sees pending Worker/Validator invocations
+	 * even while their Task is reviewing, blocked, or otherwise not executing,
+	 * and a reviewing Task with no live writer does not block. A holder whose
+	 * Task reached a final state (operator abandon or completion) is a known
+	 * stop and releases the lock. Timeout, cancel, and unreadable output are
+	 * not stop — the record stays pending and keeps blocking.
+	 */
 	private writerConflict(cwd: string, role: DelegationKind): WriterConflict {
-		return findWriterConflict(this.store.list(), cwd, role, this.store.now().getTime());
+		if (!isWriterRole(role)) return { conflict: false };
+		const target = normalizeWorkspaceIdentity(cwd);
+		for (const record of this.delegations.values()) {
+			if (!isWriterRole(record.kind)) continue;
+			if (!record.worktrees?.includes(target)) continue;
+			const holder = this.store.get(record.taskId);
+			if (holder && isFinalTaskState(holder.state)) continue;
+			return {
+				conflict: true,
+				taskId: record.taskId,
+				reason: [
+					`Planner-only guard: task ${record.taskId} already holds the write lock for ${target}.`,
+					holder && isExecutingStale(holder, this.store.now().getTime())
+						? `That task has been executing for over ${executingStaleMinutes()} minutes and its child run has not been confirmed exited; reconcile the run (or abandon the task) before starting another writer.`
+						: "Keep one writable invocation per worktree; even a second call on the same Task must wait.",
+					"Wait for that run's result to release the lock, or delegate this one into a separate worktree.",
+				].join("\n"),
+			};
+		}
+		return { conflict: false };
+	}
+
+	/**
+	 * Consume same-Task pending children whose runs already finished (terminal
+	 * child-run meta) before the write lock is taken, so a lost completion
+	 * notice with a recorded result is not refused as a live writer.
+	 */
+	private async reconcileBeforeLock(taskId: string, warnings: string[]): Promise<void> {
+		for (const [toolCallId, record] of [...this.delegations]) {
+			if (record.taskId !== taskId) continue;
+			if (await this.reconcileDelegation(toolCallId, record)) {
+				warnings.push(
+					`Planner-only: the previous pending child for task ${taskId} had already finished; its saved result was consumed before this delegation started.`,
+				);
+			}
+		}
+	}
+
+	/**
+	 * The acceptance-boundary snapshot gate, shared by the Root verdict path
+	 * and the Reviewer accept path so the two PASS gates cannot drift apart
+	 * (tickets 02/10): the workspace snapshot is sampled over the task's
+	 * verification inputs and compared with the snapshot bound to the report
+	 * under review. A stale, pre-snapshot, or unknown binding is folded into
+	 * the comparison as not-fresh, so the PASS cannot complete.
+	 */
+	private foldSnapshotBindingIntoComparison(
+		task: TaskRecord,
+		currentSample: EvidenceRef,
+		comparison: EvidenceComparison,
+		invocationId: string,
+	): EvidenceComparison {
+		const snapshot = captureWorkspaceSnapshot({
+			cwd: task.cwd,
+			taskId: task.taskId,
+			invocationId,
+			paths: snapshotPathsFor(task, currentSample),
+		});
+		const binding = compareSnapshotBinding(task.snapshot, snapshot, task.reports.length);
+		if (binding.state !== "fresh" && binding.reason) {
+			return {
+				...comparison,
+				fresh: false,
+				unexplained: true,
+				reasons: [...comparison.reasons, binding.reason],
+			};
+		}
+		return comparison;
 	}
 
 	private hasPendingDelegation(taskId: string): boolean {
@@ -816,7 +931,7 @@ export class PlannerOrchestrator {
 		if (!task) return true;
 		const text = readLargestRunOutput(record.asyncDir, record.runId) ?? "";
 		if (record.kind === "validator") await this.handleValidatorResult(task, text);
-		else if (record.kind === "reviewer") await this.handleReviewerResult(task, text);
+		else if (record.kind === "reviewer") await this.handleReviewerResult(task, text, record);
 		else await this.handleWorkerResult(task, text, toolCallId);
 		return true;
 	}
@@ -913,21 +1028,12 @@ export class PlannerOrchestrator {
 			comparison = compareWithRootSamples(current, currentSample, report);
 			// Ticket 10 — acceptance compares the workspace snapshot digest, not
 			// HEAD/status hashes. Unknown or stale bindings refuse the PASS.
-			const snapshot = captureWorkspaceSnapshot({
-				cwd: current.cwd,
-				taskId: current.taskId,
-				invocationId: `verdict-${report.evidence.workerRunId}`,
-				paths: snapshotPathsFor(current, currentSample),
-			});
-			const binding = compareSnapshotBinding(current.snapshot, snapshot, current.reports.length);
-			if (binding.state !== "fresh" && binding.reason) {
-				comparison = {
-					...comparison,
-					fresh: false,
-					unexplained: true,
-					reasons: [...comparison.reasons, binding.reason],
-				};
-			}
+			comparison = this.foldSnapshotBindingIntoComparison(
+				current,
+				currentSample,
+				comparison,
+				`verdict-${report.evidence.workerRunId}`,
+			);
 			this.store.setLastComparison(current.taskId, comparison);
 			evidence = describeComparison(comparison);
 		}
@@ -994,7 +1100,7 @@ export class PlannerOrchestrator {
 			const firstLine = (text.split(/\r?\n/, 1)[0] ?? "").trim();
 			if (task && !isFinalTaskState(task.state)) {
 				this.store.transition(task.taskId, "failed");
-				task.stateReason = `delegation launch failed: ${firstLine}`;
+				this.store.setStateReason(task.taskId, `delegation launch failed: ${firstLine}`);
 			}
 			return {
 				content: [{
@@ -1032,7 +1138,7 @@ export class PlannerOrchestrator {
 		}
 
 		return delegation.kind === "reviewer"
-			? this.handleReviewerResult(task, text)
+			? this.handleReviewerResult(task, text, delegation)
 			: delegation.kind === "validator"
 				? this.handleValidatorResult(task, text)
 				: this.handleWorkerResult(task, text, event.toolCallId);
@@ -1107,6 +1213,7 @@ export class PlannerOrchestrator {
 	private async handleReviewerResult(
 		task: TaskRecord,
 		text: string,
+		record?: DelegationRecord,
 	): Promise<{ content: { type: "text"; text: string }[] }> {
 		const extracted = extractReviewResult(text);
 		if (!extracted.review) {
@@ -1141,15 +1248,31 @@ export class PlannerOrchestrator {
 			};
 		}
 
-		// FR-03 / D09 — the verdict is bound to the report revision and
-		// workspace summary it reviewed. A stale PASS cannot complete a Task
-		// that has a newer report, and an unbound pass is refused outright.
-		const latestReport = task.reports.at(-1);
+		// Ticket 02 — a PASS needs a WorkerReport to bind to. Without one there
+		// is no report revision and no snapshot digest to name.
+		if (review.verdict === "pass" && task.reports.length === 0) {
+			return {
+				content: [{
+					type: "text",
+					text: [
+						`[PLANNER-ONLY] Reviewer verdict was rejected: task ${task.taskId} has no recorded WorkerReport; a pass needs a report revision and a workspace snapshot digest to bind to.`,
+						"The verdict was not recorded and no task state changed.",
+						`Delegate the worker for task ${task.taskId} first, then re-delegate review.`,
+						"",
+						truncate(text, RAW_OUTPUT_FALLBACK_CHARS),
+					].join("\n"),
+				}],
+			};
+		}
+
+		// FR-03 / D09 — the verdict is bound to the report revision and the
+		// workspace snapshot digest it reviewed. A stale PASS cannot complete a
+		// Task that has a newer report, and an unbound pass is refused outright.
+		// HEAD/status hashes are not a substitute: a missing bound snapshot is
+		// unknown, never a digest of porcelain.
 		const bindingErrors = validateReviewResultBinding(review, {
 			reportRevision: task.reports.length,
-			...(latestReport
-				? { workspaceDigest: task.snapshot?.digest ?? workspaceSummaryDigest(latestReport) }
-				: {}),
+			...(task.snapshot ? { workspaceDigest: task.snapshot.digest } : {}),
 		});
 		if (bindingErrors.length > 0) {
 			return {
@@ -1166,20 +1289,49 @@ export class PlannerOrchestrator {
 			};
 		}
 
+		// Ticket 02 — a truncated or path-omitted packet means the reviewer did
+		// not see the full diff against the Task baseline: accepting such a PASS
+		// would be cheaper than Root's own verdict. request_changes and blocked
+		// still record over a partial packet.
+		if (review.verdict === "pass" && record?.packetTruncated) {
+			return {
+				content: [{
+					type: "text",
+					text: [
+						`[PLANNER-ONLY] Reviewer verdict was rejected: the review packet for task ${task.taskId} was truncated (patchTruncated or omitted patch paths); a pass over a partial packet is not eligible.`,
+						"The verdict was not recorded and no task state changed.",
+						"Re-delegate review with a complete packet, or return request_changes or blocked for the partial evidence.",
+						"",
+						truncate(text, RAW_OUTPUT_FALLBACK_CHARS),
+					].join("\n"),
+				}],
+			};
+		}
+
 		this.store.recordReview(task.taskId, review);
 		const report = task.reports.at(-1);
-		const comparison = report
-			? compareWithRootSamples(
-				task,
-				await captureEvidence(this.gitRunner, {
-					cwd: task.cwd,
-					taskId: task.taskId,
-					workerRunId: report.evidence.workerRunId,
-					...(task.baseEvidence?.finalGitRef ? { baseGitRef: task.baseEvidence.finalGitRef } : {}),
-				}),
-				report,
-			)
-			: undefined;
+		let comparison: EvidenceComparison | undefined;
+		if (report) {
+			const currentSample = await captureEvidence(this.gitRunner, {
+				cwd: task.cwd,
+				taskId: task.taskId,
+				workerRunId: report.evidence.workerRunId,
+				...(task.baseEvidence?.finalGitRef ? { baseGitRef: task.baseEvidence.finalGitRef } : {}),
+			});
+			comparison = compareWithRootSamples(task, currentSample, report);
+			if (review.verdict === "pass") {
+				// Ticket 02 — mirror the Root acceptance boundary: the workspace is
+				// sampled again right here, and the PASS only completes when the fresh
+				// sample's digest still matches the snapshot bound to the report under
+				// review. A reviewer's evidenceFresh flag never overrides this.
+				comparison = this.foldSnapshotBindingIntoComparison(
+					task,
+					currentSample,
+					comparison,
+					`review-${report.evidence.workerRunId}`,
+				);
+			}
+		}
 		if (comparison) this.store.setLastComparison(task.taskId, comparison);
 		const { decision } = advanceReview({
 			store: this.store,

@@ -396,6 +396,17 @@ export class TaskStore {
 		return this.touch(record);
 	}
 
+	/**
+	 * Record why a Task needs attention (e.g. a stale write-lock holder that
+	 * needs reconcile). Task memory fields such as `stateReason` are written
+	 * only here — Orchestration must not mutate a TaskRecord in place.
+	 */
+	setStateReason(taskId: string, reason: string): TaskRecord {
+		const record = this.require(taskId);
+		record.stateReason = reason;
+		return this.touch(record);
+	}
+
 	recordReport(taskId: string, report: WorkerReport): TaskRecord {
 		const record = this.require(taskId);
 		record.reports.push(report);
@@ -486,6 +497,11 @@ export interface WriterConflict {
 
 /**
  * FR-04 / D07 — at most one writable invocation per worktree at a time.
+ *
+ * This store-level helper keys on Task records; live lock ownership is
+ * decided by Orchestration over its pending Delegations (a live writable
+ * Delegation holds the lock even while its Task is reviewing or blocked).
+ * Orchestration uses this helper's refusal shape and stale-holder policy.
  *
  * The lock follows actual write ability (`isWriterRole`), not the presence of
  * a TaskSpec or the worker role name: a warn-mode unstructured worker and a

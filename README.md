@@ -162,7 +162,19 @@ extensions, and that tool belongs to the parent extension). Root samples Git its
 bounded evidence packet — HEAD, status, current changed files, A-to-C
 attributed / undeclared / extra-declared paths, diff stat, diff check —
 in the `ReviewRequest`; reviewers work with `read`/`grep`/`find`/`ls` only.
-No full diff crosses the seam by default.
+A bounded patch against the Task's start baseline does cross the seam in the
+`ReviewRequest` (committed Task changes stay reviewable); if the packet was
+truncated (`patchTruncated` or omitted patch paths), a reviewer PASS is
+refused and only `request_changes` or `blocked` can be recorded from it.
+
+A reviewer PASS is snapshot-digest-bound: it must name the report revision and
+the WorkspaceSnapshot digest it was shown, and Root re-samples the workspace
+snapshot at accept time — a mismatching, stale, or unknown sample forces
+`revalidate` instead of completion. HEAD/status hashes are Git attribution
+evidence only; they never stand in as the PASS identity. The write lock is
+held by the live writable delegation (worker or validator) for its whole
+invocation, so a second writable child on the same worktree is refused before
+launch even while the Task is reviewing or blocked.
 
 Review states: `planning → executing → reviewing → completed | changes_requested | blocked`.
 Root records verdicts with `planner_verdict`: tasks in `blocked` or `failed` state can directly pass as long as they have a recorded report; `completed` is the sole terminal state. At most three corrections (`MAX_REVIEW_ROUNDS`). Stale in-scope evidence cannot

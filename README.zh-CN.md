@@ -105,7 +105,9 @@ Worker 必须返回带 version 的 `WorkerReport`。父进程抽取、超过 12k
 
 默认允许没有内嵌 `TaskSpec` 的 worker 委派，但会告警。设 `PI_PLANNER_ONLY_STRUCTURED_DELEGATION=strict` 则直接阻断。explorer 始终宽松；validator 两种模式都只告警。
 
-Reviewer 没有 `git_audit`（前台子进程不加载 ambient 扩展，该工具属于父扩展）。Root 自己采样 Git，把有界证据包——HEAD、status、当前变更文件、A-to-C 归因/漏报/多报路径、diff stat、diff check——放进 `ReviewRequest`；reviewer 只用 `read`/`grep`/`find`/`ls`。默认不传全量 diff。
+Reviewer 没有 `git_audit`（前台子进程不加载 ambient 扩展，该工具属于父扩展）。Root 自己采样 Git，把有界证据包——HEAD、status、当前变更文件、A-to-C 归因/漏报/多报路径、diff stat、diff check——放进 `ReviewRequest`；reviewer 只用 `read`/`grep`/`find`/`ls`。针对 Task 起始基线的有界补丁会随 `ReviewRequest` 传给 reviewer（已提交的 Task 变更仍可评审）；若补丁被截断（`patchTruncated` 或省略路径），reviewer 的 PASS 会被拒收，只能记录 `request_changes` 或 `blocked`。
+
+reviewer 的 PASS 与快照摘要绑定：必须写明它看到的报告版本和 WorkspaceSnapshot 摘要，且 Root 在接受时会重新采样工作区快照——不匹配、过期或未知（超预算/不可读）的采样一律 `revalidate` 而非完成。HEAD/status 哈希只作为 Git 归因证据，永远不能替代 PASS 身份。写锁由存活的可写委派（worker 或 validator）在整个调用期间持有，因此同一工作树上的第二个可写子进程会在启动前被拒绝——即使 Task 正处于 reviewing 或 blocked。
 
 Review 状态：`planning → executing → reviewing → completed | changes_requested | blocked`。Root 使用 `planner_verdict` 记录裁决：blocked / failed 的 Task 只要有已记录的报告就可以直接 pass；completed 是唯一终态。最多 3 轮修正（`MAX_REVIEW_ROUNDS`）。范围内 stale evidence 不能直接 PASS。Root 可以覆盖 reviewer，覆盖记录只留在内存。
 
