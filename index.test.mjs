@@ -597,6 +597,7 @@ try {
 			await commands.get("planner-only").handler("status", ctx);
 			assert.match(sent.at(-1).content, /Planner-only mode is off \\(source: env\\)/);
 			assert.match(sent.at(-1).content, /PI_PLANNER_ONLY=0 forces planner-only off/);
+			assert.match(sent.at(-1).content, /Oracle suite: bounded/);
 
 			// marker source is reported headless too
 			delete process.env.PI_PLANNER_ONLY;
@@ -605,6 +606,12 @@ try {
 			await commands.get("planner-only").handler("status", ctx);
 			assert.match(sent.at(-1).content, /Planner-only mode is off \\(source: marker\\)/);
 			assert.ok(existsSync(markerPath));
+
+			// oracle suite full env
+			process.env.PI_PLANNER_ONLY_ORACLE = "full";
+			await commands.get("planner-only").handler("status", ctx);
+			assert.match(sent.at(-1).content, /Oracle suite: full/);
+			delete process.env.PI_PLANNER_ONLY_ORACLE;
 
 			console.log("planner-only t05 env: PASS");`,
 		],

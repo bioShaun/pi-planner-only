@@ -27,6 +27,7 @@ import {
 	renderUsageLine,
 } from "./usage.ts";
 import type { PiUsageLike, UsageEntry } from "./usage.ts";
+import { oracleSuiteMode } from "./roles.ts";
 
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
 	? resolve(process.env.PI_CODING_AGENT_DIR)
@@ -916,6 +917,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					lines.push(`Marker: ${OFF_MARKER}`);
 				}
 				lines.push(`Usage log: ${logStatus}`);
+				lines.push(`Oracle suite: ${oracleSuiteMode()}`);
 				notify(ctx, lines.join("\n"));
 				return;
 			}
