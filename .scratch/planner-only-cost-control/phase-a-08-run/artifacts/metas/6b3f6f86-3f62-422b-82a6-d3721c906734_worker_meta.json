@@ -1,0 +1,247 @@
+{
+  "runId": "6b3f6f86-3f62-422b-82a6-d3721c906734",
+  "agent": "worker",
+  "task": "[prompt redacted]",
+  "exitCode": 0,
+  "model": "kimi-coding/kimi-for-coding:high",
+  "attemptedModels": [
+    "kimi-coding/kimi-for-coding:high"
+  ],
+  "modelAttempts": [
+    {
+      "model": "kimi-coding/kimi-for-coding:high",
+      "success": true,
+      "exitCode": 0,
+      "usage": {
+        "input": 9508,
+        "output": 3520,
+        "cacheRead": 101632,
+        "cacheWrite": 0,
+        "cost": 0.04242268,
+        "turns": 14
+      }
+    }
+  ],
+  "usage": {
+    "input": 9508,
+    "output": 3520,
+    "cacheRead": 101632,
+    "cacheWrite": 0,
+    "cost": 0.04242268,
+    "turns": 14
+  },
+  "acceptance": {
+    "status": "review-required",
+    "evidenceStatus": "checked",
+    "explicit": false,
+    "effectiveAcceptance": {
+      "level": "checked",
+      "explicit": false,
+      "inferredReason": [
+        "async write-capable or risky run"
+      ],
+      "criteria": [
+        {
+          "id": "criterion-1",
+          "must": "Implement the requested change without widening scope",
+          "evidence": [
+            "changed-files",
+            "tests-added",
+            "commands-run",
+            "residual-risks",
+            "no-staged-files"
+          ],
+          "severity": "required"
+        },
+        {
+          "id": "criterion-2",
+          "must": "Return evidence sufficient for an independent acceptance review",
+          "evidence": [
+            "changed-files",
+            "tests-added",
+            "commands-run",
+            "residual-risks",
+            "no-staged-files"
+          ],
+          "severity": "required"
+        }
+      ],
+      "evidence": [
+        "changed-files",
+        "tests-added",
+        "commands-run",
+        "residual-risks",
+        "no-staged-files"
+      ],
+      "verify": [],
+      "review": {
+        "agent": "reviewer",
+        "required": true
+      },
+      "stopRules": []
+    },
+    "inferredReason": [
+      "async write-capable or risky run"
+    ],
+    "criteria": [
+      {
+        "id": "criterion-1",
+        "must": "Implement the requested change without widening scope",
+        "evidence": [
+          "changed-files",
+          "tests-added",
+          "commands-run",
+          "residual-risks",
+          "no-staged-files"
+        ],
+        "severity": "required"
+      },
+      {
+        "id": "criterion-2",
+        "must": "Return evidence sufficient for an independent acceptance review",
+        "evidence": [
+          "changed-files",
+          "tests-added",
+          "commands-run",
+          "residual-risks",
+          "no-staged-files"
+        ],
+        "severity": "required"
+      }
+    ],
+    "runtimeChecks": [
+      {
+        "id": "criterion:criterion-1",
+        "status": "passed",
+        "message": "Required criterion 'criterion-1' satisfied."
+      },
+      {
+        "id": "criterion:criterion-2",
+        "status": "passed",
+        "message": "Required criterion 'criterion-2' satisfied."
+      },
+      {
+        "id": "evidence:changed-files",
+        "status": "passed",
+        "message": "changed-files evidence present."
+      },
+      {
+        "id": "evidence:tests-added",
+        "status": "passed",
+        "message": "tests-added evidence present."
+      },
+      {
+        "id": "evidence:commands-run",
+        "status": "passed",
+        "message": "commands-run evidence present."
+      },
+      {
+        "id": "evidence:residual-risks",
+        "status": "passed",
+        "message": "residual-risks evidence present."
+      },
+      {
+        "id": "evidence:no-staged-files",
+        "status": "passed",
+        "message": "no-staged-files evidence present."
+      },
+      {
+        "id": "no-staged-files",
+        "status": "passed",
+        "message": "No staged files detected."
+      }
+    ],
+    "verifyRuns": [],
+    "childReport": {
+      "criteriaSatisfied": [
+        {
+          "id": "criterion-1",
+          "status": "satisfied",
+          "evidence": "index.ts status handler pushes `Oracle suite: ${oracleSuiteMode()}` after `Usage log:` line; import added from ./roles.ts; tests added exactly as specified; commit 9921446 contains only index.ts and index.test.mjs"
+        },
+        {
+          "id": "criterion-2",
+          "status": "satisfied",
+          "evidence": "All 3 validation commands exit 0; commit hash, changed files, and untracked .scratch/ status confirmed via git log/status"
+        }
+      ],
+      "changedFiles": [
+        "index.ts",
+        "index.test.mjs"
+      ],
+      "testsAddedOrUpdated": [
+        "index.test.mjs (U-5 bounded assertion + full-oracle-mode env block)"
+      ],
+      "commandsRun": [
+        {
+          "command": "node --experimental-strip-types index.test.mjs",
+          "result": "passed",
+          "summary": "planner-only extension: PASS"
+        },
+        {
+          "command": "node --experimental-strip-types roles.test.mjs",
+          "result": "passed",
+          "summary": "planner-only roles: PASS"
+        },
+        {
+          "command": "npm run typecheck",
+          "result": "passed",
+          "summary": "tsc --noEmit exit 0"
+        },
+        {
+          "command": "npm ci",
+          "result": "passed",
+          "summary": "lockfile-readonly install of missing node_modules; lockfile untouched"
+        },
+        {
+          "command": "git commit (9921446 on phase-a-08-rerun)",
+          "result": "passed",
+          "summary": "commit message 'feat: print oracle suite mode on /planner-only status'; 2 files, 12 insertions; .scratch/ remains untracked"
+        }
+      ],
+      "validationOutput": [
+        "All validation commands pass with exit 0"
+      ],
+      "residualRisks": [
+        "none"
+      ],
+      "noStagedFiles": true,
+      "diffSummary": "index.ts +2 (import oracleSuiteMode; push Oracle suite line in status handler); index.test.mjs +10 (bounded assertion in U-5; new full-mode env block with env restore)",
+      "reviewFindings": [
+        "no blockers"
+      ],
+      "manualNotes": "Ran npm ci because node_modules was absent (required for validation); package-lock.json unchanged."
+    },
+    "reviewResult": {
+      "status": "review-required",
+      "findings": [
+        {
+          "severity": "non-blocking",
+          "issue": "Independent review has not been supplied.",
+          "rationale": "The run cannot be marked reviewed from child evidence alone."
+        }
+      ]
+    }
+  },
+  "launchContractDigest": "6a47dbc90a97a6c33ad2cd09eaff3de3ba30d06b18e4fd49fc062d21eff4cf8a",
+  "launchResolvedExtensions": {
+    "version": 1,
+    "source": "launch-resolved",
+    "disableAmbientExtensions": false,
+    "runtime": [
+      "sha256:d03ad380efa2768f"
+    ],
+    "configured": [],
+    "effective": [
+      "sha256:d03ad380efa2768f"
+    ],
+    "omitted": {
+      "runtime": 0,
+      "configured": 0,
+      "effective": 0
+    }
+  },
+  "transcriptPath": "/home/tcuni-claw/pi/pi-planner-only-phase-a-08/.scratch/phase-a-08-session/subagent-artifacts/6b3f6f86-3f62-422b-82a6-d3721c906734_worker_transcript.jsonl",
+  "skills": [],
+  "timestamp": 1788759670918
+}

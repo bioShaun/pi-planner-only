@@ -1,0 +1,76 @@
+{
+  "runId": "ed50b789-ef8e-4a20-9edb-9cd8ce45e30b",
+  "agent": "reviewer",
+  "task": "[prompt redacted]",
+  "exitCode": 0,
+  "model": "kimi-coding/kimi-for-coding:high",
+  "attemptedModels": [
+    "kimi-coding/kimi-for-coding:high"
+  ],
+  "modelAttempts": [
+    {
+      "model": "kimi-coding/kimi-for-coding:high",
+      "success": true,
+      "exitCode": 0,
+      "usage": {
+        "input": 7300,
+        "output": 1135,
+        "cacheRead": 6400,
+        "cacheWrite": 0,
+        "cost": 0.012691,
+        "turns": 2
+      }
+    }
+  ],
+  "usage": {
+    "input": 7300,
+    "output": 1135,
+    "cacheRead": 6400,
+    "cacheWrite": 0,
+    "cost": 0.012691,
+    "turns": 2
+  },
+  "acceptance": {
+    "status": "not-required",
+    "evidenceStatus": "not-required",
+    "explicit": false,
+    "effectiveAcceptance": {
+      "level": "none",
+      "explicit": false,
+      "inferredReason": [
+        "read-only/reviewer-style agent"
+      ],
+      "criteria": [],
+      "evidence": [],
+      "verify": [],
+      "stopRules": []
+    },
+    "inferredReason": [
+      "read-only/reviewer-style agent"
+    ],
+    "criteria": [],
+    "runtimeChecks": [],
+    "verifyRuns": []
+  },
+  "launchContractDigest": "5dd793bfd062c3822813ec9941d405220c950bac7554ba53567f7fb87ef62b9e",
+  "launchResolvedExtensions": {
+    "version": 1,
+    "source": "launch-resolved",
+    "disableAmbientExtensions": false,
+    "runtime": [
+      "sha256:d03ad380efa2768f"
+    ],
+    "configured": [],
+    "effective": [
+      "sha256:d03ad380efa2768f"
+    ],
+    "omitted": {
+      "runtime": 0,
+      "configured": 0,
+      "effective": 0
+    }
+  },
+  "transcriptPath": "/home/tcuni-claw/pi/pi-planner-only-phase-a-08-r3/.scratch/phase-a-08-session/subagent-artifacts/ed50b789-ef8e-4a20-9edb-9cd8ce45e30b_reviewer_transcript.jsonl",
+  "skills": [],
+  "timestamp": 1788764852272
+}

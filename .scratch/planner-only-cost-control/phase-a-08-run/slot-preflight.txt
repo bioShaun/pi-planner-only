@@ -1,0 +1,29 @@
+=== 2026-09-07T13:35:50+08:00 phase A issue 08 slot preflight ===
+PID      RSS         CPU%  COMM             状态
+2922205      0.3G   69.0  agy              << 绕过了 slot
+=====
+=== heavy.slice 资源用量 ===
+  内存 3.2G 已用 / 64.0G 软限 / 76.0G 硬顶   swap上限 0.0G   进程 0   CPU权重 50
+
+=== 池 io（6 槽）===
+139  finished   /project/tmp/slot/ts-out.6TMZsT 1        0.09/0.04/0.02 [TC-Wheat-Uni-60K+5K_v3-a1-hash-preflight]/home/tcuni-claw/.local/share/slot/jobs/1788257739-853625-5334.sh
+140  finished   /project/tmp/slot/ts-out.GPrZew 0        119.28/66.02/6.15 [TC-Wheat-Uni-60K+5K_v3-a2-hash-preflight]/home/tcuni-claw/.local/share/slot/jobs/1788257837-854937-12179.sh
+132  finished   /project/tmp/slot/ts-out.xmWKHw 0        43314.97/329.84/614.73 [pea-core64-resume]/home/tcuni-claw/.local/share/slot/jobs/1788232064-441295-2575.sh
+143  finished   /project/tmp/slot/ts-out.AI7oe6 0        24096.24/134.88/266.68 [pea-core64-resume2]/home/tcuni-claw/.local/share/slot/jobs/1788326662-3074987-23150.sh
+158  finished   /project/tmp/slot/ts-out.WOm3gz 0        12.89/8.98/3.87 [dmel-idrename]/home/tcuni-claw/.local/share/slot/jobs/1788386064-216892-12497.sh
+159  finished   /project/tmp/slot/ts-out.N2pXF8 0        165.31/137.99/25.21 [dmel-gffrepair]/home/tcuni-claw/.local/share/slot/jobs/1788386283-219264-27717.sh
+157  finished   /project/tmp/slot/ts-out.P4r1cj -1       11467.93/0.00/0.00 [dmel-merge]/home/tcuni-claw/.local/share/slot/jobs/1788385121-208527-30662.sh
+173  finished   /project/tmp/slot/ts-out.pIN6UC 0        827.76/6.40/9.99 [pea-core64-1468-resume]/home/tcuni-claw/.local/share/slot/jobs/1788450823-2685441-13225.sh
+174  finished   /project/tmp/slot/ts-out.mqbDfo 0        6645.84/714.55/42.12 [pea-core64-1468-final-resume]/home/tcuni-claw/.local/share/slot/jobs/1788491845-3257424-4088.sh
+178  finished   /project/tmp/slot/ts-out.r4Pl7K 8        10302.64/29.76/61.29 [barley-prjeb80159-vcf]/home/tcuni-claw/.local/share/slot/jobs/1788503127-3477033-14788.sh
+184  finished   /project/tmp/slot/ts-out.I3ci1A 1        10.03/11.52/0.45 [peanut-t010-sensitivity]/home/tcuni-claw/.local/share/slot/jobs/1788513731-3703669-29120.sh
+188  finished   /project/tmp/slot/ts-out.lkLuc1 1        6.37/8.27/0.34 [peanut-t010-sensitivity-r003]/home/tcuni-claw/.local/share/slot/jobs/1788515050-3732847-16393.sh
+191  finished   /project/tmp/slot/ts-out.kpHt8w 0        35.95/41.70/1.58 [peanut-t010-sensitivity-r004]/home/tcuni-claw/.local/share/slot/jobs/1788516192-3770035-17841.sh
+192  finished   /project/tmp/slot/ts-out.OujoDg 1        21.13/21.12/0.68 [peanut-t011-combination]/home/tcuni-claw/.local/share/slot/jobs/1788520328-3856140-901.sh
+193  finished   /project/tmp/slot/ts-out.A9ITil 0        115.04/111.54/3.22 [peanut-t011-combination-r2]/home/tcuni-claw/.local/share/slot/jobs/1788520728-3864857-18099.sh
+187  finished   /project/tmp/slot/ts-out.FL3Wq5 0        8376.12/18.35/33.81 [barley-prjeb80159-pgr-spring-resume]/home/tcuni-claw/.local/share/slot/jobs/1788514825-3726536-7706.sh
+196  finished   /project/tmp/slot/ts-out.T72bRY 0        118.70/29.68/4.82 [barley-prjeb80159-verify]/home/tcuni-claw/.local/share/slot/jobs/1788523624-3919220-15517.sh
+177  finished   /project/tmp/slot/ts-out.M36ihn 0        31294.87/52491.93/902.45 [pea-core62-fastq-gzip-gate]/home/tcuni-claw/.local/share/slot/jobs/1788495125-3336180-1900.sh
+197  finished   /project/tmp/slot/ts-out.irnrRr 1        3039.88/3027.74/12.92 [peanut-t011-planner-verifier-rerun]/home/tcuni-claw/.local/share/slot/jobs/1788523883-3923866-23718.sh
+199  finished   /project/tmp/slot/ts-out.vuiDVV 1        66.23/19.29/0.62 [r2-extract]/home/tcuni-claw/.local/share/slot/jobs/1788585375-859496-12171.sh
+

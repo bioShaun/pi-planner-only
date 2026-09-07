@@ -1,0 +1,90 @@
+{
+  "runId": "f1d2b014-f7b6-4591-adbd-32cd3d9e2582",
+  "agent": "worker",
+  "task": "[prompt redacted]",
+  "exitCode": 0,
+  "usage": {
+    "input": 11056,
+    "output": 2858,
+    "cacheRead": 55040,
+    "cacheWrite": 0,
+    "cost": 0.0323928,
+    "turns": 8
+  },
+  "model": "kimi-coding/kimi-for-coding:high",
+  "attemptedModels": [
+    "kimi-coding/kimi-for-coding:high"
+  ],
+  "modelAttempts": [
+    {
+      "model": "kimi-coding/kimi-for-coding:high",
+      "success": true,
+      "exitCode": 0,
+      "usage": {
+        "input": 11056,
+        "output": 2858,
+        "cacheRead": 55040,
+        "cacheWrite": 0,
+        "cost": 0.0323928,
+        "turns": 8
+      }
+    }
+  ],
+  "durationMs": 61402,
+  "toolCount": 12,
+  "launchContractDigest": "1a6e6a74dc6f7e2a980daaa64319f74c1e7b71fb1bac644de6d4f2433b077a49",
+  "launchResolvedExtensions": {
+    "version": 1,
+    "source": "launch-resolved",
+    "disableAmbientExtensions": true,
+    "runtime": [
+      "sha256:0195cc34e41290d4"
+    ],
+    "configured": [],
+    "effective": [
+      "sha256:0195cc34e41290d4"
+    ],
+    "omitted": {
+      "runtime": 0,
+      "configured": 0,
+      "effective": 0
+    }
+  },
+  "acceptance": {
+    "status": "not-required",
+    "evidenceStatus": "not-required",
+    "explicit": false,
+    "effectiveAcceptance": {
+      "level": "none",
+      "explicit": false,
+      "inferredReason": [
+        "read-only task wording"
+      ],
+      "criteria": [],
+      "evidence": [],
+      "verify": [],
+      "stopRules": []
+    },
+    "inferredReason": [
+      "read-only task wording"
+    ],
+    "criteria": [],
+    "runtimeChecks": [],
+    "verifyRuns": []
+  },
+  "effects": {
+    "fileMutation": {
+      "status": "not-applicable",
+      "expected": false,
+      "attempted": true,
+      "evidence": {
+        "source": "tracked-files",
+        "trackedOnly": true,
+        "changedFiles": [],
+        "attemptedMutation": false
+      }
+    }
+  },
+  "transcriptPath": "/home/tcuni-claw/pi/pi-planner-only-phase-a-08-r4/.scratch/phase-a-08-session/subagent-artifacts/f1d2b014-f7b6-4591-adbd-32cd3d9e2582_worker_0_transcript.jsonl",
+  "timestamp": 1788790225384
+}

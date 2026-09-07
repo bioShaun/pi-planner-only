@@ -1,0 +1,33 @@
+{
+  "defaultProvider": "kimi-coding",
+  "defaultModel": "kimi-for-coding",
+  "defaultThinkingLevel": "high",
+  "packages": [
+    "npm:pi-subagents",
+    "/home/tcuni-claw/pi/pi-planner-only"
+  ],
+  "subagents": {
+    "defaultModel": "kimi-coding/kimi-for-coding",
+    "agentOverrides": {
+      "planner": {
+        "model": "kimi-coding/kimi-for-coding",
+        "thinking": "high"
+      },
+      "oracle": {
+        "model": "kimi-coding/kimi-for-coding",
+        "thinking": "medium"
+      },
+      "reviewer": {
+        "model": "kimi-coding/kimi-for-coding",
+        "thinking": "high"
+      },
+      "worker": {
+        "model": "kimi-coding/kimi-for-coding",
+        "thinking": "high"
+      }
+    }
+  },
+  "enabledModels": [
+    "kimi-coding/kimi-for-coding"
+  ]
+}

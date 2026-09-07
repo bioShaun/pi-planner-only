@@ -1,0 +1,209 @@
+{
+  "runId": "4e032aed-40ae-4e88-87b6-fcd6b1351d63",
+  "agent": "worker",
+  "task": "[prompt redacted]",
+  "exitCode": 0,
+  "usage": {
+    "input": 28189,
+    "output": 4962,
+    "cacheRead": 324864,
+    "cacheWrite": 0,
+    "cost": 0.10835171,
+    "turns": 18
+  },
+  "model": "kimi-coding/kimi-for-coding:high",
+  "attemptedModels": [
+    "kimi-coding/kimi-for-coding:high"
+  ],
+  "modelAttempts": [
+    {
+      "model": "kimi-coding/kimi-for-coding:high",
+      "success": true,
+      "exitCode": 0,
+      "usage": {
+        "input": 28189,
+        "output": 4962,
+        "cacheRead": 324864,
+        "cacheWrite": 0,
+        "cost": 0.10835171,
+        "turns": 18
+      }
+    }
+  ],
+  "durationMs": 109093,
+  "toolCount": 23,
+  "launchContractDigest": "aac44a4be7adfab6e88633e9478373d903d9c704d7d7dd9716d8db63ea36686e",
+  "launchResolvedExtensions": {
+    "version": 1,
+    "source": "launch-resolved",
+    "disableAmbientExtensions": true,
+    "runtime": [
+      "sha256:0195cc34e41290d4"
+    ],
+    "configured": [],
+    "effective": [
+      "sha256:0195cc34e41290d4"
+    ],
+    "omitted": {
+      "runtime": 0,
+      "configured": 0,
+      "effective": 0
+    }
+  },
+  "acceptance": {
+    "status": "checked",
+    "evidenceStatus": "checked",
+    "explicit": false,
+    "effectiveAcceptance": {
+      "level": "checked",
+      "explicit": false,
+      "inferredReason": [
+        "write-capable worker/task"
+      ],
+      "criteria": [
+        {
+          "id": "criterion-1",
+          "must": "Implement the requested change without widening scope",
+          "evidence": [
+            "changed-files",
+            "tests-added",
+            "commands-run",
+            "residual-risks",
+            "no-staged-files"
+          ],
+          "severity": "required"
+        }
+      ],
+      "evidence": [
+        "changed-files",
+        "tests-added",
+        "commands-run",
+        "residual-risks",
+        "no-staged-files"
+      ],
+      "verify": [],
+      "stopRules": []
+    },
+    "inferredReason": [
+      "write-capable worker/task"
+    ],
+    "criteria": [
+      {
+        "id": "criterion-1",
+        "must": "Implement the requested change without widening scope",
+        "evidence": [
+          "changed-files",
+          "tests-added",
+          "commands-run",
+          "residual-risks",
+          "no-staged-files"
+        ],
+        "severity": "required"
+      }
+    ],
+    "runtimeChecks": [
+      {
+        "id": "criterion:criterion-1",
+        "status": "passed",
+        "message": "Required criterion 'criterion-1' satisfied."
+      },
+      {
+        "id": "evidence:changed-files",
+        "status": "passed",
+        "message": "changed-files evidence present."
+      },
+      {
+        "id": "evidence:tests-added",
+        "status": "passed",
+        "message": "tests-added evidence present."
+      },
+      {
+        "id": "evidence:commands-run",
+        "status": "passed",
+        "message": "commands-run evidence present."
+      },
+      {
+        "id": "evidence:residual-risks",
+        "status": "passed",
+        "message": "residual-risks evidence present."
+      },
+      {
+        "id": "evidence:no-staged-files",
+        "status": "passed",
+        "message": "no-staged-files evidence present."
+      },
+      {
+        "id": "no-staged-files",
+        "status": "passed",
+        "message": "No staged files detected."
+      }
+    ],
+    "verifyRuns": [],
+    "childReport": {
+      "criteriaSatisfied": [
+        {
+          "id": "criterion-1",
+          "status": "satisfied",
+          "evidence": "Only the status action gained one line from oracleSuiteMode() plus its import; tests extended in the existing status block; no changes to oracle defaults, Worker contracts, Reviewer packets, usage accounting, or README."
+        }
+      ],
+      "changedFiles": [
+        "index.ts",
+        "index.test.mjs"
+      ],
+      "testsAddedOrUpdated": [
+        "index.test.mjs (U-5 status block: bounded default + PI_PLANNER_ONLY_ORACLE=full coverage)"
+      ],
+      "commandsRun": [
+        {
+          "command": "npm test",
+          "result": "passed",
+          "summary": "all 14 test suites PASS (policy, roles, task, report, review, notify, usage, orchestrate, evidence, git_audit, index, workspace-snapshot, architecture, naming)"
+        },
+        {
+          "command": "npm run typecheck",
+          "result": "passed",
+          "summary": "tsc --noEmit clean"
+        },
+        {
+          "command": "node --experimental-strip-types status-handler smoke test",
+          "result": "passed",
+          "summary": "status output prints 'Oracle suite: bounded' by default and 'Oracle suite: full' with PI_PLANNER_ONLY_ORACLE=full"
+        },
+        {
+          "command": "git commit 4a72dd0 on phase-a-08-rerun-4",
+          "result": "passed",
+          "summary": "2 files changed, 10 insertions; not pushed"
+        }
+      ],
+      "validationOutput": [
+        "planner-only extension: PASS (includes new oracle-suite status assertions)",
+        "All other suites unchanged and passing"
+      ],
+      "residualRisks": [
+        "node_modules is an untracked symlink to the main checkout's deps (needed to run tests in this worktree); remove if undesired"
+      ],
+      "noStagedFiles": true,
+      "diffSummary": "index.ts: +1 import, +1 status line 'Oracle suite: <mode>'; index.test.mjs: +8 lines asserting bounded default and full mode",
+      "reviewFindings": [
+        "no blockers"
+      ],
+      "manualNotes": "README not edited per constraints; issue checkboxes in .scratch/oracle-status-line/issues/01-status-oracle-suite.md left as-is since .scratch stays untracked."
+    }
+  },
+  "effects": {
+    "fileMutation": {
+      "status": "observed",
+      "expected": true,
+      "attempted": true,
+      "evidence": {
+        "source": "tracked-files",
+        "trackedOnly": true,
+        "changedFiles": [],
+        "attemptedMutation": false
+      }
+    }
+  },
+  "transcriptPath": "/home/tcuni-claw/pi/pi-planner-only-phase-a-08-r4/.scratch/phase-a-08-session/subagent-artifacts/4e032aed-40ae-4e88-87b6-fcd6b1351d63_worker_0_transcript.jsonl",
+  "timestamp": 1788790013295
+}

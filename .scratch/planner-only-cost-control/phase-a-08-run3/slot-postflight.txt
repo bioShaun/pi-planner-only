@@ -1,0 +1,5 @@
+=== date ===
+2026-09-07T15:10:03+08:00
+=== slot audit ===
+PID      RSS         CPU%  COMM             状态
+903016      46.6G   1789  pbbwa            << 绕过了 slot
