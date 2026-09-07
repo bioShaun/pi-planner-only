@@ -1,0 +1,54 @@
+{
+  "lastChangelogVersion": "0.85.1",
+  "theme": "grok-build-coding",
+  "defaultProvider": "kimi-coding",
+  "defaultModel": "k3-256k",
+  "defaultThinkingLevel": "high",
+  "packages": [
+    "npm:pi-subagents",
+    "npm:pi-tool-display",
+    "https://github.com/bioShaun/pi-grok-theme",
+    "https://github.com/bioShaun/pi-context-engine",
+    "git:git@github.com:bioShaun/pi-planner-only",
+    "git:github.com/bioShaun/pi-submodel"
+  ],
+  "subagents": {
+    "defaultModel": "kimi-coding/kimi-for-coding",
+    "agentOverrides": {
+      "planner": {
+        "model": "kimi-coding/kimi-for-coding",
+        "thinking": "high"
+      },
+      "oracle": {
+        "model": "kimi-coding/kimi-for-coding",
+        "thinking": "medium"
+      },
+      "reviewer": {
+        "model": "kimi-coding/kimi-for-coding",
+        "thinking": "high"
+      },
+      "worker": {
+        "model": "kimi-coding/kimi-for-coding",
+        "thinking": "high"
+      },
+      "researcher": {
+        "model": "kimi-coding/kimi-for-coding",
+        "thinking": "medium"
+      },
+      "scout": {
+        "model": "qwen-local/qwen3.8-27b",
+        "thinking": "low"
+      }
+    }
+  },
+  "enabledModels": [
+    "kimi-coding/k3-256k",
+    "qwen-local/qwen3.8-27b",
+    "tcuni-claude/claude-opus-5",
+    "tcuni-claude/claude-fable-5-1",
+    "tcuni-agy/gemini-3.8-flash-high",
+    "volcengine/glm-5-3",
+    "volcengine/glm-5-3-flash",
+    "kimi-coding/kimi-for-coding"
+  ]
+}

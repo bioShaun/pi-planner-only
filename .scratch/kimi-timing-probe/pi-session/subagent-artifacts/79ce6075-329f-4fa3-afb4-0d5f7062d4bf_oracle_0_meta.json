@@ -1,0 +1,90 @@
+{
+  "runId": "79ce6075-329f-4fa3-afb4-0d5f7062d4bf",
+  "agent": "oracle",
+  "task": "[prompt redacted]",
+  "exitCode": 0,
+  "usage": {
+    "input": 11607,
+    "output": 704,
+    "cacheRead": 34752,
+    "cacheWrite": 0,
+    "cost": 0.02044553,
+    "turns": 4
+  },
+  "model": "kimi-coding/kimi-for-coding:off",
+  "attemptedModels": [
+    "kimi-coding/kimi-for-coding:off"
+  ],
+  "modelAttempts": [
+    {
+      "model": "kimi-coding/kimi-for-coding:off",
+      "success": true,
+      "exitCode": 0,
+      "usage": {
+        "input": 11607,
+        "output": 704,
+        "cacheRead": 34752,
+        "cacheWrite": 0,
+        "cost": 0.02044553,
+        "turns": 4
+      }
+    }
+  ],
+  "durationMs": 30130,
+  "toolCount": 6,
+  "launchContractDigest": "4791a2262f3e13b6c4cc899def5f4025ba1635641913dc78a0c0944df66d7b85",
+  "launchResolvedExtensions": {
+    "version": 1,
+    "source": "launch-resolved",
+    "disableAmbientExtensions": true,
+    "runtime": [
+      "sha256:723678a5c7bb9321"
+    ],
+    "configured": [],
+    "effective": [
+      "sha256:723678a5c7bb9321"
+    ],
+    "omitted": {
+      "runtime": 0,
+      "configured": 0,
+      "effective": 0
+    }
+  },
+  "acceptance": {
+    "status": "not-required",
+    "evidenceStatus": "not-required",
+    "explicit": false,
+    "effectiveAcceptance": {
+      "level": "none",
+      "explicit": false,
+      "inferredReason": [
+        "read-only/reviewer-style agent"
+      ],
+      "criteria": [],
+      "evidence": [],
+      "verify": [],
+      "stopRules": []
+    },
+    "inferredReason": [
+      "read-only/reviewer-style agent"
+    ],
+    "criteria": [],
+    "runtimeChecks": [],
+    "verifyRuns": []
+  },
+  "effects": {
+    "fileMutation": {
+      "status": "not-applicable",
+      "expected": false,
+      "attempted": false,
+      "evidence": {
+        "source": "tracked-files",
+        "trackedOnly": true,
+        "changedFiles": [],
+        "attemptedMutation": false
+      }
+    }
+  },
+  "transcriptPath": "/Users/guilixuan/.pi/agent/sessions/--Users-guilixuan-test-pi-pi-planner-only-kimi-probe--/subagent-artifacts/79ce6075-329f-4fa3-afb4-0d5f7062d4bf_oracle_0_transcript.jsonl",
+  "timestamp": 1788739655323
+}

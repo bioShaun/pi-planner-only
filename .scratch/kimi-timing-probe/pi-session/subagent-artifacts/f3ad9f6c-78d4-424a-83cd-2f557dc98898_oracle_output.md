@@ -1,0 +1,1 @@
+All bounded checks pass. Returning the oracle verdict.

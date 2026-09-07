@@ -1,0 +1,131 @@
+{
+  "runId": "b62fc0d8-b43b-4eef-9467-a713b026494b",
+  "agent": "worker",
+  "task": "[prompt redacted]",
+  "exitCode": 0,
+  "usage": {
+    "input": 26759,
+    "output": 2821,
+    "cacheRead": 594048,
+    "cacheWrite": 0,
+    "cost": 0.14957416999999998,
+    "turns": 33
+  },
+  "model": "kimi-coding/kimi-for-coding:off",
+  "attemptedModels": [
+    "kimi-coding/kimi-for-coding:off"
+  ],
+  "modelAttempts": [
+    {
+      "model": "kimi-coding/kimi-for-coding:off",
+      "success": true,
+      "exitCode": 0,
+      "usage": {
+        "input": 26759,
+        "output": 2821,
+        "cacheRead": 594048,
+        "cacheWrite": 0,
+        "cost": 0.14957416999999998,
+        "turns": 33
+      }
+    }
+  ],
+  "durationMs": 134856,
+  "toolCount": 36,
+  "launchContractDigest": "f322a1f5eafde1618cda73a6ff990d3b912f3b76b88e7e1352a493cd49f1e198",
+  "launchResolvedExtensions": {
+    "version": 1,
+    "source": "launch-resolved",
+    "disableAmbientExtensions": true,
+    "runtime": [
+      "sha256:723678a5c7bb9321"
+    ],
+    "configured": [],
+    "effective": [
+      "sha256:723678a5c7bb9321"
+    ],
+    "omitted": {
+      "runtime": 0,
+      "configured": 0,
+      "effective": 0
+    }
+  },
+  "acceptance": {
+    "status": "rejected",
+    "evidenceStatus": "rejected",
+    "explicit": false,
+    "effectiveAcceptance": {
+      "level": "checked",
+      "explicit": false,
+      "inferredReason": [
+        "write-capable worker/task"
+      ],
+      "criteria": [
+        {
+          "id": "criterion-1",
+          "must": "Implement the requested change without widening scope",
+          "evidence": [
+            "changed-files",
+            "tests-added",
+            "commands-run",
+            "residual-risks",
+            "no-staged-files"
+          ],
+          "severity": "required"
+        }
+      ],
+      "evidence": [
+        "changed-files",
+        "tests-added",
+        "commands-run",
+        "residual-risks",
+        "no-staged-files"
+      ],
+      "verify": [],
+      "stopRules": []
+    },
+    "inferredReason": [
+      "write-capable worker/task"
+    ],
+    "criteria": [
+      {
+        "id": "criterion-1",
+        "must": "Implement the requested change without widening scope",
+        "evidence": [
+          "changed-files",
+          "tests-added",
+          "commands-run",
+          "residual-risks",
+          "no-staged-files"
+        ],
+        "severity": "required"
+      }
+    ],
+    "runtimeChecks": [
+      {
+        "id": "attestation",
+        "status": "failed",
+        "message": "Structured acceptance report not found."
+      }
+    ],
+    "verifyRuns": [],
+    "childReportParseError": "Structured acceptance report not found."
+  },
+  "effects": {
+    "fileMutation": {
+      "status": "observed",
+      "expected": true,
+      "attempted": true,
+      "evidence": {
+        "source": "tracked-files",
+        "trackedOnly": true,
+        "changedFiles": [
+          "package-lock.json"
+        ],
+        "attemptedMutation": true
+      }
+    }
+  },
+  "transcriptPath": "/Users/guilixuan/.pi/agent/sessions/--Users-guilixuan-test-pi-pi-planner-only-kimi-probe--/subagent-artifacts/b62fc0d8-b43b-4eef-9467-a713b026494b_worker_0_transcript.jsonl",
+  "timestamp": 1788739564265
+}
