@@ -77,6 +77,7 @@ export interface ChildUsageIds {
 	toolCallId?: string;
 	agent?: string;
 	model?: string;
+	thinking?: string;
 	source: ChildUsage["source"];
 	pending?: boolean;
 }
@@ -180,17 +181,38 @@ export function lookupRates(pricing: PricingTable, provider: string | undefined,
 	return undefined;
 }
 
+type UsablePricingRates = {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+};
+
+function hasUsableRates(rates: PricingRates | undefined): rates is UsablePricingRates {
+	return rates !== undefined
+		&& Number.isFinite(rates.input)
+		&& Number.isFinite(rates.output)
+		&& Number.isFinite(rates.cacheRead)
+		&& Number.isFinite(rates.cacheWrite);
+}
+
 function tableCost(rates: PricingRates | undefined, tokens: TokenCounts): number | undefined {
-	if (!rates) return undefined;
-	if (rates.input == null || rates.output == null || rates.cacheRead == null || rates.cacheWrite == null) {
-		return undefined;
-	}
+	if (!hasUsableRates(rates)) return undefined;
 	return (
 		(tokens.input * rates.input) +
 		(tokens.output * rates.output) +
 		(tokens.cacheRead * rates.cacheRead) +
 		(tokens.cacheWrite * rates.cacheWrite)
 	) / 1_000_000;
+}
+
+/**
+ * True when the pricing table can compute a cost for this model: lookupRates
+ * finds an entry and all four rate fields are finite numbers. Zero rates count
+ * as usable; a missing entry or any null/missing field does not.
+ */
+export function hasUsableRate(pricing: PricingTable, provider: string | undefined, model: string | undefined): boolean {
+	return tableCost(lookupRates(pricing, provider, model), emptyTokenCounts()) !== undefined;
 }
 
 function resolveCost(
@@ -232,15 +254,19 @@ export function emptyPricingTable(): PricingTable {
 	return { version: 1, currency: "USD", rates: {} };
 }
 
-export function loadPricingTable(env: NodeJS.ProcessEnv = process.env): PricingTable {
+export function pricingPath(env: NodeJS.ProcessEnv = process.env): string {
 	const override = env.PI_PLANNER_ONLY_PRICING;
-	const path = override && override.trim()
+	return override && override.trim()
 		? override
 		: join(
 			env.PI_CODING_AGENT_DIR ? resolve(env.PI_CODING_AGENT_DIR) : join(homedir(), ".pi", "agent"),
 			"planner-only",
 			"pricing.json",
 		);
+}
+
+export function loadPricingTable(env: NodeJS.ProcessEnv = process.env): PricingTable {
+	const path = pricingPath(env);
 	let raw: string;
 	try {
 		raw = readFileSync(path, "utf8");
@@ -285,6 +311,12 @@ export function childUsageFromValue(
 	const rec = value as PiUsageLike;
 	const tokens = tokensFromUsage(rec);
 	const reported = piReportedCost(rec);
+	const model = ids.model;
+	let thinking = ids.thinking;
+	if (!thinking && model && model.includes(":")) {
+		const colonIdx = model.lastIndexOf(":");
+		thinking = model.slice(colonIdx + 1);
+	}
 	const child: ChildUsage = {
 		...tokens,
 		kind,
@@ -293,7 +325,8 @@ export function childUsageFromValue(
 		...(ids.runId ? { runId: ids.runId } : {}),
 		...(ids.toolCallId ? { toolCallId: ids.toolCallId } : {}),
 		...(ids.agent ? { agent: ids.agent } : {}),
-		...(ids.model ? { model: ids.model } : {}),
+		...(model ? { model } : {}),
+		...(thinking ? { thinking } : {}),
 	};
 	if (typeof rec.turns === "number" && Number.isFinite(rec.turns)) child.turns = rec.turns;
 	if (reported !== undefined) child.costUsd = reported;
@@ -605,13 +638,15 @@ export function renderUsage(
 	const root = taskUsage.root;
 	const lines: string[] = [];
 	lines.push(`Usage for ${taskId} (${state}, ${rounds} rounds)`);
-	const rootCost = root.costUsd !== undefined && !taskUsage.costUnknown
-		? `   ${formatMoney(root.costUsd, currency)}`
-		: taskUsage.costUnknown
-			? ""
-			: root.costUsd !== undefined
-				? `   ${formatMoney(root.costUsd, currency)}`
-				: "";
+	let rootCost: string;
+	if (root.costUsd !== undefined && !taskUsage.costUnknown) {
+		rootCost = `   ${formatMoney(root.costUsd, currency)}`;
+	} else if (root.turns > 0 && root.costUsd === undefined) {
+		// Unknown is not zero: never render the missing Root cost as $0.
+		rootCost = "   cost unknown";
+	} else {
+		rootCost = "";
+	}
 	const rootModel = taskUsage.rootModel ?? "";
 	lines.push(
 		`Root   ${rootModel}   ${root.turns} turns   in ${formatTokens(root.input)} (cache ${formatTokens(root.cacheRead)})  out ${formatTokens(root.output)}${rootCost}`,
@@ -634,17 +669,39 @@ export function renderUsage(
 		const unknownCount = (root.costUsd === undefined && root.turns > 0 ? 1 : 0)
 			+ taskUsage.children.filter((child) => child.costUsd === undefined).length;
 		lines.push(`cost unknown${unknownCount ? ` for ${unknownCount} components` : ""}`);
+		if (root.turns > 0 && root.costUsd === undefined) {
+			const knownChildren = taskUsage.children.filter((child) => child.costUsd !== undefined);
+			if (knownChildren.length > 0) {
+				lines.push(`Total ${formatMoney(childCostSum, currency)} excluding Root (Root cost unknown, not included)`);
+			} else {
+				lines.push("Total unknown excluding Root (Root cost unknown, no known component costs)");
+			}
+		}
 	} else if (rootCostVal !== undefined) {
 		const total = rootCostVal + childCostSum;
 		const share = total > 0 ? Math.round((rootCostVal / total) * 100) : 0;
 		lines.push(`Root share of cost: ${share}%   (cost unknown for 0 components)`);
 	}
-	if (!taskUsage.costUnknown && opts.rootRates && tableCost(opts.rootRates, emptyTokenCounts()) !== undefined) {
-		const childTokens: TokenCounts = emptyTokenCounts();
-		for (const child of taskUsage.children) addTokens(childTokens, child);
+	const estimateMissing: string[] = [];
+	if (!hasUsableRates(opts.rootRates)) estimateMissing.push("缺少 Root 费率");
+	const childTokens: TokenCounts = emptyTokenCounts();
+	let childUsageComplete = taskUsage.children.length > 0;
+	for (const child of taskUsage.children) {
+		if (![child.input, child.output, child.cacheRead, child.cacheWrite].every(Number.isFinite)) {
+			childUsageComplete = false;
+		}
+		addTokens(childTokens, child);
+		if (child.costUsd === undefined) estimateMissing.push(`缺少子进程费率${child.model ? `（${child.model}）` : ""}`);
+	}
+	if (!childUsageComplete) estimateMissing.push("缺少子进程用量");
+	if (estimateMissing.length > 0) {
+		lines.push(`同 token 用量换价估算：不可估算（${estimateMissing.join("、")}）`);
+	} else {
 		const estimate = tableCost(opts.rootRates, childTokens);
 		if (estimate !== undefined) {
-			lines.push(`Estimated Root-only cost of the child work: ${formatMoney(estimate, currency)} (children tokens × Root rates; upper bound)`);
+			lines.push(`同 token 用量换价估算：${formatMoney(estimate, currency)}（假设子进程用量保持不变、仅替换费率）`);
+		} else {
+			lines.push("同 token 用量换价估算：不可估算（缺少 Root 费率）");
 		}
 	}
 	return lines.join("\n");
@@ -661,6 +718,12 @@ export function renderUsageLine(taskUsage: TaskUsage, currency: "USD" | "CNY" = 
 	let line: string;
 	if (taskUsage.costUnknown) {
 		line = `usage: root ${compactRoot || rootTok} (${taskUsage.root.turns} turns) · children ${compactChild || childTok} · cost unknown`;
+		if (taskUsage.root.turns > 0 && taskUsage.root.costUsd === undefined) {
+			const knownChildCost = taskUsage.children.reduce((sum, child) => sum + (child.costUsd ?? 0), 0);
+			line += taskUsage.children.some((child) => child.costUsd !== undefined)
+				? ` · total ${formatMoney(knownChildCost, currency)} excluding Root`
+				: " · total unknown excluding Root";
+		}
 	} else {
 		const rootCost = taskUsage.root.costUsd !== undefined ? formatMoney(taskUsage.root.costUsd, currency) : "";
 		const childCostNum = taskUsage.children.reduce((sum, child) => sum + (child.costUsd ?? 0), 0);

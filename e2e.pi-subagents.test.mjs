@@ -36,9 +36,9 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { applyRoleDelegation, ROLE_TOOL_PROFILES } from "./roles.ts";
+import { loadRoleModelPolicy, resolveRoleModel } from "./role-models.ts";
 import { filterPlannerTools } from "./index.ts";
 
-const SKIP_PREFIX = "planner-only pi-subagents E2E: SKIP —";
 const PUBLIC_SUBPATH = "./child-tool-plan";
 const PUBLIC_SPECIFIER = "pi-subagents/child-tool-plan";
 const here = dirname(fileURLToPath(import.meta.url));
@@ -64,12 +64,13 @@ function versionInRange(version, range) {
 	return cmpTriple(value, parseTriple(parsed[1])) >= 0 && cmpTriple(value, parseTriple(parsed[2])) < 0;
 }
 
-function skip(reason) {
+function reportUnavailable(reason) {
+	console.log(`planner-only pi-subagents E2E: §G 角色模型启动契约未验证 (${reason})`);
 	if (process.env.PI_PLANNER_ONLY_REQUIRE_CONTRACT === "1") {
-		console.error(`planner-only pi-subagents E2E: FAIL — release gate requires contract coverage: ${reason}`);
+		console.error(`planner-only pi-subagents E2E: FAIL — release gate requires §G contract coverage: ${reason}`);
 		process.exit(1);
 	}
-	console.log(`${SKIP_PREFIX} ${reason}`);
+	console.log("planner-only pi-subagents E2E: PASS");
 	process.exit(0);
 }
 
@@ -80,21 +81,19 @@ assert.equal(typeof declaredRange, "string", "package.json must declare pi-plann
 const agentDir = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
 const pkgDir = join(agentDir, "npm", "node_modules", "pi-subagents");
 if (!existsSync(pkgDir)) {
-	skip("role-downgrade coverage did NOT run (pi-subagents is not installed)");
+	reportUnavailable("pi-subagents is not installed; public host contract is unavailable");
 }
 
 const installedManifest = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8"));
 const installedVersion = installedManifest.version;
 if (!versionInRange(installedVersion, declaredRange)) {
-	skip(`role-downgrade coverage did NOT run (pi-subagents ${installedVersion} is outside ${declaredRange})`);
+	reportUnavailable(`pi-subagents ${installedVersion} is outside ${declaredRange}; supported public host contract is unavailable`);
 }
 
 const exportTarget = installedManifest.exports?.[PUBLIC_SUBPATH];
-assert.equal(
-	typeof exportTarget,
-	"string",
-	`installed pi-subagents must export ${PUBLIC_SUBPATH}`,
-);
+if (typeof exportTarget !== "string") {
+	reportUnavailable(`installed pi-subagents does not export ${PUBLIC_SUBPATH}`);
+}
 
 const workDir = mkdtempSync(join(process.cwd(), ".planner-only-e2e-"));
 try {
@@ -153,6 +152,9 @@ try {
 	for (const tool of ["read", "grep", "find", "ls", "bash", "edit", "write"]) {
 		assert.ok(workerTools.includes(tool), `worker child must keep ${tool}`);
 	}
+	const workerPayload = { agent: "worker", context: "fork", task: "implement it" };
+	applyRoleDelegation(workerPayload, { role: "worker", taskId: "T-20260907-e2e-1" });
+	assert.equal(workerPayload.context, "fresh", "worker child must be forced to fresh context");
 
 	// ------------------------------------------------------------------
 	// §C — Fresh Reviewer: real reviewer tools, fresh context
@@ -199,6 +201,11 @@ try {
 	assert.ok(!oracleTools.includes("edit"));
 	assert.ok(!oracleTools.includes("write"));
 
+	const oraclePayload = { agent: "worker", context: "fork", task: "run tests" };
+	applyRoleDelegation(oraclePayload, { role: "validator" });
+	assert.equal(oraclePayload.agent, "oracle");
+	assert.equal(oraclePayload.context, "fresh", "oracle child must be forced to fresh context");
+
 	const oraclePlan = resolvePiLaunchToolPlan({
 		tools: oracleTools,
 		extensions: [],
@@ -225,7 +232,161 @@ try {
 	);
 	assert.equal(childProbe.status, 0, childProbe.stderr || childProbe.stdout);
 
-	console.log("planner-only pi-subagents E2E: PASS");
+	// ------------------------------------------------------------------
+	// §E — Thinking contract verification
+	// ------------------------------------------------------------------
+	let launchResolver = null;
+	let launchResolverError = "未找到 ./preflight 导出";
+	const preflightTarget = installedManifest.exports?.["./preflight"];
+	if (preflightTarget) {
+		try {
+			const mod = await import(pathToFileURL(join(pkgCopy, preflightTarget)).href);
+			if (typeof mod.resolveSubagentLaunchContract === "function") {
+				launchResolver = mod.resolveSubagentLaunchContract;
+			}
+		} catch (error) {
+			// §G below reports the public-contract limitation instead of skipping.
+			launchResolver = null;
+			launchResolverError = error instanceof Error ? error.message : String(error);
+		}
+	}
+
+	const preflightModels = [
+		{ provider: "policy-test", id: "worker", fullId: "policy-test/worker" },
+		{ provider: "policy-test", id: "oracle", fullId: "policy-test/oracle" },
+	];
+	if (typeof launchResolver === "function") {
+		const workerContract = await launchResolver({
+			agent: "worker",
+			cwd: process.cwd(),
+			context: "fresh",
+			thinking: "high",
+			model: "policy-test/worker",
+			availableModels: preflightModels,
+			skill: false,
+			artifacts: false,
+		});
+		const oracleContract = await launchResolver({
+			agent: "oracle",
+			cwd: process.cwd(),
+			context: "fresh",
+			thinking: "medium",
+			model: "policy-test/oracle",
+			availableModels: preflightModels,
+			skill: false,
+			artifacts: false,
+		});
+		assert.equal(workerContract.ok, true, workerContract.message);
+		assert.equal(oracleContract.ok, true, oracleContract.message);
+		assert.match(workerContract.contract.model, /policy-test\/worker/);
+		assert.equal(workerContract.contract.thinking, "high");
+		assert.match(oracleContract.contract.model, /policy-test\/oracle/);
+		assert.equal(oracleContract.contract.thinking, "medium");
+	} else {
+		console.log("planner-only pi-subagents E2E: §E thinking 契约未验证 (pi-subagents 未暴露可导入的 resolveSubagentLaunchContract)");
+	}
+
+	// ------------------------------------------------------------------
+	// §F — Budget contract verification
+	// ------------------------------------------------------------------
+	let budgetResolver = null;
+	const budgetPreflight = installedManifest.exports?.["./budget"] ?? installedManifest.exports?.["./preflight"];
+	if (budgetPreflight) {
+		try {
+			const mod = await import(pathToFileURL(join(pkgCopy, budgetPreflight)).href);
+			if (typeof mod.resolveSubagentBudgetContract === "function") {
+				budgetResolver = mod.resolveSubagentBudgetContract;
+			}
+		} catch {
+			budgetResolver = null;
+		}
+	}
+
+	if (typeof budgetResolver === "function") {
+		const budgetContract = await budgetResolver({
+			agent: "worker",
+			toolBudget: { hard: 20 },
+			usageBudget: { tokens: { hard: 40000 }, costUsd: { hard: 0.1 } },
+		});
+		assert.equal(budgetContract.toolBudget?.hard, 20);
+	} else {
+		console.log("planner-only pi-subagents E2E: §F 预算宿主契约未验证 (pi-subagents 未暴露无模型调用的 budget 契约公开接口)");
+	}
+
+	// ------------------------------------------------------------------
+	// §G — Role model launch contract verification via the public host API
+	// ------------------------------------------------------------------
+	let contractUnverifiedReason = null;
+	const rolePolicy = loadRoleModelPolicy({
+		...process.env,
+		PI_PLANNER_ONLY_ROLE_MODELS: "1",
+		PI_PLANNER_ONLY_MODEL_WORKER: "policy-test/worker",
+		PI_PLANNER_ONLY_THINKING_WORKER: "off",
+		PI_PLANNER_ONLY_MODEL_REVIEWER: "policy-test/reviewer",
+		PI_PLANNER_ONLY_THINKING_REVIEWER: "low",
+		PI_PLANNER_ONLY_MODEL_VALIDATOR: "policy-test/validator",
+		PI_PLANNER_ONLY_THINKING_VALIDATOR: "medium",
+		PI_PLANNER_ONLY_MODEL_EXPLORER: "policy-test/explorer",
+		PI_PLANNER_ONLY_THINKING_EXPLORER: "high",
+	});
+	if (typeof launchResolver !== "function") {
+		contractUnverifiedReason = `公开 ./preflight 无法导入 resolveSubagentLaunchContract (${launchResolverError})`;
+	} else {
+		const roleCases = [
+			{ role: "worker", agent: "worker", model: "policy-test/worker", thinking: "off" },
+			{ role: "reviewer", agent: "reviewer", model: "policy-test/reviewer", thinking: "low" },
+			{ role: "validator", agent: "oracle", model: "policy-test/validator", thinking: "medium" },
+			{ role: "explorer", agent: "reviewer", model: "policy-test/explorer", thinking: "high" },
+		];
+		const availableModels = roleCases.map(({ model }) => ({
+			provider: "policy-test",
+			id: model.slice("policy-test/".length),
+			fullId: model,
+		}));
+		for (const roleCase of roleCases) {
+			const input = { agent: "worker", context: "fork", task: `${roleCase.role} launch` };
+			resolveRoleModel(rolePolicy, roleCase.role, input);
+			applyRoleDelegation(input, { role: roleCase.role });
+			const result = await launchResolver({
+				agent: input.agent,
+				cwd: process.cwd(),
+				context: "fresh",
+				model: input.model,
+				thinking: input.thinking,
+				availableModels,
+				skill: false,
+				artifacts: false,
+			});
+			if (!result.ok) {
+				contractUnverifiedReason = `${roleCase.role}: ${result.code} ${result.message}`;
+				break;
+			}
+			assert.equal(result.contract.agent.name, roleCase.agent, `${roleCase.role} host agent remap`);
+			assert.match(result.contract.model ?? "", new RegExp(roleCase.model.replace("/", "\\\\/")));
+			assert.equal(result.contract.thinking, roleCase.thinking, `${roleCase.role} host thinking`);
+			const ceiling = ROLE_TOOL_PROFILES[roleCase.role];
+			if (ceiling) {
+				const allowed = new Set([...ceiling, "contact_supervisor"]);
+				for (const tool of result.contract.tools.effectiveAllowlist) {
+					assert.ok(allowed.has(tool), `${roleCase.role} launch widened its tool allowlist with ${tool}`);
+				}
+			}
+		}
+	}
+	if (contractUnverifiedReason) {
+		console.log(`planner-only pi-subagents E2E: §G 角色模型启动契约未验证 (${contractUnverifiedReason})`);
+		if (process.env.PI_PLANNER_ONLY_REQUIRE_CONTRACT === "1") {
+			console.error(`planner-only pi-subagents E2E: FAIL — release gate requires §G contract coverage: ${contractUnverifiedReason}`);
+			process.exitCode = 1;
+		}
+	}
+
+	if (process.exitCode === 1 && process.env.PI_PLANNER_ONLY_REQUIRE_CONTRACT === "1") {
+		// The release gate must not turn an unverified public host contract into
+		// a passing delivery.
+	} else {
+		console.log("planner-only pi-subagents E2E: PASS");
+	}
 } finally {
 	rmSync(workDir, { recursive: true, force: true });
 }

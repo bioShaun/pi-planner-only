@@ -32,6 +32,8 @@ export interface GitProbe {
 	statusPorcelain: string | null;
 	statusHash: string | null;
 	changedPaths: string[];
+	/** Untracked (`?`) porcelain entries; directories carry a trailing slash. */
+	untrackedPaths: string[];
 	diffStat: string | null;
 	/** True when the status command itself failed; empty output is then unknown, not clean. */
 	statusFailed: boolean;
@@ -48,8 +50,7 @@ const MAX_REVIEW_PACKET_PATCH_CHARS = 8000;
 const MAX_REVIEW_PACKET_PATCH_FILE_CHARS = 4000;
 const MAX_REVIEW_PACKET_PATCH_FILES = 50;
 
-export function hashStatus(porcelain: string): string {
-	const entries = porcelain
+export function hashStatus(porcelain: string): string {	const entries = porcelain
 		.split("\n")
 		.filter((line) => line && !line.startsWith("#"))
 		.join("\n");
@@ -84,6 +85,35 @@ export function parseChangedPaths(porcelain: string): string[] {
 	return [...new Set(paths.filter(Boolean))].sort();
 }
 
+/**
+ * Ticket 20 — parse only the untracked (`?`) entries of
+ * `git status --porcelain=v2`. Untracked directories arrive collapsed with a
+ * trailing slash; the text is kept as printed so callers can match it against
+ * the task's scope paths. Tracked kinds (`1`, `2`, `u`) never enter this set.
+ */
+export function parseUntrackedPaths(porcelain: string): string[] {
+	const paths: string[] = [];
+	for (const rawLine of porcelain.split("\n")) {
+		const line = rawLine.replace(/\r$/, "");
+		if (line.startsWith("? ")) paths.push(line.slice(2));
+	}
+	return [...new Set(paths.filter(Boolean))].sort();
+}
+
+/**
+ * Ticket 20 — the untracked set of each sample Root captured, keyed by the
+ * sample object itself (samples are compared by identity, never serialized
+ * for this purpose). `snapshotPathsFor` uses it to keep out-of-scope
+ * untracked runtime directories out of the PASS snapshot digest while
+ * leaving `changedPaths` — and with it the status text Root sees — intact.
+ */
+const untrackedPathsBySample = new WeakMap<EvidenceRef, readonly string[]>();
+
+/** The untracked paths of a sample captured by `captureEvidence`; `[]` otherwise. */
+export function untrackedPathsOf(sample: EvidenceRef): readonly string[] {
+	return untrackedPathsBySample.get(sample) ?? [];
+}
+
 function unavailableProbe(): GitProbe {
 	return {
 		available: false,
@@ -91,6 +121,7 @@ function unavailableProbe(): GitProbe {
 		statusPorcelain: null,
 		statusHash: null,
 		changedPaths: [],
+		untrackedPaths: [],
 		diffStat: null,
 		statusFailed: false,
 	};
@@ -121,6 +152,7 @@ export async function probeGit(run: GitRunner, cwd: string): Promise<GitProbe> {
 		statusPorcelain: porcelain,
 		statusHash: porcelain === null ? null : hashStatus(porcelain),
 		changedPaths: porcelain === null ? [] : parseChangedPaths(porcelain),
+		untrackedPaths: porcelain === null ? [] : parseUntrackedPaths(porcelain),
 		diffStat:
 			diffStat.code === 0 && diffStat.stdout.trim()
 				? diffStat.stdout.trim().slice(-MAX_DIFF_STAT_CHARS)
@@ -237,7 +269,7 @@ export async function captureEvidence(
 		? await diffNamesBetweenRefs(run, cwd, options.baseGitRef, probe.head)
 		: undefined;
 
-	return {
+	const sample: EvidenceRef = {
 		cwd,
 		taskId: options.taskId,
 		workerRunId: options.workerRunId,
@@ -252,6 +284,8 @@ export async function captureEvidence(
 		gitAvailable: true,
 		generatedAt,
 	};
+	untrackedPathsBySample.set(sample, probe.untrackedPaths);
+	return sample;
 }
 
 function clip(value: string | null | undefined, limit: number): string | undefined {

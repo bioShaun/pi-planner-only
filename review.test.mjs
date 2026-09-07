@@ -6,6 +6,7 @@ import {
 import { extractWorkerReport } from "./report.ts";
 import {
 	decideReview,
+	buildUndeclaredCorrectionGuidance,
 	deriveVerdict,
 	extractReviewResult,
 	summarizeFindings,
@@ -303,9 +304,24 @@ assert.match(summarizeFindings([finding("major", "test")]).join("\n"), /\[major\
 	assert.match(decision.reason, /could not be obtained/);
 }
 
-// --------------------------------------------------------------------------
-// Stale evidence cannot pass (§10.2)
-// --------------------------------------------------------------------------
+// Undeclared paths get an explicit target state and revert-first correction.
+{
+	const store = newTask();
+	const withRef = {
+		...store.require("T-20260831-001"),
+		baseEvidence: { finalGitRef: "abc1234" },
+	};
+	const guidance = buildUndeclaredCorrectionGuidance(withRef, { undeclaredPaths: ["package-lock.json"] });
+	assert.match(guidance.join("\n"), /Target state: commit abc1234\./);
+	assert.match(guidance.join("\n"), /Revert undeclared paths \(package-lock\.json\) rather than committing them\./);
+
+	const cleanTarget = { ...withRef, baseEvidence: undefined };
+	assert.match(
+		buildUndeclaredCorrectionGuidance(cleanTarget, { undeclaredPaths: ["pnpm-lock.yaml"] }).join("\n"),
+		/Target state: clean working tree matching baseline snapshot\./,
+	);
+}
+
 
 {
 	const store = newTask();

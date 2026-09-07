@@ -12,6 +12,7 @@ const evidence = src("evidence.ts");
 const policy = src("policy.ts");
 const roles = src("roles.ts");
 const usage = src("usage.ts");
+const roleModels = src("role-models.ts");
 const orchestrate = src("orchestrate.ts");
 const pkg = JSON.parse(src("package.json"));
 
@@ -69,6 +70,12 @@ assert.doesNotMatch(index, /const prepareRoleDelegation/);
 assert.doesNotMatch(usage, /from "\.\/index\.ts"/);
 assert.doesNotMatch(usage, /@earendil-works/);
 assert.equal(pkg.files.includes("usage.ts"), true, "usage.ts must ship in the package files list");
+assert.equal(pkg.files.includes("floors.ts"), true, "floors.ts must ship in the package files list");
+assert.equal(pkg.files.includes("role-models.ts"), true, "role-models.ts must ship in the package files list");
+assert.match(orchestrate, /from "\.\/role-models\.ts"/);
+assert.match(index, /from "\.\/role-models\.ts"/);
+assert.doesNotMatch(policy, /role-models|PI_PLANNER_ONLY_MODEL_|ROLE_MODELS/);
+assert.doesNotMatch(roleModels, /from "\.\/index\.ts"|@earendil-works/);
 
 // Orchestration records no ledger mutations; the adapter owns capture.
 assert.doesNotMatch(orchestrate, /UsageLedger/);

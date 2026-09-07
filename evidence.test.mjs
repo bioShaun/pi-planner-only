@@ -11,6 +11,7 @@ import {
 	hashStatus,
 	isEvidenceStale,
 	parseChangedPaths,
+	parseUntrackedPaths,
 	probeGit,
 } from "./evidence.ts";
 
@@ -93,6 +94,16 @@ assert.deepEqual(parseChangedPaths(porcelain), [
 ]);
 assert.deepEqual(parseChangedPaths(""), []);
 assert.deepEqual(parseChangedPaths("# branch.oid abc\n# branch.head main"), []);
+
+// Ticket 20 — untracked (`?`) entries parse separately: directories arrive
+// collapsed with a trailing slash; tracked kinds never enter the set.
+assert.deepEqual(parseUntrackedPaths(porcelain), ["docs/with spaces.md", "src/new.ts"]);
+assert.deepEqual(parseUntrackedPaths(""), []);
+assert.deepEqual(parseUntrackedPaths("# branch.oid abc\n# branch.head main"), []);
+assert.deepEqual(
+	parseUntrackedPaths("? .agent-dir/\n? .pi/\n1 .M N... 100644 100644 100644 1111111 2222222 src/a.ts"),
+	[".agent-dir/", ".pi/"],
+);
 
 assert.equal(hashStatus("x"), hashStatus("x"));
 assert.notEqual(hashStatus("x"), hashStatus("y"));

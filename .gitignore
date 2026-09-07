@@ -5,3 +5,14 @@ node_modules/
 
 .planner-only-*
 .wl-debug-*
+
+# herdr-pair round handoffs and per-round command logs
+.handoff/
+.scratch/planner-only-cost-control/**/*.log
+.scratch/**/*.bak-*
+
+# raw session transcripts from the phase-a-08 runs; the small evidence
+# (meta.json, usage.jsonl, comparison.md) is committed, the logs are not
+.scratch/planner-only-cost-control/phase-a-08-run*/artifacts/root-session.jsonl
+.scratch/planner-only-cost-control/phase-a-08-run*/artifacts/subagent-artifacts/*_transcript.jsonl
+.scratch/planner-only-cost-control/phase-a-08-run*/artifacts/session-tree/

@@ -376,6 +376,24 @@ function blockedDecision(reason: string, round: number): ReviewDecision {
 	};
 }
 
+export function buildUndeclaredCorrectionGuidance(
+	task: TaskRecord,
+	comparison?: EvidenceComparison,
+): string[] {
+	const comp = comparison ?? task.lastComparison;
+	const undeclared = comp?.undeclaredPaths ?? [];
+	if (undeclared.length === 0) return [];
+
+	const targetState = task.baseEvidence?.finalGitRef
+		? `Target state: commit ${task.baseEvidence.finalGitRef}.`
+		: "Target state: clean working tree matching baseline snapshot.";
+
+	const pathsStr = undeclared.join(", ");
+	const revertAdvice = `Revert undeclared paths (${pathsStr}) rather than committing them.`;
+
+	return [targetState, revertAdvice];
+}
+
 /**
  * Decide the next lifecycle step for a task under review.
  *
@@ -426,6 +444,7 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 
 	if (input.report && input.report.status === "failed") {
 		if (round < MAX_REVIEW_ROUNDS) {
+			const undeclaredGuidance = buildUndeclaredCorrectionGuidance(task, input.comparison);
 			return {
 				action: "request_changes",
 				nextState: "changes_requested",
@@ -434,6 +453,7 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 				reason: `worker reported failed: ${input.report.summary}`,
 				guidance: [
 					"Do not patch the failure in the parent.",
+					...undeclaredGuidance,
 					"Delegate a new bounded TaskSpec with the failure summary, the exit codes, and a narrower objective.",
 					`This is correction ${round + 1} of ${MAX_REVIEW_ROUNDS}.`,
 				],
@@ -444,6 +464,7 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 
 	if (input.comparison && evidenceAction(input.comparison) === "revalidate") {
 		if (round < MAX_REVIEW_ROUNDS) {
+			const undeclaredGuidance = buildUndeclaredCorrectionGuidance(task, input.comparison);
 			return {
 				action: "revalidate",
 				nextState: "changes_requested",
@@ -452,6 +473,7 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 				reason: `evidence is stale: ${input.comparison.reasons.join("; ")}`,
 				guidance: [
 					"Stale evidence must not be accepted.",
+					...undeclaredGuidance,
 					"Inspect the current state with read/grep/git_audit, then re-delegate validation for the affected paths.",
 					"A bounded oracle check is enough when the worker's validation already exited 0; do not re-run the full suite unless PI_PLANNER_ONLY_ORACLE=full.",
 					`This is correction ${round + 1} of ${MAX_REVIEW_ROUNDS}.`,
@@ -492,6 +514,7 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 			};
 		case "request_changes":
 			if (round < MAX_REVIEW_ROUNDS) {
+				const undeclaredGuidance = buildUndeclaredCorrectionGuidance(task, input.comparison);
 				return {
 					action: "request_changes",
 					nextState: "changes_requested",
@@ -500,6 +523,7 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 					reason: review.summary,
 					guidance: [
 						...summarizeFindings(review.findings),
+						...undeclaredGuidance,
 						"Delegate a bounded correction. Never patch rejected work in the parent.",
 						`This is correction ${round + 1} of ${MAX_REVIEW_ROUNDS}.`,
 					],

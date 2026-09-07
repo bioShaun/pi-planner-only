@@ -337,6 +337,7 @@ export interface ChildUsage extends TokenCounts {
 	kind: DelegationKind;      // worker | reviewer | explorer | validator
 	agent?: string;
 	model?: string;
+	thinking?: string;
 	turns?: number;
 	costUsd?: number;
 	/** Usage not yet resolvable (async run, metadata file absent at consume time). */

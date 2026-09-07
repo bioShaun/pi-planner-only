@@ -4,17 +4,37 @@ import {
 	ROLE_AGENTS,
 	ROLE_TOOL_PROFILES,
 	applyRoleDelegation,
+	hasMissingRequiredValidationCommands,
 	inferRoleFromAgent,
+	lastWorkerValidationPassed,
+	missingTaskSpecValidationCommands,
 	oracleSuiteMode,
 	prepareRoleDelegation,
 	resolveDelegationTarget,
 	roleAllowsMutatingTools,
+	stripDelegationKeys,
+	taskSpecRequestsFullSuite,
+	STRIPPED_DELEGATION_KEYS,
 	wrapOracleContract,
 	wrapWorkerContract,
 } from "./roles.ts";
-import { reviewerPrompt } from "./review.ts";
+import { createTaskSpec } from "./task.ts";
+import { extractReviewRequest, reviewerPrompt } from "./review.ts";
 
-assert.deepEqual([...ROLE_TOOL_PROFILES.explorer].sort(), ["find", "grep", "ls", "read"]);
+assert.equal(hasMissingRequiredValidationCommands(createTaskSpec({ objective: "missing commands", cwd: process.cwd(), validation: { required: true } })), true);
+assert.equal(hasMissingRequiredValidationCommands(createTaskSpec({ objective: "empty commands", cwd: process.cwd(), validation: { required: true, commands: [] } })), true);
+assert.equal(hasMissingRequiredValidationCommands(createTaskSpec({ objective: "defined commands", cwd: process.cwd(), validation: { required: true, commands: ["npm test"] } })), false);
+assert.deepEqual(
+	missingTaskSpecValidationCommands(
+		createTaskSpec({ objective: "file check does not cover test", cwd: process.cwd(), validation: { commands: ["npm test"] } }),
+		{ validation: [{ command: "test -f src/parser.test.ts", status: "passed", exitCode: 0 }] },
+	),
+	["npm test"],
+);
+assert.equal(taskSpecRequestsFullSuite(createTaskSpec({ objective: "e2e", cwd: process.cwd(), validation: { commands: ["npm test", "npm run test:e2e"] } })), true);
+assert.equal(taskSpecRequestsFullSuite(createTaskSpec({ objective: "unit", cwd: process.cwd(), validation: { commands: ["npm test"] } })), false);
+assert.equal(taskSpecRequestsFullSuite(createTaskSpec({ objective: "types", cwd: process.cwd(), validation: { commands: ["npm run typecheck"] } })), false);
+
 // Reviewer children launch with --no-extensions, so git_audit does not exist
 // there. Root passes a bounded Git evidence packet instead.
 assert.deepEqual([...ROLE_TOOL_PROFILES.reviewer].sort(), ["find", "grep", "ls", "read"]);
@@ -40,14 +60,26 @@ assert.equal(ROLE_AGENTS.worker, undefined);
 assert.equal(inferRoleFromAgent("reviewer"), "reviewer");
 assert.equal(inferRoleFromAgent("oracle"), "validator");
 assert.equal(inferRoleFromAgent("worker"), "worker");
+assert.equal(inferRoleFromAgent("scout"), "explorer");
+assert.equal(inferRoleFromAgent("ScOuT"), "explorer");
 assert.equal(inferRoleFromAgent("delegate"), undefined);
+
+const scout = { agent: "scout", task: "Survey the repo." };
+assert.equal(applyRoleDelegation(scout, { role: "explorer" }).role, "explorer");
+assert.equal(scout.agent, "scout");
+const preparedScout = { agent: "ScOuT", task: "Survey the repo." };
+prepareRoleDelegation(preparedScout, () => undefined);
+assert.equal(preparedScout.agent, "ScOuT");
 
 const worker = { agent: "worker", task: "implement it", context: "fork" };
 assert.equal(applyRoleDelegation(worker, { role: "worker", taskId: "T-20260831-001" }).mutated, true);
 assert.equal(worker.agent, "worker");
-assert.equal(worker.context, "fork");
+assert.equal(worker.context, "fresh");
 assert.match(worker.task, /\[PLANNER-ONLY WORKER CONTRACT\]/);
-assert.match(worker.task, /Do not run \/code-review/);
+assert.match(worker.task, /Do not run npm install, pnpm install, or any other command that modifies a lockfile/);
+assert.match(worker.task, /unless the TaskSpec explicitly requires it/);
+assert.match(worker.task, /lockfile-readonly install \(npm ci, pnpm install --frozen-lockfile\)/);
+assert.match(worker.task, /If a lockfile is modified anyway, list it in changedFiles/);
 assert.match(worker.task, /"taskId":"T-20260831-001"/);
 assert.equal(applyRoleDelegation(worker, { role: "worker", taskId: "T-20260831-001" }).mutated, false, "already wrapped");
 
@@ -60,10 +92,48 @@ assert.equal("context" in explorer, false);
 const validator = { agent: "worker", task: "run tests" };
 assert.equal(applyRoleDelegation(validator, { role: "validator" }).mutated, true);
 assert.equal(validator.agent, "oracle");
+assert.equal(validator.context, "fresh");
 assert.match(validator.task, /\[PLANNER-ONLY ORACLE\]/);
-assert.match(validator.task, /ORACLE_SUITE=bounded/);
-assert.doesNotMatch(validator.task, /ORACLE_SUITE=full/);
-assert.match(validator.task, /Do not run npm test/);
+assert.match(validator.task, /ORACLE_SUITE=full/);
+assert.doesNotMatch(validator.task, /ORACLE_SUITE=bounded/);
+assert.doesNotMatch(validator.task, /Do not run npm test/);
+assert.equal(lastWorkerValidationPassed(undefined), false);
+const unknownValidationReport = {
+	status: "completed",
+	validation: [],
+};
+assert.equal(lastWorkerValidationPassed(unknownValidationReport), false);
+const failedWithoutValidation = {
+	status: "failed",
+	validation: [],
+};
+assert.equal(lastWorkerValidationPassed(failedWithoutValidation), false);
+
+const boundedValidator = { agent: "oracle", task: "run tests" };
+const passedReport = {
+	status: "completed",
+	validation: [{ status: "passed", exitCode: 0 }],
+};
+assert.equal(lastWorkerValidationPassed(passedReport), true);
+const notRunReport = {
+	status: "completed",
+	validation: [{ status: "not-run", exitCode: 0 }],
+};
+assert.equal(lastWorkerValidationPassed(notRunReport), false);
+const passedNonZeroReport = {
+	status: "completed",
+	validation: [{ status: "passed", exitCode: 1 }],
+};
+assert.equal(lastWorkerValidationPassed(passedNonZeroReport), false);
+const contradictoryValidator = { agent: "oracle", task: "run tests" };
+applyRoleDelegation(contradictoryValidator, {
+	role: "validator",
+	workerValidationPassed: false,
+});
+assert.match(contradictoryValidator.task, /ORACLE_SUITE=full/);
+applyRoleDelegation(boundedValidator, { role: "validator", workerValidationPassed: true });
+assert.match(boundedValidator.task, /ORACLE_SUITE=bounded/);
+assert.doesNotMatch(boundedValidator.task, /ORACLE_SUITE=full/);
 
 const reviewer = {
 	agent: "worker",
@@ -235,7 +305,7 @@ assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root
 	assert.deepEqual(target.namedTaskIds, ["T-20260905-001", "T-20260905-002"]);
 }
 
-// U-5: TaskSpec.budget -> usageBudget passthrough and input priority
+// U-5 updated for floors: stricter wins, floors cannot be raised, missing dimensions completed
 {
 	const input = { agent: "worker", task: "implement" };
 	const res = applyRoleDelegation(input, {
@@ -243,9 +313,10 @@ assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root
 		budget: { tokens: 100_000, costUsd: 2.5 },
 	});
 	assert.equal(res.mutated, true);
+	// Stricter floor 0.50 wins over 2.5
 	assert.deepEqual(input.usageBudget, {
 		tokens: { hard: 100_000 },
-		costUsd: { hard: 2.5 },
+		costUsd: { hard: 0.50 },
 	});
 }
 
@@ -255,8 +326,10 @@ assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root
 		role: "worker",
 		budget: { tokens: 50_000 },
 	});
+	// Missing costUsd completed by floor 0.50
 	assert.deepEqual(input.usageBudget, {
 		tokens: { hard: 50_000 },
+		costUsd: { hard: 0.50 },
 	});
 }
 
@@ -266,12 +339,14 @@ assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root
 		role: "worker",
 		budget: { costUsd: 0.75 },
 	});
+	// Missing tokens completed by floor 100_000, looser 0.75 clamped to floor 0.50
 	assert.deepEqual(input.usageBudget, {
-		costUsd: { hard: 0.75 },
+		tokens: { hard: 100_000 },
+		costUsd: { hard: 0.50 },
 	});
 }
 
-// Explicit usageBudget in the input wins
+// Explicit usageBudget in the input: stricter wins per dimension
 {
 	const input = {
 		agent: "worker",
@@ -285,11 +360,12 @@ assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root
 	assert.equal(res.mutated, true);
 	assert.deepEqual(input.usageBudget, {
 		tokens: { hard: 10_000 },
+		costUsd: { hard: 0.50 },
 	});
 	assert.match(input.task, /\[PLANNER-ONLY WORKER CONTRACT\]/);
 }
 
-// prepareRoleDelegation passes TaskSpec.budget through
+// prepareRoleDelegation passes TaskSpec.budget through and clamps looser values
 {
 	const specWithBudget = {
 		taskId: "T-20260905-b01",
@@ -308,7 +384,7 @@ assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root
 	prepareRoleDelegation(payload, () => undefined);
 	assert.deepEqual(payload.usageBudget, {
 		tokens: { hard: 42_000 },
-		costUsd: { hard: 1.25 },
+		costUsd: { hard: 0.50 },
 	});
 	assert.match(payload.task, /\[PLANNER-ONLY WORKER CONTRACT\]/);
 	assert.match(payload.task, /budgeted task/);
@@ -325,16 +401,100 @@ assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root
 	const bounded = wrapOracleContract("run tests", "bounded", true);
 	assert.match(bounded, /\[PLANNER-ONLY ORACLE\]/);
 	assert.match(bounded, /ORACLE_SUITE=bounded/);
-	assert.match(bounded, /Do not run npm test/);
+	assert.match(bounded, /You MAY run only the test files named in the WorkerReport/);
+	assert.match(bounded, /Do not run npm test, npm run test:e2e, or the full suite/);
+	assert.match(bounded, /Check git rev-parse HEAD and git status --porcelain/);
 	assert.doesNotMatch(bounded, /ORACLE_SUITE=full/);
 	assert.equal(wrapOracleContract(bounded, "bounded", true), bounded);
 
 	const full = wrapOracleContract("run tests", "full", true);
 	assert.match(full, /ORACLE_SUITE=full/);
-	assert.doesNotMatch(full, /Do not run npm test/);
+	assert.doesNotMatch(full, /You MAY run only the test files named in the WorkerReport/);
+	assert.doesNotMatch(full, /Do not run npm test, npm run test:e2e, or the full suite/);
 
 	const failed = wrapOracleContract("run tests", "bounded", false);
 	assert.match(failed, /ORACLE_SUITE=full/);
+
+	const missing = wrapOracleContract("Validate T", "missing", false, ["npm run typecheck"]);
+	assert.match(missing, /\[PLANNER-ONLY ORACLE\]/);
+	assert.match(missing, /ORACLE_SUITE=missing/);
+	assert.match(missing, /npm run typecheck/);
+	assert.doesNotMatch(missing, /ORACLE_SUITE=full/);
+	assert.doesNotMatch(missing, /ORACLE_SUITE=bounded/);
+	assert.doesNotMatch(missing, /Re-run the listed validation commands/);
+	assert.equal(wrapOracleContract(missing, "missing", false, ["npm run typecheck"]), missing);
+}
+
+{
+	const fixtureSpec = {
+		taskId: "T-20260907-043",
+		objective: "validate fixture",
+		cwd: process.cwd(),
+		role: "worker",
+		scope: {},
+		constraints: [],
+		acceptanceCriteria: [],
+		validation: { required: true, commands: ["npm test", "npm run typecheck"] },
+		expectedEvidence: {},
+		stopConditions: [],
+	};
+	const partialReport = {
+		version: 1,
+		taskId: "T-20260907-043",
+		status: "completed",
+		summary: "done",
+		changedFiles: ["src/a.ts"],
+		validation: [
+			{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "tests pass" },
+		],
+		evidence: { taskId: "T-20260907-043" },
+		risks: [],
+		unresolved: [],
+	};
+	assert.deepEqual(
+		missingTaskSpecValidationCommands(fixtureSpec, partialReport),
+		["npm run typecheck"],
+	);
+
+	const fullReport = {
+		...partialReport,
+		validation: [
+			{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "tests pass" },
+			{ command: "npm run typecheck", type: "typecheck", status: "passed", exitCode: 0, summary: "typecheck pass" },
+		],
+	};
+	assert.deepEqual(
+		missingTaskSpecValidationCommands(fixtureSpec, fullReport),
+		[],
+	);
+
+	const emptyReport = {
+		...partialReport,
+		validation: [],
+	};
+	assert.deepEqual(
+		missingTaskSpecValidationCommands(fixtureSpec, emptyReport),
+		["npm test", "npm run typecheck"],
+	);
+}
+
+{
+	const packet = wrapOracleContract(
+		JSON.stringify({ taskId: "T-20260905-061", objective: "x", validation: { required: true, commands: ["npm test"] } }),
+		"bounded",
+		true,
+	);
+	const fromPacket = applyRoleDelegation(
+		{ agent: "oracle", task: "Validate T-20260905-061" },
+		{ role: "validator", packet },
+	);
+	assert.equal(fromPacket.oracleSuiteConflict, undefined, "injected TaskSpec packet must not count as Root full-suite prose");
+
+	const fromRoot = applyRoleDelegation(
+		{ agent: "oracle", task: "Validate T-20260905-061 by running npm test" },
+		{ role: "validator", workerValidationPassed: true },
+	);
+	assert.equal(fromRoot.oracleSuiteConflict, true);
 }
 
 {
@@ -394,6 +554,316 @@ assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root
 	}) };
 	prepareRoleDelegation(payload, () => failedWorker);
 	assert.match(payload.task, /ORACLE_SUITE=full/);
+}
+
+// Issue 03: Title alias in roles and invalid candidate guard
+{
+	const titlePrompt = `Please review:\n\`\`\`json\n${JSON.stringify({
+		taskId: "oracle-status-line-01",
+		title: "Roles title feature",
+		acceptanceCriteria: ["roles test passes"],
+	})}\n\`\`\``;
+	const target = resolveDelegationTarget({ agent: "reviewer", task: titlePrompt }, () => undefined);
+	assert.equal(target.role, "reviewer");
+	assert.ok(target.spec !== undefined);
+	assert.equal(target.spec.objective, "Roles title feature");
+	assert.deepEqual(target.spec.acceptanceCriteria, ["roles test passes"]);
+
+	const payload = { agent: "reviewer", task: titlePrompt };
+	prepareRoleDelegation(payload, () => undefined);
+	const request = extractReviewRequest(payload.task);
+	assert.ok(request !== undefined);
+	assert.equal(request.taskSpec?.objective, "Roles title feature");
+	assert.deepEqual(request.taskSpec?.acceptanceCriteria, ["roles test passes"]);
+
+	// Invalid candidate (missing objective) should not mutate rawInput
+	const invalidPayload = { agent: "worker", task: `\`\`\`json\n{"taskId":"T-1","acceptanceCriteria":["x"]}\n\`\`\`` };
+	const originalTask = invalidPayload.task;
+	prepareRoleDelegation(invalidPayload, () => undefined);
+	assert.equal(invalidPayload.task, originalTask, "invalid TaskSpec candidate does not trigger contract mutation");
+}
+
+// Issue 04: Worker and Validator fresh default, bounded execution packet without Root markers
+{
+	const unrelatedRootMarker = "UNRELATED_ROOT_CONVERSATION_HISTORY_MARKER_xyz987";
+	const workerTask = `${unrelatedRootMarker}\nHere is the spec:\n\`\`\`json\n${JSON.stringify({
+		taskId: "T-20260907-001",
+		objective: "implement bounded packet",
+		acceptanceCriteria: ["all tests pass"],
+	})}\n\`\`\``;
+	const workerPayload = { agent: "worker", task: workerTask, context: "fork" };
+	prepareRoleDelegation(workerPayload, () => undefined);
+	assert.equal(workerPayload.context, "fresh", "Worker context forced to fresh");
+	assert.equal(workerPayload.__contextOverridden, true, "Worker context override flagged");
+	assert.doesNotMatch(workerPayload.task, new RegExp(unrelatedRootMarker), "Root unrelated marker stripped from Worker packet");
+	assert.match(workerPayload.task, /\[PLANNER-ONLY WORKER CONTRACT\]/, "Worker contract present");
+	assert.match(workerPayload.task, /"taskId":\s*"T-20260907-001"/, "TaskSpec present in packet");
+
+	const validatorTask = `${unrelatedRootMarker}\nPlease validate:\n\`\`\`json\n${JSON.stringify({
+		taskId: "T-20260907-002",
+		objective: "validate bounded packet",
+		acceptanceCriteria: ["all tests pass"],
+	})}\n\`\`\``;
+	const validatorPayload = { agent: "oracle", task: validatorTask };
+	prepareRoleDelegation(validatorPayload, () => undefined);
+	assert.equal(validatorPayload.context, "fresh", "Validator context defaults to fresh");
+	assert.doesNotMatch(validatorPayload.task, new RegExp(unrelatedRootMarker), "Root unrelated marker stripped from Validator packet");
+	assert.match(validatorPayload.task, /\[PLANNER-ONLY ORACLE\]/, "Validator contract present");
+	assert.match(validatorPayload.task, /"taskId":\s*"T-20260907-002"/, "TaskSpec present in packet");
+}
+
+// Issue 04: Context reuse handling (same-task vs cross-task vs root history vs unverified)
+{
+	const mockPreviousTask = {
+		taskId: "T-20260907-reuse-1",
+		cwd: "/repo",
+		state: "changes_requested",
+		reports: [{
+			version: 1,
+			taskId: "T-20260907-reuse-1",
+			status: "completed",
+			changedFiles: ["foo.ts"],
+			evidence: ["npm test passed"],
+			validation: [],
+		}],
+		baseEvidence: { workerRunId: "run-001", finalGitRef: "git-ref-1" },
+		lastComparison: { diff: "changed foo.ts" },
+		aliases: [],
+		reviews: [],
+		overrides: [],
+	};
+
+	// 1. Same-task explicit reuse succeeds and enters packet
+	const sameTaskPayload = {
+		agent: "worker",
+		task: `\`\`\`json\n{"taskId":"T-20260907-reuse-1","objective":"fix bug"}\n\`\`\``,
+		reuseTaskId: "T-20260907-reuse-1",
+	};
+	prepareRoleDelegation(sameTaskPayload, (id) => id === "T-20260907-reuse-1" ? mockPreviousTask : undefined);
+	assert.equal(sameTaskPayload.context, "fresh", "remains fresh bounded context");
+	assert.match(sameTaskPayload.task, /\[PLANNER-ONLY REUSED TASK CONTEXT\]/, "previous context injected into packet");
+	assert.match(sameTaskPayload.task, /foo\.ts/, "previous report details in packet");
+	assert.equal(sameTaskPayload.__reuseOutcome?.reused, true);
+
+	// 2. Cross-task explicit reuse is rejected and falls back to fresh
+	const crossTaskPayload = {
+		agent: "worker",
+		task: `\`\`\`json\n{"taskId":"T-20260907-reuse-1","objective":"fix bug"}\n\`\`\``,
+		reuseTaskId: "T-OTHER-TASK",
+	};
+	prepareRoleDelegation(crossTaskPayload, (id) => id === "T-20260907-reuse-1" ? mockPreviousTask : undefined);
+	assert.equal(crossTaskPayload.context, "fresh");
+	assert.doesNotMatch(crossTaskPayload.task, /\[PLANNER-ONLY REUSED TASK CONTEXT\]/);
+	assert.equal(crossTaskPayload.__reuseOutcome?.reused, false);
+	assert.match(crossTaskPayload.__reuseOutcome?.reason, /does not match canonical task/);
+
+	// 3. Root history requested is rejected and falls back to fresh
+	const rootForkPayload = {
+		agent: "worker",
+		task: `\`\`\`json\n{"taskId":"T-20260907-reuse-1","objective":"fix bug"}\n\`\`\``,
+		context: "fork",
+		reuseRootHistory: true,
+	};
+	prepareRoleDelegation(rootForkPayload, (id) => id === "T-20260907-reuse-1" ? mockPreviousTask : undefined);
+	assert.equal(rootForkPayload.context, "fresh");
+	assert.equal(rootForkPayload.__contextOverridden, true);
+	assert.equal(rootForkPayload.__reuseOutcome?.reused, false);
+	assert.match(rootForkPayload.__reuseOutcome?.reason, /Root history cannot be reused/);
+
+	// 4. Unverifiable context (no previous task or report) is rejected and falls back to fresh
+	const missingReportPayload = {
+		agent: "worker",
+		task: `\`\`\`json\n{"taskId":"T-20260907-reuse-2","objective":"fix bug"}\n\`\`\``,
+		reuseTaskId: "T-20260907-reuse-2",
+	};
+	prepareRoleDelegation(missingReportPayload, () => undefined);
+	assert.equal(missingReportPayload.context, "fresh");
+	assert.equal(missingReportPayload.__reuseOutcome?.reused, false);
+	assert.match(missingReportPayload.__reuseOutcome?.reason, /cannot verify previous execution context/);
+}
+
+// Issue 04: Reviewer behaviour remains unchanged
+{
+	const reviewerSpec = {
+		taskId: "T-20260907-rev-1",
+		objective: "review changes",
+		role: "reviewer",
+	};
+	const reviewerPayload = {
+		agent: "reviewer",
+		task: JSON.stringify(reviewerSpec),
+	};
+	prepareRoleDelegation(reviewerPayload, () => undefined);
+	assert.equal(reviewerPayload.agent, "reviewer");
+	assert.equal(reviewerPayload.context, "fresh");
+	assert.match(reviewerPayload.task, /\[PLANNER-ONLY FRESH REVIEW\]/);
+}
+
+// Issue 04 / Defect 2: Private fields and caller reuse keys stripped before handing to host
+{
+	const payloadWithKeys = {
+		agent: "worker",
+		task: "implement feature",
+		reuseTaskId: "T-1",
+		reuseContext: "T-1",
+		reuseRootHistory: true,
+		reuse: true,
+		__reuseOutcome: { reused: true, reason: "ok" },
+		__contextOverridden: true,
+	};
+	stripDelegationKeys(payloadWithKeys);
+	for (const key of STRIPPED_DELEGATION_KEYS) {
+		assert.equal(key in payloadWithKeys, false, `key ${key} must be stripped`);
+	}
+	assert.equal(payloadWithKeys.agent, "worker");
+	assert.equal(payloadWithKeys.task, "implement feature");
+}
+
+// ----------------------------------------------------------------------
+// Issue 05: Default floors for bounded delegations, initial worker, and stricter resolution
+// ----------------------------------------------------------------------
+
+// Checkbox 1: Bounded report correction (worker + reports.length > 0) gets toolBudget.hard=20 and usageBudget floors
+{
+	const taskRecordWithReports = {
+		taskId: "T-20260907-corr-1",
+		cwd: "/test",
+		spec: { taskId: "T-20260907-corr-1", objective: "fix report", role: "worker" },
+		reports: [{
+			version: 1,
+			taskId: "T-20260907-corr-1",
+			status: "completed",
+			summary: "initial report",
+			changedFiles: [],
+			validation: [],
+			evidence: { cwd: "/test", taskId: "T-20260907-corr-1", workerRunId: "run-1" },
+		}],
+	};
+	const payload = {
+		agent: "worker",
+		task: JSON.stringify({ taskId: "T-20260907-corr-1", objective: "fix report", role: "worker" }),
+	};
+	prepareRoleDelegation(payload, (id) => id === "T-20260907-corr-1" ? taskRecordWithReports : undefined);
+	assert.deepEqual(payload.toolBudget, { hard: 20 });
+	assert.deepEqual(payload.usageBudget, {
+		tokens: { hard: 40_000 },
+		costUsd: { hard: 0.10 },
+	});
+	assert.deepEqual(payload.__floorLimits?.toolBudget, { value: 20, source: "floor" });
+	assert.deepEqual(payload.__floorLimits?.tokens, { value: 40_000, source: "floor" });
+	assert.deepEqual(payload.__floorLimits?.costUsd, { value: 0.10, source: "floor" });
+}
+
+// Checkbox 2: Validator & Explorer get toolBudget.hard=20 and usageBudget floors; initial worker has no toolBudget floor
+{
+	// Explorer
+	const explorerPayload = { agent: "explorer", task: "investigate repo" };
+	prepareRoleDelegation(explorerPayload, () => undefined);
+	assert.deepEqual(explorerPayload.toolBudget, { hard: 20 });
+	assert.deepEqual(explorerPayload.usageBudget, {
+		tokens: { hard: 40_000 },
+		costUsd: { hard: 0.10 },
+	});
+
+	// Validator (oracle)
+	const validatorPayload = { agent: "validator", task: "run tests" };
+	prepareRoleDelegation(validatorPayload, () => undefined);
+	assert.deepEqual(validatorPayload.toolBudget, { hard: 20 });
+	assert.deepEqual(validatorPayload.usageBudget, {
+		tokens: { hard: 40_000 },
+		costUsd: { hard: 0.10 },
+	});
+
+	// Worker initial (no prior reports)
+	const initialWorkerPayload = {
+		agent: "worker",
+		task: JSON.stringify({ taskId: "T-20260907-init-1", objective: "do work", role: "worker" }),
+	};
+	prepareRoleDelegation(initialWorkerPayload, () => undefined);
+	assert.equal(initialWorkerPayload.toolBudget, undefined, "initial worker must not have default toolBudget floor");
+	assert.deepEqual(initialWorkerPayload.usageBudget, {
+		tokens: { hard: 100_000 },
+		costUsd: { hard: 0.50 },
+	});
+	assert.deepEqual(initialWorkerPayload.__floorLimits?.tokens, { value: 100_000, source: "floor" });
+	assert.deepEqual(initialWorkerPayload.__floorLimits?.costUsd, { value: 0.50, source: "floor" });
+
+	// Worker without any TaskSpec embedded also receives default initial usage floor (no zero guardrail)
+	const noSpecWorkerPayload = { agent: "worker", task: "implement something without spec" };
+	prepareRoleDelegation(noSpecWorkerPayload, () => undefined);
+	assert.equal(noSpecWorkerPayload.toolBudget, undefined);
+	assert.deepEqual(noSpecWorkerPayload.usageBudget, {
+		tokens: { hard: 100_000 },
+		costUsd: { hard: 0.50 },
+	});
+}
+
+// Checkbox 3: Stricter caller vs stricter TaskSpec vs looser both
+{
+	// Caller more strict
+	const callerStrict = {
+		agent: "worker",
+		task: JSON.stringify({ taskId: "T-1", objective: "work", role: "worker" }),
+		usageBudget: { tokens: { hard: 30_000 }, costUsd: { hard: 0.20 } },
+	};
+	prepareRoleDelegation(callerStrict, () => undefined);
+	assert.deepEqual(callerStrict.usageBudget, {
+		tokens: { hard: 30_000 },
+		costUsd: { hard: 0.20 },
+	});
+	assert.equal(callerStrict.__floorLimits?.tokens.source, "caller");
+	assert.equal(callerStrict.__floorLimits?.costUsd.source, "caller");
+
+	// TaskSpec more strict
+	const specStrict = {
+		agent: "worker",
+		task: JSON.stringify({
+			taskId: "T-2",
+			objective: "work",
+			role: "worker",
+			budget: { tokens: 25_000, costUsd: 0.15 },
+		}),
+	};
+	prepareRoleDelegation(specStrict, () => undefined);
+	assert.deepEqual(specStrict.usageBudget, {
+		tokens: { hard: 25_000 },
+		costUsd: { hard: 0.15 },
+	});
+	assert.equal(specStrict.__floorLimits?.tokens.source, "taskSpec");
+	assert.equal(specStrict.__floorLimits?.costUsd.source, "taskSpec");
+
+	// Both looser -> floor wins, neither caller nor spec raises floor
+	const bothLooser = {
+		agent: "worker",
+		task: JSON.stringify({
+			taskId: "T-3",
+			objective: "work",
+			role: "worker",
+			budget: { tokens: 500_000, costUsd: 5.0 },
+		}),
+		usageBudget: { tokens: { hard: 200_000 }, costUsd: { hard: 2.0 } },
+	};
+	prepareRoleDelegation(bothLooser, () => undefined);
+	assert.deepEqual(bothLooser.usageBudget, {
+		tokens: { hard: 100_000 },
+		costUsd: { hard: 0.50 },
+	});
+	assert.equal(bothLooser.__floorLimits?.tokens.source, "floor");
+	assert.equal(bothLooser.__floorLimits?.costUsd.source, "floor");
+}
+
+// Checkbox 4: Source literals and summary format
+{
+	const mixedPayload = {
+		agent: "validator",
+		task: "run check",
+		toolBudget: { hard: 10 },
+		usageBudget: { tokens: { hard: 20_000 } },
+	};
+	prepareRoleDelegation(mixedPayload, () => undefined);
+	assert.deepEqual(mixedPayload.__floorLimits?.toolBudget, { value: 10, source: "caller" });
+	assert.deepEqual(mixedPayload.__floorLimits?.tokens, { value: 20_000, source: "caller" });
+	assert.deepEqual(mixedPayload.__floorLimits?.costUsd, { value: 0.10, source: "floor" });
 }
 
 console.log("planner-only roles: PASS");

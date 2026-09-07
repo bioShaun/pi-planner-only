@@ -33,6 +33,7 @@ import { jsonCandidates } from "./report.ts";
 import { emptyTaskUsage } from "./usage.ts";
 
 const TASK_ROLES: readonly TaskRole[] = ["worker", "explorer", "validator", "reviewer"];
+const explicitlyNoValidation = new WeakSet<TaskSpec>();
 
 /**
  * FR-04 — capability profiles per role. The write lock follows actual write
@@ -96,7 +97,7 @@ export function createTaskId(now: Date = new Date(), sequence = 1): string {
 }
 
 export function createTaskSpec(input: CreateTaskSpecInput, taskId = createTaskId()): TaskSpec {
-	return {
+	const spec: TaskSpec = {
 		taskId: input.taskId?.trim() || taskId,
 		objective: input.objective.trim(),
 		cwd: resolve(input.cwd),
@@ -122,6 +123,12 @@ export function createTaskSpec(input: CreateTaskSpecInput, taskId = createTaskId
 		stopConditions: uniqueNonEmpty(input.stopConditions ?? []),
 		...(input.parentEvidenceRef ? { parentEvidenceRef: input.parentEvidenceRef } : {}),
 	};
+	if (input.validation?.required === false) explicitlyNoValidation.add(spec);
+	return spec;
+}
+
+export function isExplicitlyNoValidation(spec: TaskSpec | undefined): boolean {
+	return spec !== undefined && explicitlyNoValidation.has(spec);
 }
 
 export function validateTaskSpec(value: unknown): string[] {
@@ -176,27 +183,172 @@ export function validateTaskSpec(value: unknown): string[] {
 	return errors;
 }
 
-/** Pull a TaskSpec the parent embedded in a delegation prompt. */
-export function extractTaskSpec(text: string): TaskSpec | undefined {
-	if (!text.trim()) return undefined;
-	for (const candidate of jsonCandidates(text)) {
+export const TASKSPEC_CHARACTERISTIC_FIELDS = [
+	"taskId",
+	"objective",
+	"title",
+	"acceptanceCriteria",
+	"scope",
+	"validation",
+	"expectedEvidence",
+	"stopConditions",
+	"constraints",
+	"budget",
+] as const;
+
+export interface ExtractedTaskSpecResult {
+	spec?: TaskSpec;
+	hasCharacteristics: boolean;
+	titleAliasUsed: boolean;
+	errors: string[];
+	candidate?: Record<string, unknown>;
+}
+
+function topLevelJsonCandidates(text: string): string[] {
+	const candidates: string[] = [];
+	const trimmed = text.trim();
+	if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+		candidates.push(trimmed);
+	}
+	for (const match of text.matchAll(/```(?:json|jsonc)?\s*([\s\S]*?)```/g)) {
+		if (match[1]?.trim()) candidates.push(match[1].trim());
+	}
+	for (let start = text.indexOf("{"); start !== -1; start = text.indexOf("{", start + 1)) {
+		let depth = 0;
+		let inString = false;
+		let escaped = false;
+		let matchedEnd = -1;
+		for (let index = start; index < text.length; index += 1) {
+			const char = text[index];
+			if (inString) {
+				if (escaped) escaped = false;
+				else if (char === "\\") escaped = true;
+				else if (char === '"') inString = false;
+				continue;
+			}
+			if (char === '"') inString = true;
+			else if (char === "{") depth += 1;
+			else if (char === "}") {
+				depth -= 1;
+				if (depth === 0) {
+					matchedEnd = index;
+					break;
+				}
+			}
+		}
+		if (matchedEnd !== -1) {
+			candidates.push(text.slice(start, matchedEnd + 1));
+			start = matchedEnd;
+		}
+	}
+	return [...new Set(candidates)];
+}
+
+export function extractTaskSpecDetails(
+	text: string,
+	defaultCwd?: string,
+	defaultRole: TaskRole = "worker",
+): ExtractedTaskSpecResult {
+	if (typeof text !== "string" || !text.trim()) {
+		return { hasCharacteristics: false, titleAliasUsed: false, errors: [] };
+	}
+
+	let firstErrorResult: ExtractedTaskSpecResult | undefined;
+
+	for (const candidate of topLevelJsonCandidates(text)) {
 		let parsed: unknown;
 		try {
 			parsed = JSON.parse(candidate);
 		} catch {
 			continue;
 		}
-		if (
-			typeof parsed !== "object" ||
-			parsed === null ||
-			Array.isArray(parsed) ||
-			!("objective" in parsed)
-		) {
-			continue;
+
+		if (!isPlainObject(parsed)) continue;
+
+		// Ignore ReviewRequest and WorkerReport payloads
+		if ("reviewMode" in parsed && "reportTaskId" in parsed) continue;
+		if ("status" in parsed && "changedFiles" in parsed && "evidence" in parsed) continue;
+
+		const matchingFields = TASKSPEC_CHARACTERISTIC_FIELDS.filter((field) => field in parsed);
+		const hasCharacteristics = matchingFields.length >= 2 || (matchingFields.length === 1 && matchingFields[0] !== "taskId");
+		if (!hasCharacteristics) continue;
+
+		let objective: unknown = parsed.objective;
+		let titleAliasUsed = false;
+		if (isNonEmptyString(parsed.objective)) {
+			objective = parsed.objective;
+		} else if (isNonEmptyString(parsed.title)) {
+			objective = parsed.title;
+			titleAliasUsed = true;
 		}
-		if (validateTaskSpec(parsed).length === 0) return parsed as TaskSpec;
+
+		const effectiveCwd = isNonEmptyString(parsed.cwd)
+			? parsed.cwd
+			: defaultCwd ?? (typeof process !== "undefined" ? process.cwd() : "");
+		const effectiveRole = isNonEmptyString(parsed.role)
+			? (parsed.role as TaskRole)
+			: defaultRole;
+
+		const candidateToValidate: Record<string, unknown> = {
+			...parsed,
+			objective,
+			cwd: effectiveCwd,
+			role: effectiveRole,
+		};
+
+		const errors = validateTaskSpec(candidateToValidate);
+		if (errors.length === 0) {
+			const spec = createTaskSpec(
+				{
+					taskId: isNonEmptyString(parsed.taskId) ? parsed.taskId : undefined,
+					objective: objective as string,
+					cwd: effectiveCwd,
+					role: effectiveRole,
+					scope: isPlainObject(parsed.scope) ? (parsed.scope as TaskScope) : undefined,
+					constraints: isStringArray(parsed.constraints) ? parsed.constraints : undefined,
+					acceptanceCriteria: isStringArray(parsed.acceptanceCriteria) ? parsed.acceptanceCriteria : undefined,
+					validation: isPlainObject(parsed.validation) ? (parsed.validation as Partial<TaskValidation>) : undefined,
+					expectedEvidence: isPlainObject(parsed.expectedEvidence) ? (parsed.expectedEvidence as ExpectedEvidence) : undefined,
+					stopConditions: isStringArray(parsed.stopConditions) ? parsed.stopConditions : undefined,
+				},
+				isNonEmptyString(parsed.taskId) ? parsed.taskId : undefined,
+			);
+			if (isPlainObject(parsed.budget)) {
+				(spec as { budget?: unknown }).budget = parsed.budget;
+			}
+			return {
+				spec,
+				hasCharacteristics: true,
+				titleAliasUsed,
+				errors: [],
+				candidate: parsed,
+			};
+		}
+
+		if (!firstErrorResult) {
+			firstErrorResult = {
+				hasCharacteristics: true,
+				titleAliasUsed: false,
+				errors,
+				candidate: parsed,
+			};
+		}
 	}
-	return undefined;
+
+	if (firstErrorResult) {
+		return firstErrorResult;
+	}
+
+	return { hasCharacteristics: false, titleAliasUsed: false, errors: [] };
+}
+
+/** Pull a TaskSpec the parent embedded in a delegation prompt. */
+export function extractTaskSpec(
+	text: string,
+	defaultCwd?: string,
+	defaultRole: TaskRole = "worker",
+): TaskSpec | undefined {
+	return extractTaskSpecDetails(text, defaultCwd, defaultRole).spec;
 }
 
 /**
@@ -251,6 +403,10 @@ export interface TaskRecord {
 	usage: TaskUsage;
 	createdAt: string;
 	updatedAt: string;
+	/** Whether this Task was created as a placeholder without parent TaskSpec. */
+	isPlaceholder?: boolean;
+	/** Whether the embedded TaskSpec used 'title' as an alias for 'objective'. */
+	titleAliasUsed?: boolean;
 }
 
 export interface TaskStoreOptions {
@@ -287,14 +443,14 @@ export class TaskStore {
 			cwd: spec?.cwd ?? "",
 			state: "planning",
 			reviewRound: 0,
-			reviewMode: "root",
+			reviewMode: process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW === "1" ? "fresh" : "root",
 			reports: [],
 			validatorReports: [],
 			reviews: [],
 			overrides: [],
 			aliases,
 			reportCorrections: 0,
-			usage: emptyTaskUsage(),
+		usage: emptyTaskUsage(),
 			createdAt: timestamp,
 			updatedAt: timestamp,
 		};
@@ -348,6 +504,7 @@ export class TaskStore {
 		record.spec = spec;
 		record.role = spec.role;
 		record.cwd = spec.cwd;
+		record.isPlaceholder = false;
 		return this.touch(record);
 	}
 

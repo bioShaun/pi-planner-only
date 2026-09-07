@@ -5,11 +5,14 @@ import {
 	TaskStore,
 	createTaskId,
 	createTaskSpec,
+	isExplicitlyNoValidation,
 	extractTaskSpec,
+	extractTaskSpecDetails,
 	findWriterConflict,
 	isExecutingStale,
 	validateTaskSpec,
 	canTransition,
+	TASKSPEC_CHARACTERISTIC_FIELDS,
 } from "./task.ts";
 import {
 	compactWorkerReport,
@@ -73,7 +76,14 @@ const spec = createTaskSpec(
 assert.deepEqual(validateTaskSpec(spec), []);
 assert.equal(spec.cwd, resolve(cwd));
 assert.equal(spec.role, "worker");
-assert.equal(spec.validation.required, true);
+assert.equal(createTaskSpec({ objective: "required without commands", cwd, validation: { required: true } }).validation.commands, undefined);
+assert.equal(createTaskSpec({ objective: "required with empty commands", cwd, validation: { required: true, commands: [] } }).validation.commands, undefined);
+assert.deepEqual(validateTaskSpec(createTaskSpec({ objective: "required without commands", cwd, validation: { required: true } })), []);
+
+
+const explicitlyDisabledSpec = createTaskSpec({ objective: "skip validation", cwd, validation: { required: false } }, "T-20260831-002");
+assert.equal(isExplicitlyNoValidation(explicitlyDisabledSpec), true);
+assert.equal(isExplicitlyNoValidation(createTaskSpec({ objective: "default validation", cwd }, "T-20260831-003")), false);
 
 assert.ok(validateTaskSpec({ ...spec, taskId: "" }).length > 0);
 assert.ok(validateTaskSpec({ ...spec, role: "admin" }).length > 0);
@@ -230,6 +240,19 @@ const task = store.create(spec);
 assert.equal(task.state, "planning");
 assert.equal(task.reviewRound, 0);
 assert.equal(task.reviewMode, "root");
+{
+	const previous = process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW;
+	try {
+		process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW = "1";
+		const strictTask = new TaskStore({ now: () => new Date("2026-08-31T00:00:00Z") }).create(
+			createTaskSpec({ objective: "strict review", cwd }, "T-20260831-strict"),
+		);
+		assert.equal(strictTask.reviewMode, "fresh");
+	} finally {
+		if (previous === undefined) delete process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW;
+		else process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW = previous;
+	}
+}
 assert.equal(task.usage.root.turns, 0);
 assert.deepEqual(task.usage.children, []);
 assert.equal(task.usage.costUnknown, false);
@@ -402,6 +425,61 @@ assert.throws(() => store.abandon(abandoned.taskId), /terminal task/);
 	store.setLastComparison(task.taskId, comparison);
 	assert.equal(store.require(task.taskId).lastComparison?.fresh, true);
 	assert.ok(extractTaskSpec(`please do:\n\`\`\`json\n${JSON.stringify(spec)}\n\`\`\``));
+}
+
+// --------------------------------------------------------------------------
+// Issue 03: extractTaskSpecDetails unit tests
+// --------------------------------------------------------------------------
+{
+	// 1. Characteristic fields present (taskId, acceptanceCriteria, scope) but missing objective
+	const missingObjPrompt = `Please work on:\n\`\`\`json\n${JSON.stringify({
+		taskId: "oracle-status-line-01",
+		acceptanceCriteria: ["test passes"],
+		scope: { allowedPaths: ["src/"] },
+	})}\n\`\`\``;
+	const res1 = extractTaskSpecDetails(missingObjPrompt);
+	assert.equal(res1.hasCharacteristics, true);
+	assert.equal(res1.spec, undefined);
+	assert.ok(res1.errors.includes("objective must be a non-empty string"));
+	assert.equal(res1.titleAliasUsed, false);
+
+	// 2. validation.required is not a boolean
+	const invalidValPrompt = `Please work on:\n\`\`\`json\n${JSON.stringify({
+		taskId: "oracle-status-line-01",
+		objective: "Fix bug",
+		validation: { required: "true", commands: ["npm test"] },
+	})}\n\`\`\``;
+	const res2 = extractTaskSpecDetails(invalidValPrompt);
+	assert.equal(res2.hasCharacteristics, true);
+	assert.equal(res2.spec, undefined);
+	assert.ok(res2.errors.includes("validation.required must be a boolean"));
+
+	// 3. title used as alias for objective
+	const titlePrompt = `Please work on:\n\`\`\`json\n${JSON.stringify({
+		taskId: "oracle-status-line-01",
+		title: "Fix bug via title",
+		acceptanceCriteria: ["unit test passes"],
+	})}\n\`\`\``;
+	const res3 = extractTaskSpecDetails(titlePrompt);
+	assert.equal(res3.hasCharacteristics, true);
+	assert.ok(res3.spec !== undefined);
+	assert.equal(res3.spec.objective, "Fix bug via title");
+	assert.equal(res3.titleAliasUsed, true);
+	assert.deepEqual(res3.errors, []);
+	assert.equal(extractTaskSpec(titlePrompt)?.objective, "Fix bug via title");
+
+	// 4. No characteristic fields
+	const plainPrompt = "Just run npm test and let me know.";
+	const res4 = extractTaskSpecDetails(plainPrompt);
+	assert.equal(res4.hasCharacteristics, false);
+	assert.equal(res4.spec, undefined);
+	assert.equal(res4.errors.length, 0);
+
+	// 5. Bare JSON without characteristic fields (e.g. random object)
+	const randomJsonPrompt = `Context:\n\`\`\`json\n{"foo": "bar", "count": 42}\n\`\`\``;
+	const res5 = extractTaskSpecDetails(randomJsonPrompt);
+	assert.equal(res5.hasCharacteristics, false);
+	assert.equal(res5.spec, undefined);
 }
 
 console.log("planner-only task lifecycle: PASS");

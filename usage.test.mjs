@@ -5,6 +5,7 @@ import {
 	UsageLedger,
 	childUsageFromValue,
 	emptyTaskUsage,
+	hasUsableRate,
 	loadPricingTable,
 	lookupRates,
 	modelIdForPricing,
@@ -384,12 +385,34 @@ assert.equal(modelIdForPricing("volcengine/glm-5-3"), "volcengine/glm-5-3");
 	});
 	assert.match(pricedBlock, /\$1\.23/);
 	assert.match(pricedBlock, /Root share of cost: 93%/);
-	assert.match(pricedBlock, /Estimated Root-only cost of the child work:/);
+	assert.match(pricedBlock, /同 token 用量换价估算/);
+	assert.match(pricedBlock, /子进程用量保持不变、仅替换费率/);
+	assert.doesNotMatch(pricedBlock, /upper bound/);
 	assert.match(pricedBlock, /review leak 18\.4 KB/);
 	assert.match(pricedBlock, /injected 27\.9 KB/);
 
 	const pricedLine = renderUsageLine(priced);
-	assert.match(pricedLine, /root share 93%/);
+	const unavailableBlock = renderUsage(priced, {
+		taskId: "T-20260905-004",
+		state: "completed",
+		rounds: 1,
+	});
+	assert.match(unavailableBlock, /同 token 用量换价估算：不可估算/);
+	assert.match(unavailableBlock, /缺少 Root 费率/);
+	assert.doesNotMatch(unavailableBlock, /upper bound/);
+	assert.doesNotMatch(unavailableBlock, /\$0\.00/);
+
+	const childRateMissing = {
+		...priced,
+		children: priced.children.map((child) => ({ ...child, costUsd: undefined })),
+	};
+	const childRateMissingBlock = renderUsage(childRateMissing, {
+		taskId: "T-20260905-005",
+		rootRates: { input: 10, output: 10, cacheRead: 0, cacheWrite: 0 },
+	});
+	assert.match(childRateMissingBlock, /同 token 用量换价估算：不可估算/);
+	assert.match(childRateMissingBlock, /缺少子进程费率.*volcengine\/glm-5-3/);
+	assert.doesNotMatch(childRateMissingBlock, /\$0\.00/);
 	assert.doesNotMatch(pricedLine, /cost unknown/);
 	assert.ok(Buffer.byteLength(pricedLine) <= 160);
 
@@ -482,6 +505,92 @@ assert.equal(modelIdForPricing("volcengine/glm-5-3"), "volcengine/glm-5-3");
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
+}
+
+// --------------------------------------------------------------------------
+// hasUsableRate: missing entry, null field, and zero rates
+// --------------------------------------------------------------------------
+
+{
+	const pricing = {
+		version: 1,
+		currency: "USD",
+		rates: {
+			"test-priced/has-rate": { input: 1, output: 2, cacheRead: 0.5, cacheWrite: 1.5 },
+			"test-priced/zero-rate": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			"test-priced/null-rate": { input: null, output: 2, cacheRead: 0.5, cacheWrite: 1.5 },
+		},
+	};
+	assert.equal(hasUsableRate(pricing, "test-priced", "has-rate"), true);
+	assert.equal(hasUsableRate(pricing, undefined, "test-priced/has-rate:high"), true, "thinking suffix still resolves");
+	assert.equal(hasUsableRate(pricing, "test-priced", "zero-rate"), true, "zero rates count as a usable rate");
+	assert.equal(hasUsableRate(pricing, "test-priced", "null-rate"), false, "a null field makes the rate unusable");
+	assert.equal(hasUsableRate(pricing, "test-unpriced", "no-rate"), false, "a missing entry is unusable");
+	assert.equal(hasUsableRate(pricing, undefined, undefined), false);
+}
+
+// --------------------------------------------------------------------------
+// Issue 07: Root cost unknown is never zero; totals say "excluding Root"
+// --------------------------------------------------------------------------
+
+{
+	const usage = emptyTaskUsage();
+	usage.root.turns = 5;
+	usage.root.input = 120_000;
+	usage.root.output = 4_000;
+	usage.root.cacheRead = 30_000;
+	usage.rootModel = "test-unpriced/no-rate";
+	usage.costUnknown = true;
+	usage.children.push({
+		kind: "worker",
+		pending: false,
+		source: "sync-details",
+		model: "test-priced/has-rate",
+		input: 90_000,
+		output: 10_000,
+		cacheRead: 0,
+		cacheWrite: 0,
+		costUsd: 0.09,
+	});
+
+	const block = renderUsage(usage, { taskId: "T-20260907-001", state: "reviewing", rounds: 1 });
+	assert.match(block, /Root {3}test-unpriced\/no-rate/);
+	assert.match(block, /cost unknown/);
+	assert.match(block, /excluding Root/, "totals must state they exclude Root");
+	assert.match(block, /\$0\.09/, "the known child cost is still shown");
+	assert.doesNotMatch(block, /\$0\.00/, "unknown must never render as $0.00 for Root or the total");
+	assert.doesNotMatch(block, /¥0/);
+
+	const line = renderUsageLine(usage);
+	assert.match(line, /^usage: /);
+	assert.match(line, /cost unknown/);
+	assert.match(line, /excluding Root/);
+	assert.match(line, /\$0\.09/);
+	assert.doesNotMatch(line, /\$0\.00/);
+	assert.ok(Buffer.byteLength(line) <= 160, `line is ${Buffer.byteLength(line)} bytes`);
+
+	// No known component costs at all: the total is unknown, not $0.00.
+	const allUnknown = emptyTaskUsage();
+	allUnknown.root.turns = 3;
+	allUnknown.root.input = 10_000;
+	allUnknown.costUnknown = true;
+	allUnknown.children.push({
+		kind: "worker",
+		pending: false,
+		source: "meta-file",
+		model: "test-unpriced/no-rate",
+		input: 5_000,
+		output: 500,
+		cacheRead: 0,
+		cacheWrite: 0,
+	});
+	const allUnknownBlock = renderUsage(allUnknown, { taskId: "T-20260907-002" });
+	assert.match(allUnknownBlock, /excluding Root/);
+	assert.doesNotMatch(allUnknownBlock, /\$0\.00/);
+	const allUnknownLine = renderUsageLine(allUnknown);
+	assert.match(allUnknownLine, /excluding Root/);
+	assert.doesNotMatch(allUnknownLine, /\$0\.00/);
+	assert.ok(Buffer.byteLength(allUnknownLine) <= 160);
 }
 
 console.log("planner-only usage: PASS");

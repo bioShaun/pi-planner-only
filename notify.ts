@@ -213,6 +213,7 @@ export interface ChildRunMeta {
 	/** Numeric exit code marks the run terminal; absent means state unknown. */
 	exitCode?: number;
 	model?: string;
+	thinking?: string;
 	usage?: unknown;
 }
 
@@ -250,6 +251,7 @@ function tryReadChildMetaFile(
 		// notice was lost; its absence means the run state is unknown.
 		...(typeof rec.exitCode === "number" ? { exitCode: rec.exitCode } : {}),
 		...(typeof rec.model === "string" ? { model: rec.model } : {}),
+		...(typeof rec.thinking === "string" ? { thinking: rec.thinking } : {}),
 		...("usage" in rec ? { usage: rec.usage } : {}),
 	};
 }

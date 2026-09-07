@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { PlannerOrchestrator, isDelegationCall } from "./orchestrate.ts";
 import { createTaskSpec, isExecutingStale, isHolderStale } from "./task.ts";
 import { TaskStore } from "./task.ts";
-import { hashStatus, workspaceSummaryDigest } from "./evidence.ts";
+import { hashStatus, workspaceSummaryDigest, describeComparison } from "./evidence.ts";
+import { extractReviewRequest } from "./review.ts";
 
 // Fixture ids are stamped 2026-09-05; pin the store clock so id replacement
 // never depends on the wall clock of the machine running the suite.
@@ -128,7 +129,54 @@ async function delegateWorker(orch, toolCallId, taskId) {
 	return outcome;
 }
 
-// Management calls are not delegations, even when they carry workflow data.
+
+// Ticket 11: required validation without commands blocks Validator delegation before
+// the oracle contract can substitute ORACLE_SUITE=full/bounded.
+{
+	const missingCommandsSpec = createTaskSpec({
+		objective: "validator definition required",
+		cwd: BASE,
+		role: "validator",
+		validation: { required: true },
+	});
+	const input = { task: JSON.stringify(missingCommandsSpec) };
+	const orch = new PlannerOrchestrator({ store: pinnedStore(), gitRunner });
+	await orch.prepareRoleDelegation(input);
+	assert.doesNotMatch(input.task, /ORACLE_SUITE=(?:full|bounded)/);
+	const outcome = await orch.beginDelegation({ toolCallId: "call-missing-validation", input }, BASE);
+	assert.match(outcome.block?.reason ?? "", /需补充验证定义/);
+	assert.equal(orch.pendingDelegationCount(), 0);
+}
+
+// Ticket 11: an existing Task with a required but undefined validation block also
+// blocks a task-id-only Validator delegation before launch.
+{
+	const taskId = "T-20260905-811";
+	const missingCommandsSpec = createTaskSpec({
+		taskId,
+		objective: "worker task with undefined validation",
+		cwd: BASE,
+		role: "worker",
+		validation: { required: true },
+	});
+	const orch = new PlannerOrchestrator({ store: pinnedStore(), gitRunner });
+	const workerInput = { task: JSON.stringify(missingCommandsSpec) };
+	await orch.beginDelegation({ toolCallId: "call-missing-validation-worker", input: workerInput }, BASE);
+	const report = reportFor(taskId, "call-missing-validation-worker");
+	report.evidence.cwd = BASE;
+	await orch.handleSubagentResult(workerResult("call-missing-validation-worker", report));
+
+	const validatorInput = { agent: "oracle", task: `Validate ${taskId}` };
+	await orch.prepareRoleDelegation(validatorInput);
+	assert.doesNotMatch(validatorInput.task, /ORACLE_SUITE=/);
+	const outcome = await orch.beginDelegation(
+		{ toolCallId: "call-missing-validation-store", input: validatorInput },
+		BASE,
+	);
+	assert.match(outcome.block?.reason ?? "", /需补充验证定义/);
+	assert.equal(orch.pendingDelegationCount(), 0);
+}
+
 assert.equal(isDelegationCall({ action: "list" }), false);
 assert.equal(isDelegationCall({ action: "status", id: "x" }), false);
 assert.equal(isDelegationCall({ agent: "worker", task: "..." }), true);
@@ -245,8 +293,44 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 }
 
 // --------------------------------------------------------------------------
-// §P1-3 — structured delegation modes
-// --------------------------------------------------------------------------
+// p07-r033: public host launch contract receives the role-specific model fields
+// after beginDelegation applies the existing agent remaps.
+{
+	const saved = { ...process.env };
+	try {
+		process.env.PI_PLANNER_ONLY_ROLE_MODELS = "1";
+		for (const [role, model, thinking, agent] of [
+			["worker", "policy-test/worker", "off", "worker"],
+			["reviewer", "policy-test/reviewer", "low", "reviewer"],
+			["validator", "policy-test/validator", "medium", "oracle"],
+			["explorer", "policy-test/explorer", "high", "reviewer"],
+		]) {
+			process.env[`PI_PLANNER_ONLY_MODEL_${role.toUpperCase()}`] = model;
+			process.env[`PI_PLANNER_ONLY_THINKING_${role.toUpperCase()}`] = thinking;
+			const input = {
+				agent: role === "explorer" ? "worker" : agent,
+				task: role === "reviewer" ? JSON.stringify({ taskId: `T-20260905-${role}`, role: "reviewer" }) : JSON.stringify(specFor(`T-20260905-${role}`, role)),
+			};
+			const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+			await orch.prepareRoleDelegation(input);
+			await orch.beginDelegation({ toolCallId: `call-model-${role}`, input }, BASE);
+			assert.equal(input.agent, agent, `${role} must use its existing host agent remap`);
+			assert.equal(input.model, model);
+			assert.equal(input.thinking, thinking);
+			if (role !== "explorer") assert.equal(input.context, "fresh");
+		}
+	} finally {
+		for (const key of Object.keys(process.env)) {
+			if (key.startsWith("PI_PLANNER_ONLY_MODEL_") || key.startsWith("PI_PLANNER_ONLY_THINKING_") || key === "PI_PLANNER_ONLY_ROLE_MODELS") {
+				if (saved[key] === undefined) delete process.env[key];
+			}
+		}
+		for (const [key, value] of Object.entries(saved)) {
+			if (key.startsWith("PI_PLANNER_ONLY_MODEL_") || key.startsWith("PI_PLANNER_ONLY_THINKING_") || key === "PI_PLANNER_ONLY_ROLE_MODELS") process.env[key] = value;
+		}
+	}
+}
+
 
 // strict mode blocks a worker delegation that carries no TaskSpec
 {
@@ -684,6 +768,61 @@ function truncatedPreview() {
 	assert.equal(task.reviews.at(-1).source, "root");
 }
 
+// Ticket 22 round p10-r046 — strict fresh review requires reviewer evidence.
+{
+	const previous = process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW;
+	try {
+		process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW = "1";
+		const makeStrictTask = (taskId) => {
+			const store = new TaskStore({ now: FIXED_NOW });
+			const task = store.create(createTaskSpec({ objective: "strict review", cwd: BASE }, taskId));
+			store.recordReport(taskId, reportFor(taskId, `${taskId}-worker`));
+			return { store, task: store.require(taskId) };
+		};
+		const noReviewer = makeStrictTask("T-20260905-220a");
+		assert.equal(noReviewer.store.require(noReviewer.task.taskId).reviewMode, "fresh");
+		const noReviewerOrch = new PlannerOrchestrator({ gitRunner, store: noReviewer.store });
+		assert.match(noReviewerOrch.rootVerdictRefusal(noReviewer.task, "pass"), /reviewer ReviewResult/);
+
+		const zeroPaths = makeStrictTask("T-20260905-220b");
+		zeroPaths.store.recordReview(zeroPaths.task.taskId, {
+			taskId: zeroPaths.task.taskId, verdict: "pass", summary: "reviewed", findings: [], evidenceFresh: true, source: "reviewer",
+		});
+		zeroPaths.store.setLastComparison(zeroPaths.task.taskId, {
+			verifiable: true, fresh: true, reasons: [], truthPaths: [], undeclaredPaths: [], extraDeclaredPaths: [],
+			overlappingPaths: [], unrelatedPaths: [], missingPaths: [], unexplained: false,
+		});
+		const zeroPathsOrch = new PlannerOrchestrator({ gitRunner, store: zeroPaths.store });
+		assert.match(zeroPathsOrch.rootVerdictRefusal(zeroPaths.task, "pass"), /attribution paths are 0/);
+
+		const attributed = makeStrictTask("T-20260905-220c");
+		attributed.store.recordReview(attributed.task.taskId, {
+			taskId: attributed.task.taskId, verdict: "pass", summary: "reviewed", findings: [], evidenceFresh: true, source: "reviewer",
+		});
+		const comparison = {
+			verifiable: true, fresh: true, reasons: [], truthPaths: ["src/parser.ts"], undeclaredPaths: [], extraDeclaredPaths: [],
+			overlappingPaths: [], unrelatedPaths: [], missingPaths: [], unexplained: false,
+		};
+		attributed.store.setLastComparison(attributed.task.taskId, comparison);
+		const attributedOrch = new PlannerOrchestrator({ gitRunner, store: attributed.store });
+		assert.equal(attributedOrch.rootVerdictRefusal(attributed.task, "pass"), undefined);
+		const receipt = attributedOrch.renderDecisionBlock(attributed.task, { action: "accept", reason: "accepted", guidance: [] }, describeComparison(comparison));
+		assert.match(receipt, /review mode: fresh/);
+		assert.ok(receipt.includes(`evidence: ${describeComparison(comparison)}`));
+
+		delete process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW;
+		const defaultStore = new TaskStore({ now: FIXED_NOW });
+		const defaultTask = defaultStore.create(createTaskSpec({ objective: "default review", cwd: BASE }, "T-20260905-220e"));
+		defaultStore.recordReport(defaultTask.taskId, reportFor(defaultTask.taskId, "default-worker"));
+		const defaultOrch = new PlannerOrchestrator({ gitRunner, store: defaultStore });
+		assert.equal(defaultTask.reviewMode, "root");
+		assert.equal(defaultOrch.rootVerdictRefusal(defaultTask, "pass"), undefined);
+	} finally {
+		if (previous === undefined) delete process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW;
+		else process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW = previous;
+	}
+}
+
 // --------------------------------------------------------------------------
 // RF-6 — failed launch is not "has started"
 // --------------------------------------------------------------------------
@@ -932,6 +1071,12 @@ function truncatedPreview() {
 		kind: "explorer",
 		asyncRequested: false,
 		agent: "explorer",
+		floorLimits: {
+			toolBudget: { value: 20, source: "floor" },
+			tokens: { value: 40000, source: "floor" },
+			costUsd: { value: 0.1, source: "floor" },
+		},
+		floorSummary: "toolBudget.hard=20 (floor), usageBudget.tokens.hard=40000 (floor), usageBudget.costUsd.hard=0.1 (floor)",
 	});
 }
 
@@ -951,6 +1096,55 @@ function truncatedPreview() {
 	assert.equal(outcome.task?.taskId, taskId);
 	assert.equal(orch.store.list().length, before);
 	assert.equal(orch.getDelegation("call-915-explore")?.taskId, taskId);
+}
+
+// scout is an explorer-kind delegation, but keeps the caller's scout builtin so
+// its reconnaissance tools are not replaced by explorer's reviewer remap.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	const input = { agent: "scout", task: "Survey the repo and report findings." };
+	const before = orch.store.list().length;
+	const outcome = await orch.beginDelegation({ toolCallId: "call-scout-unbound", input }, BASE);
+	assert.equal(input.agent, "scout");
+	assert.equal(outcome.task, undefined);
+	assert.deepEqual(outcome.warnings, [
+		"Planner-only: explorer delegation is not attached to any Task; its output is returned as-is.",
+	]);
+	assert.equal(orch.store.list().length, before);
+	assert.equal(orch.getDelegation("call-scout-unbound")?.kind, "explorer");
+	assert.equal(orch.getDelegation("call-scout-unbound")?.taskId, "unbound-explorer-call-scout-unbound");
+
+	const raw = "Scout findings: bash is available and the parser is in src/parser.ts.";
+	const result = await orch.handleSubagentResult({
+		toolCallId: "call-scout-unbound",
+		toolName: "subagent",
+		input,
+		content: [{ type: "text", text: raw }],
+	});
+	assert.equal(result.content[0].text, raw);
+	assert.doesNotMatch(result.content[0].text, /Placeholder task T-/);
+	assert.doesNotMatch(result.content[0].text, /Worker output .* is not a valid WorkerReport/);
+
+	const workerOutcome = await orch.beginDelegation({
+		toolCallId: "call-worker-after-scout",
+		input: { agent: "worker", task: "Implement the parser change." },
+	}, BASE);
+	assert.match(workerOutcome.task?.taskId ?? "", /^T-\d{8}-001$/);
+	assert.equal(orch.store.list().length, before + 1);
+}
+
+// scout naming a live Task binds to it without creating another Task.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	const taskId = "T-20260905-916";
+	await delegateWorker(orch, "call-916-worker", taskId);
+	const before = orch.store.list().length;
+	const input = { agent: "SCOUT", task: `Investigate task ${taskId} and report findings.` };
+	const outcome = await orch.beginDelegation({ toolCallId: "call-916-scout", input }, BASE);
+	assert.equal(input.agent, "SCOUT");
+	assert.equal(outcome.task?.taskId, taskId);
+	assert.equal(orch.store.list().length, before);
+	assert.equal(orch.getDelegation("call-916-scout")?.kind, "explorer");
 }
 
 // --------------------------------------------------------------------------
@@ -1360,7 +1554,7 @@ function reportT3(taskId, toolCallId) {
 	const validatorReport = reportFor(taskId, "call-l3-v2");
 	validatorReport.evidence = { ...validatorReport.evidence, cwd: BASE };
 	const result = await orch.handleSubagentResult(workerResult("call-l3-v2", validatorReport));
-	assert.ok(result.content[0].text.startsWith(`[PLANNER-ONLY] Validator result for task ${taskId}`));
+	assert.match(result.content[0].text, new RegExp(`Validator result for task ${taskId}`));
 	assert.equal(orch.store.require(taskId).validatorReports.length, 1);
 	assert.equal(orch.store.require(taskId).reports.length, reportsBefore);
 	assert.equal(orch.store.require(taskId).reportCorrections, 0);
@@ -1393,7 +1587,7 @@ function reportT3(taskId, toolCallId) {
 	validatorReport.version = "1";
 	validatorReport.evidence = { ...validatorReport.evidence, cwd: BASE };
 	const repaired = await orch.handleSubagentResult(workerResult("call-l3-v3", validatorReport));
-	assert.ok(repaired.content[0].text.startsWith(`[PLANNER-ONLY] Validator result for task ${taskId}`));
+	assert.match(repaired.content[0].text, new RegExp(`Validator result for task ${taskId}`));
 	assert.match(repaired.content[0].text, /Report normalised: version "1" → 1/);
 	assert.equal(orch.store.require(taskId).validatorReports.length, 1);
 
@@ -1408,7 +1602,7 @@ function reportT3(taskId, toolCallId) {
 	const validReport = reportFor(taskId, "call-l3-v3b");
 	validReport.evidence = { ...validReport.evidence, cwd: BASE };
 	const clean = await orch.handleSubagentResult(workerResult("call-l3-v3b", validReport));
-	assert.ok(clean.content[0].text.startsWith(`[PLANNER-ONLY] Validator result for task ${taskId}`));
+	assert.match(clean.content[0].text, new RegExp(`Validator result for task ${taskId}`));
 	assert.doesNotMatch(clean.content[0].text, /Report normalised:/);
 	assert.equal(orch.store.require(taskId).validatorReports.length, 2);
 }
@@ -1603,6 +1797,32 @@ function reportT3(taskId, toolCallId) {
 	const lines = withValidator.split("\n");
 	const changedIndex = lines.findIndex((line) => line.startsWith("Changed files:"));
 	assert.equal(lines[changedIndex + 1], "Validator reports: 1");
+}
+
+// renderTaskStatus shows the explicit TaskSpec opt-out reason, but not the default false
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const disabled = orch.store.create(createTaskSpec({ objective: "no validation", cwd: BASE, validation: { required: false } }, "T-20260905-236"));
+	const disabledStatus = orch.renderTaskStatus(disabled);
+	assert.match(disabledStatus, /Validation: not required \(TaskSpec 明确不要求验证\)/);
+
+	const defaulted = orch.store.create(createTaskSpec({ objective: "default validation", cwd: BASE }, "T-20260905-237"));
+	assert.doesNotMatch(orch.renderTaskStatus(defaulted), /Validation: not required/);
+}
+
+// renderTaskStatus shows passed only for a complete validation and fresh Evidence
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-238";
+	await delegateWorker(orch, "call-validation-status", taskId);
+	await orch.handleSubagentResult(workerResult("call-validation-status", reportFor(taskId, "call-validation-status")));
+	const task = orch.store.require(taskId);
+	assert.ok(task.lastComparison);
+	orch.store.setLastComparison(taskId, { ...task.lastComparison, fresh: true });
+	assert.match(orch.renderTaskStatus(orch.store.require(taskId)), /^Validation: passed$/m);
+
+	orch.store.setLastComparison(taskId, { ...task.lastComparison, fresh: false });
+	assert.doesNotMatch(orch.renderTaskStatus(orch.store.require(taskId)), /^Validation: passed$/m);
 }
 
 // --------------------------------------------------------------------------
@@ -2591,6 +2811,388 @@ function realGitRunnerOf(dir) {
 	}
 }
 
+// Ticket 20 — out-of-scope untracked runtime dirs are not PASS snapshot
+// inputs: churn there must not stale the binding, while in-scope untracked
+// (E02) and tracked content changes still do.
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-snapuntracked-"));
+	const git = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+	try {
+		git("init", "-q");
+		git("config", "user.email", "test@example.com");
+		git("config", "user.name", "Test");
+		writeFileSync(join(dir, "tracked.txt"), "base\n");
+		git("add", ".");
+		git("commit", "-m", "base", "-q");
+
+		const runner = realGitRunnerOf(dir);
+
+		// 1 — report bound, then only out-of-scope untracked runtime dirs churn:
+		// PASS completes and never reports "workspace snapshot changed since the report".
+		{
+			const orch = new PlannerOrchestrator({ gitRunner: runner, store: pinnedStore() });
+			const spec = { ...specFor("T-20260905-920"), cwd: dir, scope: { allowedPaths: ["tracked.txt"] } };
+			await orch.beginDelegation(
+				{ toolCallId: "call-t20-1", input: { task: JSON.stringify(spec) } },
+				BASE,
+			);
+			writeFileSync(join(dir, "tracked.txt"), "worker edit\n");
+			mkdirSync(join(dir, ".agent-dir"));
+			writeFileSync(join(dir, ".agent-dir", "session.json"), "{\"run\":1}\n");
+			mkdirSync(join(dir, ".pi"));
+			writeFileSync(join(dir, ".pi", "state.log"), "v1\n");
+			await orch.handleSubagentResult(workerResult("call-t20-1", {
+				version: 1,
+				taskId: "T-20260905-920",
+				status: "completed",
+				summary: "edited tracked.txt",
+				changedFiles: ["tracked.txt"],
+				validation: [{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "ok" }],
+				evidence: { cwd: dir, taskId: "T-20260905-920", workerRunId: "call-t20-1", changedPaths: ["tracked.txt"], gitAvailable: true, generatedAt: new Date().toISOString() },
+				risks: [],
+				unresolved: [],
+			}));
+
+			// every delegation rewrites its session/state dirs; the tracked tree is untouched
+			writeFileSync(join(dir, ".agent-dir", "session.json"), "{\"run\":2}\n");
+			writeFileSync(join(dir, ".pi", "state.log"), "v2\n");
+			mkdirSync(join(dir, ".scratch", "session"), { recursive: true });
+			writeFileSync(join(dir, ".scratch", "session", "events.ndjson"), "{}\n");
+
+			const verdict = await orch.recordRootVerdict(orch.store.require("T-20260905-920"), "pass", "runtime dirs only");
+			assert.equal(verdict.decision.action, "accept", verdict.decision.reason);
+			assert.equal(verdict.task.state, "completed");
+			assert.ok(
+				!/workspace snapshot changed since the report/.test(`${verdict.decision.reason}\n${verdict.evidence ?? ""}`),
+				`${verdict.decision.reason} | ${verdict.evidence ?? ""}`,
+			);
+		}
+
+		// 2 — empty-scope placeholder Task: untracked runtime churn alone does
+		// not stale the PASS; a tracked ticket file change still does.
+		{
+			const orch = new PlannerOrchestrator({ gitRunner: runner, store: pinnedStore() });
+			const spec = { ...specFor("T-20260905-921"), cwd: dir, scope: { allowedPaths: [] } };
+			await orch.beginDelegation(
+				{ toolCallId: "call-t20-2", input: { task: JSON.stringify(spec) } },
+				BASE,
+			);
+			await orch.handleSubagentResult(workerResult("call-t20-2", {
+				version: 1,
+				taskId: "T-20260905-921",
+				status: "completed",
+				summary: "placeholder triage, no file changes",
+				changedFiles: [],
+				validation: [{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "ok" }],
+				evidence: { cwd: dir, taskId: "T-20260905-921", workerRunId: "call-t20-2", changedPaths: [], gitAvailable: true, generatedAt: new Date().toISOString() },
+				risks: [],
+				unresolved: [],
+			}));
+
+			writeFileSync(join(dir, ".agent-dir", "session.json"), "{\"run\":3}\n");
+			mkdirSync(join(dir, ".scratch", "phase-a-08-session"), { recursive: true });
+			writeFileSync(join(dir, ".scratch", "phase-a-08-session", "log.ndjson"), "{}\n");
+
+			const verdict = await orch.recordRootVerdict(orch.store.require("T-20260905-921"), "pass", "empty scope, runtime churn only");
+			assert.equal(verdict.decision.action, "accept", verdict.decision.reason);
+			assert.equal(verdict.task.state, "completed");
+			assert.ok(
+				!/workspace snapshot changed since the report/.test(`${verdict.decision.reason}\n${verdict.evidence ?? ""}`),
+				`${verdict.decision.reason} | ${verdict.evidence ?? ""}`,
+			);
+		}
+		{
+			const orch = new PlannerOrchestrator({ gitRunner: runner, store: pinnedStore() });
+			const spec = { ...specFor("T-20260905-922"), cwd: dir, scope: { allowedPaths: [] } };
+			await orch.beginDelegation(
+				{ toolCallId: "call-t20-3", input: { task: JSON.stringify(spec) } },
+				BASE,
+			);
+			await orch.handleSubagentResult(workerResult("call-t20-3", {
+				version: 1,
+				taskId: "T-20260905-922",
+				status: "completed",
+				summary: "placeholder triage, no file changes",
+				changedFiles: [],
+				validation: [{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "ok" }],
+				evidence: { cwd: dir, taskId: "T-20260905-922", workerRunId: "call-t20-3", changedPaths: [], gitAvailable: true, generatedAt: new Date().toISOString() },
+				risks: [],
+				unresolved: [],
+			}));
+
+			writeFileSync(join(dir, "tracked.txt"), "external edit after the report\n");
+			const verdict = await orch.recordRootVerdict(orch.store.require("T-20260905-922"), "pass", "tracked ticket file changed");
+			assert.equal(verdict.decision.action, "revalidate");
+			assert.ok(
+				verdict.decision.reason.includes("workspace snapshot changed since the report")
+				|| verdict.decision.reason.includes("content changed since the report"),
+				verdict.decision.reason,
+			);
+			assert.notEqual(verdict.task.state, "completed");
+		}
+
+		// 3 — E02 preserved at the snapshot gate: an in-scope untracked file
+		// whose content changes after the report still stales the PASS.
+		{
+			const orch = new PlannerOrchestrator({ gitRunner: runner, store: pinnedStore() });
+			const spec = { ...specFor("T-20260905-923"), cwd: dir, scope: { allowedPaths: ["tracked.txt", "notes.md"] } };
+			await orch.beginDelegation(
+				{ toolCallId: "call-t20-4", input: { task: JSON.stringify(spec) } },
+				BASE,
+			);
+			writeFileSync(join(dir, "tracked.txt"), "worker edit\n");
+			writeFileSync(join(dir, "notes.md"), "draft v1\n");
+			await orch.handleSubagentResult(workerResult("call-t20-4", {
+				version: 1,
+				taskId: "T-20260905-923",
+				status: "completed",
+				summary: "edited tracked.txt, drafted notes.md",
+				changedFiles: ["tracked.txt", "notes.md"],
+				validation: [{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "ok" }],
+				evidence: { cwd: dir, taskId: "T-20260905-923", workerRunId: "call-t20-4", changedPaths: ["tracked.txt", "notes.md"], gitAvailable: true, generatedAt: new Date().toISOString() },
+				risks: [],
+				unresolved: [],
+			}));
+
+			writeFileSync(join(dir, "notes.md"), "draft v2 changed after the report\n");
+			const verdict = await orch.recordRootVerdict(orch.store.require("T-20260905-923"), "pass", "in-scope untracked changed");
+			assert.equal(verdict.decision.action, "revalidate");
+			assert.ok(
+				verdict.decision.reason.includes("workspace snapshot changed since the report")
+				|| verdict.decision.reason.includes("content changed since the report"),
+				verdict.decision.reason,
+			);
+			assert.notEqual(verdict.task.state, "completed");
+		}
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// Ticket 12 round p09-r042 — a complete report is bounded only after a fresh Root comparison.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-042";
+	await delegateWorker(orch, "call-12-worker", taskId);
+	await orch.handleSubagentResult(workerResult("call-12-worker", reportFor(taskId, "call-12-worker")));
+	const task = orch.store.require(taskId);
+	const validatorInput = { agent: "oracle", task: `Validate ${taskId}` };
+
+	orch.store.setLastComparison(taskId, { ...task.lastComparison, fresh: true });
+	await orch.prepareRoleDelegation(validatorInput);
+	assert.match(validatorInput.task, /ORACLE_SUITE=bounded/);
+	assert.doesNotMatch(validatorInput.task, /ORACLE_SUITE=full/);
+
+	orch.store.setLastComparison(taskId, { ...orch.store.require(taskId).lastComparison, fresh: false });
+	const staleValidatorInput = { agent: "oracle", task: `Validate ${taskId}` };
+	await orch.prepareRoleDelegation(staleValidatorInput);
+	assert.match(staleValidatorInput.task, /ORACLE_SUITE=full/);
+	assert.doesNotMatch(staleValidatorInput.task, /ORACLE_SUITE=bounded/);
+}
+
+// Ticket 12 round p09-r043 — partial worker validation with multiple required commands gets missing contract when fresh, full when stale.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260907-043";
+	const twoCommandSpec = createTaskSpec({
+		taskId,
+		objective: "implement two command feature",
+		cwd: BASE,
+		role: "worker",
+		validation: { required: true, commands: ["npm test", "npm run typecheck"] },
+	});
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-12-043-worker", input: { task: JSON.stringify(twoCommandSpec) } },
+		BASE,
+	);
+	setDirtyTree();
+	await orch.handleSubagentResult(workerResult("call-12-043-worker", {
+		...reportFor(taskId, "call-12-043-worker"),
+		validation: [
+			{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "tests passed" },
+		],
+	}));
+	const task = orch.store.require(taskId);
+	orch.store.setLastComparison(taskId, { ...task.lastComparison, fresh: true });
+
+	const validatorInput = { agent: "oracle", task: `Validate ${taskId}` };
+	await orch.prepareRoleDelegation(validatorInput);
+	assert.match(validatorInput.task, /ORACLE_SUITE=missing/);
+	assert.match(validatorInput.task, /npm run typecheck/);
+	assert.doesNotMatch(validatorInput.task, /ORACLE_SUITE=bounded/);
+	assert.doesNotMatch(validatorInput.task, /ORACLE_SUITE=full/);
+
+	orch.store.setLastComparison(taskId, { ...orch.store.require(taskId).lastComparison, fresh: false });
+	const staleValidatorInput = { agent: "oracle", task: `Validate ${taskId}` };
+	await orch.prepareRoleDelegation(staleValidatorInput);
+	assert.match(staleValidatorInput.task, /ORACLE_SUITE=full/);
+	assert.doesNotMatch(staleValidatorInput.task, /ORACLE_SUITE=missing/);
+	assert.doesNotMatch(staleValidatorInput.task, /ORACLE_SUITE=bounded/);
+}
+
+// Ticket 12 round p10-r044 — an explicit full-suite TaskSpec request wins over bounded.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260907-044";
+	const fullSuiteSpec = createTaskSpec({
+		taskId,
+		objective: "run the complete validation suite",
+		cwd: BASE,
+		role: "worker",
+		validation: { required: true, commands: ["npm test", "npm run test:e2e"] },
+	});
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-12-044-worker", input: { task: JSON.stringify(fullSuiteSpec) } },
+		BASE,
+	);
+	setDirtyTree();
+	await orch.handleSubagentResult(workerResult("call-12-044-worker", {
+		...reportFor(taskId, "call-12-044-worker"),
+		validation: [
+			{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "unit passed" },
+			{ command: "npm run test:e2e", type: "test", status: "passed", exitCode: 0, summary: "e2e passed" },
+		],
+	}));
+	const task = orch.store.require(taskId);
+	orch.store.setLastComparison(taskId, { ...task.lastComparison, fresh: true });
+	const validatorInput = { agent: "oracle", task: `Validate ${taskId}` };
+	await orch.prepareRoleDelegation(validatorInput);
+	assert.match(validatorInput.task, /ORACLE_SUITE=full/);
+	assert.match(validatorInput.task, /Re-run the listed validation commands/);
+	assert.doesNotMatch(validatorInput.task, /ORACLE_SUITE=(?:bounded|missing)/);
+	const begin = await orch.beginDelegation({ toolCallId: "call-12-044-validator", input: validatorInput }, BASE);
+	assert.equal(Boolean(begin.warnings?.some((warning) => warning.includes("suite conflict"))), false);
+}
+
+// Ticket 12 round p10-r045 — a test-file existence check does not cover the
+// TaskSpec command, so fresh evidence still requires the full oracle suite and
+// does not render Validation: passed. Exact command coverage remains bounded.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-045";
+	await delegateWorker(orch, "call-12-045-worker", taskId);
+	await orch.handleSubagentResult(workerResult("call-12-045-worker", {
+		...reportFor(taskId, "call-12-045-worker"),
+		validation: [{ command: "test -f src/parser.test.ts", type: "test", status: "passed", exitCode: 0, summary: "test file exists" }],
+	}));
+	const task = orch.store.require(taskId);
+	orch.store.setLastComparison(taskId, { ...task.lastComparison, fresh: true });
+	const validatorInput = { agent: "oracle", task: `Validate ${taskId}` };
+	await orch.prepareRoleDelegation(validatorInput);
+	assert.match(validatorInput.task, /ORACLE_SUITE=full/);
+	assert.doesNotMatch(validatorInput.task, /ORACLE_SUITE=(?:bounded|missing)/);
+	assert.doesNotMatch(orch.renderTaskStatus(orch.store.require(taskId)), /Validation: passed/);
+
+	const completeTaskId = "T-20260905-046";
+	await delegateWorker(orch, "call-12-045-complete-worker", completeTaskId);
+	await orch.handleSubagentResult(workerResult("call-12-045-complete-worker", reportFor(completeTaskId, "call-12-045-complete-worker")));
+	const completeTask = orch.store.require(completeTaskId);
+	orch.store.setLastComparison(completeTaskId, { ...completeTask.lastComparison, fresh: true });
+	const completeValidatorInput = { agent: "oracle", task: `Validate ${completeTaskId}` };
+	await orch.prepareRoleDelegation(completeValidatorInput);
+	assert.match(completeValidatorInput.task, /ORACLE_SUITE=bounded/);
+	assert.match(orch.renderTaskStatus(orch.store.require(completeTaskId)), /Validation: passed/);
+}
+
+// Ticket 11 round p08-r035 — an empty non-failed validation list is unknown.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-035";
+	await delegateWorker(orch, "call-11-empty-worker", taskId);
+	await orch.handleSubagentResult(workerResult("call-11-empty-worker", {
+		...reportFor(taskId, "call-11-empty-worker"),
+		validation: [],
+	}));
+	const validatorInput = { agent: "oracle", task: `Validate ${taskId}` };
+	await orch.prepareRoleDelegation(validatorInput);
+	assert.match(validatorInput.task, /ORACLE_SUITE=full/);
+	assert.doesNotMatch(validatorInput.task, /ORACLE_SUITE=bounded/);
+}
+
+// Ticket 11 round p08-r037 — not-run and passed with a non-zero exit are not bounded-safe.
+for (const [suffix, validation] of [
+	["not-run", [{ command: "npm test", type: "test", status: "not-run", exitCode: 0, summary: "not run" }]],
+	["passed-nonzero", [{ command: "npm test", type: "test", status: "passed", exitCode: 1, summary: "failed" }]],
+]) {
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = `T-20260905-037-${suffix}`;
+	await delegateWorker(orch, `call-11-${suffix}-worker`, taskId);
+	await orch.handleSubagentResult(workerResult(`call-11-${suffix}-worker`, {
+		...reportFor(taskId, `call-11-${suffix}-worker`),
+		validation,
+	}));
+	const validatorInput = { agent: "oracle", task: `Validate ${taskId}` };
+	await orch.prepareRoleDelegation(validatorInput);
+	assert.match(validatorInput.task, /ORACLE_SUITE=full/);
+	assert.doesNotMatch(validatorInput.task, /ORACLE_SUITE=bounded/);
+}
+
+// Ticket 06 — bounded Oracle conflicts are visible before launch and at result time.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-061";
+	await delegateWorker(orch, "call-06-worker", taskId);
+	await orch.handleSubagentResult(workerResult("call-06-worker", reportFor(taskId, "call-06-worker")));
+	const completedTask = orch.store.require(taskId);
+	orch.store.setLastComparison(taskId, { ...completedTask.lastComparison, fresh: true });
+
+	const boundedInput = {
+		agent: "oracle",
+		task: `Validate ${taskId} by running npm test`,
+	};
+	await orch.prepareRoleDelegation(boundedInput);
+	const boundedBegin = await orch.beginDelegation({ toolCallId: "call-06-oracle", input: boundedInput }, BASE);
+	assert.ok(boundedBegin.warnings?.includes("[PLANNER-ONLY] Oracle suite conflict: Root prompt requests a full suite while mode is bounded."));
+	assert.equal(orch.getDelegation("call-06-oracle")?.oracleSuiteConflict, true);
+	const boundedReceipt = await orch.handleSubagentResult({
+		toolCallId: "call-06-oracle",
+		toolName: "subagent",
+		details: { asyncId: "run-06-oracle-async", runId: "run-06-oracle-async", asyncDir: "/no-such-dir" },
+		content: [{ type: "text", text: "Async: oracle [run-06-oracle-async]\nThe async run is detached and running in the background." }],
+		isError: false,
+	});
+	assert.equal(
+		boundedReceipt.content[0].text.split("\n", 1)[0],
+		"[PLANNER-ONLY] Oracle suite conflict: Root prompt requests a full suite while mode is bounded.",
+	);
+	const boundedResult = await orch.handleSubagentResult({
+		toolCallId: "call-06-oracle",
+		toolName: "subagent",
+		details: { mode: "single", runId: "run-06-oracle", results: [{ exitCode: 0, outputState: "present" }] },
+		content: [{ type: "text", text: "Validator completed without a WorkerReport." }],
+		isError: false,
+	});
+	assert.equal(
+		boundedResult.content[0].text.split("\n", 1)[0],
+		"[PLANNER-ONLY] Oracle suite conflict: Root prompt requests a full suite while mode is bounded.",
+	);
+
+	const previousOracleMode = process.env.PI_PLANNER_ONLY_ORACLE;
+	process.env.PI_PLANNER_ONLY_ORACLE = "full";
+	try {
+		const fullInput = { agent: "oracle", task: `Validate ${taskId} by running npm test` };
+		await orch.prepareRoleDelegation(fullInput);
+		const fullBegin = await orch.beginDelegation({ toolCallId: "call-06-oracle-full", input: fullInput }, BASE);
+		assert.equal(Boolean(fullBegin.warnings?.includes("[PLANNER-ONLY] Oracle suite conflict: Root prompt requests a full suite while mode is bounded.")), false);
+		assert.equal(orch.getDelegation("call-06-oracle-full")?.oracleSuiteConflict, undefined);
+	} finally {
+		if (previousOracleMode === undefined) delete process.env.PI_PLANNER_ONLY_ORACLE;
+		else process.env.PI_PLANNER_ONLY_ORACLE = previousOracleMode;
+	}
+
+	const silentInput = { agent: "oracle", task: `Validate ${taskId}` };
+	await orch.prepareRoleDelegation(silentInput);
+	const silentBegin = await orch.beginDelegation({ toolCallId: "call-06-oracle-silent", input: silentInput }, BASE);
+	assert.equal(
+		Boolean(silentBegin.warnings?.includes("[PLANNER-ONLY] Oracle suite conflict: Root prompt requests a full suite while mode is bounded.")),
+		false,
+		"TaskSpec validation.commands containing npm test is not Root prose requesting a full suite",
+	);
+	assert.equal(orch.getDelegation("call-06-oracle-silent")?.oracleSuiteConflict, undefined);
+}
+
 console.log("planner-only orchestration: PASS");
 
 // --------------------------------------------------------------------------
@@ -3261,4 +3863,863 @@ function receiptFor(toolCallId, runId, asyncDir) {
 		/needs reconcile:.*stale duration/,
 		"needs-reconcile is recorded for a reviewing Task that still holds a live writer",
 	);
+}
+
+// --------------------------------------------------------------------------
+// Ticket 01 & 02: receipt classification by details & async reviewer notify
+// --------------------------------------------------------------------------
+
+// Fixture source: 2026-09-07 probe / analysis P1 (pi-subagents 0.65.1 Oracle-1 foreground run 79ce6075-329f-4fa3-afb4-0d5f7062d4bf)
+const oracle1RunId = "79ce6075-329f-4fa3-afb4-0d5f7062d4bf";
+const oracle1Details = {
+	mode: "single",
+	runId: oracle1RunId,
+	timeoutMs: 1800000,
+	results: [
+		{
+			index: 0,
+			agent: "oracle",
+			exitCode: 0,
+			outputState: "present",
+		},
+	],
+	mission: {
+		status: "completed",
+	},
+};
+const oracle1ForegroundText = [
+	"Run fan-out: 1/64 used, 63 remaining",
+	"## Bounded Oracle Report for T-20260907-001",
+	"",
+	"| # | Check | Exit | Key Output |",
+	"|---|-------|------|------------|",
+	"| 1 | `git log --oneline -2` | 0 | HEAD = `1b103f6 feat: print oracle suite on /planner-only status` |",
+	"| 5 | `node --test index.test.mjs` | 0 | 1 test, 1 pass, 0 fail, duration ~1.8 s |",
+	"",
+	"Verdict: HEAD 1b103f6 implements the ticket. The named test suite passes.",
+	"Mission: f244dd20-aea2-4516-9efb-1527894253a6 (completed)",
+].join("\n");
+
+// Ticket 01: Oracle-1 fixture returned for validator, explorer, worker
+// All three take the completion path, never misclassified as async launch receipt.
+{
+	// 1. Validator: recorded as validation conclusion
+	const orchV = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskIdV = "T-20260905-701";
+	orchV.store.create(createTaskSpec({ taskId: taskIdV, objective: `validate ${taskIdV}`, cwd: BASE }));
+	await orchV.beginDelegation(
+		{ toolCallId: "call-v-fg", input: { async: false, agent: "oracle", task: `Validate ${taskIdV}` } },
+		BASE,
+	);
+	const outcomeV = await orchV.handleSubagentResult({
+		toolCallId: "call-v-fg",
+		toolName: "subagent",
+		input: { async: false },
+		details: oracle1Details,
+		content: [{ type: "text", text: oracle1ForegroundText }],
+	});
+	assert.doesNotMatch(outcomeV.content[0].text, /has started/);
+	assert.match(outcomeV.content[0].text, /Validator output for task .* is not a WorkerReport; judge it directly/);
+	assert.equal(orchV.pendingDelegationCount(), 0);
+
+	// 2. Explorer: output returned as-is
+	const orchE = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	await orchE.beginDelegation(
+		{ toolCallId: "call-e-fg", input: { async: false, agent: "explorer", task: "Explore codebase" } },
+		BASE,
+	);
+	const outcomeE = await orchE.handleSubagentResult({
+		toolCallId: "call-e-fg",
+		toolName: "subagent",
+		input: { async: false },
+		details: oracle1Details,
+		content: [{ type: "text", text: oracle1ForegroundText }],
+	});
+	assert.doesNotMatch(outcomeE.content[0].text, /has started/);
+	assert.equal(outcomeE.content[0].text, oracle1ForegroundText);
+	assert.equal(orchE.pendingDelegationCount(), 0);
+
+	// 3. Worker: enters WorkerReport parsing
+	const orchW = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskIdW = "T-20260905-702";
+	await orchW.beginDelegation(
+		{ toolCallId: "call-w-fg", input: { async: false, task: JSON.stringify(specFor(taskIdW)) } },
+		BASE,
+	);
+	const outcomeW = await orchW.handleSubagentResult({
+		toolCallId: "call-w-fg",
+		toolName: "subagent",
+		input: { async: false },
+		details: oracle1Details,
+		content: [{ type: "text", text: oracle1ForegroundText }],
+	});
+	assert.doesNotMatch(outcomeW.content[0].text, /has started/);
+	assert.match(outcomeW.content[0].text, /not a valid WorkerReport|did not contain a WorkerReport/);
+	assert.equal(orchW.pendingDelegationCount(), 0);
+}
+
+// Ticket 01: Caller explicit async:false disables prose heuristics regardless of content
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-703";
+	await orch.beginDelegation(
+		{ toolCallId: "call-af-fg", input: { async: false, task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	const textWithAsyncProse = [
+		"Async: worker [custom-fake-run-id]",
+		"The async run is detached and running in the background.",
+	].join("\n");
+	const outcome = await orch.handleSubagentResult({
+		toolCallId: "call-af-fg",
+		toolName: "subagent",
+		input: { async: false },
+		details: { runId: "fg-run-custom" },
+		content: [{ type: "text", text: textWithAsyncProse }],
+	});
+	assert.doesNotMatch(outcome.content[0].text, /has started/);
+	assert.match(outcome.content[0].text, /not a valid WorkerReport|did not contain a WorkerReport/);
+	assert.equal(orch.pendingDelegationCount(), 0);
+}
+
+// Ticket 01: Real async receipt (details has asyncId) contains runId and bg_wait id=<runId> guide
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-704";
+	await orch.beginDelegation(
+		{ toolCallId: "call-ar-receipt", input: { async: true, task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	const receipt = await orch.handleSubagentResult({
+		toolCallId: "call-ar-receipt",
+		toolName: "subagent",
+		details: { asyncId: oracle1RunId, runId: oracle1RunId, asyncDir: "/no-such-dir" },
+		content: [{ type: "text", text: `Async: worker [${oracle1RunId}]\nThe async run is detached and running in the background.` }],
+	});
+	assert.match(receipt.content[0].text, /has started/);
+	assert.match(receipt.content[0].text, new RegExp(oracle1RunId));
+	assert.match(receipt.content[0].text, new RegExp(`bg_wait id=${oracle1RunId}`));
+	assert.match(receipt.content[0].text, /bg_wait without an id may report empty briefly after launch/);
+	assert.equal(orch.pendingDelegationCount(), 1);
+}
+
+// Ticket 02: Async Reviewer notify dispatches via ReviewResult path, identical to sync path
+{
+	const validReviewBody = (taskId, digest) => ({
+		taskId,
+		verdict: "request_changes",
+		summary: "Need test additions and fix lockfile.",
+		evidenceFresh: true,
+		findings: [{ severity: "major", category: "correctness", description: "Missing unit test", requestedChange: "Add test" }],
+		reportRevision: 1,
+		workspaceDigest: digest,
+	});
+
+	const reviewerNotify = (runId, body) =>
+		`Background task completed: **reviewer**\n\n${typeof body === "string" ? body : JSON.stringify(body)}\n\nChild runs: ${runId}`;
+
+	// 1. Legal ReviewResult: review round advances, decision produced, no WorkerReport error
+	{
+		const runIdAsync = "run-rev-legal-async";
+		const runIdSync = "run-rev-legal-sync";
+
+		const orchAsync = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+		const taskAsync = "T-20260905-710";
+		await delegateWorker(orchAsync, "call-w-710a", taskAsync);
+		await orchAsync.handleSubagentResult(workerResult("call-w-710a", reportFor(taskAsync, "call-w-710a")));
+		const digestAsync = orchAsync.store.require(taskAsync).snapshot?.digest;
+
+		await orchAsync.beginDelegation(
+			{ toolCallId: "call-r-710a", input: { agent: "reviewer", task: `Review ${taskAsync}` } },
+			BASE,
+		);
+		await orchAsync.handleSubagentResult({
+			toolCallId: "call-r-710a",
+			toolName: "subagent",
+			details: { asyncId: runIdAsync, runId: runIdAsync, asyncDir: "/no-such-dir" },
+			content: [{ type: "text", text: `Async: reviewer [${runIdAsync}]\nThe async run is detached and running in the background.` }],
+		});
+		const asyncOutcome = await orchAsync.handleAsyncNotify(reviewerNotify(runIdAsync, validReviewBody(taskAsync, digestAsync)));
+
+		assert.doesNotMatch(asyncOutcome.content[0].text, /WorkerReport/);
+		assert.match(asyncOutcome.content[0].text, /\[FRESH REVIEWER\] verdict: request_changes/);
+		assert.match(asyncOutcome.content[0].text, /decision: request_changes/);
+		const asyncFinal = orchAsync.store.require(taskAsync);
+		assert.equal(asyncFinal.state, "changes_requested");
+		assert.equal(asyncFinal.reviewRound, 1);
+		assert.equal(asyncFinal.reviews.length, 1);
+		assert.equal(asyncFinal.reportCorrections, 0);
+
+		// Sync path with identical input
+		const orchSync = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+		const taskSync = "T-20260905-710";
+		await delegateWorker(orchSync, "call-w-710s", taskSync);
+		await orchSync.handleSubagentResult(workerResult("call-w-710s", reportFor(taskSync, "call-w-710s")));
+		const digestSync = orchSync.store.require(taskSync).snapshot?.digest;
+
+		await orchSync.beginDelegation(
+			{ toolCallId: "call-r-710s", input: { agent: "reviewer", task: `Review ${taskSync}` } },
+			BASE,
+		);
+		const syncOutcome = await orchSync.handleSubagentResult({
+			toolCallId: "call-r-710s",
+			toolName: "subagent",
+			details: { mode: "single", runId: runIdSync, results: [{ exitCode: 0, outputState: "present" }] },
+			content: [{ type: "text", text: JSON.stringify(validReviewBody(taskSync, digestSync)) }],
+		});
+
+		assert.doesNotMatch(syncOutcome.content[0].text, /WorkerReport/);
+		assert.match(syncOutcome.content[0].text, /\[FRESH REVIEWER\] verdict: request_changes/);
+		const syncFinal = orchSync.store.require(taskSync);
+
+		assert.equal(asyncFinal.state, syncFinal.state);
+		assert.equal(asyncFinal.reviewRound, syncFinal.reviewRound);
+		assert.equal(asyncFinal.reportCorrections, syncFinal.reportCorrections);
+		assert.equal(asyncFinal.reviews.length, syncFinal.reviews.length);
+		assert.equal(asyncFinal.reviews[0].verdict, syncFinal.reviews[0].verdict);
+		assert.equal(asyncFinal.reviews[0].summary, syncFinal.reviews[0].summary);
+	}
+
+	// 2. Mismatched taskId or reportRevision: rejected identically in sync and async
+	{
+		// 2a. TaskId mismatch
+		const taskAsyncId = "T-20260905-711";
+		const orchAsync = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+		await delegateWorker(orchAsync, "call-w-711a", taskAsyncId);
+		await orchAsync.handleSubagentResult(workerResult("call-w-711a", reportFor(taskAsyncId, "call-w-711a")));
+		const digestA = orchAsync.store.require(taskAsyncId).snapshot?.digest;
+		await orchAsync.beginDelegation(
+			{ toolCallId: "call-r-711a", input: { agent: "reviewer", task: `Review ${taskAsyncId}` } },
+			BASE,
+		);
+		await orchAsync.handleSubagentResult({
+			toolCallId: "call-r-711a",
+			toolName: "subagent",
+			details: { asyncId: "run-mismatch-a", runId: "run-mismatch-a", asyncDir: "/no-such-dir" },
+			content: [{ type: "text", text: "Async: reviewer [run-mismatch-a]\nThe async run is detached and running in the background." }],
+		});
+		const wrongTaskReview = validReviewBody("T-WRONG-TASK", digestA);
+		const asyncMismatchedTask = await orchAsync.handleAsyncNotify(reviewerNotify("run-mismatch-a", wrongTaskReview));
+
+		const orchSync = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+		await delegateWorker(orchSync, "call-w-711s", taskAsyncId);
+		await orchSync.handleSubagentResult(workerResult("call-w-711s", reportFor(taskAsyncId, "call-w-711s")));
+		await orchSync.beginDelegation(
+			{ toolCallId: "call-r-711s", input: { agent: "reviewer", task: `Review ${taskAsyncId}` } },
+			BASE,
+		);
+		const syncMismatchedTask = await orchSync.handleSubagentResult({
+			toolCallId: "call-r-711s",
+			toolName: "subagent",
+			details: { mode: "single", runId: "run-mismatch-s", results: [{ exitCode: 0, outputState: "present" }] },
+			content: [{ type: "text", text: JSON.stringify(wrongTaskReview) }],
+		});
+
+		assert.match(asyncMismatchedTask.content[0].text, /ReviewResult taskId mismatch: expected T-20260905-711, got T-WRONG-TASK/);
+		assert.match(syncMismatchedTask.content[0].text, /ReviewResult taskId mismatch: expected T-20260905-711, got T-WRONG-TASK/);
+		assert.equal(orchAsync.store.require(taskAsyncId).state, orchSync.store.require(taskAsyncId).state);
+		assert.equal(orchAsync.store.require(taskAsyncId).reviewRound, orchSync.store.require(taskAsyncId).reviewRound);
+		assert.equal(orchAsync.store.require(taskAsyncId).reviews.length, 0);
+		assert.equal(orchSync.store.require(taskAsyncId).reviews.length, 0);
+
+		// 2b. Report revision mismatch
+		const wrongRevReview = { ...validReviewBody(taskAsyncId, digestA), reportRevision: 99 };
+		await orchAsync.beginDelegation(
+			{ toolCallId: "call-r-711b", input: { agent: "reviewer", task: `Review ${taskAsyncId}` } },
+			BASE,
+		);
+		await orchAsync.handleSubagentResult({
+			toolCallId: "call-r-711b",
+			toolName: "subagent",
+			details: { asyncId: "run-mismatch-b", runId: "run-mismatch-b", asyncDir: "/no-such-dir" },
+			content: [{ type: "text", text: "Async: reviewer [run-mismatch-b]\nThe async run is detached and running in the background." }],
+		});
+		const asyncMismatchedRev = await orchAsync.handleAsyncNotify(reviewerNotify("run-mismatch-b", wrongRevReview));
+
+		await orchSync.beginDelegation(
+			{ toolCallId: "call-r-711sb", input: { agent: "reviewer", task: `Review ${taskAsyncId}` } },
+			BASE,
+		);
+		const syncMismatchedRev = await orchSync.handleSubagentResult({
+			toolCallId: "call-r-711sb",
+			toolName: "subagent",
+			details: { mode: "single", runId: "run-mismatch-sb", results: [{ exitCode: 0, outputState: "present" }] },
+			content: [{ type: "text", text: JSON.stringify(wrongRevReview) }],
+		});
+
+		assert.match(asyncMismatchedRev.content[0].text, /ReviewResult reportRevision mismatch: it reviewed revision 99, but the latest report is revision 1/);
+		assert.match(syncMismatchedRev.content[0].text, /ReviewResult reportRevision mismatch: it reviewed revision 99, but the latest report is revision 1/);
+		assert.equal(orchAsync.store.require(taskAsyncId).state, orchSync.store.require(taskAsyncId).state);
+		assert.equal(orchAsync.store.require(taskAsyncId).reviewRound, orchSync.store.require(taskAsyncId).reviewRound);
+	}
+
+	// 3. Truncated Reviewer output without output file: rejected identically, no WorkerReport correction
+	{
+		const taskTruncId = "T-20260905-712";
+		const truncatedReviewText = `{"taskId":"${taskTruncId}","verdict":"pass"...[preview truncated]`;
+
+		const orchAsync = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+		await delegateWorker(orchAsync, "call-w-712a", taskTruncId);
+		await orchAsync.handleSubagentResult(workerResult("call-w-712a", reportFor(taskTruncId, "call-w-712a")));
+		await orchAsync.beginDelegation(
+			{ toolCallId: "call-r-712a", input: { agent: "reviewer", task: `Review ${taskTruncId}` } },
+			BASE,
+		);
+		await orchAsync.handleSubagentResult({
+			toolCallId: "call-r-712a",
+			toolName: "subagent",
+			details: { asyncId: "run-trunc-a", runId: "run-trunc-a", asyncDir: "/no-such-dir" },
+			content: [{ type: "text", text: "Async: reviewer [run-trunc-a]\nThe async run is detached and running in the background." }],
+		});
+		const asyncTruncOutcome = await orchAsync.handleAsyncNotify(reviewerNotify("run-trunc-a", truncatedReviewText));
+
+		const orchSync = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+		await delegateWorker(orchSync, "call-w-712s", taskTruncId);
+		await orchSync.handleSubagentResult(workerResult("call-w-712s", reportFor(taskTruncId, "call-w-712s")));
+		await orchSync.beginDelegation(
+			{ toolCallId: "call-r-712s", input: { agent: "reviewer", task: `Review ${taskTruncId}` } },
+			BASE,
+		);
+		const syncTruncOutcome = await orchSync.handleSubagentResult({
+			toolCallId: "call-r-712s",
+			toolName: "subagent",
+			details: { mode: "single", runId: "run-trunc-s", results: [{ exitCode: 0, outputState: "present" }] },
+			content: [{ type: "text", text: truncatedReviewText }],
+		});
+
+		assert.match(asyncTruncOutcome.content[0].text, /Reviewer output for task T-20260905-712 is not a valid ReviewResult/);
+		assert.match(syncTruncOutcome.content[0].text, /Reviewer output for task T-20260905-712 is not a valid ReviewResult/);
+		assert.doesNotMatch(asyncTruncOutcome.content[0].text, /report-only correction/);
+		assert.doesNotMatch(syncTruncOutcome.content[0].text, /report-only correction/);
+		assert.equal(orchAsync.store.require(taskTruncId).reportCorrections, 0);
+		assert.equal(orchSync.store.require(taskTruncId).reportCorrections, 0);
+		assert.equal(orchAsync.store.require(taskTruncId).state, orchSync.store.require(taskTruncId).state);
+		assert.equal(orchAsync.store.require(taskTruncId).reviewRound, orchSync.store.require(taskTruncId).reviewRound);
+	}
+}
+
+// ==========================================================================
+// Issue 03: Embedded TaskSpec explicit failure, title alias, canonical id echo
+// ==========================================================================
+{
+	// ----------------------------------------------------------------------
+	// Checkbox 1: Embedded JSON has taskId, acceptanceCriteria, scope but lacks objective
+	// Delegation rejected before launch, reason points out missing objective,
+	// NO Task created (store empty), NO child process started (delegation not registered).
+	// ----------------------------------------------------------------------
+	{
+		const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+		const promptWithMissingObj = `Please implement the feature according to spec:
+\`\`\`json
+{
+  "taskId": "oracle-status-line-01",
+  "acceptanceCriteria": ["status line tests pass"],
+  "scope": { "allowedPaths": ["src/status.ts"] }
+}
+\`\`\``;
+		const outcome = await orch.beginDelegation(
+			{ toolCallId: "call-cb1-worker", input: { agent: "worker", task: promptWithMissingObj } },
+			BASE,
+		);
+		assert.ok(outcome.block !== undefined, "delegation should be blocked");
+		assert.match(outcome.block.reason, /objective must be a non-empty string/, "reason must explicitly point out missing objective");
+		assert.equal(orch.store.list().length, 0, "store must be completely empty: no Task created");
+		assert.equal(orch.hasPendingDelegation("oracle-status-line-01"), false, "no pending delegation registered");
+	}
+
+	// ----------------------------------------------------------------------
+	// Checkbox 2: Embedded JSON validation.required is not a boolean
+	// Delegation rejected, reason points out field and expected type.
+	// ----------------------------------------------------------------------
+	{
+		const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+		const promptWithInvalidVal = `Please work on this:
+\`\`\`json
+{
+  "taskId": "oracle-status-line-01",
+  "objective": "Add status line",
+  "validation": {
+    "required": "true",
+    "commands": ["npm test"]
+  }
+}
+\`\`\``;
+		const outcome = await orch.beginDelegation(
+			{ toolCallId: "call-cb2-worker", input: { agent: "worker", task: promptWithInvalidVal } },
+			BASE,
+		);
+		assert.ok(outcome.block !== undefined, "delegation should be blocked");
+		assert.match(outcome.block.reason, /validation\.required must be a boolean/, "reason must name validation.required and boolean type");
+		assert.equal(orch.store.list().length, 0, "store must be completely empty: no Task created");
+	}
+
+	// ----------------------------------------------------------------------
+	// Checkbox 3: Embedded JSON uses title instead of objective
+	// Task created successfully, objective takes title value, result explains alias used.
+	// ----------------------------------------------------------------------
+	{
+		const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+		const promptWithTitle = `Please work on this:
+\`\`\`json
+{
+  "taskId": "oracle-status-line-01",
+  "title": "Implement status line component",
+  "acceptanceCriteria": ["tests pass"]
+}
+\`\`\``;
+		const outcome = await orch.beginDelegation(
+			{ toolCallId: "call-cb3-worker", input: { agent: "worker", task: promptWithTitle } },
+			BASE,
+		);
+		assert.equal(outcome.block, undefined, "delegation must not be blocked");
+		assert.ok(outcome.task !== undefined, "task must be created");
+		assert.equal(outcome.task.spec.objective, "Implement status line component", "objective takes title value");
+		assert.equal(outcome.task.titleAliasUsed, true, "titleAliasUsed recorded");
+		assert.ok(outcome.warnings?.some((w) => w.includes("used 'title' as alias for 'objective'")), "warnings explains title alias used");
+
+		const canonicalId = outcome.task.taskId;
+		const report = {
+			...reportFor(canonicalId, "call-cb3-worker"),
+			taskId: canonicalId,
+		};
+		const result = await orch.handleSubagentResult(workerResult("call-cb3-worker", report));
+		assert.match(result.content[0].text, /TaskSpec used 'title' as alias for 'objective'/, "result explains title alias used");
+	}
+
+	// ----------------------------------------------------------------------
+	// Checkbox 4: Delegation text has NO characteristic fields at all
+	// Placeholder Task created, delegation result first line states placeholder fact and canonical id.
+	// Strict mode blocks unstructured delegation.
+	// ----------------------------------------------------------------------
+	{
+		const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+		const plainTextPrompt = "Please inspect src/ and explain the code structure.";
+		const outcome = await orch.beginDelegation(
+			{ toolCallId: "call-cb4-worker", input: { agent: "worker", task: plainTextPrompt } },
+			BASE,
+		);
+		assert.equal(outcome.block, undefined, "warn mode allows delegation");
+		assert.ok(outcome.task !== undefined, "task created");
+		assert.equal(outcome.task.isPlaceholder, true, "isPlaceholder marked true");
+		assert.equal(outcome.task.spec.objective, "(unspecified — parent did not embed a TaskSpec)");
+
+		const canonicalId = outcome.task.taskId;
+		const report = {
+			...reportFor(canonicalId, "call-cb4-worker"),
+			taskId: canonicalId,
+		};
+		const result = await orch.handleSubagentResult(workerResult("call-cb4-worker", report));
+		const firstLine = result.content[0].text.split("\n")[0];
+		assert.equal(
+			firstLine,
+			`[PLANNER-ONLY] Placeholder task ${canonicalId} created (parent did not embed a TaskSpec; canonical id: ${canonicalId}).`,
+			"first line of worker result must state placeholder fact and canonical id",
+		);
+
+		// Also verify async launch receipt first line:
+		const orchAsync = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+		const outcomeAsync = await orchAsync.beginDelegation(
+			{ toolCallId: "call-cb4-async", input: { agent: "worker", async: true, task: plainTextPrompt } },
+			BASE,
+		);
+		assert.equal(outcomeAsync.task.isPlaceholder, true);
+		const asyncReceipt = await orchAsync.handleSubagentResult({
+			toolCallId: "call-cb4-async",
+			toolName: "subagent",
+			details: { asyncId: "run-cb4-async", runId: "run-cb4-async", asyncDir: "/no-dir" },
+			content: [{ type: "text", text: "Async: worker [run-cb4-async]\nDetached and running in the background." }],
+		});
+		assert.equal(
+			asyncReceipt.content[0].text.split("\n")[0],
+			`[PLANNER-ONLY] Placeholder task ${outcomeAsync.task.taskId} created (parent did not embed a TaskSpec; canonical id: ${outcomeAsync.task.taskId}).`,
+			"first line of async receipt must state placeholder fact and canonical id",
+		);
+
+		// Strict mode guard verification:
+		const orchStrict = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "strict" });
+		const strictOutcome = await orchStrict.beginDelegation(
+			{ toolCallId: "call-cb4-strict", input: { agent: "worker", task: plainTextPrompt } },
+			BASE,
+		);
+		assert.ok(strictOutcome.block !== undefined, "strict mode must block unstructured delegation");
+		assert.match(strictOutcome.block.reason, /delegated without an embedded TaskSpec/);
+	}
+
+	// ----------------------------------------------------------------------
+	// Checkbox 5: Worker reports with Root self-made ID (oracle-status-line-01)
+	// Resolved as alias, report accepted and recorded under canonical Task, result echoes canonical id.
+	// ----------------------------------------------------------------------
+	{
+		const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+		const customId = "oracle-status-line-01";
+		const promptWithCustomId = `Please work on this:\n\`\`\`json\n${JSON.stringify({
+			taskId: customId,
+			title: "Implement status line component",
+			acceptanceCriteria: ["tests pass"],
+		})}\n\`\`\``;
+		const outcome = await orch.beginDelegation(
+			{ toolCallId: "call-cb5-worker", input: { agent: "worker", task: promptWithCustomId } },
+			BASE,
+		);
+		const canonicalId = outcome.task.taskId;
+		assert.match(canonicalId, /^T-\d{8}-\d{3}$/, "plugin assigns canonical taskId");
+		assert.ok(outcome.task.aliases.includes(customId), "Root self-made id is retained as alias");
+		assert.ok(outcome.warnings?.some((w) => w.includes(`TaskSpec id ${customId} replaced by ${canonicalId}`)), "warning notes id replaced and kept as alias");
+
+		// Worker returns a report claiming the Root-provided ID:
+		const workerReportWithCustomId = {
+			...reportFor(customId, "call-cb5-worker"),
+			taskId: customId,
+			evidence: {
+				...reportFor(customId, "call-cb5-worker").evidence,
+				taskId: customId,
+			},
+		};
+		const result = await orch.handleSubagentResult(workerResult("call-cb5-worker", workerReportWithCustomId));
+		// Report must be accepted (not rejected by identity check) and recorded under canonical Task:
+		assert.equal(orch.store.require(canonicalId).reports.length, 1, "report recorded under canonical Task");
+		// Store resolves alias:
+		assert.equal(orch.store.get(customId)?.taskId, canonicalId, "store resolves Root self-made id to canonical Task");
+		// Result echoes canonical taskId, alias, and normalisation:
+		assert.match(result.content[0].text, new RegExp(`taskId: ${canonicalId}`), "result echoes canonical taskId");
+		assert.match(result.content[0].text, new RegExp(`aliases: ${customId} \\(Root-provided id is kept as alias; canonical id is ${canonicalId}\\)`), "result explains Root-provided id kept as alias");
+		assert.match(result.content[0].text, new RegExp(`Report normalised: taskId ${customId} → ${canonicalId}`), "result echoes normalized taskId");
+	}
+
+	// ----------------------------------------------------------------------
+	// Checkbox 6: Reviewer packet in legal paths carries non-empty objective and acceptanceCriteria
+	// ----------------------------------------------------------------------
+	{
+		// Path 6A: Task created via title alias; reviewer delegated on that task
+		const orchA = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+		const promptTitle = `\`\`\`json\n${JSON.stringify({
+			taskId: "oracle-status-line-01",
+			title: "Implement status line component",
+			acceptanceCriteria: ["unit tests pass", "integration passes"],
+		})}\n\`\`\``;
+		const outcomeA = await orchA.beginDelegation(
+			{ toolCallId: "call-cb6a-worker", input: { agent: "worker", task: promptTitle } },
+			BASE,
+		);
+		const canonicalIdA = outcomeA.task.taskId;
+		await orchA.handleSubagentResult(workerResult("call-cb6a-worker", reportFor(canonicalIdA, "call-cb6a-worker")));
+
+		// Now prepare Reviewer delegation
+		const reviewerInputA = { agent: "reviewer", task: `Review task ${canonicalIdA}` };
+		await orchA.prepareRoleDelegation(reviewerInputA);
+		const requestA = extractReviewRequest(reviewerInputA.task);
+		assert.ok(requestA !== undefined, "ReviewRequest packet built");
+		assert.ok(requestA.taskSpec !== undefined, "Reviewer packet carries taskSpec");
+		assert.equal(requestA.taskSpec.objective, "Implement status line component", "Reviewer packet objective is non-empty and from title");
+		assert.ok(Array.isArray(requestA.taskSpec.acceptanceCriteria) && requestA.taskSpec.acceptanceCriteria.length === 2, "Reviewer packet acceptanceCriteria is non-empty array");
+		assert.equal(requestA.taskId, canonicalIdA, "Reviewer packet targets canonical taskId");
+
+		// Path 6B: Direct embedded TaskSpec in Reviewer delegation prompt (with title and acceptanceCriteria)
+		const orchB = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+		const directReviewerPrompt = `Review this task:
+\`\`\`json
+{
+  "taskId": "T-20260905-999",
+  "title": "Direct spec title",
+  "acceptanceCriteria": ["direct criterion 1"]
+}
+\`\`\``;
+		const reviewerInputB = { agent: "reviewer", task: directReviewerPrompt };
+		await orchB.prepareRoleDelegation(reviewerInputB);
+		const requestB = extractReviewRequest(reviewerInputB.task);
+		assert.ok(requestB !== undefined, "ReviewRequest packet built for direct spec");
+		assert.ok(requestB.taskSpec !== undefined, "taskSpec carried in reviewer packet");
+		assert.equal(requestB.taskSpec.objective, "Direct spec title", "Reviewer packet has non-empty objective");
+		assert.deepEqual(requestB.taskSpec.acceptanceCriteria, ["direct criterion 1"], "Reviewer packet has non-empty acceptanceCriteria");
+	}
+}
+
+// ----------------------------------------------------------------------
+// Issue 04: Delegations in status rendering with role, actual model, thinking
+// ----------------------------------------------------------------------
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260907-stat1";
+	await delegateWorker(orch, "call-stat-1", taskId);
+	orch.noteDelegationModel(taskId, "call-stat-1", "kimi-for-coding:high", "high");
+
+	const task = orch.store.require(taskId);
+	const statusOutput = orch.renderTaskStatus(task);
+	assert.match(statusOutput, /Delegations:/, "Delegations section present in status");
+	assert.match(statusOutput, /worker: kimi-for-coding:high \(thinking: high\)/, "Worker role, model and thinking displayed");
+
+	// When model or thinking not reported, show unknown
+	const orch2 = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId2 = "T-20260907-stat2";
+	await delegateWorker(orch2, "call-stat-2", taskId2);
+	const statusOutput2 = orch2.renderTaskStatus(orch2.store.require(taskId2));
+	assert.match(statusOutput2, /worker: unknown \(thinking: unknown\)/, "Unknown model and thinking displayed as unknown without fake defaults");
+}
+
+// ----------------------------------------------------------------------
+// Issue 04: Context reuse fallback and override notes in worker/validator result
+// ----------------------------------------------------------------------
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260907-reuse-stat";
+	const workerInput = {
+		agent: "worker",
+		task: JSON.stringify(specFor(taskId, "worker")),
+		reuseTaskId: "T-CROSS-TASK",
+	};
+	await orch.prepareRoleDelegation(workerInput);
+	assert.ok(workerInput.__reuseOutcome, "internal reuse outcome present before beginDelegation");
+	const outcome = await orch.beginDelegation({ toolCallId: "call-reuse-note", input: workerInput }, BASE);
+	assert.ok(outcome.warnings?.some((w) => w.includes("context reuse request rejected")), "warning emitted when context reuse rejected");
+	assert.equal(workerInput.reuseTaskId, undefined, "caller reuseTaskId stripped after beginDelegation");
+	assert.equal(workerInput.__reuseOutcome, undefined, "private __reuseOutcome stripped after beginDelegation");
+	assert.equal(workerInput.__contextOverridden, undefined, "private __contextOverridden stripped after beginDelegation");
+
+	const result = await orch.handleSubagentResult(workerResult("call-reuse-note", reportFor(taskId, "call-reuse-note")));
+	assert.match(result.content[0].text, /Note: context reuse fell back to fresh/, "Worker result explains fallback to fresh");
+}
+
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260907-fork-strip";
+	const workerInput = {
+		agent: "worker",
+		context: "fork",
+		task: JSON.stringify(specFor(taskId, "worker")),
+		reuseTaskId: taskId,
+		reuseContext: taskId,
+		reuseRootHistory: true,
+		reuse: true,
+	};
+	await orch.prepareRoleDelegation(workerInput);
+	assert.equal(workerInput.context, "fresh", "context forced to fresh");
+	assert.equal(workerInput.__contextOverridden, true, "__contextOverridden set before beginDelegation");
+	const outcome = await orch.beginDelegation({ toolCallId: "call-fork-strip", input: workerInput }, BASE);
+	assert.ok(outcome.warnings?.some((w) => w.includes("context 'fork' overridden to 'fresh'")), "fork override warning emitted");
+
+	for (const key of ["__reuseOutcome", "__contextOverridden", "reuseTaskId", "reuseContext", "reuseRootHistory", "reuse"]) {
+		assert.equal(key in workerInput, false, `key ${key} must be stripped from input handed to host`);
+	}
+}
+
+// --------------------------------------------------------------------------
+// Issue 05: Default floors, stricter limit resolution, limits in results,
+// and budget-stop handling leaving executing state.
+// --------------------------------------------------------------------------
+
+// 1. Initial worker has usage floor but no tool floor; limits reported in result
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-921";
+	const workerInput = {
+		agent: "worker",
+		task: JSON.stringify(specFor(taskId, "worker")),
+	};
+	await orch.prepareRoleDelegation(workerInput);
+	assert.equal(workerInput.toolBudget, undefined, "Worker initial has no default toolBudget");
+	assert.deepEqual(workerInput.usageBudget, {
+		tokens: { hard: 100000 },
+		costUsd: { hard: 0.5 },
+	}, "Worker initial gets default usageBudget");
+
+	await orch.beginDelegation({ toolCallId: "call-f01", input: workerInput }, BASE);
+	const res = await orch.handleSubagentResult(workerResult("call-f01", reportFor(taskId, "call-f01")));
+	assert.match(res.content[0].text, /Limits: usageBudget\.tokens\.hard=100000 \(floor\), usageBudget\.costUsd\.hard=0\.5 \(floor\)/);
+}
+
+// 2. Report correction worker delegation has bounded floors (toolBudget 20, tokens 40k, costUsd 0.10)
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-922";
+	// First delegation returns a valid report so task.reports.length === 1
+	const workerInput1 = { agent: "worker", task: JSON.stringify(specFor(taskId, "worker")) };
+	await orch.prepareRoleDelegation(workerInput1);
+	await orch.beginDelegation({ toolCallId: "call-f02-1", input: workerInput1 }, BASE);
+	await orch.handleSubagentResult(workerResult("call-f02-1", reportFor(taskId, "call-f02-1")));
+
+	// Second delegation is a report correction worker
+	const workerInput2 = { agent: "worker", task: `Fix report for ${taskId}` };
+	await orch.prepareRoleDelegation(workerInput2);
+	assert.deepEqual(workerInput2.toolBudget, { hard: 20 }, "Correction worker receives default toolBudget floor");
+	assert.deepEqual(workerInput2.usageBudget, {
+		tokens: { hard: 40000 },
+		costUsd: { hard: 0.1 },
+	}, "Correction worker receives default usageBudget floor");
+
+	await orch.beginDelegation({ toolCallId: "call-f02-2", input: workerInput2 }, BASE);
+	const res2 = await orch.handleSubagentResult(workerResult("call-f02-2", reportFor(taskId, "call-f02-2")));
+	assert.match(res2.content[0].text, /Limits: toolBudget\.hard=20 \(floor\), usageBudget\.tokens\.hard=40000 \(floor\), usageBudget\.costUsd\.hard=0\.1 \(floor\)/);
+}
+
+// 3. Stricter caller vs stricter taskSpec vs floor
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-923";
+	const spec = {
+		...specFor(taskId, "worker"),
+		budget: {
+			usageBudget: { costUsd: { hard: 0.05 } },
+		},
+	};
+	const workerInput = {
+		agent: "worker",
+		task: JSON.stringify(spec),
+		usageBudget: { tokens: { hard: 20000 } },
+	};
+	await orch.prepareRoleDelegation(workerInput);
+	// tokens: caller 20k (< floor 100k); costUsd: spec 0.05 (< floor 0.5)
+	assert.deepEqual(workerInput.usageBudget, {
+		tokens: { hard: 20000 },
+		costUsd: { hard: 0.05 },
+	});
+
+	await orch.beginDelegation({ toolCallId: "call-f03", input: workerInput }, BASE);
+	const res = await orch.handleSubagentResult(workerResult("call-f03", reportFor(taskId, "call-f03")));
+	assert.match(res.content[0].text, /Limits: usageBudget\.tokens\.hard=20000 \(caller\), usageBudget\.costUsd\.hard=0\.05 \(taskSpec\)/);
+}
+
+// 4. Synchronous child stopped due to tool limit: task leaves executing, stop reason reported
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-924";
+	const workerInput = { agent: "worker", task: JSON.stringify(specFor(taskId, "worker")) };
+	await orch.prepareRoleDelegation(workerInput);
+	await orch.beginDelegation({ toolCallId: "call-f04", input: workerInput }, BASE);
+	const task = orch.store.require(taskId);
+	assert.equal(task.state, "executing");
+
+	const res = await orch.handleSubagentResult({
+		toolCallId: "call-f04",
+		toolName: "subagent",
+		input: workerInput,
+		content: [{ type: "text", text: "Subagent stopped: toolBudget hard limit reached (20 calls made)" }],
+		details: { status: "stopped" },
+		isError: false,
+	});
+
+	assert.match(res.content[0].text, /\[PLANNER-ONLY\] Subagent for task T-20260905-924 stopped/i);
+	assert.match(res.content[0].text, /Limits:/);
+	const updatedTask = orch.store.require(taskId);
+	assert.notEqual(updatedTask.state, "executing");
+	assert.equal(updatedTask.state, "failed");
+	assert.match(updatedTask.stateReason ?? "", /stopped/);
+	assert.equal(orch.pendingDelegationCount(), 0);
+}
+
+// p07-r029: enabled policy rejects before launch and injects matching values on success.
+{
+	const saved = {
+		flag: process.env.PI_PLANNER_ONLY_ROLE_MODELS,
+		workerModel: process.env.PI_PLANNER_ONLY_MODEL_WORKER,
+		workerThinking: process.env.PI_PLANNER_ONLY_THINKING_WORKER,
+	};
+	try {
+		process.env.PI_PLANNER_ONLY_ROLE_MODELS = "1";
+		delete process.env.PI_PLANNER_ONLY_MODEL_REVIEWER;
+		delete process.env.PI_PLANNER_ONLY_THINKING_REVIEWER;
+		const missing = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+		const reviewerInput = { agent: "reviewer", task: "review" };
+		const blocked = await missing.beginDelegation({ toolCallId: "call-policy-missing", input: reviewerInput }, BASE);
+		assert.match(blocked.block?.reason ?? "", /role model policy is enabled but reviewer is missing model and thinking/);
+		assert.equal("model" in reviewerInput, false);
+
+		process.env.PI_PLANNER_ONLY_MODEL_WORKER = "policy-test/worker";
+		process.env.PI_PLANNER_ONLY_THINKING_WORKER = "medium";
+		const worker = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+		const workerInput = { agent: "worker", task: JSON.stringify(specFor("T-20260905-927")) };
+		const outcome = await worker.beginDelegation({ toolCallId: "call-policy-ok", input: workerInput }, BASE);
+		assert.equal(outcome.block, undefined);
+		assert.equal(workerInput.model, "policy-test/worker");
+		assert.equal(workerInput.thinking, "medium");
+	} finally {
+		for (const [key, value] of Object.entries({
+			PI_PLANNER_ONLY_ROLE_MODELS: saved.flag,
+			PI_PLANNER_ONLY_MODEL_WORKER: saved.workerModel,
+			PI_PLANNER_ONLY_THINKING_WORKER: saved.workerThinking,
+		})) {
+			if (value === undefined) delete process.env[key]; else process.env[key] = value;
+		}
+	}
+}
+
+// p07-r032: policy status records requested/resolved/actual, unknown is not a mismatch,
+// and an observed mismatch stops later controlled launches.
+{
+	const saved = {
+		flag: process.env.PI_PLANNER_ONLY_ROLE_MODELS,
+		workerModel: process.env.PI_PLANNER_ONLY_MODEL_WORKER,
+		workerThinking: process.env.PI_PLANNER_ONLY_THINKING_WORKER,
+	};
+	try {
+		process.env.PI_PLANNER_ONLY_ROLE_MODELS = "1";
+		process.env.PI_PLANNER_ONLY_MODEL_WORKER = "policy-test/worker";
+		process.env.PI_PLANNER_ONLY_THINKING_WORKER = "medium";
+
+		const unknown = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+		const unknownInput = { agent: "worker", task: JSON.stringify(specFor("T-20260905-928")) };
+		const unknownOutcome = await unknown.beginDelegation({ toolCallId: "call-policy-unknown", input: unknownInput }, BASE);
+		assert.equal(unknownOutcome.block, undefined);
+		const unknownStatus = unknown.renderTaskStatus(unknownOutcome.task);
+		assert.match(unknownStatus, /requested=未指定 \(thinking: 未指定\)/);
+		assert.match(unknownStatus, /resolved=policy-test\/worker \(thinking: medium\)/);
+		assert.match(unknownStatus, /actual=未知 \(thinking: 未知\)/);
+		const secondUnknown = await unknown.beginDelegation({
+			toolCallId: "call-policy-unknown-2",
+			input: { agent: "worker", task: JSON.stringify(specFor("T-20260905-929")) },
+		}, BASE);
+		assert.equal(secondUnknown.block, undefined, "unknown actual model must not stop launches");
+
+		const mismatch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+		const mismatchInput = { agent: "worker", task: JSON.stringify(specFor("T-20260905-930")) };
+		const mismatchOutcome = await mismatch.beginDelegation({ toolCallId: "call-policy-mismatch", input: mismatchInput }, BASE);
+		assert.equal(mismatchOutcome.block, undefined);
+		mismatch.noteDelegationModel("T-20260905-930", "call-policy-mismatch", "other/model", "medium");
+		assert.match(mismatch.renderTaskStatus(mismatchOutcome.task), /不匹配/);
+		const stopped = await mismatch.beginDelegation({
+			toolCallId: "call-policy-stopped",
+			input: { agent: "worker", task: JSON.stringify(specFor("T-20260905-931")) },
+		}, BASE);
+		assert.match(stopped.block?.reason ?? "", /^Planner-only guard: role model policy mismatch recorded; further controlled launches are stopped\.$/);
+	} finally {
+		for (const [key, value] of Object.entries({
+			PI_PLANNER_ONLY_ROLE_MODELS: saved.flag,
+			PI_PLANNER_ONLY_MODEL_WORKER: saved.workerModel,
+			PI_PLANNER_ONLY_THINKING_WORKER: saved.workerThinking,
+		})) {
+			if (value === undefined) delete process.env[key]; else process.env[key] = value;
+		}
+	}
+}
+
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-925";
+	const workerInput = {
+		agent: "worker",
+		async: true,
+		task: JSON.stringify(specFor(taskId, "worker")),
+	};
+	await orch.prepareRoleDelegation(workerInput);
+	await orch.beginDelegation({ toolCallId: "call-f05", input: workerInput }, BASE);
+	await orch.handleSubagentResult({
+		toolCallId: "call-f05",
+		toolName: "subagent",
+		input: workerInput,
+		details: { asyncId: "run-f05", runId: "run-f05" },
+		content: [{ type: "text", text: 'Async: worker [run-f05]\nThe async run is detached and running in the background.' }],
+		isError: false,
+	});
+	const task = orch.store.require(taskId);
+	assert.equal(task.state, "executing");
+
+	const notifyOutcome = await orch.handleAsyncNotify(
+		'Background task stopped: **worker**\n\ntoolBudget limit exceeded\n\nChild runs: run-f05'
+	);
+	assert.ok(notifyOutcome !== undefined);
+	assert.match(notifyOutcome.content[0].text, /\[PLANNER-ONLY\] Subagent for task T-20260905-925 stopped/);
+	assert.match(notifyOutcome.content[0].text, /Limits:/);
+	const updatedTask = orch.store.require(taskId);
+	assert.notEqual(updatedTask.state, "executing");
+	assert.equal(updatedTask.state, "failed");
+	assert.equal(orch.pendingDelegationCount(), 0);
 }

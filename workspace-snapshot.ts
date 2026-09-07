@@ -9,7 +9,10 @@
  * and a truncated manifest is never presented as complete.
  *
  * Sampling covers the declared verification inputs: the task's exact scope
- * paths plus the paths Git reports changed. Ignored files are not swept.
+ * paths plus the paths Git reports changed — narrowed (ticket 20) to
+ * verification inputs: untracked paths outside the task scope are runtime
+ * noise and never enter the digest, while in-scope untracked paths do.
+ * Ignored files are not swept.
  * Symlinks are recorded (kind + target) but never followed outside the tree.
  */
 

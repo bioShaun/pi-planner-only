@@ -21,13 +21,17 @@ import {
 	UsageLedger,
 	childUsageFromValue,
 	emptyTaskUsage,
+	hasUsableRate,
 	loadPricingTable,
 	lookupRates,
+	pricingPath,
 	renderUsage,
 	renderUsageLine,
 } from "./usage.ts";
 import type { PiUsageLike, UsageEntry } from "./usage.ts";
 import { oracleSuiteMode } from "./roles.ts";
+import { loadFloorConfig } from "./floors.ts";
+import { configuredRoleModelSummaries, loadRoleModelPolicy } from "./role-models.ts";
 
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
 	? resolve(process.env.PI_CODING_AGENT_DIR)
@@ -149,6 +153,7 @@ function sameToolOrder(left: readonly string[], right: readonly string[]): boole
 }
 
 export default function plannerOnly(pi: ExtensionAPI): void {
+	loadFloorConfig();
 	// Foreground children do not load ambient extensions. Background children
 	// may; this extension no-ops when PI_SUBAGENT_CHILD=1 so it cannot
 	// recurse into a child that loaded it. Workers must retain their
@@ -171,6 +176,34 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	let ledger = new UsageLedger({ pricing });
 	const allSessionEntries: UsageEntry[] = [];
 	let usageLogWriteFailed = false;
+
+	// Latest model reported by the public `model_select` event. The status
+	// command prefers the handler-time ctx.model and falls back to this so a
+	// mid-session switch is reflected in the next status render.
+	let selectedModel: { provider?: string; id: string } | undefined;
+
+	function rootModelIdentity(model: unknown): { provider?: string; id: string } | undefined {
+		if (model === undefined || model === null) return undefined;
+		if (typeof model === "string") {
+			return model.trim() ? { id: model.trim() } : undefined;
+		}
+		if (typeof model === "object") {
+			const rec = model as { provider?: unknown; id?: unknown };
+			const id = typeof rec.id === "string" && rec.id.trim() ? rec.id.trim() : undefined;
+			if (!id) return undefined;
+			const provider = typeof rec.provider === "string" && rec.provider.trim() ? rec.provider.trim() : undefined;
+			return { ...(provider ? { provider } : {}), id };
+		}
+		return undefined;
+	}
+
+	function rootRateWarning(ctx: ExtensionContext): string | undefined {
+		const identity = rootModelIdentity(ctx.model) ?? selectedModel;
+		if (!identity) return undefined;
+		if (hasUsableRate(pricing, identity.provider, identity.id)) return undefined;
+		const display = identity.provider ? `${identity.provider}/${identity.id}` : identity.id;
+		return `[PLANNER-ONLY] Root model ${display} has no rate in ${pricingPath()}. Root cost will be recorded as unknown and excluded from totals. Set PI_PLANNER_ONLY_PRICING to use another file.`;
+	}
 
 	const REVIEW_LEAK_TOOLS = new Set(["read", "grep", "find", "ls", "git_audit"]);
 
@@ -323,11 +356,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				runId,
 				agent: meta.agent,
 				...(meta.model ? { model: meta.model } : {}),
+				...(meta.thinking ? { thinking: meta.thinking } : {}),
 				source: "meta-file",
 				pending: false,
 			});
 			if (child) {
 				ledger.recordChild(taskId, child);
+				orchestrator.noteDelegationModel(taskId, runId, child.model, child.thinking);
 				syncUsage(taskId);
 				return true;
 			}
@@ -349,13 +384,18 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			for (const agent of agents) {
 				const meta = readChildMeta(artifactDirsFor(ctx, asyncDir), child.runId, agent);
 				if (!meta) continue;
-				return childUsageFromValue(meta.usage, child.kind, {
+				const resolved = childUsageFromValue(meta.usage, child.kind, {
 					runId: child.runId,
 					agent: meta.agent,
 					...(meta.model ? { model: meta.model } : {}),
+					...(meta.thinking ? { thinking: meta.thinking } : {}),
 					source: "meta-file",
 					pending: false,
 				});
+				if (resolved) {
+					orchestrator.noteDelegationModel(taskId, child.runId, resolved.model, resolved.thinking);
+				}
+				return resolved;
 			}
 			return undefined;
 		});
@@ -418,8 +458,15 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				...(runId ? { runId } : {}),
 				...(typeof rec.agent === "string" ? { agent: rec.agent } : delegation.agent ? { agent: delegation.agent } : {}),
 				...(typeof rec.model === "string" ? { model: rec.model } : {}),
+				...(typeof rec.thinking === "string" ? { thinking: rec.thinking } : {}),
 			});
-			if (child) ledger.recordChild(delegation.taskId, child);
+			if (child) {
+				ledger.recordChild(delegation.taskId, child);
+				orchestrator.noteDelegationModel(delegation.taskId, event.toolCallId, child.model, child.thinking);
+				if (runId) {
+					orchestrator.noteDelegationModel(delegation.taskId, runId, child.model, child.thinking);
+				}
+			}
 		}
 		if (results.length === 0 || !results.some((item) => asRecord(item)?.usage)) {
 			harvestMetaUsage(
@@ -457,8 +504,12 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					...(typeof completion.agent === "string" ? { agent: completion.agent }
 						: found.record.agent ? { agent: found.record.agent } : {}),
 					...(typeof rec?.model === "string" ? { model: rec.model } : {}),
+					...(typeof rec?.thinking === "string" ? { thinking: rec.thinking } : {}),
 				});
-				if (child) ledger.recordChild(found.record.taskId, child);
+				if (child) {
+					ledger.recordChild(found.record.taskId, child);
+					orchestrator.noteDelegationModel(found.record.taskId, runId, child.model, child.thinking);
+				}
 			}
 			syncUsage(found.record.taskId);
 		}
@@ -484,11 +535,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				runId,
 				agent: meta.agent,
 				...(meta.model ? { model: meta.model } : {}),
+				...(meta.thinking ? { thinking: meta.thinking } : {}),
 				source: "meta-file",
 				pending: false,
 			});
 			if (child) {
 				ledger.recordChild(record.taskId, child);
+				orchestrator.noteDelegationModel(record.taskId, runId, child.model, child.thinking);
 				syncUsage(record.taskId);
 				return;
 			}
@@ -709,6 +762,12 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		restrictActiveTools();
 		updateStatus(ctx);
 		loadSessionUsage(ctx);
+		const rateWarning = rootRateWarning(ctx);
+		if (rateWarning) notify(ctx, rateWarning, "warning");
+	});
+
+	pi.on("model_select", async (event) => {
+		selectedModel = rootModelIdentity(event.model);
 	});
 
 	pi.on("session_shutdown", async () => {
@@ -907,8 +966,12 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			if (action === "status") {
 				const log = usageLogPath();
 				const logStatus = log ? `${log} (enabled)` : "disabled";
+				const roleModelPolicy = loadRoleModelPolicy();
 				const lines = [
 					`Planner-only mode is ${isDisabled() ? "off" : "on"} (source: ${guardDecisionSource()}).`,
+					...(roleModelPolicy.enabled
+						? configuredRoleModelSummaries(roleModelPolicy)
+						: ["无模型成本保证"]),
 				];
 				const forcing = envForcingValue();
 				if (forcing !== undefined) {
@@ -918,7 +981,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				}
 				lines.push(`Usage log: ${logStatus}`);
 				lines.push(`Oracle suite: ${oracleSuiteMode()}`);
-				notify(ctx, lines.join("\n"));
+				const rateWarning = rootRateWarning(ctx);
+				if (rateWarning) lines.push(rateWarning);
+				const active = store.active();
+				if (active) {
+					lines.push("", orchestrator.renderTaskStatus(active));
+				}
+				notify(ctx, lines.join("\n"), rateWarning ? "warning" : "info");
 				return;
 			}
 			if (action === "on") {

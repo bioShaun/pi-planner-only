@@ -331,7 +331,7 @@ assert.equal(existsSync(userMarker), userMarkerWasPresent);
 
 const e2ePath = new URL("./e2e.pi-subagents.test.mjs", import.meta.url).pathname;
 
-// Local run without the peer: skip is visible, exit 0
+// Local run without the peer: the missing public contract is explicit, exit 0
 {
 	const emptyAgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-e2e-"));
 	try {
@@ -340,7 +340,7 @@ const e2ePath = new URL("./e2e.pi-subagents.test.mjs", import.meta.url).pathname
 			encoding: "utf8",
 		});
 		assert.equal(local.status, 0, local.stderr || local.stdout);
-		assert.match(local.stdout, /SKIP — .*pi-subagents is not installed/);
+		assert.match(local.stdout, /§G 角色模型启动契约未验证 .*pi-subagents is not installed/);
 	} finally {
 		rmSync(emptyAgentDir, { recursive: true, force: true });
 	}
@@ -360,13 +360,13 @@ const e2ePath = new URL("./e2e.pi-subagents.test.mjs", import.meta.url).pathname
 			encoding: "utf8",
 		});
 		assert.notEqual(gated.status, 0, "a skipped contract suite must fail the release gate");
-		assert.match(gated.stderr, /FAIL — release gate requires contract coverage/);
+		assert.match(gated.stderr, /FAIL — release gate requires §G contract coverage/);
 	} finally {
 		rmSync(emptyAgentDir, { recursive: true, force: true });
 	}
 }
 
-// Out-of-range peer: skip locally, fail under the gate
+// Out-of-range peer: the public contract is unverified locally, fail under the gate
 {
 	const fakeAgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-e2e-"));
 	try {
@@ -378,7 +378,7 @@ const e2ePath = new URL("./e2e.pi-subagents.test.mjs", import.meta.url).pathname
 			encoding: "utf8",
 		});
 		assert.equal(local.status, 0, local.stderr || local.stdout);
-		assert.match(local.stdout, /SKIP — .*outside >=0\.65 <0\.70/);
+		assert.match(local.stdout, /§G 角色模型启动契约未验证 .*outside >=0\.65 <0\.70/);
 
 		const gated = spawnSync(process.execPath, [e2ePath], {
 			env: {
@@ -631,8 +631,99 @@ try {
 	rmSync(t05bAgentDir, { recursive: true, force: true });
 }
 
+// p07-r032: public tool_call/tool_result/status expose role-model policy state.
+{
+	const saved = {
+		flag: process.env.PI_PLANNER_ONLY_ROLE_MODELS,
+		workerModel: process.env.PI_PLANNER_ONLY_MODEL_WORKER,
+		workerThinking: process.env.PI_PLANNER_ONLY_THINKING_WORKER,
+	};
+	try {
+		process.env.PI_PLANNER_ONLY_ROLE_MODELS = "1";
+		process.env.PI_PLANNER_ONLY_MODEL_WORKER = "policy-test/worker";
+		process.env.PI_PLANNER_ONLY_THINKING_WORKER = "medium";
+		const firstInput = {
+			agent: "worker",
+			cwd: "/fixture/index-policy-unknown",
+			task: JSON.stringify({
+				taskId: "T-20260905-932",
+				objective: "policy status",
+				cwd: "/fixture/index-policy-unknown",
+				role: "worker",
+				scope: { allowedPaths: ["src/parser.ts"] },
+				constraints: ["no new deps"],
+				acceptanceCriteria: ["tests pass"],
+				validation: { required: true, commands: ["npm test"] },
+				expectedEvidence: { changedFiles: true, tests: true },
+				stopConditions: ["ask if ambiguous"],
+			}),
+		};
+		assert.equal(await handlers.get("tool_call")({ toolName: "subagent", input: firstInput, toolCallId: "call-policy-index-1" }, ctx), undefined);
+		await commands.get("planner-only").handler("status", ctx);
+		assert.match(notices.at(-1).message, /requested=未指定 \(thinking: 未指定\)/);
+		assert.match(notices.at(-1).message, /resolved=policy-test\/worker \(thinking: medium\)/);
+		assert.match(notices.at(-1).message, /actual=未知 \(thinking: 未知\)/);
+
+		const secondInput = { ...firstInput, cwd: "/fixture/index-policy-unknown-2", task: firstInput.task.replace("T-20260905-932", "T-20260905-933").replace("index-policy-unknown", "index-policy-unknown-2") };
+		assert.equal(await handlers.get("tool_call")({ toolName: "subagent", input: secondInput, toolCallId: "call-policy-index-2" }, ctx), undefined, "unknown actual must not block the next worker");
+
+		const actual = await handlers.get("tool_result")({
+			toolCallId: "call-policy-index-1",
+			toolName: "subagent",
+			input: firstInput,
+			details: { results: [{ model: "other/model", thinking: "medium", usage: {} }] },
+			content: [{ type: "text", text: "child result" }],
+			isError: false,
+		}, ctx);
+		assert.ok(actual);
+		const blocked = await handlers.get("tool_call")({
+			toolName: "subagent",
+			toolCallId: "call-policy-index-3",
+			input: { agent: "worker", cwd: "/fixture/index-policy-blocked", task: firstInput.task.replace("T-20260905-932", "T-20260905-934").replace("index-policy-unknown", "index-policy-blocked") },
+		}, ctx);
+		assert.equal(blocked.block, true);
+		assert.match(blocked.reason, /Planner-only guard: role model policy mismatch recorded; further controlled launches are stopped\./);
+	} finally {
+		for (const [key, value] of Object.entries({
+			PI_PLANNER_ONLY_ROLE_MODELS: saved.flag,
+			PI_PLANNER_ONLY_MODEL_WORKER: saved.workerModel,
+			PI_PLANNER_ONLY_THINKING_WORKER: saved.workerThinking,
+		})) {
+			if (value === undefined) delete process.env[key]; else process.env[key] = value;
+		}
+	}
+}
+
+// p07-r033: Root remains host-controlled while status reports requested policy values.
+{
+	const saved = {
+		flag: process.env.PI_PLANNER_ONLY_ROLE_MODELS,
+		rootModel: process.env.PI_PLANNER_ONLY_MODEL_ROOT,
+		rootThinking: process.env.PI_PLANNER_ONLY_THINKING_ROOT,
+	};
+	const originalModel = ctx.model;
+	try {
+		process.env.PI_PLANNER_ONLY_ROLE_MODELS = "1";
+		process.env.PI_PLANNER_ONLY_MODEL_ROOT = "policy-test/root";
+		process.env.PI_PLANNER_ONLY_THINKING_ROOT = "off";
+		await commands.get("planner-only").handler("status", ctx);
+		assert.match(notices.at(-1).message, /root: model=policy-test\/root thinking=off/);
+		assert.doesNotMatch(notices.at(-1).message, /Root .*已切换|Root.*switched/);
+		assert.equal(ctx.model, originalModel, "status must not mutate the host Root model");
+	} finally {
+		for (const [key, value] of Object.entries({
+			PI_PLANNER_ONLY_ROLE_MODELS: saved.flag,
+			PI_PLANNER_ONLY_MODEL_ROOT: saved.rootModel,
+			PI_PLANNER_ONLY_THINKING_ROOT: saved.rootThinking,
+		})) {
+			if (value === undefined) delete process.env[key]; else process.env[key] = value;
+		}
+	}
+}
+
 // --------------------------------------------------------------------------
 // v0.2 lifecycle: git_audit, delegation, worker reports, review commands
+// --------------------------------------------------------------------------
 // --------------------------------------------------------------------------
 
 const { hashStatus } = await import("./evidence.ts");
@@ -721,6 +812,148 @@ assert.match(notices.at(-1).message, /Review mode: root/);
 gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
 gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
 
+// Public hook: a validator Task with no WorkerReport must receive the full oracle contract.
+{
+	const input = { agent: "oracle", task: JSON.stringify(delegationSpec("T-20260905-no-report", "validator")) };
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-no-report-validator", toolName: "subagent", input },
+		ctx,
+	);
+	assert.match(input.task, /ORACLE_SUITE=full/);
+	assert.doesNotMatch(input.task, /ORACLE_SUITE=bounded/);
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-no-report-validator",
+			toolName: "subagent",
+			content: [{ type: "text", text: "Validator completed without a WorkerReport." }],
+			isError: false,
+		},
+		ctx,
+	);
+}
+
+// A WorkerReport with no validation results is unknown, so the public hook must
+// give the Validator the full oracle contract rather than the bounded shortcut.
+{
+	const emptyValidationTask = delegationSpec("T-20260905-empty-validation");
+	const emptyValidationInput = { agent: "worker", task: JSON.stringify(emptyValidationTask) };
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-empty-validation-worker", toolName: "subagent", input: emptyValidationInput },
+		ctx,
+	);
+	const emptyValidationReport = {
+		version: 1,
+		taskId: "T-20260905-empty-validation",
+		status: "completed",
+		summary: "No validation was run.",
+		changedFiles: [],
+		validation: [],
+		evidence: {
+			cwd: process.cwd(),
+			taskId: "T-20260905-empty-validation",
+			workerRunId: "call-empty-validation-worker",
+			baseGitRef: "abc1234",
+			finalGitRef: "abc1234",
+			gitStatusHash: cleanHash,
+			changedPaths: [],
+			gitAvailable: true,
+			generatedAt: "2026-08-31T10:00:00.000Z",
+		},
+		risks: [],
+		unresolved: [],
+	};
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-empty-validation-worker",
+			toolName: "subagent",
+			input: {},
+			content: [{ type: "text", text: JSON.stringify(emptyValidationReport) }],
+			isError: false,
+		},
+		ctx,
+	);
+	const emptyValidationValidator = {
+		agent: "oracle",
+		task: JSON.stringify({ ...emptyValidationTask, role: "validator" }),
+	};
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-empty-validation-validator", toolName: "subagent", input: emptyValidationValidator },
+		ctx,
+	);
+	assert.match(emptyValidationValidator.task, /ORACLE_SUITE=full/);
+	assert.doesNotMatch(emptyValidationValidator.task, /ORACLE_SUITE=bounded/);
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-empty-validation-validator",
+			toolName: "subagent",
+			content: [{ type: "text", text: "Validator completed the full-suite review." }],
+			isError: false,
+		},
+		ctx,
+	);
+}
+
+// A not-run result and a passed result with a non-zero exit both require the full oracle contract.
+{
+	const contradictoryTask = delegationSpec("T-20260905-contradictory-validation");
+	const contradictoryInput = { agent: "worker", task: JSON.stringify(contradictoryTask) };
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-contradictory-validation-worker", toolName: "subagent", input: contradictoryInput },
+		ctx,
+	);
+	const contradictoryReport = {
+		version: 1,
+		taskId: "T-20260905-contradictory-validation",
+		status: "completed",
+		summary: "Validation results are contradictory.",
+		changedFiles: [],
+		validation: [
+			{ command: "npm test", type: "test", status: "not-run", exitCode: 0, summary: "not run" },
+			{ command: "npm run test:e2e", type: "test", status: "passed", exitCode: 1, summary: "failed" },
+		],
+		evidence: {
+			cwd: process.cwd(),
+			taskId: "T-20260905-contradictory-validation",
+			workerRunId: "call-contradictory-validation-worker",
+			baseGitRef: "abc1234",
+			finalGitRef: "abc1234",
+			gitStatusHash: cleanHash,
+			changedPaths: [],
+			gitAvailable: true,
+			generatedAt: "2026-08-31T10:00:00.000Z",
+		},
+	};
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-contradictory-validation-worker",
+			toolName: "subagent",
+			input: {},
+			content: [{ type: "text", text: JSON.stringify(contradictoryReport) }],
+			isError: false,
+		},
+		ctx,
+	);
+	const contradictoryValidator = {
+		agent: "oracle",
+		task: JSON.stringify({ ...contradictoryTask, role: "validator" }),
+	};
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-contradictory-validation-validator", toolName: "subagent", input: contradictoryValidator },
+		ctx,
+	);
+	assert.match(contradictoryValidator.task, /ORACLE_SUITE=full/);
+	assert.doesNotMatch(contradictoryValidator.task, /ORACLE_SUITE=bounded/);
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-contradictory-validation-validator",
+			toolName: "subagent",
+			content: [{ type: "text", text: "Validator completed the full-suite review." }],
+			isError: false,
+		},
+		ctx,
+	);
+}
+
 // the worker returns a valid report wrapped in noise; the parent sees a bounded report
 const workerReport = {
 	version: 1,
@@ -767,6 +1000,227 @@ assert.doesNotMatch(workerText, /You are an isolated reviewer/);
 assert.doesNotMatch(workerText, /\[PLANNER-ONLY FRESH REVIEW\]/);
 // the raw worker transcript is replaced, not forwarded
 assert.doesNotMatch(workerText, /lots of raw noise/);
+
+// The public hook bounds only after Root records a fresh comparison; a changed
+// comparison forces the full listed validation commands again.
+const publicBoundedValidator = { agent: "oracle", task: `Validate ${CANON100}` };
+await handlers.get("tool_call")(
+	{ toolCallId: "call-100-oracle-fresh", toolName: "subagent", input: publicBoundedValidator },
+	ctx,
+);
+assert.match(publicBoundedValidator.task, /ORACLE_SUITE=bounded/);
+assert.doesNotMatch(publicBoundedValidator.task, /ORACLE_SUITE=full/);
+await handlers.get("tool_result")(
+	{
+		toolCallId: "call-100-oracle-fresh",
+		toolName: "subagent",
+		content: [{ type: "text", text: "Validator completed the bounded review." }],
+		isError: false,
+	},
+	ctx,
+);
+
+// Ticket 12 round p10-r044: an explicit full-suite TaskSpec request remains full
+// even with a complete, fresh WorkerReport.
+const fullSuiteTaskId = "T-20260907-044";
+const fullSuiteWorkerInput = {
+	agent: "worker",
+	task: JSON.stringify({
+		...delegationSpec(fullSuiteTaskId),
+		validation: { required: true, commands: ["npm test", "npm run test:e2e"] },
+	}),
+};
+await handlers.get("tool_call")(
+	{ toolCallId: "call-100-oracle-full-suite-worker", toolName: "subagent", input: fullSuiteWorkerInput },
+	ctx,
+);
+const fullSuiteReport = {
+	...workerReport,
+	taskId: fullSuiteTaskId,
+	validation: [
+		{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "npm test passed" },
+		{ command: "npm run test:e2e", type: "test", status: "passed", exitCode: 0, summary: "e2e passed" },
+	],
+	evidence: {
+		...workerReport.evidence,
+		taskId: fullSuiteTaskId,
+		workerRunId: "call-100-oracle-full-suite-worker",
+	},
+};
+const fullSuiteWorkerResult = await handlers.get("tool_result")(
+	{
+		toolCallId: "call-100-oracle-full-suite-worker",
+		toolName: "subagent",
+		content: [{ type: "text", text: JSON.stringify(fullSuiteReport) }],
+		isError: false,
+	},
+	ctx,
+);
+assert.ok(fullSuiteWorkerResult?.content?.length, "worker tool_result must be returned");
+const fullSuiteValidator = { agent: "oracle", task: `Validate ${fullSuiteTaskId}` };
+await handlers.get("tool_call")(
+	{ toolCallId: "call-100-oracle-full-suite-validator", toolName: "subagent", input: fullSuiteValidator },
+	ctx,
+);
+assert.match(fullSuiteValidator.task, /ORACLE_SUITE=full/);
+assert.match(fullSuiteValidator.task, /Re-run the listed validation commands/);
+assert.doesNotMatch(fullSuiteValidator.task, /ORACLE_SUITE=(?:bounded|missing)/);
+await handlers.get("tool_result")(
+	{
+		toolCallId: "call-100-oracle-full-suite-validator",
+		toolName: "subagent",
+		content: [{ type: "text", text: "Validator completed the full-suite review." }],
+		isError: false,
+	},
+	ctx,
+);
+
+// Ticket 12 round p10-r045: a public file-existence-only report cannot produce
+// bounded validation or a passed status, and every public tool_call has a result.
+const existenceTaskId = "T-20260907-045";
+const existenceWorkerInput = {
+	agent: "worker",
+	task: JSON.stringify(delegationSpec(existenceTaskId)),
+};
+await handlers.get("tool_call")(
+	{ toolCallId: "call-100-existence-worker", toolName: "subagent", input: existenceWorkerInput },
+	ctx,
+);
+const existenceReport = {
+	...workerReport,
+	taskId: existenceTaskId,
+	validation: [{ command: "test -f src/parser.test.ts", type: "test", status: "passed", exitCode: 0, summary: "test file exists" }],
+	evidence: {
+		...workerReport.evidence,
+		taskId: existenceTaskId,
+		workerRunId: "call-100-existence-worker",
+	},
+};
+const existenceWorkerResult = await handlers.get("tool_result")(
+	{
+		toolCallId: "call-100-existence-worker",
+		toolName: "subagent",
+		content: [{ type: "text", text: JSON.stringify(existenceReport) }],
+		isError: false,
+	},
+	ctx,
+);
+assert.ok(existenceWorkerResult?.content?.length, "existence worker tool_result must be returned");
+const existenceValidator = { agent: "oracle", task: `Validate ${existenceTaskId}` };
+await handlers.get("tool_call")(
+	{ toolCallId: "call-100-existence-validator", toolName: "subagent", input: existenceValidator },
+	ctx,
+);
+assert.match(existenceValidator.task, /ORACLE_SUITE=full/);
+assert.doesNotMatch(existenceValidator.task, /ORACLE_SUITE=(?:bounded|missing)/);
+await commands.get("planner-only").handler("task", ctx);
+assert.doesNotMatch(notices.at(-1).message, /Validation: passed/);
+await handlers.get("tool_result")(
+	{
+		toolCallId: "call-100-existence-validator",
+		toolName: "subagent",
+		content: [{ type: "text", text: "Validator completed the full-suite review." }],
+		isError: false,
+	},
+	ctx,
+);
+
+const staleTaskId = "T-20260907-042";
+const staleWorkerInput = { agent: "worker", task: JSON.stringify(delegationSpec(staleTaskId)) };
+await handlers.get("tool_call")(
+	{ toolCallId: "call-100-oracle-stale-worker", toolName: "subagent", input: staleWorkerInput },
+	ctx,
+);
+gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus.replace("2222222", "9999999"), stderr: "", code: 0 });
+await handlers.get("tool_result")(
+	{
+		toolCallId: "call-100-oracle-stale-worker",
+		toolName: "subagent",
+		content: [{ type: "text", text: JSON.stringify({
+			...workerReport,
+			taskId: staleTaskId,
+			evidence: { ...workerReport.evidence, taskId: staleTaskId, workerRunId: "call-100-oracle-stale-worker" },
+		}) }],
+		isError: false,
+	},
+	ctx,
+);
+const publicStaleValidator = { agent: "oracle", task: `Validate ${staleTaskId}` };
+await handlers.get("tool_call")(
+	{ toolCallId: "call-100-oracle-stale", toolName: "subagent", input: publicStaleValidator },
+	ctx,
+);
+assert.match(publicStaleValidator.task, /ORACLE_SUITE=full/);
+assert.doesNotMatch(publicStaleValidator.task, /ORACLE_SUITE=bounded/);
+await handlers.get("tool_result")(
+	{
+		toolCallId: "call-100-oracle-stale",
+		toolName: "subagent",
+		content: [{ type: "text", text: "Validator completed the full listed validation." }],
+		isError: false,
+	},
+	ctx,
+);
+gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+
+gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
+const missingTaskId = "T-20260907-043";
+const missingWorkerInput = {
+	agent: "worker",
+	task: JSON.stringify({
+		...delegationSpec(missingTaskId),
+		scope: { allowedPaths: ["src/parser.ts", "src/parser.test.ts"] },
+		validation: { required: true, commands: ["npm test", "npm run typecheck"] },
+	}),
+};
+await handlers.get("tool_call")(
+	{ toolCallId: "call-100-oracle-missing-worker", toolName: "subagent", input: missingWorkerInput },
+	ctx,
+);
+gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+await handlers.get("tool_result")(
+	{
+		toolCallId: "call-100-oracle-missing-worker",
+		toolName: "subagent",
+		content: [{ type: "text", text: JSON.stringify({
+			...workerReport,
+			taskId: missingTaskId,
+			changedFiles: ["src/parser.ts", "src/parser.test.ts"],
+			validation: [
+				{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "npm test passed" },
+			],
+			evidence: {
+				...workerReport.evidence,
+				cwd: `/fixture/${missingTaskId}`,
+				taskId: missingTaskId,
+				workerRunId: "call-100-oracle-missing-worker",
+				changedPaths: ["src/parser.ts", "src/parser.test.ts"],
+			},
+		}) }],
+		isError: false,
+	},
+	ctx,
+);
+const publicMissingValidator = { agent: "oracle", task: `Validate ${missingTaskId}` };
+await handlers.get("tool_call")(
+	{ toolCallId: "call-100-oracle-missing", toolName: "subagent", input: publicMissingValidator },
+	ctx,
+);
+assert.match(publicMissingValidator.task, /ORACLE_SUITE=missing/);
+assert.match(publicMissingValidator.task, /npm run typecheck/);
+assert.doesNotMatch(publicMissingValidator.task, /ORACLE_SUITE=bounded/);
+assert.doesNotMatch(publicMissingValidator.task, /ORACLE_SUITE=full/);
+assert.doesNotMatch(publicMissingValidator.task, /Re-run the listed validation commands/);
+await handlers.get("tool_result")(
+	{
+		toolCallId: "call-100-oracle-missing",
+		toolName: "subagent",
+		content: [{ type: "text", text: "Validator completed the missing validation commands." }],
+		isError: false,
+	},
+	ctx,
+);
+gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
 
 // a fresh reviewer on the same task records a verdict and advances the state
 const reviewerSpec = delegationSpec("T-20260905-100", "reviewer");
@@ -895,7 +1349,7 @@ await handlers.get("tool_call")(
 	ctx,
 );
 assert.equal(workerInput.agent, "worker");
-assert.equal(workerInput.context, "fork");
+assert.equal(workerInput.context, "fresh");
 
 // evidence drift: an external edit after the report marks the evidence stale
 await handlers.get("tool_call")(
@@ -1068,6 +1522,49 @@ const unknownVerdict = await verdictTool.execute(
 assert.equal(unknownVerdict.isError, true);
 assert.match(unknownVerdict.content[0].text, /unknown task T-20260905-nope/);
 assert.match(unknownVerdict.content[0].text, /planner_verdict/);
+
+// Ticket 22 round p10-r046: public planner_verdict refuses strict pass without reviewer.
+{
+	const previous = process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW;
+	try {
+		process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW = "1";
+		const taskId = "T-20260905-221";
+		const toolCallId = "call-221-worker";
+		const toolResult = await handlers.get("tool_call")(
+			{ toolCallId, toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
+			ctx,
+		);
+		assert.equal(toolResult?.block, undefined);
+		const worker = await handlers.get("tool_result")(
+			{
+				toolCallId,
+				toolName: "subagent",
+				input: {},
+				content: [{ type: "text", text: JSON.stringify({
+					...workerReport,
+					taskId,
+					evidence: { ...workerReport.evidence, taskId, workerRunId: toolCallId, cwd: `/fixture/${taskId}` },
+				}) }],
+				isError: false,
+			},
+			ctx,
+		);
+		assert.equal(worker.isError, undefined);
+		const refused = await verdictTool.execute(
+			"v-221",
+			{ verdict: "pass", summary: "strict gate", taskId },
+			undefined,
+			undefined,
+			ctx,
+		);
+		assert.equal(refused.isError, true);
+		assert.match(refused.content[0].text, /planner_verdict refused:/);
+		assert.match(refused.content[0].text, /reviewer ReviewResult/);
+	} finally {
+		if (previous === undefined) delete process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW;
+		else process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW = previous;
+	}
+}
 
 // pass with no recorded WorkerReport -> refused, state unchanged
 const noReportVerdict = await verdictTool.execute(
@@ -1705,6 +2202,7 @@ assert.match(
 	await commands.get("planner-only").handler("status", ctx);
 	assert.match(notices.at(-1).message, /Planner-only mode is on/);
 	assert.match(notices.at(-1).message, /Usage log: .*usage\.jsonl \(enabled\)/);
+	assert.match(notices.at(-1).message, /无模型成本保证/);
 }
 
 {
@@ -2034,6 +2532,736 @@ assert.match(
 	);
 	assert.match(resLowShare.content[0].text, /decision: review_pending/);
 	assert.doesNotMatch(resLowShare.content[0].text, /warning: Root is reading the diff itself/);
+}
+
+// --------------------------------------------------------------------------
+// Issues 01 & 02: Host details classification & async notify dispatch
+// --------------------------------------------------------------------------
+
+// 1. Issue 01: Host details classification with Oracle-1 foreground fixture
+{
+	const oracle1Details = {
+		mode: "single",
+		runId: "79ce6075-329f-4fa3-afb4-0d5f7062d4bf",
+		results: [{
+			agent: "worker",
+			exitCode: 0,
+			outputState: "present",
+			startedAt: 1757209700000,
+			completedAt: 1757209701000,
+		}],
+		mission: { status: "completed" },
+	};
+
+	// 1a. Worker with completion evidence in details takes worker completed path, not async receipt
+	const taskIdWorker = "T-20260905-801";
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-ora-w", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskIdWorker)) } },
+		ctx,
+	);
+	notices.length = 0;
+	await commands.get("planner-only").handler(`task ${taskIdWorker}`, ctx);
+	const canonWorker = /Task: (T-\d{8}-\d{3})/.exec(notices.at(-1).message)?.[1];
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+
+	const resWorker = await handlers.get("tool_result")(
+		{
+			toolCallId: "call-ora-w",
+			toolName: "subagent",
+			details: oracle1Details,
+			content: [{ type: "text", text: JSON.stringify({
+				...workerReport,
+				taskId: canonWorker,
+				changedFiles: ["src/parser.ts"],
+				evidence: { ...workerReport.evidence, taskId: canonWorker, workerRunId: "call-ora-w", cwd: `/fixture/${taskIdWorker}`, changedPaths: ["src/parser.ts"] },
+			}) }],
+			isError: false,
+		},
+		ctx,
+	);
+	assert.match(resWorker.content[0].text, /\[PLANNER-ONLY WORKER REPORT\]/);
+	assert.match(resWorker.content[0].text, /decision: review_pending/);
+	assert.doesNotMatch(resWorker.content[0].text, /Async delegation/);
+
+	// 1b. Explorer with completion evidence takes explorer path: returns as-is without entering WorkerReport parsing
+	const taskIdExplorer = "T-20260905-802";
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-ora-e", toolName: "subagent", input: { agent: "worker", task: JSON.stringify(delegationSpec(taskIdExplorer, "explorer")) } },
+		ctx,
+	);
+	const resExplorer = await handlers.get("tool_result")(
+		{
+			toolCallId: "call-ora-e",
+			toolName: "subagent",
+			details: oracle1Details,
+			content: [{ type: "text", text: "Explorer findings: inspected architecture, no changes required." }],
+			isError: false,
+		},
+		ctx,
+	);
+	assert.equal(resExplorer.content[0].text, "Explorer findings: inspected architecture, no changes required.");
+	assert.doesNotMatch(resExplorer.content[0].text, /\[PLANNER-ONLY/);
+
+	// 1c. Validator with completion evidence takes validator path
+	const taskIdValidator = "T-20260905-803";
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-ora-vw", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskIdValidator)) } },
+		ctx,
+	);
+	notices.length = 0;
+	await commands.get("planner-only").handler(`task ${taskIdValidator}`, ctx);
+	const canonValidator = /Task: (T-\d{8}-\d{3})/.exec(notices.at(-1).message)?.[1];
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-ora-vw",
+			toolName: "subagent",
+			details: oracle1Details,
+			content: [{ type: "text", text: JSON.stringify({
+				...workerReport,
+				taskId: canonValidator,
+				changedFiles: ["src/parser.ts"],
+				evidence: { ...workerReport.evidence, taskId: canonValidator, workerRunId: "call-ora-vw", cwd: `/fixture/${taskIdValidator}`, changedPaths: ["src/parser.ts"] },
+			}) }],
+			isError: false,
+		},
+		ctx,
+	);
+
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-ora-v", toolName: "subagent", input: { agent: "oracle", task: JSON.stringify(delegationSpec(canonValidator, "validator")) } },
+		ctx,
+	);
+	const resValidator = await handlers.get("tool_result")(
+		{
+			toolCallId: "call-ora-v",
+			toolName: "subagent",
+			details: oracle1Details,
+			content: [{ type: "text", text: "Validator passed all independent checks." }],
+			isError: false,
+		},
+		ctx,
+	);
+	assert.match(resValidator.content[0].text, /\[PLANNER-ONLY\] Validator output for task/);
+	assert.doesNotMatch(resValidator.content[0].text, /Async delegation/);
+}
+
+// 2. Issue 01: True async launch receipt text formatting
+{
+	const taskId = "T-20260905-804";
+	const runId = "run-async-enriched-804";
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-async-804", toolName: "subagent", input: { agent: "worker", async: true, task: JSON.stringify(delegationSpec(taskId)) } },
+		ctx,
+	);
+	notices.length = 0;
+	await commands.get("planner-only").handler(`task ${taskId}`, ctx);
+	const canon = /Task: (T-\d{8}-\d{3})/.exec(notices.at(-1).message)?.[1];
+
+	const receipt = await handlers.get("tool_result")(
+		{
+			toolCallId: "call-async-804",
+			toolName: "subagent",
+			details: { asyncId: runId, runId, asyncDir: "/no-such-dir" },
+			content: [{ type: "text", text: `Async: worker [${runId}]\nThe async run is detached and running in the background.` }],
+			isError: false,
+		},
+		ctx,
+	);
+	assert.equal(
+		receipt.content[0].text,
+		`[PLANNER-ONLY] Async delegation for task ${canon} has started (runId: ${runId}). Await the run result with bg_wait id=${runId}; bg_wait without an id may report empty briefly after launch.`,
+	);
+}
+
+// 3. Issue 01: Caller explicit async: false disables prose heuristics
+{
+	const taskId = "T-20260905-805";
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-explicit-false", toolName: "subagent", input: { agent: "worker", async: false, task: JSON.stringify(delegationSpec(taskId)) } },
+		ctx,
+	);
+	notices.length = 0;
+	await commands.get("planner-only").handler(`task ${taskId}`, ctx);
+	const canon = /Task: (T-\d{8}-\d{3})/.exec(notices.at(-1).message)?.[1];
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+
+	const resExplicitFalse = await handlers.get("tool_result")(
+		{
+			toolCallId: "call-explicit-false",
+			toolName: "subagent",
+			details: { mode: "single" }, // no asyncId, no exitCode
+			content: [{
+				type: "text",
+				text: `Async: worker [00000000-1111-2222-3333-444444444444]\nThe async run is detached and running in the background.\n\`\`\`json\n${JSON.stringify({
+					...workerReport,
+					taskId: canon,
+					changedFiles: ["src/parser.ts"],
+					evidence: { ...workerReport.evidence, taskId: canon, workerRunId: "call-explicit-false", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+				})}\n\`\`\``,
+			}],
+			isError: false,
+		},
+		ctx,
+	);
+	// Because async: false was set, prose heuristic was skipped and worker report was parsed directly
+	assert.match(resExplicitFalse.content[0].text, /\[PLANNER-ONLY WORKER REPORT\]/);
+	assert.doesNotMatch(resExplicitFalse.content[0].text, /Async delegation for task/);
+}
+
+// 4. Issue 02: Async notify for reviewer with full parity to sync reviewer result
+{
+	// 4a. Async reviewer delegation + async notify
+	const taskAsyncId = "T-20260905-806";
+	const runAsyncRev = "run-rev-async-806";
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-w-806", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskAsyncId)) } },
+		ctx,
+	);
+	notices.length = 0;
+	await commands.get("planner-only").handler(`task ${taskAsyncId}`, ctx);
+	const canonAsync = /Task: (T-\d{8}-\d{3})/.exec(notices.at(-1).message)?.[1];
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+
+	const wResAsync = await handlers.get("tool_result")(
+		{
+			toolCallId: "call-w-806",
+			toolName: "subagent",
+			details: { mode: "single", results: [{ exitCode: 0, outputState: "present" }] },
+			content: [{ type: "text", text: JSON.stringify({
+				...workerReport,
+				taskId: canonAsync,
+				changedFiles: ["src/parser.ts"],
+				evidence: { ...workerReport.evidence, taskId: canonAsync, workerRunId: "call-w-806", cwd: `/fixture/${taskAsyncId}`, changedPaths: ["src/parser.ts"] },
+			}) }],
+			isError: false,
+		},
+		ctx,
+	);
+	const digestAsync = /workspaceDigest: ([0-9a-f]{16})/.exec(wResAsync.content[0].text)?.[1];
+	assert.ok(digestAsync, "digestAsync must exist");
+
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-r-806", toolName: "subagent", input: { agent: "reviewer", async: true, task: `Review ${canonAsync}` } },
+		ctx,
+	);
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-r-806",
+			toolName: "subagent",
+			details: { asyncId: runAsyncRev, runId: runAsyncRev, asyncDir: "/no-such-dir" },
+			content: [{ type: "text", text: `Async: reviewer [${runAsyncRev}]\nThe async run is detached and running in the background.` }],
+			isError: false,
+		},
+		ctx,
+	);
+
+	const reviewPayload = {
+		taskId: canonAsync,
+		verdict: "request_changes",
+		summary: "need more regression test coverage",
+		evidenceFresh: true,
+		reportRevision: 1,
+		workspaceDigest: digestAsync,
+		findings: [{ severity: "major", category: "test", description: "boundary missing", requestedChange: "add boundary test" }],
+	};
+	const replacedAsync = await handlers.get("message_end")({
+		message: {
+			role: "custom",
+			customType: "subagent-notify",
+			content: `Background task completed: **reviewer**\n\n${JSON.stringify(reviewPayload)}\n\nChild runs: ${runAsyncRev}`,
+			display: "Background task completed: reviewer",
+		},
+	}, ctx);
+	assert.match(replacedAsync.message.content, /\[FRESH REVIEWER\] verdict: request_changes/);
+	assert.match(replacedAsync.message.content, /decision: request_changes/);
+
+	notices.length = 0;
+	await commands.get("planner-only").handler(`task ${canonAsync}`, ctx);
+	const asyncTaskStatus = notices.at(-1).message;
+	assert.match(asyncTaskStatus, /State: changes_requested/);
+	assert.match(asyncTaskStatus, /Worker round: 1\/3/);
+	assert.match(asyncTaskStatus, /Reviews: request_changes \(reviewer\)/);
+
+	// 4b. Sync reviewer delegation
+	const taskSyncId = "T-20260905-807";
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-w-807", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskSyncId)) } },
+		ctx,
+	);
+	notices.length = 0;
+	await commands.get("planner-only").handler(`task ${taskSyncId}`, ctx);
+	const canonSync = /Task: (T-\d{8}-\d{3})/.exec(notices.at(-1).message)?.[1];
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+
+	const wResSync = await handlers.get("tool_result")(
+		{
+			toolCallId: "call-w-807",
+			toolName: "subagent",
+			details: { mode: "single", results: [{ exitCode: 0, outputState: "present" }] },
+			content: [{ type: "text", text: JSON.stringify({
+				...workerReport,
+				taskId: canonSync,
+				changedFiles: ["src/parser.ts"],
+				evidence: { ...workerReport.evidence, taskId: canonSync, workerRunId: "call-w-807", cwd: `/fixture/${taskSyncId}`, changedPaths: ["src/parser.ts"] },
+			}) }],
+			isError: false,
+		},
+		ctx,
+	);
+	const digestSync = /workspaceDigest: ([0-9a-f]{16})/.exec(wResSync.content[0].text)?.[1];
+	assert.ok(digestSync, "digestSync must exist");
+
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-r-807", toolName: "subagent", input: { agent: "reviewer", task: `Review ${canonSync}` } },
+		ctx,
+	);
+	const syncReviewRes = await handlers.get("tool_result")(
+		{
+			toolCallId: "call-r-807",
+			toolName: "subagent",
+			details: { mode: "single", runId: "run-rev-sync-807", results: [{ exitCode: 0, outputState: "present" }] },
+			content: [{ type: "text", text: JSON.stringify({ ...reviewPayload, taskId: canonSync, workspaceDigest: digestSync }) }],
+			isError: false,
+		},
+		ctx,
+	);
+	assert.match(syncReviewRes.content[0].text, /\[FRESH REVIEWER\] verdict: request_changes/);
+	assert.match(syncReviewRes.content[0].text, /decision: request_changes/);
+
+	notices.length = 0;
+	await commands.get("planner-only").handler(`task ${canonSync}`, ctx);
+	const syncTaskStatus = notices.at(-1).message;
+	assert.match(syncTaskStatus, /State: changes_requested/);
+	assert.match(syncTaskStatus, /Worker round: 1\/3/);
+	assert.match(syncTaskStatus, /Reviews: request_changes \(reviewer\)/);
+
+	// Both paths produce identical task state and round
+	const asyncStateMatch = /State: (\w+)/.exec(asyncTaskStatus)?.[1];
+	const syncStateMatch = /State: (\w+)/.exec(syncTaskStatus)?.[1];
+	assert.equal(asyncStateMatch, syncStateMatch);
+	const asyncRoundMatch = /Worker round: (\d\/\d)/.exec(asyncTaskStatus)?.[1];
+	const syncRoundMatch = /Worker round: (\d\/\d)/.exec(syncTaskStatus)?.[1];
+	assert.equal(asyncRoundMatch, syncRoundMatch);
+
+	// 4c. Truncated Reviewer output without file: rejected, no WorkerReport correction
+	const taskTruncId = "T-20260905-808";
+	const runTrunc = "run-rev-trunc-808";
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-w-808", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskTruncId)) } },
+		ctx,
+	);
+	notices.length = 0;
+	await commands.get("planner-only").handler(`task ${taskTruncId}`, ctx);
+	const canonTrunc = /Task: (T-\d{8}-\d{3})/.exec(notices.at(-1).message)?.[1];
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-w-808",
+			toolName: "subagent",
+			details: { mode: "single", results: [{ exitCode: 0, outputState: "present" }] },
+			content: [{ type: "text", text: JSON.stringify({
+				...workerReport,
+				taskId: canonTrunc,
+				changedFiles: ["src/parser.ts"],
+				evidence: { ...workerReport.evidence, taskId: canonTrunc, workerRunId: "call-w-808", cwd: `/fixture/${taskTruncId}`, changedPaths: ["src/parser.ts"] },
+			}) }],
+			isError: false,
+		},
+		ctx,
+	);
+
+	await handlers.get("tool_call")(
+		{ toolCallId: "call-r-808", toolName: "subagent", input: { agent: "reviewer", async: true, task: `Review ${canonTrunc}` } },
+		ctx,
+	);
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-r-808",
+			toolName: "subagent",
+			details: { asyncId: runTrunc, runId: runTrunc, asyncDir: "/no-such-dir" },
+			content: [{ type: "text", text: `Async: reviewer [${runTrunc}]\nThe async run is detached and running in the background.` }],
+			isError: false,
+		},
+		ctx,
+	);
+
+	const truncatedReviewNotify = await handlers.get("message_end")({
+		message: {
+			role: "custom",
+			customType: "subagent-notify",
+			content: `Background task completed: **reviewer**\n\n{"taskId":"${canonTrunc}","verdict":"pass"...[preview truncated]\n\nChild runs: ${runTrunc}`,
+			display: "Background task completed: reviewer",
+		},
+	}, ctx);
+	assert.match(truncatedReviewNotify.message.content, /\[PLANNER-ONLY\] Reviewer output for task .* is not a valid ReviewResult/);
+	assert.match(truncatedReviewNotify.message.content, /Re-delegate review with the required ReviewResult JSON shape/);
+	assert.doesNotMatch(truncatedReviewNotify.message.content, /WorkerReport/);
+	assert.doesNotMatch(truncatedReviewNotify.message.content, /repair/);
+}
+
+// Issue 03: Extension hook integration for TaskSpec validation, title alias, and placeholder
+{
+	// 1. Missing objective blocked at tool_call level
+	const promptMissingObj = `\`\`\`json\n{"taskId":"oracle-status-line-01","acceptanceCriteria":["tests pass"],"scope":{"allowedPaths":["src/"]}}\n\`\`\``;
+	const callMissingObj = await handlers.get("tool_call")(
+		{ toolCallId: "call-ext-cb1", toolName: "subagent", input: { agent: "worker", task: promptMissingObj } },
+		ctx,
+	);
+	assert.equal(callMissingObj?.block, true);
+	assert.match(callMissingObj?.reason, /objective must be a non-empty string/);
+
+	// 2. validation.required not boolean blocked at tool_call level
+	const promptInvalidVal = `\`\`\`json\n{"taskId":"oracle-status-line-01","objective":"fix","validation":{"required":"true"}}\n\`\`\``;
+	const callInvalidVal = await handlers.get("tool_call")(
+		{ toolCallId: "call-ext-cb2", toolName: "subagent", input: { agent: "worker", task: promptInvalidVal } },
+		ctx,
+	);
+	assert.equal(callInvalidVal?.block, true);
+	assert.match(callInvalidVal?.reason, /validation\.required must be a boolean/);
+
+	// 3. required validation without commands is blocked before oracle wrapping
+	const promptMissingCommands = `\`\`\`json\n{"taskId":"oracle-status-line-missing-validation","objective":"validate the change","role":"validator","validation":{"required":true}}\n\`\`\``;
+	const callMissingCommands = await handlers.get("tool_call")(
+		{ toolCallId: "call-ext-cb-missing-validation", toolName: "subagent", input: { agent: "oracle", task: promptMissingCommands } },
+		ctx,
+	);
+	assert.equal(callMissingCommands?.block, true);
+	assert.match(callMissingCommands?.reason, /需补充验证定义/);
+
+	// 4. title alias allowed and creates Task
+	const promptTitle = `\`\`\`json\n{"taskId":"oracle-status-line-01","title":"Ext title feature","acceptanceCriteria":["tests pass"]}\n\`\`\``;
+	const callTitle = await handlers.get("tool_call")(
+		{ toolCallId: "call-ext-cb3", toolName: "subagent", input: { agent: "worker", task: promptTitle } },
+		ctx,
+	);
+	assert.equal(callTitle?.block, undefined);
+
+	// 5. Plain text without characteristics creates placeholder Task, tool_result first line announces it
+	const callPlain = await handlers.get("tool_call")(
+		{ toolCallId: "call-ext-cb4", toolName: "subagent", input: { agent: "worker", task: "Just run some checks" } },
+		ctx,
+	);
+	assert.equal(callPlain?.block, undefined);
+	const resPlain = await handlers.get("tool_result")(
+		{
+			toolCallId: "call-ext-cb4",
+			toolName: "subagent",
+			details: { mode: "single", results: [{ exitCode: 0, outputState: "present" }] },
+			content: [{ type: "text", text: "Some plain output from worker." }],
+			isError: false,
+		},
+		ctx,
+	);
+	const firstLinePlain = resPlain.content[0].text.split("\n")[0];
+	assert.match(firstLinePlain, /^\[PLANNER-ONLY\] Placeholder task T-\d{8}-\d{3} created \(parent did not embed a TaskSpec; canonical id: T-\d{8}-\d{3}\)\.$/);
+}
+
+// Issue 04: /planner-only status prints actual model and thinking from details/meta
+{
+	// Clear any active tasks so writer lock is clean
+	while (true) {
+		notices.length = 0;
+		await commands.get("planner-only").handler("task", ctx);
+		const currentTaskNotice = notices.at(-1)?.message;
+		const match = currentTaskNotice?.match(/^Task: (T-\d{8}-\d{3})/m);
+		if (!match) break;
+		await commands.get("planner-only").handler(`task abandon ${match[1]}`, ctx);
+	}
+
+	const taskPrompt = `\`\`\`json\n{"taskId":"T-20260907-stat10","objective":"status test","acceptanceCriteria":["tests pass"]}\n\`\`\``;
+	const callResult = await handlers.get("tool_call")(
+		{ toolCallId: "call-status-cb1", toolName: "subagent", input: { agent: "worker", task: taskPrompt } },
+		ctx,
+	);
+	assert.equal(callResult?.block, undefined, callResult?.reason);
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-status-cb1",
+			toolName: "subagent",
+			details: {
+				mode: "single",
+				results: [{
+					exitCode: 0,
+					outputState: "present",
+					model: "kimi-for-coding:high",
+					thinking: "high",
+					usage: { inputTokens: 100, outputTokens: 50 },
+				}],
+			},
+			content: [{ type: "text", text: "Worker execution complete." }],
+			isError: false,
+		},
+		ctx,
+	);
+
+	notices.length = 0;
+	await commands.get("planner-only").handler("status", ctx);
+	const statusNotice = notices.at(-1)?.message;
+	assert.ok(statusNotice !== undefined);
+	assert.match(statusNotice, /Delegations:/);
+	assert.match(statusNotice, /worker: kimi-for-coding:high \(thinking: high\)/);
+}
+
+{
+	// Issue 05: startup fails when floor env var is set to empty or invalid
+	const savedEnv = process.env.PI_PLANNER_ONLY_FLOOR_BOUNDED_TOOL_HARD;
+	try {
+		process.env.PI_PLANNER_ONLY_FLOOR_BOUNDED_TOOL_HARD = "";
+		assert.throws(() => {
+			plannerOnly({
+				on() {},
+				registerCommand() {},
+				registerTool() {},
+				exec: async () => ({ stdout: "", stderr: "", code: 0 }),
+			});
+		}, /PI_PLANNER_ONLY_FLOOR_BOUNDED_TOOL_HARD is set but empty/);
+
+		process.env.PI_PLANNER_ONLY_FLOOR_BOUNDED_TOOL_HARD = "not-a-number";
+		assert.throws(() => {
+			plannerOnly({
+				on() {},
+				registerCommand() {},
+				registerTool() {},
+				exec: async () => ({ stdout: "", stderr: "", code: 0 }),
+			});
+		}, /is invalid; must be a positive finite number/);
+	} finally {
+		if (savedEnv !== undefined) {
+			process.env.PI_PLANNER_ONLY_FLOOR_BOUNDED_TOOL_HARD = savedEnv;
+		} else {
+			delete process.env.PI_PLANNER_ONLY_FLOOR_BOUNDED_TOOL_HARD;
+		}
+	}
+}
+
+// --------------------------------------------------------------------------
+// Issue 07: Root model with no pricing rate — startup & status warning
+// --------------------------------------------------------------------------
+
+const i07AgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-i07-"));
+try {
+	const i07Probe = spawnSync(
+		process.execPath,
+		[
+			"--input-type=module",
+			"--eval",
+			`import assert from "node:assert/strict";
+			import { mkdirSync, writeFileSync } from "node:fs";
+			import { join } from "node:path";
+			import plannerOnly from ${JSON.stringify(new URL("./index.ts", import.meta.url).href)};
+
+			delete process.env.PI_PLANNER_ONLY_PRICING;
+
+			const agentDir = process.env.PI_CODING_AGENT_DIR;
+			const defaultPricingPath = join(agentDir, "planner-only", "pricing.json");
+			mkdirSync(join(agentDir, "planner-only"), { recursive: true });
+			writeFileSync(defaultPricingPath, JSON.stringify({
+				version: 1,
+				currency: "USD",
+				rates: {
+					"test-priced/has-rate": { input: 1, output: 2, cacheRead: 0.5, cacheWrite: 1.5 },
+					"test-priced/zero-rate": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				},
+			}));
+
+			const WARN_RE = /\\[PLANNER-ONLY\\] Root model/;
+			const frozenLine = (model, path) =>
+				\`[PLANNER-ONLY] Root model \${model} has no rate in \${path}. Root cost will be recorded as unknown and excluded from totals. Set PI_PLANNER_ONLY_PRICING to use another file.\`;
+
+			function makePi() {
+				const handlers = new Map();
+				const commands = new Map();
+				let active = ["read", "bash", "subagent", "write"];
+				const sent = [];
+				return {
+					handlers,
+					commands,
+					sent,
+					pi: {
+						on(name, h) { handlers.set(name, h); },
+						registerCommand(name, def) { commands.set(name, def); },
+						registerTool() {},
+						getActiveTools() { return [...active]; },
+						getAllTools() { return [{ name: "read" }, { name: "bash" }, { name: "write" }, { name: "subagent" }]; },
+						setActiveTools(names) { active = [...names]; },
+						sendMessage(message) { sent.push(message); },
+						async exec() { return { stdout: "", stderr: "", code: 0 }; },
+					},
+				};
+			}
+
+			function makeCtx(model, notices = []) {
+				return {
+					hasUI: true,
+					cwd: process.cwd(),
+					...(model !== undefined ? { model } : {}),
+					ui: {
+						notify(message, type) { notices.push({ message, type }); },
+						setStatus() {},
+						theme: { fg(_c, t) { return t; } },
+					},
+					notices,
+				};
+			}
+
+			// 1. No rate: session_start warns with the frozen line naming the model
+			//    and the resolved default pricing path; status repeats the same line.
+			{
+				const d = makePi();
+				plannerOnly(d.pi);
+				const ctx = makeCtx({ provider: "test-unpriced", id: "no-rate" });
+				await d.handlers.get("session_start")({}, ctx);
+				const expected = frozenLine("test-unpriced/no-rate", defaultPricingPath);
+				const startNotice = ctx.notices.find((n) => WARN_RE.test(n.message));
+				assert.ok(startNotice, "session_start must warn about the unpriced Root model");
+				assert.equal(startNotice.type, "warning");
+				assert.equal(startNotice.message, expected);
+
+				ctx.notices.length = 0;
+				await d.commands.get("planner-only").handler("status", ctx);
+				const statusNotice = ctx.notices.at(-1);
+				assert.ok(
+					statusNotice.message.split("\\n").includes(expected),
+					\`status body must contain the frozen line: \${statusNotice.message}\`,
+				);
+			}
+
+			// 2. Priced model (and a zero-rate model): no warning anywhere.
+			{
+				const d = makePi();
+				plannerOnly(d.pi);
+				for (const model of [
+					{ provider: "test-priced", id: "has-rate" },
+					{ provider: "test-priced", id: "zero-rate" },
+				]) {
+					const ctx = makeCtx(model);
+					await d.handlers.get("session_start")({}, ctx);
+					assert.equal(ctx.notices.some((n) => WARN_RE.test(n.message)), false,
+						\`no startup warning for priced model \${model.id}\`);
+					await d.commands.get("planner-only").handler("status", ctx);
+					assert.equal(ctx.notices.some((n) => WARN_RE.test(n.message)), false,
+						\`no status warning for priced model \${model.id}\`);
+				}
+			}
+
+			// 3. Mid-session switch: start priced, model_select to unpriced, next
+			//    status warns even when the command ctx carries no model.
+			{
+				const d = makePi();
+				plannerOnly(d.pi);
+				assert.equal(d.handlers.has("model_select"), true, "the public model_select event is registered");
+				const ctx = makeCtx({ provider: "test-priced", id: "has-rate" });
+				await d.handlers.get("session_start")({}, ctx);
+				assert.equal(ctx.notices.some((n) => WARN_RE.test(n.message)), false);
+				await d.handlers.get("model_select")({ model: { provider: "test-unpriced", id: "no-rate" } }, ctx);
+				const bareCtx = makeCtx(undefined);
+				await d.commands.get("planner-only").handler("status", bareCtx);
+				const statusNotice = bareCtx.notices.at(-1);
+				assert.ok(
+					statusNotice.message.split("\\n").includes(frozenLine("test-unpriced/no-rate", defaultPricingPath)),
+					\`status after model_select must warn: \${statusNotice.message}\`,
+				);
+			}
+
+			// 4. No ctx.model at all: stay silent.
+			{
+				const d = makePi();
+				plannerOnly(d.pi);
+				const ctx = makeCtx(undefined);
+				await d.handlers.get("session_start")({}, ctx);
+				assert.equal(ctx.notices.some((n) => WARN_RE.test(n.message)), false,
+					"no warning when the host reports no model");
+				await d.commands.get("planner-only").handler("status", ctx);
+				assert.equal(ctx.notices.some((n) => WARN_RE.test(n.message)), false);
+			}
+
+			// 5. PI_PLANNER_ONLY_PRICING override: the warning names the override
+			//    path, and headless delivery goes through sendMessage.
+			{
+				const overridePath = join(agentDir, "override-pricing.json");
+				writeFileSync(overridePath, JSON.stringify({ version: 1, currency: "USD", rates: {} }));
+				process.env.PI_PLANNER_ONLY_PRICING = overridePath;
+				try {
+					const d = makePi();
+					plannerOnly(d.pi);
+					const headlessCtx = {
+						hasUI: false,
+						cwd: process.cwd(),
+						model: { provider: "test-unpriced", id: "no-rate" },
+						ui: { notify() {}, setStatus() {}, theme: { fg(_c, t) { return t; } } },
+					};
+					await d.handlers.get("session_start")({}, headlessCtx);
+					const sentNotice = d.sent.at(-1);
+					assert.ok(sentNotice, "headless warning must use sendMessage");
+					assert.equal(
+						sentNotice.content,
+						frozenLine("test-unpriced/no-rate", overridePath),
+						"the warning names the override pricing path",
+					);
+				} finally {
+					delete process.env.PI_PLANNER_ONLY_PRICING;
+				}
+			}
+
+			console.log("planner-only issue07 root rate warning: PASS");`,
+		],
+		{
+			env: {
+				...process.env,
+				PI_CODING_AGENT_DIR: i07AgentDir,
+				PI_SUBAGENT_CHILD: "0",
+			},
+			encoding: "utf8",
+		},
+	);
+	assert.equal(i07Probe.status, 0, i07Probe.stderr || i07Probe.stdout);
+	assert.match(i07Probe.stdout, /planner-only issue07 root rate warning: PASS/);
+} finally {
+	rmSync(i07AgentDir, { recursive: true, force: true });
+}
+
+// p07-r029: model policy never changes Root write-tool capability.
+{
+	const saved = {
+		flag: process.env.PI_PLANNER_ONLY_ROLE_MODELS,
+		model: process.env.PI_PLANNER_ONLY_MODEL_WORKER,
+		thinking: process.env.PI_PLANNER_ONLY_THINKING_WORKER,
+	};
+	try {
+		process.env.PI_PLANNER_ONLY_ROLE_MODELS = "on";
+		process.env.PI_PLANNER_ONLY_MODEL_WORKER = "policy-test/worker";
+		process.env.PI_PLANNER_ONLY_THINKING_WORKER = "medium";
+		const rootWrite = await handlers.get("tool_call")({ toolName: "write", input: { path: "x" } }, ctx);
+		assert.equal(rootWrite.block, true);
+	} finally {
+		for (const [key, value] of Object.entries({
+			PI_PLANNER_ONLY_ROLE_MODELS: saved.flag,
+			PI_PLANNER_ONLY_MODEL_WORKER: saved.model,
+			PI_PLANNER_ONLY_THINKING_WORKER: saved.thinking,
+		})) {
+			if (value === undefined) delete process.env[key]; else process.env[key] = value;
+		}
+	}
 }
 
 rmSync(isolatedAgentDir, { recursive: true, force: true });
