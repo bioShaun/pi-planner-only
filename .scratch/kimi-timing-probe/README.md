@@ -15,5 +15,7 @@ git branch -D kimi-timing-probe
 | `pi-session/` | 当时 Pi 会话与全部 subagent artifacts（约 2.4MB） |
 | `snapshots/` | 该 Task 的 usage 一行、当时 `settings.json` |
 | `../oracle-status-line/` | 探测用的 spec / 票 / Root prompt |
+| `../planner-only-cost-control/` | 费用控制规格（尚未实施） |
+| `../planner-only-hardening-gaps/` | GLM 那轮实现的两张 leftover 票 + spec |
 
 本分支另有探测 Worker 提交的 `1b103f6`（`/planner-only status` 打印 oracle suite）。若分析后不要这行功能，随分支一起丢掉。
