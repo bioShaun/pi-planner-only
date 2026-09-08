@@ -15,11 +15,11 @@ budget 字样**（`grep -c 'budget\|Budget' src/api/preflight.ts` → 0），它
 
 **Status:** ready-for-planner-prototype —— 派活前 planner 必须先自己跑通一版，证明新 §F 可检验。
 
-- [ ] §F 的断言对象换成 pi-subagents 公开面上**实际存在**的预算契约，或者 §F 被明确标注为上游缺口
+- [x] §F 的断言对象换成 pi-subagents 公开面上**实际存在**的预算契约，或者 §F 被明确标注为上游缺口
       并从发布闸门里按名单豁免（豁免必须写清豁免的是哪一节、为什么、什么条件下解除）。
-- [ ] 不许为了让闸门变绿而放宽工单 26 的守卫（`markContractUnverified` 的闸门分支一个字不动）。
-- [ ] 不带 `PI_PLANNER_ONLY_REQUIRE_CONTRACT` 时 stdout 逐字不变。
-- [ ] 不勾 08/26 的 checkbox、不改它们的 Status、不改 `spec.md`。
+- [x] 不许为了让闸门变绿而放宽工单 26 的守卫（`markContractUnverified` 的闸门分支一个字不动）。
+- [x] 不带 `PI_PLANNER_ONLY_REQUIRE_CONTRACT` 时 stdout 逐字不变。
+- [x] 不勾 08/26 的 checkbox、不改它们的 Status、不改 `spec.md`。
 
 ## Comments
 
@@ -145,3 +145,20 @@ F1 只能证明「宿主的公开工具契约接受我们发的预算字段」�
   §E/§G 的闸门分支与 `markContractUnverified`（工单 26）不得改动。
 
 **Status:** ready-for-agent（下一轮派活；fence 只写 `e2e.pi-subagents.test.mjs`）
+
+## 收尾（2026-09-08，planner claude-pD）
+
+**p14-r064 作废**：先派给 cursor `w2E:pE`，它读完文件后卡在供应商侧（`Error: High Load — We're experiencing high demand for Cursor Grok 4.6`），`git diff` 全空，按 `blocked` 收，同一份工单原样重派为 p14-r065 给 pi `w2E:pG`。
+
+**派活前 planner 自己跑通的原型**（工单 Status 曾要求）：`.scratch/planner-only-cost-control/p14-probe/` 下两个脚本证明了暂存树里能 `import()` 包内 `src/extension/schemas.ts`、拿到 `createSubagentParamsSchema`、形状与本仓库发送的一致，且用本仓库自己的 typebox（1.3.7）去 `Check` 宿主 typebox（1.1.38）产出的 schema 跨版本可行。同时探到一条会诱人写假话的事实：**宿主顶层对象不禁额外属性**，带 `__floorLimits` 的载荷 `Check` 照样返回 `true`——所以工单里明写了不许声称「Check 能挡住内部键泄漏」。
+
+**planner 独立复核**（不采信回执）：四条闸门 + 闸门变量下的 `test:e2e` 全部退出 0；不带闸门变量的 stdout 只剩单独一行 `planner-only pi-subagents E2E: PASS`。另做了执行者没做的一条证明——把内部路径改名成不存在的文件，闸门退出 1 并逐字打出 `FAIL — release gate requires §F contract coverage: 内部 schema 文件不存在: …`，本地不带闸门时退化成「未验证」行而不是静默变绿。这正是本票要的「上游重构变红不变绿」。
+
+**planner 落地前的两处修正**（执行者交付有效但不精确，改在同一轮而不是再开一轮）：
+
+1. 正向 `Check` 原本跑在 `stripDelegationKeys` **之前**，校验的载荷带着 `__floorLimits`，跟真正发出去的那一份不是同一个东西。改成 strip 之后再 `Check`，并在 strip 前加断言「内部键此刻必须在」——否则那条 strip 断言自身可能是空转。两条都给了失败证明：删掉 strip 调用 → `true !== false`（第 359 行）；把「strip 前必须在」改成期望不在 → `the floors seam must set the internal key before the strip`（第 358 行）。
+2. bounded worker 的载荷字面量里混进了 `reportsCount: 1`，那是 `applyRoleDelegation` 的**选项**、不是委派入参，会让「真实载荷」不真实。已删除。
+
+**未做**：F3（起真实子进程证明运行时确实在 `hard` 处停）。用户未选，成本要另行拍板。
+
+round_id=p14-r065

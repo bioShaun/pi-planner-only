@@ -6,8 +6,8 @@
 
 **Status:** ready-for-agent
 
-- [ ] 无任何预算的报告修正委派：宿主实际启动参数含默认 toolBudget.hard 与 usageBudget（真实公开宿主入口验证）。
-- [ ] 无任何预算的 Validator 与 Explorer 委派：同上；实现 Worker 首轮只含默认 usageBudget。
+- [x] 无任何预算的报告修正委派：宿主实际启动参数含默认 toolBudget.hard 与 usageBudget（公开分发包内、有导出符号的模块验证；措辞经用户 2026-09-08 拍板放宽，见文末）。
+- [x] 无任何预算的 Validator 与 Explorer 委派：同上；实现 Worker 首轮只含默认 usageBudget。
 - [x] 调用方给出比默认更严的 usageBudget：生效值是调用方的；TaskSpec budget 比默认更严：生效值是 TaskSpec 的；两者都更宽松：生效值是默认地板。
 - [x] 委派结果说明生效上限及来源。
 - [x] 子进程因工具上限被停止时，Root 收到的结果包含停止原因，Task 状态不停留在 executing。
@@ -32,3 +32,19 @@ Round `p05-r021`: 落地默认 toolBudget / usageBudget 地板。集中配置在
 另注：`npm run test:release` 目前在 §F 未验证的情况下仍退出 0，与文件头 C01 的承诺不符 —— 已另开工单 26，本票不动。
 
 round_id=claude-pD-2026-09-08-note-05
+
+2026-09-08（planner claude-pD）：**第 1、2 条勾上，靠的是用户拍板的 F1，不是宿主新开了公开入口。**
+
+用户 2026-09-08 就工单 36 拍板走 F1：断言 pi-subagents **公开分发包内、有导出符号、但不在 `exports` 映射里**的模块 `src/extension/schemas.ts`，并把本票这两条的「真实公开宿主入口验证」放宽为「公开分发包内、有导出符号的模块验证」。原措辞在 pi-subagents 0.66.0 下不可满足——14 个 `exports` 子路径没有一个能到达委派参数 schema。
+
+p14-r065（pi `w2E:pG` 落地，planner 复跑核验并自行修正后提交 `a89c2ca`）之后，§F 实际证明了：
+
+1. 宿主的委派工具参数 schema **确实声明**了 `toolBudget`（`hard` 必填、整数、`minimum: 1`、禁额外键）与 `usageBudget`（`tokens` / `costUsd` 各自 `hard` 必填、数值、`exclusiveMinimum: 0`、两层都禁额外键）——即宿主**接受**每次委派带的预算参数；
+2. 由本插件 `applyRoleDelegation` 真造出来的 validator 载荷与 bounded worker 载荷（`toolBudget.hard=20`、`tokens.hard=40000`、`costUsd.hard=0.1`），在 `stripDelegationKeys` 之后、也就是**真正发出去的那个状态**下，通过宿主 schema 的 `Check`；四条否定用例（缺 `hard`／`hard=0`／`tokens` 缺 `hard`／多未知键）全部被拒；
+3. 上游把这个内部路径挪走或改形状时，闸门**变红而不是变绿**：planner 把路径改名后 `PI_PLANNER_ONLY_REQUIRE_CONTRACT=1 npm run test:e2e` 退出 1 并逐字打出 `FAIL — release gate requires §F contract coverage: 内部 schema 文件不存在: …`。
+
+**仍未证明（不要读成已闭合）**：子进程运行时是否真的在 `hard` 处被宿主停下来。那需要一次真实子进程运行去读它收到的启动参数并跑到上限，要花模型钱，用户当时没选（工单 36 里的 F3），本轮不做。本票这两条按「宿主接受该参数形状」计，不按「运行时强制执行已验证」计。
+
+`npm run test:release` 从 §F 的红转绿；§E / §G 的闸门分支与 `markContractUnverified`（工单 26）一字未动。
+
+round_id=p14-r065
