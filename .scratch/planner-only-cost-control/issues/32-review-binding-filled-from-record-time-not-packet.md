@@ -19,20 +19,20 @@
 
 **Blocked by:** None（源码在 `p12-r054` 收口后的工作区 / 重提交后的 HEAD）。
 
-**Status:** ready-for-agent
+**Status:** done（2026-09-08 p13-r062 由 cursor `w2E:pE` 落地，planner 独立复跑核验通过）
 
-- [ ] 补齐的取值来源改为 reviewer 实际收到的那份 ReviewRequest（委派记录里已有 `request`，
+- [x] 补齐的取值来源改为 reviewer 实际收到的那份 ReviewRequest（委派记录里已有 `request`，
       见 `roles.ts:350-351`）；取不到包时**不得**退回用记录时的值静默补齐，
       要么按现有 pass 缺失校验拒收，要么在回执里说明为什么退回是安全的。
-- [ ] 新增用例：委派时 revision 为 N、记录时 Task 已有 revision N+1 的情况下，
+- [x] 新增用例：委派时 revision 为 N、记录时 Task 已有 revision N+1 的情况下，
       一份**不含绑定字段**的 pass 不得被记成 N+1。因为现有的一 Task 一委派锁挡住了这条路，
       用例要么直接调用补齐函数与校验（绕开委派锁），要么显式构造两条并存的委派；
       **不许为了让用例可达而放松锁本身**。
-- [ ] `review.ts` 里 `bindReviewResultFromRequest` 的注释与实际取值来源一致。
-- [ ] 工单 27 落地的行为逐字不变：合同字段 pass 仍能走到 `completed`
+- [x] `review.ts` 里 `bindReviewResultFromRequest` 的注释与实际取值来源一致。
+- [x] 工单 27 落地的行为逐字不变：合同字段 pass 仍能走到 `completed`
       （`index.test.mjs` 末尾那条端到端一行不改仍绿），两条 mismatch 分支仍拒收，
       `orchestrate.test.mjs` 里 T-20260905-996 / 997 一行不改仍绿。
-- [ ] 不勾 08 checkbox、不改 08 Status、不改 `spec.md`。
+- [x] 不勾 08 checkbox、不改 08 Status、不改 `spec.md`。
 
 ## Comments
 
@@ -119,3 +119,43 @@ await orch.beginDelegation({ toolCallId: "call-t8-4r", input: probeInput }, BASE
 **不许**为了让 998 继续绿而保留记录时退路，也**不许**把 998 删掉了事。
 
 round_id=claude-pD-2026-09-08-verify-32
+
+---
+
+## 2026-09-08 p13-r062 落地 + planner 独立核验
+
+执行者 cursor `w2E:pE`，改动 `orchestrate.ts` / `review.ts` / `orchestrate.test.mjs`（+72/−16）。
+
+实现：`DelegationRecord` 新增 `packetBinding`（`{ reportRevision, workspaceDigest? }`，注释写明是
+「reviewer 实际收到的那份包里的绑定」）；`beginDelegation` 在存委派记录时把 `packet` 的绑定一并存下；
+`handleReviewerResult` 里把原来的 `expectedBinding` 拆成两个用途明确的东西 ——
+**补齐**用 `record.packetBinding`，**校验**仍用记录时的 `currentBinding`
+（`task.reports.length` / `task.snapshot.digest`）。没有可用包绑定时 `boundReview = review`，
+**不补齐**，交给原有缺失校验拒收。`review.ts` 的注释同步改成「caller 必须传包绑定，不得传记录时值」。
+
+**planner 逐条复跑（不认口述）：**
+
+| 条款 | 复跑 | 结果 |
+|---|---|---|
+| 1 补齐取包、取不到不得静默退回 | 读 diff：`hasPacketBinding` 为假时直接 `boundReview = review` | ✅ 无记录时退路 |
+| 2 新用例：包 N、记录时 N+1，省略绑定的 pass 不得记成 N+1 | 把改后的 `orchestrate.test.mjs` 拷进 HEAD 的 detached worktree 单跑 | **RED 复现**：exit 1，`did not match /reportRevision mismatch/`，旧代码把它盖成 `completed` |
+| 3 `review.ts` 注释与取值来源一致 | 读 diff | ✅ |
+| 4 工单 27 行为不变；996/997/999 一行不改 | `git diff orchestrate.test.mjs` 只有 998 那一处与新增块；`index.test.mjs` 未出现在 `git status` | ✅ 全绿 |
+| 5 不动其他票／spec | `git status --porcelain` 只有 `orchestrate.ts`／`review.ts`／`orchestrate.test.mjs` 三个 M | ✅ |
+
+闸门：`typecheck` 0、`npm test` 0、`npm run test:e2e` 0（仍打印 §F 未验证 + `PASS`）、`git diff --check` 0。
+slot 预检记在 `.scratch/planner-only-cost-control/p13-r062-planner-verify-slot.log`：
+`slot audit` 报 `postsort`（RSS 12.0G）绕过 slot，**未终止**。
+
+**planner 落地时改了执行者的一处措辞（已复跑全绿）：** 无包时的拒收回执原本写成一句中文
+「这次委派没有可用的 ReviewRequest 绑定，请重新委派 review」，夹在一段全英文的回执里，而且
+丢了 taskId。改成
+`This delegation carries no usable ReviewRequest binding, so omitted bindings were not filled. Re-delegate review for task <id> so the reviewer receives the current ReviewRequest.`
+语义不变，与相邻两行同语言、同样带上任务号。没有任何测试断言过那句中文。
+
+**留痕：** 996/997 这类直调 `beginDelegation` 的单测委派里没有包，它们的拒收回执现在走的是
+上面这句「无可用绑定」的分支（断言只匹配 `reportRevision mismatch` / `workspaceDigest mismatch`，
+所以仍绿）。生产路径不受影响 —— `index.ts:895` 先 `prepareRoleDelegation` 再 `beginDelegation`，
+包必然存在且带 `reportRevision`。
+
+round_id=p13-r062

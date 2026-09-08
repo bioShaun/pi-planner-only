@@ -215,10 +215,12 @@ export function validateReviewResultBinding(
 }
 
 /**
- * Ticket 27 — fill omitted FR-03/D09 bindings from the ReviewRequest the
- * reviewer was shown, immediately before validate-and-record. Explicit values
- * are kept so a mismatch still refuses. workspaceDigest is only filled when
- * the packet carried one (no bound snapshot → leave omitted).
+ * Ticket 27 / 32 — fill omitted FR-03/D09 bindings from `expected`, which the
+ * caller must take from the ReviewRequest packet this reviewer was shown
+ * (DelegationRecord.packetBinding). Do not pass the Task's record-time
+ * revision/digest: that would stamp a stale omitted pass as current. Explicit
+ * values are kept so a mismatch still refuses. workspaceDigest is only filled
+ * when the packet carried one (no bound snapshot → leave omitted).
  */
 export function bindReviewResultFromRequest(
 	review: ReviewResult,

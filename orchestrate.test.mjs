@@ -2906,10 +2906,9 @@ function realGitRunnerOf(dir) {
 	const taskId = "T-20260905-998";
 	await delegateWorker(orch, "call-t8-4", taskId);
 	await orch.handleSubagentResult(workerResult("call-t8-4", reportFor(taskId, "call-t8-4")));
-	await orch.beginDelegation(
-		{ toolCallId: "call-t8-4r", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) } },
-		BASE,
-	);
+	const probeInput = { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) };
+	await orch.prepareRoleDelegation(probeInput);
+	await orch.beginDelegation({ toolCallId: "call-t8-4r", input: probeInput }, BASE);
 	const unbound = await orch.handleSubagentResult({
 		toolCallId: "call-t8-4r",
 		toolName: "subagent",
@@ -2938,6 +2937,41 @@ function realGitRunnerOf(dir) {
 	assert.match(outcome.content[0].text, /decision: accept/);
 	assert.equal(orch.store.require(taskId).state, "completed");
 	assert.equal(orch.store.require(taskId).reviews.at(-1).reportRevision, 1);
+}
+
+// Ticket 32 — an omitted-binding pass must fill from the ReviewRequest the
+// reviewer was shown (revision N), not from the Task at record time (N+1).
+// The one-task-one-delegation lock would drop the reviewer if a second worker
+// began, so the newer report is injected on the store while the reviewer record
+// stays live. The lock itself is not relaxed.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-032";
+	await delegateWorker(orch, "call-t32-w1", taskId);
+	await orch.handleSubagentResult(workerResult("call-t32-w1", reportFor(taskId, "call-t32-w1")));
+	assert.equal(orch.store.require(taskId).reports.length, 1);
+
+	const reviewerInput = { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) };
+	await orch.prepareRoleDelegation(reviewerInput);
+	await orch.beginDelegation({ toolCallId: "call-t32-r", input: reviewerInput }, BASE);
+
+	orch.store.recordReport(taskId, reportFor(taskId, "call-t32-w2"));
+	const snap = orch.store.require(taskId).snapshot;
+	assert.ok(snap, "the N report left a bound snapshot");
+	orch.store.setSnapshot(taskId, { ...snap, reportRevision: 2 });
+	assert.equal(orch.store.require(taskId).reports.length, 2);
+
+	const unbound = await orch.handleSubagentResult({
+		toolCallId: "call-t32-r",
+		toolName: "subagent",
+		input: {},
+		content: [{ type: "text", text: JSON.stringify({ taskId, verdict: "pass", summary: "unbound pass over N", evidenceFresh: true, findings: [] }) }],
+		isError: false,
+	});
+	assert.ok(unbound, "the reviewer result is consumed, not dropped");
+	assert.match(unbound.content[0].text, /reportRevision mismatch/);
+	assert.equal(orch.store.require(taskId).reviews.length, 0, "the omitted pass is not stamped as N+1");
+	assert.equal(orch.store.require(taskId).state, "reviewing", "the Task does not complete");
 }
 
 // --------------------------------------------------------------------------

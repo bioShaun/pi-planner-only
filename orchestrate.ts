@@ -245,6 +245,12 @@ export interface DelegationRecord {
 	lockedAt?: string;
 	/** The ReviewRequest packet this reviewer invocation carries was truncated; a PASS over it is ineligible. */
 	packetTruncated?: boolean;
+	/**
+	 * Bindings from the ReviewRequest packet this reviewer actually received.
+	 * Used only to fill omitted ReviewResult fields; validation still compares
+	 * against the Task at record time.
+	 */
+	packetBinding?: { reportRevision: number; workspaceDigest?: string };
 	contextOverridden?: boolean;
 	reuseReason?: string;
 	floorLimits?: EffectiveLimits;
@@ -719,6 +725,12 @@ export class PlannerOrchestrator {
 			const packet = extractReviewRequest(delegationPrompt(input));
 			const packetTruncated = packet?.evidencePacket?.patchTruncated === true
 				|| (packet?.evidencePacket?.patchOmittedPaths?.length ?? 0) > 0;
+			const packetBinding = packet !== undefined && typeof packet.reportRevision === "number"
+				? {
+					reportRevision: packet.reportRevision,
+					...(packet.workspaceDigest !== undefined ? { workspaceDigest: packet.workspaceDigest } : {}),
+				}
+				: undefined;
 			this.delegations.set(event.toolCallId, {
 				taskId,
 				kind: "reviewer",
@@ -726,6 +738,7 @@ export class PlannerOrchestrator {
 				...(isExplicitAsyncFalse(input) ? { asyncExplicitFalse: true } : {}),
 				...(inputAgent(input) ? { agent: inputAgent(input) } : {}),
 				...(packetTruncated ? { packetTruncated: true } : {}),
+				...(packetBinding ? { packetBinding } : {}),
 				...(contextOverridden ? { contextOverridden: true } : {}),
 				...(reuseOutcome?.reason ? { reuseReason: reuseOutcome.reason } : {}),
 				...(floorLimits ? { floorLimits } : {}),
@@ -1803,16 +1816,21 @@ export class PlannerOrchestrator {
 
 		// FR-03 / D09 — the verdict is bound to the report revision and the
 		// workspace snapshot digest it reviewed. A stale PASS cannot complete a
-		// Task that has a newer report. Ticket 27: omitted bindings are filled
-		// from the ReviewRequest this reviewer was shown; an explicit mismatch
-		// is still refused. HEAD/status hashes are not a substitute: a missing
-		// bound snapshot is unknown, never a digest of porcelain.
-		const expectedBinding = {
+		// Task that has a newer report. Ticket 27/32: omitted bindings are filled
+		// from the ReviewRequest this reviewer was shown (persisted on the
+		// DelegationRecord); validation still compares against the Task at
+		// record time. A missing packet is not filled from record-time values.
+		const currentBinding = {
 			reportRevision: task.reports.length,
 			...(task.snapshot ? { workspaceDigest: task.snapshot.digest } : {}),
 		};
-		const boundReview = bindReviewResultFromRequest(review, expectedBinding);
-		const bindingErrors = validateReviewResultBinding(boundReview, expectedBinding);
+		const packetBinding = record?.packetBinding;
+		const hasPacketBinding = packetBinding !== undefined
+			&& typeof packetBinding.reportRevision === "number";
+		const boundReview = hasPacketBinding
+			? bindReviewResultFromRequest(review, packetBinding)
+			: review;
+		const bindingErrors = validateReviewResultBinding(boundReview, currentBinding);
 		if (bindingErrors.length > 0) {
 			return {
 				content: [{
@@ -1820,7 +1838,9 @@ export class PlannerOrchestrator {
 					text: [
 						`[PLANNER-ONLY] Reviewer verdict was rejected: ${bindingErrors.join("; ")}.`,
 						"The verdict was not recorded and no task state changed.",
-						`Re-delegate review for task ${task.taskId} so the reviewer receives the current ReviewRequest.`,
+						hasPacketBinding
+							? `Re-delegate review for task ${task.taskId} so the reviewer receives the current ReviewRequest.`
+							: `This delegation carries no usable ReviewRequest binding, so omitted bindings were not filled. Re-delegate review for task ${task.taskId} so the reviewer receives the current ReviewRequest.`,
 						"",
 						truncate(text, RAW_OUTPUT_FALLBACK_CHARS),
 					].join("\n"),
