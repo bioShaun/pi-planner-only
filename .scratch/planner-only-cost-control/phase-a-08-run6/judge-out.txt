@@ -1,0 +1,216 @@
+
+===== C1 strict mode + review mode =====
+$ cat '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/env.txt'
+cwd=/home/tcuni-claw/pi/pi-planner-only-phase-a-08-r6
+pi=/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/pi
+PI_CODING_AGENT_DIR=/home/tcuni-claw/pi/pi-planner-only-phase-a-08-r6/.agent-dir
+PI_PLANNER_ONLY=1
+PI_PLANNER_ONLY_REQUIRE_CONTRACT=0
+PI_PLANNER_ONLY_REQUIRE_REVIEW=1
+HEAD=9027d8fae85e162d8f7d96d3545ddd46dbc00fa1
+branch=phase-a-08-rerun-6
+CLI_MODEL=kimi-coding/kimi-for-coding
+PLUGIN=/home/tcuni-claw/pi/pi-planner-only
+PLUGIN_HEAD=0158a1bc6a131c6370118a02e9d856f8963867ac
+[exit=0]
+$ grep -c 'review mode: root' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/artifacts/root-session.jsonl'
+0
+[exit=1]
+$ grep -c 'review mode: fresh' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/artifacts/root-session.jsonl'
+2
+[exit=0]
+
+===== C2 planner_verdict PASS / usage last state =====
+$ grep -o 'planner_verdict[^"]*' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/artifacts/root-session.jsonl' | sort | uniq -c
+      2 planner_verdict
+      1 planner_verdict refused: Task T-20260908-001 is already completed; verdicts are final. Start a new Task with a new TaskSpec for further work.
+      1 planner_verdict tool: {verdict, summary, findings?}.\nA fresh reviewer is expected: delegate the review first; call planner_verdict only to arbitrate its result.\nLimits: usageBudget.tokens.hard=100000 (floor), usageBudget.costUsd.hard=0.5 (floor)\nReport normalised: evidence.workerRunId missing → tool_1Ti2EEkFHJo3IG5lwYZ668c4; taskId 01-status-oracle-suite → T-20260908-001\n\n[PLANNER-ONLY WORKER REPORT]\ntaskId: T-20260908-001\nstatus: completed\nstate: reviewing\nround: 0/3\nreview mode: fresh\nevidence: fresh (attributed 2 paths)\n\nSummary: `/planner-only status` now prints `Oracle suite: bounded|full` sourced from oracleSuiteMode() in roles.ts. index.ts gains a roles.ts import and one extra lines.push after the Usage log line. U-5 status block in index.test.mjs extended with default-env (bounded) and PI_PLANNER_ONLY_ORACLE=full assertions, restoring the env var after. Committed as fd786ad on phase-a-08-rerun-6, no push; .scratch/ left untracked.\n\nChanged files (2):\n- index.ts\n- index.test.mjs\n\nValidation:\n- [passed] test: node --experimental-strip-types index.test.mjs exit 0 — planner-only extension: PASS\n- [passed] test: npm run typecheck exit 0 — tsc --noEmit clean\n\nEvidence ref (Worker declaration; Root A-to-C attribution is in the comparison):\n  cwd: undefined\n  run: tool_1Ti2EEkFHJo3IG5lwYZ668c4\n  base: (none)\n  head: fd786ad3c165990723e9c2f86f731f58e345a81d\n  statusHash: 8707c772ebadb44b\n  workspaceDigest: 4f53cda18c2baa0c\n\nRisks: (none)\n\nUnresolved: (none)
+      1 planner_verdict.
+      1 planner_verdict: pass.
+      1 planner_verdict` refused as final (no further action needed)\n- **Commit:** `fd786ad` \
+      1 planner_verdict`.\n- Worker may commit on the current branch `kimi-timing-probe`. Do not push. Leave `.scratch/` untracked.\n- Stop when the task is PASS or BLOCKED. Then summarize: taskId, verdict, commit hash if any, and that the run is done.\n\nWhen finished, reply with a short recap only.\n\n</file>\n
+[exit=0]
+$ grep -o '"verdict":"[a-z_]*"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/artifacts/root-session.jsonl' | sort | uniq -c
+      2 "verdict":"pass"
+[exit=0]
+$ python3 - <<'PY'
+import json
+for r in (json.loads(l) for l in open('/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/artifacts/usage.jsonl') if l.strip()):
+    print({k: r.get(k) for k in ('taskId','state','rounds','rootModel','finishedAt','incomplete','unattributed')})
+PY
+{'taskId': 'T-20260908-001', 'state': 'completed', 'rounds': 0, 'rootModel': 'kimi-for-coding', 'finishedAt': '2026-09-08T04:58:46.917Z', 'incomplete': None, 'unattributed': None}
+{'taskId': 'unbound-explorer-tool_p8hiRjFeOSGigk0wAkKzeZZr', 'state': None, 'rounds': 0, 'rootModel': None, 'finishedAt': '2026-09-08T04:59:01.538Z', 'incomplete': True, 'unattributed': True}
+[exit=0]
+$ cat '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/exit.txt'
+exit_code=0
+[exit=0]
+
+===== C3 oracle ran =====
+$ python3 -c 'import json,glob,sys; print(sum(json.load(open(f)).get("agent") in ("oracle","validator") for f in glob.glob(sys.argv[1])))' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/artifacts/subagent-artifacts/*_meta.json'
+1
+[exit=0]
+
+===== C4 reviewer ran =====
+$ python3 -c 'import json,glob,sys; print(sum(json.load(open(f)).get("agent") in ("reviewer","explorer") for f in glob.glob(sys.argv[1])))' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/artifacts/subagent-artifacts/*_meta.json'
+1
+[exit=0]
+
+===== C5 ReviewResult produced by that reviewer's _output.md =====
+
+--- /home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/artifacts/subagent-artifacts/2b609a71-a184-4b41-90df-57599afc42ea_reviewer_0_output.md ---
+$ grep -c '"verdict"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/artifacts/subagent-artifacts/2b609a71-a184-4b41-90df-57599afc42ea_reviewer_0_output.md'
+1
+[exit=0]
+$ grep -c '"findings"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/artifacts/subagent-artifacts/2b609a71-a184-4b41-90df-57599afc42ea_reviewer_0_output.md'
+1
+[exit=0]
+$ head -60 '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/artifacts/subagent-artifacts/2b609a71-a184-4b41-90df-57599afc42ea_reviewer_0_output.md'
+## Review
+
+**Verification performed:**
+
+1. **Status output change (index.ts:920)** — `lines.push(`Oracle suite: ${oracleSuiteMode()}`)` added immediately after the `Usage log:` line inside the `status` action handler. All pre-existing lines (mode/source, Environment/Marker, Usage log) are untouched. Import added at index.ts:18 (`import { oracleSuiteMode } from "./roles.ts"`).
+
+2. **Source function (roles.ts:51-53)** — `oracleSuiteMode()` returns `"full"` only when `PI_PLANNER_ONLY_ORACLE` (trimmed, lowercased) equals `"full"`, otherwise `"bounded"`. Matches the acceptance criteria exactly.
+
+3. **Tests (index.test.mjs:1697-1711)** — New assertions placed directly after the existing U-5 status assertions (`Usage log: ... usage\.jsonl \(enabled\)`). Covers default-env (`delete process.env.PI_PLANNER_ONLY_ORACLE` → `Oracle suite: bounded`) and `PI_PLANNER_ONLY_ORACLE = "full"` → `Oracle suite: full`. The env var is saved and restored afterward (with undefined-vs-set branching), so no test pollution.
+
+4. **Git evidence** — Head `fd786ad3...` matches `workerReport.evidence.finalGitRef`; `diffCheck` and `diffCheckStaged` exit 0; status shows only untracked `.agent-dir/`, `.scratch/oracle-status-line/`, `.scratch/phase-a-08-session/` (`.scratch/` left untracked as required). Patch is complete: `patchReturnedFiles` 2 / `patchTotalFiles` 2, not truncated, no omitted paths. Changed files match `workerReport.changedFiles` exactly.
+
+No scope creep, no unrelated edits, no issues found.
+
+```json
+{"taskId":"T-20260908-001","verdict":"pass","summary":"All acceptance criteria verified from source: index.ts status handler emits `Oracle suite: bounded|full` via oracleSuiteMode() from roles.ts, placed after the Usage log line with all existing status lines unchanged; U-5 status block in index.test.mjs extended with default-env and PI_PLANNER_ONLY_ORACLE=full assertions with env restore; patch complete (2/2 files, untruncated); head matches worker evidence and .scratch/ remains untracked. No issues found.","evidenceFresh":true,"findings":[]}
+```[exit=0]
+
+===== C6 evidence attribution > 0 =====
+$ grep -o 'attributed [0-9]* path' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/artifacts/root-session.jsonl' | tail -1
+attributed 2 path
+[exit=0]
+$ grep -o 'attributed [0-9]* path' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/artifacts/root-session.jsonl' | sort | uniq -c
+      3 attributed 2 path
+[exit=0]
+
+===== C7 no placeholder task =====
+$ grep -c 'Placeholder task' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/artifacts/root-session.jsonl'
+0
+[exit=1]
+
+===== C8 no WorkerReport parse error =====
+$ grep -c 'not a valid WorkerReport' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/artifacts/root-session.jsonl'
+0
+[exit=1]
+
+===== C9 validator delegated at most once / async waits =====
+$ grep -o '"agent": "[a-z]*"' /home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/artifacts/subagent-artifacts/*_meta.json | sed 's#.*/##' | cut -d: -f2- | sort | uniq -c
+      1 "agent": "oracle"
+      1 "agent": "reviewer"
+      1 "agent": "scout"
+      1 "agent": "worker"
+[exit=0]
+$ grep -o 'Async delegation for task [^ ]* has started' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/artifacts/root-session.jsonl' | sort | uniq -c
+      1 Async delegation for task unbound-explorer-tool_p8hiRjFeOSGigk0wAkKzeZZr has started
+[exit=0]
+$ grep -o 'bg_wait id=[0-9a-f-]*' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/artifacts/root-session.jsonl' | sort | uniq -c
+      1 bg_wait id=1fd32313-a63b-43d1-ada8-29b12a20a1c9
+[exit=0]
+$ grep -o 'bg_wait[^"]\{0,60\}' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/artifacts/root-session.jsonl' | head -20
+bg_wait` until the child finishes before the next step.\n- After th
+bg_wait id=1fd32313-a63b-43d1-ada8-29b12a20a1c9; bg_wait without an
+bg_wait
+bg_wait
+[exit=0]
+
+===== C10 worktree clean =====
+$ git -C '/home/tcuni-claw/pi/pi-planner-only-phase-a-08-r6' status --porcelain
+?? .agent-dir/
+?? .scratch/oracle-status-line/
+?? .scratch/phase-a-08-session/
+[exit=0]
+
+===== C11 turns per delegation =====
+$ python3 - <<'PY'
+import json,glob,os
+for m in sorted(glob.glob('/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/artifacts/subagent-artifacts/*_meta.json')):
+    d=json.load(open(m))
+    u=d.get('usage',{})
+    print(os.path.basename(m), d.get('agent'), 'turns=%s'%u.get('turns'), 'cost=%s'%u.get('cost'), 'exit=%s'%d.get('exitCode'), 'error' if 'error' in d else '')
+PY
+1fd32313-a63b-43d1-ada8-29b12a20a1c9_scout_meta.json scout turns=9 cost=0.03440106 exit=0 
+2b609a71-a184-4b41-90df-57599afc42ea_reviewer_0_meta.json reviewer turns=3 cost=0.0136283 exit=0 
+8e6d03ee-ad26-4a35-820c-fdf321d0ba6d_worker_0_meta.json worker turns=12 cost=0.06921572 exit=0 
+e67b0831-6b24-49b7-9e5d-687c287004e6_oracle_0_meta.json oracle turns=7 cost=0.023338209999999998 exit=0 
+[exit=0]
+
+===== C12 comparison.md exists =====
+$ test -f '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/comparison.md'; echo present=$?
+present=0
+[exit=0]
+
+===== C13 slot preflight recorded =====
+$ head -20 '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/slot-preflight.txt'
+=== slot audit  2026-09-08T12:51:20+08:00 ===
+PID      RSS         CPU%  COMM             状态
+3917509     48.6G   1863  pbbwa            << 绕过了 slot
+
+=== slot status 2026-09-08T12:51:21+08:00 ===
+=== heavy.slice 资源用量 ===
+  内存 8.6G 已用 / 64.0G 软限 / 76.0G 硬顶   swap上限 0.0G   进程 220   CPU权重 50
+
+=== 池 io（6 槽）===
+132  finished   /project/tmp/slot/ts-out.xmWKHw 0        43314.97/329.84/614.73 [pea-core64-resume]/home/tcuni-claw/.local/share/slot/jobs/1788232064-441295-2575.sh
+143  finished   /project/tmp/slot/ts-out.AI7oe6 0        24096.24/134.88/266.68 [pea-core64-resume2]/home/tcuni-claw/.local/share/slot/jobs/1788326662-3074987-23150.sh
+158  finished   /project/tmp/slot/ts-out.WOm3gz 0        12.89/8.98/3.87 [dmel-idrename]/home/tcuni-claw/.local/share/slot/jobs/1788386064-216892-12497.sh
+159  finished   /project/tmp/slot/ts-out.N2pXF8 0        165.31/137.99/25.21 [dmel-gffrepair]/home/tcuni-claw/.local/share/slot/jobs/1788386283-219264-27717.sh
+157  finished   /project/tmp/slot/ts-out.P4r1cj -1       11467.93/0.00/0.00 [dmel-merge]/home/tcuni-claw/.local/share/slot/jobs/1788385121-208527-30662.sh
+173  finished   /project/tmp/slot/ts-out.pIN6UC 0        827.76/6.40/9.99 [pea-core64-1468-resume]/home/tcuni-claw/.local/share/slot/jobs/1788450823-2685441-13225.sh
+174  finished   /project/tmp/slot/ts-out.mqbDfo 0        6645.84/714.55/42.12 [pea-core64-1468-final-resume]/home/tcuni-claw/.local/share/slot/jobs/1788491845-3257424-4088.sh
+178  finished   /project/tmp/slot/ts-out.r4Pl7K 8        10302.64/29.76/61.29 [barley-prjeb80159-vcf]/home/tcuni-claw/.local/share/slot/jobs/1788503127-3477033-14788.sh
+184  finished   /project/tmp/slot/ts-out.I3ci1A 1        10.03/11.52/0.45 [peanut-t010-sensitivity]/home/tcuni-claw/.local/share/slot/jobs/1788513731-3703669-29120.sh
+188  finished   /project/tmp/slot/ts-out.lkLuc1 1        6.37/8.27/0.34 [peanut-t010-sensitivity-r003]/home/tcuni-claw/.local/share/slot/jobs/1788515050-3732847-16393.sh
+191  finished   /project/tmp/slot/ts-out.kpHt8w 0        35.95/41.70/1.58 [peanut-t010-sensitivity-r004]/home/tcuni-claw/.local/share/slot/jobs/1788516192-3770035-17841.sh
+[exit=0]
+
+===== C14 ledger consistency =====
+$ python3 - <<'PY'
+import json,glob,os
+rows=[json.loads(l) for l in open('/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/artifacts/usage.jsonl') if l.strip()]
+# Ticket 35 shutdown flush can add a second (unattributed) row; the ledger is
+# the union of every row's children, not just the last line's.
+ledger={c.get('runId') for r in rows for c in r.get('children',[]) if c.get('runId')}
+metas={}
+for m in glob.glob('/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run6/artifacts/subagent-artifacts/*_meta.json'):
+    d=json.load(open(m)); metas[d['runId']]=(d.get('agent'), d.get('usage',{}).get('cost'))
+mset=set(metas)
+print('ledger runIds (%d):'%len(ledger)); [print('  ',r) for r in sorted(ledger)]
+print('meta runIds (%d):'%len(mset)); [print('  ',r,metas[r]) for r in sorted(mset)]
+print('meta - ledger:', sorted(mset-ledger))
+print('ledger - meta:', sorted(ledger-mset))
+print('EQUAL:', mset==ledger)
+missing=sum(metas[r][1] or 0 for r in (mset-ledger))
+print('unrecorded cost: %.8f'%missing)
+for r in rows:
+    print('row', r['taskId'], 'state=', r.get('state'), 'incomplete=', r.get('incomplete'),
+          'unattributed=', r.get('unattributed'), 'rootCostUsd=', r.get('root',{}).get('costUsd'),
+          'children=', [(c.get('agent'), c.get('costUsd')) for c in r.get('children',[])])
+total=sum(r.get('root',{}).get('costUsd') or 0 for r in rows)+sum(c.get('costUsd') or 0 for r in rows for c in r.get('children',[]))
+print('ledger total cost: %.8f'%total)
+PY
+ledger runIds (4):
+   1fd32313-a63b-43d1-ada8-29b12a20a1c9
+   2b609a71-a184-4b41-90df-57599afc42ea
+   8e6d03ee-ad26-4a35-820c-fdf321d0ba6d
+   e67b0831-6b24-49b7-9e5d-687c287004e6
+meta runIds (4):
+   1fd32313-a63b-43d1-ada8-29b12a20a1c9 ('scout', 0.03440106)
+   2b609a71-a184-4b41-90df-57599afc42ea ('reviewer', 0.0136283)
+   8e6d03ee-ad26-4a35-820c-fdf321d0ba6d ('worker', 0.06921572)
+   e67b0831-6b24-49b7-9e5d-687c287004e6 ('oracle', 0.023338209999999998)
+meta - ledger: []
+ledger - meta: []
+EQUAL: True
+unrecorded cost: 0.00000000
+row T-20260908-001 state= completed incomplete= None unattributed= None rootCostUsd= 0.015696389999999998 children= [('worker', 0.06921572), ('oracle', 0.023338209999999998), ('reviewer', 0.0136283)]
+row unbound-explorer-tool_p8hiRjFeOSGigk0wAkKzeZZr state= None incomplete= True unattributed= True rootCostUsd= None children= [('scout', 0.03440106)]
+ledger total cost: 0.15627968
+[exit=0]

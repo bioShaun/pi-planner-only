@@ -1,0 +1,5 @@
+Implemented the `Oracle suite:` status line.
+
+```json
+{"version":1,"taskId":"01-status-oracle-suite","status":"completed","summary":"`/planner-only status` now prints `Oracle suite: bounded|full` sourced from oracleSuiteMode() in roles.ts. index.ts gains a roles.ts import and one extra lines.push after the Usage log line. U-5 status block in index.test.mjs extended with default-env (bounded) and PI_PLANNER_ONLY_ORACLE=full assertions, restoring the env var after. Committed as fd786ad on phase-a-08-rerun-6, no push; .scratch/ left untracked.","changedFiles":["index.ts","index.test.mjs"],"validation":[{"command":"node --experimental-strip-types index.test.mjs","type":"test","status":"passed","exitCode":0,"summary":"planner-only extension: PASS"},{"command":"npm run typecheck","type":"test","status":"passed","exitCode":0,"summary":"tsc --noEmit clean"}],"evidence":{"taskId":"01-status-oracle-suite","commit":"fd786ad","branch":"phase-a-08-rerun-6"},"risks":[],"unresolved":[]}
+```

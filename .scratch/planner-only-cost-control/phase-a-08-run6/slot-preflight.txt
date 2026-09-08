@@ -1,0 +1,82 @@
+=== slot audit  2026-09-08T12:51:20+08:00 ===
+PID      RSS         CPU%  COMM             状态
+3917509     48.6G   1863  pbbwa            << 绕过了 slot
+
+=== slot status 2026-09-08T12:51:21+08:00 ===
+=== heavy.slice 资源用量 ===
+  内存 8.6G 已用 / 64.0G 软限 / 76.0G 硬顶   swap上限 0.0G   进程 220   CPU权重 50
+
+=== 池 io（6 槽）===
+132  finished   /project/tmp/slot/ts-out.xmWKHw 0        43314.97/329.84/614.73 [pea-core64-resume]/home/tcuni-claw/.local/share/slot/jobs/1788232064-441295-2575.sh
+143  finished   /project/tmp/slot/ts-out.AI7oe6 0        24096.24/134.88/266.68 [pea-core64-resume2]/home/tcuni-claw/.local/share/slot/jobs/1788326662-3074987-23150.sh
+158  finished   /project/tmp/slot/ts-out.WOm3gz 0        12.89/8.98/3.87 [dmel-idrename]/home/tcuni-claw/.local/share/slot/jobs/1788386064-216892-12497.sh
+159  finished   /project/tmp/slot/ts-out.N2pXF8 0        165.31/137.99/25.21 [dmel-gffrepair]/home/tcuni-claw/.local/share/slot/jobs/1788386283-219264-27717.sh
+157  finished   /project/tmp/slot/ts-out.P4r1cj -1       11467.93/0.00/0.00 [dmel-merge]/home/tcuni-claw/.local/share/slot/jobs/1788385121-208527-30662.sh
+173  finished   /project/tmp/slot/ts-out.pIN6UC 0        827.76/6.40/9.99 [pea-core64-1468-resume]/home/tcuni-claw/.local/share/slot/jobs/1788450823-2685441-13225.sh
+174  finished   /project/tmp/slot/ts-out.mqbDfo 0        6645.84/714.55/42.12 [pea-core64-1468-final-resume]/home/tcuni-claw/.local/share/slot/jobs/1788491845-3257424-4088.sh
+178  finished   /project/tmp/slot/ts-out.r4Pl7K 8        10302.64/29.76/61.29 [barley-prjeb80159-vcf]/home/tcuni-claw/.local/share/slot/jobs/1788503127-3477033-14788.sh
+184  finished   /project/tmp/slot/ts-out.I3ci1A 1        10.03/11.52/0.45 [peanut-t010-sensitivity]/home/tcuni-claw/.local/share/slot/jobs/1788513731-3703669-29120.sh
+188  finished   /project/tmp/slot/ts-out.lkLuc1 1        6.37/8.27/0.34 [peanut-t010-sensitivity-r003]/home/tcuni-claw/.local/share/slot/jobs/1788515050-3732847-16393.sh
+191  finished   /project/tmp/slot/ts-out.kpHt8w 0        35.95/41.70/1.58 [peanut-t010-sensitivity-r004]/home/tcuni-claw/.local/share/slot/jobs/1788516192-3770035-17841.sh
+192  finished   /project/tmp/slot/ts-out.OujoDg 1        21.13/21.12/0.68 [peanut-t011-combination]/home/tcuni-claw/.local/share/slot/jobs/1788520328-3856140-901.sh
+193  finished   /project/tmp/slot/ts-out.A9ITil 0        115.04/111.54/3.22 [peanut-t011-combination-r2]/home/tcuni-claw/.local/share/slot/jobs/1788520728-3864857-18099.sh
+187  finished   /project/tmp/slot/ts-out.FL3Wq5 0        8376.12/18.35/33.81 [barley-prjeb80159-pgr-spring-resume]/home/tcuni-claw/.local/share/slot/jobs/1788514825-3726536-7706.sh
+196  finished   /project/tmp/slot/ts-out.T72bRY 0        118.70/29.68/4.82 [barley-prjeb80159-verify]/home/tcuni-claw/.local/share/slot/jobs/1788523624-3919220-15517.sh
+177  finished   /project/tmp/slot/ts-out.M36ihn 0        31294.87/52491.93/902.45 [pea-core62-fastq-gzip-gate]/home/tcuni-claw/.local/share/slot/jobs/1788495125-3336180-1900.sh
+197  finished   /project/tmp/slot/ts-out.irnrRr 1        3039.88/3027.74/12.92 [peanut-t011-planner-verifier-rerun]/home/tcuni-claw/.local/share/slot/jobs/1788523883-3923866-23718.sh
+199  finished   /project/tmp/slot/ts-out.vuiDVV 1        66.23/19.29/0.62 [r2-extract]/home/tcuni-claw/.local/share/slot/jobs/1788585375-859496-12171.sh
+203  finished   /project/tmp/slot/ts-out.tcCe9z 0        143.38/3.80/7.25 [io]/home/tcuni-claw/.local/share/slot/jobs/1788765083-1017707-18899.sh
+207  finished   /project/tmp/slot/ts-out.38z9AK 1        137.11/2.97/5.30 [wew-v2.1-download-md5]/home/tcuni-claw/.local/share/slot/jobs/1788821142-2859595-21395.sh
+
+=== 池 cpu（16 槽）===
+350  finished   /project/tmp/slot/ts-out.PPZb9l 0        16677.09/232475.77/2531.42 [qtn-v3-map]/home/tcuni-claw/.local/share/slot/jobs/1788488828-3207328-17933.sh
+353  finished   /project/tmp/slot/ts-out.RXZuqq 0        59.65/30.43/3.91 [qtn-v3-depth]/home/tcuni-claw/.local/share/slot/jobs/1788505688-3525612-591.sh
+354  finished   /project/tmp/slot/ts-out.bEvk3E 0        4.43/31.91/3.23 [qtn-v3-junction]/home/tcuni-claw/.local/share/slot/jobs/1788505862-3532935-10456.sh
+355  finished   /project/tmp/slot/ts-out.ugCIIL 0        4.77/3.78/0.11 [qtn-v3-classify]/home/tcuni-claw/.local/share/slot/jobs/1788505995-3536296-27384.sh
+376  finished   /project/tmp/slot/ts-out.Iut3Ps 0        4969.59/9376.78/81.10 [barley-prjeb80159-merge]/home/tcuni-claw/.local/share/slot/jobs/1788527560-3991232-20268.sh
+428  finished   /project/tmp/slot/ts-out.mKcIJm 0        0.03/0.00/0.00 [test]/home/tcuni-claw/.local/share/slot/jobs/1788775543-1662947-21491.sh
+430  finished   /project/tmp/slot/ts-out.I1JxeP 0        0.02/0.00/0.00 [test-bash]/home/tcuni-claw/.local/share/slot/jobs/1788775657-1669601-4177.sh
+431  finished   /project/tmp/slot/ts-out.jRX5MA 0        13.15/3.08/0.92 [r1-t2-makeblastdb]/home/tcuni-claw/.local/share/slot/jobs/1788775734-1673729-23472.sh
+436  finished   /project/tmp/slot/ts-out.K5Oqay 0        2.82/0.01/0.01 [test-wget]/home/tcuni-claw/.local/share/slot/jobs/1788775885-1684049-21169.sh
+438  finished   /project/tmp/slot/ts-out.7n0b0O -1       108.42/0.00/0.00 [r1-t1-sl240]/home/tcuni-claw/.local/share/slot/jobs/1788775912-1685934-11434.sh
+439  finished   /project/tmp/slot/ts-out.dPraYj -1       108.41/0.00/0.00 [r1-t1-sl250]/home/tcuni-claw/.local/share/slot/jobs/1788775912-1685958-17884.sh
+440  finished   /project/tmp/slot/ts-out.E0GChj -1       108.40/0.00/0.00 [r1-t1-sl300]/home/tcuni-claw/.local/share/slot/jobs/1788775912-1685982-27141.sh
+441  finished   /project/tmp/slot/ts-out.I3hwWh -1       108.39/0.00/0.00 [r1-t1-sl310]/home/tcuni-claw/.local/share/slot/jobs/1788775912-1686010-6724.sh
+444  finished   /project/tmp/slot/ts-out.1LVBZ7 0        26.22/4.53/0.83 [r1-t1-sl250]/home/tcuni-claw/.local/share/slot/jobs/1788776032-1692420-8219.sh
+443  finished   /project/tmp/slot/ts-out.2M0Pq6 0        37.59/4.46/0.80 [r1-t1-sl240]/home/tcuni-claw/.local/share/slot/jobs/1788776032-1692396-14442.sh
+446  finished   /project/tmp/slot/ts-out.JHEetK 0        40.56/4.76/0.90 [r1-t1-sl310]/home/tcuni-claw/.local/share/slot/jobs/1788776032-1692470-21467.sh
+442  finished   /project/tmp/slot/ts-out.SfMKEY 0        162.93/4.98/2.32 [r1-t1-sl500]/home/tcuni-claw/.local/share/slot/jobs/1788775912-1686036-4991.sh
+445  finished   /project/tmp/slot/ts-out.TYLV3R 0        67.29/3.00/2.38 [r1-t1-sl300]/home/tcuni-claw/.local/share/slot/jobs/1788776032-1692444-13329.sh
+461  finished   /project/tmp/slot/ts-out.oXASXG 0        109.14/109.49/2.42 [peanut-t012-reports]/home/tcuni-claw/.local/share/slot/jobs/1788778107-1807838-27936.sh
+474  finished   /project/tmp/slot/ts-out.6TVv9U 1        80.08/78.92/1.91 [peanut-t012-family]/home/tcuni-claw/.local/share/slot/jobs/1788784236-2095010-29516.sh
+
+=== 池 gpu（1 槽）===
+ID   State      Output               E-Level  Times(r/u/s)   Command [run=1/1]
+5    running    /project/tmp/slot/ts-out.U4k4Gx                         [pea-core62-gvcf-production-hold-oom]/home/tcuni-claw/.local/share/slot/jobs/1788823757-2917383-6915.sh
+0    finished   /project/tmp/slot/ts-out.Klqlh0 1        2518.52/25.40/23.06 [pea-core64-gvcf-pilot]/home/tcuni-claw/.local/share/slot/jobs/1788450823-2685461-30840.sh
+1    finished   /project/tmp/slot/ts-out.PvKmS9 0        2833.30/23.35/19.17 [pea-zw6-split-pilot]/home/tcuni-claw/.local/share/slot/jobs/1788485505-3129294-9946.sh
+2    finished   /project/tmp/slot/ts-out.sPGlHF 1        36280.62/98.40/128.66 [pea-core62-gvcf-production]/home/tcuni-claw/.local/share/slot/jobs/1788535147-4122570-128.sh
+3    finished   /project/tmp/slot/ts-out.yQuMTp 1        1.69/2.58/0.36 [pea-core62-gvcf-production-retry]/home/tcuni-claw/.local/share/slot/jobs/1788763955-862696-15880.sh
+4    finished   /project/tmp/slot/ts-out.wFXDJ3 1        47402.62/129.45/181.22 [pea-core62-gvcf-production-retry2]/home/tcuni-claw/.local/share/slot/jobs/1788764220-902012-13728.sh
+
+=== 池 nf（2 槽）===
+39   finished   /project/tmp/slot/ts-out.QPiEpN 1        5.80/4.55/0.94 [gastrodia-elata-ref-known-attempt3-20260901]/home/tcuni-claw/.local/share/slot/jobs/1788183245-3929068-16756.sh
+40   finished   /project/tmp/slot/ts-out.b1WA6t 1        6.49/5.34/1.15 [gastrodia-elata-ref-known-attempt4-20260901]/home/tcuni-claw/.local/share/slot/jobs/1788183694-3936209-23426.sh
+41   finished   /project/tmp/slot/ts-out.ZaNpPX 1        16.26/17.80/1.95 [gastrodia-elata-ref-known-attempt4-20260901]/home/tcuni-claw/.local/share/slot/jobs/1788183724-3936936-30607.sh
+42   finished   /project/tmp/slot/ts-out.NgVjzC 1        773.61/771.85/21.17 [gastrodia-elata-ref-known-attempt5-20260901]/home/tcuni-claw/.local/share/slot/jobs/1788184005-3944715-5461.sh
+43   finished   /project/tmp/slot/ts-out.erFeFJ 1        67.48/77.99/8.35 [gastrodia-elata-ref-known-attempt6-20260901]/home/tcuni-claw/.local/share/slot/jobs/1788186314-3991237-20665.sh
+44   finished   /project/tmp/slot/ts-out.1JDwbr 2        57.54/60.80/5.07 [gastrodia-elata-ref-known-attempt7-20260901]/home/tcuni-claw/.local/share/slot/jobs/1788186722-3999340-31280.sh
+45   finished   /project/tmp/slot/ts-out.Bf07lC 127      1850.42/1872.05/49.71 [gastrodia-elata-ref-known-attempt8-20260901]/home/tcuni-claw/.local/share/slot/jobs/1788187136-4008169-28197.sh
+46   finished   /project/tmp/slot/ts-out.mqYnpg -1       68.54/0.06/0.09 [TC-Wheat-Uni-60K+5K_v3-a2-B]/home/tcuni-claw/.local/share/slot/jobs/1788258167-859893-9902.sh
+47   finished   /project/tmp/slot/ts-out.Guz8pB 1        77438.63/75247.25/5150.45 [TC-Wheat-Uni-60K+5K_v3-a3-smoke-chain]/home/tcuni-claw/.local/share/slot/jobs/1788260320-897020-27413.sh
+48   finished   /project/tmp/slot/ts-out.GSdzfB 0        263.14/92.20/42.97 [TC-Wheat-Uni-60K+5K_v3-a3-full]/home/tcuni-claw/.local/share/slot/jobs/1788338394-3497249-2501.sh
+49   finished   /project/tmp/slot/ts-out.GejmJN 0        1.06/0.01/0.00 [20260902T172828-48515c1f]/home/tcuni-claw/.local/share/slot/jobs/1788370109-4127539-21643.sh
+50   finished   /project/tmp/slot/ts-out.XmPmIX 1        45.58/59.19/11.01 [pea-zw6-split-ref]/home/tcuni-claw/.local/share/slot/jobs/1788476681-3011623-14967.sh
+51   finished   /project/tmp/slot/ts-out.v8u8oL 1        31.86/40.83/7.56 [pea-zw6-split-ref-resume]/home/tcuni-claw/.local/share/slot/jobs/1788477043-3018353-8229.sh
+52   finished   /project/tmp/slot/ts-out.1ovLtQ 1        2886.81/2868.94/14.19 [pea-zw6-split-ref-resume2]/home/tcuni-claw/.local/share/slot/jobs/1788477332-3022787-4046.sh
+54   finished   /project/tmp/slot/ts-out.efEHAI 0        64.58/62.64/12.14 [pea-zw6-split-ref-resume3]/home/tcuni-claw/.local/share/slot/jobs/1788480575-3061241-10310.sh
+55   finished   /project/tmp/slot/ts-out.i25LTX -1       1662.46/0.00/0.00 [TC-YINUO-20260907-WHW003-full-design]/home/tcuni-claw/.local/share/slot/jobs/1788772665-1508551-13484.sh
+57   finished   /project/tmp/slot/ts-out.AbIRZx 1        258.68/105.19/7.00 [triticum_aestivum_czz-split-no-annotation]/home/tcuni-claw/.local/share/slot/jobs/1788775473-1657991-30587.sh
+56   finished   /project/tmp/slot/ts-out.iyhYrr 0        9185.68/24589.74/940.14 [TC-YINUO-20260907-WHW003-twostage]/home/tcuni-claw/.local/share/slot/jobs/1788774380-1603862-13350.sh
+58   finished   /project/tmp/slot/ts-out.yhAuL3 1        225.78/133.10/39.90 [triticum_aestivum_czz-split-no-conda]/home/tcuni-claw/.local/share/slot/jobs/1788830086-3093257-24996.sh
+59   finished   /project/tmp/slot/ts-out.wF2EcP 1        4.51/15.57/0.86 [triticum_aestivum_czz-split-no-conda-60g]/home/tcuni-claw/.local/share/slot/jobs/1788830434-3101089-22156.sh

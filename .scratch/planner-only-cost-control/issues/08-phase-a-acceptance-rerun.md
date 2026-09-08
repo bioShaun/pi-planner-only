@@ -78,3 +78,30 @@ round_id=claude-pD-2026-09-08-judge-08-r5
 - 2026-09-08 费用口径补充（用户指示「主模型按 5× 价格」，口径已于同日澄清）：**只把 root 的主模型单价 ×5，children 照实测不动** —— 平时 root 坐 opus 这类贵模型，子代理本就跑便宜模型，这个不对称正是本插件要省的钱。r5 实测 $0.78194 → 5× 口径 **$1.17838**（root $0.09911→$0.49555，children $0.68283 不变）；r4 同口径 $0.29582 → $0.51697；参考值 ~$0.19 → ~$0.29，即 r5 约为参考的 4 倍。明细见 `phase-a-08-run5/comparison.md`「按主模型 5× 定价复算」一节。**14 条判定一条没变**，但两点必须读对：① root 占比从 12.7% 升到 **42.1%**，r5 光 root 那 12 个 turn 就 $0.50，比参考轮整轮还贵 —— 主模型越贵，工单 27 那个「Root 反复重派、每次被同一道校验挡回」的死锁越烧钱；② C14 里漏记比例看着从 35.1% 降到 23.3%，那只是 root 单价把分母撑大，缺口（oracle 从不入账 $0.25224 + 末次落账后 7 个子代理丢失 $0.02227）一分没少，**不得据此宣称账本变准**。
 
 round_id=claude-pD-2026-09-08-fix-08-clauses
+
+- 2026-09-08 phase-a-08-rerun-6（Planner 本 pane `slot cpu`；带 `PI_PLANNER_ONLY_REQUIRE_REVIEW=1`；新 worktree `/home/tcuni-claw/pi/pi-planner-only-phase-a-08-r6` 从 `9027d8f` 起，插件为主树 `0158a1b`（27/28/29/30/33/34/35 全部已闭合）；Root prompt 与 r5 逐字节相同；`.agent-dir/planner-only` 从零开始；运行期间未执行 `/planner-only review root`）：`exit_code=0`，**7 分 23 秒**，无 kill。**十四条逐条判：14 pass → 整轮 PASS。** 对照：`phase-a-08-run6/comparison.md`；命令原始输出：`phase-a-08-run6/judge-out.txt`。**checkbox 与 Status 未动，等用户决定是否据此关票并进入阶段 B–E。**
+
+  | 条款 | 判定 | 实测 |
+  |---|---|---|
+  | 1 严格模式 / review mode | **pass** | `review mode: root` = 0，`review mode: fresh` = 2 |
+  | 2 PASS 且账本 completed | **pass** | Task 行 `state=completed` `rounds=0`；accept 回执 `decision: accept` / `[FRESH REVIEWER] verdict: pass`；Root 的 `planner_verdict{pass}` 被按设计 `refused: lifecycle`。字面「末条」已失效，见下 |
+  | 3 oracle 真的跑过 | **pass** | 顶层 `agent` 计数 = 1 |
+  | 4 reviewer 真的跑过 | **pass** | 顶层 `agent` 计数 = 1 |
+  | 5 ReviewResult 由 reviewer 产出 | **pass** | 用 `review.ts` 的 `extractReviewResult` 实跑解析 `2b609a71_reviewer_0_output.md`，解出 `verdict:"pass"`、`findings:[]` |
+  | 6 证据归因 > 0 | **pass** | `attributed 2 path` |
+  | 7 无占位 Task | **pass** | 0（r5 是 16）；两次无效 worker 委派被工单 30 当场拒收 |
+  | 8 无 WorkerReport 解析错误 | **pass** | 0（r5 是 6） |
+  | 9 Validator 至多一次 / 异步能等到 | **pass** | oracle 1 次；scout 异步委派被 `bg_wait id=1fd32313…` 等到。**票面字面串恒为 0，是假阴性，见下** |
+  | 10 工作树干净 | **pass** | 只剩三个预期 untracked |
+  | 11 委派在默认地板内 | **pass** | 四个子代理全部未触顶、无 budget stop、`exitCode` 全 0；最大 12 turns（r5 曾 22） |
+  | 12 对照文件写出 | **pass** | `phase-a-08-run6/comparison.md` |
+  | 13 slot 预飞记录 | **pass** | `slot-preflight.txt`；审计发现绕过 slot 的 PID 3917509／`pbbwa`（48.6G），按规则未终止 |
+  | 14 账本一致性（硬条件） | **pass** | ledger 4 runId = meta 4 runId，差集双向为空，**漏记 $0.00000000**（r5 漏 35.1%、r4 漏 30.1%） |
+
+  **费用与墙钟：** 实测 $0.15628（root $0.01570 ＋ children $0.14058），**主模型 5× 口径 $0.21907**（root $0.07848，占 35.8%），均**低于参考值**（~$0.19 → 5× 约 ~$0.29）。总墙钟 7 分 23 秒，参考 ~8 min。r5 → r6：实测降到 1/5.0，5× 口径降到 1/5.4。分段：规划 173 s（含 scout 83 s ＋ 两次被拒委派）、worker 93 s、oracle 87 s、reviewer 43 s、收尾 15 s。
+
+  **四张阻塞票的效果在真实运行里都看得见：** ① 30 —— 前两次 worker 委派分别以「无 TaskSpec」「scope 非对象」被拒，Root 第三次才带上合法 TaskSpec，占位 Task 归零；② 27 —— reviewer 交回的 ReviewResult **不含** `reportRevision`／`workspaceDigest` 仍被记录并完成 Task，r5 的死锁不再复现；③ 29 —— oracle 这次进了账本；④ 35 —— 进程退出兜底落账写出第二行 `unattributed` 快照（`finishedAt` 正是进程结束时刻），把 scout 那 $0.03440 捞了回来，这是账本零漏记的最后一块。
+
+  **本票条款缺陷（未擅自修改，待授权）：** ① 条款 2 的「`usage.jsonl` 末条 `state=completed`」被工单 35 淘汰 —— 退出兜底会追加一行 `unattributed` 快照，末条不再是 Task 行（照字面跑会 `KeyError: 'state'`）；同条「一次运行产生 `planner_verdict` PASS」也被 22／24 淘汰 —— fresh reviewer 的 PASS 才是完成动作，Root 随后的 verdict 会被按设计拒收。建议改为「该 Task 的账本记录 `state=completed`，允许并存 `unattributed:true` 的兜底行」＋「产生一次被记录的 PASS verdict（fresh reviewer accept，或无 reviewer 可仲裁时的 `planner_verdict`）」。② 条款 9 的字面串 `Async delegation has started` 与真实回执 `Async delegation for task <id> has started (runId: …)` 对不上，grep 恒为 0（本轮 0 是假阴性，实际有 1 次并被等到）；建议改成 `grep -o 'Async delegation for task [^ ]* has started'` ＋ `grep -o 'bg_wait id=[0-9a-f-]*'`。两处只在 `judge.sh` 里按语义修正并加了注释，**票面一个字未动**。备份 `08-phase-a-acceptance-rerun.md.bak-20260908e`。
+
+round_id=claude-pD-2026-09-08-judge-08-r6

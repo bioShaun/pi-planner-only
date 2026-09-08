@@ -46,3 +46,29 @@ planner 一开始判定这是阻塞级缺陷，写探针实跑之后才确认「
 留着不修不影响 08 重跑。
 
 round_id=p12-r054（开票）
+
+---
+
+## 2026-09-08 planner 复核（派活前实跑核验，未改判）
+
+指向修复点的那句括注不准确，派活前先在此更正，避免执行者按错的位置动手：
+
+- `roles.ts:344-354` 的 `request?: ReviewRequest` 属于 **`DelegationTarget`**——
+  `resolveDelegationTarget()` 每次解析委派输入时现算的临时结果，**不是**留在委派记录里的字段。
+- 真正被持久化的是 `orchestrate.ts:236-262` 的 `DelegationRecord`，它今天**只**存了
+  `packetTruncated?: boolean`（`orchestrate.ts:719-732`），没有存包里的
+  `reportRevision` / `workspaceDigest`。
+- 但包本身在同一处就在作用域里：`orchestrate.ts:719` 的 `const packet = extractReviewRequest(...)`。
+  所以修法是在 `:722` 那次 `this.delegations.set(...)` 里把包里的绑定值（或整包）一并存下，
+  再在 `handleReviewerResult(task, text, record)` 里取用——该函数三处调用点
+  （`:1375`、`:1642`、`:1689`）都已经把 `DelegationRecord` 传进去了，取值链是通的。
+- `packet` 可能为 `undefined`（reviewer 委派没带 ReviewRequest）；这种情况按正文第 1 条办：
+  **不得**静默退回记录时的值。
+
+其余事实复核无误：`orchestrate.ts:1810-1813` 的 `expectedBinding` 确实取记录时的
+`task.reports.length` / `task.snapshot.digest`；`review.ts:216-217` 的注释确实写的是
+"from the ReviewRequest the reviewer was shown"；`types.ts:240-243` 证明 ReviewRequest
+本身带 `reportRevision` / `workspaceDigest`。结论不变：今天不可达，属低优先级。
+
+round_id=p13（08 第六次重跑期间的只读复核；重跑未结束前不得派会改主树源码的轮次，
+插件是从主树加载的，跑中改源码会污染这次验收）
