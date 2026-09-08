@@ -64,6 +64,19 @@ function versionInRange(version, range) {
 	return cmpTriple(value, parseTriple(parsed[1])) >= 0 && cmpTriple(value, parseTriple(parsed[2])) < 0;
 }
 
+function markContractUnverified(section, reason) {
+	const messages = {
+		E: `planner-only pi-subagents E2E: §E thinking 契约未验证 (${reason})`,
+		F: `planner-only pi-subagents E2E: §F 预算宿主契约未验证 (${reason})`,
+		G: `planner-only pi-subagents E2E: §G 角色模型启动契约未验证 (${reason})`,
+	};
+	console.log(messages[section]);
+	if (process.env.PI_PLANNER_ONLY_REQUIRE_CONTRACT === "1") {
+		console.error(`planner-only pi-subagents E2E: FAIL — release gate requires §${section} contract coverage: ${reason}`);
+		process.exitCode = 1;
+	}
+}
+
 function reportUnavailable(reason) {
 	console.log(`planner-only pi-subagents E2E: §G 角色模型启动契约未验证 (${reason})`);
 	if (process.env.PI_PLANNER_ONLY_REQUIRE_CONTRACT === "1") {
@@ -283,7 +296,7 @@ try {
 		assert.match(oracleContract.contract.model, /policy-test\/oracle/);
 		assert.equal(oracleContract.contract.thinking, "medium");
 	} else {
-		console.log("planner-only pi-subagents E2E: §E thinking 契约未验证 (pi-subagents 未暴露可导入的 resolveSubagentLaunchContract)");
+		markContractUnverified("E", "pi-subagents 未暴露可导入的 resolveSubagentLaunchContract");
 	}
 
 	// ------------------------------------------------------------------
@@ -310,7 +323,7 @@ try {
 		});
 		assert.equal(budgetContract.toolBudget?.hard, 20);
 	} else {
-		console.log("planner-only pi-subagents E2E: §F 预算宿主契约未验证 (pi-subagents 未暴露无模型调用的 budget 契约公开接口)");
+		markContractUnverified("F", "pi-subagents 未暴露无模型调用的 budget 契约公开接口");
 	}
 
 	// ------------------------------------------------------------------
@@ -374,11 +387,7 @@ try {
 		}
 	}
 	if (contractUnverifiedReason) {
-		console.log(`planner-only pi-subagents E2E: §G 角色模型启动契约未验证 (${contractUnverifiedReason})`);
-		if (process.env.PI_PLANNER_ONLY_REQUIRE_CONTRACT === "1") {
-			console.error(`planner-only pi-subagents E2E: FAIL — release gate requires §G contract coverage: ${contractUnverifiedReason}`);
-			process.exitCode = 1;
-		}
+		markContractUnverified("G", contractUnverifiedReason);
 	}
 
 	if (process.exitCode === 1 && process.env.PI_PLANNER_ONLY_REQUIRE_CONTRACT === "1") {
