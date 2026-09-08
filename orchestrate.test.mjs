@@ -4913,6 +4913,97 @@ const oracle1ForegroundText = [
 	}
 }
 
+// p13-r063: every role-model rejection path blocks before launch without mutating caller input.
+{
+	const saved = {
+		flag: process.env.PI_PLANNER_ONLY_ROLE_MODELS,
+		workerModel: process.env.PI_PLANNER_ONLY_MODEL_WORKER,
+		workerThinking: process.env.PI_PLANNER_ONLY_THINKING_WORKER,
+		reviewerModel: process.env.PI_PLANNER_ONLY_MODEL_REVIEWER,
+		reviewerThinking: process.env.PI_PLANNER_ONLY_THINKING_REVIEWER,
+	};
+	try {
+		process.env.PI_PLANNER_ONLY_ROLE_MODELS = "1";
+		delete process.env.PI_PLANNER_ONLY_MODEL_WORKER;
+		delete process.env.PI_PLANNER_ONLY_THINKING_WORKER;
+		process.env.PI_PLANNER_ONLY_MODEL_REVIEWER = "policy-test/reviewer";
+		process.env.PI_PLANNER_ONLY_THINKING_REVIEWER = "low";
+		const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+		const input = { agent: "worker", task: JSON.stringify(specFor("T-20260905-932")) };
+		const blocked = await orch.beginDelegation({ toolCallId: "call-policy-worker-missing", input }, BASE);
+		assert.match(blocked.block?.reason ?? "", /role model policy is enabled but worker is missing model and thinking/);
+		assert.equal("model" in input, false);
+		assert.equal("thinking" in input, false);
+	} finally {
+		for (const [key, value] of Object.entries({
+			PI_PLANNER_ONLY_ROLE_MODELS: saved.flag,
+			PI_PLANNER_ONLY_MODEL_WORKER: saved.workerModel,
+			PI_PLANNER_ONLY_THINKING_WORKER: saved.workerThinking,
+			PI_PLANNER_ONLY_MODEL_REVIEWER: saved.reviewerModel,
+			PI_PLANNER_ONLY_THINKING_REVIEWER: saved.reviewerThinking,
+		})) {
+			if (value === undefined) delete process.env[key]; else process.env[key] = value;
+		}
+	}
+}
+
+{
+	const saved = {
+		flag: process.env.PI_PLANNER_ONLY_ROLE_MODELS,
+		workerModel: process.env.PI_PLANNER_ONLY_MODEL_WORKER,
+		workerThinking: process.env.PI_PLANNER_ONLY_THINKING_WORKER,
+	};
+	try {
+		process.env.PI_PLANNER_ONLY_ROLE_MODELS = "1";
+		process.env.PI_PLANNER_ONLY_MODEL_WORKER = "policy-test/worker";
+		process.env.PI_PLANNER_ONLY_THINKING_WORKER = "medium level";
+		const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+		const input = { agent: "worker", task: JSON.stringify(specFor("T-20260905-933")) };
+		const blocked = await orch.beginDelegation({ toolCallId: "call-policy-worker-invalid", input }, BASE);
+		assert.match(blocked.block?.reason ?? "", /cannot resolve worker thinking medium level/);
+		assert.equal("model" in input, false);
+		assert.equal("thinking" in input, false);
+	} finally {
+		for (const [key, value] of Object.entries({
+			PI_PLANNER_ONLY_ROLE_MODELS: saved.flag,
+			PI_PLANNER_ONLY_MODEL_WORKER: saved.workerModel,
+			PI_PLANNER_ONLY_THINKING_WORKER: saved.workerThinking,
+		})) {
+			if (value === undefined) delete process.env[key]; else process.env[key] = value;
+		}
+	}
+}
+
+{
+	const saved = {
+		flag: process.env.PI_PLANNER_ONLY_ROLE_MODELS,
+		workerModel: process.env.PI_PLANNER_ONLY_MODEL_WORKER,
+		workerThinking: process.env.PI_PLANNER_ONLY_THINKING_WORKER,
+	};
+	try {
+		process.env.PI_PLANNER_ONLY_ROLE_MODELS = "1";
+		process.env.PI_PLANNER_ONLY_MODEL_WORKER = "policy-test/worker";
+		process.env.PI_PLANNER_ONLY_THINKING_WORKER = "medium";
+		const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+		const input = {
+			agent: "worker",
+			model: "caller/model",
+			task: JSON.stringify(specFor("T-20260905-934")),
+		};
+		const blocked = await orch.beginDelegation({ toolCallId: "call-policy-worker-conflict", input }, BASE);
+		assert.match(blocked.block?.reason ?? "", /conflict for worker: caller=caller\/model policy=policy-test\/worker/);
+		assert.equal(input.model, "caller/model");
+	} finally {
+		for (const [key, value] of Object.entries({
+			PI_PLANNER_ONLY_ROLE_MODELS: saved.flag,
+			PI_PLANNER_ONLY_MODEL_WORKER: saved.workerModel,
+			PI_PLANNER_ONLY_THINKING_WORKER: saved.workerThinking,
+		})) {
+			if (value === undefined) delete process.env[key]; else process.env[key] = value;
+		}
+	}
+}
+
 // p07-r032: policy status records requested/resolved/actual, unknown is not a mismatch,
 // and an observed mismatch stops later controlled launches.
 {

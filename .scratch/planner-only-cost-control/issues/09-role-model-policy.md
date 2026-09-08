@@ -12,12 +12,12 @@
 - [ ] **Root 模型配置的宿主可接受性校验**：Root 不是被委派启动的子代理，
       `resolveSubagentLaunchContract` 在构造上不能为它出具启动契约，需要另找验证手段；
       要求是「只在宿主允许范围内校验，**不伪称已切换**」。在找到手段之前本条留空。
-- [ ] Worker 缺配置：委派前拒绝，原因指明角色与缺项；不发生子进程启动。
-- [ ] 模型名无法解析：委派前拒绝并给出解析错误。
-- [ ] 调用方显式传入与策略冲突的模型：拒绝并指出冲突双方。
-- [ ] 实际模型未知：记录未知，不阻断；实际模型或 thinking 与策略不符：记录不匹配，后续受控启动被拒绝并说明。
-- [ ] 策略未开启：status 显示「无模型成本保证」。
-- [ ] 角色工具能力在所有模型配置下保持不变。
+- [x] Worker 缺配置：委派前拒绝，原因指明角色与缺项；不发生子进程启动。
+- [x] 模型名无法解析：委派前拒绝并给出解析错误。
+- [x] 调用方显式传入与策略冲突的模型：拒绝并指出冲突双方。
+- [x] 实际模型未知：记录未知，不阻断；实际模型或 thinking 与策略不符：记录不匹配，后续受控启动被拒绝并说明。
+- [x] 策略未开启：status 显示「无模型成本保证」。
+- [x] 角色工具能力在所有模型配置下保持不变。
 
 ## Comments
 
@@ -59,3 +59,73 @@ Parent: `.scratch/planner-only-cost-control/spec.md`（User Stories 11–17，�
 原票把它们压进了同一个 checkbox。拆开后 Root 这项义务留在账上，不会随措辞消失。
 
 round_id=p12-r058（票面拆条，用户拍板）
+
+- 2026-09-08 round `p13-r063`（pi `w2E:pG`，只写测试）：补三条 `beginDelegation` 接缝拒绝用例
+  （worker 缺配置 / thinking 解析失败 / caller 与 policy 冲突）与 §G 的「同角色换模型工具集不变」。
+  **planner 复跑发现 §G 那条是空转，已由 planner 就地改正后才接收**，详见下条。
+
+- 2026-09-08 planner 独立核验 `p13-r063`（claude-pD）：
+
+  **接缝三条：成立。** 用例走 `orch.beginDelegation`，断言 `block.reason` 同时点名角色与成因，
+  并断言输入未被注入/未被改写（前两条 `"model" in input === false` 且 `"thinking" in input === false`，
+  第三条 `input.model` 仍是 `caller/model`）。除执行者自己的三份反向期望失败证明外，
+  我另做了一次**独立的接缝证明**：把第二条的 `PI_PLANNER_ONLY_ROLE_MODELS` 临时置 `"0"` 后重跑，
+  断言拿到的是空串 —— 说明这个 block 确实只由角色模型策略产生，不是别处顺带拒的：
+
+  ```text
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression
+    /cannot resolve worker thinking medium level/. Input:
+  ''
+      at orchestrate.test.mjs:4964:10
+  ```
+  临时改动已还原（`diff` 与改前副本 IDENTICAL）。
+
+  **§G 那条：执行者交来的版本是空转的，我改了。** 原写法在循环里对
+  `["policy-test/validator", "policy-test/validator-alt"]` 各解析一次，但循环变量 `model`
+  从没被用上 —— 模型是 `resolveRoleModel(rolePolicy, "validator", input)` 从**同一份策略**里写进
+  `input.model` 的，两轮都是 `policy-test/validator`。等于拿同一份契约跟自己比，恒真。
+  实测打点：
+
+  ```text
+  PROBE loop model=policy-test/validator     input.model=policy-test/validator contract.model=policy-test/validator:medium
+  PROBE loop model=policy-test/validator-alt input.model=policy-test/validator contract.model=policy-test/validator:medium
+  ```
+
+  改法：模型是策略选的，所以「换模型」必须换策略 —— 循环内用 `loadRoleModelPolicy` 载入第二份
+  只有 `PI_PLANNER_ONLY_MODEL_VALIDATOR` 不同的策略，并新增一条
+  `assert.equal(result.contract.model?.startsWith(model), true)` 把空转钉死，
+  之后才比 `tools.effectiveAllowlist.toSorted()` 相等。改后实测两轮确实是两个模型
+  （`validator:medium` / `validator-alt:medium`），工具集相同。
+
+  两条失败证明（临时改动均已还原，还原后与改前副本 IDENTICAL）：
+
+  ```text
+  # A：退回执行者的原写法（共用 rolePolicy）
+  AssertionError [ERR_ASSERTION]: validator launch must use policy-test/validator-alt
+  false !== true
+      at e2e.pi-subagents.test.mjs:419:12
+
+  # B：把第二个模型的 allowlist 临时加一个 write
+  AssertionError [ERR_ASSERTION]: ...
+    actual:   [ 'bash', 'find', 'grep', 'ls', 'read' ]
+    expected: [ 'bash', 'find', 'grep', 'ls', 'read', 'write' ]
+      at e2e.pi-subagents.test.mjs:424:12
+  ```
+
+  **另修一处越界：** 执行者把新块插在 `p07-r032` 那段的注释行上，把
+  `// p07-r032: policy status records requested/resolved/actual, unknown is not a mismatch,`
+  整行删掉了，只剩下半句悬空注释。工单写明 4884-4925 只读，已恢复原注释。
+
+  **本轮勾掉第 3–8 条。** 第 6 条（未知不阻断 / 不匹配后停机）证据是
+  `orchestrate.test.mjs` p07-r032 段的 `assert.equal(secondUnknown.block, undefined)` 与
+  `/不匹配/` + 后续启动被拒；第 7 条（策略未开启 status 显示「无模型成本保证」）证据是
+  `index.ts:1073` 与 `index.test.mjs:2253`。两条此前只是没人去勾，不是没证据。
+  **第 2 条（Root 模型配置的宿主可接受性）继续留空** —— Root 不是被委派的子代理，
+  `resolveSubagentLaunchContract` 构造上不为它出具启动契约，验证手段仍未找到。
+
+  闸门（planner 自己跑）：`typecheck` 0、`npm test` 0、`npm run test:e2e` 0、`git diff --check` 0；
+  不带闸门变量的 e2e stdout 逐字未变（仍是「§F 预算宿主契约未验证」+ `PASS`）。
+  slot 预检 `.scratch/planner-only-cost-control/p13-r063-planner-verify-slot.log`：
+  `slot audit` 报 `postsort`（RSS 30.6G）绕过 slot，**未终止**。
+
+round_id=p13-r063

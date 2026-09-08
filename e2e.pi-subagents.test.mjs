@@ -351,11 +351,14 @@ try {
 			{ role: "validator", agent: "oracle", model: "policy-test/validator", thinking: "medium" },
 			{ role: "explorer", agent: "reviewer", model: "policy-test/explorer", thinking: "high" },
 		];
-		const availableModels = roleCases.map(({ model }) => ({
-			provider: "policy-test",
-			id: model.slice("policy-test/".length),
-			fullId: model,
-		}));
+		const availableModels = [
+			...roleCases.map(({ model }) => ({
+				provider: "policy-test",
+				id: model.slice("policy-test/".length),
+				fullId: model,
+			})),
+			{ provider: "policy-test", id: "validator-alt", fullId: "policy-test/validator-alt" },
+		];
 		for (const roleCase of roleCases) {
 			const input = { agent: "worker", context: "fork", task: `${roleCase.role} launch` };
 			resolveRoleModel(rolePolicy, roleCase.role, input);
@@ -383,6 +386,45 @@ try {
 				for (const tool of result.contract.tools.effectiveAllowlist) {
 					assert.ok(allowed.has(tool), `${roleCase.role} launch widened its tool allowlist with ${tool}`);
 				}
+			}
+		}
+		if (!contractUnverifiedReason) {
+			const validatorContracts = [];
+			for (const model of ["policy-test/validator", "policy-test/validator-alt"]) {
+				// The role policy is what selects the model, so varying the model means
+				// loading a second policy that differs only in the validator model.
+				const altPolicy = loadRoleModelPolicy({
+					...process.env,
+					PI_PLANNER_ONLY_ROLE_MODELS: "1",
+					PI_PLANNER_ONLY_MODEL_VALIDATOR: model,
+					PI_PLANNER_ONLY_THINKING_VALIDATOR: "medium",
+				});
+				const input = { agent: "worker", context: "fork", task: `validator launch with ${model}` };
+				resolveRoleModel(altPolicy, "validator", input);
+				applyRoleDelegation(input, { role: "validator" });
+				const result = await launchResolver({
+					agent: input.agent,
+					cwd: process.cwd(),
+					context: "fresh",
+					model: input.model,
+					thinking: input.thinking,
+					availableModels,
+					skill: false,
+					artifacts: false,
+				});
+				if (!result.ok) {
+					contractUnverifiedReason = `validator model ${model}: ${result.code} ${result.message}`;
+					break;
+				}
+				assert.equal(result.contract.model?.startsWith(model), true, `validator launch must use ${model}`);
+				validatorContracts.push(result.contract);
+			}
+			if (!contractUnverifiedReason) {
+				assert.deepEqual(
+					validatorContracts[0].tools.effectiveAllowlist.toSorted(),
+					validatorContracts[1].tools.effectiveAllowlist.toSorted(),
+					"validator tool capabilities must not change with the selected model",
+				);
 			}
 		}
 	}
