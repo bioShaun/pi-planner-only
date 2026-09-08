@@ -16,15 +16,24 @@
 
 **Blocked by:** None（源码在 `0fe04df`）。
 
-**Status:** ready-for-agent
+**Status:** done（(a) 部分；(b) 见工单 35）
 
-- [ ] 一次含 oracle 委派的运行结束后，`usage.jsonl` 末条 children 里出现该 oracle 的 runId 与 costUsd。
-- [ ] **未绑定 validator（委派没有指名任何 Task）的费用挂到真实活动 Task 上**，与未绑定 explorer 的现有行为一致；已绑定 validator 的既有行为逐字不变。
-- [ ] 费用挂靠的目标 Task 选择要有测试覆盖「同 cwd 无活动 Task」的情形：此时不得静默丢弃，也不得挂到别的 cwd 的 Task 上。
-- [ ] 会话在 Task 非终态下结束时，仍写出一条最终账本记录，且该记录的 children 覆盖本次会话产生的全部 `*_meta.json` runId。
-- [ ] 不变量测试：`usage.jsonl` 末条 children 的 runId 集合 ⊇ 该会话 `<SA>` 中 `*_meta.json` 的 runId 集合。修复前该用例必须失败，回执贴出失败输出原文。
-- [ ] 不重复计数：同一 runId 只出现一次（工单 23 的重复写修复不得回退，`index.test.mjs:3372-3427` 一行不改仍全绿）。
-- [ ] 不勾 08 checkbox、不改 08 Status、不改 `spec.md`。
+- [x] 一次含 oracle 委派的运行结束后，`usage.jsonl` 末条 children 里出现该 oracle 的 runId 与 costUsd。
+- [x] **未绑定 validator（委派没有指名任何 Task）的费用挂到真实活动 Task 上**，与未绑定 explorer 的现有行为一致；已绑定 validator 的既有行为逐字不变。
+- [~] 费用挂靠的目标 Task 选择要有测试覆盖「同 cwd 无活动 Task」的情形：此时不得静默丢弃，也不得挂到别的 cwd 的 Task 上。
+      **半条达成**：「不挂别的 cwd」已实现且有测试（`orchestrate.test.mjs:1188-1207`）；
+      「不静默丢弃」只在**内存账本**层面成立（planner 实测：ghost id 下 `children:1`、`costUsd 0.058` 仍在），
+      落盘那一半未达成 —— `flushIfTerminal` 对 store 里不存在的 taskId 直接早退，幽灵 id 永远进不了 `usage.jsonl`。
+      堵它要改 `index.ts`/`usage.ts`，被本轮 fence 排除。**残留移交工单 35。**
+- [→] （已移交工单 35）会话在 Task 非终态下结束时，仍写出一条最终账本记录。
+- [→] （已移交工单 35）不变量测试：`usage.jsonl` 末条 children 的 runId 集合 ⊇ `*_meta.json` 的 runId 集合。
+- [x] 不重复计数：同一 runId 只出现一次（`index.test.mjs:3372-3427` 一行不改仍全绿）。
+- [x] **占位串来源要区分对待**：`orchestrate.ts:757-759` 的三种占位串里，只有合成的
+      `unbound-validator-<toolCallId>` 是幽灵；`specId` 与单个 `named[0]` 是委派声明的真实 Task id。
+      挂账不得把后两种从它们声明的 Task 上改挂到 `activeForCwd(cwd)` 去；测试要覆盖
+      「占位串是一个 store 里存在的 specId，且它与当前 cwd 活动 Task 不同」这一情形，
+      断言费用仍记在 specId 上。
+- [x] 不勾 08 checkbox、不改 08 Status、不改 `spec.md`。
 
 ## Comments
 
@@ -62,3 +71,69 @@ round_id=p11-r053（补根因）
   再决定兜底落账挂在哪里；查明过程与结论写进回执，不要默认它一定会触发。
 
 round_id=p12-r056（派活前核验，行号复核）
+
+2026-09-08 派活前 planner 三次核验（round_id=p12-r058）。工单 27/28/33/34 已全部落地
+（HEAD `76689a3`），但它们只动了 `report.ts`/`roles.ts`/`types.ts`，**本票引用的所有行号在
+当前 HEAD 上逐条复核仍然成立，无需重钉**：`orchestrate.ts:759` 占位串、`:764-779` 无
+`accountingTaskId`、全文只有 `:231`（类型）与 `:922`（explorer）两处命中；explorer 取值在
+`:918`；`index.ts:452-453` 的 `accountingTaskId(record)` 与 `:459/511/534/848/858/903/911`
+七处调用点；`session_shutdown` 在 `index.ts:782-786`，函数体只有 `restoreSuppressedTools()`；
+`flushIfTerminal` 定义在 `:436`，调用点 `:743/869/922/1048/1113`。
+`store.activeForCwd` 确实存在（`task.ts:488`）。
+
+run5 产物也重跑核对了一遍（`.../phase-a-08-run5/artifacts/usage.jsonl`）：
+5 条记录、taskId 全是 `T-20260908-001`、`grep -c unbound-validator` 为 0、
+children 的 `(kind, agent)` 分布 `{('worker','worker'): 22, ('reviewer','reviewer'): 3}`。
+与本票原文完全一致。
+
+**新增一条要求（读代码时发现的坑，写进条款）：占位串有三种来源，不能一视同仁地改。**
+`orchestrate.ts:757-759` 是 `specId ?? (named.length === 1 ? named[0] : undefined) ??
+\`unbound-validator-${event.toolCallId}\``。只有第三种是合成幽灵；前两种是委派自己声明的
+真实 Task id。如果照抄 explorer 那行**无条件**写
+`accountingTaskId = store.activeForCwd(cwd) ?? active`，那么当占位串本来是一个有效的
+`specId`（比如 `T-002`）而当前 cwd 的活动 Task 是 `T-001` 时，费用会被从 `T-002`
+**改挂到 `T-001`** —— 把一条今天正确的路径改错。explorer 没有这个问题，因为它的
+`taskId` 恒为合成串。执行者必须处理这个区别，并说明判据。
+
+round_id=p12-r058（派活前核验）
+
+2026-09-08：**本票已拆分**（round_id=p12-r058）。
+(a)「未绑定 validator 挂账到幽灵 Task」保留在本票，已派给 w2E:pE（cursor），round p12-r058。
+(b)「会话非终态结束时无兜底落账」**移到新工单 35**
+（`35-no-final-ledger-flush-when-the-session-ends-non-terminal.md`），
+本票上面条款里属于 (b) 的两条（最终账本记录、runId 差集不变量）由 35 承接，本票不再计。
+拆票理由与宿主 `session_shutdown` 事件语义的实读结论都写在 35 里。
+
+2026-09-08 planner 验收（round_id=p12-r058，执行者 w2E:pE / cursor）：**接受并提交。**
+
+改动只有 `orchestrate.ts` +11/-1：把合成占位串提成 `syntheticId` 变量，
+`accountingTask` 仅当 `placeholder === syntheticId` 时取 `this.store.activeForCwd(cwd)`，
+再按 explorer 的写法条件展开 `accountingTaskId`。测试 `orchestrate.test.mjs` +154、
+`index.test.mjs` +69。
+
+执行者对我提出的「三种占位串」陷阱选了**按合成串判**，而不是按 `store.get(placeholder)` 是否存在。
+理由我复核后认同：若按 store 是否存在，一个声明了 `T-002` 但 store 里暂时没有它的委派
+会被改挂到 cwd 的活动 Task 上，正是本票禁止的改挂。「声明了真实 id」应当压过
+「当前 cwd 碰巧有活动 Task」。它也**没有**照抄 explorer 的 `?? active` 兜底 —— 抄了就会跨 cwd 挂账。
+
+planner 在自己 pane 里逐条复现：
+
+- 两处 RED 独立复现（只回滚 `orchestrate.ts`）：`orchestrate.test.mjs:1106` 得到
+  `undefined` 而非 `'T-20260908-581'`；`index.test.mjs:3435` 得到 `0 !== 1`，
+  失败消息里打出的 children 只有一个 worker、没有 oracle。逐字节还原后 md5 与冻结快照一致。
+  日志：`p12-r058-29a-verify-red-orch.log` / `p12-r058-29a-verify-red-index.log`。
+- 四条验收命令 `slot cpu` 一次跑通 exit 0，17 个测试文件全 PASS，e2e PASS。
+  日志：`p12-r058-29a-verify-accept.log`。slot 预检 `p12-r058-verify-slot-audit.log`：
+  绕过 slot 的 `htvc`（PID 3821263，RSS 18.7G）与 `agy`（PID 3239052），按规则均未终止。
+- `index.test.mjs:3400-3439` 那个新用例是**真端到端**：走 `tool_call`/`tool_result` 真实
+  handler，先断言通知里出现「validator delegation names no Task under review」证明确实走了
+  未绑定分支，再从磁盘 `usage.jsonl` 读回，断言 oracle child 的
+  `runId`/`agent`/`costUsd 0.058`/`kind: validator` 都在真实 Task 的记录里。
+  这正是本票的标题不变量，不是插件自证。
+
+**明确未达成的半条（见上面 `[~]`）：** 「同 cwd 无活动 Task 时不静默丢弃」只在内存账本层面成立。
+planner 实测确认费用没在账本对象里消失，但它落不了盘。这是**我写的 fence 与我写的条款自相矛盾**
+造成的，不是执行者的实现缺陷 —— 执行者主动在回执里点明了这一点而没有偷偷扩大范围。
+残留已作为一条新条款写进工单 35。
+
+round_id=p12-r058

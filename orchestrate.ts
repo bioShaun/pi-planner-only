@@ -754,16 +754,26 @@ export class PlannerOrchestrator {
 				const prompt = delegationPrompt(input);
 				const specId = (target?.spec ?? extractTaskSpec(prompt))?.taskId;
 				const named = promptTaskIds(prompt);
+				const syntheticId = `unbound-validator-${event.toolCallId}`;
 				const placeholder = specId
 					?? (named.length === 1 ? named[0] : undefined)
-					?? `unbound-validator-${event.toolCallId}`;
+					?? syntheticId;
 				const unboundConflict = await this.refuseOrClearWriteLock(cwd, "validator", warnings);
 				if (unboundConflict.conflict) {
 					return { conflict: unboundConflict, ...(warnings.length ? { warnings } : {}) };
 				}
+				// Only the synthetic placeholder is a ghost id. specId and a
+				// single named id are declared Task ids: hang usage there, even
+				// when they differ from (or are missing in) the store. Never
+				// copy explorer's `?? active` fallback — that would re-attribute
+				// onto another cwd's Task.
+				const accountingTask = placeholder === syntheticId
+					? this.store.activeForCwd(cwd)
+					: undefined;
 				this.delegations.set(event.toolCallId, {
 					taskId: placeholder,
 					kind: "validator",
+					...(accountingTask ? { accountingTaskId: accountingTask.taskId } : {}),
 					asyncRequested: isAsyncInput(input),
 					...(isExplicitAsyncFalse(input) ? { asyncExplicitFalse: true } : {}),
 					...(inputAgent(input) ? { agent: inputAgent(input) } : {}),

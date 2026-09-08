@@ -1081,6 +1081,160 @@ function truncatedPreview() {
 	assert.equal(orch.getDelegation("call-explorer-fallback")?.accountingTaskId, task.taskId);
 }
 
+// p12-r058: an unbound validator whose placeholder is the synthetic
+// `unbound-validator-<toolCallId>` string attributes usage to the live Task
+// in the delegated cwd (not the store-wide active Task in another cwd).
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	const cwdA = "/repo/v-acct-cwd";
+	const cwdB = "/repo/v-acct-other";
+	const taskA = orch.store.create(specFor("T-20260908-581", "worker", cwdA));
+	const taskB = orch.store.create(specFor("T-20260908-582", "worker", cwdB));
+	taskA.updatedAt = "2026-09-05T00:00:00.000Z";
+	taskB.updatedAt = "2026-09-05T00:01:00.000Z";
+	assert.equal(orch.store.active()?.taskId, taskB.taskId);
+	const outcome = await orch.beginDelegation(
+		{
+			toolCallId: "call-v-acct-synthetic",
+			input: { agent: "oracle", cwd: cwdA, task: "validate the claim with no task named" },
+		},
+		BASE,
+	);
+	assert.equal(outcome.task, undefined);
+	assert.equal(orch.getDelegation("call-v-acct-synthetic")?.taskId, "unbound-validator-call-v-acct-synthetic");
+	assert.equal(orch.getDelegation("call-v-acct-synthetic")?.kind, "validator");
+	assert.equal(orch.getDelegation("call-v-acct-synthetic")?.accountingTaskId, taskA.taskId);
+}
+
+// p12-r058: placeholder is an existing specId different from the cwd-active
+// Task. Bound validator keeps that specId; do not re-attribute to activeForCwd.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	const cwdActive = "/repo/v-acct-active";
+	const cwdSpec = "/repo/v-acct-spec";
+	const activeTask = orch.store.create(specFor("T-20260908-583", "worker", cwdActive));
+	const specTask = orch.store.create(specFor("T-20260908-584", "worker", cwdSpec));
+	activeTask.updatedAt = "2026-09-05T00:01:00.000Z";
+	specTask.updatedAt = "2026-09-05T00:00:00.000Z";
+	assert.equal(orch.store.activeForCwd(cwdActive)?.taskId, activeTask.taskId);
+	const outcome = await orch.beginDelegation(
+		{
+			toolCallId: "call-v-acct-specid",
+			input: {
+				agent: "oracle",
+				cwd: cwdActive,
+				task: JSON.stringify(specFor("T-20260908-584", "validator", cwdSpec)),
+			},
+		},
+		BASE,
+	);
+	assert.equal(outcome.task?.taskId, specTask.taskId, "validator must stay bound to the named specId");
+	assert.equal(orch.getDelegation("call-v-acct-specid")?.taskId, specTask.taskId);
+	assert.equal(
+		orch.getDelegation("call-v-acct-specid")?.accountingTaskId,
+		undefined,
+		"existing specId must not be re-attributed to activeForCwd",
+	);
+}
+
+// p12-r058: declared specId that is not in the store (unbound placeholder is
+// that id) must not be re-hung onto the cwd-active Task.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	const cwdA = "/repo/v-acct-declared";
+	const live = orch.store.create(specFor("T-20260908-585", "worker", cwdA));
+	const outcome = await orch.beginDelegation(
+		{
+			toolCallId: "call-v-acct-declared",
+			input: {
+				agent: "oracle",
+				cwd: cwdA,
+				task: JSON.stringify(specFor("T-20260908-586", "validator", cwdA)),
+			},
+		},
+		BASE,
+	);
+	assert.equal(outcome.task, undefined);
+	assert.equal(orch.getDelegation("call-v-acct-declared")?.taskId, "T-20260908-586");
+	assert.equal(
+		orch.getDelegation("call-v-acct-declared")?.accountingTaskId,
+		undefined,
+		`declared specId must stay on T-20260908-586, not ${live.taskId}`,
+	);
+}
+
+// p12-r058: a single named Task id in the prompt that exists in the store,
+// different from the cwd-active Task, keeps that named id (no re-hang).
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	const cwdNamed = "/repo/v-acct-named";
+	const cwdActive = "/repo/v-acct-named-active";
+	const namedTask = orch.store.create(specFor("T-20260908-587", "worker", cwdNamed));
+	const activeTask = orch.store.create(specFor("T-20260908-588", "worker", cwdActive));
+	namedTask.updatedAt = "2026-09-05T00:00:00.000Z";
+	activeTask.updatedAt = "2026-09-05T00:01:00.000Z";
+	const outcome = await orch.beginDelegation(
+		{
+			toolCallId: "call-v-acct-named",
+			input: { agent: "oracle", cwd: cwdActive, task: "Validate T-20260908-587." },
+		},
+		BASE,
+	);
+	assert.equal(outcome.task?.taskId, namedTask.taskId);
+	assert.equal(orch.getDelegation("call-v-acct-named")?.taskId, namedTask.taskId);
+	assert.equal(orch.getDelegation("call-v-acct-named")?.accountingTaskId, undefined);
+}
+
+// p12-r058: same cwd has no live Task; another cwd does. Do not attach to the
+// other cwd's Task and do not invent a silent drop of the delegation record.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	const other = orch.store.create(specFor("T-20260908-589", "worker", "/repo/v-acct-foreign"));
+	const outcome = await orch.beginDelegation(
+		{
+			toolCallId: "call-v-acct-nocwd",
+			input: { agent: "oracle", cwd: "/repo/v-acct-empty", task: "validate the claim with no task named" },
+		},
+		BASE,
+	);
+	assert.equal(outcome.task, undefined);
+	assert.equal(orch.getDelegation("call-v-acct-nocwd")?.taskId, "unbound-validator-call-v-acct-nocwd");
+	assert.equal(
+		orch.getDelegation("call-v-acct-nocwd")?.accountingTaskId,
+		undefined,
+		`must not hang onto other-cwd Task ${other.taskId}`,
+	);
+}
+
+// p12-r058: a bound validator (resolveValidatorReviewedTask hit via report)
+// keeps taskId = reviewed Task and does not set accountingTaskId.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-590";
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-v-acct-bound-w", input: { task: JSON.stringify(specFor(taskId, "worker", BASE)) } },
+		BASE,
+	);
+	setDirtyTree();
+	const workerReport = {
+		...reportFor(taskId, "call-v-acct-bound-w"),
+		evidence: { ...reportFor(taskId, "call-v-acct-bound-w").evidence, cwd: BASE },
+	};
+	await orch.handleSubagentResult(workerResult("call-v-acct-bound-w", workerReport));
+	const outcome = await orch.beginDelegation(
+		{
+			toolCallId: "call-v-acct-bound-v",
+			input: { agent: "oracle", task: "validate the claim with no task named" },
+		},
+		BASE,
+	);
+	assert.equal(outcome.task?.taskId, taskId);
+	assert.equal(orch.getDelegation("call-v-acct-bound-v")?.taskId, taskId);
+	assert.equal(orch.getDelegation("call-v-acct-bound-v")?.kind, "validator");
+	assert.equal(orch.getDelegation("call-v-acct-bound-v")?.accountingTaskId, undefined);
+}
+
 // Unbound explorer delegation creates no Task at all: it is recorded as the
 // `unbound-explorer-` placeholder (mirroring `unbound-validator-`) and returns
 // only the standalone warning, with no evidence sampling.

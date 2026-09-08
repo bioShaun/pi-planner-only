@@ -3369,6 +3369,75 @@ try {
 	assert.equal(missing.child.pending, true);
 }
 
+// p12-r058: an unbound oracle (synthetic placeholder, no Task named, no report
+// yet) must still land its runId and costUsd on the real cwd-active Task's
+// usage.jsonl children exactly once when that Task becomes terminal.
+{
+	const taskSpecId = "T-20260908-058";
+	const taskCallId = "call-r058-task";
+	const oracleCallId = "call-r058-oracle";
+	const oracleRunId = "r058-oracle-run";
+	notices.length = 0;
+	await commands.get("planner-only").handler("task", ctx);
+	const existingTaskId = /Task: (T-\d{8}-\d{3})/.exec(notices.at(-1)?.message ?? "")?.[1];
+	if (existingTaskId) await commands.get("planner-only").handler(`task abandon ${existingTaskId}`, ctx);
+	await handlers.get("tool_call")({
+		toolCallId: taskCallId,
+		toolName: "subagent",
+		input: { agent: "worker", task: JSON.stringify(delegationSpec(taskSpecId)) },
+	}, ctx);
+	notices.length = 0;
+	await commands.get("planner-only").handler(`task ${taskSpecId}`, ctx);
+	const taskId = /Task: (T-\d{8}-\d{3})/.exec(notices.at(-1)?.message ?? "")?.[1];
+	assert.ok(taskId, "real Task must exist before the unbound oracle");
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+	await handlers.get("tool_result")({
+		toolCallId: taskCallId,
+		toolName: "subagent",
+		content: [{ type: "text", text: "worker output is not a WorkerReport" }],
+		isError: false,
+	}, ctx);
+	const oracleCall = await handlers.get("tool_call")({
+		toolCallId: oracleCallId,
+		toolName: "subagent",
+		input: {
+			agent: "oracle",
+			cwd: `/fixture/${taskSpecId}`,
+			task: "validate the claim with no task named",
+		},
+	}, ctx);
+	assert.equal(oracleCall?.block, undefined, oracleCall?.reason ?? "unbound oracle must launch");
+	assert.ok(
+		notices.some((notice) => notice.message.includes("validator delegation names no Task under review")),
+		"oracle must take the unbound-validator path",
+	);
+	await handlers.get("tool_result")({
+		toolCallId: oracleCallId,
+		toolName: "subagent",
+		details: {
+			runId: oracleRunId,
+			results: [{
+				agent: "oracle",
+				model: "volcengine/glm-5-3-flash:medium",
+				usage: { input: 80, output: 16, cacheRead: 0, cacheWrite: 0, cost: 0.058, turns: 2 },
+			}],
+		},
+		content: [{ type: "text", text: "HEAD matches; named tests exist." }],
+		isError: false,
+	}, ctx);
+	await commands.get("planner-only").handler(`task abandon ${taskId}`, ctx);
+	const logPath = join(isolatedAgentDir, "planner-only", "usage.jsonl");
+	const rows = readFileSync(logPath, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+	const failed = rows.filter((row) => row.taskId === taskId && row.state === "failed");
+	assert.equal(failed.length, 1, JSON.stringify({ taskId, matchingRows: rows.filter((row) => row.taskId === taskId) }));
+	const oracleChildren = failed[0].children.filter((child) => child.runId === oracleRunId);
+	assert.equal(oracleChildren.length, 1, JSON.stringify(failed[0].children));
+	assert.equal(oracleChildren[0].agent, "oracle");
+	assert.equal(oracleChildren[0].costUsd, 0.058);
+	assert.equal(oracleChildren[0].kind, "validator");
+}
+
 // p11-r052: an async explorer dispatched while its worker Task is executing is
 // unbound, but its usage must still be accounted to that real Task exactly once
 // when the Task becomes terminal before the explorer notification.
