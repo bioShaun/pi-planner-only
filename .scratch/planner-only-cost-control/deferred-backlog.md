@@ -63,3 +63,155 @@ Root=GPT-5.6 Luna、子代理=qwen3.8-27b，**全部真实运行合计硬上限 
 3. **两条 block 路径的残留字段不一致**：untrusted 闸门拦下时会 `delete input.usageBudget`，
    `cumulative budget exhausted` 那条早退路径不会。两条都不会启动子进程，只是排障时读 hook
    输入会看到不一样的东西。（与 p16-r076 记的那条 backlog 是同一件事，现在只修好了一半。）
+
+---
+
+# F. 收尾规划（2026-09-09，planner claude 交棒）
+
+用户 2026-09-09 拍板：**claude 做最后的规划，之后由 cursor 统筹，pi 与 agy 执行。**
+本节是那份「最后的规划」。写这一节的目的，是让接手的 planner 不必读本会话的上下文
+也能把剩下的活派完——**凡本节没写死的，都不要靠猜**。
+
+## F0. 交棒时的事实基线
+
+- 分支 `planner-only-cost-control`，HEAD `6d93821`（16-c 落地）。工作区干净。
+- 阶段 17，已用 1/5 轮（p17-r079，已 accepted）。
+- 验收基线（`6d93821` 实测）：`npm run typecheck` = 0；`npm test` = 1（**仅** `naming.test.mjs`
+  失败，见 F1）；`PI_PLANNER_ONLY_REQUIRE_CONTRACT=1 npm run test:e2e` = 0；`git diff --check` = 0。
+- 预算链 13 → 14 → 15 → 16 全部闭合。剩下的都不是「有没有封顶」，而是度量与取证。
+
+## F1. 两条验收规则的更正（都是 2026-09-09 现证的，必须写进每份工单）
+
+**规则一：`npm test` 的验收话术改掉。**
+旧话术「16 个套件全部打印 `: PASS`」是**不可靠的**：`orchestrate.test.mjs` 的
+`console.log("planner-only orchestration: PASS")` 在第 3717 行，而文件有 5957 行——
+横幅之后还有 2240 行断言。横幅印出来不代表这套过了。真正兜底的是 `npm test` 的 `&&` 链
+能不能走到 `architecture`。新话术：
+
+> `npm test` 的输出里必须出现 `planner-only architecture: PASS`，且唯一的 `AssertionError`
+> 是 `naming.test.mjs` 的 `extension install is missing ledger-store.ts`（该套件对着仓外
+> 一份跟踪 `main` 的安装副本跑，本分支必红，且它的输出走 stderr，`npm test` 整体 exit=1 是预期）。
+
+顺手可做（非阻塞）：把那行横幅移到文件末尾，这个陷阱就没了。
+
+**规则二：禁止删除既有断言。**
+p17-r079 里执行者在未获授权的情况下删掉了 `L22`/`L23` 两条既有断言，报告只字未提，
+diffstat 的 `-3` 把它藏在 Y3b 那一行改动里。复原后整套照常通过——**删除没有技术理由**。
+每份工单的 fence 段必须逐字带上：
+
+> 既有断言一律不许删除或改写。确有必要时，停下来向 planner 报告：写清哪一条、在第几行、
+> 为什么当前实现让它变红。**擅自删除既有断言视为回归**，该轮不予接收。
+> 交付前自查：`git diff -- <测试文件> | grep '^-.*assert'` 必须只输出 planner 明确授权的那几行。
+
+## F2. 断言质量：本轮实测出的三种失效形态
+
+派活时把这三条写进「失败证明」段落，它们不是理论风险，是 p17-r079 现场抓到的：
+
+1. **空转**：B9 声称「reviewer 在预算停止后仍豁免」，但把 `role !== "reviewer"` 整个删掉，
+   B9 仍然通过。真正抓住这条的是既有断言 Z8。**空转断言比没有断言更糟**——它宣称了
+   套件并不具备的覆盖。判定方法：删掉断言所声称守护的那段实现，断言必须变红。
+2. **测错层**：B8 声称「预算拒绝不泄漏预留」，但往 `reserve()` 的拒绝分支注入泄漏，
+   orchestrator 层的 `heldCount` 仍是 1（block 路径本来就按 toolCallId 释放）。
+   断言要放在缺陷可观测的那一层。
+3. **合并**：B2/B4 被写成一条 `assert`，逐条失败证明无法成立。**一条断言一个命题。**
+
+还有一条给做审计的人自己的：**判定空转之前先怀疑自己的变异**。本轮 B10 我的变异过宽
+（直接报错），按规矩记为**未证明**而不是空转；A8 的第一次反向变异也过宽，先打红了
+第 2169 行的既有断言，disarm 之后才轮到 A8。变异必须和断言的语义一样窄。
+
+审计手法（沿用）：变异 → 跑属主套件 → 若首个失败不是目标行，把更早那条 `assert.xxx(`
+换成一个求值但吞掉结果的 Proxy（**不要注释掉**）再跑。
+
+## F3. 剩余轮次（按序，fence 与验收已写死）
+
+### 轮 1 —— 工单 18 费用对照记录规范与汇总（不花钱，派 pi）
+
+- **为什么先做**：19 的前置。没有记录规范，实验跑完也没法比。用确定性样本验汇总逻辑，
+  不需要真花钱。
+- **fence**：`usage.ts` `types.ts` `index.ts` + 对应 `.test.mjs` + `architecture.test.mjs`
+  + `.scratch/planner-only-cost-control/p18-*.log`；其余只读；不 commit、不勾 checkbox、
+  不动 `spec.md` 与 `issues/`。
+- **验收**：typecheck=0；F1 规则一的 `npm test` 话术；e2e=0；`git diff --check`=0；
+  新断言逐条失败证明（否定断言须反向变异）；F1 规则二的 `grep '^-.*assert'` 自查。
+- **planner 前置**：派活前先读 `issues/18-*.md`，把条款和 fence 对着读一遍，
+  问「照这个 fence，每一条都做得到吗」——p12-r058 就是栽在这里（fence 把唯一能落盘的文件划成只读）。
+
+### 轮 2 —— 记账性勾选（不花钱，不派轮次，planner 自己做）
+
+C 档的 10/11/12/20/21，代码在 p06–p11 已落地。**逐条按产物复核**（跑对应套件、
+读对应 Comments 里的轮次号），复核完再勾。不要读成未实现，也不要不复核就勾。
+
+### 轮 3 —— 契约实跑（**花钱 ≈$0.1**，planner 必须自己先跑通原型）
+
+合并 36-F3 + 工单 09 第 2 条 + 工单 25 剩余三条：三票要的证据都出自「真起一次带预算的委派」，
+合并成一次运行取证，只花一份钱。
+
+**这一轮不交给 cursor 统筹，见 F4。**
+
+### 轮 4 —— 工单 19 真实费用对照实验（**花钱，余额**）
+
+两组跑同一组本仓库小票（38、39 + 1–2 张同量级 backlog 小票，用户 2026-09-08 选定）。
+**失败样本不剔除；报告里不许出现未经测量的节省比例。**
+
+**这一轮不交给 cursor 统筹，见 F4。**
+
+## F4. 哪些能交给 cursor 统筹，哪些不能
+
+**能交（轮 1、轮 2 的派发与初审）**：验收字面可判、不花钱、fence 已在 F3 写死。
+cursor 在本仓做执行者的记录是好的（p16-r074…r078 五轮全部 accepted）。
+
+**不能交（轮 3、轮 4）**，三条理由，都是现证的不是推测：
+
+1. **花钱的授权不可转授。** $1 硬顶是用户授权给本会话 planner 的。双层闸门
+   （工单自带 `cumulativeBudget` 做狗粮 + driver 里独立的 Usage 对账）本身是判断题。
+2. **planner 座位的本职是不信执行者的报告。** p17-r079 里执行者诚实、代码也对，
+   问题全出在「它写的断言宣称了套件没有的覆盖」——只有独立跑变异才看得见（F2）。
+   cursor 在本仓的已知失效模式恰恰是高峰期 High Load 空手而归、`/new` 与正文粘连导致
+   fresh-marker 不可信（见 memory `cursor-fresh-marker-is-vacuous`），
+   那等于把「静默漏检」放在唯一的把关位上。
+3. **额度方向反了。** 用户 2026-09-08 说 cursor 额度不多，而 planner 是全场最烧 token 的座位
+   （读 spec、写工单、全量重跑、变异审计）。把额度最紧的放最烧的位置不划算。
+   执行优先 pi / agy。
+
+## F5. 交给 cursor 的硬约束（照抄进它的第一份工单）
+
+1. **不许用「执行者说通过了」结束一轮。** 每一轮的四条验收命令，统筹者必须在自己的 pane
+   里原样重跑一遍，日志按 `p<phase>-r<NN>-*.log` 存进 `.scratch/planner-only-cost-control/`。
+2. **派活前先实跑核验工单本身**（memory `verify-tickets-before-dispatch`：这类错误在本专题
+   已经出现五次）。不止核验诊断，**改动本身也要先在自己 pane 里原型跑通再派**——
+   p17-r079 正是靠原型才提前知道「四条 checkbox 的行为其实已经成立」以及
+   「新增一行 status 会让既有断言 Y3b 变红」，工单里才写得出「只许改 Y3b 这一条」。
+3. **提交执行者产出前先冻结工作区**（memory `freeze-tree-before-committing-executor-work`：
+   pane 要 done、哈希要比对、验收要重跑）。
+4. **`.agent-dir/models.json` 与 `.agent-dir/auth.json` 含 provider API key**——
+   永远不读、不回显进报告、不提交。
+5. **环境硬规则逐字带进每份工单**（执行者不继承全局规则文件，cursor cli 只扫 workspace）：
+   `/tmp` 及其子目录一律禁止放任何中间产物；跨 cwd 的中间文件放 `/project/tmp`；
+   预计超 1 分钟 / 超 2G 内存 / 大量读写 `/data_0` 的命令一律 `slot` 提交；
+   **起重任务前必须先跑 `slot audit` 和 `slot status` 并把输出写进项目日志**；
+   `slot audit` 发现绕过 slot 的重进程**不得擅自终止**，应等待、降并发或报告冲突；
+   不得用 `slot slots` 调大槽位给自己插队。
+6. **本 cwd 有四个 agent 同时在跑**（pD/pE/pF/pG）。同一 cwd 同时只能有一个写者；
+   批量删除 `.planner-only-test-*` 之类的散落目录**不要做**——那可能是别的 agent
+   正在跑的测试沙箱。要清理就移到 `.scratch/.../quarantine/`（可逆）。
+
+## F6. 未了项（不阻塞，接手者按需取用）
+
+- **B10 未证明**：`orchestrate.test.mjs` 里「预算停止不改变状态机」那条，我的变异过宽
+  （直接报错），没能证明它非空转。需要一个更窄的变异：只让「已停止」的 Task 走不同的
+  verdict 分支。
+- **`orchestrate.test.mjs` 的 PASS 横幅**在 3717 行，建议移到文件末尾（见 F1 规则一）。
+- E 档三条（隔离在会话内不解除且 status 不提示 / `writeErrorFor()` 是死接口 /
+  两条 block 路径的 `input.usageBudget` 残留不一致）——第三条本轮又复现了一次：
+  预算耗尽被拒时，`input.usageBudget` 仍留着 `{"tokens":{"hard":100000},"costUsd":{"hard":0.5}}`。
+- **ledger 每次 `session_start` 恢复历史上写过的每一个 Task**（无上限，与工单 38 相关）；
+  占位 Task 带 `cwd: ""`；任何命名安全的散落 `.json` 都可能变成幽灵 Task。
+- **`blocked` 之后的生命周期**：`blocked` 的 Task 无法 abandon
+  （`cannot abandon terminal task: blocked`），但 `planner_verdict` 仍接受对它记 verdict；
+  迟到的子进程回执会把 `blocked` 的 Task 重新打开成 `changes_requested`。
+  已用对照组确认是既有生命周期规则，与预算无关。
+- **`index.test.mjs` 的日期耦合已修**（本轮附带）：夹具原本写死 `T-20260908-801`，
+  而产品按当天日期铸 id（`shouldReplaceTaskId`），过午夜后占位 Task 撞上 per-cwd 写锁，
+  导致 HEAD 上每天必红。**注意**：一度怀疑这是「跨午夜可重置已用满的预算」的绕过，
+  `p17-probe/r079-midnight-budget-bypass.mjs` 实测证伪——ledger 恢复的 Task 保留身份
+  与已用额度，id 替换只发生在 store 不认识该 id 时。别再重复这个误判。
