@@ -103,6 +103,24 @@ assert.equal(activeTools.includes("write"), false);
 assert.equal(activeTools.includes("custom_mutator"), false);
 assert.equal(setActiveCalls.length, 1);
 
+// Issue 13B: status exposes session totals and keeps pre-Task Root usage unattributed.
+await handlers.get("message_end")({ message: {
+	role: "assistant", id: "msg-budget-session", model: "test-model",
+	usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.04 }, content: "before task",
+} }, ctx);
+const sessionTaskId = "T-20260908-801";
+await handlers.get("tool_call")({
+	toolCallId: "call-budget-session",
+	toolName: "subagent",
+	input: { task: JSON.stringify(delegationSpec(sessionTaskId)) },
+}, ctx);
+notices.length = 0;
+await commands.get("planner-only").handler("status", ctx);
+const budgetStatus = notices.at(-1).message;
+assert.equal(budgetStatus.includes("Session usage: tokens=15，已知费用 $0.0400，未知项 0 项"), true);
+assert.equal(budgetStatus.includes("Unattributed (会话级，未归入任何 Task): 1 turns, tokens=15, 费用 $0.0400"), true);
+assert.equal(budgetStatus.includes("Budget: 未设累计上限（已知消耗 tokens=0，费用 $0.0000"), true);
+
 const blocked = await handlers.get("tool_call")(
 	{ toolName: "write", input: { path: "/tmp/x" } },
 	ctx,

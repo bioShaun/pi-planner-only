@@ -8,6 +8,7 @@ import { TaskStore } from "./task.ts";
 import { hashStatus, workspaceSummaryDigest, describeComparison } from "./evidence.ts";
 import { extractReviewRequest } from "./review.ts";
 import { workerReportShapeReminder } from "./report.ts";
+import { emptyTaskUsage } from "./usage.ts";
 
 // Fixture ids are stamped 2026-09-05; pin the store clock so id replacement
 // never depends on the wall clock of the machine running the suite.
@@ -2016,6 +2017,67 @@ function reportT3(taskId, toolCallId) {
 	// the guessed hash is dropped; the stored binding is Root's own report-time sample
 	assert.equal(task.reports[0].evidence.gitStatusHash, cleanHash);
 	assert.equal(task.state, "reviewing");
+}
+
+// Issue 13B: cumulative budget status rendering
+function statusWithBudget(cumulativeBudget, usage) {
+	const store = pinnedStore();
+	const task = store.create({ ...specFor("T-20260908-budget"), cumulativeBudget });
+	task.usage = usage;
+	return new PlannerOrchestrator({ gitRunner, store }).renderTaskStatus(task);
+}
+function usageFixture(output = 0, costUsd) {
+	const usage = emptyTaskUsage();
+	usage.root = { ...usage.root, turns: output ? 1 : 0, output, ...(costUsd === undefined ? {} : { costUsd }) };
+	return usage;
+}
+{
+	const status = statusWithBudget(undefined, usageFixture(120, 0));
+	assert.equal(status.includes("Budget: 未设累计上限（已知消耗 tokens=120，费用 $0.0000；未知项 tokens 0 项、费用 0 项）"), true);
+	assert.equal(status.includes("剩余"), false);
+}
+{
+	const usage = usageFixture(700, 0.1234);
+	usage.children = [{ input: 0, output: 300, cacheRead: 0, cacheWrite: 0, kind: "worker", pending: false, source: "sync-details", costUsd: 0.4567 }];
+	const status = statusWithBudget({ tokens: 1500, costUsd: 1 }, usage);
+	assert.equal(status.includes("  tokens: 已用 1000 / 上限 1500，剩余 500，未知项 0 项"), true);
+	assert.equal(status.includes("  费用: 已用 $0.5801 / 上限 $1.0000，剩余 $0.4199，未知项 0 项"), true);
+}
+{
+	assert.equal(statusWithBudget({ tokens: 1000 }, usageFixture(1200, 0.5)).includes("剩余 -200，未知项 0 项（已超支）"), true);
+}
+{
+	const status = statusWithBudget({ costUsd: 2 }, usageFixture(7, 0.25));
+	assert.equal(status.includes("  tokens: 已用 7，未设累计上限，未知项 0 项"), true);
+	assert.equal(status.includes("  费用: 已用 $0.2500 / 上限 $2.0000，剩余 $1.7500，未知项 0 项"), true);
+}
+{
+	const usage = usageFixture(10, 0.1);
+	usage.root.tokensUnknownTurns = 1;
+	assert.equal(statusWithBudget({ tokens: 20, costUsd: 1 }, usage).includes("剩余 10（不含 1 个未知项），未知项 1 项"), true);
+}
+{
+	const usage = usageFixture(10, 0.1);
+	usage.children = [1, 2].map((output) => ({ input: 0, output, cacheRead: 0, cacheWrite: 0, kind: "worker", pending: false, source: "sync-details", costUsd: 0.2 }));
+	const status = statusWithBudget({ tokens: 100 }, usage);
+	assert.equal(status.includes("  - root: 1 turns, tokens=10, 费用 $0.1000"), true);
+	assert.equal(status.includes("  - worker: 2 calls, tokens=3, 费用 $0.4000"), true);
+	assert.equal(status.includes("reviewer"), false);
+}
+{
+	// A role with zero calls is absent, not zero-filled: children arrived before
+	// any Root turn, so there must be no "root: 0 turns" row.
+	const usage = usageFixture(0);
+	usage.children = [{ input: 0, output: 5, cacheRead: 0, cacheWrite: 0, kind: "explorer", pending: false, source: "sync-details", costUsd: 0.01 }];
+	const status = statusWithBudget({ tokens: 100 }, usage);
+	assert.equal(status.includes("  - explorer: 1 calls, tokens=5, 费用 $0.0100"), true);
+	assert.equal(status.split("\n").some((line) => line.startsWith("  - root:")), false, "a Root with zero turns must not get a role row");
+}
+{
+	const store = pinnedStore();
+	const task = store.create(specFor("T-20260908-no-usage"));
+	task.usage = undefined;
+	assert.equal(new PlannerOrchestrator({ gitRunner, store }).renderTaskStatus(task).split("\n").some((line) => line.startsWith("Budget")), false);
 }
 
 // renderTaskStatus lists validator reports when present, omits the line when absent

@@ -93,6 +93,7 @@ import type {
 	StructuredDelegationMode,
 	WorkerReport,
 } from "./types.ts";
+import { summarizeTaskBudget } from "./usage.ts";
 
 /** Worker output kept as a fallback when a report cannot be parsed at all. */
 const RAW_OUTPUT_FALLBACK_CHARS = 4000;
@@ -1168,6 +1169,32 @@ export class PlannerOrchestrator {
 					lines.push(`  - ${d.role}: requested=${d.requested}; resolved=${d.resolved}; actual=${d.actual}${d.mismatch ? "; 不匹配" : ""}`);
 				} else {
 					lines.push(`  - ${d.role}: ${d.model} (thinking: ${d.thinking})`);
+				}
+			}
+		}
+		if (task.usage !== undefined) {
+			const budget = summarizeTaskBudget(task.usage, task.spec?.cumulativeBudget);
+			const money = (value: number): string => `$${value.toFixed(4)}`;
+			const dimensionLine = (label: string, dimension: { limit?: number; known: number; unknownParts: number; remaining?: number }, format: (value: number) => string): string => {
+				if (dimension.limit === undefined) return `  ${label}: 已用 ${format(dimension.known)}，未设累计上限，未知项 ${dimension.unknownParts} 项`;
+				const unknownNote = dimension.unknownParts > 0 ? `（不含 ${dimension.unknownParts} 个未知项）` : "";
+				const overBudget = (dimension.remaining ?? 0) < 0 ? "（已超支）" : "";
+				return `  ${label}: 已用 ${format(dimension.known)} / 上限 ${format(dimension.limit)}，剩余 ${format(dimension.remaining ?? 0)}${unknownNote}，未知项 ${dimension.unknownParts} 项${overBudget}`;
+			};
+			if (!budget.configured) {
+				lines.push(`Budget: 未设累计上限（已知消耗 tokens=${budget.tokens.known}，费用 ${money(budget.costUsd.known)}；未知项 tokens ${budget.tokens.unknownParts} 项、费用 ${budget.costUsd.unknownParts} 项）`);
+			} else {
+				lines.push("Budget (累计):", dimensionLine("tokens", budget.tokens, (value) => String(value)), dimensionLine("费用", budget.costUsd, money));
+			}
+			const roles = (Object.entries(budget.byRole) as Array<[string, { calls: number; tokens: number; costUsd: number; costUnknownParts: number }]>)
+				.filter(([, usage]) => usage.calls > 0)
+				.sort(([left], [right]) => left === "root" ? -1 : right === "root" ? 1 : left.localeCompare(right));
+			if (roles.length > 0) {
+				lines.push("Budget by role:");
+				for (const [role, usage] of roles) {
+					const countLabel = role === "root" ? "turns" : "calls";
+					const unknown = usage.costUnknownParts > 0 ? `，费用未知 ${usage.costUnknownParts} 项` : "";
+					lines.push(`  - ${role}: ${usage.calls} ${countLabel}, tokens=${usage.tokens}, 费用 ${money(usage.costUsd)}${unknown}`);
 				}
 			}
 		}

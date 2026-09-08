@@ -28,6 +28,7 @@ import {
 	pricingPath,
 	renderUsage,
 	renderUsageLine,
+	summarizeSessionUsage,
 	shouldFlushUsageOnShutdown,
 } from "./usage.ts";
 import type { PiUsageLike, UsageEntry } from "./usage.ts";
@@ -1085,6 +1086,11 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				const active = store.active();
 				if (active) {
 					lines.push("", orchestrator.renderTaskStatus(active));
+				}
+				const sessionUsage = summarizeSessionUsage(ledger);
+				lines.push(`Session usage: tokens=${sessionUsage.totalTokens}，已知费用 $${sessionUsage.totalCostUsd.toFixed(4)}，未知项 ${sessionUsage.costUnknownParts} 项`);
+				if (sessionUsage.unattributed.turns > 0 || sessionUsage.unattributed.costUnknown) {
+					lines.push(`Unattributed (会话级，未归入任何 Task): ${sessionUsage.unattributed.turns} turns, tokens=${sessionUsage.unattributed.tokens}, 费用 $${sessionUsage.unattributed.costUsd.toFixed(4)}${sessionUsage.unattributed.costUnknown ? "，费用不可知" : ""}`);
 				}
 				notify(ctx, lines.join("\n"), rateWarning ? "warning" : "info");
 				return;
