@@ -322,4 +322,58 @@ function snapshotPath(dir, taskId) {
 	}
 }
 
+{
+	const dir = sandbox();
+	const origWrite = fsCjs.writeFileSync;
+	let writeCalls = 0;
+	fsCjs.writeFileSync = function patchedWrite(...args) {
+		writeCalls += 1;
+		return origWrite.apply(this, args);
+	};
+	try {
+		const ledger = new LedgerSnapshotStore(dir);
+		const record = makeRecord("T-20260908-q1");
+		const notListed = ledger.isQuarantined(record.taskId);
+		assert.equal(notListed, false, "Q1: a taskId is not quarantined until registered");
+
+		ledger.write(record);
+		const path = snapshotPath(dir, record.taskId);
+		writeFileSync(path, "this is not json", "utf8");
+		const before = readFileSync(path, "utf8");
+		const ledgerDir = join(dir, "planner-only", "ledger");
+		const beforeNames = readdirSync(ledgerDir).sort();
+		writeCalls = 0;
+
+		ledger.quarantine(record.taskId, "unparseable JSON");
+		const listed = ledger.isQuarantined(record.taskId);
+		assert.equal(listed, true, "Q2: quarantine registers the taskId");
+		const otherListed = ledger.isQuarantined("T-20260908-other");
+		assert.equal(otherListed, false, "Q3: quarantine is scoped to that taskId");
+
+		assert.doesNotThrow(() => ledger.write(record), "Q4: write of a quarantined taskId does not throw");
+		const afterWrite = readFileSync(path, "utf8");
+		assert.equal(afterWrite, before, "Q5: write of a quarantined taskId does not change the snapshot bytes");
+		const afterNames = readdirSync(ledgerDir).sort();
+		assert.deepEqual(afterNames, beforeNames, "Q6: write of a quarantined taskId creates no temp files");
+		assert.equal(writeCalls, 0, "Q6b: write of a quarantined taskId does not call writeFileSync");
+		const qErr = ledger.writeErrorFor(record.taskId);
+		assert.ok(qErr, "Q7: writeErrorFor records the quarantine");
+		assert.match(String(qErr), /quarantin/i, "Q8: the write-health reason names quarantine, not a disk fault");
+
+		const neighbor = makeRecord("T-20260908-q2");
+		ledger.write(neighbor);
+		assert.equal(existsSync(snapshotPath(dir, neighbor.taskId)), true, "Q9: a neighbouring taskId still writes");
+		assert.equal(readFileSync(path, "utf8"), before, "Q10: writing a neighbour does not rewrite the quarantined file");
+
+		const fresh = new LedgerSnapshotStore(dir);
+		assert.equal(fresh.isQuarantined(record.taskId), false, "Q11: quarantine does not persist to disk");
+		const { corrupt } = ledger.readAll();
+		assert.equal(corrupt.some((item) => item.taskId === record.taskId), true, "Q12: readAll still reports the corrupt file");
+		assert.equal(readFileSync(path, "utf8"), before, "Q13: readAll does not repair the quarantined file");
+	} finally {
+		fsCjs.writeFileSync = origWrite;
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
 console.log("planner-only ledger-store: PASS");

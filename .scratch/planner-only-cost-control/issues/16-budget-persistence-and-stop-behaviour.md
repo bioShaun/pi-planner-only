@@ -6,8 +6,8 @@
 
 **Status:** ready-for-agent
 
-- [ ] reload 后 status 显示的已用与预留与 reload 前一致。
-- [ ] Usage 文件损坏：status 显示余额不可信，新的付费委派被拒绝。
+- [x] reload 后 status 显示的已用与预留与 reload 前一致。（16-b，p16-r077 落地 / p16-r078 补隔离）
+- [x] Usage 文件损坏：status 显示余额不可信，新的付费委派被拒绝。（同上；跨会话不自愈由 p16-r078 钉死）
 - [ ] 预算停止后：status 可查；Root 可记录非通过 Verdict；此前已启动的子进程返回后仍被结算与记录。
 - [ ] 预算停止不改变写锁与 Task 状态机的现有规则。
 
@@ -196,3 +196,76 @@ reviewer（按设计豁免 untrusted 闸门，合理）动它一下 → `touch()
   「原样 persist 一遍」写出的字节可能一模一样（L12/L12a 都栽在这上面）。变异要写入一个**不同**的值。
 - **`str.replace` 不加断言就是静默失效**：我给 `neutralise()` 补 `return True` 的那次 patch 没匹配上，
   函数返回 `None`，于是所有需要中和的用例统一报「无法中和」（58/66）。补上断言后重跑才是 66/66。
+
+---
+
+## 落地记录：16-b′ 隔离名单 p16-r078（执行者 cursor `w2E:pE`，planner claude-pD 独立复核）
+
+**改了什么**（`HEAD=1260d18` 之上，5 文件 / +126 −0）：
+
+- `ledger-store.ts` +16：`quarantine(taskId, reason)` / `isQuarantined(taskId)`，
+  外加 `write()` 开头（合法 id 校验之后）的硬拦：撞上被隔离的 taskId 就
+  **记一条 `quarantined: <reason>` 的按 taskId 写健康度、直接 return**——不写盘、不建临时文件、不抛。
+  隔离表只在内存里（`private readonly quarantined = new Map()`），不落盘；`readAll()` 一个字没改。
+- `orchestrate.ts` +5：`restoreFromLedger()` 的 corrupt 循环里同时 `this.snapshots.quarantine(...)`；
+  untrusted 闸门拦下非 reviewer 时顺手 `delete input.usageBudget` / `delete input.__floorLimits`。
+- `ledger-store.test.mjs` +54（Q1–Q13）、`orchestrate.test.mjs` +47（L14–L24、L18c）、
+  `architecture.test.mjs` +4（C16-6..C16-9）。
+
+**planner 侧独立复核**（不采信执行者报告，全部自己重跑）：
+
+1. `slot audit` 无绕过 slot 的重进程（上一轮那个 `htvc` 已经不在了），`slot status` 见
+   `p16-r078-planner-slot.log`；本轮所有命令走 `slot cpu`。
+2. 四条验收自己重跑（`p16-r078-planner-acceptance.log`）：typecheck=0；
+   `npm test` 16 个套件全 `: PASS`，只剩 `naming.test.mjs` 卡在「install 缺 ledger-store.ts」
+   （分支未并 main 的既有闸门，**它的失败输出在 stderr**），exit=1；
+   `PI_PLANNER_ONLY_REQUIRE_CONTRACT=1 test:e2e`=0；`git diff --check`=0。
+3. **实测 C（本轮核心）原样重跑，洞已堵**：
+
+   ```
+   ledger file after session B, first 200 chars:
+     this is not json
+     still corrupt (non-JSON)? true
+   C: worker delegation blocked? YES: Planner-only guard: task T-20260908-971 ledger snapshot unreadable
+   C: usageBudget handed to the child: undefined
+   ```
+
+   session C 的 status 仍是「余额不可信」，全程再没出现过 `costUsd.hard: 0.5`。
+   实测 A、实测 B 原样重跑逐字复现（剩余 $0.0100 / clamp `0.010000000000000002`；
+   损坏的 961 被拒、完好的 962 拿到 `costUsd.hard: 0.04`）。
+4. **逐条空转审计 32/32 CAUGHT**（Q1–Q13、L14–L24+L18c、C16-6..9），驱动是我自己写的
+   `p16-probe/r078-vacuity-audit.py`，变异与执行者的各写各的，逐字输出见
+   `p16-r078-planner-vacuity-final.log`；审计前后 `md5sum -c p16-r078-planner-freeze.md5` 五个文件全 OK。
+   核心是那三条反向变异：**摘掉 `snapshots.quarantine(...)`（L15/L24 变红）**、
+   **摘掉 reviewer 豁免（L16 变红）**、**让隔离只生效一次（L17 变红）**。
+
+**复核中查实的两件事：**
+
+- 执行者说「`prepareRoleDelegation` 在闸门之前就把默认地板盖到了 `input` 上」——**属实**，
+  探针 `p16-probe/r078-planner-floorlimits-shape.mjs` 打出来是
+  `usageBudget: {"tokens":{"hard":100000},"costUsd":{"hard":0.5}}`。所以 `delete input.usageBudget`
+  这半是有承重的（L18b/L22 抓得住）。
+- 但 `__floorLimits` 的形状是 `{"costUsd":{"value":0.5,"source":"floor"}}`，**没有 `hard` 这个键**，
+  正则 `/"hard":\s*0\.5/` 永远匹配不到它。所以 `delete input.__floorLimits` 那半
+  **没有任何断言承重**，属于顺手做的清理（该 tool_call 已被 block、不会启动，删了无害）。
+  L18c/L23 是端到端的冗余守卫，钉住的其实是 `usageBudget` 那半。
+
+**我自己在审计驱动里犯的两个错（同样是「先怀疑自己的变异」）：**
+
+1. L18c/L23 首轮报 VACUOUS：我的变异是「不删 `__floorLimits`」，而上面刚说了那个键里根本没有
+   `"hard": 0.5`——变异不改变可观测行为，等于没变。改成变异 `usageBudget` 那半、
+   让中和循环跨过 L18b，两条立刻 CAUGHT。
+2. L20 首轮 GAVE-UP（同一行被「中和」40 次）：我的变异是「第二次 restore 整段跳过 corrupt 循环」，
+   它把更早那个 L9 块的占位记录也一起干掉了，`store.require` 从**非断言行**抛出，
+   中和循环只会往上找 assert，怎么中和都不动。变异收窄成「只对本块那个 taskId、只在第二次、
+   只漏掉 untrustedBalances 那一条」（占位记录保留，status 渲染得出来）之后 CAUGHT。
+   **教训同上一轮：变异要跟断言的语义一样窄，越界的变异会先炸在别处，而别处未必有断言可中和。**
+
+**新增 backlog（本轮不做，已进 deferred-backlog.md）：**
+
+- 隔离表在会话内不会解除：人在会话中途把损坏文件修好，也要等下次会话才恢复可写
+  （设计如此，但 status 上没有任何提示说「本会话内不会自愈」）。
+- `writeErrorFor()` / `lastWriteError` 至今**没有任何产品代码读它**，只有测试读。
+  隔离导致的「写不进去」对用户是静默的——用户能看到的只有 Task status 那行「余额不可信」。
+- 被 `cumulative budget exhausted` 拦下的那条早退路径**没有**做同样的 `input.usageBudget` 清理，
+  两条 block 路径的残留字段行为不一致。

@@ -122,6 +122,10 @@ assert.match(orchestrate, /restoreFromLedger\(\)/, "C16-2: the orchestrator load
 assert.match(index, /loadSessionUsage\(ctx\);\s*\n\s*orchestrator\.restoreFromLedger\(\)/, "C16-3: session_start restores the ledger after loadSessionUsage");
 assert.match(orchestrate, /untrustedBalances/, "C16-4: untrusted balances are tracked per taskId");
 assert.match(orchestrate, /ledger snapshot unreadable/, "C16-5: untrusted refusal is a distinct message from cumulativeBudgetRefusal");
+assert.match(ledgerStore, /quarantine\(taskId/, "C16-6: LedgerSnapshotStore exposes quarantine");
+assert.match(ledgerStore, /isQuarantined\(taskId/, "C16-7: LedgerSnapshotStore exposes isQuarantined");
+assert.match(orchestrate, /this\.snapshots\.quarantine\(/, "C16-8: restoreFromLedger registers corrupt taskIds in the snapshot quarantine");
+assert.match(ledgerStore, /isQuarantined\(record\.taskId\)/, "C16-9: write refuses quarantined taskIds");
 
 assert.match(reservations, /rekey\(/, "C37-1: BudgetReservations exposes rekey");
 assert.equal((orchestrate.match(/this\.reservations\.rekey\(/g) ?? []).length, 1, "C37-2: orchestrate rekeys in exactly one place");

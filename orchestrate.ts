@@ -607,6 +607,7 @@ export class PlannerOrchestrator {
 		}
 		for (const item of corrupt) {
 			this.untrustedBalances.set(item.taskId, item.reason);
+			this.snapshots.quarantine(item.taskId, item.reason);
 			if (SAFE_TASK_ID.test(item.taskId) && !this.store.get(item.taskId)) {
 				this.store.restore(untrustedPlaceholder(item.taskId));
 			}
@@ -798,6 +799,10 @@ export class PlannerOrchestrator {
 		const untrustedTaskId = target?.task?.taskId ?? target?.taskId ?? spec?.taskId;
 		// Reviewer stays exempt: an unreadable ledger must not prevent closing the Task.
 		if (role !== "reviewer" && untrustedTaskId && this.untrustedBalances.has(untrustedTaskId)) {
+			if (input && typeof input === "object" && !Array.isArray(input)) {
+				delete (input as Record<string, unknown>).usageBudget;
+				delete (input as Record<string, unknown>).__floorLimits;
+			}
 			return { block: { reason: this.untrustedLedgerRefusal(untrustedTaskId) } };
 		}
 		const cumulativeBudget = (gateTask?.spec as unknown as { cumulativeBudget?: unknown } | undefined)?.cumulativeBudget;

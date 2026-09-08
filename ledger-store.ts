@@ -18,6 +18,7 @@ export class LedgerSnapshotStore {
 	private readonly dir: string;
 	private _lastWriteError: unknown;
 	private readonly writeErrors = new Map<string, unknown>();
+	private readonly quarantined = new Map<string, string>();
 	private warnedIo = false;
 
 	constructor(dir: string) {
@@ -32,11 +33,26 @@ export class LedgerSnapshotStore {
 		return this.writeErrors.get(taskId);
 	}
 
+	quarantine(taskId: string, reason: string): void {
+		this.quarantined.set(taskId, reason);
+	}
+
+	isQuarantined(taskId: string): boolean {
+		return this.quarantined.has(taskId);
+	}
+
 	write(record: TaskRecord): void {
 		if (!SAFE_TASK_ID.test(record.taskId)) {
 			const err = new Error(`invalid ledger taskId: ${record.taskId}`);
 			this._lastWriteError = err;
 			throw err;
+		}
+		if (this.isQuarantined(record.taskId)) {
+			const reason = this.quarantined.get(record.taskId) ?? "unreadable snapshot";
+			const err = new Error(`quarantined: ${reason}`);
+			this._lastWriteError = err;
+			this.writeErrors.set(record.taskId, err);
+			return;
 		}
 		try {
 			this.writeAtomic(record);

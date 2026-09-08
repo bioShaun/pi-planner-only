@@ -5838,3 +5838,50 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 		rmSync(dir, { recursive: true, force: true });
 	}
 }
+
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-16b-l14-"));
+	try {
+		const bad = spentTaskRecord("T-20260908-963", 0.04, 0.05);
+		new LedgerSnapshotStore(dir).write(bad);
+		const path = join(dir, "planner-only", "ledger", `${bad.taskId}.json`);
+		writeFileSync(path, "this is not json", "utf8");
+		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
+		const result = orch.restoreFromLedger();
+		assert.equal(result.corrupt.some((item) => item.taskId === "T-20260908-963"), true, "L14: restoreFromLedger reports the unreadable file as corrupt");
+		const placeholder = orch.store.require("T-20260908-963");
+		const untrustedStatus = orch.renderTaskStatus(placeholder);
+		assert.match(untrustedStatus, /余额不可信/, "L14b: the placeholder still renders an untrusted status");
+
+		orch.store.persist(placeholder);
+		assert.equal(readFileSync(path, "utf8"), "this is not json", "L15: persist of the placeholder does not rewrite the corrupt snapshot");
+		writeFileSync(path, "this is not json", "utf8");
+
+		const reviewer = await orch.beginDelegation({ toolCallId: "call-l16", input: { agent: "reviewer", task: `Review ${bad.taskId}` } }, BASE);
+		assert.equal(reviewer.block, undefined, "L16: reviewer is still allowed when the ledger is unreadable");
+		orch.store.persist(orch.store.require("T-20260908-963"));
+		assert.equal(readFileSync(path, "utf8"), "this is not json", "L17: reviewer activity does not rewrite the corrupt snapshot");
+
+		const inputB = { task: JSON.stringify(bad.spec) };
+		await orch.prepareRoleDelegation(inputB);
+		const refused = await orch.beginDelegation({ toolCallId: "call-l18", input: inputB }, BASE);
+		assert.match(refused.block?.reason ?? "", /ledger snapshot unreadable/, "L18: a worker stays refused after reviewer activity");
+		assert.equal(inputB.usageBudget, undefined, "L18b: reviewer activity does not grant the child a usageBudget");
+		assert.doesNotMatch(JSON.stringify(inputB), /"hard":\s*0\.5/, "L18c: blocked untrusted launch does not leave costUsd.hard 0.5 on the input");
+
+		const orch2 = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
+		const result2 = orch2.restoreFromLedger();
+		assert.equal(result2.corrupt.some((item) => item.taskId === "T-20260908-963"), true, "L19: a later session still reports the file corrupt");
+		const status2 = orch2.renderTaskStatus(orch2.store.require("T-20260908-963"));
+		assert.match(status2, /余额不可信/, "L20: a later session still shows 余额不可信");
+		const inputC = { task: JSON.stringify(bad.spec) };
+		await orch2.prepareRoleDelegation(inputC);
+		const refusedC = await orch2.beginDelegation({ toolCallId: "call-l21", input: inputC }, BASE);
+		assert.match(refusedC.block?.reason ?? "", /ledger snapshot unreadable/, "L21: a later session still refuses a paid worker launch");
+		assert.equal(inputC.usageBudget, undefined, "L22: a later session does not hand the child a usageBudget");
+		assert.doesNotMatch(JSON.stringify(inputC), /"hard":\s*0\.5/, "L23: a later session does not grant costUsd.hard 0.5");
+		assert.equal(readFileSync(path, "utf8"), "this is not json", "L24: the corrupt bytes survive across sessions");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}

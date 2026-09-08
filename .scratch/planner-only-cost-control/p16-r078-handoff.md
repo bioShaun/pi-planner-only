@@ -4,7 +4,8 @@
 
 你是执行者。规划者是 Claude，pane `w2E:pD`。**报告发回 `w2E:pD`。**
 工作目录 `/home/tcuni-claw/pi/pi-planner-only`，分支 `planner-only-cost-control`。
-**`HEAD=ca091c4`，且工作区里带着 p16-r077 未提交的改动（9 个文件）——就在这份改动上继续改，不要 stash、不要 reset。**
+**`HEAD=1260d18`，工作区干净**（p16-r077 的 9 个文件我已经复核完并提交了，提交信息里写明了本轮要修的洞）。
+先 `git log --oneline -1` 自己核一遍；对不上就停下来问我，不要 stash、不要 reset、不要 rebase。
 
 ---
 

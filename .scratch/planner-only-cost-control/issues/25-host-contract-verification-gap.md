@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-human
+**Status:** ready-for-agent（2026-09-08 用户授权真实花费；剩余三条改由一次契约实跑取证，见文末）
 
 - [x] 判定 §G 是否可以在本机修复：`@earendil-works/pi-tui` 装进宿主 node_modules 后，公开 `./preflight` 能否导入 `resolveSubagentLaunchContract`。
 - [x] 若可修复：修复后 `npm run test:e2e` 的 §G 不再打印「未验证」，且 `PI_PLANNER_ONLY_REQUIRE_CONTRACT=1` 下 `npm run test:release` 仍为 0。
@@ -119,3 +119,14 @@ planner-only pi-subagents E2E: PASS
 顺带发现一个**闸门缺陷，另开工单 26**：文件头注释 C01 声称「with `PI_PLANNER_ONLY_REQUIRE_CONTRACT=1`（the release gate）the same conditions exit non-zero —— a skipped contract test must never read as a pass」，但全文只有 §G 有这个守卫（`e2e.pi-subagents.test.mjs:69` 与 `:378`）。§E（`:286`）与 §F（`:313`）跳过时只 `console.log` 就往下走。实测 `npm run test:release` 在 §F 未验证的情况下**退出 0** —— 一条被跳过的契约测试正以 PASS 的面目通过发布闸门，与 C01 的承诺相反。
 
 round_id=claude-pD-2026-09-08-install-pitui
+
+---
+
+## 2026-09-08 用户授权真实模型花费
+
+- **Root（主模型）**：GPT-5.6 Luna；**子代理**：qwen3.8-27b（沿用当前配置）。要求最小化花费。
+- **总花费硬上限 $1**，覆盖本票在内的**全部**真实模型运行（契约实跑 + 19 的对照实验合计）。
+  跑到上限即停：实验驱动必须自己带这道闸门，不能只靠事后对账。
+- 19 的样本票取**本仓库自己的小票**（38、39 + 1-2 张同量级 backlog 小票）：
+  验收标准已写死在工单里，通过/失败是客观的，不需要另造评分。
+- 执行者路由：cursor 额度告急，自本日起优先 pi `w2E:pG`、agy `w2E:pF`。
