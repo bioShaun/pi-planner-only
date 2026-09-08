@@ -1,0 +1,8 @@
+5f8bb8b517000cd8a7f7cdeafcb3c3c6  ledger-store.ts
+1def307246372d93a3030cdcc1bd4fd1  ledger-store.test.mjs
+5dae83ca95854bc0d0a601079b2a5d68  task.ts
+9c40a6d1ac104009ea1bee7a19194880  task.test.mjs
+bd665a1a1449f55041aca5ea5cce9f6d  orchestrate.ts
+43bc87adf362665fc23cf9ae26dda129  index.ts
+44b838353c7e4a626c89f2762fa62551  architecture.test.mjs
+8fd27ebcdfadfebbdb87dd6c4ccc4729  package.json

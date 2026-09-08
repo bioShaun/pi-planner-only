@@ -502,4 +502,30 @@ assert.throws(() => store.abandon(abandoned.taskId), /terminal task/);
 	assert.equal(res5.spec, undefined);
 }
 
+{
+	const seen = [];
+	const persistStore = new TaskStore({
+		now: () => new Date("2026-09-08T12:00:00.000Z"),
+		onPersist: (record) => seen.push(record.taskId + ":" + record.state),
+	});
+	const rec = persistStore.create(createTaskSpec({ objective: "onPersist create", cwd }, "T-20260908-p1"));
+	assert.deepEqual(seen, ["T-20260908-p1:planning"], "T1: create() invokes onPersist");
+	persistStore.transition(rec.taskId, "executing");
+	assert.deepEqual(seen, ["T-20260908-p1:planning", "T-20260908-p1:executing"], "T2: touch() invokes onPersist");
+	persistStore.create(createTaskSpec({ objective: "onPersist create", cwd }, "T-20260908-p1"));
+	assert.equal(seen.length, 2, "T3: create() of an existing id does not persist again");
+	persistStore.persist(rec);
+	assert.equal(seen.length, 3, "T4: persist() is the public usage-sync sink");
+}
+
+{
+	const exploding = new TaskStore({
+		onPersist: () => {
+			throw new Error("sink exploded");
+		},
+	});
+	assert.doesNotThrow(() => exploding.create(createTaskSpec({ objective: "sink must not explode create", cwd }, "T-20260908-p2")), "T5: onPersist throw must not fail create()");
+	assert.doesNotThrow(() => exploding.transition("T-20260908-p2", "executing"), "T6: onPersist throw must not fail touch()");
+}
+
 console.log("planner-only task lifecycle: PASS");

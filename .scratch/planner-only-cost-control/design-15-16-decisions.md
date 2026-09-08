@@ -149,3 +149,56 @@ $0.45 的负债来自一个从未存在的子进程，上限当场吃穿。而�
 但工单 05 文末那句仍然有效且没被本文件闭合：**运行时强制从未被证明。**
 本轮 p15-r072（14B + 17）做的就是把这件事在 status 上说出来，默认按「仅事后观测」披露。
 F3（真跑一次子进程去证明宿主到底停不停）要花模型钱，仍在用户手上，本文件不替它做决定。
+
+---
+
+## E. 工单 37：第一次委派绕过闸门——改法定稿
+
+### E.1 现象与机制（已实跑坐实）
+
+探针 `p16-probe/r075-first-delegation-ungated.mjs`，`cumulativeBudget = {tokens: 200000, costUsd: 0.05}`：
+
+```
+usageBudget handed to call-first:  {"tokens":{"hard":100000},"costUsd":{"hard":0.5}}
+first delegation blocked? no
+在途预留 present after 1st? false
+second delegation blocked? YES: ... cumulative budget exhausted (costUsd).
+```
+
+**第一个子进程的单次硬上限是 $0.50，Task 的整份累计预算是 $0.05。**
+机制：检查—预留那段的入口是 `budgetTask = target?.task`（`orchestrate.ts:727-733`），
+而创建 Task 的那次委派走到这里时 store 里还没有记录——记录要到 `orchestrate.ts:1000/1005/1067`
+的 `store.create()` 才出现。整段被跳过：不检查、不预留、不盖 grant，
+`resolveEffectiveLimits` 也拿不到 `balanceTokens/balanceCostUsd`。
+
+### E.2 我在工单里写错的一条，更正
+
+37 号工单原文的「方案 C：委派成功记录之后补做一次预留……闸门仍然是事后的」**是错的**。
+`beginDelegation` 就是 `tool_call` 钩子，`store.create()` 和它的返回在同一次调用里，
+返回 `{block}` 就能阻止启动——建完 Task 再预留**仍然是启动前**。
+
+但方案 C 有另一个真问题，也是我一开始没看到的：
+`orchestrate.ts` 的 828、886、936 三处是 `delegations.set(...)` **紧跟 `return`**，
+它们是**成功启动**的早退路径，不是拒绝路径，压根走不到 `ensureCwd`。
+把预留整段挪到 `ensureCwd` 之后，会把这三条路径现有的预留**一起弄丢**。
+所以「往后挪」不成立，要「就地补齐」。
+
+### E.3 定稿（方案 B′）
+
+1. 预留点不动。当 `target?.task` 为空而 `targetSpec?.cumulativeBudget` 存在时，
+   用 `emptyTaskUsage()` + 该 `cumulativeBudget` 现算一份 budget，
+   预留挂在 `targetSpec.taskId` 上。新 Task 余额是满的，检查这一半必然通过，
+   **真正起作用的是另一半：把余额喂给 `resolveEffectiveLimits`，
+   让第一个子进程的 `usageBudget.hard` 受累计预算约束**，并盖上 grant。
+2. **键的风险必须处理**：`spec.taskId` 不一定就是入库的 id——
+   `shouldReplaceTaskId` 分支会用 `store.nextTaskId()` 另生成一个，原 id 只留作别名
+   （`orchestrate.ts:997-1000`）。而 `endDelegation` 是按 `record.taskId` 释放的
+   （`orchestrate.ts:564`），键不对就会**永久泄漏**，且 `inFlight(realTaskId)` 看不见它——
+   D4 不显示、闸门不计数，比不预留更糟。
+   因此加 `BudgetReservations.rekey(fromTaskId, toTaskId, toolCallId)`，
+   在 `store.create(storedSpec, spec.taskId)` 之后立刻改键。
+3. 其余一切不动：grant 盖章、D4 披露、工单 15 的负债都是按 `toolCallId` 走的，改键之后自动正确。
+
+**定稿前还欠一次实跑核验**（cursor 占着写者位，等 p16-r075 收工再做）：
+`summarizeTaskBudget(emptyTaskUsage(), cumulativeBudget)` 产出的 `ReservationBudget`
+形状与既有调用一致，`limit` 有值、`known` 为 0。没核之前不许派工。

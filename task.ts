@@ -431,15 +431,18 @@ export interface TaskRecord {
 
 export interface TaskStoreOptions {
 	now?: () => Date;
+	onPersist?: (record: TaskRecord) => void;
 }
 
 export class TaskStore {
 	private readonly tasks = new Map<string, TaskRecord>();
 	private readonly clock: () => Date;
+	private readonly onPersist?: (record: TaskRecord) => void;
 	private sequence = 0;
 
 	constructor(options: TaskStoreOptions = {}) {
 		this.clock = options.now ?? (() => new Date());
+		this.onPersist = options.onPersist;
 	}
 
 	now(): Date {
@@ -475,6 +478,7 @@ export class TaskStore {
 			updatedAt: timestamp,
 		};
 		this.tasks.set(taskId, record);
+		this.persist(record);
 		return record;
 	}
 
@@ -517,8 +521,17 @@ export class TaskStore {
 			.sort((left, right) => (left.updatedAt < right.updatedAt ? 1 : -1))[0];
 	}
 
+	persist(record: TaskRecord): void {
+		try {
+			this.onPersist?.(record);
+		} catch {
+			// The sink records lastWriteError. Task memory must not die with a snapshot.
+		}
+	}
+
 	private touch(record: TaskRecord): TaskRecord {
 		record.updatedAt = this.now().toISOString();
+		this.persist(record);
 		return record;
 	}
 

@@ -174,6 +174,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	const orchestrator = new PlannerOrchestrator({
 		gitRunner,
 		artifactDirs: () => artifactDirsFor(latestCtx ?? ({ hasUI: false, cwd: process.cwd() } as ExtensionContext)),
+		ledgerDir: AGENT_DIR,
 	});
 	let pricing = loadPricingTable();
 	let ledger = new UsageLedger({ pricing });
@@ -412,7 +413,10 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		if (!taskId) return;
 		const usage = ledger.taskUsage(taskId);
 		const task = orchestrator.store.get(taskId);
-		if (usage && task) task.usage = usage;
+		if (usage && task) {
+			task.usage = usage;
+			orchestrator.store.persist(task);
+		}
 	}
 
 	function resolveTaskPending(taskId: string, ctx: ExtensionContext, asyncDir?: string): void {

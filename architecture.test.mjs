@@ -15,6 +15,7 @@ const usage = src("usage.ts");
 const roleModels = src("role-models.ts");
 const orchestrate = src("orchestrate.ts");
 const reservations = src("reservations.ts");
+const ledgerStore = src("ledger-store.ts");
 const floors = src("floors.ts");
 const pkg = JSON.parse(src("package.json"));
 
@@ -106,5 +107,15 @@ assert.equal(index.includes("pendingChild(record.kind, { agent, toolCallId: unde
 // Ticket 15-b D1: confirmed-not-launched is queried from the orchestrator, not recoded in the adapter.
 assert.equal(index.includes("wasConfirmedNotLaunched("), true);
 assert.equal(orchestrate.includes("wasConfirmedNotLaunched("), true);
+
+assert.equal(pkg.files.includes("ledger-store.ts"), true, "C1: ledger-store.ts must ship in the package files list");
+assert.match(pkg.scripts?.test ?? "", /ledger-store\.test\.mjs/, "C2: the unit test script must run ledger-store.test.mjs");
+assert.doesNotMatch(ledgerStore, /from "\.\/index\.ts"|@earendil-works/, "C3: ledger-store.ts must not import the adapter or the Pi host");
+assert.doesNotMatch(ledgerStore, /readFileSync|readFile\(/, "C4: this round must not read snapshots back");
+assert.doesNotMatch(ledgerStore, /usage\.jsonl/, "C5: ledger snapshots must not reuse usage.jsonl");
+assert.match(index, /ledgerDir:\s*AGENT_DIR/, "C6: the Pi adapter passes AGENT_DIR as ledgerDir");
+assert.match(orchestrate, /from "\.\/ledger-store\.ts"/, "C7: the orchestrator owns LedgerSnapshotStore");
+assert.match(orchestrate, /new LedgerSnapshotStore\(deps\.ledgerDir\)/, "C8: the sink is constructed from deps.ledgerDir");
+assert.match(index, /task\.usage = usage;\s*\n\s*orchestrator\.store\.persist\(task\)/, "C9: syncUsage persists after the direct usage write");
 
 console.log("planner-only architecture: PASS");

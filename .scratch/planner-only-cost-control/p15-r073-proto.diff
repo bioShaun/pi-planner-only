@@ -1,0 +1,307 @@
+diff --git a/index.ts b/index.ts
+index 8868a32..8a05cc0 100644
+--- a/index.ts
++++ b/index.ts
+@@ -319,7 +319,20 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 		return join(AGENT_DIR, "planner-only", "usage.jsonl");
+ 	}
+ 
+-	function pendingChild(kind: DelegationKind, ids: { runId?: string; agent?: string; toolCallId?: string }): ChildUsage {
++	/**
++	 * A child whose usage cannot be read yet.
++	 *
++	 * Ticket 15: it MUST carry a key (runId or toolCallId). An unkeyed child is
++	 * appended rather than upserted, so a second record of the same child adds a
++	 * second row -- and with debt attached that double-charges the Task and the
++	 * real usage can never replace it. `debt` is the budget granted at launch,
++	 * charged while the real value is missing.
++	 */
++	function pendingChild(
++		kind: DelegationKind,
++		ids: { runId?: string; agent?: string; toolCallId?: string },
++		debt?: { tokens?: number; costUsd?: number },
++	): ChildUsage {
+ 		return {
+ 			input: 0,
+ 			output: 0,
+@@ -331,6 +344,16 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 			...(ids.runId ? { runId: ids.runId } : {}),
+ 			...(ids.agent ? { agent: ids.agent } : {}),
+ 			...(ids.toolCallId ? { toolCallId: ids.toolCallId } : {}),
++			...(debt?.tokens !== undefined ? { tokensDebt: debt.tokens } : {}),
++			...(debt?.costUsd !== undefined ? { costDebtUsd: debt.costUsd } : {}),
++		};
++	}
++
++	/** The budget granted to this invocation, charged as debt while usage is unknown (ticket 15). */
++	function grantedDebt(record: DelegationRecord): { tokens?: number; costUsd?: number } {
++		return {
++			...(record.grantedTokens !== undefined ? { tokens: record.grantedTokens } : {}),
++			...(record.grantedCostUsd !== undefined ? { costUsd: record.grantedCostUsd } : {}),
+ 		};
+ 	}
+ 
+@@ -573,7 +596,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 			);
+ 		}
+ 		if (results.length === 0 && !runId) {
+-			ledger.recordChild(taskId, pendingChild(delegation.kind, { agent: delegation.agent }));
++			// The toolCallId is the key here: without it this row can never be
++			// replaced by the real usage, and a repeat would add a second charge.
++			ledger.recordChild(taskId, pendingChild(
++				delegation.kind,
++				{ agent: delegation.agent, toolCallId: event.toolCallId },
++				grantedDebt(delegation),
++			));
+ 			syncUsage(taskId);
+ 			return;
+ 		}
+@@ -614,12 +643,17 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 		}
+ 	}
+ 
+-	function recordAsyncChild(record: DelegationRecord, ctx: ExtensionContext, notifyAgent?: string): void {
++	function recordAsyncChild(
++		record: DelegationRecord,
++		ctx: ExtensionContext,
++		notifyAgent?: string,
++		toolCallId?: string,
++	): void {
+ 		const taskId = accountingTaskId(record);
+ 		const agent = notifyAgent || record.agent;
+ 		const runId = record.runId;
+ 		if (!runId) {
+-			ledger.recordChild(taskId, pendingChild(record.kind, { agent, toolCallId: undefined }));
++			ledger.recordChild(taskId, pendingChild(record.kind, { agent, toolCallId }, grantedDebt(record)));
+ 			syncUsage(taskId);
+ 			return;
+ 		}
+@@ -639,7 +673,11 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 				return;
+ 			}
+ 		}
+-		ledger.recordChild(taskId, pendingChild(record.kind, { runId, agent: agent || record.agent }));
++		ledger.recordChild(taskId, pendingChild(
++			record.kind,
++			{ runId, agent: agent || record.agent, ...(toolCallId ? { toolCallId } : {}) },
++			grantedDebt(record),
++		));
+ 		syncUsage(taskId);
+ 	}
+ 
+@@ -997,7 +1035,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 		for (const item of snapshot) {
+ 			if (remaining.has(item.toolCallId)) continue;
+ 			const usageTaskId = accountingTaskId(item.record);
+-			recordAsyncChild(item.record, host, parsed?.agent);
++			recordAsyncChild(item.record, host, parsed?.agent, item.toolCallId);
+ 			let text = outcome?.content[0]?.text ?? "";
+ 			if (text) {
+ 				text = enrichDecisionText(text, item.record.taskId);
+diff --git a/orchestrate.test.mjs b/orchestrate.test.mjs
+index ed94207..1a34896 100644
+--- a/orchestrate.test.mjs
++++ b/orchestrate.test.mjs
+@@ -2156,7 +2156,7 @@ function usageFixture(output = 0, costUsd) {
+ {
+ 	const usage = usageFixture(10, 0.1);
+ 	usage.root.tokensUnknownTurns = 1;
+-	assert.equal(statusWithBudget({ tokens: 20, costUsd: 1 }, usage).includes("剩余 10（不含 1 个未知项），未知项 1 项"), true);
++	assert.equal(statusWithBudget({ tokens: 20, costUsd: 1 }, usage).includes("已用 10（不含 1 个未知项） / 上限 20，剩余 10，未知项 1 项"), true);
+ }
+ {
+ 	const usage = usageFixture(10, 0.1);
+diff --git a/orchestrate.ts b/orchestrate.ts
+index d36a7ba..f93d4aa 100644
+--- a/orchestrate.ts
++++ b/orchestrate.ts
+@@ -256,6 +256,14 @@ export interface DelegationRecord {
+ 	packetBinding?: { reportRevision: number; workspaceDigest?: string };
+ 	contextOverridden?: boolean;
+ 	reuseReason?: string;
++	/**
++	 * Budget reserved for this invocation at launch. Ticket 15 charges these
++	 * amounts as debt while the child's real usage is unknown, so that a child
++	 * which burned real money cannot leave the gate reading a full balance.
++	 * Absent when the Task has no cumulative budget (nothing was reserved).
++	 */
++	grantedTokens?: number;
++	grantedCostUsd?: number;
+ 	floorLimits?: EffectiveLimits;
+ 	floorSummary?: string;
+ 	/** Root prompt requested a full suite while the actual validator suite is bounded. */
+@@ -626,8 +634,16 @@ export class PlannerOrchestrator {
+ 		} finally {
+ 			// Reservations happen before the launch decision. Any path that returns
+ 			// without recording a delegation must return its reservation as well.
+-			if (!this.delegations.has(event.toolCallId)) {
++			const record = this.delegations.get(event.toolCallId);
++			if (!record) {
+ 				this.reservations.releaseByToolCall(event.toolCallId);
++			} else {
++				// Ticket 15: stamp the granted budget here rather than at the five
++				// delegations.set sites, for the same reason endDelegation is the one
++				// release point -- a per-site copy is a per-site chance to forget.
++				const grant = this.reservations.grantFor(event.toolCallId);
++				if (grant?.tokens !== undefined) record.grantedTokens = grant.tokens;
++				if (grant?.costUsd !== undefined) record.grantedCostUsd = grant.costUsd;
+ 			}
+ 		}
+ 	}
+@@ -1241,12 +1257,19 @@ export class PlannerOrchestrator {
+ 		}
+ 		if (task.usage !== undefined) {
+ 			const budget = summarizeTaskBudget(task.usage, task.spec?.cumulativeBudget);
+-			const money = (value: number): string => `$${value.toFixed(4)}`;
+-			const dimensionLine = (label: string, dimension: { limit?: number; known: number; unknownParts: number; remaining?: number }, format: (value: number) => string): string => {
+-				if (dimension.limit === undefined) return `  ${label}: 已用 ${format(dimension.known)}，未设累计上限，未知项 ${dimension.unknownParts} 项`;
+-				const unknownNote = dimension.unknownParts > 0 ? `（不含 ${dimension.unknownParts} 个未知项）` : "";
++			const money = (value: number): string => `${value < 0 ? "-" : ""}$${Math.abs(value).toFixed(4)}`;
++			// Ticket 15: part of 已用 can be debt -- an estimate charged for a child
++			// whose real spend is unknown. It counts against the gate, so it is shown
++			// inside 已用, but it is never shown as if it had been measured.
++			const dimensionLine = (label: string, dimension: { limit?: number; known: number; unknownParts: number; debt: number; remaining?: number }, format: (value: number) => string): string => {
++				const debtNote = dimension.debt > 0
++					? `（其中 ${format(dimension.debt)} 是 ${dimension.unknownParts} 个未知项按授予额度估算，非实测）`
++					: dimension.unknownParts > 0 ? `（不含 ${dimension.unknownParts} 个未知项）` : "";
++				if (dimension.limit === undefined) return `  ${label}: 已用 ${format(dimension.known)}${debtNote}，未设累计上限，未知项 ${dimension.unknownParts} 项`;
+ 				const overBudget = (dimension.remaining ?? 0) < 0 ? "（已超支）" : "";
+-				return `  ${label}: 已用 ${format(dimension.known)} / 上限 ${format(dimension.limit)}，剩余 ${format(dimension.remaining ?? 0)}${unknownNote}，未知项 ${dimension.unknownParts} 项${overBudget}`;
++				// The debt note sits on 已用, the figure it qualifies. Parked after 剩余
++				// it reads as if the estimate were part of what is left.
++				return `  ${label}: 已用 ${format(dimension.known)}${debtNote} / 上限 ${format(dimension.limit)}，剩余 ${format(dimension.remaining ?? 0)}，未知项 ${dimension.unknownParts} 项${overBudget}`;
+ 			};
+ 			// Ticket 14 clause 6 / ticket 17 clause 1: a configured limit is only a hard
+ 			// stop where the host actually halts the child. Enforcement is an explicit
+diff --git a/reservations.ts b/reservations.ts
+index 3e8e94d..3fd6a99 100644
+--- a/reservations.ts
++++ b/reservations.ts
+@@ -80,6 +80,19 @@ export class BudgetReservations {
+ 		return { grant };
+ 	}
+ 
++	/**
++	 * What is currently held for one in-flight call, whichever Task holds it.
++	 * Ticket 15 charges an unresolved child this amount as debt, so the figure
++	 * has to be readable from outside without knowing the taskId.
++	 */
++	grantFor(toolCallId: string): HeldReservation | undefined {
++		for (const reservations of this.held.values()) {
++			const reservation = reservations.get(toolCallId);
++			if (reservation) return reservation;
++		}
++		return undefined;
++	}
++
+ 	release(taskId: string, toolCallId: string): void {
+ 		const reservations = this.held.get(taskId);
+ 		if (!reservations) return;
+diff --git a/types.ts b/types.ts
+index 8349c42..78de5a9 100644
+--- a/types.ts
++++ b/types.ts
+@@ -352,6 +352,17 @@ export interface ChildUsage extends TokenCounts {
+ 	outcome?: "succeeded" | "failed" | "unknown";
+ 	turns?: number;
+ 	costUsd?: number;
++	/**
++	 * Ticket 15: what this child is charged while its real spend is unknown.
++	 * Set from the budget granted at launch, so the liability is bounded by
++	 * something the plugin actually decided rather than by a guess. It is an
++	 * ESTIMATE, not a ceiling: nothing proves the host stops the child at the
++	 * granted value (ticket 17). Counted only while the real value is absent,
++	 * so a resolved child's stale debt field is inert.
++	 */
++	costDebtUsd?: number;
++	/** As costDebtUsd, for the token dimension; counted only while usage is unresolved. */
++	tokensDebt?: number;
+ 	/** Usage not yet resolvable (async run, metadata file absent at consume time). */
+ 	pending: boolean;
+ 	source: "sync-details" | "bg-wait" | "meta-file" | "unavailable";
+diff --git a/usage.ts b/usage.ts
+index 17e5e4b..82ebcdd 100644
+--- a/usage.ts
++++ b/usage.ts
+@@ -613,6 +613,12 @@ export interface BudgetDimension {
+ 	known: number;
+ 	/** How many components could not be valued at all. Never folded into `known`. */
+ 	unknownParts: number;
++	/**
++	 * The part of `known` that is estimated debt rather than observed spend
++	 * (ticket 15). Always <= known. Disclosed separately so an operator is never
++	 * shown an estimate dressed up as a measurement.
++	 */
++	debt: number;
+ 	/** limit - known. undefined when limit is undefined. NEVER clamped: overspend must stay negative. */
+ 	remaining?: number;
+ }
+@@ -640,17 +646,28 @@ function usageTokens(counts: TokenCounts): number {
+  * Summarize a Task without persisting a second accounting structure.
+  * Token totals deliberately exclude `reasoning`: providers differ on whether
+  * it is already included in `output`, so adding it can double-count usage.
+- * Unknown components do not reduce remaining: treating them as debt is
+- * reserved for a later budget policy.
++ *
++ * Ticket 15: a component whose value is unknown is charged its recorded debt
++ * (the budget granted at launch) instead of zero, and the debt is also reported
++ * separately in `debt`. Charging zero let a child that burned real money leave
++ * the gate reading a full balance. Debt is counted ONLY while the real value is
++ * absent, so a resolved child's stale debt field can never double-count.
+  */
+ export function summarizeTaskBudget(usage: TaskUsage, limits?: CumulativeBudgetLimits): TaskBudgetSummary {
+ 	const rootTokens = usageTokens(usage.root);
+ 	const childTokens = usage.children.reduce((sum, child) => sum + usageTokens(child), 0);
+-	const tokenKnown = rootTokens + childTokens;
++	const unresolved = (child: ChildUsage): boolean => child.pending || child.source === "unavailable";
++	const tokenDebt = usage.children.reduce((sum, child) => sum + (unresolved(child) ? (child.tokensDebt ?? 0) : 0), 0);
++	const tokenKnown = rootTokens + childTokens + tokenDebt;
+ 	const tokenUnknown = usage.root.tokensUnknownTurns
+-		+ usage.children.filter((child) => child.pending || child.source === "unavailable").length;
++		+ usage.children.filter(unresolved).length;
++	const costDebt = usage.children.reduce(
++		(sum, child) => sum + (child.costUsd === undefined ? (child.costDebtUsd ?? 0) : 0),
++		0,
++	);
+ 	const costKnown = (usage.root.costUsd ?? 0)
+-		+ usage.children.reduce((sum, child) => sum + (child.costUsd ?? 0), 0);
++		+ usage.children.reduce((sum, child) => sum + (child.costUsd ?? 0), 0)
++		+ costDebt;
+ 	// Root cost is sticky-unknown across all its turns, so it contributes one
+ 	// unknown component at most; unknown parts are not folded into known/remaining.
+ 	// A Root bucket that never took a turn spent nothing: zero is not unknown,
+@@ -658,10 +675,11 @@ export function summarizeTaskBudget(usage: TaskUsage, limits?: CumulativeBudgetL
+ 	const rootCostUnknown = usage.root.turns > 0 && usage.root.costUsd === undefined;
+ 	const costUnknown = (rootCostUnknown ? 1 : 0)
+ 		+ usage.children.filter((child) => child.costUsd === undefined).length;
+-	const dimension = (known: number, unknownParts: number, limit?: number): BudgetDimension => ({
++	const dimension = (known: number, unknownParts: number, debt: number, limit?: number): BudgetDimension => ({
+ 		...(limit === undefined ? {} : { limit, remaining: limit - known }),
+ 		known,
+ 		unknownParts,
++		debt,
+ 	});
+ 	const byRole: Record<string, RoleUsageSummary> = {
+ 		root: {
+@@ -679,14 +697,17 @@ export function summarizeTaskBudget(usage: TaskUsage, limits?: CumulativeBudgetL
+ 			costUnknownParts: 0,
+ 		});
+ 		role.calls += 1;
+-		role.tokens += usageTokens(child);
+-		role.costUsd += child.costUsd ?? 0;
++		// Ticket 15: the per-role figures carry the same debt the dimensions do.
++		// Leaving debt out here made the roles sum to less than 已用, which reads
++		// as an accounting bug rather than as an estimate.
++		role.tokens += usageTokens(child) + (unresolved(child) ? (child.tokensDebt ?? 0) : 0);
++		role.costUsd += child.costUsd ?? (child.costDebtUsd ?? 0);
+ 		if (child.costUsd === undefined) role.costUnknownParts += 1;
+ 	}
+ 	return {
+ 		configured: limits?.tokens !== undefined || limits?.costUsd !== undefined,
+-		tokens: dimension(tokenKnown, tokenUnknown, limits?.tokens),
+-		costUsd: dimension(costKnown, costUnknown, limits?.costUsd),
++		tokens: dimension(tokenKnown, tokenUnknown, tokenDebt, limits?.tokens),
++		costUsd: dimension(costKnown, costUnknown, costDebt, limits?.costUsd),
+ 		byRole,
+ 	};
+ }

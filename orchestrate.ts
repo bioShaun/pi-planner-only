@@ -63,6 +63,7 @@ import {
 	validateReviewResultIdentity,
 } from "./review.ts";
 import type { ReviewDecision } from "./review.ts";
+import { LedgerSnapshotStore } from "./ledger-store.ts";
 import {
 	TaskStore,
 	createTaskSpec,
@@ -215,6 +216,8 @@ export interface SubagentEvent {
 
 export interface OrchestratorDeps {
 	store?: TaskStore;
+	/** Directory that becomes `<ledgerDir>/planner-only/ledger/<taskId>.json`. */
+	ledgerDir?: string;
 	gitRunner: GitRunner;
 	structuredDelegationMode?: StructuredDelegationMode;
 	/**
@@ -551,7 +554,16 @@ export class PlannerOrchestrator {
 	}
 
 	constructor(deps: OrchestratorDeps) {
-		this.store = deps.store ?? new TaskStore();
+		if (deps.store) {
+			this.store = deps.store;
+		} else if (deps.ledgerDir) {
+			const snapshots = new LedgerSnapshotStore(deps.ledgerDir);
+			this.store = new TaskStore({
+				onPersist: (record) => snapshots.write(record),
+			});
+		} else {
+			this.store = new TaskStore();
+		}
 		this.gitRunner = deps.gitRunner;
 		this.artifactDirs = deps.artifactDirs ?? (() => []);
 		this.structuredDelegationMode =
