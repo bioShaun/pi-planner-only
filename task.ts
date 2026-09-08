@@ -484,6 +484,19 @@ export class TaskStore {
 			.sort((left, right) => (left.updatedAt < right.updatedAt ? 1 : -1))[0];
 	}
 
+	/** Most recently updated non-terminal task for the workspace identity. */
+	activeForCwd(cwd: string): TaskRecord | undefined {
+		const target = normalizeWorkspaceIdentity(cwd);
+		return this.list()
+			.filter(
+				(task) =>
+					!isFinalTaskState(task.state) &&
+					task.cwd !== "" &&
+					normalizeWorkspaceIdentity(task.cwd) === target,
+			)
+			.sort((left, right) => (left.updatedAt < right.updatedAt ? 1 : -1))[0];
+	}
+
 	private touch(record: TaskRecord): TaskRecord {
 		record.updatedAt = this.now().toISOString();
 		return record;

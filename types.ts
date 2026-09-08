@@ -338,6 +338,7 @@ export interface ChildUsage extends TokenCounts {
 	agent?: string;
 	model?: string;
 	thinking?: string;
+	outcome?: "succeeded" | "failed" | "unknown";
 	turns?: number;
 	costUsd?: number;
 	/** Usage not yet resolvable (async run, metadata file absent at consume time). */

@@ -41,6 +41,12 @@ export interface PricingTable {
 	rates: Record<string, PricingRates>;
 }
 
+export function childOutcomeFromExitCode(exitCode: number | undefined): "succeeded" | "failed" | "unknown" {
+	if (exitCode === undefined) return "unknown";
+	return exitCode === 0 ? "succeeded" : "failed";
+}
+
+
 export type UsageEntryKind = "root-turn" | "child" | "injected" | "leak";
 
 export interface UsageEntry {

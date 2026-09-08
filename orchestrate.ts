@@ -226,6 +226,8 @@ export type { DelegationKind };
 export interface DelegationRecord {
 	taskId: string;
 	kind: DelegationKind;
+	/** Task to receive usage when this invocation's behavioral taskId is synthetic. */
+	accountingTaskId?: string;
 	asyncRequested?: boolean;
 	asyncExplicitFalse?: boolean;
 	runId?: string;
@@ -912,9 +914,11 @@ export class PlannerOrchestrator {
 					// An explorer binds to no Task: it is read-only and needs no
 					// writer contract, so mirror the unbound-validator placeholder
 					// instead of creating a placeholder Task for a read-only pass.
+					const accountingTask = this.store.activeForCwd(cwd) ?? active;
 					this.delegations.set(event.toolCallId, {
 						taskId: `unbound-explorer-${event.toolCallId}`,
 						kind: "explorer",
+						...(accountingTask ? { accountingTaskId: accountingTask.taskId } : {}),
 						asyncRequested: isAsyncInput(input),
 						...(isExplicitAsyncFalse(input) ? { asyncExplicitFalse: true } : {}),
 						...(inputAgent(input) ? { agent: inputAgent(input) } : {}),

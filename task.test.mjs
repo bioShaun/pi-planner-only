@@ -288,6 +288,16 @@ const other = store.create(createTaskSpec({ objective: "t", cwd }, "T-20260831-0
 store.transition(other.taskId, "executing");
 assert.equal(store.active()?.taskId, "T-20260831-003");
 
+// activeForCwd() excludes terminal tasks, even when they match the cwd.
+{
+	const terminal = store.create(createTaskSpec({ objective: "terminal cwd", cwd }, "T-20260831-terminal-cwd"));
+	store.transition(terminal.taskId, "executing");
+	store.transition(terminal.taskId, "reviewing");
+	store.transition(terminal.taskId, "completed");
+	assert.notEqual(store.activeForCwd(cwd)?.taskId, terminal.taskId);
+	assert.equal(store.activeForCwd("/no-such-workspace"), undefined);
+}
+
 // --------------------------------------------------------------------------
 // One writer per cwd
 // --------------------------------------------------------------------------

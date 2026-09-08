@@ -1293,6 +1293,54 @@ await commands.get("planner-only").handler("task T-20260905-110", ctx);
 assert.match(notices.at(-1).message, /Review mode: fresh/);
 await commands.get("planner-only").handler("review T-20260905-110 root", ctx);
 
+// Strict mode refuses only the persistent root-mode escape hatch. The task
+// remains fresh, while the fresh command stays available for recovery.
+{
+	const previous = process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW;
+	try {
+		process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW = "1";
+		const strictTaskId = "T-20260905-501";
+		await handlers.get("tool_call")(
+			{ toolCallId: "call-501", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(strictTaskId)) } },
+			ctx,
+		);
+		notices.length = 0;
+		await commands.get("planner-only").handler(`review ${strictTaskId} root`, ctx);
+		assert.match(notices.at(-1).message, /Strict mode \(PI_PLANNER_ONLY_REQUIRE_REVIEW=1\)/);
+		assert.match(notices.at(-1).message, /reviewer ReviewResult/);
+		assert.match(notices.at(-1).message, /evidence attribution must have > 0 paths/);
+		assert.match(notices.at(-1).message, /unset PI_PLANNER_ONLY_REQUIRE_REVIEW and restart the session/);
+		notices.length = 0;
+		await commands.get("planner-only").handler(`task ${strictTaskId}`, ctx);
+		assert.match(notices.at(-1).message, /Review mode: fresh/);
+		notices.length = 0;
+		await commands.get("planner-only").handler(`review ${strictTaskId} fresh`, ctx);
+		assert.match(notices.at(-1).message, /^Review mode for T-\d{8}-\d{3} set to fresh\.$/);
+	} finally {
+		if (previous === undefined) delete process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW;
+		else process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW = previous;
+	}
+}
+
+// Without strict mode, root mode retains the original receipt verbatim.
+{
+	const previous = process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW;
+	try {
+		delete process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW;
+		const defaultTaskId = "T-20260905-502";
+		await handlers.get("tool_call")(
+			{ toolCallId: "call-502", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(defaultTaskId)) } },
+			ctx,
+		);
+		notices.length = 0;
+		await commands.get("planner-only").handler(`review ${defaultTaskId} root`, ctx);
+		assert.match(notices.at(-1).message, /^Review mode for T-\d{8}-\d{3} set to root\.$/);
+	} finally {
+		if (previous === undefined) delete process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW;
+		else process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW = previous;
+	}
+}
+
 // malformed worker output triggers exactly one report-only correction
 await handlers.get("tool_call")(
 	{ toolCallId: "call-120", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260905-120")) } },
@@ -3262,6 +3310,120 @@ try {
 			if (value === undefined) delete process.env[key]; else process.env[key] = value;
 		}
 	}
+}
+
+// p10-r048: sync scout accounting probes scout metadata and preserves the
+// documented synthetic-id limitation when no Task is active.
+{
+	const artifactDir = join(isolatedAgentDir, "artifacts");
+	const asyncDir = join(isolatedAgentDir, "async-subagent-runs", "r048");
+	mkdirSync(artifactDir, { recursive: true });
+	const childEntry = (runId) => [...sessionEntries].reverse()
+		.find((entry) => entry.customType === "planner-only-usage" && entry.data?.kind === "child" && entry.data.child?.runId === runId)?.data;
+
+	const successRunId = "r048-scout-success";
+	writeFileSync(join(artifactDir, `${successRunId}_scout_meta.json`), JSON.stringify({
+		runId: successRunId, agent: "scout", exitCode: 0, model: "scout/model", thinking: "low",
+		usage: { inputTokens: 10, outputTokens: 5 },
+	}));
+	await handlers.get("tool_call")({ toolCallId: "call-r048-scout-success", toolName: "subagent", input: { agent: "scout", cwd: "/fixture/r048-unbound", task: "inspect" } }, ctx);
+	await handlers.get("tool_result")({
+		toolCallId: "call-r048-scout-success", toolName: "subagent", details: { runId: successRunId, asyncDir, results: [] },
+		content: [{ type: "text", text: "scout done" }], isError: false,
+	}, ctx);
+	const success = childEntry(successRunId);
+	assert.ok(success, "scout meta usage must be persisted");
+	assert.match(success.taskId, /^T-/);
+	assert.notEqual(success.taskId, "unbound-explorer-call-r048-scout-success");
+	assert.equal(success.child.agent, "scout");
+	assert.equal(success.child.outcome, "succeeded");
+
+	const failedRunId = "r048-scout-failed";
+	writeFileSync(join(artifactDir, `${failedRunId}_scout_meta.json`), JSON.stringify({
+		runId: failedRunId, agent: "scout", exitCode: 1,
+		usage: { inputTokens: 7, outputTokens: 3 },
+	}));
+	await handlers.get("tool_call")({ toolCallId: "call-r048-scout-failed", toolName: "subagent", input: { agent: "scout", cwd: "/fixture/r048-unbound", task: "inspect" } }, ctx);
+	await handlers.get("tool_result")({
+		toolCallId: "call-r048-scout-failed", toolName: "subagent", details: { runId: failedRunId, asyncDir, results: [] },
+		content: [{ type: "text", text: "scout failed" }], isError: true,
+	}, ctx);
+	const failed = childEntry(failedRunId);
+	assert.ok(failed);
+	assert.equal(failed.child.outcome, "failed");
+
+	for (let i = 0; i < 32; i += 1) {
+		await commands.get("planner-only").handler("task", ctx);
+		const activeTaskId = /Task: (T-\d{8}-\d{3})/.exec(notices.at(-1)?.message ?? "")?.[1];
+		if (!activeTaskId) break;
+		await commands.get("planner-only").handler(`task abandon ${activeTaskId}`, ctx);
+	}
+	await handlers.get("tool_call")({ toolCallId: "call-r048-scout-missing", toolName: "subagent", input: { agent: "scout", cwd: "/fixture/r048-unbound", task: "inspect" } }, ctx);
+	await handlers.get("tool_result")({
+		toolCallId: "call-r048-scout-missing", toolName: "subagent", details: { results: [] },
+		content: [{ type: "text", text: "scout pending" }], isError: false,
+	}, ctx);
+	const missing = [...sessionEntries].reverse()
+		.find((entry) => entry.customType === "planner-only-usage" && entry.data?.kind === "child" && entry.data.child?.pending)?.data;
+	assert.ok(missing);
+	assert.equal(missing.child.pending, true);
+}
+
+// p11-r052: an async explorer dispatched while its worker Task is executing is
+// unbound, but its usage must still be accounted to that real Task exactly once
+// when the Task becomes terminal before the explorer notification.
+{
+	const taskSpecId = "T-20260908-052";
+	const taskCallId = "call-r052-task";
+	const scoutCallId = "call-r052-scout";
+	const scoutRunId = "r052-scout-async";
+	notices.length = 0;
+	await commands.get("planner-only").handler("task", ctx);
+	const existingTaskId = /Task: (T-\d{8}-\d{3})/.exec(notices.at(-1)?.message ?? "")?.[1];
+	if (existingTaskId) await commands.get("planner-only").handler(`task abandon ${existingTaskId}`, ctx);
+	await handlers.get("tool_call")({
+		toolCallId: taskCallId,
+		toolName: "subagent",
+		input: { agent: "worker", task: JSON.stringify(delegationSpec(taskSpecId)) },
+	}, ctx);
+	notices.length = 0;
+	await commands.get("planner-only").handler(`task ${taskSpecId}`, ctx);
+	const taskId = /Task: (T-\d{8}-\d{3})/.exec(notices.at(-1)?.message ?? "")?.[1];
+	assert.ok(taskId, "real Task must be created before the async explorer");
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\\n", stderr: "", code: 0 });
+
+	// The worker is still executing here, so the same-cwd explorer must take
+	// the unbound branch while activeForCwd still supplies accountingTaskId.
+	await handlers.get("tool_call")({
+		toolCallId: scoutCallId,
+		toolName: "subagent",
+		input: { agent: "scout", async: true, cwd: `/fixture/${taskSpecId}`, task: "inspect" },
+	}, ctx);
+
+	await handlers.get("tool_result")({
+		toolCallId: taskCallId,
+		toolName: "subagent",
+		content: [{ type: "text", text: JSON.stringify({ ...workerReport, taskId: taskSpecId, evidence: { ...workerReport.evidence, taskId: taskSpecId, workerRunId: taskCallId, cwd: `/fixture/${taskSpecId}`, changedPaths: ["src/parser.ts"] } }) }],
+		isError: false,
+	}, ctx);
+
+	await commands.get("planner-only").handler(`task abandon ${taskId}`, ctx);
+	await handlers.get("tool_result")({
+		toolCallId: scoutCallId,
+		toolName: "subagent",
+		details: { asyncId: scoutRunId, runId: scoutRunId, asyncDir: "/no-such-async-dir" },
+		content: [{ type: "text", text: `Async: scout [${scoutRunId}]\\nThe async run is detached and running in the background.` }],
+		isError: false,
+	}, ctx);
+	assert.ok(notices.some((notice) => notice.message.includes("explorer delegation is not attached to any Task")));
+	const notifyText = `Background task completed: **scout**\n\nscout result\n\nChild runs: ${scoutRunId}`;
+	await handlers.get("message_end")({
+		message: { role: "custom", customType: "subagent-notify", content: notifyText },
+	}, ctx);
+	const logPath = join(isolatedAgentDir, "planner-only", "usage.jsonl");
+	const rows = readFileSync(logPath, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+	assert.equal(rows.filter((row) => row.taskId === taskId && row.state === "failed").length, 1, JSON.stringify({ taskId, matchingRows: rows.filter((row) => row.taskId === taskId) }));
 }
 
 rmSync(isolatedAgentDir, { recursive: true, force: true });

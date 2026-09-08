@@ -1048,6 +1048,38 @@ function truncatedPreview() {
 	));
 }
 
+// Explorer accounting prefers the newest live Task in the delegated cwd,
+// even when another cwd's Task is the store-wide active Task.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	const cwdA = "/repo/explorer-a";
+	const cwdB = "/repo/explorer-b";
+	const taskA = orch.store.create(specFor("T-explorer-cwd-a", "worker", cwdA));
+	const taskB = orch.store.create(specFor("T-explorer-cwd-b", "worker", cwdB));
+	taskA.updatedAt = "2026-09-05T00:00:00.000Z";
+	taskB.updatedAt = "2026-09-05T00:01:00.000Z";
+	assert.equal(orch.store.active()?.taskId, taskB.taskId);
+	const outcome = await orch.beginDelegation(
+		{ toolCallId: "call-explorer-cwd", input: { agent: "explorer", task: "Inspect the workspace.", cwd: cwdA } },
+		BASE,
+	);
+	assert.equal(outcome.task, undefined);
+	assert.equal(orch.getDelegation("call-explorer-cwd")?.accountingTaskId, taskA.taskId);
+}
+
+// Explorer accounting falls back to the store-wide active Task when its cwd
+// differs from the delegated cwd.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	const task = orch.store.create(specFor("T-explorer-fallback", "worker", "/repo/current"));
+	const outcome = await orch.beginDelegation(
+		{ toolCallId: "call-explorer-fallback", input: { agent: "explorer", task: "Inspect another workspace.", cwd: "/repo/other" } },
+		BASE,
+	);
+	assert.equal(outcome.task, undefined);
+	assert.equal(orch.getDelegation("call-explorer-fallback")?.accountingTaskId, task.taskId);
+}
+
 // Unbound explorer delegation creates no Task at all: it is recorded as the
 // `unbound-explorer-` placeholder (mirroring `unbound-validator-`) and returns
 // only the standalone warning, with no evidence sampling.

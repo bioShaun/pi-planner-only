@@ -362,7 +362,7 @@ try {
 				break;
 			}
 			assert.equal(result.contract.agent.name, roleCase.agent, `${roleCase.role} host agent remap`);
-			assert.match(result.contract.model ?? "", new RegExp(roleCase.model.replace("/", "\\\\/")));
+			assert.match(result.contract.model ?? "", new RegExp(roleCase.model.replace("/", "\\/")));
 			assert.equal(result.contract.thinking, roleCase.thinking, `${roleCase.role} host thinking`);
 			const ceiling = ROLE_TOOL_PROFILES[roleCase.role];
 			if (ceiling) {

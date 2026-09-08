@@ -29,3 +29,21 @@ Parent: `.scratch/planner-only-cost-control/spec.md`（User Stories 11–17，�
 - 2026-09-07 round p07-r032：补齐 role-models/orchestrate/index 的 requested/resolved/actual、未知不阻断与不匹配后停机接缝测试；checkbox 与 Status 未动。
 - 2026-09-07 Planner 独立验收 `p07-r032`：生产文件 mtime 未动；新增断言覆盖 `requested=`/`resolved=`/`actual=`、`未知` 不阻断、`不匹配` 后冻结停机句；工单 04 的 `unknown` 行与「无模型成本保证」仍在。`npm test`/`typecheck`/`test:e2e`/`git diff --check` 均为 0，含 `planner-only naming: PASS`。HEAD=`bc7bb4e858c77843f3b643250638e4b2d94a0e38`。与 r031 实现一并视为本切片已锁定。`finish-round accepted`。checkbox 与 Status 仍未动。未做真实五角色宿主 e2e。
 - 2026-09-07 round p07-r033：通过公开 `pi-subagents/./preflight` 设计并执行五角色模型/thinking 契约核对；当前宿主 peer 缺少 `@earendil-works/pi-tui`，因此 E2E 明确打印 §G「角色模型启动契约未验证」并以 PASS 结束，未将插件 input 字段视为宿主生效；Root 仅验证 status requested 配置且未切换 `ctx.model`。checkbox 与 Status 未动。
+- 2026-09-08（planner claude-pD）**宿主侧结论：§G 已能真验证，但第 1 条我不勾 —— 票面措辞与宿主入口能提供的证据不匹配，需要人拍板。**
+
+  装上 `@earendil-works/pi-tui` 后（详见工单 25），`e2e.pi-subagents.test.mjs:335-372` 的 §G 段落真跑通过，用**真实公开宿主入口** `resolveSubagentLaunchContract` 逐个验证了四个角色 case：
+
+  | role | 期望子代理名 | model | thinking |
+  |---|---|---|---|
+  | worker | worker | policy-test/worker | off |
+  | reviewer | reviewer | policy-test/reviewer | low |
+  | validator | **oracle** | policy-test/validator | medium |
+  | explorer | **reviewer** | policy-test/explorer | high |
+
+  每个 case 都断言了 `result.contract.agent.name` 等于期望子代理名（角色→子代理重映射由宿主真的执行了）、`contract.model` 匹配、`contract.thinking` 相等，外加工具白名单不超出 `ROLE_TOOL_PROFILES` 的天花板。这是宿主第三方证据，不是插件自证。
+
+  **不勾的理由：本条写的是「五种角色」，§G 只能给出四种。** 第五种是 Root，而 Root 不是被委派启动的子代理，它就是宿主会话本身 —— `resolveSubagentLaunchContract` 这个入口在构造上不可能为 Root 出具启动契约。票面同一段 What to build 里其实已经写了「Root 自身配置只在宿主允许范围内校验，**不伪称已切换**」，与「五种角色宿主实际启动参数一致」是两种不同的要求，被压进了同一条 checkbox。
+
+  照字面勾，等于用四种角色的证据宣称五种都验过；不勾，这条又会永远挂着。**这是票面缺陷，不是实现缺陷**，处置要人定：① 把第 1 条拆成「四个子代理角色的启动契约（§G 已满足）」＋「Root 模型配置的宿主可接受性校验（另找验证手段）」两条；或 ② 明确 Root 不在本条范围内并把措辞从「五种角色」改成「四种子代理角色」。在拍板前本条留空。
+
+  round_id=claude-pD-2026-09-08-note-09

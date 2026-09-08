@@ -6,10 +6,10 @@
 
 **Status:** ready-for-agent
 
-- [ ] Root 模型无费率：启动通知与 status 输出各含一条警告，内容包含模型名与费率文件路径提示。
-- [ ] Root 模型有费率：不出现警告。
-- [ ] 会话中途 Root 切换到无费率模型：下一次 status 出现警告。
-- [ ] Usage 汇总里 Root 费用显示未知，合计标明不含 Root。
+- [x] Root 模型无费率：启动通知与 status 输出各含一条警告，内容包含模型名与费率文件路径提示。
+- [x] Root 模型有费率：不出现警告。
+- [x] 会话中途 Root 切换到无费率模型：下一次 status 出现警告。
+- [x] Usage 汇总里 Root 费用显示未知，合计标明不含 Root。
 
 ## Comments
 

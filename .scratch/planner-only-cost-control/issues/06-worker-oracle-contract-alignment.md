@@ -6,11 +6,11 @@
 
 **Status:** ready-for-agent
 
-- [ ] Worker 合同文本包含依赖安装禁令、替代做法与 lockfile 申报要求（集成测试断言注入的任务文本）。
-- [ ] 插件生成的纠偏提示包含目标状态与 revert 优先建议。
-- [ ] bounded Oracle 合同措辞允许 named test、禁止全量；Root 正文出现全量套件命令且模式为 bounded 时，委派结果首行含冲突警告。
-- [ ] full 模式下不产生该警告。
-- [ ] 现有 Evidence 新鲜度与 undeclared 文件检查行为不变。
+- [x] Worker 合同文本包含依赖安装禁令、替代做法与 lockfile 申报要求（集成测试断言注入的任务文本）。
+- [x] 插件生成的纠偏提示包含目标状态与 revert 优先建议。
+- [x] bounded Oracle 合同措辞允许 named test、禁止全量；Root 正文出现全量套件命令且模式为 bounded 时，委派结果首行含冲突警告。
+- [x] full 模式下不产生该警告。
+- [x] 现有 Evidence 新鲜度与 undeclared 文件检查行为不变。
 
 ## Comments
 

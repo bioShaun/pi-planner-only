@@ -20,6 +20,7 @@ import type { ChildUsage, DelegationKind, ReviewFinding, ReviewMode, ReviewVerdi
 import {
 	UsageLedger,
 	childUsageFromValue,
+	childOutcomeFromExitCode,
 	emptyTaskUsage,
 	hasUsableRate,
 	loadPricingTable,
@@ -329,7 +330,24 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		};
 	}
 
-	const CHILD_META_AGENTS = ["worker", "oracle", "reviewer", "explorer"] as const;
+	const CHILD_META_AGENTS = ["worker", "oracle", "reviewer", "explorer", "scout"] as const;
+
+	function childOutcome(exitCode: number | undefined): ChildUsage["outcome"] {
+		return childOutcomeFromExitCode(exitCode);
+	}
+
+	function childFromMeta(meta: NonNullable<ReturnType<typeof readChildMeta>>, kind: DelegationKind): ChildUsage | undefined {
+		const child = childUsageFromValue(meta.usage, kind, {
+			runId: meta.runId,
+			agent: meta.agent,
+			...(meta.model ? { model: meta.model } : {}),
+			...(meta.thinking ? { thinking: meta.thinking } : {}),
+			source: "meta-file",
+			pending: false,
+		});
+		if (!child) return undefined;
+		return { ...child, outcome: childOutcome(meta.exitCode) };
+	}
 
 	function runIdFromDetails(details: Record<string, unknown> | undefined): string | undefined {
 		if (!details) return undefined;
@@ -352,14 +370,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		for (const agent of agents) {
 			const meta = readChildMeta(dirs, runId, agent);
 			if (!meta?.usage) continue;
-			const child = childUsageFromValue(meta.usage, kind, {
-				runId,
-				agent: meta.agent,
-				...(meta.model ? { model: meta.model } : {}),
-				...(meta.thinking ? { thinking: meta.thinking } : {}),
-				source: "meta-file",
-				pending: false,
-			});
+			const child = childFromMeta(meta, kind);
 			if (child) {
 				ledger.recordChild(taskId, child);
 				orchestrator.noteDelegationModel(taskId, runId, child.model, child.thinking);
@@ -384,14 +395,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			for (const agent of agents) {
 				const meta = readChildMeta(artifactDirsFor(ctx, asyncDir), child.runId, agent);
 				if (!meta) continue;
-				const resolved = childUsageFromValue(meta.usage, child.kind, {
-					runId: child.runId,
-					agent: meta.agent,
-					...(meta.model ? { model: meta.model } : {}),
-					...(meta.thinking ? { thinking: meta.thinking } : {}),
-					source: "meta-file",
-					pending: false,
-				});
+				const resolved = childFromMeta(meta, child.kind);
 				if (resolved) {
 					orchestrator.noteDelegationModel(taskId, child.runId, resolved.model, resolved.thinking);
 				}
@@ -444,10 +448,16 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		await writeUsageLog(taskId, ctx);
 	}
 
+	/** Child usage belongs to the real active Task when explorer behavior remains unbound. */
+	function accountingTaskId(record: DelegationRecord): string {
+		return record.accountingTaskId ?? record.taskId;
+	}
+
 	function recordSyncChildren(event: { toolCallId: string; details?: unknown }, delegation: DelegationRecord): void {
 		const details = asRecord(event.details);
 		const results = details && Array.isArray(details.results) ? details.results : [];
-		const runId = runIdFromDetails(details);
+		const taskId = accountingTaskId(delegation);
+		const runId = runIdFromDetails(details) ?? delegation.runId;
 		for (const item of results) {
 			const rec = asRecord(item);
 			if (!rec) continue;
@@ -461,16 +471,16 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				...(typeof rec.thinking === "string" ? { thinking: rec.thinking } : {}),
 			});
 			if (child) {
-				ledger.recordChild(delegation.taskId, child);
-				orchestrator.noteDelegationModel(delegation.taskId, event.toolCallId, child.model, child.thinking);
+				ledger.recordChild(taskId, child);
+				orchestrator.noteDelegationModel(taskId, event.toolCallId, child.model, child.thinking);
 				if (runId) {
-					orchestrator.noteDelegationModel(delegation.taskId, runId, child.model, child.thinking);
+					orchestrator.noteDelegationModel(taskId, runId, child.model, child.thinking);
 				}
 			}
 		}
 		if (results.length === 0 || !results.some((item) => asRecord(item)?.usage)) {
 			harvestMetaUsage(
-				delegation.taskId,
+				taskId,
 				delegation.kind,
 				runId,
 				delegation.agent,
@@ -478,8 +488,12 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				typeof details?.asyncDir === "string" ? details.asyncDir : undefined,
 			);
 		}
-		if (results.length === 0 && !runId) return;
-		syncUsage(delegation.taskId);
+		if (results.length === 0 && !runId) {
+			ledger.recordChild(taskId, pendingChild(delegation.kind, { agent: delegation.agent }));
+			syncUsage(taskId);
+			return;
+		}
+		syncUsage(taskId);
 	}
 
 	function recordBgWaitChildren(event: { details?: unknown }): void {
@@ -494,6 +508,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			const found = pending.find((item) => item.record.runId === runId);
 			if (!found) continue;
 			const results = Array.isArray(completion.results) ? completion.results : [];
+			const taskId = accountingTaskId(found.record);
 			for (const item of results) {
 				const rec = asRecord(item);
 				const usageValue = rec?.usage ?? rec;
@@ -507,20 +522,21 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					...(typeof rec?.thinking === "string" ? { thinking: rec.thinking } : {}),
 				});
 				if (child) {
-					ledger.recordChild(found.record.taskId, child);
-					orchestrator.noteDelegationModel(found.record.taskId, runId, child.model, child.thinking);
+					ledger.recordChild(taskId, child);
+					orchestrator.noteDelegationModel(taskId, runId, child.model, child.thinking);
 				}
 			}
-			syncUsage(found.record.taskId);
+			syncUsage(taskId);
 		}
 	}
 
 	function recordAsyncChild(record: DelegationRecord, ctx: ExtensionContext, notifyAgent?: string): void {
+		const taskId = accountingTaskId(record);
 		const agent = notifyAgent || record.agent;
 		const runId = record.runId;
 		if (!runId) {
-			ledger.recordChild(record.taskId, pendingChild(record.kind, { agent, toolCallId: undefined }));
-			syncUsage(record.taskId);
+			ledger.recordChild(taskId, pendingChild(record.kind, { agent, toolCallId: undefined }));
+			syncUsage(taskId);
 			return;
 		}
 		const agents = [...new Set([
@@ -531,23 +547,16 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		for (const name of agents) {
 			const meta = readChildMeta(artifactDirsFor(ctx, record.asyncDir), runId, name);
 			if (!meta) continue;
-			const child = childUsageFromValue(meta.usage, record.kind, {
-				runId,
-				agent: meta.agent,
-				...(meta.model ? { model: meta.model } : {}),
-				...(meta.thinking ? { thinking: meta.thinking } : {}),
-				source: "meta-file",
-				pending: false,
-			});
+			const child = childFromMeta(meta, record.kind);
 			if (child) {
-				ledger.recordChild(record.taskId, child);
-				orchestrator.noteDelegationModel(record.taskId, runId, child.model, child.thinking);
-				syncUsage(record.taskId);
+				ledger.recordChild(taskId, child);
+				orchestrator.noteDelegationModel(taskId, runId, child.model, child.thinking);
+				syncUsage(taskId);
 				return;
 			}
 		}
-		ledger.recordChild(record.taskId, pendingChild(record.kind, { runId, agent: agent || record.agent }));
-		syncUsage(record.taskId);
+		ledger.recordChild(taskId, pendingChild(record.kind, { runId, agent: agent || record.agent }));
+		syncUsage(taskId);
 	}
 
 	function recordInjectedText(taskId: string | undefined, text: string): void {
@@ -836,7 +845,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		}
 		if (event.toolName !== "subagent") return;
 		const delegation = orchestrator.getDelegation(event.toolCallId);
-		const before = delegation ? orchestrator.store.get(delegation.taskId)?.state : undefined;
+		const before = delegation ? orchestrator.store.get(accountingTaskId(delegation))?.state : undefined;
 		const result = await orchestrator.handleSubagentResult({
 			toolCallId: event.toolCallId,
 			toolName: event.toolName,
@@ -846,6 +855,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			isError: event.isError,
 		});
 		if (delegation) {
+			const usageTaskId = accountingTaskId(delegation);
 			recordSyncChildren(event, delegation);
 			let text = result?.content?.[0]?.text ?? "";
 			if (text && !text.includes("has started") && !text.includes("failed to launch")) {
@@ -853,10 +863,10 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				if (result?.content?.[0]) {
 					result.content[0].text = text;
 				}
-				recordInjectedText(delegation.taskId, text);
+				recordInjectedText(usageTaskId, text);
 			}
 			persistSessionEntries();
-			await flushIfTerminal(delegation.taskId, before, host, typeof asRecord(event.details)?.asyncDir === "string" ? asRecord(event.details)?.asyncDir as string : undefined);
+			await flushIfTerminal(usageTaskId, before, host, typeof asRecord(event.details)?.asyncDir === "string" ? asRecord(event.details)?.asyncDir as string : undefined);
 		}
 		return result;
 	});
@@ -890,13 +900,15 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		const parsed = parseSubagentNotify(notifyText);
 		const beforeByTask = new Map<string, TaskState>();
 		for (const item of snapshot) {
-			const state = orchestrator.store.get(item.record.taskId)?.state;
-			if (state) beforeByTask.set(item.record.taskId, state);
+			const usageTaskId = accountingTaskId(item.record);
+			const state = orchestrator.store.get(usageTaskId)?.state;
+			if (state) beforeByTask.set(usageTaskId, state);
 		}
 		const outcome = await orchestrator.handleAsyncNotify(notifyText);
 		const remaining = new Set(orchestrator.listDelegations().map((item) => item.toolCallId));
 		for (const item of snapshot) {
 			if (remaining.has(item.toolCallId)) continue;
+			const usageTaskId = accountingTaskId(item.record);
 			recordAsyncChild(item.record, host, parsed?.agent);
 			let text = outcome?.content[0]?.text ?? "";
 			if (text) {
@@ -904,10 +916,10 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				if (outcome?.content[0]) {
 					outcome.content[0].text = text;
 				}
-				recordInjectedText(item.record.taskId, text);
+				recordInjectedText(usageTaskId, text);
 			}
 			persistSessionEntries();
-			await flushIfTerminal(item.record.taskId, beforeByTask.get(item.record.taskId), host, item.record.asyncDir);
+			await flushIfTerminal(usageTaskId, beforeByTask.get(usageTaskId), host, item.record.asyncDir);
 		}
 		if (!outcome) return;
 		return { message: { ...event.message, content: outcome.content[0]?.text ?? "" } as typeof event.message };
@@ -1070,6 +1082,10 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					return;
 				}
 				if (sub === "root" || sub === "fresh") {
+					if (sub === "root" && process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW === "1") {
+						notify(ctx, "Strict mode (PI_PLANNER_ONLY_REQUIRE_REVIEW=1) refuses review mode root: accept requires a reviewer ReviewResult and evidence attribution must have > 0 paths. The only way to disable strict mode is to unset PI_PLANNER_ONLY_REQUIRE_REVIEW and restart the session.", "warning");
+						return;
+					}
 					store.setReviewMode(task.taskId, sub as ReviewMode);
 					notify(ctx, `Review mode for ${task.taskId} set to ${sub}.`);
 					return;

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
 	UsageLedger,
 	childUsageFromValue,
+	childOutcomeFromExitCode,
 	emptyTaskUsage,
 	hasUsableRate,
 	loadPricingTable,
@@ -154,6 +155,8 @@ assert.equal(modelIdForPricing("volcengine/glm-5-3"), "volcengine/glm-5-3");
 	assert.equal(task.children.length, 1);
 	assert.equal(task.children[0].pending, true);
 	assert.equal(task.children[0].source, "unavailable");
+	assert.equal(u.taskUsage("T-20260905-003").costUnknown, true);
+	assert.equal(task.children[0].costUsd, undefined, "missing meta stays unknown, never zero cost");
 
 	const resolved = u.resolvePending("T-20260905-003", (child) => {
 		if (child.runId !== "run-1") return undefined;
@@ -470,8 +473,66 @@ assert.equal(modelIdForPricing("volcengine/glm-5-3"), "volcengine/glm-5-3");
 }
 
 // --------------------------------------------------------------------------
-// pricing table loader: currency, null, _-prefixed keys, env override
+// run4 regression fixture: failed worker and unbound scout are the exact gap
 // --------------------------------------------------------------------------
+
+{
+	const fixtureRoot = join(process.cwd(), ".scratch/planner-only-cost-control/phase-a-08-run4/artifacts");
+	const logged = readFileSync(join(fixtureRoot, "usage.jsonl"), "utf8")
+		.trim().split("\n").map((line) => JSON.parse(line));
+	const finalRecord = logged.at(-1);
+	const loggedRunIds = new Set(finalRecord.children.map((child) => child.runId));
+	const metaFiles = [
+		"4e032aed-40ae-4e88-87b6-fcd6b1351d63_worker_0_meta.json",
+		"c22defe6-1944-4fe4-b992-5a50a94d9d88_delegate_0_meta.json",
+		"f1d2b014-f7b6-4591-adbd-32cd3d9e2582_worker_0_meta.json",
+		"2d9ca9b6-ba2d-4491-908f-307855167e7d_delegate_0_meta.json",
+		"73bd7b92-06a4-4c17-a5c8-e9936494f47f_worker_0_meta.json",
+		"eb50ca15-b655-40f5-85cf-c1b8a96062ce_scout_meta.json",
+	].map((name) => JSON.parse(readFileSync(join(fixtureRoot, "metas", name), "utf8")));
+	const missing = metaFiles.filter((meta) => !loggedRunIds.has(meta.runId));
+	assert.deepEqual(missing.map((meta) => meta.runId), [
+		"73bd7b92-06a4-4c17-a5c8-e9936494f47f",
+		"eb50ca15-b655-40f5-85cf-c1b8a96062ce",
+	]);
+	assert.equal(childOutcomeFromExitCode(1), "failed");
+	assert.equal(childOutcomeFromExitCode(0), "succeeded");
+	assert.equal(childOutcomeFromExitCode(undefined), "unknown");
+
+	const u = ledger();
+	for (const child of finalRecord.children) u.recordChild(finalRecord.taskId, child);
+	for (const meta of missing) {
+		u.recordChild(finalRecord.taskId, {
+			...childUsageFromValue(meta.usage, meta.agent === "scout" ? "explorer" : "worker", {
+				runId: meta.runId,
+				agent: meta.agent,
+				source: "meta-file",
+				pending: false,
+			}),
+			outcome: childOutcomeFromExitCode(meta.exitCode),
+		});
+	}
+	// Re-seeing an inner scout run must not create another child.
+	u.recordChild(finalRecord.taskId, {
+		...childUsageFromValue(metaFiles.at(-1).usage, "explorer", {
+			runId: metaFiles.at(-1).runId,
+			agent: "scout",
+			source: "meta-file",
+			pending: false,
+		}),
+		outcome: "succeeded",
+	});
+	const task = u.taskUsage(finalRecord.taskId);
+	const childTotal = task.children.reduce((sum, child) => sum + (child.costUsd ?? 0), 0);
+	const total = finalRecord.root.costUsd + childTotal;
+	assert.equal(task.children.length, 6);
+	assert.ok(Math.abs(childTotal - 0.24052828) < 1e-8, `children total ${childTotal}`);
+	assert.ok(Math.abs(total - 0.29581593) < 1e-8, `total ${total}`);
+	assert.equal(task.children.find((child) => child.runId === missing[0].runId).outcome, "failed");
+	assert.equal(task.children.find((child) => child.runId === missing[1].runId).outcome, "succeeded");
+	console.log(`run4 fixture: children ${childTotal.toFixed(8)} total ${total.toFixed(8)}`);
+}
+
 
 {
 	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
