@@ -47,7 +47,8 @@ e63c7583  ["validation[0].status missing → passed", "validation[1].status miss
 或让门槛消费归一化前的原始值、或让 `normalizeWorkerReport` 把这种情况推断成 `not-run` 并在 repairs 里说明。
 **不接受直接删掉推断逻辑** —— 那会让今天能被接受的报告变成不可接受，属于另一类回归。
 
-**Blocked by:** None（源码在 `report.ts:227-232`、`roles.ts:89-96`、`roles.ts:118-122`）。
+**Blocked by:** None（源码在 `report.ts:227-232`、`roles.ts:89-96`、`roles.ts:118-122`；
+渲染在 `report.ts:664-674`）。
 
 **Status:** ready-for-agent
 
@@ -57,7 +58,11 @@ e63c7583  ["validation[0].status missing → passed", "validation[1].status miss
       新增测试直接用 run5 的 `75d7ae1c-*_output.md` 与 `e63c7583-*_output.md` 做输入（不许手写 fixture）。
 - [ ] worker **明写** `status:"passed"` + `exitCode:0` 的既有行为逐字不变，两道门槛仍然放行。
 - [ ] `status` 写成空串、null 的情形与缺失情形同等处理，有测试覆盖。
-- [ ] 推断结果仍出现在 `repairs` 里（可读性不许倒退），且 `compactWorkerReport` 的既有输出不变。
+- [ ] 推断结果仍出现在 `repairs` 里（可读性不许倒退）。
+      **渲染函数是 `renderValidationResults`（`report.ts:664-674`），它打印 `[${item.status}]`** ——
+      所以「把缺失的 status 推断成 `not-run` 而不是 `passed`」这条路会改变这类报告的渲染文本，
+      这是允许的；要求是 **worker 明写 `status` 的报告，渲染输出逐字不变**，
+      且读者能看出该值是推断来的（放在 repairs 里即可，不强制改渲染格式）。
 - [ ] 工单 33 的不变量逐条保住：`JSON.parse(workerReportShapeReminder(id))` 仍过 `validateWorkerReport`，
       `lastWorkerValidationPassed` 仍为 false，`missingTaskSpecValidationCommands` 仍返回要求的命令；
       `roles.test.mjs` 里 33 新增的那一块**一行不改**仍然全绿。
@@ -78,3 +83,11 @@ Parent: `.scratch/planner-only-cost-control/spec.md`（阶段 A 验收决策）�
 08 测出来的通过会建立在被悄悄放松的验证之上。run5 已有两份真实样本走了这条路。
 
 round_id=p12-r056（工单 33 验收时开）
+
+2026-09-08 派活前 planner 自查（round_id=p12-r057），改了一条条款：
+原文写「`compactWorkerReport` 的既有输出不变」，两处不准确 ——
+渲染 validation 的函数是 `renderValidationResults`（`report.ts:664-674`，打印 `[${item.status}]`），
+不是 `compactWorkerReport`；而且这条要求会把「推断成 not-run」这条最简路线直接判死
+（那条路必然改变这类报告的渲染文本）。已改成「明写 status 的报告渲染逐字不变」。
+
+round_id=p12-r057（派活前核验）
