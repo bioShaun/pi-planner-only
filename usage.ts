@@ -913,3 +913,50 @@ export function renderUsageLine(taskUsage: TaskUsage, currency: "USD" | "CNY" = 
 export function shouldFlushUsageOnShutdown(reason: unknown): boolean {
 	return reason === "quit" || reason === "new" || reason === "fork" || reason === "resume";
 }
+
+export interface RunRecordTaskFacts {
+	taskId: string; objective?: string; acceptanceCriteria: string[]; state: string; reviewRounds: number;
+	createdAt?: string; updatedAt?: string; cwd: string; baseGitRef?: string; finalGitRef?: string; gitStatusHash?: string;
+}
+export interface RunRecordPricingSource { path: string; version?: number; currency: "USD" | "CNY"; loadedAt: string; }
+export interface RunRecord {
+	version: 1; runId: string; recordedAt: string; arm: string; task: RunRecordTaskFacts;
+	models: { root?: string; children: Array<{ kind: DelegationKind; agent?: string; model?: string; thinking?: string }> };
+	pricing: RunRecordPricingSource; cache: { cacheRead: number; cacheWrite: number };
+	tokens: TokenCounts & { total: number; turns: number };
+	cost: { rootUsd?: number; childrenUsd: number; totalUsd?: number; debtUsd: number; unknownParts: number };
+	outcome: { state: string; completed: boolean }; durationMs?: number; comparable: boolean; incomparableReasons: string[];
+}
+
+export function buildRunRecord(input: { runId: string; arm: string; task: RunRecordTaskFacts; usage: TaskUsage; pricing: RunRecordPricingSource; now?: () => Date }): RunRecord {
+	const { usage } = input;
+	const unresolved = (child: ChildUsage) => child.pending || child.source === "unavailable";
+	const rootUnknown = usage.root.turns > 0 && usage.root.costUsd === undefined;
+	const childUnknown = usage.children.filter((child) => child.costUsd === undefined && !(unresolved(child) && child.costDebtUsd !== undefined));
+	const debtUsd = usage.children.reduce((sum, child) => sum + (child.costUsd === undefined ? (child.costDebtUsd ?? 0) : 0), 0);
+	const childrenUsd = usage.children.reduce((sum, child) => sum + (child.costUsd ?? 0), 0);
+	const tokens = { input: usage.root.input + usage.children.reduce((s, c) => s + c.input, 0), output: usage.root.output + usage.children.reduce((s, c) => s + c.output, 0), cacheRead: usage.root.cacheRead + usage.children.reduce((s, c) => s + c.cacheRead, 0), cacheWrite: usage.root.cacheWrite + usage.children.reduce((s, c) => s + c.cacheWrite, 0), turns: usage.root.turns + usage.children.reduce((s, c) => s + (c.turns ?? 0), 0), total: 0 };
+	tokens.total = tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite;
+	const reasons: string[] = [];
+	if (rootUnknown || childUnknown.length > 0) reasons.push(`${(rootUnknown ? 1 : 0) + childUnknown.length} cost component(s) have no resolvable rate`);
+	if (usage.root.tokensUnknownTurns > 0) reasons.push(`${usage.root.tokensUnknownTurns} root turn(s) reported no token counts`);
+	if (debtUsd > 0) reasons.push(`$${debtUsd} of the total is estimated debt, not observed spend`);
+	const started = input.task.createdAt ? Date.parse(input.task.createdAt) : Number.NaN;
+	const ended = input.task.updatedAt ? Date.parse(input.task.updatedAt) : Number.NaN;
+	const durationMs = Number.isFinite(started) && Number.isFinite(ended) && ended >= started ? ended - started : undefined;
+	if (durationMs === undefined) reasons.push("run duration is not derivable from the Task timestamps");
+	if (!input.task.baseGitRef) reasons.push("no baseline git ref: the starting repo state is unidentified");
+	return { version: 1, runId: input.runId, recordedAt: (input.now?.() ?? new Date()).toISOString(), arm: input.arm, task: input.task, models: { root: usage.rootModel, children: usage.children.map(({ kind, agent, model, thinking }) => ({ kind, agent, model, thinking })) }, pricing: input.pricing, cache: { cacheRead: tokens.cacheRead, cacheWrite: tokens.cacheWrite }, tokens, cost: { rootUsd: usage.root.costUsd, childrenUsd, totalUsd: reasons.length === 0 ? (usage.root.costUsd ?? 0) + childrenUsd : undefined, debtUsd, unknownParts: (rootUnknown ? 1 : 0) + childUnknown.length }, outcome: { state: input.task.state, completed: input.task.state === "completed" }, durationMs, comparable: reasons.length === 0, incomparableReasons: reasons };
+}
+
+export interface RunSummary { runs: number; comparable: number; incomparable: number; completed: number; passRate: number; totalSpendUsd: number; costPerSuccessUsd?: number; avgReviewRounds: number; avgDurationMs?: number; incomparableReasons: Record<string, number>; }
+export function summarizeRuns(records: readonly RunRecord[]): RunSummary {
+	const comparable = records.filter((r) => r.comparable); const completed = records.filter((r) => r.outcome.completed); const successes = comparable.filter((r) => r.outcome.completed); const durations = records.flatMap((r) => r.durationMs === undefined ? [] : [r.durationMs]); const reasons: Record<string, number> = {};
+	for (const r of records) for (const reason of r.incomparableReasons) reasons[reason] = (reasons[reason] ?? 0) + 1;
+	const spend = comparable.reduce((sum, r) => sum + (r.cost.totalUsd ?? 0), 0);
+	return { runs: records.length, comparable: comparable.length, incomparable: records.length - comparable.length, completed: completed.length, passRate: records.length === 0 ? 0 : completed.length / records.length, totalSpendUsd: spend, costPerSuccessUsd: successes.length === 0 ? undefined : spend / successes.length, avgReviewRounds: records.length === 0 ? 0 : records.reduce((s, r) => s + r.task.reviewRounds, 0) / records.length, avgDurationMs: durations.length === 0 ? undefined : durations.reduce((s, d) => s + d, 0) / durations.length, incomparableReasons: reasons };
+}
+export function renderRunSummary(summary: RunSummary): string {
+	const cost = summary.costPerSuccessUsd === undefined ? "无可比成功样本" : `$${summary.costPerSuccessUsd.toFixed(4)}`;
+	return [`费用对照汇总: ${summary.runs} runs`, `通过率: ${(summary.passRate * 100).toFixed(2)}% (${summary.completed}/${summary.runs})`, `成功完成成本: ${cost}`, `总支出: $${summary.totalSpendUsd.toFixed(4)}`, `平均返工: ${summary.avgReviewRounds.toFixed(2)} 轮`, `平均耗时: ${summary.avgDurationMs === undefined ? "不可得" : `${summary.avgDurationMs.toFixed(0)} ms`}`, `可比: ${summary.comparable}，不可比: ${summary.incomparable}`, ...Object.entries(summary.incomparableReasons).map(([reason, count]) => `不可比原因: ${reason} (${count})`)].join("\n");
+}

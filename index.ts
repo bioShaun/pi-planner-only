@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -19,9 +19,11 @@ import { MAX_REVIEW_ROUNDS, WORKER_REPORT_VERSION, isFinalTaskState, isTerminalT
 import type { ChildUsage, DelegationKind, ReviewFinding, ReviewMode, ReviewVerdict, TaskState } from "./types.ts";
 import {
 	UsageLedger,
+	buildRunRecord,
+	summarizeRuns,
+	renderRunSummary,
 	childUsageFromValue,
 	childOutcomeFromExitCode,
-	emptyTaskUsage,
 	hasUsableRate,
 	loadPricingTable,
 	lookupRates,
@@ -1296,6 +1298,49 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					lines.push(`untasked: ${renderUsageLine({ root: session.untasked, children: [], costUnknown: session.untasked.costUsd === undefined && session.untasked.turns > 0 }, pricing.currency)}`);
 					return lines.join("\n");
 				};
+
+				if (sub.toLowerCase() === "record") {
+					const taskId = (parts[2] ?? "").trim() || store.active()?.taskId;
+					if (!taskId) { notify(ctx, "Planner-only: no active task to record.", "warning"); return; }
+					const task = store.get(taskId);
+					const usage = task ? ledger.taskUsage(task.taskId) : undefined;
+					if (!task || !usage) { notify(ctx, `Unknown planner-only task: ${taskId}`, "warning"); return; }
+					const armIndex = parts.indexOf("--arm");
+					const record = buildRunRecord({
+						runId: `${task.taskId}-${Date.now()}`,
+						arm: armIndex >= 0 ? (parts[armIndex + 1] ?? "unspecified") : "unspecified",
+						task: {
+							taskId: task.taskId,
+							objective: task.spec?.objective,
+							acceptanceCriteria: task.spec?.acceptanceCriteria ?? [],
+							state: task.state,
+							reviewRounds: task.reviewRound,
+							createdAt: task.createdAt,
+							updatedAt: task.updatedAt,
+							cwd: task.cwd,
+							baseGitRef: task.baseEvidence?.baseGitRef,
+							finalGitRef: task.baseEvidence?.finalGitRef,
+							gitStatusHash: task.baseEvidence?.gitStatusHash,
+						},
+						usage,
+						pricing: { path: pricingPath(), version: pricing.version, currency: pricing.currency, loadedAt: new Date().toISOString() },
+					});
+					const dir = join(AGENT_DIR, "planner-only", "runs");
+					mkdirSync(dir, { recursive: true });
+					const path = join(dir, `${record.runId}.json`);
+					writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+					notify(ctx, `Planner-only: wrote run record ${path} (comparable: ${record.comparable}).`);
+					return;
+				}
+
+				if (sub.toLowerCase() === "summary") {
+					const dir = (parts[2] ?? "").trim() || join(AGENT_DIR, "planner-only", "runs");
+					if (!existsSync(dir)) { notify(ctx, `Planner-only: no run records at ${dir}.`, "warning"); return; }
+					const records = readdirSync(dir).filter((name) => name.endsWith(".json"))
+						.map((name) => JSON.parse(readFileSync(join(dir, name), "utf8")));
+					notify(ctx, renderRunSummary(summarizeRuns(records)));
+					return;
+				}
 
 				if (sub.toLowerCase() === "session") {
 					notify(ctx, renderSessionView());

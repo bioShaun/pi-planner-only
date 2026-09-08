@@ -72,6 +72,7 @@ assert.doesNotMatch(index, /const prepareRoleDelegation/);
 // usage.ts is a pure module: no Pi host, no adapter.
 assert.doesNotMatch(usage, /from "\.\/index\.ts"/);
 assert.doesNotMatch(usage, /@earendil-works/);
+assert.doesNotMatch(usage, /from "\.\/task\.ts"/);
 assert.equal(pkg.files.includes("usage.ts"), true, "usage.ts must ship in the package files list");
 assert.equal(pkg.files.includes("floors.ts"), true, "floors.ts must ship in the package files list");
 assert.equal(pkg.files.includes("role-models.ts"), true, "role-models.ts must ship in the package files list");

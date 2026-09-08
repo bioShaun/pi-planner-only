@@ -7,6 +7,8 @@ import {
 	summarizeSessionUsage,
 	childUsageFromValue,
 	childOutcomeFromExitCode,
+	buildRunRecord,
+	summarizeRuns,
 	emptyTaskUsage,
 	hasUsableRate,
 	loadPricingTable,
@@ -514,9 +516,35 @@ assert.equal(modelIdForPricing("volcengine/glm-5-3"), "volcengine/glm-5-3");
 	assert.match(renderUsage(tiny, { taskId: "T-x", state: "planning", rounds: 0 }), /\$0\.0123/);
 }
 
+
 // --------------------------------------------------------------------------
 // load() idempotency; drain() returns each record once
 // --------------------------------------------------------------------------
+
+{
+	const usage = emptyTaskUsage();
+	usage.root.turns = 1;
+	usage.root.input = 10;
+	usage.root.output = 2;
+	usage.root.costUsd = 0.05;
+	const record = buildRunRecord({
+		runId: "run-1", arm: "isolated-baseline",
+		task: { taskId: "T-1", objective: "objective", acceptanceCriteria: ["pass"], state: "completed", reviewRounds: 1, createdAt: "2026-09-09T00:00:00Z", updatedAt: "2026-09-09T00:01:00Z", cwd: "/repo", baseGitRef: "abc" },
+		usage, pricing: { path: "/pricing.json", version: 1, currency: "USD", loadedAt: "2026-09-09T00:02:00Z" }, now: () => new Date("2026-09-09T00:02:00Z"),
+	});
+	assert.equal(record.comparable, true);
+	assert.equal(record.task.baseGitRef, "abc");
+	assert.equal(record.cache.cacheRead, 0);
+	assert.equal(record.outcome.completed, true);
+	const missingBase = { ...record, comparable: false, cost: { ...record.cost, totalUsd: undefined }, task: { ...record.task, baseGitRef: undefined }, incomparableReasons: ["no baseline git ref"] };
+	const summary = summarizeRuns([record, missingBase]);
+	assert.equal(summary.runs, 2);
+	assert.equal(summary.completed, 2);
+	assert.equal(summary.comparable, 1);
+	assert.equal(summary.totalSpendUsd, 0.05);
+	assert.equal(summary.costPerSuccessUsd, 0.05);
+}
+
 
 {
 	const u = ledger();
