@@ -455,9 +455,9 @@ export function workerReportShapeReminder(taskId: string): string {
 		validation: [{
 			command: "npm test",
 			type: "test",
-			status: "passed",
+			status: "not-run",
 			exitCode: 0,
-			summary: "npm test passed",
+			summary: "npm test was not run in this worker round",
 		}],
 		evidence: { taskId },
 		risks: [],

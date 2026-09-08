@@ -534,7 +534,7 @@ function assertRepaired(raw, expectedPatch, notePattern, context) {
 	const item = parsed.validation[0];
 	assert.equal(typeof item, "object");
 	assert.equal(item.type, "test");
-	assert.equal(item.status, "passed");
+	assert.equal(item.status, "not-run");
 	assert.equal(typeof item.summary, "string");
 	assert.ok(item.summary.length > 0);
 	assert.equal(typeof item.command, "string");

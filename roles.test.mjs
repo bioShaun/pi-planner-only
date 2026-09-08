@@ -19,6 +19,7 @@ import {
 	wrapWorkerContract,
 } from "./roles.ts";
 import { createTaskSpec } from "./task.ts";
+import { validateWorkerReport, workerReportShapeReminder } from "./report.ts";
 import { extractReviewRequest, reviewerPrompt } from "./review.ts";
 
 assert.equal(hasMissingRequiredValidationCommands(createTaskSpec({ objective: "missing commands", cwd: process.cwd(), validation: { required: true } })), true);
@@ -34,6 +35,19 @@ assert.deepEqual(
 assert.equal(taskSpecRequestsFullSuite(createTaskSpec({ objective: "e2e", cwd: process.cwd(), validation: { commands: ["npm test", "npm run test:e2e"] } })), true);
 assert.equal(taskSpecRequestsFullSuite(createTaskSpec({ objective: "unit", cwd: process.cwd(), validation: { commands: ["npm test"] } })), false);
 assert.equal(taskSpecRequestsFullSuite(createTaskSpec({ objective: "types", cwd: process.cwd(), validation: { commands: ["npm run typecheck"] } })), false);
+
+// A copied reminder must remain a valid shape while conservatively proving no validation ran.
+{
+	const reminderReport = JSON.parse(workerReportShapeReminder("T-copy"));
+	const spec = createTaskSpec({
+		objective: "copy detection",
+		cwd: process.cwd(),
+		validation: { commands: ["npm test"] },
+	});
+	assert.deepEqual(validateWorkerReport(reminderReport), []);
+	assert.equal(lastWorkerValidationPassed(reminderReport), false);
+	assert.deepEqual(missingTaskSpecValidationCommands(spec, reminderReport), ["npm test"]);
+}
 
 // Reviewer children launch with --no-extensions, so git_audit does not exist
 // there. Root passes a bounded Git evidence packet instead.
