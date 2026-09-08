@@ -747,3 +747,15 @@ export function renderUsageLine(taskUsage: TaskUsage, currency: "USD" | "CNY" = 
 	}
 	return cut;
 }
+
+/**
+ * Whether this session_shutdown reason should append usage.jsonl.
+ *
+ * `quit` ends the process. `new` / `fork` / `resume` dispose this session and
+ * replace it with a different session file, so in-memory children would never
+ * meet flushIfTerminal. `reload` keeps the same session file and emits
+ * session_start on a new runner that loadSessionUsage-s the persisted entries.
+ */
+export function shouldFlushUsageOnShutdown(reason: unknown): boolean {
+	return reason === "quit" || reason === "new" || reason === "fork" || reason === "resume";
+}

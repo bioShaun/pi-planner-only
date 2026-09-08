@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -3613,6 +3613,151 @@ function extractReviewResultContractExample(prompt) {
 		if (previous === undefined) delete process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW;
 		else process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW = previous;
 	}
+}
+
+async function abandonActiveTasks() {
+	for (let i = 0; i < 32; i++) {
+		notices.length = 0;
+		await commands.get("planner-only").handler("task", ctx);
+		const id = /Task: (T-\d{8}-\d{3})/.exec(notices.at(-1)?.message ?? "")?.[1];
+		if (!id) return;
+		await commands.get("planner-only").handler(`task abandon ${id}`, ctx);
+	}
+}
+
+function usageLogRows() {
+	const logPath = join(isolatedAgentDir, "planner-only", "usage.jsonl");
+	if (!existsSync(logPath)) return [];
+	return readFileSync(logPath, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+}
+
+function metaRunIdsIn(dir) {
+	if (!existsSync(dir)) return [];
+	return readdirSync(dir)
+		.map((name) => /^(.*)_(?:worker|oracle|reviewer|explorer|scout)(?:_0)?_meta\.json$/.exec(name)?.[1])
+		.filter((id) => typeof id === "string");
+}
+
+// p13-r060 / ticket 35: session_shutdown while a Task is still open must write
+// a usage.jsonl snapshot whose children runIds cover this session's *_meta.json.
+{
+	await abandonActiveTasks();
+	const taskSpecId = "T-20260908-060";
+	const taskCallId = "call-r060-open";
+	const metaRunId = "r060-inv-meta";
+	const artifactDir = join(isolatedAgentDir, "sessions", "subagent-artifacts");
+	mkdirSync(artifactDir, { recursive: true });
+	await handlers.get("tool_call")({
+		toolCallId: taskCallId,
+		toolName: "subagent",
+		input: { agent: "worker", task: JSON.stringify(delegationSpec(taskSpecId)) },
+	}, ctx);
+	writeFileSync(join(artifactDir, `${metaRunId}_oracle_meta.json`), JSON.stringify({
+		runId: metaRunId,
+		agent: "oracle",
+		model: "volcengine/glm-5-3-flash:medium",
+		usage: { input: 40, output: 8, cacheRead: 0, cacheWrite: 0, cost: 0.02227, turns: 1 },
+	}));
+	await handlers.get("session_shutdown")({ reason: "quit" }, ctx);
+	const rows = usageLogRows();
+	assert.ok(rows.length >= 1, "shutdown of a non-terminal Task must append usage.jsonl");
+	const last = rows.at(-1);
+	const childRunIds = new Set((last.children ?? []).map((child) => child.runId).filter(Boolean));
+	const expectedMetaRunIds = [...new Set(metaRunIdsIn(artifactDir).filter((id) => id.startsWith("r060-inv-")))];
+	assert.ok(expectedMetaRunIds.length >= 1, "fixture meta must exist");
+	assert.ok(
+		expectedMetaRunIds.every((id) => childRunIds.has(id)),
+		`usage.jsonl last children runIds ${JSON.stringify([...childRunIds])} does not cover meta runIds ${JSON.stringify(expectedMetaRunIds)}`,
+	);
+	assert.equal(last.incomplete, true);
+	assert.notEqual(last.state, "completed");
+	assert.notEqual(last.state, "failed");
+	assert.notEqual(last.state, "blocked");
+}
+
+// p13-r060: a terminal flushIfTerminal row must not be duplicated by shutdown.
+{
+	await abandonActiveTasks();
+	const taskSpecId = "T-20260908-061";
+	const taskCallId = "call-r060-dup";
+	await handlers.get("tool_call")({
+		toolCallId: taskCallId,
+		toolName: "subagent",
+		input: { agent: "worker", task: JSON.stringify(delegationSpec(taskSpecId)) },
+	}, ctx);
+	notices.length = 0;
+	await commands.get("planner-only").handler(`task ${taskSpecId}`, ctx);
+	const taskId = /Task: (T-\d{8}-\d{3})/.exec(notices.at(-1)?.message ?? "")?.[1];
+	assert.ok(taskId);
+	await handlers.get("tool_result")({
+		toolCallId: taskCallId,
+		toolName: "subagent",
+		details: {
+			results: [{
+				agent: "worker",
+				usage: { input: 4, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1 },
+			}],
+		},
+		content: [{ type: "text", text: "not a WorkerReport" }],
+		isError: false,
+	}, ctx);
+	await commands.get("planner-only").handler(`task abandon ${taskId}`, ctx);
+	const before = usageLogRows().filter((row) => row.taskId === taskId);
+	assert.equal(before.length, 1, JSON.stringify(before));
+	await handlers.get("session_shutdown")({ reason: "quit" }, ctx);
+	const after = usageLogRows().filter((row) => row.taskId === taskId);
+	assert.equal(after.length, 1, JSON.stringify(after));
+}
+
+// p13-r060: reload keeps the same session file and a replacement instance
+// will session_start + loadSessionUsage; do not append a snapshot here.
+{
+	await abandonActiveTasks();
+	const taskSpecId = "T-20260908-062";
+	await handlers.get("tool_call")({
+		toolCallId: "call-r060-reload",
+		toolName: "subagent",
+		input: { agent: "worker", task: JSON.stringify(delegationSpec(taskSpecId)) },
+	}, ctx);
+	const beforeLen = usageLogRows().length;
+	await handlers.get("session_shutdown")({ reason: "reload" }, ctx);
+	assert.equal(usageLogRows().length, beforeLen);
+}
+
+// p13-r060: ghost unbound-validator cost must land in usage.jsonl as unattributed.
+{
+	await abandonActiveTasks();
+	const oracleCallId = "call-r060-ghost";
+	const oracleRunId = "r060-ghost-run";
+	const ghostCall = await handlers.get("tool_call")({
+		toolCallId: oracleCallId,
+		toolName: "subagent",
+		input: { agent: "oracle", cwd: "/repo/r060-empty", task: "validate the claim with no task named" },
+	}, ctx);
+	assert.equal(ghostCall?.block, undefined, ghostCall?.reason ?? "ghost oracle must launch");
+	await handlers.get("tool_result")({
+		toolCallId: oracleCallId,
+		toolName: "subagent",
+		details: {
+			runId: oracleRunId,
+			results: [{
+				agent: "oracle",
+				model: "volcengine/glm-5-3-flash:medium",
+				usage: { input: 80, output: 16, cacheRead: 0, cacheWrite: 0, cost: 0.058, turns: 2 },
+			}],
+		},
+		content: [{ type: "text", text: "HEAD matches; named tests exist." }],
+		isError: false,
+	}, ctx);
+	await handlers.get("session_shutdown")({ reason: "quit" }, ctx);
+	const ghostRows = usageLogRows().filter((row) =>
+		row.unattributed === true && (row.children ?? []).some((child) => child.runId === oracleRunId),
+	);
+	assert.equal(ghostRows.length, 1, JSON.stringify(usageLogRows().slice(-3)));
+	assert.equal(ghostRows[0].incomplete, true);
+	assert.notEqual(ghostRows[0].state, "completed");
+	assert.notEqual(ghostRows[0].state, "failed");
+	assert.notEqual(ghostRows[0].state, "blocked");
 }
 
 rmSync(isolatedAgentDir, { recursive: true, force: true });

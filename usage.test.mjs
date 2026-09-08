@@ -12,6 +12,7 @@ import {
 	modelIdForPricing,
 	renderUsage,
 	renderUsageLine,
+	shouldFlushUsageOnShutdown,
 } from "./usage.ts";
 
 const now = () => new Date("2026-09-05T12:00:00.000Z");
@@ -652,6 +653,16 @@ assert.equal(modelIdForPricing("volcengine/glm-5-3"), "volcengine/glm-5-3");
 	assert.match(allUnknownLine, /excluding Root/);
 	assert.doesNotMatch(allUnknownLine, /\$0\.00/);
 	assert.ok(Buffer.byteLength(allUnknownLine) <= 160);
+}
+
+{
+	assert.equal(shouldFlushUsageOnShutdown("quit"), true);
+	assert.equal(shouldFlushUsageOnShutdown("new"), true);
+	assert.equal(shouldFlushUsageOnShutdown("fork"), true);
+	assert.equal(shouldFlushUsageOnShutdown("resume"), true);
+	assert.equal(shouldFlushUsageOnShutdown("reload"), false);
+	assert.equal(shouldFlushUsageOnShutdown(undefined), false);
+	assert.equal(shouldFlushUsageOnShutdown({}), false);
 }
 
 console.log("planner-only usage: PASS");

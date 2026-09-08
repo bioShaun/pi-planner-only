@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
@@ -28,6 +28,7 @@ import {
 	pricingPath,
 	renderUsage,
 	renderUsageLine,
+	shouldFlushUsageOnShutdown,
 } from "./usage.ts";
 import type { PiUsageLike, UsageEntry } from "./usage.ts";
 import { oracleSuiteMode } from "./roles.ts";
@@ -177,6 +178,8 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	let ledger = new UsageLedger({ pricing });
 	const allSessionEntries: UsageEntry[] = [];
 	let usageLogWriteFailed = false;
+	const terminalUsageLogged = new Set<string>();
+	const openUsageLogged = new Set<string>();
 
 	// Latest model reported by the public `model_select` event. The status
 	// command prefers the handler-time ctx.model and falls back to this so a
@@ -406,25 +409,38 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		syncUsage(taskId);
 	}
 
-	async function writeUsageLog(taskId: string, ctx: ExtensionContext): Promise<void> {
+	async function writeUsageLog(
+		taskId: string,
+		ctx: ExtensionContext,
+		options?: { incomplete?: boolean; unattributed?: boolean },
+	): Promise<void> {
 		const path = usageLogPath();
 		if (!path) return;
+		const shutdownSnapshot = Boolean(options?.incomplete || options?.unattributed);
+		if (shutdownSnapshot && (terminalUsageLogged.has(taskId) || openUsageLogged.has(taskId))) return;
 		const task = orchestrator.store.get(taskId);
 		const usage = ledger.taskUsage(taskId);
-		if (!task || !usage) return;
+		if (!usage) return;
+		if (!task && !options?.unattributed) return;
 		const line = {
 			...usage,
-			taskId: task.taskId,
-			cwd: task.cwd,
-			state: task.state,
-			rounds: task.reviewRound,
+			taskId: task?.taskId ?? taskId,
+			cwd: task?.cwd ?? "",
+			...(task ? { state: task.state, rounds: task.reviewRound } : { rounds: 0 }),
 			rootModel: usage.rootModel,
 			finishedAt: new Date().toISOString(),
 			sessionFile: sessionFileOf(ctx),
+			...(options?.incomplete ? { incomplete: true } : {}),
+			...(options?.unattributed ? { unattributed: true } : {}),
 		};
 		try {
 			await mkdir(dirname(path), { recursive: true });
 			await appendFile(path, `${JSON.stringify(line)}\n`, "utf8");
+			if (task && isFinalTaskState(task.state) && !options?.incomplete) {
+				terminalUsageLogged.add(taskId);
+			} else if (options?.incomplete || options?.unattributed) {
+				openUsageLogged.add(taskId);
+			}
 		} catch {
 			if (!usageLogWriteFailed) {
 				usageLogWriteFailed = true;
@@ -446,6 +462,73 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		resolveTaskPending(taskId, ctx, asyncDir);
 		persistSessionEntries();
 		await writeUsageLog(taskId, ctx);
+	}
+
+	const META_FILE_RE = /^(.*)_(worker|oracle|reviewer|explorer|scout)(?:_0)?_meta\.json$/;
+	const AGENT_KIND: Record<string, DelegationKind> = {
+		worker: "worker",
+		oracle: "validator",
+		reviewer: "reviewer",
+		explorer: "explorer",
+		scout: "explorer",
+	};
+
+	function ledgerHasRunId(runId: string): boolean {
+		for (const id of ledger.sessionUsage().tasks) {
+			const usage = ledger.taskUsage(id);
+			if (usage?.children.some((child) => child.runId === runId)) return true;
+		}
+		return false;
+	}
+
+	async function harvestOrphanMetas(ctx: ExtensionContext): Promise<void> {
+		const dirs = [...new Set(artifactDirsFor(ctx))];
+		for (const dir of dirs) {
+			let names: string[] = [];
+			try {
+				names = await readdir(dir);
+			} catch {
+				continue;
+			}
+			for (const name of names) {
+				const match = META_FILE_RE.exec(name);
+				if (!match) continue;
+				const runId = match[1] as string;
+				const agent = match[2] as string;
+				if (ledgerHasRunId(runId)) continue;
+				const meta = readChildMeta([dir], runId, agent);
+				if (!meta?.usage) continue;
+				const kind = AGENT_KIND[agent] ?? "worker";
+				const child = childFromMeta(meta, kind);
+				if (!child) continue;
+				const live = orchestrator.store.active();
+				const target = live?.taskId ?? "unattributed";
+				ledger.recordChild(target, child);
+				orchestrator.noteDelegationModel(target, runId, child.model, child.thinking);
+				syncUsage(target);
+			}
+		}
+	}
+
+	async function flushOpenUsageOnShutdown(ctx: ExtensionContext): Promise<void> {
+		await harvestOrphanMetas(ctx);
+		persistSessionEntries();
+		const storeIds = new Set(orchestrator.store.list().map((task) => task.taskId));
+		for (const taskId of ledger.sessionUsage().tasks) {
+			if (storeIds.has(taskId) || terminalUsageLogged.has(taskId)) continue;
+			await writeUsageLog(taskId, ctx, { incomplete: true, unattributed: true });
+		}
+		const live = orchestrator.store.list().filter((task) => !isFinalTaskState(task.state));
+		const active = orchestrator.store.active();
+		const ordered = [
+			...live.filter((task) => task.taskId !== active?.taskId),
+			...(active && live.some((task) => task.taskId === active.taskId) ? [active] : []),
+		];
+		for (const task of ordered) {
+			if (!ledger.taskUsage(task.taskId)) continue;
+			resolveTaskPending(task.taskId, ctx);
+			await writeUsageLog(task.taskId, ctx, { incomplete: true });
+		}
 	}
 
 	/** Child usage belongs to the real active Task when explorer behavior remains unbound. */
@@ -779,10 +862,14 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		selectedModel = rootModelIdentity(event.model);
 	});
 
-	pi.on("session_shutdown", async () => {
-		// A reload tears down this instance before the replacement session starts.
-		// Restore its snapshot so the replacement can capture the complete set.
+	pi.on("session_shutdown", async (event, ctx) => {
+		// Restore tools for reload/replace. Usage snapshot is separate: only
+		// reasons that tear this session down without a same-file successor.
 		restoreSuppressedTools();
+		if (!shouldFlushUsageOnShutdown(event?.reason)) return;
+		const host = ctx ?? latestCtx;
+		if (!host) return;
+		await flushOpenUsageOnShutdown(host);
 	});
 
 	pi.on("before_agent_start", async (event) => {
