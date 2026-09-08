@@ -13,7 +13,7 @@
 「Return only a WorkerReport JSON object:」后面，**周围没有任何一句话让 worker 把里面的值换成真值**。
 
 **后果是严重度反转：照抄从"吵闹但安全"变成"安静且危险"。** planner 实测
-（`p12-r056-28-copy-verbatim.log`，2026-09-08，输入是 `JSON.parse(workerReportShapeReminder(...))` 原样）：
+（`p12-r055-verify-28-copy-verbatim.log`，2026-09-08，输入是 `JSON.parse(workerReportShapeReminder(...))` 原样）：
 
 ```
 照抄之后：lastWorkerValidationPassed = true   missingTaskSpecValidationCommands(["npm test"]) = []
@@ -43,6 +43,17 @@
 - ③ 让示例里的值**自我暴露**（`"command":"<the command you actually ran>"` 之类），
   但这会让串本身过不了校验，与 28 条款 2 冲突，选它必须给出如何两全的方案。
 
+**选项 ① 的可满足性 planner 已实测**（`p12-r055-verify-33-opt1-check.log`），三种写法都成立 ——
+仍过 `validateWorkerReport`（`exitCode` 本来就是选填），且门槛全部退到保守侧：
+
+```
+{command,type,status:"not-run",summary}              validate [] | gatePassed false | missing ["npm test"]
+{command,type,status:"not-run",exitCode:0,summary}   validate [] | gatePassed false | missing ["npm test"]
+{command,type,status:"failed",exitCode:1,summary}    validate [] | gatePassed false | missing ["npm test"]
+```
+
+所以选 ① 不会与工单 28 的条款 2（渲染串本身过校验）冲突。选 ② 或 ③ 需自行论证等效性。
+
 **Blocked by:** None（源码在 `report.ts:448`、`roles.ts:59-70`，工单 28 已落地）。
 
 **Status:** ready-for-agent
@@ -61,7 +72,7 @@
 
 Parent: `.scratch/planner-only-cost-control/spec.md`（阶段 A 验收决策）。
 
-来源：planner 验收工单 28 的交付时实测发现（2026-09-08，round_id=p12-r056）。
+来源：planner 验收工单 28 的交付时实测发现（2026-09-08，round_id=p12-r055）。
 执行者的交付满足 28 的全部条款、没有引入回归，故 28 照常收口，本票另开。
 
 **优先级：高于 29/30，且阻塞第六次 08 重跑。** 理由是 08 的条款 8 数的是
@@ -69,4 +80,4 @@ Parent: `.scratch/planner-only-cost-control/spec.md`（阶段 A 验收决策）�
 计数会从非 0 掉到 0，**08 会因此测出一个建立在伪造绿灯之上的通过**。
 这正是本专题反复记的那类事故（工单 27 收口注：绿灯建立在真实链路上不存在的东西之上）。
 
-round_id=p12-r056（工单 28 验收时开）
+round_id=p12-r055（工单 28 验收时开）

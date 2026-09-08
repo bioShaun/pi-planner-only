@@ -134,20 +134,20 @@ orchestrate.test.mjs   +2 / -2     I-2 的 jsonReminder 改为调用 workerRepor
 
 **planner 自己复现的证据（不采信回执）：**
 
-- slot 预飞已记（`p12-r056-slot-audit.log` / `-slot-status.log`）：`pbbwa`(49.4G) 与 `agy` 两个绕过
+- slot 预飞已记（`p12-r055-verify-slot-audit.log` / `-slot-status.log`）：`pbbwa`(49.4G) 与 `agy` 两个绕过
   slot 的进程仍在，按规矩未终止；测试全部走 `slot cpu`。
 - 四条命令全 exit 0：`npm run typecheck`、`npm test`（16 个套件全 PASS）、
   `npm run test:e2e`（只剩既有的「§F 预算宿主契约未验证」）、`git diff --check`。
-  日志 `p12-r056-28-typecheck.log` / `-npm-test.log` / `-e2e.log` / `-diff-check.log`。
+  日志 `p12-r055-verify-28-typecheck.log` / `-npm-test.log` / `-e2e.log` / `-diff-check.log`。
 - **RED 由 planner 独立复现**：只回退 `report.ts`（先备份），`node --experimental-strip-types report.test.mjs`
   退出码 1，报错与回执贴出的原文逐字一致（`status must be one of ...`，`report.test.mjs:530`）；
-  随后按字节还原（`md5sum` 相同，`--numstat` 仍是 66/9）。日志 `p12-r056-28-red-report.log`。
-- **缺陷 B 的修复前/修复后对照由 planner 亲自跑**（`p12-r056-28-run5-before.log` / `-after.log`）：
+  随后按字节还原（`md5sum` 相同，`--numstat` 仍是 66/9）。日志 `p12-r055-verify-28-red-report.log`。
+- **缺陷 B 的修复前/修复后对照由 planner 亲自跑**（`p12-r055-verify-28-run5-before.log` / `-after.log`）：
   修复前三份样本对外都报小对象的 `status must be one of ...`；修复后报的是真报告，
   `picked candidate with keys [version, taskId, status, summary, changedFiles, validation, evidence, risks, unresolved]`
   加上 4 / 4 / 2 条 `validation[i] must be an object` —— 与本票正文那张实测表逐条吻合。
   `74f164e8` 修复前后都是 `ok status=completed`，条款 7 保住。
-- 条款 1/2/3 的三项一起验（`p12-r056-28-reminder-check.log`）：
+- 条款 1/2/3 的三项一起验（`p12-r055-verify-28-reminder-check.log`）：
   `JSON.parse(workerReportShapeReminder(id))` 过 `validateWorkerReport` 返回 `[]`；
   同一份实例喂给门槛，`missingTaskSpecValidationCommands({commands:["npm test"]}, r)` 为 `[]`、
   `lastWorkerValidationPassed(r)` 为 `true` —— 门槛对 `command`/`status`/`exitCode` 的读法仍然成立。
@@ -170,10 +170,10 @@ orchestrate.test.mjs   +2 / -2     I-2 的 jsonReminder 改为调用 workerRepor
 
 **验收时发现的新缺陷，已开工单 33，且它阻塞第六次 08 重跑：**
 合同示例现在是一份可照抄的实例，而它的 validation 元素写的是 `status:"passed", exitCode:0`，
-合同周围**没有一句话让 worker 换成真值**。planner 实测（`p12-r056-28-copy-verbatim.log`）：
+合同周围**没有一句话让 worker 换成真值**。planner 实测（`p12-r055-verify-28-copy-verbatim.log`）：
 照抄一份就让 `lastWorkerValidationPassed` 变 true、`missingTaskSpecValidationCommands` 变空，
 oracle 从 `ORACLE_SUITE=full` 掉到 `ORACLE_SUITE=bounded`（明写「不要跑 npm test / test:e2e / 全量套件」）。
 修复前照抄会被 `status` 枚举挡下、整份报告拒收 —— 也就是**照抄的失败方向从保守翻成了危险**。
 成因是本票条款 1 与条款 2 选项 ① 叠加逼出的形状，**责任在工单，不在执行者**，故 28 照常收口。
 
-round_id=p12-r056（验收接收）
+round_id=p12-r055（验收接收）
