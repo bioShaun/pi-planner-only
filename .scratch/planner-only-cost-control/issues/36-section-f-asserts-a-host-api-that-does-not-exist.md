@@ -50,3 +50,78 @@ Parent: `.scratch/planner-only-cost-control/spec.md`。开票人 planner claude-
 优先级：0.3.x 要对外声称「release gate 绿」之前必须闭合；不阻塞任何在跑的工单。
 
 round_id=claude-pD-2026-09-08-open-36
+
+---
+
+## 2026-09-08 planner 原型探测：三条候选方向作废两条，出现更强的第四条
+
+我把装好的 pi-subagents 0.66.0 源码翻了一遍（它以 TypeScript 源码分发，`src/` 全在包里）。
+结论比开票时精确得多：
+
+**1. 宿主是真的接受每次委派的 `toolBudget` 与 `usageBudget`。**
+`src/extension/schemas.ts:366-367` 是委派工具的入参 schema，两个字段都在，形状与我们发的一致：
+
+```json
+toolBudget  {"type":"object","required":["hard"],
+             "properties":{"soft":{"type":"integer","minimum":1},
+                           "hard":{"type":"integer","minimum":1},
+                           "block":{...}},"additionalProperties":false}
+usageBudget {"type":"object",
+             "properties":{"tokens":{"type":"object","required":["hard"],...},
+                           "costUsd":{"type":"object","required":["hard"],...}},
+             "additionalProperties":false,
+             "description":"Optional root-only reported-usage budget. Hard limits prevent
+                            future child launches; running children are not stopped."}
+```
+
+也就是说 `roles.ts:311-315` 把 `input.toolBudget = { hard: N }` 写进委派入参这件事，
+宿主侧是**认的**，不是我们自说自话。
+
+**2. 但 `./preflight` 的启动契约里没有它。**
+`src/shared/launch-contract.ts` 里 `toolBudget` 只作为**代理定义**字段出现
+（`:73 toolBudget: agent.toolBudget`，参与 agent definition digest）；
+每次调用的 `LaunchBindingInput`（`:82-105`）**既没有 toolBudget 也没有 usageBudget**。
+所以 §F 现在这种「找 `resolveSubagentBudgetContract`」的写法，无论宿主怎么升都不会命中 —— 
+预算根本不在 launch binding 这条线上。
+
+**3. `./delegation` 是纯类型，运行时拿不到值。**
+`src/api/delegation.ts` 运行时只导出 5 个事件名常量
+（`SUBAGENT_DELEGATION_{REQUEST,STARTED,UPDATE,RESPONSE,CANCEL}_EVENT`）；
+`SubagentDelegationRequest.toolBudget`（`:35`）是 interface 字段，strip-types 之后不存在。
+
+**4. `SubagentParams` 是可运行时断言的，但不在 exports 里。**
+`src/extension/schemas.ts` 导出 `SubagentParams` 与 `createSubagentParamsSchema()`，
+后者是纯函数、无副作用，返回上面那份 JSON schema。**已实跑验证**（照 §E/§G 的办法把整包拷出
+node_modules、软链兄弟依赖后 strip-types 导入）：
+
+```text
+exports: ChainItem,DynamicCollectSchema,DynamicExpandSchema,DynamicParallelTemplateSchema,
+         ParallelTaskSchema,SubagentParams,SubagentWaitParams,createSubagentParamsSchema
+has toolBudget: true | has usageBudget: true
+```
+
+但 `package.json` 的 14 个 `exports` 子路径里**没有** `./src/extension/schemas.ts`，
+`.` → `index.ts` 也只导出 `registerSubagentExtension` 一个注册函数，不转出 schema。
+
+### 由此重写候选方向
+
+- ~~断言 `./delegation` 的事件常量~~ —— 与预算无关，作废。
+- ~~断言「不存在 token/cost 预算字段」~~ —— **事实相反**，宿主有，作废。
+- **F1（内部路径断言，现在是首选）**：导入 `src/extension/schemas.ts` 的
+  `createSubagentParamsSchema()`，断言 `properties.toolBudget` / `properties.usageBudget`
+  的形状与我们发送的一致（`toolBudget.hard` 必填正整数；`usageBudget.tokens/costUsd.hard`
+  必填正数）。代价：依赖**非导出的内部路径**，必须在测试里显式写明这一点并锁死版本，
+  这样上游哪天重构会**变红**而不是悄悄变绿。已实跑可行。
+- **F2（具名豁免）**：把 §F 声明成上游缺口，闸门放行但必须打印具名豁免（缺的公开入口 + 工单 05
+  第 1、2 条），且豁免要在一份显式白名单里。
+- **F3（真跑一次子进程读启动参数）**：唯一能证明**运行时真的被执行**（hard 到了就停）的办法，
+  要花模型钱，需用户拍板。
+
+### 还要拍板的点
+
+F1 只能证明「宿主的公开工具契约接受我们发的预算字段」，证明不了「跑起来真的在 hard 处停」。
+工单 05 第 1、2 条的措辞是「宿主实际启动参数含默认 toolBudget.hard 与 usageBudget
+（真实公开宿主入口验证）」—— F1 能满足「实际启动参数含」，但「公开」这个词要放宽成
+「公开分发的包内、有导出符号的模块」。这一步措辞是否放宽，是用户的决定，不是我的。
+
+**Status:** ready-for-planner-prototype → **needs-user-decision（F1 / F2 / F3 三选一，且 F1 需放宽「公开」措辞）**
