@@ -202,13 +202,35 @@ export function validateReviewResultBinding(
 				"ReviewResult is missing reportRevision; a pass must name the report revision it reviewed",
 			);
 		}
-		if (review.workspaceDigest === undefined) {
+		// workspaceDigest is conditional on the ReviewRequest: roles.ts only
+		// writes it when the Task has a bound snapshot. A pass must not be
+		// refused for omitting a field the packet never carried.
+		if (review.workspaceDigest === undefined && expected.workspaceDigest !== undefined) {
 			errors.push(
 				"ReviewResult is missing workspaceDigest; a pass must name the workspace summary it reviewed",
 			);
 		}
 	}
 	return errors;
+}
+
+/**
+ * Ticket 27 — fill omitted FR-03/D09 bindings from the ReviewRequest the
+ * reviewer was shown, immediately before validate-and-record. Explicit values
+ * are kept so a mismatch still refuses. workspaceDigest is only filled when
+ * the packet carried one (no bound snapshot → leave omitted).
+ */
+export function bindReviewResultFromRequest(
+	review: ReviewResult,
+	expected: { reportRevision: number; workspaceDigest?: string },
+): ReviewResult {
+	return {
+		...review,
+		...(review.reportRevision === undefined ? { reportRevision: expected.reportRevision } : {}),
+		...(review.workspaceDigest === undefined && expected.workspaceDigest !== undefined
+			? { workspaceDigest: expected.workspaceDigest }
+			: {}),
+	};
 }
 
 export interface FreshReviewerTaskInput {

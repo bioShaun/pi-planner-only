@@ -202,6 +202,46 @@ const reviewerSpec = {
 	assert.doesNotMatch(payload.task, /"role": "reviewer"/);
 }
 
+// Ticket 27 — workspaceDigest is omitted from ReviewRequest when the Task
+// has a report but no bound snapshot. reportRevision is still present.
+{
+	const originalSpec = {
+		...reviewerSpec,
+		role: "worker",
+		objective: "implement the parser",
+		acceptanceCriteria: ["empty input returns []"],
+	};
+	const existing = {
+		taskId: "T-20260831-027",
+		spec: originalSpec,
+		reports: [{
+			version: 1,
+			taskId: "T-20260831-027",
+			status: "completed",
+			summary: "done",
+			changedFiles: ["src/parser.ts"],
+			validation: [],
+			evidence: {
+				cwd: "/repo",
+				taskId: "T-20260831-027",
+				workerRunId: "call-27",
+				gitAvailable: true,
+				generatedAt: "2026-09-08T00:00:00.000Z",
+			},
+			risks: [],
+			unresolved: [],
+		}],
+		reviews: [],
+		overrides: [],
+	};
+	const payload = { agent: "reviewer", task: JSON.stringify(reviewerSpec) };
+	prepareRoleDelegation(payload, () => existing);
+	const request = extractReviewRequest(payload.task);
+	assert.ok(request);
+	assert.equal(request.reportRevision, 1);
+	assert.equal("workspaceDigest" in request, false);
+}
+
 // The reviewer prompt no longer advertises tools the child cannot have
 assert.doesNotMatch(reviewerPrompt("T-20260831-009"), /git_audit/);
 assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root/);

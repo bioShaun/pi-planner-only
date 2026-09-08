@@ -58,6 +58,7 @@ import {
 	extractReviewRequest,
 	extractReviewResult,
 	summarizeFindings,
+	bindReviewResultFromRequest,
 	validateReviewResultBinding,
 	validateReviewResultIdentity,
 } from "./review.ts";
@@ -1747,7 +1748,7 @@ export class PlannerOrchestrator {
 			};
 		}
 
-		const review: ReviewResult = { ...extracted.review, source: "reviewer" };
+		let review: ReviewResult = { ...extracted.review, source: "reviewer" };
 		const identityErrors = validateReviewResultIdentity(review, task.taskId);
 		if (identityErrors.length > 0) {
 			return {
@@ -1783,13 +1784,16 @@ export class PlannerOrchestrator {
 
 		// FR-03 / D09 — the verdict is bound to the report revision and the
 		// workspace snapshot digest it reviewed. A stale PASS cannot complete a
-		// Task that has a newer report, and an unbound pass is refused outright.
-		// HEAD/status hashes are not a substitute: a missing bound snapshot is
-		// unknown, never a digest of porcelain.
-		const bindingErrors = validateReviewResultBinding(review, {
+		// Task that has a newer report. Ticket 27: omitted bindings are filled
+		// from the ReviewRequest this reviewer was shown; an explicit mismatch
+		// is still refused. HEAD/status hashes are not a substitute: a missing
+		// bound snapshot is unknown, never a digest of porcelain.
+		const expectedBinding = {
 			reportRevision: task.reports.length,
 			...(task.snapshot ? { workspaceDigest: task.snapshot.digest } : {}),
-		});
+		};
+		const boundReview = bindReviewResultFromRequest(review, expectedBinding);
+		const bindingErrors = validateReviewResultBinding(boundReview, expectedBinding);
 		if (bindingErrors.length > 0) {
 			return {
 				content: [{
@@ -1797,13 +1801,14 @@ export class PlannerOrchestrator {
 					text: [
 						`[PLANNER-ONLY] Reviewer verdict was rejected: ${bindingErrors.join("; ")}.`,
 						"The verdict was not recorded and no task state changed.",
-						`Re-delegate review for task ${task.taskId} so the reviewer receives the current ReviewRequest, and echo its reportRevision and workspaceDigest.`,
+						`Re-delegate review for task ${task.taskId} so the reviewer receives the current ReviewRequest.`,
 						"",
 						truncate(text, RAW_OUTPUT_FALLBACK_CHARS),
 					].join("\n"),
 				}],
 			};
 		}
+		review = boundReview;
 
 		// Ticket 02 — a truncated or path-omitted packet means the reviewer did
 		// not see the full diff against the Task baseline: accepting such a PASS

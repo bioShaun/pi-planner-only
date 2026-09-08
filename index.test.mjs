@@ -3426,6 +3426,105 @@ try {
 	assert.equal(rows.filter((row) => row.taskId === taskId && row.state === "failed").length, 1, JSON.stringify({ taskId, matchingRows: rows.filter((row) => row.taskId === taskId) }));
 }
 
+function extractReviewResultContractExample(prompt) {
+	const marker = "Return only a ReviewResult JSON object";
+	const at = prompt.indexOf(marker);
+	if (at < 0) throw new Error("ReviewResult contract marker missing");
+	const start = prompt.indexOf("{", at);
+	if (start < 0) throw new Error("ReviewResult contract example missing");
+	let depth = 0;
+	for (let i = start; i < prompt.length; i++) {
+		const ch = prompt[i];
+		if (ch === "{") depth++;
+		else if (ch === "}") {
+			depth--;
+			if (depth === 0) return JSON.parse(prompt.slice(start, i + 1));
+		}
+	}
+	throw new Error("ReviewResult contract example is not closed");
+}
+
+// Ticket 27 — strict mode: a reviewer that returns only the contract's fields
+// (no reportRevision / workspaceDigest) must still complete the Task; the
+// orchestrator fills those bindings from the ReviewRequest before record.
+{
+	const { extractReviewRequest } = await import("./review.ts");
+	const previous = process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW;
+	try {
+		process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW = "1";
+		const taskId = "T-20260908-027";
+		gitResponses.set("rev-parse HEAD", { stdout: "abc1234\n", stderr: "", code: 0 });
+		gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
+		gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
+		const workerCall = "call-27-worker";
+		await handlers.get("tool_call")(
+			{ toolCallId: workerCall, toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
+			ctx,
+		);
+		gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+		gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr: "", code: 0 });
+		const worker = await handlers.get("tool_result")(
+			{
+				toolCallId: workerCall,
+				toolName: "subagent",
+				input: {},
+				content: [{ type: "text", text: JSON.stringify({
+					...workerReport,
+					taskId,
+					evidence: { ...workerReport.evidence, taskId, workerRunId: workerCall, cwd: `/fixture/${taskId}` },
+				}) }],
+				isError: false,
+			},
+			ctx,
+		);
+		assert.equal(worker.isError, undefined);
+		const reviewInput = {
+			agent: "reviewer",
+			task: JSON.stringify(delegationSpec(taskId, "reviewer")),
+		};
+		await handlers.get("tool_call")(
+			{ toolCallId: "call-27-reviewer", toolName: "subagent", input: reviewInput },
+			ctx,
+		);
+		const example = extractReviewResultContractExample(reviewInput.task);
+		const request = extractReviewRequest(reviewInput.task);
+		assert.ok(request, "reviewer packet must embed a ReviewRequest");
+		const contractPass = {};
+		for (const key of Object.keys(example)) {
+			if (key === "taskId") contractPass.taskId = request.taskId;
+			else if (key === "verdict") contractPass.verdict = "pass";
+			else if (key === "summary") contractPass.summary = "meets acceptance";
+			else if (key === "evidenceFresh") contractPass.evidenceFresh = true;
+			else if (key === "findings") contractPass.findings = [];
+			else if (key === "reportRevision" || key === "workspaceDigest") {
+				continue;
+			} else {
+				contractPass[key] = example[key];
+			}
+		}
+		assert.equal("reportRevision" in contractPass, false);
+		assert.equal("workspaceDigest" in contractPass, false);
+		gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
+		const reviewed = await handlers.get("tool_result")(
+			{
+				toolCallId: "call-27-reviewer",
+				toolName: "subagent",
+				input: {},
+				content: [{ type: "text", text: JSON.stringify(contractPass) }],
+				isError: false,
+			},
+			ctx,
+		);
+		assert.match(reviewed.content[0].text, /decision: accept/);
+		notices.length = 0;
+		await commands.get("planner-only").handler(`task ${taskId}`, ctx);
+		assert.match(notices.at(-1).message, /State: completed/);
+	} finally {
+		if (previous === undefined) delete process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW;
+		else process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW = previous;
+	}
+}
+
 rmSync(isolatedAgentDir, { recursive: true, force: true });
 
 console.log("planner-only extension: PASS");

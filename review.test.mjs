@@ -11,6 +11,8 @@ import {
 	extractReviewResult,
 	summarizeFindings,
 	validateReviewResult,
+	validateReviewResultBinding,
+	bindReviewResultFromRequest,
 	validateReviewResultIdentity,
 	buildFreshReviewerTask,
 	buildReviewRequest,
@@ -485,6 +487,69 @@ assert.match(
 	const prompted = reviewerPrompt("T-20260831-001");
 	assert.match(prompted, /isolated reviewer for task T-20260831-001/);
 	assert.doesNotMatch(prompted, /\{TASK_ID\}/);
+}
+
+// Ticket 27 — orchestration fills omitted bindings from the ReviewRequest;
+// an explicit mismatch is left for validateReviewResultBinding to refuse.
+{
+	const omitted = makeReview("pass");
+	const bound = bindReviewResultFromRequest(omitted, {
+		reportRevision: 1,
+		workspaceDigest: "aaaaaaaaaaaaaaaa",
+	});
+	assert.equal(bound.reportRevision, 1);
+	assert.equal(bound.workspaceDigest, "aaaaaaaaaaaaaaaa");
+	assert.equal("reportRevision" in omitted, false, "bind does not mutate the extracted review");
+	assert.deepEqual(validateReviewResultBinding(bound, { reportRevision: 1, workspaceDigest: "aaaaaaaaaaaaaaaa" }), []);
+
+	const mismatched = bindReviewResultFromRequest(
+		{ ...makeReview("pass"), reportRevision: 9, workspaceDigest: "bbbbbbbbbbbbbbbb" },
+		{ reportRevision: 1, workspaceDigest: "aaaaaaaaaaaaaaaa" },
+	);
+	assert.equal(mismatched.reportRevision, 9);
+	assert.equal(mismatched.workspaceDigest, "bbbbbbbbbbbbbbbb");
+	assert.match(
+		validateReviewResultBinding(mismatched, { reportRevision: 1, workspaceDigest: "aaaaaaaaaaaaaaaa" }).join("\n"),
+		/ReviewResult reportRevision mismatch: it reviewed revision 9, but the latest report is revision 1/,
+	);
+	assert.match(
+		validateReviewResultBinding(mismatched, { reportRevision: 1, workspaceDigest: "aaaaaaaaaaaaaaaa" }).join("\n"),
+		/ReviewResult workspaceDigest mismatch: the reviewed workspace summary does not match the latest report/,
+	);
+
+	const noDigest = bindReviewResultFromRequest(
+		{ ...makeReview("pass") },
+		{ reportRevision: 1 },
+	);
+	assert.equal(noDigest.reportRevision, 1);
+	assert.equal("workspaceDigest" in noDigest, false);
+	assert.deepEqual(validateReviewResultBinding(noDigest, { reportRevision: 1 }), []);
+}
+
+// Ticket 27 — pass is not refused for a missing workspaceDigest when the
+// ReviewRequest did not carry one (no bound snapshot).
+{
+	const unboundDigest = { ...makeReview("pass"), reportRevision: 0 };
+	assert.deepEqual(validateReviewResultBinding(unboundDigest, { reportRevision: 0 }), []);
+	assert.match(
+		validateReviewResultBinding(unboundDigest, { reportRevision: 0, workspaceDigest: "aaaaaaaaaaaaaaaa" }).join("\n"),
+		/ReviewResult is missing workspaceDigest; a pass must name the workspace summary it reviewed/,
+	);
+}
+
+// Ticket 27 — mismatch branches stay verbatim; request_changes / blocked stay unbound.
+{
+	const mismatched = { ...makeReview("pass"), reportRevision: 1, workspaceDigest: "aaaaaaaaaaaaaaaa" };
+	assert.match(
+		validateReviewResultBinding(mismatched, { reportRevision: 2, workspaceDigest: "aaaaaaaaaaaaaaaa" }).join("\n"),
+		/ReviewResult reportRevision mismatch: it reviewed revision 1, but the latest report is revision 2/,
+	);
+	assert.match(
+		validateReviewResultBinding(mismatched, { reportRevision: 1, workspaceDigest: "bbbbbbbbbbbbbbbb" }).join("\n"),
+		/ReviewResult workspaceDigest mismatch: the reviewed workspace summary does not match the latest report/,
+	);
+	assert.deepEqual(validateReviewResultBinding(makeReview("request_changes"), { reportRevision: 1, workspaceDigest: "aaaaaaaaaaaaaaaa" }), []);
+	assert.deepEqual(validateReviewResultBinding(makeReview("blocked"), { reportRevision: 1, workspaceDigest: "aaaaaaaaaaaaaaaa" }), []);
 }
 
 console.log("planner-only review: PASS");

@@ -2697,7 +2697,8 @@ function realGitRunnerOf(dir) {
 	assert.equal(orch.store.require(taskId).state, "reviewing");
 }
 
-// A pass that names no revision or digest at all is refused, not defaulted.
+// Ticket 27 — a pass that names no revision or digest is bound by
+// orchestration from the ReviewRequest the reviewer was shown, then recorded.
 {
 	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-998";
@@ -2714,9 +2715,11 @@ function realGitRunnerOf(dir) {
 		content: [{ type: "text", text: JSON.stringify({ taskId, verdict: "pass", summary: "unbound pass", evidenceFresh: true, findings: [] }) }],
 		isError: false,
 	});
-	assert.match(unbound.content[0].text, /missing reportRevision/);
-	assert.match(unbound.content[0].text, /missing workspaceDigest/);
-	assert.equal(orch.store.require(taskId).reviews.length, 0);
+	assert.match(unbound.content[0].text, /decision: accept/);
+	assert.equal(orch.store.require(taskId).reviews.length, 1);
+	assert.equal(orch.store.require(taskId).reviews.at(-1).reportRevision, 1);
+	assert.equal(orch.store.require(taskId).reviews.at(-1).workspaceDigest, orch.store.require(taskId).snapshot?.digest);
+	assert.equal(orch.store.require(taskId).state, "completed");
 }
 
 // A well-formed ReviewResult matching task, revision, and digest is still recorded.
