@@ -7,6 +7,7 @@ import { createTaskSpec, isExecutingStale, isHolderStale } from "./task.ts";
 import { TaskStore } from "./task.ts";
 import { hashStatus, workspaceSummaryDigest, describeComparison } from "./evidence.ts";
 import { extractReviewRequest } from "./review.ts";
+import { workerReportShapeReminder } from "./report.ts";
 
 // Fixture ids are stamped 2026-09-05; pin the store clock so id replacement
 // never depends on the wall clock of the machine running the suite.
@@ -1950,8 +1951,7 @@ function reportT6(taskId) {
 // I-2 — reactive JSON reminder after the first prose-only report strike
 // --------------------------------------------------------------------------
 
-const jsonReminder = (taskId) =>
-	`JSON only: {"version":1,"taskId":"${taskId}","status":"completed|partial|blocked|failed","summary":"...","changedFiles":[],"validation":[],"evidence":{"taskId":"${taskId}"},"risks":[],"unresolved":[]}`;
+const jsonReminder = (taskId) => `JSON only: ${workerReportShapeReminder(taskId)}`;
 const rawResult = (toolCallId, text) => ({
 	toolCallId,
 	toolName: "subagent",

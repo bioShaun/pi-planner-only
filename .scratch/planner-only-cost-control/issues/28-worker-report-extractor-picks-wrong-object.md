@@ -33,14 +33,14 @@ e567653d  真报告 2 条                                   小对象 {taskId,re
 
 **Blocked by:** None（源码在 `0fe04df`）。
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `workerReportShapeReminder` 里 `validation` 的元素形状写明白。**元素的真实契约是
+- [x] `workerReportShapeReminder` 里 `validation` 的元素形状写明白。**元素的真实契约是
       `types.ts:149-155` 的 `ValidationResult`：`type`（必填，取值 test|build|lint|typecheck|manual|other）、
       `status`（必填，取值 passed|failed|not-run）、`summary`（必填非空）、`command` 与 `exitCode` 选填。**
       示例元素必须同时带上校验器要求的 `type`/`status`/`summary` **和**门槛读取的 `command`/`exitCode`
       —— 只写后四个（漏 `type`）会被 `report.ts:59` 拒收。
-- [ ] 新增一条测试：**用 `workerReportShapeReminder()` 渲染出的串本身**解析后过 `validateWorkerReport`（不许手写 fixture）。
+- [x] 新增一条测试：**用 `workerReportShapeReminder()` 渲染出的串本身**解析后过 `validateWorkerReport`（不许手写 fixture）。
       **注意这条今天不可满足，且原因不止 `validation`：** planner 实测，
       `JSON.parse(workerReportShapeReminder("T-..."))` 过 `validateWorkerReport` 返回
       `["status must be one of completed, partial, blocked, failed"]` ——
@@ -49,17 +49,17 @@ e567653d  真报告 2 条                                   小对象 {taskId,re
       ① 改成合法实例（`status` 取一个具体值、`summary` 写一句真话），图例信息移到旁边的散文里；
       ② 保留图例形态，但测试改为断言「由图例派生出的示例」过校验 —— 若选这条，
       必须说明派生过程为什么不是变相的手写 fixture。**不接受放宽 `validateWorkerReport` 来迁就图例。**
-- [ ] 决定并实现字符串数组写法的归宿，二选一，在回执里说明理由：
+- [x] 决定并实现字符串数组写法的归宿，二选一，在回执里说明理由：
       ① 校验放宽为接受字符串元素并归一化成 `{summary: <字符串>}` 一类的对象；② 保持只接受对象，但合同必须先写清楚。
       **无论选哪条，`missingTaskSpecValidationCommands`（`roles.ts:89`）与 `lastWorkerValidationPassed`（`roles.ts:118`）
       对 `item.command` / `item.status` / `item.exitCode` 的读法必须仍然成立** —— 不能把一个无 `exitCode` 的元素喂进去让门槛静默变松。
-- [ ] 提取器全失败时的报错指明挑中了哪个候选对象（例如打印它的键名或前若干字符），不再只报一句字段值非法。
-- [ ] 候选挑选不再让不相干小对象盖过真正的报告：一个同时有 `version`、`taskId` 和顶层合法 `status` 的候选，
+- [x] 提取器全失败时的报错指明挑中了哪个候选对象（例如打印它的键名或前若干字符），不再只报一句字段值非法。
+- [x] 候选挑选不再让不相干小对象盖过真正的报告：一个同时有 `version`、`taskId` 和顶层合法 `status` 的候选，
       其错误优先于只有 1 条错误的小对象对外呈现。
-- [ ] 回归用例直接用 run5 的三份真实输出做输入：`phase-a-08-run5/artifacts/subagent-artifacts/68b5f76e-*_output.md`、
+- [x] 回归用例直接用 run5 的三份真实输出做输入：`phase-a-08-run5/artifacts/subagent-artifacts/68b5f76e-*_output.md`、
       `a5b8f153-*_output.md`、`e567653d-*_output.md`。修复前用例必须失败，回执贴出失败输出原文。
-- [ ] `74f164e8-*_output.md`（`validation` 为对象数组）行为逐字不变 —— 它现在就能正常提取出 `status=completed`，不许被改回归。
-- [ ] 不勾 08 checkbox、不改 08 Status、不改 `spec.md`。
+- [x] `74f164e8-*_output.md`（`validation` 为对象数组）行为逐字不变 —— 它现在就能正常提取出 `status=completed`，不许被改回归。
+- [x] 不勾 08 checkbox、不改 08 Status、不改 `spec.md`。
 
 ## Comments
 
@@ -107,3 +107,73 @@ round_id=p11-r053（重写）
   实际是 `roles.ts:118` 的 `lastWorkerValidationPassed`。已改。
 
 round_id=p12-r055（派活前核验）
+
+2026-09-08 收口（planner claude-pD 逐条复现后接收，执行者 cursor `w2E:pE`，round_id=p12-r055）。
+
+**执行者的两处选择与理由（planner 认可）：**
+
+- 条款 2 选 ①：`workerReportShapeReminder` 改成**一份可照抄的合法实例**，
+  枚举取值移到函数 JSDoc 的散文里。理由：worker 会整段复制合同 JSON，图例形态今天必被拒收；
+  若选 ②（从图例派生示例），那张「枚举替换表」本身就是变相的手写 fixture。未放宽 `validateWorkerReport`。
+- 条款 3 选 ②：`validation` 继续只接受对象，合同写清元素形状。理由：门槛读的是
+  `item.command` / `item.status` / `item.exitCode === 0`，把字符串收成 `{summary}` 会产出一份
+  「有成功记录却没有 command/exitCode」的元素，门槛要么把它算作没过、要么靠猜 `exitCode=0` 静默变松；
+  `ValidationResult` 类型不许改。
+
+净改动（相对 `c38d925`）：
+
+```
+report.ts             +66 / -9
+report.test.mjs       +75 / -4
+orchestrate.test.mjs   +2 / -2     I-2 的 jsonReminder 改为调用 workerReportShapeReminder
+```
+
+`orchestrate.test.mjs` 属于「可以改但要说明」的一档，理由成立：该用例断言 Root 文案含
+`JSON only: <reminder>`，合同一改，硬编码的旧图例必红；改动只是把期望值改为从同一个函数派生，
+没有动编排侧的透出逻辑。`orchestrate.ts`、`roles.ts`、`types.ts` 一行未改。
+
+**planner 自己复现的证据（不采信回执）：**
+
+- slot 预飞已记（`p12-r056-slot-audit.log` / `-slot-status.log`）：`pbbwa`(49.4G) 与 `agy` 两个绕过
+  slot 的进程仍在，按规矩未终止；测试全部走 `slot cpu`。
+- 四条命令全 exit 0：`npm run typecheck`、`npm test`（16 个套件全 PASS）、
+  `npm run test:e2e`（只剩既有的「§F 预算宿主契约未验证」）、`git diff --check`。
+  日志 `p12-r056-28-typecheck.log` / `-npm-test.log` / `-e2e.log` / `-diff-check.log`。
+- **RED 由 planner 独立复现**：只回退 `report.ts`（先备份），`node --experimental-strip-types report.test.mjs`
+  退出码 1，报错与回执贴出的原文逐字一致（`status must be one of ...`，`report.test.mjs:530`）；
+  随后按字节还原（`md5sum` 相同，`--numstat` 仍是 66/9）。日志 `p12-r056-28-red-report.log`。
+- **缺陷 B 的修复前/修复后对照由 planner 亲自跑**（`p12-r056-28-run5-before.log` / `-after.log`）：
+  修复前三份样本对外都报小对象的 `status must be one of ...`；修复后报的是真报告，
+  `picked candidate with keys [version, taskId, status, summary, changedFiles, validation, evidence, risks, unresolved]`
+  加上 4 / 4 / 2 条 `validation[i] must be an object` —— 与本票正文那张实测表逐条吻合。
+  `74f164e8` 修复前后都是 `ok status=completed`，条款 7 保住。
+- 条款 1/2/3 的三项一起验（`p12-r056-28-reminder-check.log`）：
+  `JSON.parse(workerReportShapeReminder(id))` 过 `validateWorkerReport` 返回 `[]`；
+  同一份实例喂给门槛，`missingTaskSpecValidationCommands({commands:["npm test"]}, r)` 为 `[]`、
+  `lastWorkerValidationPassed(r)` 为 `true` —— 门槛对 `command`/`status`/`exitCode` 的读法仍然成立。
+
+**注记（不阻塞收口）：**
+
+1. 形状串长度 199 → 290 字符（+91，约 +23 token）。它出现在
+   `roles.ts:66` 的每份 worker 合同和 `orchestrate.ts:1995` 的散文报告纠正提示里。
+   对本专题的省 token 目标是可接受的代价，但记在案。
+2. `report.test.mjs` 现在直接读 `.scratch/.../phase-a-08-run5/artifacts/subagent-artifacts/*_output.md`
+   当输入 —— 这是本票条款 6 明确要求的。四份样本都已被 git 跟踪，
+   清理 `.scratch` 会让单元测试失败（`assert.ok(name, ...)` 会明确报缺文件，不会静默跳过）。
+   发布前若要清 `.scratch`，需先把这四份样本挪进正式 fixture 目录。
+3. 条款 4 的正文原话还要求报错说明「那个对象**为什么**被判为最接近的候选」。
+   落地的报错只给了键名清单，没有给出选中理由（例如标一句 shaped）。
+   条款本身只要求「指明挑中了哪个候选对象（例如打印它的键名）」，故判为满足；差额记在此处。
+4. `isCanonicalReportShape` 判的是**未归一化前**的原始候选，要求 `version` 存在、`taskId` 非空、
+   顶层 `status` 是合法 `WorkerStatus`。若真报告自己把 `status` 写错（例如 `"done"`），
+   它就退回按错误条数比较，小对象仍可能胜出。本票只要求盖住「顶层合法 status」那一类，故不追加。
+
+**验收时发现的新缺陷，已开工单 33，且它阻塞第六次 08 重跑：**
+合同示例现在是一份可照抄的实例，而它的 validation 元素写的是 `status:"passed", exitCode:0`，
+合同周围**没有一句话让 worker 换成真值**。planner 实测（`p12-r056-28-copy-verbatim.log`）：
+照抄一份就让 `lastWorkerValidationPassed` 变 true、`missingTaskSpecValidationCommands` 变空，
+oracle 从 `ORACLE_SUITE=full` 掉到 `ORACLE_SUITE=bounded`（明写「不要跑 npm test / test:e2e / 全量套件」）。
+修复前照抄会被 `status` 枚举挡下、整份报告拒收 —— 也就是**照抄的失败方向从保守翻成了危险**。
+成因是本票条款 1 与条款 2 选项 ① 叠加逼出的形状，**责任在工单，不在执行者**，故 28 照常收口。
+
+round_id=p12-r056（验收接收）

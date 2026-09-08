@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
 	compactWorkerReport,
 	extractWorkerReport,
@@ -8,6 +11,19 @@ import {
 	validateWorkerReportIdentity,
 	workerReportShapeReminder,
 } from "./report.ts";
+
+const RUN5_ARTIFACTS = join(
+	dirname(fileURLToPath(import.meta.url)),
+	".scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts",
+);
+
+function readRun5Output(prefix) {
+	const name = readdirSync(RUN5_ARTIFACTS).find(
+		(file) => file.startsWith(prefix) && file.endsWith("_output.md"),
+	);
+	assert.ok(name, `run5 artifact ${prefix}-*_output.md must exist`);
+	return readFileSync(join(RUN5_ARTIFACTS, name), "utf8");
+}
 
 const CWD = "/repo";
 
@@ -509,10 +525,20 @@ function assertRepaired(raw, expectedPatch, notePattern, context) {
 }
 
 {
-	assert.equal(
-		workerReportShapeReminder("T-20260831-100"),
-		`{"version":1,"taskId":"T-20260831-100","status":"completed|partial|blocked|failed","summary":"...","changedFiles":[],"validation":[],"evidence":{"taskId":"T-20260831-100"},"risks":[],"unresolved":[]}`,
-	);
+	const reminder = workerReportShapeReminder("T-20260831-100");
+	const parsed = JSON.parse(reminder);
+	assert.deepEqual(validateWorkerReport(parsed), []);
+	assert.equal(parsed.status, "completed");
+	assert.equal(typeof parsed.summary, "string");
+	assert.notEqual(parsed.summary, "...");
+	const item = parsed.validation[0];
+	assert.equal(typeof item, "object");
+	assert.equal(item.type, "test");
+	assert.equal(item.status, "passed");
+	assert.equal(typeof item.summary, "string");
+	assert.ok(item.summary.length > 0);
+	assert.equal(typeof item.command, "string");
+	assert.equal(typeof item.exitCode, "number");
 }
 
 {
@@ -586,6 +612,51 @@ function assertRepaired(raw, expectedPatch, notePattern, context) {
 	const empty = normalizeWorkerReport({ ...raw, evidence: "  " }, { expectedTaskId: "T-1" });
 	assert.equal(empty.report.notes, undefined);
 	assert.deepEqual(empty.report.evidence, { taskId: "T-1" });
+}
+
+{
+	const mixed = [
+		"notes",
+		JSON.stringify({ taskId: "T-20260908-028", head: "abc", lockfileDiff: "none" }),
+		"report:",
+		JSON.stringify({
+			version: 1,
+			taskId: "T-20260908-028",
+			status: "completed",
+			summary: "done",
+			changedFiles: [],
+			validation: ["npm test passed", "npm run typecheck passed"],
+			evidence: { taskId: "T-20260908-028" },
+			risks: [],
+			unresolved: [],
+		}),
+	].join("\n");
+	const extracted = extractWorkerReport(mixed);
+	assert.ok(extracted.error, "string validation entries are still invalid");
+	assert.match(extracted.error, /picked candidate with keys \[/);
+	assert.match(extracted.error, /version/);
+	assert.match(extracted.error, /validation/);
+	assert.match(extracted.error, /validation\[\d+] must be an object/);
+}
+
+{
+	const good = extractWorkerReport(readRun5Output("74f164e8"));
+	assert.equal(good.error, undefined);
+	assert.equal(good.report.status, "completed");
+}
+
+{
+	for (const prefix of ["68b5f76e", "a5b8f153", "e567653d"]) {
+		const extracted = extractWorkerReport(readRun5Output(prefix));
+		assert.ok(extracted.error, `${prefix} must still fail extraction`);
+		assert.match(
+			extracted.error,
+			/validation\[\d+] must be an object/,
+			`${prefix} must present the real report's validation errors, not the small object's status error`,
+		);
+		assert.match(extracted.error, /picked candidate with keys \[/);
+		assert.match(extracted.error, /validation/);
+	}
 }
 
 console.log("planner-only report: PASS");

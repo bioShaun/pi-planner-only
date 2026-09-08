@@ -440,9 +440,29 @@ export function validateWorkerReportIdentity(
 	return errors;
 }
 
-/** Compact JSON shape shown to workers so a report-only round is not the first time they see it. */
+/** Compact JSON shape shown to workers so a report-only round is not the first time they see it.
+ * This is a copyable valid instance, not a value legend. Status enumerations
+ * (completed|partial|blocked|failed) and validation enumerations
+ * (type: test|build|lint|typecheck|manual|other; status: passed|failed|not-run)
+ * live here in prose so the JSON itself passes validateWorkerReport. */
 export function workerReportShapeReminder(taskId: string): string {
-	return `{"version":1,"taskId":"${taskId}","status":"completed|partial|blocked|failed","summary":"...","changedFiles":[],"validation":[],"evidence":{"taskId":"${taskId}"},"risks":[],"unresolved":[]}`;
+	return JSON.stringify({
+		version: 1,
+		taskId,
+		status: "completed",
+		summary: "Scoped change is done.",
+		changedFiles: [],
+		validation: [{
+			command: "npm test",
+			type: "test",
+			status: "passed",
+			exitCode: 0,
+			summary: "npm test passed",
+		}],
+		evidence: { taskId },
+		risks: [],
+		unresolved: [],
+	});
 }
 
 /** Scan for top-level `{...}` objects while ignoring braces inside strings. */
@@ -487,6 +507,22 @@ function looksLikeReport(value: unknown): boolean {
 	return isPlainObject(value) && ("taskId" in value || "status" in value);
 }
 
+function isCanonicalReportShape(value: unknown): boolean {
+	return (
+		isPlainObject(value) &&
+		value.version !== undefined &&
+		isNonEmptyString(value.taskId) &&
+		isNonEmptyString(value.status) &&
+		WORKER_STATUSES.includes(value.status as WorkerStatus)
+	);
+}
+
+function candidateKeyList(value: unknown): string {
+	if (!isPlainObject(value)) return "(non-object)";
+	const keys = Object.keys(value);
+	return keys.length > 0 ? keys.join(", ") : "(empty)";
+}
+
 /**
  * Pull a WorkerReport out of free-form worker output.
  *
@@ -502,8 +538,14 @@ export function extractWorkerReport(
 		return { error: "worker returned no output", repairs: [] };
 	}
 
-	let bestErrors: string[] | undefined;
-	let bestRepairs: string[] = [];
+	let best:
+		| {
+			errors: string[];
+			repairs: string[];
+			shaped: boolean;
+			keys: string;
+		}
+		| undefined;
 	let sawReportShape = false;
 
 	for (const candidate of jsonCandidates(text)) {
@@ -515,19 +557,34 @@ export function extractWorkerReport(
 		}
 		if (!looksLikeReport(parsed)) continue;
 		sawReportShape = true;
+		const shaped = isCanonicalReportShape(parsed);
 		const normalised = normalizeWorkerReport(parsed, context);
 		const errors = validateWorkerReport(normalised.report);
 		if (errors.length === 0) {
 			return { report: normalised.report as WorkerReport, repairs: normalised.repairs };
 		}
-		if (!bestErrors || errors.length < bestErrors.length) {
-			bestErrors = errors;
-			bestRepairs = normalised.repairs;
+		const next = {
+			errors,
+			repairs: normalised.repairs,
+			shaped,
+			keys: candidateKeyList(parsed),
+		};
+		if (
+			!best ||
+			(next.shaped && !best.shaped) ||
+			(next.shaped === best.shaped && next.errors.length < best.errors.length)
+		) {
+			best = next;
 		}
 	}
 
-	if (bestErrors) return { error: `invalid WorkerReport: ${bestErrors.join("; ")}`, repairs: bestRepairs };
-	if (sawReportShape) return { error: "invalid WorkerReport", repairs: bestRepairs };
+	if (best) {
+		return {
+			error: `invalid WorkerReport: picked candidate with keys [${best.keys}]; ${best.errors.join("; ")}`,
+			repairs: best.repairs,
+		};
+	}
+	if (sawReportShape) return { error: "invalid WorkerReport", repairs: [] };
 	return { error: "worker output did not contain a WorkerReport object", repairs: [] };
 }
 
