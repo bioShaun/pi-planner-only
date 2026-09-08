@@ -27,3 +27,13 @@ reviewer 也在 summary 里点出「TaskSpec embedded no explicit objective/scop
 r4 也踩到过（2 次），当时归因到 `reviewMode` 默认 root，属误判：22 落地后计数不降反升，说明是独立的一条。
 
 round_id=claude-pD-2026-09-08-open-30
+
+2026-09-08 派活前 planner 定位（读源码 + 对 run5 产物核实，不是推测）：
+
+- **占位 Task 的唯一创建点是 `orchestrate.ts:940-944`** —— `this.store.create(createTaskSpec({objective: "(unspecified — parent did not embed a TaskSpec)", cwd}))` 紧跟 `task.isPlaceholder = true`。严格模式的拒绝就加在这里，是本票唯一需要动的判断点。
+- 回执文案 `[PLANNER-ONLY] Placeholder task … created (parent did not embed a TaskSpec; canonical id: …)` 在 `orchestrate.ts` 有 **6 个**发射点（1558/1585/2000/2046/2089/2127），全部读 `task.isPlaceholder`。严格模式下若改为拒绝，这 6 处的非严格路径必须逐字不变 —— 工单 03 的占位回退是有意设计。
+- **本票与工单 29 是同一条因果链的两端。** r5 里 6 次 oracle 全部走了 `orchestrate.ts:757` 的「未绑定 validator」分支，正是因为 Root 从没嵌入 TaskSpec、委派里没有 Task 可绑；那条分支不设 `accountingTaskId`，于是 oracle 的 $0.25224 全部记到幽灵 Task 上（工单 29(a)）。**30 修好之后 29(a) 的触发频率会大幅下降，但 29(a) 本身仍必须修** —— 未绑定委派在合法场景下依然会发生，不能靠「上游不再产生」来掩盖一个记账洞。两票都要做，顺序 29 在 30 之前不重要，但不得只做 30 就宣称账本修好了。
+- 同样地，r5 里 `52e07540` 与 `bf04bce7` 两个 worker 返回散文而非 WorkerReport（`worker output did not contain a WorkerReport object`），两份输出都明说「TaskSpec 里 objective/scope/acceptanceCriteria 全空」。那是本票的下游症状，不是工单 28 的范围。
+
+round_id=p11-r053（补根因）
+
