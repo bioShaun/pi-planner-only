@@ -536,13 +536,20 @@ assert.equal(modelIdForPricing("volcengine/glm-5-3"), "volcengine/glm-5-3");
 	assert.equal(record.task.baseGitRef, "abc");
 	assert.equal(record.cache.cacheRead, 0);
 	assert.equal(record.outcome.completed, true);
-	const missingBase = { ...record, comparable: false, cost: { ...record.cost, totalUsd: undefined }, task: { ...record.task, baseGitRef: undefined }, incomparableReasons: ["no baseline git ref"] };
+	const missingBase = buildRunRecord({
+		runId: "run-2", arm: "role-split",
+		task: { ...record.task, baseGitRef: undefined },
+		usage, pricing: { path: "/pricing.json", version: 1, currency: "USD", loadedAt: "2026-09-09T00:00:00Z" }, now: () => new Date("2026-09-09T00:02:00Z"),
+	});
+	missingBase.cost.totalUsd = 0.05;
+	assert.equal(missingBase.comparable, false);
+	assert.ok(missingBase.incomparableReasons.includes("no baseline git ref: the starting repo state is unidentified"));
 	const summary = summarizeRuns([record, missingBase]);
 	assert.equal(summary.runs, 2);
 	assert.equal(summary.completed, 2);
 	assert.equal(summary.comparable, 1);
-	assert.equal(summary.totalSpendUsd, 0.05);
-	assert.equal(summary.costPerSuccessUsd, 0.05);
+	assert.ok(Math.abs(summary.totalSpendUsd - 0.05) < 1e-9);
+	assert.ok(Math.abs(summary.costPerSuccessUsd - 0.05) < 1e-9);
 }
 
 

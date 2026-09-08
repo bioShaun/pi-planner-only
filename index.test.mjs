@@ -127,6 +127,34 @@ assert.equal(budgetStatus.includes("Session usage: tokens=15，已知费用 $0.0
 assert.equal(budgetStatus.includes("Unattributed (会话级，未归入任何 Task): 1 turns, tokens=15, 费用 $0.0400"), true);
 assert.equal(budgetStatus.includes("Budget: 未设累计上限（已知消耗 tokens=0，费用 $0.0000"), true);
 
+await handlers.get("message_end")({ message: {
+	role: "assistant", id: "msg-budget-task", model: "test-model",
+	usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.05 }, content: "task usage",
+} }, ctx);
+notices.length = 0;
+await commands.get("planner-only").handler("usage record", ctx);
+const runsDir = join(isolatedAgentDir, "planner-only", "runs");
+const firstRunFiles = readdirSync(runsDir).filter((name) => name.endsWith(".json"));
+assert.equal(firstRunFiles.length, 1);
+const firstRun = JSON.parse(readFileSync(join(runsDir, firstRunFiles[0]), "utf8"));
+assert.equal(firstRun.version, 1);
+assert.equal(firstRun.task.taskId, sessionTaskId);
+
+await commands.get("planner-only").handler("usage record --arm role-split", ctx);
+const recordsAfterArm = readdirSync(runsDir)
+	.filter((name) => name.endsWith(".json"))
+	.map((name) => JSON.parse(readFileSync(join(runsDir, name), "utf8")));
+assert.equal(recordsAfterArm.some((record) => record.arm === "role-split"), true);
+
+notices.length = 0;
+await commands.get("planner-only").handler("usage summary", ctx);
+assert.match(notices.at(-1).message, /费用对照汇总:/);
+
+notices.length = 0;
+await commands.get("planner-only").handler(`usage summary ${join(isolatedAgentDir, "missing-runs")}`, ctx);
+assert.equal(notices.at(-1).type, "warning");
+assert.match(notices.at(-1).message, /no run records/);
+
 const blocked = await handlers.get("tool_call")(
 	{ toolName: "write", input: { path: "/tmp/x" } },
 	ctx,

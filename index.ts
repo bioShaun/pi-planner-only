@@ -1300,7 +1300,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				};
 
 				if (sub.toLowerCase() === "record") {
-					const taskId = (parts[2] ?? "").trim() || store.active()?.taskId;
+					let taskId: string | undefined;
+					for (let index = 2; index < parts.length; index += 1) {
+						if (parts[index - 1] === "--arm" || parts[index].startsWith("--")) continue;
+						taskId = parts[index].trim();
+						if (taskId) break;
+					}
+					taskId ||= store.active()?.taskId;
 					if (!taskId) { notify(ctx, "Planner-only: no active task to record.", "warning"); return; }
 					const task = store.get(taskId);
 					const usage = task ? ledger.taskUsage(task.taskId) : undefined;
