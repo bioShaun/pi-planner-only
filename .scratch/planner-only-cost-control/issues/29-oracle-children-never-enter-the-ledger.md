@@ -41,3 +41,24 @@ round_id=claude-pD-2026-09-08-open-29
 2026-09-08：派活前 planner 读 `orchestrate.ts` / `index.ts` 把 (a) 的根因钉到了具体行（见上），并对 `usage.jsonl` 实测核对。这一步是被工单 28 逼出来的 —— 28 初版照抄了一句误导性报错，成因写反，实跑才纠正。本票的 (a) 已经过源码与产物双向核实；(b) 仍只有时间戳与差集证据，未定位到具体代码路径，执行者需自己查明并在回执里写清楚。
 
 round_id=p11-r053（补根因）
+
+2026-09-08 派活前 planner 二次核验（round_id=p12-r056）。行号在工单 27/28 落地后有位移，重新钉一遍，
+两条根因都在当前 HEAD 上复核过：
+
+- **(a) 仍然成立。** 未绑定 validator 分支在 `orchestrate.ts:751-780`：占位串在 `:759`
+  （`unbound-validator-${event.toolCallId}`），`this.delegations.set(...)` 在 `:764-779`，
+  **全段没有 `accountingTaskId`**。全仓 `grep -n accountingTaskId orchestrate.ts` 只有两处命中：
+  类型声明 `:231` 与 explorer 分支的 `:922`。也就是说除 explorer 外，没有任何分支挂账。
+- explorer 的对照实现在 `orchestrate.ts:914-927`，挂账那行是 `:922`
+  （`const accountingTask = this.store.activeForCwd(cwd) ?? active;` 在 `:918`）。
+  `index.ts:451-453` 的 `accountingTaskId(record)` 返回 `record.accountingTaskId ?? record.taskId`，
+  该函数在 `index.ts:459 / 511 / 534 / 848 / 858 / 903 / 911` 七处被调用 —— 补上那一行即可全线生效。
+- **(b) 的落点已找到，但结论要执行者自己确认。** `index.ts:782-786` 已经有一个
+  `pi.on("session_shutdown", ...)` 钩子，**它只调用 `restoreSuppressedTools()`，不写账本**。
+  `flushIfTerminal`（`index.ts:436-448`）的五个调用点全在事件处理路径上
+  （`:743 / 869 / 922 / 1048 / 1113`），且它开头就 `if (!after || !isFinalTaskState(after.state)) return;`
+  —— Task 非终态时直接返回，这与「最后 21 分钟 7 个子代理全丢」的现象吻合。
+  **执行者必须先查明 `session_shutdown` 在正常进程退出（而不只是 reload）时是否触发**，
+  再决定兜底落账挂在哪里；查明过程与结论写进回执，不要默认它一定会触发。
+
+round_id=p12-r056（派活前核验，行号复核）
