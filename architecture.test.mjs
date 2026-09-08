@@ -111,12 +111,17 @@ assert.equal(orchestrate.includes("wasConfirmedNotLaunched("), true);
 assert.equal(pkg.files.includes("ledger-store.ts"), true, "C1: ledger-store.ts must ship in the package files list");
 assert.match(pkg.scripts?.test ?? "", /ledger-store\.test\.mjs/, "C2: the unit test script must run ledger-store.test.mjs");
 assert.doesNotMatch(ledgerStore, /from "\.\/index\.ts"|@earendil-works/, "C3: ledger-store.ts must not import the adapter or the Pi host");
-assert.doesNotMatch(ledgerStore, /readFileSync|readFile\(/, "C4: this round must not read snapshots back");
+assert.match(ledgerStore, /readFileSync/, "C4: readAll reads snapshot files");
 assert.doesNotMatch(ledgerStore, /usage\.jsonl/, "C5: ledger snapshots must not reuse usage.jsonl");
 assert.match(index, /ledgerDir:\s*AGENT_DIR/, "C6: the Pi adapter passes AGENT_DIR as ledgerDir");
 assert.match(orchestrate, /from "\.\/ledger-store\.ts"/, "C7: the orchestrator owns LedgerSnapshotStore");
 assert.match(orchestrate, /new LedgerSnapshotStore\(deps\.ledgerDir\)/, "C8: the sink is constructed from deps.ledgerDir");
 assert.match(index, /task\.usage = usage;\s*\n\s*orchestrator\.store\.persist\(task\)/, "C9: syncUsage persists after the direct usage write");
+assert.match(src("task.ts"), /restore\(record: TaskRecord\): void/, "C16-1: TaskStore.restore is a real method");
+assert.match(orchestrate, /restoreFromLedger\(\)/, "C16-2: the orchestrator loads snapshots at restoreFromLedger");
+assert.match(index, /loadSessionUsage\(ctx\);\s*\n\s*orchestrator\.restoreFromLedger\(\)/, "C16-3: session_start restores the ledger after loadSessionUsage");
+assert.match(orchestrate, /untrustedBalances/, "C16-4: untrusted balances are tracked per taskId");
+assert.match(orchestrate, /ledger snapshot unreadable/, "C16-5: untrusted refusal is a distinct message from cumulativeBudgetRefusal");
 
 assert.match(reservations, /rekey\(/, "C37-1: BudgetReservations exposes rekey");
 assert.equal((orchestrate.match(/this\.reservations\.rekey\(/g) ?? []).length, 1, "C37-2: orchestrate rekeys in exactly one place");

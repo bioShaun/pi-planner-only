@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import * as fs from "node:fs";
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { LedgerSnapshotStore } from "./ledger-store.ts";
 import { PlannerOrchestrator } from "./orchestrate.ts";
@@ -223,6 +223,102 @@ function snapshotPath(dir, taskId) {
 		assert.equal(fs.existsSync(leaked), false, "A33: omitting ledgerDir does not persist into cwd");
 	} finally {
 		rmSync(leaked, { force: true });
+	}
+}
+
+{
+	const dir = sandbox();
+	const origError = console.error;
+	let warns = 0;
+	console.error = () => {
+		warns += 1;
+	};
+	try {
+		const missing = new LedgerSnapshotStore(join(dir, "no-such-agent"));
+		const empty = missing.readAll();
+		assert.deepEqual(empty, { records: [], corrupt: [] }, "B1: missing ledger dir returns empty records and corrupt");
+		assert.equal(warns, 0, "B2: missing ledger dir does not warn");
+	} finally {
+		console.error = origError;
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+{
+	const dir = sandbox();
+	try {
+		const record = makeRecord("T-20260908-b3");
+		const ledger = new LedgerSnapshotStore(dir);
+		ledger.write(record);
+		const ledgerDir = join(dir, "planner-only", "ledger");
+		writeFileSync(join(ledgerDir, `.tmp-${process.pid}-99`), "partial", "utf8");
+		writeFileSync(join(ledgerDir, `.tmp-${process.pid}-99.json`), "{}", "utf8");
+		writeFileSync(join(ledgerDir, "notes.txt"), "ignore me", "utf8");
+		const { records, corrupt } = ledger.readAll();
+		assert.equal(records.length, 1, "B3: a valid snapshot is returned in records");
+		assert.equal(records[0].taskId, "T-20260908-b3", "B4: restored record keeps the snapshot taskId");
+		assert.deepEqual(corrupt, [], "B5: tmp leftovers and non-json files are not corrupt");
+		assert.equal(existsSync(join(ledgerDir, `.tmp-${process.pid}-99`)), true, "B6: readAll does not delete .tmp leftovers");
+		assert.equal(existsSync(join(ledgerDir, "notes.txt")), true, "B7: readAll does not delete non-json files");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+{
+	const dir = sandbox();
+	try {
+		const ledger = new LedgerSnapshotStore(dir);
+		ledger.write(makeRecord("T-20260908-keep"));
+		const ledgerDir = join(dir, "planner-only", "ledger");
+		writeFileSync(join(ledgerDir, "@@@.json"), "not-json", "utf8");
+		writeFileSync(join(ledgerDir, "T-20260908-parse.json"), "this is not json", "utf8");
+		writeFileSync(join(ledgerDir, "T-20260908-ver.json"), JSON.stringify({ version: 2, task: { taskId: "T-20260908-ver" } }), "utf8");
+		writeFileSync(join(ledgerDir, "T-20260908-notask.json"), JSON.stringify({ version: 1, writtenAt: "2026-09-08T00:00:00.000Z" }), "utf8");
+		writeFileSync(join(ledgerDir, "T-20260908-mismatch.json"), JSON.stringify({ version: 1, task: { taskId: "T-other" } }), "utf8");
+		const { records, corrupt } = ledger.readAll();
+		assert.equal(records.some((r) => r.taskId === "T-20260908-keep"), true, "B8: a neighbouring valid snapshot still restores");
+		const byId = Object.fromEntries(corrupt.map((c) => [c.taskId, c.reason]));
+		assert.match(byId["@@@"] ?? "", /filename is not a safe taskId/, "B9: unsafe filename stem is corrupt");
+		assert.match(byId["T-20260908-parse"] ?? "", /unparseable JSON/, "B10: unparseable JSON is corrupt");
+		assert.match(byId["T-20260908-ver"] ?? "", /unsupported version/, "B11: version !== 1 is corrupt");
+		assert.match(byId["T-20260908-notask"] ?? "", /missing task/, "B12: missing task is corrupt");
+		assert.match(byId["T-20260908-mismatch"] ?? "", /task\.taskId does not match filename/, "B13: task.taskId !== stem is corrupt");
+		assert.equal(existsSync(join(ledgerDir, "T-20260908-parse.json")), true, "B14: readAll does not delete a corrupt file");
+		assert.equal(existsSync(join(ledgerDir, "T-20260908-ver.json")), true, "B15: readAll does not delete an unsupported-version file");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+{
+	const dir = sandbox();
+	const ledger = new LedgerSnapshotStore(dir);
+	const origWrite = fsCjs.writeFileSync;
+	const origError = console.error;
+	let warns = 0;
+	console.error = () => {
+		warns += 1;
+	};
+	try {
+		assert.throws(() => ledger.write({ ...makeRecord("T-20260908-ok"), taskId: "" }), /invalid ledger taskId/, "B16: empty taskId still throws");
+		assert.equal(warns, 0, "B17: invalid taskId does not consume the I/O warn quota");
+		fsCjs.writeFileSync = function () {
+			throw new Error("disk full");
+		};
+		assert.doesNotThrow(() => ledger.write(makeRecord("T-20260908-io1")), "B18: I/O failure after an invalid id still does not throw");
+		assert.equal(warns, 1, "B19: I/O failure after an invalid id still warns once");
+		assert.ok(ledger.writeErrorFor("T-20260908-io1"), "B20: writeErrorFor records the failed taskId");
+		assert.equal(ledger.writeErrorFor("T-20260908-other"), undefined, "B21: write failure is scoped to that taskId");
+		fsCjs.writeFileSync = origWrite;
+		ledger.write(makeRecord("T-20260908-io1"));
+		assert.equal(ledger.writeErrorFor("T-20260908-io1"), undefined, "B22: a later successful write clears that taskId's failure mark");
+		assert.ok(ledger.lastWriteError, "B23: lastWriteError remains as a diagnostic after the successful rewrite");
+		assert.match(String(ledger.lastWriteError), /disk full/, "B24: lastWriteError still carries the last I/O error");
+	} finally {
+		fsCjs.writeFileSync = origWrite;
+		console.error = origError;
+		rmSync(dir, { recursive: true, force: true });
 	}
 }
 

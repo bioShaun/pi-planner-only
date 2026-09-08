@@ -529,6 +529,16 @@ export class TaskStore {
 		}
 	}
 
+	/**
+	 * Install a snapshot from disk. Loading is not a mutation: do not touch()
+	 * or persist() (that would rewrite updatedAt). An in-memory record of the
+	 * same id wins over a stale snapshot.
+	 */
+	restore(record: TaskRecord): void {
+		if (this.tasks.has(record.taskId)) return;
+		this.tasks.set(record.taskId, record);
+	}
+
 	private touch(record: TaskRecord): TaskRecord {
 		record.updatedAt = this.now().toISOString();
 		this.persist(record);

@@ -63,7 +63,8 @@ import {
 	validateReviewResultIdentity,
 } from "./review.ts";
 import type { ReviewDecision } from "./review.ts";
-import { LedgerSnapshotStore } from "./ledger-store.ts";
+import { LedgerSnapshotStore, SAFE_TASK_ID } from "./ledger-store.ts";
+import type { LedgerCorrupt } from "./ledger-store.ts";
 import {
 	TaskStore,
 	createTaskSpec,
@@ -506,6 +507,27 @@ function runIdFromReceipt(event: SubagentEvent): string | undefined {
 	return undefined;
 }
 
+function untrustedPlaceholder(taskId: string): TaskRecord {
+	return {
+		taskId,
+		role: "worker",
+		cwd: "",
+		state: "planning",
+		reviewRound: 0,
+		reviewMode: "root",
+		reports: [],
+		validatorReports: [],
+		reviews: [],
+		overrides: [],
+		aliases: [],
+		reportCorrections: 0,
+		usage: emptyTaskUsage(),
+		createdAt: "1970-01-01T00:00:00.000Z",
+		updatedAt: "1970-01-01T00:00:00.000Z",
+		stateReason: "ledger snapshot unreadable",
+	};
+}
+
 export class PlannerOrchestrator {
 	readonly store: TaskStore;
 	readonly structuredDelegationMode: StructuredDelegationMode;
@@ -523,6 +545,9 @@ export class PlannerOrchestrator {
 	private readonly confirmedNotLaunchedIds = new Set<string>();
 	/** taskId -> history of all delegations for that task. */
 	private readonly delegationHistory = new Map<string, DelegationHistoryEntry[]>();
+	private readonly snapshots?: LedgerSnapshotStore;
+	/** Per-task: snapshot unreadable, so remaining balance must not be claimed. */
+	private readonly untrustedBalances = new Map<string, string>();
 
 	private roleModelMismatchRecorded = false;
 	private roleModelPolicyEnabled = false;
@@ -558,6 +583,7 @@ export class PlannerOrchestrator {
 			this.store = deps.store;
 		} else if (deps.ledgerDir) {
 			const snapshots = new LedgerSnapshotStore(deps.ledgerDir);
+			this.snapshots = snapshots;
 			this.store = new TaskStore({
 				onPersist: (record) => snapshots.write(record),
 			});
@@ -570,10 +596,37 @@ export class PlannerOrchestrator {
 			deps.structuredDelegationMode ?? readStructuredDelegationMode();
 	}
 
+	restoreFromLedger(): { restored: number; corrupt: LedgerCorrupt[] } {
+		if (!this.snapshots) return { restored: 0, corrupt: [] };
+		const { records, corrupt } = this.snapshots.readAll();
+		let restored = 0;
+		for (const record of records) {
+			if (this.store.get(record.taskId)) continue;
+			this.store.restore(record);
+			restored += 1;
+		}
+		for (const item of corrupt) {
+			this.untrustedBalances.set(item.taskId, item.reason);
+			if (SAFE_TASK_ID.test(item.taskId) && !this.store.get(item.taskId)) {
+				this.store.restore(untrustedPlaceholder(item.taskId));
+			}
+		}
+		return { restored, corrupt };
+	}
+
 	private endDelegation(toolCallId: string): void {
 		const record = this.delegations.get(toolCallId);
 		this.delegations.delete(toolCallId);
 		if (record) this.reservations.release(record.taskId, toolCallId);
+	}
+
+	private untrustedLedgerRefusal(taskId: string): string {
+		const reason = this.untrustedBalances.get(taskId) ?? "unreadable snapshot";
+		return [
+			`Planner-only guard: task ${taskId} ledger snapshot unreadable`,
+			"余额无法确认，拒绝新的受控启动。",
+			`原因: ${reason}`,
+		].join("\n");
 	}
 
 	private cumulativeBudgetRefusal(taskId: string, budget: ReservationBudget, refusal: { dimension: "tokens" | "costUsd" }): string {
@@ -742,6 +795,11 @@ export class PlannerOrchestrator {
 			? { taskId: spec.taskId, usage: emptyTaskUsage(), spec, reports: [] as TaskRecord["reports"] }
 			: undefined;
 		const gateTask = budgetTask ?? firstDelegationTask;
+		const untrustedTaskId = target?.task?.taskId ?? target?.taskId ?? spec?.taskId;
+		// Reviewer stays exempt: an unreadable ledger must not prevent closing the Task.
+		if (role !== "reviewer" && untrustedTaskId && this.untrustedBalances.has(untrustedTaskId)) {
+			return { block: { reason: this.untrustedLedgerRefusal(untrustedTaskId) } };
+		}
 		const cumulativeBudget = (gateTask?.spec as unknown as { cumulativeBudget?: unknown } | undefined)?.cumulativeBudget;
 		// Reviewer does not reserve or consume the balance gate; exhausted Tasks must still be closable.
 		if (role !== "reviewer" && gateTask?.usage && cumulativeBudget && typeof cumulativeBudget === "object") {
@@ -1282,7 +1340,11 @@ export class PlannerOrchestrator {
 				}
 			}
 		}
-		if (task.usage !== undefined) {
+		const untrustedReason = this.untrustedBalances.get(task.taskId);
+		if (untrustedReason) {
+			lines.push("Budget: 余额不可信（账本快照无法读取，拒绝把剩余当作可信数字）");
+			lines.push(`  原因: ${untrustedReason}`);
+		} else if (task.usage !== undefined) {
 			const budget = summarizeTaskBudget(task.usage, task.spec?.cumulativeBudget);
 			const money = (value: number): string => `${value < 0 ? "-" : ""}$${Math.abs(value).toFixed(4)}`;
 			// Ticket 15: part of 已用 can be debt -- an estimate charged for a child

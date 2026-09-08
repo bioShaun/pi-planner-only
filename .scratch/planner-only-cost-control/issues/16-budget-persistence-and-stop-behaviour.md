@@ -132,3 +132,67 @@ session B: 整个 Task 不见了（status 只剩 Session usage: tokens=0）
 
 恢复后闸门夹出来的余额是 `0.010000000000000002`（$0.05 − $0.04 的浮点残差，
 `p16-probe/r077-restore-shape.mjs` 实测）。**断言必须用容差，不许写 `=== 0.01`，也不许 round 掉。**
+
+---
+
+## 落地记录：16-b p16-r077（执行者 cursor `w2E:pE`，planner claude-pD 独立复核）
+
+**改了什么**（`HEAD=ca091c4` 之上，9 文件未提交时复核）：`ledger-store.ts` 导出 `SAFE_TASK_ID`、
+新增 `readAll()`（返回 `{records, corrupt}`，六类损坏各带 reason，一律不修不删）、
+把黏性 `lastWriteError` 换成按 taskId 的 `writeErrors` + `writeErrorFor()`；
+`task.ts` 新增 `restore()`（装快照不 `touch()`、内存记录优先）；
+`index.ts` 在 `session_start` 里 `loadSessionUsage(ctx)` 之后调 `restoreFromLedger()`；
+`orchestrate.ts` 新增 `restoreFromLedger()` / `untrustedBalances` / 占位记录 / untrusted 闸门 /
+status 的「余额不可信」分支。
+
+**planner 侧独立复核（全部自己重跑，不采信报告）：**
+
+1. `slot audit` / `slot status` 见 `p16-r077-planner-slot.log`。审计发现绕过 slot 的
+   `htvc`（PID 544117，RSS 19.0→19.6G），**未终止**，按规则只把自己的命令串行走 `slot cpu --`。
+2. 四条验收全部复现（`p16-r077-planner-acceptance.log`）：typecheck=0；`npm test` 16 个套件 PASS，
+   只剩 `naming.test.mjs` 卡在「install 缺 ledger-store.ts」（分支未并 main 的既有闸门）；
+   `PI_PLANNER_ONLY_REQUIRE_CONTRACT=1 test:e2e`=0；`git diff --check`=0。
+3. 实测 A / 实测 B 原样重跑，逐字复现：重载后 Task 回来了，已用 $0.0400 / 剩余 $0.0100，
+   clamp `0.010000000000000002`；损坏的 `T-20260908-961` 判「余额不可信」且受控委派被拒
+   （理由不是 cumulative budget exhausted），完好的 `T-20260908-962` 不受影响。
+4. **逐条空转审计 66/66 CAUGHT**，驱动是我自己写的 `p16-probe/r077-vacuity-audit.py`
+   （与执行者的 `r077-executor-vacuity.py` 相互独立），逐字输出见
+   `p16-r077-planner-vacuity-final.log`。审计前后 `md5sum -c p16-r077-planner-freeze.md5` 全部 OK。
+
+**但复核中我实跑发现了本轮引入的一个更大的洞（阻塞项，见 §落地记录：16-b′）**，
+所以 16 的两个 checkbox **本轮不勾**，改动先留在工作区/分支上，等 p16-r078 补丁落地后一起结。
+
+### 16-b′：损坏快照被占位记录洗白（planner 实跑，探针 `p16-probe/r077-planner-corrupt-laundering.mjs`）
+
+链条：账本文件损坏 → `restoreFromLedger()` 装一条 `untrustedPlaceholder()` 活记录 →
+reviewer（按设计豁免 untrusted 闸门，合理）动它一下 → `touch()` → `persist()` →
+**把损坏字节覆盖成一份格式合法、usage 归零、`spec` 缺失的占位快照** → 下一次会话它「不损坏」了，
+`untrustedBalances` 为空，Task 重新变可信；又因为占位记录没有 `spec.cumulativeBudget`，
+整段闸门被跳过。实测逐字：
+
+```
+  still corrupt (non-JSON)? false
+  C: worker delegation blocked? no
+  C: usageBudget handed to the child: {"tokens":{"hard":100000},"costUsd":{"hard":0.5}}
+```
+
+**$0.5 是这个 Task 整份预算 $0.05 的十倍**，正是工单 37 刚修掉的量级；
+而且损坏的原始字节被覆盖，人事后也救不回来。修法（隔离名单，写入侧硬拦，只在内存里、不落盘）
+写在 `p16-r078-handoff.md` D1–D3。
+
+### 审计方法上踩到的坑（我自己的驱动，记下来免得下次再犯）
+
+- **中和「先变红的那条断言」不能靠注释掉它**：按行注释会跨过 `try {` 把文件写坏（读出来像 UNATTRIB）；
+  更隐蔽的是 `assert.deepEqual(orch.restoreFromLedger(), …)` 把**被测调用写在断言参数里**，
+  一注释连副作用一起没了，后面依赖它的断言反被判成空转。改成把 `assert.xxx(…)`
+  换成「照常求值参数、吞掉结果」的代理后，两个坑同时消失。
+- **失败行不能取输出里第一个 `file:line`**：断言的 `actual` 是 Error 对象时，
+  node 会把那个对象的 stack 也打进 diff，第一个匹配到的是错误**构造**处（B21/B22 被误判到注入的
+  `throw new Error("disk full")` 桩上）。要先锚定错误头，跳过 `+`/`-` 的 diff 渲染，再取第一帧。
+- **变异要跟断言的语义一样窄**：`if (true || …)` 把每个 Task 都标成不可信（L9d 中和 30 次也到不了目标）；
+  「每次 I/O 失败都重抛」会先把 A14/A18 那个块打爆，而那块的失败点是桩里的裸 `throw`，无断言可中和——
+  换成「只有黏性错误来自非法 id 时才重抛」，B18 立刻 CAUGHT。
+- **同毫秒重写是等价变异**：`writtenAt`/`updatedAt` 只有毫秒精度，
+  「原样 persist 一遍」写出的字节可能一模一样（L12/L12a 都栽在这上面）。变异要写入一个**不同**的值。
+- **`str.replace` 不加断言就是静默失效**：我给 `neutralise()` 补 `return True` 的那次 patch 没匹配上，
+  函数返回 `None`，于是所有需要中和的用例统一报「无法中和」（58/66）。补上断言后重跑才是 66/66。

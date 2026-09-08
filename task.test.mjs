@@ -528,4 +528,43 @@ assert.throws(() => store.abandon(abandoned.taskId), /terminal task/);
 	assert.doesNotThrow(() => exploding.transition("T-20260908-p2", "executing"), "T6: onPersist throw must not fail touch()");
 }
 
+{
+	const seen = [];
+	const frozen = new Date("2026-09-08T12:00:00.000Z");
+	let now = frozen;
+	const store = new TaskStore({
+		now: () => now,
+		onPersist: (record) => seen.push(record.taskId + ":" + record.updatedAt),
+	});
+	assert.equal(typeof store.restore, "function", "R1: restore is a real method");
+	const snapshot = {
+		taskId: "T-20260908-r1",
+		role: "worker",
+		cwd: "/fixture/T-20260908-r1",
+		state: "changes_requested",
+		reviewRound: 1,
+		reviewMode: "root",
+		reports: [],
+		validatorReports: [],
+		reviews: [],
+		overrides: [],
+		aliases: [],
+		reportCorrections: 0,
+		usage: { root: { turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, tokensUnknownTurns: 0 }, children: [{ input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, kind: "worker", pending: false, source: "sync-details", costUsd: 0.04 }] },
+		createdAt: "2026-09-08T10:00:00.000Z",
+		updatedAt: "2026-09-08T11:00:00.000Z",
+		spec: createTaskSpec({ objective: "restore", cwd }, "T-20260908-r1"),
+	};
+	now = new Date("2026-09-08T13:00:00.000Z");
+	store.restore(snapshot);
+	assert.equal(store.require("T-20260908-r1").state, "changes_requested", "R2: restore installs the snapshot into the store");
+	assert.equal(store.require("T-20260908-r1").updatedAt, "2026-09-08T11:00:00.000Z", "R3: restore does not rewrite updatedAt");
+	assert.deepEqual(seen, [], "R4: restore does not call onPersist");
+	const live = store.require("T-20260908-r1");
+	live.state = "executing";
+	store.restore({ ...snapshot, state: "failed", updatedAt: "2026-09-08T09:00:00.000Z" });
+	assert.equal(store.require("T-20260908-r1").state, "executing", "R5: restore does not overwrite an in-memory record of the same id");
+	assert.deepEqual(seen, [], "R6: a skipped restore still does not persist");
+}
+
 console.log("planner-only task lifecycle: PASS");

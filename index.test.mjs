@@ -3,6 +3,9 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { LedgerSnapshotStore } from "./ledger-store.ts";
+import { TaskStore } from "./task.ts";
+import { emptyTaskUsage } from "./usage.ts";
 
 const isolatedAgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
 process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
@@ -3965,6 +3968,60 @@ await abandonActiveTasks();
 	const status = notices.at(-1).message;
 	// Z5 (D3): a budget-stop without runId still charges debt; it is not a start failure.
 	assert.match(status, /未知项 1 项/);
+}
+
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-16b-idx-"));
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = dir;
+	try {
+		const TASK = "T-20260908-16b";
+		const spec = { ...delegationSpec(TASK), cumulativeBudget: { tokens: 200000, costUsd: 0.05 } };
+		const store = new TaskStore();
+		const task = store.create(spec);
+		task.state = "changes_requested";
+		task.usage = emptyTaskUsage();
+		task.usage.children = [{ input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, kind: "worker", pending: false, source: "sync-details", costUsd: 0.04 }];
+		new LedgerSnapshotStore(dir).write(task);
+		const { default: factory } = await import(`./index.ts?restore-16b=${Date.now()}`);
+		const localHandlers = new Map();
+		const localCommands = new Map();
+		const localNotices = [];
+		let localTools = ["read", "bash", "write", "subagent"];
+		const pi = {
+			on(name, handler) { localHandlers.set(name, handler); },
+			registerCommand(name, definition) { localCommands.set(name, definition); },
+			registerTool() {},
+			getActiveTools() { return [...localTools]; },
+			getAllTools() { return [{ name: "read" }, { name: "bash" }, { name: "write" }, { name: "subagent" }]; },
+			setActiveTools(names) { localTools = [...names]; },
+			appendEntry() {},
+			async exec() { return { stdout: "", stderr: "", code: 1 }; },
+		};
+		const localCtx = {
+			hasUI: true,
+			ui: { notify(message) { localNotices.push(message); }, setStatus() {}, theme: { fg(_c, t) { return t; } } },
+			cwd: process.cwd(),
+			sessionManager: { getEntries() { return []; }, getSessionFile() { return join(dir, "s.jsonl"); } },
+		};
+		factory(pi);
+		await localHandlers.get("session_start")({}, localCtx);
+		localNotices.length = 0;
+		await localCommands.get("planner-only").handler(`task ${TASK}`, localCtx);
+		const status = String(localNotices.at(-1));
+		assert.match(status, /已用 \$0\.0400/, "I1: session_start restore shows spent cost");
+		assert.match(status, /剩余 \$0\.0100/, "I2: session_start restore shows remaining 0.01");
+		const input = { agent: "worker", task: JSON.stringify(spec) };
+		const out = await localHandlers.get("tool_call")(
+			{ toolCallId: "call-16b", toolName: "subagent", input },
+			localCtx,
+		);
+		assert.equal(out?.block, undefined, "I3: restored Task may delegate");
+		assert.ok(Math.abs(input.usageBudget.costUsd.hard - 0.01) < 1e-9, "I4: restored clamp is remaining, not a fresh 0.05");
+	} finally {
+		process.env.PI_CODING_AGENT_DIR = previous;
+		rmSync(dir, { recursive: true, force: true });
+	}
 }
 
 rmSync(isolatedAgentDir, { recursive: true, force: true });

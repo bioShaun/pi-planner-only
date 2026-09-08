@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { PlannerOrchestrator, isDelegationCall } from "./orchestrate.ts";
+import { LedgerSnapshotStore } from "./ledger-store.ts";
 import { BudgetReservations } from "./reservations.ts";
 import { createTaskSpec, isExecutingStale, isHolderStale } from "./task.ts";
 import { TaskStore } from "./task.ts";
@@ -5724,4 +5725,116 @@ function emptyReservationBudget(tokens = 200000, costUsd = 0.05) {
 	const orch = new PlannerOrchestrator({ gitRunner, store });
 	await orch.beginDelegation({ toolCallId: "call-z15", input }, BASE);
 	assert.equal(input.usageBudget.tokens.hard, 2_000, "Z15: existing Task still clamps from recorded usage, not emptyTaskUsage()");
+}
+
+// --------------------------------------------------------------------------
+// Ticket 16-b: restore the ledger after reload; refuse when a snapshot is unreadable.
+// --------------------------------------------------------------------------
+
+function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
+	const store = new TaskStore();
+	const spec = { ...specFor(taskId), cumulativeBudget: { tokens: 200000, costUsd: limit } };
+	const task = store.create(spec);
+	task.state = "changes_requested";
+	task.usage = emptyTaskUsage();
+	task.usage.children = [{ input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, kind: "worker", pending: false, source: "sync-details", costUsd }];
+	task.reports.push(reportFor(task.taskId, "prior-run"));
+	return task;
+}
+
+{
+	const orch = new PlannerOrchestrator({ gitRunner });
+	assert.deepEqual(orch.restoreFromLedger(), { restored: 0, corrupt: [] }, "L3: restoreFromLedger is a no-op without ledgerDir");
+}
+
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-16b-l2-"));
+	try {
+		new LedgerSnapshotStore(dir).write(spentTaskRecord("T-20260908-l2"));
+		const injected = new TaskStore();
+		const orch = new PlannerOrchestrator({ gitRunner, store: injected, ledgerDir: dir });
+		assert.deepEqual(orch.restoreFromLedger(), { restored: 0, corrupt: [] }, "L2: injected deps.store plus ledgerDir does not read the disk ledger");
+		assert.equal(orch.store.list().length, 0, "L2b: the injected store stays empty");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-16b-l1-"));
+	try {
+		const task = spentTaskRecord("T-20260908-l1", 0.04, 0.05);
+		new LedgerSnapshotStore(dir).write(task);
+		const path = join(dir, "planner-only", "ledger", `${task.taskId}.json`);
+		const before = readFileSync(path, "utf8");
+		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
+		const result = orch.restoreFromLedger();
+		assert.equal(result.restored, 1, "L1: restoreFromLedger installs the snapshot");
+		assert.deepEqual(result.corrupt, [], "L1b: a valid snapshot is not corrupt");
+		const restored = orch.store.require("T-20260908-l1");
+		assert.equal(restored.state, "changes_requested", "L1c: restored state survives");
+		assert.equal(restored.updatedAt, task.updatedAt, "L12a: restore does not rewrite updatedAt");
+		assert.equal(readFileSync(path, "utf8"), before, "L12: restoreFromLedger does not rewrite the snapshot bytes");
+		assert.deepEqual(orch.reservations.inFlight("T-20260908-l1"), { tokens: 0, costUsd: 0 }, "L4: in-flight reservations are not rehydrated");
+		const input = { task: JSON.stringify(task.spec) };
+		const out = await orch.beginDelegation({ toolCallId: "call-l5", input }, BASE);
+		assert.equal(out.block, undefined, "L5: a restored Task with remaining balance may delegate");
+		assert.ok(Math.abs(input.usageBudget.costUsd.hard - 0.01) < 1e-9, "L5b: restored remaining clamps costUsd.hard to ~0.01, not the original 0.05");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-16b-l13-"));
+	try {
+		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
+		const spec = { ...specFor("T-20260908-l13"), cumulativeBudget: { tokens: 200000, costUsd: 0.05 } };
+		const live = orch.store.create(spec);
+		const path = join(dir, "planner-only", "ledger", `${live.taskId}.json`);
+		const envelope = JSON.parse(readFileSync(path, "utf8"));
+		envelope.task.state = "failed";
+		writeFileSync(path, JSON.stringify(envelope));
+		const result = orch.restoreFromLedger();
+		assert.equal(result.restored, 0, "L13: an in-memory record is not counted as restored");
+		assert.equal(orch.store.require("T-20260908-l13").state, "planning", "L13b: live memory wins over the disk snapshot");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-16b-l6-"));
+	try {
+		const good = spentTaskRecord("T-20260908-962", 0.01, 0.05);
+		const bad = spentTaskRecord("T-20260908-961", 0.04, 0.05);
+		const ledger = new LedgerSnapshotStore(dir);
+		ledger.write(good);
+		ledger.write(bad);
+		writeFileSync(join(dir, "planner-only", "ledger", `${bad.taskId}.json`), "this is not json", "utf8");
+		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
+		const result = orch.restoreFromLedger();
+		assert.equal(result.restored, 1, "L9c: only the intact snapshot is restored as a record");
+		assert.equal(result.corrupt.some((c) => c.taskId === "T-20260908-961"), true, "L6c: the unreadable file is reported corrupt");
+		const badStatus = orch.renderTaskStatus(orch.store.require("T-20260908-961"));
+		assert.match(badStatus, /余额不可信/, "L10: status of the corrupt Task says the balance is untrusted");
+		assert.match(badStatus, /账本快照无法读取/, "L10b: status names the unreadable snapshot");
+		assert.doesNotMatch(badStatus, /剩余 \$[0-9]/, "L11: untrusted status does not present remaining as a dollar figure");
+		assert.doesNotMatch(badStatus, /剩余 -?[0-9]/, "L11b: untrusted status does not present remaining as a number");
+		const refused = await orch.beginDelegation({ toolCallId: "call-l6", input: { task: JSON.stringify(bad.spec) } }, BASE);
+		assert.match(refused.block?.reason ?? "", /ledger snapshot unreadable/, "L6: a controlled paid launch of the corrupt Task is refused");
+		assert.match(refused.block?.reason ?? "", /余额无法确认，拒绝新的受控启动/, "L6b: refusal says the balance cannot be confirmed");
+		assert.doesNotMatch(refused.block?.reason ?? "", /cumulative budget exhausted/, "L7: untrusted refusal is not the exhausted-budget message");
+		const reviewer = await orch.beginDelegation({ toolCallId: "call-l8", input: { agent: "reviewer", task: `Review ${bad.taskId}` } }, BASE);
+		assert.equal(reviewer.block, undefined, "L8: reviewer is still allowed when the ledger is unreadable");
+		const goodInput = { task: JSON.stringify(good.spec) };
+		const ok = await orch.beginDelegation({ toolCallId: "call-l9", input: goodInput }, BASE);
+		assert.equal(ok.block, undefined, "L9: a neighbouring intact Task is not frozen by the corrupt file");
+		assert.ok(goodInput.usageBudget?.costUsd?.hard > 0, "L9b: the intact Task still receives a remaining budget");
+		const goodStatus = orch.renderTaskStatus(orch.store.require("T-20260908-962"));
+		assert.doesNotMatch(goodStatus, /余额不可信/, "L9d: intact Task status does not claim an untrusted balance");
+		assert.match(goodStatus, /剩余/, "L9e: intact Task status still shows remaining");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 }

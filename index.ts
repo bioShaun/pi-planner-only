@@ -901,6 +901,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		restrictActiveTools();
 		updateStatus(ctx);
 		loadSessionUsage(ctx);
+		orchestrator.restoreFromLedger();
 		const rateWarning = rootRateWarning(ctx);
 		if (rateWarning) notify(ctx, rateWarning, "warning");
 	});
