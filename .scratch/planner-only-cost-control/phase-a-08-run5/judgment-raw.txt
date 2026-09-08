@@ -1,0 +1,542 @@
+
+===== C1 strict mode + review mode =====
+$ cat '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/env.txt'
+cwd=/home/tcuni-claw/pi/pi-planner-only-phase-a-08-r5
+pi=/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/pi
+PI_CODING_AGENT_DIR=/home/tcuni-claw/pi/pi-planner-only-phase-a-08-r5/.agent-dir
+PI_PLANNER_ONLY=1
+PI_PLANNER_ONLY_REQUIRE_CONTRACT=0
+PI_PLANNER_ONLY_REQUIRE_REVIEW=1
+HEAD=9027d8fae85e162d8f7d96d3545ddd46dbc00fa1
+branch=phase-a-08-rerun-5
+CLI_MODEL=kimi-coding/kimi-for-coding
+PLUGIN=/home/tcuni-claw/pi/pi-planner-only
+PLUGIN_HEAD=0fe04df2c85a0d58c0817d2fa4967b42382616cc
+[exit=0]
+$ grep -c 'review mode: root' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/root-session.jsonl'
+0
+[exit=1]
+$ grep -c 'review mode: fresh' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/root-session.jsonl'
+2
+[exit=0]
+
+===== C2 planner_verdict PASS / usage last state =====
+$ grep -o 'planner_verdict[^"]*' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/root-session.jsonl' | sort | uniq -c
+      6 planner_verdict
+      1 planner_verdict (grep for \
+      1 planner_verdict again — cheap.
+      1 planner_verdict attempt... it'll refuse again. No point.\n\nActually, one more thought — is there really no way to switch review mode? The command requires the operator. What about... `subagent` with workflow resource...? No.\n\nHmm, hold on, let me reconsider the un-intercepted reviewer runs. Why weren't 9080d0f8/d51869b7 intercepted while 7e479f36 was? Look at headers again:\n\n- 7e479f36 header: \
+      1 planner_verdict blocked: rootVerdictRefusal checks \
+      1 planner_verdict call raced with the review completion recording. The first refusal came BEFORE the reviewer completed (I called verdict at the same time as the reviewer was finishing; actually I called verdict after bg_wait returned... no — my first planner_verdict call happened in the same block as the bg_wait? No: I called bg_wait, got reviewer result, then called planner_verdict — refused. Then called again — refused again. Both after.\n\nHmm, \
+      1 planner_verdict checks hasPendingDelegation — the reviewer must have fully returned.\n\nAlso Gate 4: packetTruncated — the reviewer's evidence packet is built by the extension; nothing I control.\n\nLet me re-delegate the review with the proper ReviewRequest embedded and exact ReviewResult format with bindings reportRevision 2, workspaceDigest 4f53cda18c2baa0c. If reports.length is actually different, the reviewer echo would mismatch — but prepareRoleDelegation recomputes and the packet tells the reviewer the values; I'll instruct the reviewer to use the values stated in the packet it receives (reportRevision and workspaceDigest as given in the task text), which I'll state as 2 / 4f53cda18c2baa0c. Hmm, if wrong, the binding check fails again. The safest: instruct the reviewer to echo exactly the reportRevision and workspaceDigest stated in the ReviewRequest packet. I'll state what I believe: revision 2, digest 4f53cda18c2baa0c.\n\nAlso the workspace must remain identical — reviewer is read-only, fine.\n\nOne more consideration: delegation from state changes_requested round 3/3 is legal per the oracle. Pass consumesRound: false.
+      1 planner_verdict checks.
+      1 planner_verdict enforces the refusal. The slash command bypass requires operator action.\n\nActually — hold on. Let me reconsider the reviewer-echo problem. The reviewers never echo bindings because REVIEWER_PROMPT's template omits them. But the ReviewRequest packet JSON includes reportRevision and workspaceDigest fields. The kimi reviewers didn't echo. What if the delegation is intercepted and processed... we saw later reviewer runs weren't even processed. Why?\n\nLet me think about why runs 9080d0f8/d51869b7 weren't intercepted. Actually, maybe they WERE intercepted and the pass got rejected at the binding gate, and the rejection notice... where would it appear? For run 7e479f36 the rejection appeared as a user-role message. For later runs, nothing. Hmm, but maybe the rejection appeared in a way that got swallowed... The bg_wait result said \
+      1 planner_verdict for pass in fresh mode requires a recorded reviewer ReviewResult. The work IS complete and validated. The blocker is purely plugin mechanics: getting a bound PASS recorded.\n\nLet me reconsider why the last two reviewer delegations weren't processed at all. If they HAD been processed, we'd see rejection messages (unbound pass). The absence means non-interception. Why would the extension not intercept? Maybe because beginDelegation failed: e.g., the task is in a state where new delegations aren't registered (already has pending delegation?), or the \
+      1 planner_verdict handler and planner-only review command in index.ts; find how a bound PASS can be recorded or arbitrated\
+      1 planner_verdict handler in index.ts.
+      1 planner_verdict hard-requires it and I cannot produce it, and the operator's prompt says the operator may override — the right thing is to hand back to the operator with the exact override command. This is a headless probe run though; the \
+      1 planner_verdict only to arbitrate its result.\
+      3 planner_verdict refused: Task T-20260908-001 is in fresh review mode and no reviewer ReviewResult exists yet; delegate the review first — in fresh mode Root arbitrates, it does not pre-empt.
+      1 planner_verdict refuses pass in fresh mode without recorded reviewer... the /planner-only review command might use the same rootVerdictRefusal path. Probably same refusal.\n\nLet me look at the planner_verdict handler and the planner-only review command in index.ts to see if there's an operator-override route (\
+      1 planner_verdict refuses without a recorded review.\n\n2. Re-delegate review exactly like the FIRST review run (which WAS processed): TaskSpec-style with role reviewer... The first run's task: {\
+      1 planner_verdict refuses without a recorded reviewer result in fresh mode.\n\nHmm wait — maybe planner_verdict accepts if the review WAS recorded. Did the last reviewer's pass get recorded? It lacked bindings → Gate 3 refuses pass. Let me just try planner_verdict now and see if the state changed (maybe one of the passes WAS recorded — e.g., the pass from run 9080d0f8 which included... no, that lacked bindings too).\n\nActually — wait. Look at validateReviewResultBinding more carefully from the oracle's quote: errors pushed when fields missing. But maybe normalizeWorkerReport-like normalization exists for ReviewResult too — \
+      1 planner_verdict refuses. So I should report to the user and ask them to run the operator override command, OR record blocked.\n\nActually wait — one more idea for getting the echo: the packet REPLACES input.task. But `agentScope`/other fields pass through. What about delegating with agent \
+      1 planner_verdict says no reviewer ReviewResult exists. So no.\n2. The extension didn't intercept because the delegation wasn't registered as pending (e.g., the ReviewRequest-embedding path failed beginDelegation silently, or the \
+      1 planner_verdict still knows the task state (changes_requested round 3/3, fresh mode).\n\nHmm wait — actually maybe the placeholder notice means the extension considered this delegation unbound (ReviewRequest-only, no TaskSpec) and created a placeholder SPEC for the task. Fine.\n\nBut why no verdict processing? Look at the flow: when a subagent child returns, the extension intercepts via notify/readChildMeta — it matches the async run dir to a pending delegation record. For the first review (7e479f36), processing happened. For later runs... the oracle run (272092ab) also came back as plain \
+      1 planner_verdict still reads the old task state.\n\nHonestly, the cleanest next step: replicate the first review delegation EXACTLY (TaskSpec with role reviewer fields as before) — that path was intercepted. The reviewer will get the packet (with bindings in the JSON). To make the reviewer echo bindings, I can't add instructions... but maybe the model will echo them if I make the ReviewRequest's reportRevision/workspaceDigest prominent... they're in the packet JSON already.\n\nHmm, wait — actually, let me re-check whether the packet replacement happens for the runs I do. In roles.ts prepareRoleDelegation: `const packet = target.role === \
+      1 planner_verdict tool check before recording (e.g. requires an existing recorded ReviewResult, matching reportRevision/workspaceDigest)?\n4. Given a task currently in state changes_requested round 3/3 with a recorded WorkerReport (revision 1, workspaceDigest 4f53cda18c2baa0c), what exact reviewer delegation prompt shape would let the extension record the PASS?\n\nQuote the relevant code with line numbers and give a concrete recommended reviewer task text.
+      1 planner_verdict tool in index.ts, and the orchestration path in orchestrate.ts/roles.ts. No supervisor input is needed; here is the one-shot report.\n\n---\n\n## Inherited decisions\n- Planner-only oracle suite is **bounded**: read-only source analysis, no `npm test`, no full suite.\n- Task T-20260908-004 asks specifically why a reviewer \
+      1 planner_verdict tool: {verdict, summary, findings?}.\
+      1 planner_verdict verdict \
+      1 planner_verdict with request_changes? That would be false and also lands blocked at round 3/3. Don't.\n\nSummarize: taskId T-20260908-001, substantive verdict PASS, commit e4769de, blocked-on-bookkeeping with exact operator command to finalize.
+      1 planner_verdict with verdict \
+      1 planner_verdict with verdict... it refuses pass in fresh mode without recorded review. But it might accept \
+      1 planner_verdict(pass) is refused. I cannot record pass. \n\nGiven the lifecycle rules, the honest terminal action available to me: report to the operator that the task is substantively complete and validated, but the plugin's fresh-mode pass binding can't be satisfied by the current reviewer prompt/template with this model, and ask the operator to run `/planner-only review T-20260908-001 pass <summary>` to complete the task — OR record planner_verdict blocked? blocked would mark the task blocked, which misrepresents the state.\n\nHmm, actually wait. Let me re-read the operator's root-prompt: \
+      1 planner_verdict({ taskId: \
+      1 planner_verdict({verdict:\
+      5 planner_verdict, or re-delegate with the same TaskSpec.
+      1 planner_verdict.
+      1 planner_verdict. The plugin said \
+      1 planner_verdict... no.\n\nHmm. What about planner_verdict with verdict \
+      1 planner_verdict.\
+      1 planner_verdict.\n3. orchestrate.ts `recordRootVerdict` (~line 1065+) — what it does when Root agrees vs disagrees with an existing reviewer verdict, and whether it can record a pass with no prior reviewer review in fresh mode (e.g. source \
+      1 planner_verdict.\n\nActually the state: changes_requested, round 3/3, decision: revalidate. Steps per root prompt: bounded oracle → plugin reviewer → planner_verdict. The revalidate decision means: re-delegate validation for affected paths (bounded oracle). Then the review re-runs (round 3 reviewer), then verdict.\n\nLet me do the bounded oracle now.
+      1 planner_verdict.\n\nLet me delegate the correction.
+      1 planner_verdict.\n\nOption B: switch reviewMode to root — also a slash command (`/planner-only review T-20260908-001 root`). Also not invocable by me directly.\n\nHmm. But wait — the operator (user) prompt said: \
+      1 planner_verdict.\n\nRole remapping: explorer/reviewer → builtin reviewer (read/grep/find/ls; context=fresh; bounded packet; never a fork of this session); validator → oracle (bash, no edits); worker keeps its agent.\nDo not pre-compose worker→reviewer as a workflowScript, tasks array, or chain. Call the reviewer only after the worker returns, in a separate direct call.\n\nUse git_audit. Never trust a worker PASS. Never accept stale evidence; re-delegate validation (bounded oracle: HEAD/status + named tests; full suite only if PI_PLANNER_ONLY_ORACLE=full). Never fix rejected work; delegate a bounded correction. Stop after ${MAX_REVIEW_ROUNDS} review rounds (blocked).\nLifecycle state arrives in delegation results; the operator may override a verdict, you record yours with planner_verdict.`;\n\nfunction envForcesGuard(): boolean {\n\treturn new Set([\
+      1 planner_verdict.\n\nThe missing recorded WorkerReport is unfortunate but the work itself is verifiable. Alternatively, try one more correction... The plugin's rejection message says \
+      9 planner_verdict\
+      1 planner_verdict` cannot substitute for a recorded reviewer result in fresh mode; it only arbitrates/records on top of one (`recordRootVerdict`, orchestrate.ts:1065+, records an override only when disagreeing with an existing reviewer verdict).\n\n**Your scenario is otherwise favorable:** round 3/3 does not block a pass (`decideReview` pass branch, review.ts: accept/`consumesRound: false`, no round check), and delegation from `changes_requested` is legal — `applyReviewDecision` (review.ts:528+) inserts the `changes_requested → executing → reviewing` hop since `TASK_TRANSITIONS[\
+      1 planner_verdict` checks (index.ts:586–705 → orchestrate.ts)\n\n- `rootVerdictRefusal` (orchestrate.ts:796–814): not `completed`; `reports.length > 0` for non-`blocked`; **no pending delegation** (`hasPendingDelegation`, orchestrate.ts:949–954 — so the reviewer child must fully return first; `reconcilePendingDelegations` at orchestrate.ts:1000 is awaited first); and for **pass in fresh mode**:\n\n```ts\n// orchestrate.ts:806-811\nif (verdict === \
+      1 planner_verdict` correctly refuses to pre-empt in fresh mode. To finalize the task state, the operator can run:\n\n```\n/planner-only review T-20260908-001 pass \
+      1 planner_verdict` handler and the `/planner-only review` command in index.ts for an arbitration path:
+      1 planner_verdict` refusal logic precisely.\n\nReport with exact line numbers and quotes. Conclude: what is the minimal sequence of tool calls (exact arguments) that can move task T-20260908-001 (state changes_requested, round 3/3, reviewMode fresh, 2 recorded WorkerReports, 0 recorded reviews) to completed, given reviewers refuse to echo reportRevision/workspaceDigest?
+      1 planner_verdict` then either is unnecessary (accept already completes the task) or, if Root disagrees, arbitrates against the recorded result.\n\nIf the PASS still refuses after this, the remaining causes are exactly: (a) the evidence packet was truncated (`patchTruncated`/`patchOmittedPaths` — visible in the delegation begin warnings), or (b) the workspace drifted after the report was recorded (fix: re-delegate a worker correction to restore the snapshot, then re-review).\n\n## Risks\n- `captureReviewEvidencePacket` output size is not controllable from the delegation prompt; a large diff can truncate the packet and make any PASS permanently ineligible for that packet (only `request_changes`/`blocked` would record over it).\n- `jsonCandidates` order means a malformed earlier JSON object with `verdict`+`findings` could shadow a valid later one — keep the output to a single JSON object.\n- The digest `4f53cda18c2baa0c` is assumed to be the current `task.snapshot.digest`; verify via the task status output before delegating.\n\n## Need from main agent\nNone — the question is fully answerable from source. If you want me to verify the actual refusal message from the failed run's session log to pinpoint which gate fired, that log path is the one thing I don't have.\n\n## Suggested execution prompt\nNo worker handoff warranted — this is a read-only validator question with a complete answer.\n\nSession file: /home/tcuni-claw/pi/pi-planner-only-phase-a-08-r5/.scratch/phase-a-08-session/2026-09-08T00-39-46-244Z_01a07e74-e943-71fa-bbd3-156ef8f2de48/29d13c47-0c05-4199-9fa8-9f5d1daced45/run-0/session.jsonl
+      1 planner_verdict` tool boundary (index.ts:663) and bypassed by the operator command (index.ts:1016–1023). The reviewer path itself is closed for a pass in this scenario: `validateReviewResultBinding` (review.ts:199–209) requires a pass to name `reportRevision` and `workspaceDigest`, and `handleReviewerResult` rejects binding errors without recording anything (orchestrate.ts:1349–1366: \
+      1 planner_verdict` tool handler (grep \
+      1 planner_verdict` tool handler (index.ts:586–705)\n\n- Registers tool with params `{verdict: pass|request_changes|blocked, summary, taskId?, findings?}` (index.ts:609–648). **No** `reportRevision`/`workspaceDigest` inputs.\n- Execute path: resolves task (650–653), reconciles pending delegations (661–662), then `const refusal = orchestrator.rootVerdictRefusal(task, params.verdict)` (663) — **the tool honours every refusal** (comment at orchestrate.ts:790–792: \
+      1 planner_verdict` tool honours them all\
+      1 planner_verdict`.\n- Worker may commit on the current branch `kimi-timing-probe`. Do not push. Leave `.scratch/` untracked.\n- Stop when the task is PASS or BLOCKED. Then summarize: taskId, verdict, commit hash if any, and that the run is done.\n\nWhen finished, reply with a short recap only.\n\n</file>\n
+[exit=0]
+$ grep -o '"verdict":"[a-z_]*"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/root-session.jsonl' | sort | uniq -c
+      6 "verdict":"pass"
+[exit=0]
+$ tail -1 '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/usage.jsonl' | python3 -c 'import json,sys; d=json.load(sys.stdin); print({k:d[k] for k in ("state","rounds","taskId","cwd","rootModel","finishedAt")})'
+{'state': 'blocked', 'rounds': 2, 'taskId': 'T-20260908-001', 'cwd': '/home/tcuni-claw/pi/pi-planner-only-phase-a-08-r5', 'rootModel': 'kimi-for-coding', 'finishedAt': '2026-09-08T01:09:36.047Z'}
+[exit=0]
+$ cat '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/exit.txt'
+exit_code=0
+[exit=0]
+
+===== C3 oracle ran =====
+$ grep -l '"agent": "\(oracle\|validator\)"' /home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/*_meta.json | wc -l
+6
+[exit=0]
+$ grep -l '"agent": "\(oracle\|validator\)"' /home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/*_meta.json
+/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/272092ab-7c02-4cfb-a253-0b7a3c23510a_oracle_meta.json
+/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/35527130-0ee7-4bc7-93c0-6120b73730fa_oracle_meta.json
+/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/588268d7-14b8-4221-83f2-056cfeb6fd2b_oracle_0_meta.json
+/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/8d5078e9-dfb1-40ad-8d40-b7f153721d59_oracle_meta.json
+/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/b218cb3a-3e87-4f20-b82b-5594b49e1cce_oracle_meta.json
+/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/b288025c-6ebe-4d65-9204-c684c33954fe_oracle_meta.json
+[exit=0]
+
+===== C4 reviewer ran =====
+$ grep -l '"agent": "\(reviewer\|explorer\)"' /home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/*_meta.json | wc -l
+11
+[exit=0]
+$ grep -l '"agent": "\(reviewer\|explorer\)"' /home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/*_meta.json
+/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/0f57e0c8-9e03-4c33-9e25-88d38166d2a8_reviewer_meta.json
+/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/52e07540-b6ab-4ff7-b475-c6bcf2f08704_worker_meta.json
+/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/68b5f76e-f737-4acd-b12e-ef5bb452c40f_worker_meta.json
+/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/74f164e8-a852-49ca-bd7d-3ae4ca4889fd_worker_meta.json
+/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/7e479f36-7fc0-4ada-9310-60cd5fe0bbc4_reviewer_meta.json
+/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/9080d0f8-f1cb-4a6b-bbe1-75d05477b32a_reviewer_meta.json
+/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/a5b8f153-d658-42f9-b8e6-de4ec8693835_worker_meta.json
+/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/bf04bce7-a74b-42ea-b013-8858c2fbe837_worker_meta.json
+/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/d51869b7-9862-4d3b-97ea-294b82bd2929_reviewer_meta.json
+/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/e567653d-3a6e-4434-a544-408fd74d0601_worker_meta.json
+/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/e63c7583-b530-4915-9a40-54564c188ff1_worker_meta.json
+[exit=0]
+
+===== C5 ReviewResult produced by that reviewer's _output.md =====
+
+--- /home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/0f57e0c8-9e03-4c33-9e25-88d38166d2a8_reviewer_output.md ---
+$ grep -c '"verdict"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/0f57e0c8-9e03-4c33-9e25-88d38166d2a8_reviewer_output.md'
+1
+[exit=0]
+$ grep -c '"findings"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/0f57e0c8-9e03-4c33-9e25-88d38166d2a8_reviewer_output.md'
+1
+[exit=0]
+$ head -60 '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/0f57e0c8-9e03-4c33-9e25-88d38166d2a8_reviewer_output.md'
+{"taskId":"T-20260908-001","verdict":"pass","summary":"Worker's bounded correction is corroborated by the evidence packet. HEAD matches the reported finalGitRef (e4769de5f535dfdac2332222d1fe90c05df87210) and baselineRef, so no commits were created. The status output shows no tracked modifications — only untracked .agent-dir/ and .scratch/ directories — which confirms the claimed revert of the undeclared package-lock.json working-tree change: had the restore failed, package-lock.json would appear as a modified tracked entry in porcelain status. diffCheck and diffCheckStaged both exit 0, consistent with a clean tree. The packet is not partial: patchTruncated is absent/false and patchOmittedPaths is empty; patchTotalFiles=0 is the expected shape for a revert-to-baseline task, not missing evidence. The 'stale / over-reported' note in evidenceSummary is an artifact of comparing the report's declared changedFiles against the post-revert diff (the file was intentionally restored, so its change is no longer present) and does not contradict the report. The unstated objective implicit in the report — undo an undeclared working-tree edit, keep HEAD untouched, touch nothing else — is verified by the evidence. TaskSpec embedded no explicit objective/scope/acceptanceCriteria, so review is limited to verifying the reported end state, which the evidence fully supports.","evidenceFresh":true,"findings":[{"severity":"info","category":"other","description":"workerReport.changedFiles lists package-lock.json even though the packet's diff shows no net change to that file (it was restored to HEAD). This is internally consistent with the report's stated intent (a revert, not a persistent edit), but declaring a file with zero net diff as 'changed' triggered the evidenceSummary's 'stale/over-reported' flag and adds noise to the review pipeline.","requestedChange":"In future revert-only corrections, declare changedFiles as empty (or annotate the entry as 'touched-and-reverted') so the evidence packet's declared-vs-actual diff comparison does not flag a false positive."}]}[exit=0]
+
+--- /home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/52e07540-b6ab-4ff7-b475-c6bcf2f08704_worker_output.md ---
+$ grep -c '"verdict"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/52e07540-b6ab-4ff7-b475-c6bcf2f08704_worker_output.md'
+0
+[exit=1]
+$ grep -c '"findings"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/52e07540-b6ab-4ff7-b475-c6bcf2f08704_worker_output.md'
+0
+[exit=1]
+$ head -60 '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/52e07540-b6ab-4ff7-b475-c6bcf2f08704_worker_output.md'
+No TaskSpec was embedded in this task — the objective, scope, constraints, and acceptance criteria are all empty. Per the planner-only worker contract, I made no code edits (choosing work arbitrarily would widen scope without authority) and inspected the repo only to confirm no other task instructions were present. The `.scratch` area contains only session logs from prior runs, and the `.planner-only-test-*` directories are empty.[exit=0]
+
+--- /home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/68b5f76e-f737-4acd-b12e-ef5bb452c40f_worker_output.md ---
+$ grep -c '"verdict"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/68b5f76e-f737-4acd-b12e-ef5bb452c40f_worker_output.md'
+0
+[exit=1]
+$ grep -c '"findings"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/68b5f76e-f737-4acd-b12e-ef5bb452c40f_worker_output.md'
+0
+[exit=1]
+$ head -60 '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/68b5f76e-f737-4acd-b12e-ef5bb452c40f_worker_output.md'
+Reverted the lockfile and verified the workspace state exactly as directed.
+
+**WorkerReport:**
+```json
+{"version":1,"taskId":"T-20260908-001","status":"completed","summary":"Bounded correction executed: reverted the undeclared package-lock.json working-tree change with `git restore -- package-lock.json`. Verified `git status --porcelain` shows only untracked .agent-dir/ and .scratch/ entries and `git rev-parse HEAD` is e4769de (feat(status): print oracle suite mode on /planner-only status). No other edits, no commits, no push. The oracle-status ticket work remains intact in the existing commit.","changedFiles":["package-lock.json"],"validation":["git restore -- package-lock.json (exit 0)","git status --porcelain: only untracked .agent-dir/, .scratch/oracle-status-line/, .scratch/phase-a-08-session/; no tracked modifications","git rev-parse HEAD = e4769de5f535dfdac2332222d1fe90c05df87210","git diff --stat: empty"],"evidence":{"taskId":"T-20260908-001","head":"e4769de","lockfileDiff":"empty after restore"},"risks":[],"unresolved":[]}
+```[exit=0]
+
+--- /home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/74f164e8-a852-49ca-bd7d-3ae4ca4889fd_worker_output.md ---
+$ grep -c '"verdict"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/74f164e8-a852-49ca-bd7d-3ae4ca4889fd_worker_output.md'
+0
+[exit=1]
+$ grep -c '"findings"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/74f164e8-a852-49ca-bd7d-3ae4ca4889fd_worker_output.md'
+0
+[exit=1]
+$ head -60 '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/74f164e8-a852-49ca-bd7d-3ae4ca4889fd_worker_output.md'
+Verified the full picture. Summary of what happened and the final report:
+
+**Findings:** The task (`T-20260908-001`) was a placeholder wrapper around ticket `.scratch/oracle-status-line/issues/01-status-oracle-suite.md` ("Print oracle suite on `/planner-only status`"). A previous worker run in this session already implemented and committed it as `e4769de` on branch `phase-a-08-rerun-5` (`index.ts:920` prints `Oracle suite: ${oracleSuiteMode()}`; tests added in `index.test.mjs` for bounded default and `PI_PLANNER_ONLY_ORACLE=full`). The Root session kept re-delegating because earlier WorkerReports weren't parseable — not because the work was missing. This run verified the implementation against the ticket and validated it: `index.test.mjs` PASS, full `npm test` 15/15 PASS, `tsc --noEmit` exit 0. No new edits were needed; nothing is staged.
+
+```json
+{
+  "version": 1,
+  "taskId": "T-20260908-001",
+  "status": "completed",
+  "summary": "Ticket 01 (oracle suite line on /planner-only status) is implemented and committed as e4769de on branch phase-a-08-rerun-5: index.ts status action prints `Oracle suite: ${oracleSuiteMode()}` (index.ts:920), with test coverage in index.test.mjs for the default bounded mode (line 471) and PI_PLANNER_ONLY_ORACLE=full (line 615). This run independently verified the diff matches the ticket and re-ran validation: index.test.mjs PASS, full npm test 15/15 PASS, tsc --noEmit exit 0. No further edits were required; no /code-review was run.",
+  "changedFiles": [
+    "index.ts",
+    "index.test.mjs"
+  ],
+  "validation": [
+    {
+      "type": "test",
+      "status": "passed",
+      "summary": "node --experimental-strip-types index.test.mjs -> planner-only extension: PASS",
+      "exitCode": 0
+    },
+    {
+      "type": "test",
+      "status": "passed",
+      "summary": "npm test: all 15 suites PASS (policy, roles, task, report, review, notify, usage, orchestration, evidence, git_audit, extension, workspace snapshot, architecture, naming)",
+      "exitCode": 0
+    },
+    {
+      "type": "typecheck",
+      "status": "passed",
+      "summary": "npx tsc --noEmit exit 0",
+      "exitCode": 0
+    }
+  ],
+  "evidence": {
+    "taskId": "T-20260908-001",
+    "commit": "e4769de5f535dfdac2332222d1fe90c05df87210",
+    "branch": "phase-a-08-rerun-5"
+  },
+  "risks": [
+    "package-lock.json shows as modified in the working tree, but this predates the current run and no lockfile-modifying command was executed by this worker."
+  ],
+  "unresolved": []
+}
+```[exit=0]
+
+--- /home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/7e479f36-7fc0-4ada-9310-60cd5fe0bbc4_reviewer_output.md ---
+$ grep -c '"verdict"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/7e479f36-7fc0-4ada-9310-60cd5fe0bbc4_reviewer_output.md'
+1
+[exit=0]
+$ grep -c '"findings"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/7e479f36-7fc0-4ada-9310-60cd5fe0bbc4_reviewer_output.md'
+1
+[exit=0]
+$ head -60 '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/7e479f36-7fc0-4ada-9310-60cd5fe0bbc4_reviewer_output.md'
+All evidence verified. Here is my review.
+
+```json
+{
+  "taskId": "T-20260908-001",
+  "verdict": "pass",
+  "summary": "Ticket .scratch/oracle-status-line/issues/01-status-oracle-suite.md is fully implemented: index.ts:18 imports oracleSuiteMode from roles.ts and index.ts:920 appends `Oracle suite: ${oracleSuiteMode()}` immediately after the Usage log line in the /planner-only status action. oracleSuiteMode() exists at roles.ts:51 reading process.env at call time, so the line reflects the effective suite mode. Test coverage matches the ticket: the RF-4 default block (index.test.mjs:462-471) deletes PI_PLANNER_ONLY_ORACLE and asserts `Oracle suite: bounded`; the T05 env block (index.test.mjs:611-618) sets PI_PLANNER_ONLY_ORACLE=full, asserts `Oracle suite: full`, and cleans up in a finally block. roles.test.mjs:318-321 independently covers the helper. Patch is complete (3/3 files, not truncated, no omitted paths) and matches on-disk content at HEAD e4769de. The unstaged package-lock.json change merely syncs the lockfile to the already-committed package.json (version 0.3.3, peerDep >=0.84 <1), so it is not drift.",
+  "evidenceFresh": true,
+  "findings": [
+    {
+      "severity": "info",
+      "category": "scope",
+      "description": "package-lock.json is modified in the working tree (unstaged, per git status) and appears in the packet's changedFiles, but it is not attributable to this ticket. It only syncs the lockfile to package.json (0.3.3, peerDep >=0.84 <1), which are values already committed in package.json, so it is a benign sync rather than scope creep. Recommend committing or reverting it separately so the working tree is clean.",
+      "requestedChange": "None required for this task; optionally commit or revert the lockfile sync as housekeeping."
+    },
+    {
+      "severity": "info",
+      "category": "other",
+      "description": "The TaskSpec in the review packet had an unspecified objective and empty acceptanceCriteria; the review target was reconstructed from the packet's changed paths (.scratch/oracle-status-line) and the committed diff. The ticket checklist in .scratch/oracle-status-line/issues/01-status-oracle-suite.md is satisfied exactly.",
+      "requestedChange": "None; parent should embed the TaskSpec in future packets."
+    }
+  ]
+}
+```[exit=0]
+
+--- /home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/9080d0f8-f1cb-4a6b-bbe1-75d05477b32a_reviewer_output.md ---
+$ grep -c '"verdict"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/9080d0f8-f1cb-4a6b-bbe1-75d05477b32a_reviewer_output.md'
+1
+[exit=0]
+$ grep -c '"findings"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/9080d0f8-f1cb-4a6b-bbe1-75d05477b32a_reviewer_output.md'
+1
+[exit=0]
+$ head -60 '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/9080d0f8-f1cb-4a6b-bbe1-75d05477b32a_reviewer_output.md'
+{"taskId":"T-20260908-001","verdict":"pass","summary":"The worker's declared change was a bounded revert of an undeclared working-tree modification to package-lock.json. Evidence packet shows HEAD unchanged at e4769de5f535dfdac2332222d1fe90c05df87210, `git status` clean of any tracked modifications (only untracked .agent-dir/ and .scratch/ scratch dirs, which are permitted per repo policy), and diffCheck/diffCheckStaged both exit 0 with zero files returned — consistent with a successful restore and no unintended edits. No patch content exists to review because the net diff is empty, which matches the revert intent. The only discrepancy is cosmetic: workerReport.changedFiles lists package-lock.json although that file is no longer dirty (the evidenceSummary flags it as stale/over-reported); this reflects the revert action itself and does not indicate a scope violation. No TaskSpec acceptance criteria were supplied to check beyond the reported objective, and no blocker/major issues were found in the available evidence.","evidenceFresh":true,"findings":[{"severity":"minor","category":"other","description":"workerReport.changedFiles declares package-lock.json, but the evidence packet shows it is no longer modified (git status clean, patchTotalFiles=0). The declaration is stale relative to final state; it accurately describes the file the worker touched (to revert it) but should ideally have been reported as reverted/unchanged-at-final-state for clarity.","requestedChange":"In future reports, list reverted files under a separate 'revertedFiles' field or annotate them, so changedFiles reflects only net-final-state modifications."}]}[exit=0]
+
+--- /home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/a5b8f153-d658-42f9-b8e6-de4ec8693835_worker_output.md ---
+$ grep -c '"verdict"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/a5b8f153-d658-42f9-b8e6-de4ec8693835_worker_output.md'
+0
+[exit=1]
+$ grep -c '"findings"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/a5b8f153-d658-42f9-b8e6-de4ec8693835_worker_output.md'
+0
+[exit=1]
+$ head -60 '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/a5b8f153-d658-42f9-b8e6-de4ec8693835_worker_output.md'
+{"version":1,"taskId":"T-20260908-001","status":"completed","summary":"Ticket .scratch/oracle-status-line/issues/01-status-oracle-suite.md is fully implemented and committed as e4769de on branch phase-a-08-rerun-5 (not pushed). This run validated the existing work rather than re-doing it: index.ts:18 imports oracleSuiteMode from roles.ts and index.ts:920 appends `Oracle suite: ${oracleSuiteMode()}` immediately after the Usage log line in the /planner-only status action, so operators see bounded vs full without reading source or env docs. Test coverage matches the ticket: index.test.mjs asserts /Oracle suite: bounded/ for default env (index.test.mjs:471) and /Oracle suite: full/ under PI_PLANNER_ONLY_ORACLE=full with try/finally cleanup (index.test.mjs:615); roles.test.mjs:318-321 covers oracleSuiteMode() itself. Both named tests pass in this run. No default oracle behavior, Worker contract, Reviewer packet, or usage accounting changes. No /code-review run.","changedFiles":[],"validation":["node --experimental-strip-types roles.test.mjs -> PASS","node --experimental-strip-types index.test.mjs -> PASS","git rev-parse HEAD -> e4769de5f535dfdac2332222d1fe90c05df87210 (feat(status): print oracle suite mode on /planner-only status)","grep confirmed index.ts:18 import, index.ts:920 status line, roles.ts:51 oracleSuiteMode"],"evidence":{"taskId":"T-20260908-001","head":"e4769de5f535dfdac2332222d1fe90c05df87210","branch":"phase-a-08-rerun-5","ticket":".scratch/oracle-status-line/issues/01-status-oracle-suite.md","statusLine":"index.ts:920 lines.push(`Oracle suite: ${oracleSuiteMode()}`)","tests":{"roles.test.mjs":"PASS","index.test.mjs":"PASS"}},"risks":["package-lock.json shows as modified in git status, but the change (version 0.3.3 sync + peerDependencies '>=0.84 <1') predates this run and was not produced by this worker; left untouched and uncommitted per ticket instructions",".scratch/ left untracked as instructed"],"unresolved":[]}[exit=0]
+
+--- /home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/bf04bce7-a74b-42ea-b013-8858c2fbe837_worker_output.md ---
+$ grep -c '"verdict"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/bf04bce7-a74b-42ea-b013-8858c2fbe837_worker_output.md'
+0
+[exit=1]
+$ grep -c '"findings"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/bf04bce7-a74b-42ea-b013-8858c2fbe837_worker_output.md'
+0
+[exit=1]
+$ head -60 '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/bf04bce7-a74b-42ea-b013-8858c2fbe837_worker_output.md'
+Task objective was unspecified in the TaskSpec, but inherited repo context identifies the assigned ticket: `.scratch/oracle-status-line/issues/01-status-oracle-suite.md` (print `Oracle suite:` line on `/planner-only status`). I validated the work against the ticket checklist rather than re-doing it:
+
+**Ticket checklist verification:**
+- ✅ `index.ts:920` — status action pushes `Oracle suite: ${oracleSuiteMode()}` (imported from `roles.ts:18`)
+- ✅ `index.test.mjs:471` — asserts `Oracle suite: bounded` for default env
+- ✅ `index.test.mjs:615` — asserts `Oracle suite: full` under `PI_PLANNER_ONLY_ORACLE=full`
+- ✅ No README change, no scope creep, no `/code-review` run
+- ✅ Committed as `e4769de` on the current branch (no push)
+
+**Validation run:**
+- `node --experimental-strip-types index.test.mjs` → exit 0 (PASS)
+- `node --experimental-strip-types roles.test.mjs` → exit 0 (PASS)
+- `tsc --noEmit` → exit 0
+
+No file edits were needed from me this run; the feature was already implemented and committed. The only working-tree modification, `package-lock.json` (version 0.3.2→0.3.3 sync), predates this run — I did not run any install and made no edits.
+
+Implemented: verified the oracle-suite status line feature (index.ts + index.test.mjs) is complete per ticket 01-status-oracle-suite.
+Changed files: none (package-lock.json working-tree modification pre-existed; not made by me).
+Validation: index.test.mjs, roles.test.mjs, tsc --noEmit all pass.
+Open risks/questions: TaskSpec objective was unspecified — scope inferred from repo issue ticket; lockfile modification predates this run.
+Recommended next step: planner can proceed to reviewer/verdict per root-prompt.[exit=0]
+
+--- /home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/d51869b7-9862-4d3b-97ea-294b82bd2929_reviewer_output.md ---
+$ grep -c '"verdict"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/d51869b7-9862-4d3b-97ea-294b82bd2929_reviewer_output.md'
+1
+[exit=0]
+$ grep -c '"findings"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/d51869b7-9862-4d3b-97ea-294b82bd2929_reviewer_output.md'
+1
+[exit=0]
+$ head -60 '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/d51869b7-9862-4d3b-97ea-294b82bd2929_reviewer_output.md'
+```json
+{
+  "taskId": "T-20260908-001",
+  "verdict": "pass",
+  "summary": "The worker's report describes a bounded revert: an undeclared working-tree modification to package-lock.json was restored to HEAD, leaving no tracked diff. Root's Git evidence confirms this end state: HEAD equals baselineRef (e4769de), both diff checks pass with exit code 0 and zero files in the returned patch, and the only working-tree entries are the untracked .agent-dir/ and .scratch/ directories, which are permitted scratch/memory locations per project conventions and are not repo noise. The worker's declared changed file, package-lock.json, is explicitly flagged by the evidence packet as no longer present in the diff (extraDeclaredFiles), which is expected for a pure revert operation and is a report-accuracy note rather than a correctness defect. With no TaskSpec-embedded acceptance criteria and no attributable tracked changes, there is nothing further to verify against scope; the declared outcome (clean tree, no commits, no push) is fully corroborated by the evidence packet.",
+  "evidenceFresh": true,
+  "findings": [
+    {
+      "severity": "minor",
+      "category": "other",
+      "description": "workerReport.changedFiles lists package-lock.json, but the evidence packet shows no diff for it (patchTotalFiles=0; extraDeclaredFiles flags it as over-reported). This is consistent with the reported revert (restoring the file to HEAD leaves no diff), but the declaration overstates the attributable change set for a fresh review, since no patch content exists for the declared file.",
+      "requestedChange": "For revert/cleanup tasks, declare the operation (e.g., 'restored package-lock.json to HEAD, no diff remains') rather than listing the file as a changed file, so reviewers do not treat the entry as missing evidence."
+    },
+    {
+      "severity": "info",
+      "category": "scope",
+      "description": "Working tree contains untracked .agent-dir/ and .scratch/ directories (.scratch/oracle-status-line/, .scratch/phase-a-08-session/). These are permitted scratch/memory locations under project rules and are outside the attributable change set; no action required.",
+      "requestedChange": "None. Optionally confirm .agent-dir/ and .scratch/ remain untracked and ignored."
+    }
+  ]
+}
+```[exit=0]
+
+--- /home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/e567653d-3a6e-4434-a544-408fd74d0601_worker_output.md ---
+$ grep -c '"verdict"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/e567653d-3a6e-4434-a544-408fd74d0601_worker_output.md'
+0
+[exit=1]
+$ grep -c '"findings"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/e567653d-3a6e-4434-a544-408fd74d0601_worker_output.md'
+0
+[exit=1]
+$ head -60 '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/e567653d-3a6e-4434-a544-408fd74d0601_worker_output.md'
+Task context confirmed via session artifacts: this is a report-only correction run for placeholder task `T-20260908-001` (parent embedded no TaskSpec). Prior worker runs were rejected for a taskId mismatch and for returning prose instead of a WorkerReport. I inspected the repo read-only: all 10 hardening tickets in `.scratch/planner-only-hardening/issues/` are `done` with implementing commits, there is no `ready-for-agent` frontier work, and I made no file edits. The `package-lock.json` working-tree diff (version 0.3.2→0.3.3 sync with the ticket-06 peer range) pre-existed my run. Per the worker contract, returning only the WorkerReport:
+
+{"version":1,"taskId":"T-20260908-001","status":"completed","summary":"Placeholder task: parent embedded no TaskSpec, so there was no actionable objective to implement. Read-only verification of the repo state: all 10 planner-only-hardening tickets (01-10) in .scratch/planner-only-hardening/issues/ are marked done with implementing commits (9035bbc, 3408664, acc5f82, c479be6, 00adf70, 71040b8, ce93b21, 9fd96b3, c066332, 07099f8) and the spec.md frontier lists no ready-for-agent work; HEAD is e4769de. No file edits were made by this worker. Note: package-lock.json shows a pre-existing uncommitted diff (version 0.3.2->0.3.3 and peer range '*'->'>=0.84 <1', matching the committed package.json from ticket 06) that predates this run; it was not modified by this worker and no install commands were run.","changedFiles":[],"validation":["Read-only inspection of .scratch/planner-only-hardening/issues/ (all tickets done, no ready-for-agent frontier)","git log/status/diff inspection confirming no edits by this worker and no uncommitted changes beyond the pre-existing lockfile diff"],"evidence":{"taskId":"T-20260908-001","repoHead":"e4769de","ticketsDone":10,"readyForAgent":0},"risks":["Task objective was unspecified, so no implementation work could be scoped or performed","package-lock.json carries a pre-existing uncommitted sync diff (0.3.2->0.3.3, peer range '>=0.84 <1') not created by this worker; left untouched"],"unresolved":["Parent did not embed a TaskSpec; if real work was intended, a follow-up delegation with an explicit objective is required"]}[exit=0]
+
+--- /home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/e63c7583-b530-4915-9a40-54564c188ff1_worker_output.md ---
+$ grep -c '"verdict"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/e63c7583-b530-4915-9a40-54564c188ff1_worker_output.md'
+0
+[exit=1]
+$ grep -c '"findings"' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/e63c7583-b530-4915-9a40-54564c188ff1_worker_output.md'
+0
+[exit=1]
+$ head -60 '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/e63c7583-b530-4915-9a40-54564c188ff1_worker_output.md'
+Implemented the Oracle suite status line.
+
+```json
+{
+  "taskId": "T-20260208-002",
+  "status": "done",
+  "summary": "Added 'Oracle suite: <mode>' line to /planner-only status output using oracleSuiteMode() from roles.ts; extended index.test.mjs with bounded (RF-4 default) and full (PI_PLANNER_ONLY_ORACLE=full) coverage; committed on current branch phase-a-08-rerun-5 without pushing.",
+  "changedFiles": ["index.ts", "index.test.mjs"],
+  "validation": [
+    { "command": "node --experimental-strip-types index.test.mjs", "exitCode": 0 },
+    { "command": "node --experimental-strip-types roles.test.mjs", "exitCode": 0 },
+    { "command": "npm run typecheck", "exitCode": 0 }
+  ],
+  "evidence": [
+    "index.ts: import { oracleSuiteMode } from \"./roles.ts\" added after ./notify.ts import",
+    "index.ts status action: lines.push(`Oracle suite: ${oracleSuiteMode()}`) immediately after the Usage log line",
+    "index.test.mjs RF-4 default block: delete process.env.PI_PLANNER_ONLY_ORACLE before makePi, plus assert /Oracle suite: bounded/ after the source: default assertion",
+    "index.test.mjs T05b block: sets PI_PLANNER_ONLY_ORACLE=full, invokes status handler, asserts /Oracle suite: full/, deletes env var in finally",
+    "git commit e4769de 'feat(status): print oracle suite mode on /planner-only status' on branch phase-a-08-rerun-5, 2 files changed, 13 insertions; .scratch/ and package-lock.json left uncommitted/untracked"
+  ],
+  "risks": [
+    "npm install was needed (node_modules absent); package-lock.json shows as modified but was intentionally not committed",
+    "Other status tests (e.g., line ~1698) run with the suite but do not assert absence of the new line, so no breakage; full suite not run beyond the three required commands"
+  ],
+  "unresolved": []
+}
+```[exit=0]
+
+===== C6 evidence attribution > 0 =====
+$ grep -o 'attributed [0-9]* path' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/root-session.jsonl' | tail -1
+[exit=0]
+$ grep -o 'attributed [0-9]* path' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/root-session.jsonl' | sort | uniq -c
+[exit=0]
+
+===== C7 no placeholder task =====
+$ grep -c 'Placeholder task' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/root-session.jsonl'
+16
+[exit=0]
+
+===== C8 no WorkerReport parse error =====
+$ grep -c 'not a valid WorkerReport' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/root-session.jsonl'
+6
+[exit=0]
+
+===== C9 validator delegated at most once / async waits =====
+$ grep -o '"agent": "[a-z]*"' /home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/*_meta.json | sed 's#.*/##' | cut -d: -f2- | sort | uniq -c
+      1 "agent": "delegate"
+      6 "agent": "oracle"
+     11 "agent": "reviewer"
+      7 "agent": "worker"
+[exit=0]
+$ grep -c 'Async delegation has started' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/root-session.jsonl'
+0
+[exit=1]
+$ grep -o 'bg_wait[^"]\{0,60\}' '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/root-session.jsonl' | head -20
+bg_wait` until the child finishes before the next step.\n- After th
+bg_wait id=b288025c-6ebe-4d65-9204-c684c33954fe; bg_wait without an
+bg_wait
+bg_wait
+bg_wait id=e63c7583-b530-4915-9a40-54564c188ff1; bg_wait without an
+bg_wait
+bg_wait
+bg_wait id=bf04bce7-a74b-42ea-b013-8858c2fbe837; bg_wait without an
+bg_wait
+bg_wait
+bg_wait id=e567653d-3a6e-4434-a544-408fd74d0601; bg_wait without an
+bg_wait
+bg_wait
+bg_wait id=35527130-0ee7-4bc7-93c0-6120b73730fa; bg_wait without an
+bg_wait
+bg_wait
+bg_wait id=7e479f36-7fc0-4ada-9310-60cd5fe0bbc4; bg_wait without an
+bg_wait
+bg_wait
+bg_wait id=a5b8f153-d658-42f9-b8e6-de4ec8693835; bg_wait without an
+[exit=0]
+
+===== C10 worktree clean =====
+$ git -C '/home/tcuni-claw/pi/pi-planner-only-phase-a-08-r5' status --porcelain
+?? .agent-dir/
+?? .scratch/oracle-status-line/
+?? .scratch/phase-a-08-session/
+[exit=0]
+
+===== C11 turns per delegation =====
+$ python3 - <<'PY'
+import json,glob,os
+for m in sorted(glob.glob('/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/*_meta.json')):
+    d=json.load(open(m))
+    u=d.get('usage',{})
+    print(os.path.basename(m), d.get('agent'), 'turns=%s'%u.get('turns'), 'cost=%s'%u.get('cost'), 'exit=%s'%d.get('exitCode'), 'error' if 'error' in d else '')
+PY
+0f57e0c8-9e03-4c33-9e25-88d38166d2a8_reviewer_meta.json reviewer turns=1 cost=0.00975538 exit=0 
+272092ab-7c02-4cfb-a253-0b7a3c23510a_oracle_meta.json oracle turns=2 cost=0.00495801 exit=0 
+35527130-0ee7-4bc7-93c0-6120b73730fa_oracle_meta.json oracle turns=4 cost=0.00965192 exit=0 
+52e07540-b6ab-4ff7-b475-c6bcf2f08704_worker_meta.json worker turns=3 cost=0.01300556 exit=0 
+588268d7-14b8-4221-83f2-056cfeb6fd2b_oracle_0_meta.json oracle turns=3 cost=0.01063978 exit=0 
+68b5f76e-f737-4acd-b12e-ef5bb452c40f_worker_meta.json worker turns=9 cost=0.040985179999999996 exit=0 
+74f164e8-a852-49ca-bd7d-3ae4ca4889fd_worker_meta.json worker turns=22 cost=0.11666151000000001 exit=0 
+75d7ae1c-1105-489c-9987-8522f1c3e006_delegate_meta.json delegate turns=1 cost=0.0038437999999999996 exit=0 
+7e479f36-7fc0-4ada-9310-60cd5fe0bbc4_reviewer_meta.json reviewer turns=4 cost=0.039058079999999995 exit=0 
+8d5078e9-dfb1-40ad-8d40-b7f153721d59_oracle_meta.json oracle turns=12 cost=0.09758264 exit=0 
+9080d0f8-f1cb-4a6b-bbe1-75d05477b32a_reviewer_meta.json reviewer turns=1 cost=0.00358786 exit=0 
+a5b8f153-d658-42f9-b8e6-de4ec8693835_worker_meta.json worker turns=8 cost=0.049898319999999996 exit=0 
+b218cb3a-3e87-4f20-b82b-5594b49e1cce_oracle_meta.json oracle turns=16 cost=0.1100176 exit=0 
+b288025c-6ebe-4d65-9204-c684c33954fe_oracle_meta.json oracle turns=5 cost=0.01939075 exit=0 
+bf04bce7-a74b-42ea-b013-8858c2fbe837_worker_meta.json worker turns=9 cost=0.0316552 exit=0 
+d51869b7-9862-4d3b-97ea-294b82bd2929_reviewer_meta.json reviewer turns=1 cost=0.00507586 exit=0 
+e567653d-3a6e-4434-a544-408fd74d0601_worker_meta.json worker turns=9 cost=0.04105216 exit=0 
+e63c7583-b530-4915-9a40-54564c188ff1_worker_meta.json worker turns=22 cost=0.07601526 exit=0 
+[exit=0]
+
+===== C12 comparison.md exists =====
+$ test -f '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/comparison.md'; echo present=$?
+present=1
+[exit=0]
+
+===== C13 slot preflight recorded =====
+$ head -20 '/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/slot-preflight.txt'
+=== date ===
+2026-09-08T08:38:21+08:00
+
+=== slot audit ===
+PID      RSS         CPU%  COMM             状态
+3028125      3.5G    589  postsort         << 绕过了 slot
+audit exit=0
+
+=== slot status ===
+=== heavy.slice 资源用量 ===
+  内存 0.8G 已用 / 64.0G 软限 / 76.0G 硬顶   swap上限 0.0G   进程 102   CPU权重 50
+
+=== 池 io（6 槽）===
+132  finished   /project/tmp/slot/ts-out.xmWKHw 0        43314.97/329.84/614.73 [pea-core64-resume]/home/tcuni-claw/.local/share/slot/jobs/1788232064-441295-2575.sh
+143  finished   /project/tmp/slot/ts-out.AI7oe6 0        24096.24/134.88/266.68 [pea-core64-resume2]/home/tcuni-claw/.local/share/slot/jobs/1788326662-3074987-23150.sh
+158  finished   /project/tmp/slot/ts-out.WOm3gz 0        12.89/8.98/3.87 [dmel-idrename]/home/tcuni-claw/.local/share/slot/jobs/1788386064-216892-12497.sh
+159  finished   /project/tmp/slot/ts-out.N2pXF8 0        165.31/137.99/25.21 [dmel-gffrepair]/home/tcuni-claw/.local/share/slot/jobs/1788386283-219264-27717.sh
+157  finished   /project/tmp/slot/ts-out.P4r1cj -1       11467.93/0.00/0.00 [dmel-merge]/home/tcuni-claw/.local/share/slot/jobs/1788385121-208527-30662.sh
+173  finished   /project/tmp/slot/ts-out.pIN6UC 0        827.76/6.40/9.99 [pea-core64-1468-resume]/home/tcuni-claw/.local/share/slot/jobs/1788450823-2685441-13225.sh
+174  finished   /project/tmp/slot/ts-out.mqbDfo 0        6645.84/714.55/42.12 [pea-core64-1468-final-resume]/home/tcuni-claw/.local/share/slot/jobs/1788491845-3257424-4088.sh
+[exit=0]
+
+===== C14 ledger consistency =====
+$ python3 - <<'PY'
+import json,glob,os
+last=None
+for line in open('/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/usage.jsonl'):
+    line=line.strip()
+    if line: last=json.loads(line)
+ledger={c.get('runId') for c in last.get('children',[]) if c.get('runId')}
+metas={}
+for m in glob.glob('/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts/*_meta.json'):
+    d=json.load(open(m)); metas[d['runId']]=(d.get('agent'), d.get('usage',{}).get('cost'))
+mset=set(metas)
+print('ledger runIds (%d):'%len(ledger)); [print('  ',r) for r in sorted(ledger)]
+print('meta runIds (%d):'%len(mset)); [print('  ',r,metas[r]) for r in sorted(mset)]
+print('meta - ledger:', sorted(mset-ledger))
+print('ledger - meta:', sorted(ledger-mset))
+print('EQUAL:', mset==ledger)
+missing=sum(metas[r][1] or 0 for r in (mset-ledger))
+print('unrecorded cost: %.8f'%missing)
+print('ledger root cost:', last.get('root',{}).get('costUsd') or last.get('root'))
+PY
+ledger runIds (8):
+   52e07540-b6ab-4ff7-b475-c6bcf2f08704
+   68b5f76e-f737-4acd-b12e-ef5bb452c40f
+   74f164e8-a852-49ca-bd7d-3ae4ca4889fd
+   7e479f36-7fc0-4ada-9310-60cd5fe0bbc4
+   a5b8f153-d658-42f9-b8e6-de4ec8693835
+   bf04bce7-a74b-42ea-b013-8858c2fbe837
+   e567653d-3a6e-4434-a544-408fd74d0601
+   e63c7583-b530-4915-9a40-54564c188ff1
+meta runIds (18):
+   0f57e0c8-9e03-4c33-9e25-88d38166d2a8 ('reviewer', 0.00975538)
+   272092ab-7c02-4cfb-a253-0b7a3c23510a ('oracle', 0.00495801)
+   35527130-0ee7-4bc7-93c0-6120b73730fa ('oracle', 0.00965192)
+   52e07540-b6ab-4ff7-b475-c6bcf2f08704 ('worker', 0.01300556)
+   588268d7-14b8-4221-83f2-056cfeb6fd2b ('oracle', 0.01063978)
+   68b5f76e-f737-4acd-b12e-ef5bb452c40f ('worker', 0.040985179999999996)
+   74f164e8-a852-49ca-bd7d-3ae4ca4889fd ('worker', 0.11666151000000001)
+   75d7ae1c-1105-489c-9987-8522f1c3e006 ('delegate', 0.0038437999999999996)
+   7e479f36-7fc0-4ada-9310-60cd5fe0bbc4 ('reviewer', 0.039058079999999995)
+   8d5078e9-dfb1-40ad-8d40-b7f153721d59 ('oracle', 0.09758264)
+   9080d0f8-f1cb-4a6b-bbe1-75d05477b32a ('reviewer', 0.00358786)
+   a5b8f153-d658-42f9-b8e6-de4ec8693835 ('worker', 0.049898319999999996)
+   b218cb3a-3e87-4f20-b82b-5594b49e1cce ('oracle', 0.1100176)
+   b288025c-6ebe-4d65-9204-c684c33954fe ('oracle', 0.01939075)
+   bf04bce7-a74b-42ea-b013-8858c2fbe837 ('worker', 0.0316552)
+   d51869b7-9862-4d3b-97ea-294b82bd2929 ('reviewer', 0.00507586)
+   e567653d-3a6e-4434-a544-408fd74d0601 ('worker', 0.04105216)
+   e63c7583-b530-4915-9a40-54564c188ff1 ('worker', 0.07601526)
+meta - ledger: ['0f57e0c8-9e03-4c33-9e25-88d38166d2a8', '272092ab-7c02-4cfb-a253-0b7a3c23510a', '35527130-0ee7-4bc7-93c0-6120b73730fa', '588268d7-14b8-4221-83f2-056cfeb6fd2b', '75d7ae1c-1105-489c-9987-8522f1c3e006', '8d5078e9-dfb1-40ad-8d40-b7f153721d59', '9080d0f8-f1cb-4a6b-bbe1-75d05477b32a', 'b218cb3a-3e87-4f20-b82b-5594b49e1cce', 'b288025c-6ebe-4d65-9204-c684c33954fe', 'd51869b7-9862-4d3b-97ea-294b82bd2929']
+ledger - meta: []
+EQUAL: False
+unrecorded cost: 0.27450360
+ledger root cost: 0.09910943
+[exit=0]

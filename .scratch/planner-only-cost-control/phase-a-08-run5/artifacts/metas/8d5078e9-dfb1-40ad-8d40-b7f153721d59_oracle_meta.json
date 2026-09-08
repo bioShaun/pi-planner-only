@@ -1,0 +1,76 @@
+{
+  "runId": "8d5078e9-dfb1-40ad-8d40-b7f153721d59",
+  "agent": "oracle",
+  "task": "[prompt redacted]",
+  "exitCode": 0,
+  "model": "kimi-coding/kimi-for-coding:medium",
+  "attemptedModels": [
+    "kimi-coding/kimi-for-coding:medium"
+  ],
+  "modelAttempts": [
+    {
+      "model": "kimi-coding/kimi-for-coding:medium",
+      "success": true,
+      "exitCode": 0,
+      "usage": {
+        "input": 40312,
+        "output": 7331,
+        "cacheRead": 157696,
+        "cacheWrite": 0,
+        "cost": 0.09758264,
+        "turns": 12
+      }
+    }
+  ],
+  "usage": {
+    "input": 40312,
+    "output": 7331,
+    "cacheRead": 157696,
+    "cacheWrite": 0,
+    "cost": 0.09758264,
+    "turns": 12
+  },
+  "acceptance": {
+    "status": "not-required",
+    "evidenceStatus": "not-required",
+    "explicit": false,
+    "effectiveAcceptance": {
+      "level": "none",
+      "explicit": false,
+      "inferredReason": [
+        "read-only/reviewer-style agent"
+      ],
+      "criteria": [],
+      "evidence": [],
+      "verify": [],
+      "stopRules": []
+    },
+    "inferredReason": [
+      "read-only/reviewer-style agent"
+    ],
+    "criteria": [],
+    "runtimeChecks": [],
+    "verifyRuns": []
+  },
+  "launchContractDigest": "37b17fb7932c6b2fa17f133e4609b2ea598e272f1a082bfac05184696af1c0fb",
+  "launchResolvedExtensions": {
+    "version": 1,
+    "source": "launch-resolved",
+    "disableAmbientExtensions": false,
+    "runtime": [
+      "sha256:c2789dbb5fcb8657"
+    ],
+    "configured": [],
+    "effective": [
+      "sha256:c2789dbb5fcb8657"
+    ],
+    "omitted": {
+      "runtime": 0,
+      "configured": 0,
+      "effective": 0
+    }
+  },
+  "transcriptPath": "/home/tcuni-claw/pi/pi-planner-only-phase-a-08-r5/.scratch/phase-a-08-session/subagent-artifacts/8d5078e9-dfb1-40ad-8d40-b7f153721d59_oracle_transcript.jsonl",
+  "skills": [],
+  "timestamp": 1788830882705
+}

@@ -1,0 +1,90 @@
+{
+  "runId": "588268d7-14b8-4221-83f2-056cfeb6fd2b",
+  "agent": "oracle",
+  "task": "[prompt redacted]",
+  "exitCode": 0,
+  "usage": {
+    "input": 5014,
+    "output": 1080,
+    "cacheRead": 8192,
+    "cacheWrite": 0,
+    "cost": 0.01063978,
+    "turns": 3
+  },
+  "model": "kimi-coding/kimi-for-coding:medium",
+  "attemptedModels": [
+    "kimi-coding/kimi-for-coding:medium"
+  ],
+  "modelAttempts": [
+    {
+      "model": "kimi-coding/kimi-for-coding:medium",
+      "success": true,
+      "exitCode": 0,
+      "usage": {
+        "input": 5014,
+        "output": 1080,
+        "cacheRead": 8192,
+        "cacheWrite": 0,
+        "cost": 0.01063978,
+        "turns": 3
+      }
+    }
+  ],
+  "durationMs": 40156,
+  "toolCount": 2,
+  "launchContractDigest": "0fcc402f5bb843cb03500ab7e8542be2260c475471389631f37e41df6254025a",
+  "launchResolvedExtensions": {
+    "version": 1,
+    "source": "launch-resolved",
+    "disableAmbientExtensions": true,
+    "runtime": [
+      "sha256:c2789dbb5fcb8657"
+    ],
+    "configured": [],
+    "effective": [
+      "sha256:c2789dbb5fcb8657"
+    ],
+    "omitted": {
+      "runtime": 0,
+      "configured": 0,
+      "effective": 0
+    }
+  },
+  "acceptance": {
+    "status": "not-required",
+    "evidenceStatus": "not-required",
+    "explicit": false,
+    "effectiveAcceptance": {
+      "level": "none",
+      "explicit": false,
+      "inferredReason": [
+        "read-only/reviewer-style agent"
+      ],
+      "criteria": [],
+      "evidence": [],
+      "verify": [],
+      "stopRules": []
+    },
+    "inferredReason": [
+      "read-only/reviewer-style agent"
+    ],
+    "criteria": [],
+    "runtimeChecks": [],
+    "verifyRuns": []
+  },
+  "effects": {
+    "fileMutation": {
+      "status": "not-applicable",
+      "expected": false,
+      "attempted": true,
+      "evidence": {
+        "source": "tracked-files",
+        "trackedOnly": true,
+        "changedFiles": [],
+        "attemptedMutation": false
+      }
+    }
+  },
+  "transcriptPath": "/home/tcuni-claw/pi/pi-planner-only-phase-a-08-r5/.scratch/phase-a-08-session/subagent-artifacts/588268d7-14b8-4221-83f2-056cfeb6fd2b_oracle_0_transcript.jsonl",
+  "timestamp": 1788828074306
+}

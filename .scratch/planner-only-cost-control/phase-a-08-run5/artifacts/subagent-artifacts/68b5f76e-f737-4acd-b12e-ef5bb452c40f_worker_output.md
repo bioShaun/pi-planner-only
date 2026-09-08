@@ -1,0 +1,6 @@
+Reverted the lockfile and verified the workspace state exactly as directed.
+
+**WorkerReport:**
+```json
+{"version":1,"taskId":"T-20260908-001","status":"completed","summary":"Bounded correction executed: reverted the undeclared package-lock.json working-tree change with `git restore -- package-lock.json`. Verified `git status --porcelain` shows only untracked .agent-dir/ and .scratch/ entries and `git rev-parse HEAD` is e4769de (feat(status): print oracle suite mode on /planner-only status). No other edits, no commits, no push. The oracle-status ticket work remains intact in the existing commit.","changedFiles":["package-lock.json"],"validation":["git restore -- package-lock.json (exit 0)","git status --porcelain: only untracked .agent-dir/, .scratch/oracle-status-line/, .scratch/phase-a-08-session/; no tracked modifications","git rev-parse HEAD = e4769de5f535dfdac2332222d1fe90c05df87210","git diff --stat: empty"],"evidence":{"taskId":"T-20260908-001","head":"e4769de","lockfileDiff":"empty after restore"},"risks":[],"unresolved":[]}
+```
