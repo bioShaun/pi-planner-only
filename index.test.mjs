@@ -3778,6 +3778,195 @@ function metaRunIdsIn(dir) {
 	assert.notEqual(ghostRows[0].state, "blocked");
 }
 
+// --------------------------------------------------------------------------
+// Ticket 15-b: confirmed not-launched must not charge debt; budget-stop must (Z1–Z5)
+// --------------------------------------------------------------------------
+
+await abandonActiveTasks();
+
+{
+	const taskId = "T-20260908-751";
+	const spec = { ...delegationSpec(taskId), cumulativeBudget: { tokens: 200000, costUsd: 0.5 } };
+	async function delegate(toolCallId) {
+		return await handlers.get("tool_call")(
+			{ toolCallId, toolName: "subagent", input: { agent: "worker", task: JSON.stringify(spec) } },
+			ctx,
+		);
+	}
+	await delegate("call-15b-z1-1");
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-15b-z1-1", toolName: "subagent", input: {},
+			details: { results: [{ usage: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, cost: 0.05, turns: 1 }, model: "test/model" }] },
+			content: [{ type: "text", text: "worker done" }], isError: false,
+		},
+		ctx,
+	);
+	await delegate("call-15b-z1-never");
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-15b-z1-never",
+			toolName: "subagent",
+			input: {},
+			content: [{ type: "text", text: "spawn failed: no such agent 'worker'" }],
+			details: {},
+			isError: true,
+		},
+		ctx,
+	);
+	const retry = await delegate("call-15b-z1-retry");
+	// Z1: a confirmed not-launched child must not exhaust the budget with phantom debt.
+	assert.equal(retry?.block, undefined, retry?.reason);
+}
+
+{
+	const taskId = "T-20260908-752";
+	const spec = { ...delegationSpec(taskId), cumulativeBudget: { tokens: 200000, costUsd: 0.5 } };
+	async function delegate(toolCallId) {
+		return await handlers.get("tool_call")(
+			{ toolCallId, toolName: "subagent", input: { agent: "worker", task: JSON.stringify(spec) } },
+			ctx,
+		);
+	}
+	await delegate("call-15b-z2-1");
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-15b-z2-1", toolName: "subagent", input: {},
+			details: { results: [{ usage: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, cost: 0.05, turns: 1 }, model: "test/model" }] },
+			content: [{ type: "text", text: "worker done" }], isError: false,
+		},
+		ctx,
+	);
+	await delegate("call-15b-z2-never");
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-15b-z2-never",
+			toolName: "subagent",
+			input: {},
+			content: [{ type: "text", text: "spawn failed: no such agent 'worker'" }],
+			details: {},
+			isError: true,
+		},
+		ctx,
+	);
+	notices.length = 0;
+	await commands.get("planner-only").handler(`task ${taskId}`, ctx);
+	const status = notices.at(-1).message;
+	// Z2: known tokens stay at the settled child's 1500; the never-launched child is not charged.
+	assert.match(status, /tokens: 已用 1500 \/ 上限 200000，剩余 198500，未知项 0 项/);
+}
+
+{
+	const taskId = "T-20260908-753";
+	const spec = { ...delegationSpec(taskId), cumulativeBudget: { tokens: 200000, costUsd: 0.5 } };
+	async function delegate(toolCallId) {
+		return await handlers.get("tool_call")(
+			{ toolCallId, toolName: "subagent", input: { agent: "worker", task: JSON.stringify(spec) } },
+			ctx,
+		);
+	}
+	await delegate("call-15b-z3-1");
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-15b-z3-1", toolName: "subagent", input: {},
+			details: { results: [{ usage: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, cost: 0.05, turns: 1 }, model: "test/model" }] },
+			content: [{ type: "text", text: "worker done" }], isError: false,
+		},
+		ctx,
+	);
+	await delegate("call-15b-z3-never");
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-15b-z3-never",
+			toolName: "subagent",
+			input: {},
+			content: [{ type: "text", text: "spawn failed: no such agent 'worker'" }],
+			details: {},
+			isError: true,
+		},
+		ctx,
+	);
+	notices.length = 0;
+	await commands.get("planner-only").handler(`task ${taskId}`, ctx);
+	const status = notices.at(-1).message;
+	// Z3: known cost stays at the settled child's $0.0500.
+	assert.match(status, /费用: 已用 \$0\.0500 \/ 上限 \$0\.5000，剩余 \$0\.4500，未知项 0 项/);
+}
+
+{
+	const taskId = "T-20260908-754";
+	const spec = { ...delegationSpec(taskId), cumulativeBudget: { tokens: 200000, costUsd: 0.5 } };
+	async function delegate(toolCallId) {
+		return await handlers.get("tool_call")(
+			{ toolCallId, toolName: "subagent", input: { agent: "worker", task: JSON.stringify(spec) } },
+			ctx,
+		);
+	}
+	await delegate("call-15b-z4-1");
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-15b-z4-1", toolName: "subagent", input: {},
+			details: { results: [{ usage: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, cost: 0.05, turns: 1 }, model: "test/model" }] },
+			content: [{ type: "text", text: "worker done" }], isError: false,
+		},
+		ctx,
+	);
+	await delegate("call-15b-z4-never");
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-15b-z4-never",
+			toolName: "subagent",
+			input: {},
+			content: [{ type: "text", text: "spawn failed: no such agent 'worker'" }],
+			details: {},
+			isError: true,
+		},
+		ctx,
+	);
+	notices.length = 0;
+	await commands.get("planner-only").handler(`task ${taskId}`, ctx);
+	const status = notices.at(-1).message;
+	// Z4: a never-launched child is not an unknown item.
+	assert.equal((status.match(/未知项 0 项/g) ?? []).length >= 2, true, status);
+}
+
+{
+	const taskId = "T-20260908-755";
+	const spec = { ...delegationSpec(taskId), cumulativeBudget: { tokens: 200000, costUsd: 0.5 } };
+	async function delegate(toolCallId) {
+		return await handlers.get("tool_call")(
+			{ toolCallId, toolName: "subagent", input: { agent: "worker", task: JSON.stringify(spec) } },
+			ctx,
+		);
+	}
+	await delegate("call-15b-z5-1");
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-15b-z5-1", toolName: "subagent", input: {},
+			details: { results: [{ usage: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, cost: 0.05, turns: 1 }, model: "test/model" }] },
+			content: [{ type: "text", text: "worker done" }], isError: false,
+		},
+		ctx,
+	);
+	await delegate("call-15b-z5-stop");
+	await handlers.get("tool_result")(
+		{
+			toolCallId: "call-15b-z5-stop",
+			toolName: "subagent",
+			input: {},
+			content: [{ type: "text", text: "usageBudget limit reached" }],
+			details: { status: "stopped" },
+			isError: true,
+		},
+		ctx,
+	);
+	notices.length = 0;
+	await commands.get("planner-only").handler(`task ${taskId}`, ctx);
+	const status = notices.at(-1).message;
+	// Z5 (D3): a budget-stop without runId still charges debt; it is not a start failure.
+	assert.match(status, /未知项 1 项/);
+}
+
 rmSync(isolatedAgentDir, { recursive: true, force: true });
 
 console.log("planner-only extension: PASS");

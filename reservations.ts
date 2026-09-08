@@ -44,6 +44,11 @@ export class BudgetReservations {
 		return { tokens, costUsd };
 	}
 
+	/** How many in-flight calls currently hold a reservation for this Task. */
+	heldCount(taskId: string): number {
+		return this.held.get(taskId)?.size ?? 0;
+	}
+
 	reserve(taskId: string, budget: ReservationBudget, desired: ReservationDesired): ReserveOutcome {
 		const held = this.inFlight(taskId);
 		const availableTokens = budget.tokens.limit === undefined

@@ -596,13 +596,17 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			);
 		}
 		if (results.length === 0 && !runId) {
-			// The toolCallId is the key here: without it this row can never be
-			// replaced by the real usage, and a repeat would add a second charge.
-			ledger.recordChild(taskId, pendingChild(
-				delegation.kind,
-				{ agent: delegation.agent, toolCallId: event.toolCallId },
-				grantedDebt(delegation),
-			));
+			// Confirmed start failure: consume nothing. A never-launched child
+			// has no spend, so it must not receive a debt row (ticket 15-b D2).
+			if (!orchestrator.wasConfirmedNotLaunched(event.toolCallId)) {
+				// The toolCallId is the key here: without it this row can never be
+				// replaced by the real usage, and a repeat would add a second charge.
+				ledger.recordChild(taskId, pendingChild(
+					delegation.kind,
+					{ agent: delegation.agent, toolCallId: event.toolCallId },
+					grantedDebt(delegation),
+				));
+			}
 			syncUsage(taskId);
 			return;
 		}

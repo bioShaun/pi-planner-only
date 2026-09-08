@@ -103,4 +103,8 @@ assert.equal(index.includes("pendingChild(record.kind, { agent, toolCallId: unde
 	assert.equal(calls >= 3, true, "pendingChild must still be called from the adapter");
 }
 
+// Ticket 15-b D1: confirmed-not-launched is queried from the orchestrator, not recoded in the adapter.
+assert.equal(index.includes("wasConfirmedNotLaunched("), true);
+assert.equal(orchestrate.includes("wasConfirmedNotLaunched("), true);
+
 console.log("planner-only architecture: PASS");

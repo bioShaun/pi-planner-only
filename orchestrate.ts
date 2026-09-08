@@ -513,6 +513,11 @@ export class PlannerOrchestrator {
 	private readonly reservations = new BudgetReservations();
 	/** runIds whose subagent-notify (or sync result) has already been consumed. */
 	private readonly processedRunIds = new Set<string>();
+	/**
+	 * toolCallIds whose launch the host confirmed never happened.
+	 * Session-scoped Set, same treatment as processedRunIds (no numeric cap).
+	 */
+	private readonly confirmedNotLaunchedIds = new Set<string>();
 	/** taskId -> history of all delegations for that task. */
 	private readonly delegationHistory = new Map<string, DelegationHistoryEntry[]>();
 
@@ -581,6 +586,11 @@ export class PlannerOrchestrator {
 
 	getDelegation(toolCallId: string): DelegationRecord | undefined {
 		return this.delegations.get(toolCallId);
+	}
+
+	/** True when handleSubagentResult classified this call as a confirmed start failure. */
+	wasConfirmedNotLaunched(toolCallId: string): boolean {
+		return this.confirmedNotLaunchedIds.has(toolCallId);
 	}
 
 	listDelegations(): { toolCallId: string; record: DelegationRecord }[] {
@@ -1292,6 +1302,11 @@ export class PlannerOrchestrator {
 				} else {
 					lines.push(dimensionLine("费用", budget.costUsd, money));
 				}
+				const inFlight = this.reservations.inFlight(task.taskId);
+				if (inFlight.tokens !== 0 || inFlight.costUsd !== 0) {
+					const held = this.reservations.heldCount(task.taskId);
+					lines.push(`  在途预留: tokens=${inFlight.tokens}, 费用 $${inFlight.costUsd.toFixed(4)}（${held} 个子进程未回执）`);
+				}
 				// Root is not a delegated child: the host offers no pre-call control over it,
 				// so its spend can only be counted after the fact and the overspend it has
 				// already caused must be stated rather than implied by the remaining figure.
@@ -1720,6 +1735,7 @@ export class PlannerOrchestrator {
 				};
 			}
 			this.endDelegation(event.toolCallId);
+			if (!isBudgetStop) this.confirmedNotLaunchedIds.add(event.toolCallId);
 			const task = this.store.get(delegation.taskId);
 			const firstLine = (text.split(/\r?\n/, 1)[0] ?? "").trim();
 			if (task && !isFinalTaskState(task.state)) {

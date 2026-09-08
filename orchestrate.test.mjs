@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, wri
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { PlannerOrchestrator, isDelegationCall } from "./orchestrate.ts";
+import { BudgetReservations } from "./reservations.ts";
 import { createTaskSpec, isExecutingStale, isHolderStale } from "./task.ts";
 import { TaskStore } from "./task.ts";
 import { hashStatus, workspaceSummaryDigest, describeComparison } from "./evidence.ts";
@@ -5398,4 +5399,137 @@ const oracle1ForegroundText = [
 	}];
 	const status = statusWithBudget({ tokens: 200000, costUsd: 0.5 }, usage);
 	assert.equal(status.includes("- worker: 1 calls, tokens=40000, 费用 $0.1200，费用未知 1 项"), true);
+}
+
+// --------------------------------------------------------------------------
+// Ticket 15-b: confirmed not-launched classifier; status 在途预留 (Y1–Y8)
+// --------------------------------------------------------------------------
+
+{
+	// Y1: a confirmed start failure (error, no runId, no WorkerReport) is remembered.
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260908-741";
+	await delegateWorker(orch, "call-15b-y1", taskId);
+	await orch.handleSubagentResult({
+		toolCallId: "call-15b-y1",
+		toolName: "subagent",
+		isError: true,
+		content: [{ type: "text", text: "spawn failed: no such agent" }],
+	});
+	assert.equal(orch.wasConfirmedNotLaunched("call-15b-y1"), true);
+}
+
+{
+	// Y2: a budget-stop without runId is not a confirmed start failure (D3).
+	const { store, task } = budgetTaskFixture("T-20260908-742", { tokens: 200000, costUsd: 0.5 }, boundedBudgetUsage(0, 0));
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	await orch.beginDelegation({ toolCallId: "call-15b-y2", input: { task: JSON.stringify(task.spec) } }, BASE);
+	await orch.handleSubagentResult({
+		toolCallId: "call-15b-y2",
+		toolName: "subagent",
+		isError: true,
+		details: { status: "stopped" },
+		content: [{ type: "text", text: "usageBudget limit reached" }],
+	});
+	assert.equal(orch.wasConfirmedNotLaunched("call-15b-y2"), false);
+}
+
+{
+	// Y3: status prints the in-flight reservation on its own line after the dimension rows.
+	const { store, task } = budgetTaskFixture("T-20260908-743", { tokens: 200000, costUsd: 0.5 }, boundedBudgetUsage(0, 0));
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	await orch.beginDelegation({ toolCallId: "call-15b-y3", input: { task: JSON.stringify(task.spec) } }, BASE);
+	const status = orch.renderTaskStatus(orch.store.require(task.taskId));
+	assert.equal(status.split("\n").includes("  在途预留: tokens=100000, 费用 $0.5000（1 个子进程未回执）"), true);
+}
+
+{
+	// Y3b: that line sits after the two dimension rows and before Root (D4).
+	const { store, task } = budgetTaskFixture("T-20260908-744", { tokens: 200000, costUsd: 0.5 }, boundedBudgetUsage(0, 0));
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	await orch.beginDelegation({ toolCallId: "call-15b-y3b", input: { task: JSON.stringify(task.spec) } }, BASE);
+	const lines = orch.renderTaskStatus(orch.store.require(task.taskId)).split("\n");
+	const costIdx = lines.findIndex((line) => line.startsWith("  费用:"));
+	assert.equal(costIdx >= 0 && lines[costIdx + 1] === "  在途预留: tokens=100000, 费用 $0.5000（1 个子进程未回执）" && lines[costIdx + 2].startsWith("  Root:"), true);
+}
+
+{
+	// Y4: when nothing is held, status does not print the 在途预留 line.
+	const status = statusWithBudget({ tokens: 200000, costUsd: 0.5 }, usageFixture(0, 0));
+	assert.equal(status.split("\n").some((line) => line.startsWith("  在途预留:")), false);
+}
+
+{
+	// Y5: an error for a live async child (runId set, artifacts not terminal) keeps the reservation.
+	const { store, task } = budgetTaskFixture("T-20260908-745", { tokens: 200000, costUsd: 0.5 }, boundedBudgetUsage(0, 0));
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const tmp = mkdtempSync(join(process.cwd(), ".planner-only-15b-y5-"));
+	try {
+		await orch.beginDelegation({ toolCallId: "call-15b-y5", input: { task: JSON.stringify(task.spec) } }, BASE);
+		await orch.handleSubagentResult(receiptFor("call-15b-y5", "run-15b-y5", join(tmp, "async")));
+		const before = orch.reservations.inFlight(task.taskId);
+		await orch.handleSubagentResult({
+			toolCallId: "call-15b-y5",
+			toolName: "subagent",
+			isError: true,
+			content: [{ type: "text", text: "child crashed, maybe" }],
+		});
+		assert.deepEqual(orch.reservations.inFlight(task.taskId), before);
+	} finally {
+		rmSync(tmp, { recursive: true, force: true });
+	}
+}
+
+{
+	// Y6: the same unconfirmed async error still shows the D4 in-flight line.
+	const { store, task } = budgetTaskFixture("T-20260908-746", { tokens: 200000, costUsd: 0.5 }, boundedBudgetUsage(0, 0));
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const tmp = mkdtempSync(join(process.cwd(), ".planner-only-15b-y6-"));
+	try {
+		await orch.beginDelegation({ toolCallId: "call-15b-y6", input: { task: JSON.stringify(task.spec) } }, BASE);
+		await orch.handleSubagentResult(receiptFor("call-15b-y6", "run-15b-y6", join(tmp, "async")));
+		await orch.handleSubagentResult({
+			toolCallId: "call-15b-y6",
+			toolName: "subagent",
+			isError: true,
+			content: [{ type: "text", text: "child crashed, maybe" }],
+		});
+		const held = orch.reservations.inFlight(task.taskId);
+		const status = orch.renderTaskStatus(orch.store.require(task.taskId));
+		assert.equal(status.split("\n").includes(`  在途预留: tokens=${held.tokens}, 费用 $${held.costUsd.toFixed(4)}（1 个子进程未回执）`), true);
+	} finally {
+		rmSync(tmp, { recursive: true, force: true });
+	}
+}
+
+{
+	// Y7: an unconfirmed async error is not classified as confirmed-not-launched.
+	const { store, task } = budgetTaskFixture("T-20260908-747", { tokens: 200000, costUsd: 0.5 }, boundedBudgetUsage(0, 0));
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const tmp = mkdtempSync(join(process.cwd(), ".planner-only-15b-y7-"));
+	try {
+		await orch.beginDelegation({ toolCallId: "call-15b-y7", input: { task: JSON.stringify(task.spec) } }, BASE);
+		await orch.handleSubagentResult(receiptFor("call-15b-y7", "run-15b-y7", join(tmp, "async")));
+		await orch.handleSubagentResult({
+			toolCallId: "call-15b-y7",
+			toolName: "subagent",
+			isError: true,
+			content: [{ type: "text", text: "child crashed, maybe" }],
+		});
+		assert.equal(orch.wasConfirmedNotLaunched("call-15b-y7"), false);
+	} finally {
+		rmSync(tmp, { recursive: true, force: true });
+	}
+}
+
+{
+	// Y8: heldCount is the number of in-flight calls for that Task, not a hardcoded 1.
+	const reservations = new BudgetReservations();
+	const budget = {
+		tokens: { known: 0, unknownParts: 0, debt: 0, limit: 200000, remaining: 200000 },
+		costUsd: { known: 0, unknownParts: 0, debt: 0, limit: 1, remaining: 1 },
+	};
+	reservations.reserve("T-20260908-748", budget, { toolCallId: "call-a", tokens: 10, costUsd: 0.1 });
+	reservations.reserve("T-20260908-748", budget, { toolCallId: "call-b", tokens: 20, costUsd: 0.2 });
+	assert.equal(reservations.heldCount("T-20260908-748"), 2);
 }
