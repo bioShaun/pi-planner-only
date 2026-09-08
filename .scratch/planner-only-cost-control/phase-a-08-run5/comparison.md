@@ -116,17 +116,43 @@ ReviewResult」，而 reviewer 又永远记不上，**两道门槛互相咬死�
 verifying the reported end state」。这就是 Kimi 探测记的第三个 bug（TaskSpec 静默丢弃），
 22/23/24 都没碰它。
 
-## 根因三：WorkerReport 提取器在多个 JSON 对象里挑错
+## 根因三：worker 合同没写 `validation` 元素形状，且报错被归给了别的对象
+
+会话里的报错是这两行：
 
 ```
 [PLANNER-ONLY] Worker output for task T-20260908-001 is not a valid WorkerReport.
 invalid WorkerReport: status must be one of completed, partial, blocked, failed
 ```
 
-被拒的 `74f164e8_worker_output.md` 里 `"status"` 出现四次：一次是 WorkerReport 自己的
-`"status": "completed"`，另外三次是 `validation` 数组里条目对象自带的 `"status": "passed"`。
-提取器抓到了后者，把一份合法报告判死。对照组：`68b5f76e` 与 `a5b8f153` 把 `validation`
-写成字符串数组，就顺利通过。触发条件是 validation 用对象写法——而 worker 合同并没有禁止这种写法。
+**这行报错是假的 —— 它说的不是真报告的问题。** 2026-09-08 派活前在 planner pane 里对全部 18 份
+`_output.md` 实跑了 `extractWorkerReport`，逐候选跑校验，结果是：
+
+| runId | 对外报错 | 真报告的真实错误 |
+|---|---|---|
+| `68b5f76e` | `status must be one of …` | `validation[0..3] must be an object`（4 条） |
+| `a5b8f153` | `status must be one of …` | 同上（4 条） |
+| `e567653d` | `status must be one of …` | 同上（2 条） |
+| `74f164e8` | —— | **无错，`status=completed` 正常提取** |
+
+两层原因：
+
+**A．真正的拒收原因是 `validation` 元素形状。** `report.ts:444` 的 `workerReportShapeReminder`
+发给每个 worker 的形状串里只写 `"validation":[]`，对元素形状一个字没说；而 `report.ts:57` 的校验
+要求每个元素是对象。三个 worker 往里塞了字符串，就被判死。**这与根因一是同一类缺陷**：
+合同欠定义、校验严格，照合同办事的子代理产不出可被接受的产物。
+
+**B．报错文案指向了不相干的对象。** `extractWorkerReport` 全失败时保留**错误条数最少**的候选当作对外错误。
+这三份输出里除 WorkerReport 外还各有一个小 JSON（`{taskId,head,lockfileDiff}` /
+`{taskId,head,branch,ticket,statusLine,tests}` / `{taskId,repoHead,ticketsDone,readyForAgent}`），
+它们只错 1 条（`status must be one of …`），于是盖过了真报告的 2–4 条。
+
+**这条把人骗了两轮：** r4 当时归因不清是它；2026-09-08 开的工单 28 初版直接照抄错误文案，
+写成「对象数组触发拒收、字符串数组本来就能过」，**恰好写反**，还把唯一提取成功的 `74f164e8`
+指定成了失败样本。派活前实跑才纠正过来。工单 28 已按真相重写，并把这段经过记进它的 Comments。
+
+另外，`52e07540` 与 `bf04bce7` 报的是 `worker output did not contain a WorkerReport object`，
+两份输出都是散文 —— 起因是 Root 没嵌 TaskSpec（根因二），属于工单 30，不算在这条里。
 
 ## 与 r4 的对比
 

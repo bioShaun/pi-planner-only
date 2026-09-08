@@ -63,7 +63,7 @@ round_id=claude-pD-2026-09-08-rewrite-08
 
   **四条新缺陷已开票，全部阻塞 08 第六次重跑：**
   - **27（最高优先）** reviewer 输出合同（`review.ts:145-152`）不含 `reportRevision`／`workspaceDigest`，而 `validateReviewResultBinding`（`review.ts:199-209`）对 pass 硬性要求这两个字段 —— **照合同办事的 reviewer 永远产不出可记录的 PASS**。严格模式把默认切成 fresh 后与 `rootVerdictRefusal` 咬死，Task 只能 blocked。单元测试全绿是因为 fixture 注入了这两个字段（测试里 `reportRevision` 出现 15 次）。
-  - **28** WorkerReport 提取器在多个 JSON 对象里挑错：`validation` 写成对象数组时，条目自带的 `"status":"passed"` 被当成报告的 status，合法报告被判死（条款 8 的直接成因）。
+  - **28** worker 合同没写 `validation` 元素形状（`workerReportShapeReminder` 只写 `"validation":[]`，校验却要求元素是对象），且提取器用「错误最少」挑候选，把报错归给了同一份输出里的不相干小对象 —— 对外那句 `status must be one of …` 不是真报告的问题（条款 8 的直接成因）。**初版工单照抄这句假报错，把成因写反了，2026-09-08 派活前实跑 `extractWorkerReport` 才纠正；详见 28 的 Comments 与 `comparison.md` 根因三。**
   - **29** oracle 子代理**从不入账**（5 条账本记录里 children 只有 worker 与 reviewer，$0.25224 全部丢失），且进程退出时无兜底落账（最后一次落账后又跑了 7 个子代理，$0.02227 丢失）。条款 14 的直接成因，与 23 不是同一个洞。
   - **30** 严格模式下无 TaskSpec 的委派应被拒绝而非造占位 Task（条款 7 的直接成因；工单 03 的占位路径是有意设计，不冲突）。
 
