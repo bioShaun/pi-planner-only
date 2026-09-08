@@ -125,3 +125,23 @@ F1 只能证明「宿主的公开工具契约接受我们发的预算字段」�
 「公开分发的包内、有导出符号的模块」。这一步措辞是否放宽，是用户的决定，不是我的。
 
 **Status:** ready-for-planner-prototype → **needs-user-decision（F1 / F2 / F3 三选一，且 F1 需放宽「公开」措辞）**
+
+---
+
+## 2026-09-08 用户拍板：走 F1（内部路径断言 + 放宽措辞）
+
+用户在 AskUserQuestion 里选了「F1 内部路径断言 + 放宽措辞（推荐）」。据此定下：
+
+- §F 改成导入包内 `src/extension/schemas.ts` 的 `createSubagentParamsSchema()`，断言
+  `properties.toolBudget`（`hard` 必填、正整数）与 `properties.usageBudget`
+  （`tokens.hard` / `costUsd.hard` 必填、正数）的形状与插件发送的一致。
+- 测试里必须**显式写明这是非导出的内部路径**，并把断言绑到已声明的 pi-subagents 版本上，
+  让上游重构变红而不是变绿。
+- 工单 05 第 1、2 条的「真实公开宿主入口验证」放宽为
+  「**公开分发包内、有导出符号的模块**」；放宽范围仅限本条，别处不适用。
+- F1 证明的是「宿主的委派工具契约接受我们发的预算字段」。**运行时是否真的在 hard 处停**
+  仍未证明（那是 F3，用户未选，本轮不做）—— 闭合 05 第 1、2 条时必须把这句留痕写进工单。
+- 闭合后 `npm run test:release`（`PI_PLANNER_ONLY_REQUIRE_CONTRACT=1`）应从 §F 的红转绿；
+  §E/§G 的闸门分支与 `markContractUnverified`（工单 26）不得改动。
+
+**Status:** ready-for-agent（下一轮派活；fence 只写 `e2e.pi-subagents.test.mjs`）
