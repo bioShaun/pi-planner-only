@@ -72,3 +72,50 @@ round_id=p12-r054（开票）
 
 round_id=p13（08 第六次重跑期间的只读复核；重跑未结束前不得派会改主树源码的轮次，
 插件是从主树加载的，跑中改源码会污染这次验收）
+
+---
+
+## 2026-09-08 planner 派活前实跑探针（第二次复核，更正上一次的修复点并补决策）
+
+上一次复核说「修法是在 `orchestrate.ts:722` 把 `:719` 的包存下来」。这次在
+`/project/tmp/pplan-t32-probe`（HEAD `faf4a7c` 的 detached worktree）里加探针实跑 `npm test`
+之后确认：**这个修复点是对的，但理由和上一次写的不一样，而且直接决定了「取不到包」该怎么办。**
+
+**1. `:719` 的包确实就是 reviewer 看到的那一份。** `index.ts:895` 先调
+`orchestrator.prepareRoleDelegation(event.input)`——它**原地改写** `event.input`，
+把 Root 的原始 prompt 换成 `roles.ts:511-529` 用 `buildFreshReviewerTask` 生成的包；
+随后才调 `beginDelegation(event, …)`，所以 `:719` 的 `extractReviewRequest(delegationPrompt(input))`
+读到的是**改写后**的包。生产路径上这份包必然带 `reportRevision`
+（`roles.ts:523` 无条件写 `target.task?.reports.length ?? 0`）。
+
+**2. 实测分布（`npm test` 全量，探针记在 `.scratch/planner-only-cost-control/t32-packet-provenance-probe.txt`）：**
+37 次 reviewer 委派里 **9 次有包、28 次无包**；25 次走到补齐点，其中 reviewer **省略** revision 的只有 2 次：
+
+| 用例 | 包 | reviewer 省略 revision？ | 现状 |
+|---|---|---|---|
+| `index.test.mjs` T-20260908-027（工单 27 端到端） | 有（rev=2） | 是 | 走 `index.ts` 全链，包与记录时值相等 |
+| `orchestrate.test.mjs` T-20260905-998（工单 27 单测） | **无** | 是 | **直接调 `beginDelegation`，跳过了改写** |
+| `orchestrate.test.mjs` T-20260905-500 | 有但 rev=undefined | 否 | 不走补齐，不受影响 |
+
+所以那 28 次「无包」**全部来自单测直调 `beginDelegation`（fixture 走位），不是生产路径**。
+
+**3. 由此定下取不到包时的做法（本票正文第 1 条的二选一，选「拒收」那支）：**
+记录里没有可用的包绑定（包缺失，或包里没有 `reportRevision`）时**一律不补齐**，
+让现有的缺失校验按原样拒收，并在拒收回执里说明「这次委派没有可用的 ReviewRequest 绑定，
+请重新委派 review」。**不得**退回记录时的 `task.reports.length` / `task.snapshot.digest`。
+
+**4. 因此 `T-20260905-998` 这条 fixture 必须一起改，且只能往「更像生产」的方向改。**
+它今天能绿，靠的正是本票要堵的那条退路；它自己的注释还写着
+「bound by orchestration from the ReviewRequest the reviewer was shown」——注释是对的，代码不是。
+探针已实跑证明改法可行：把委派输入提出来，先 `await orch.prepareRoleDelegation(input)` 再
+`beginDelegation`，包立刻变成 `rev=1 dig=9ebdfcd9615208a5`，`orchestrate.test.mjs` 仍 **PASS**：
+
+```js
+const probeInput = { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) };
+await orch.prepareRoleDelegation(probeInput);
+await orch.beginDelegation({ toolCallId: "call-t8-4r", input: probeInput }, BASE);
+```
+
+**不许**为了让 998 继续绿而保留记录时退路，也**不许**把 998 删掉了事。
+
+round_id=claude-pD-2026-09-08-verify-32

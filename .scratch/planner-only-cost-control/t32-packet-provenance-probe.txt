@@ -1,0 +1,33 @@
+=== ticket 32 packet-provenance probe (planner, 2026-09-08, HEAD faf4a7c) ===
+--- reviewer delegations, packet present vs absent (npm test) ---
+     28 [T32] reviewer delegation packet=ABSENT
+      5 [T32] reviewer delegation packet=rev=1 dig=d11b85c7f4491de8
+      2 [T32] reviewer delegation packet=rev=1 dig=9ebdfcd9615208a5
+      1 [T32] reviewer delegation packet=rev=undefined dig=-
+      1 [T32] reviewer delegation packet=rev=2 dig=d11b85c7f4491de8
+--- fill-site lines (npm test, before the 998 fixture patch) ---
+[T32] fill-site packet=ABSENT recordtime rev=1 dig=9ebdfcd9615208a5 reviewHasRev=true
+[T32] fill-site packet=rev=undefined dig=- recordtime rev=1 dig=9ebdfcd9615208a5 reviewHasRev=true
+[T32] fill-site packet=ABSENT recordtime rev=1 dig=9ebdfcd9615208a5 reviewHasRev=true
+[T32] fill-site packet=ABSENT recordtime rev=1 dig=9ebdfcd9615208a5 reviewHasRev=true
+[T32] fill-site packet=ABSENT recordtime rev=1 dig=9ebdfcd9615208a5 reviewHasRev=true
+[T32] fill-site packet=ABSENT recordtime rev=2 dig=9ebdfcd9615208a5 reviewHasRev=true
+[T32] fill-site packet=ABSENT recordtime rev=1 dig=9ebdfcd9615208a5 reviewHasRev=true
+[T32] fill-site packet=ABSENT recordtime rev=1 dig=9ebdfcd9615208a5 reviewHasRev=false
+[T32] fill-site packet=ABSENT recordtime rev=1 dig=9ebdfcd9615208a5 reviewHasRev=true
+[T32] fill-site packet=ABSENT recordtime rev=1 dig=9ebdfcd9615208a5 reviewHasRev=true
+[T32] fill-site packet=ABSENT recordtime rev=1 dig=9ebdfcd9615208a5 reviewHasRev=true
+[T32] fill-site packet=ABSENT recordtime rev=1 dig=b9c4a4ed404c2274 reviewHasRev=true
+[T32] fill-site packet=ABSENT recordtime rev=1 dig=8b73d08aa2dce0c6 reviewHasRev=true
+[T32] fill-site packet=ABSENT recordtime rev=1 dig=- reviewHasRev=true
+[T32] fill-site packet=rev=1 dig=9ebdfcd9615208a5 recordtime rev=1 dig=9ebdfcd9615208a5 reviewHasRev=true
+[T32] fill-site packet=rev=1 dig=9ebdfcd9615208a5 recordtime rev=1 dig=9ebdfcd9615208a5 reviewHasRev=true
+[T32] fill-site packet=ABSENT recordtime rev=1 dig=9ebdfcd9615208a5 reviewHasRev=true
+[T32] fill-site packet=ABSENT recordtime rev=1 dig=9ebdfcd9615208a5 reviewHasRev=true
+[T32] fill-site packet=ABSENT recordtime rev=1 dig=9ebdfcd9615208a5 reviewHasRev=true
+[T32] fill-site packet=ABSENT recordtime rev=1 dig=9ebdfcd9615208a5 reviewHasRev=true
+[T32] fill-site packet=rev=1 dig=d11b85c7f4491de8 recordtime rev=1 dig=d11b85c7f4491de8 reviewHasRev=true
+[T32] fill-site packet=rev=1 dig=d11b85c7f4491de8 recordtime rev=1 dig=d11b85c7f4491de8 reviewHasRev=true
+[T32] fill-site packet=rev=1 dig=d11b85c7f4491de8 recordtime rev=1 dig=d11b85c7f4491de8 reviewHasRev=true
+[T32] fill-site packet=rev=1 dig=d11b85c7f4491de8 recordtime rev=1 dig=d11b85c7f4491de8 reviewHasRev=true
+[T32] fill-site packet=rev=2 dig=d11b85c7f4491de8 recordtime rev=2 dig=d11b85c7f4491de8 reviewHasRev=false
