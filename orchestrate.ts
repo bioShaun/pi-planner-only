@@ -853,13 +853,22 @@ export class PlannerOrchestrator {
 
 		if (!spec) {
 			const detail = `role ${role} delegated without an embedded TaskSpec; task identity, scope, acceptance criteria, and the WorkerReport contract are unverified.`;
-			if (role === "worker" && this.structuredDelegationMode === "strict") {
+			if (
+				role === "worker"
+				&& (this.structuredDelegationMode === "strict" || process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW === "1")
+			) {
 				return {
 					block: {
 						reason: [
 							`Planner-only guard: ${detail}`,
 							"Embed the full TaskSpec JSON in the subagent task prompt.",
-							"Set PI_PLANNER_ONLY_STRUCTURED_DELEGATION=warn to allow unstructured worker delegations.",
+							// Strict review mode outranks the structured-delegation switch:
+							// when it is on, telling the parent to set
+							// PI_PLANNER_ONLY_STRUCTURED_DELEGATION=warn would not lift
+							// the block, so never print that hint here.
+							...(process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW === "1"
+								? ["Strict mode (PI_PLANNER_ONLY_REQUIRE_REVIEW=1) requires objective, scope, and acceptanceCriteria in the embedded TaskSpec."]
+								: ["Set PI_PLANNER_ONLY_STRUCTURED_DELEGATION=warn to allow unstructured worker delegations."]),
 						].join("\n"),
 					},
 				};

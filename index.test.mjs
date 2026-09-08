@@ -3004,6 +3004,27 @@ assert.match(
 	);
 	assert.equal(callTitle?.block, undefined);
 
+	// Strict review mode refuses an unstructured worker before the child can start.
+	const previousRequireReview = process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW;
+	const previousStructuredDelegation = process.env.PI_PLANNER_ONLY_STRUCTURED_DELEGATION;
+	const execCallsBeforeStrictBlock = execCalls.length;
+	try {
+		process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW = "1";
+		delete process.env.PI_PLANNER_ONLY_STRUCTURED_DELEGATION;
+		const strictCall = await handlers.get("tool_call")(
+			{ toolCallId: "call-ext-strict-plain", toolName: "subagent", input: { agent: "worker", task: "Just run some checks" } },
+			ctx,
+		);
+		assert.equal(strictCall?.block, true);
+		assert.match(strictCall.reason, /PI_PLANNER_ONLY_REQUIRE_REVIEW=1/);
+		assert.equal(execCalls.length, execCallsBeforeStrictBlock, "blocked delegation must not start a child process");
+	} finally {
+		if (previousRequireReview === undefined) delete process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW;
+		else process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW = previousRequireReview;
+		if (previousStructuredDelegation === undefined) delete process.env.PI_PLANNER_ONLY_STRUCTURED_DELEGATION;
+		else process.env.PI_PLANNER_ONLY_STRUCTURED_DELEGATION = previousStructuredDelegation;
+	}
+
 	// 5. Plain text without characteristics creates placeholder Task, tool_result first line announces it
 	const callPlain = await handlers.get("tool_call")(
 		{ toolCallId: "call-ext-cb4", toolName: "subagent", input: { agent: "worker", task: "Just run some checks" } },

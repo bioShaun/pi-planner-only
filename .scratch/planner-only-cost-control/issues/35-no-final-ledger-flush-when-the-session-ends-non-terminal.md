@@ -39,7 +39,7 @@
 - [ ] 不变量测试：`usage.jsonl` 末条 children 的 runId 集合 ⊇ 该会话 `<SA>` 目录中
       `*_meta.json` 的 runId 集合。**修复前该用例必须失败**，回执贴出失败输出原文。
 - [ ] 不重复计数：同一 runId 只出现一次。既有的 exactly-once 用例
-      （`index.test.mjs:3372-3427`，注释标 `p11-r052`）一行不改仍然全绿。
+      （`index.test.mjs:3441-3496`，注释标 `p11-r052`）一行不改仍然全绿。
 - [ ] `reason` 的处理要说明理由：哪些 reason 该落账、哪些不该
       （例如 `reload`/`new` 是会话替换，替换后的实例可能会接着写，重复落账的风险要自己论证）。
 - [ ] Task 已经在终态、`flushIfTerminal` 已经落过账的情形，不得因为兜底再写一条重复记录。
@@ -72,3 +72,20 @@ $0.27450360，占实际总支出 $0.78197 的 **35.1%**，其中 (a) 占缺口 9
 不是从文档或记忆里抄的。若将来升级宿主版本，这段结论要重新核。
 
 round_id=p12-r058（拆票并钉死宿主事件语义）
+
+---
+
+2026-09-08 planner 派活前核验（round_id=p13，派活在 p13-r059 之后）。在 `25e632b` 上重跑一遍行号：
+
+- `flushIfTerminal` 定义 `index.ts:436`，早退在 **`:444`**（`if (!after || !isFinalTaskState(after.state)) return;`）——
+  原文记 443-444，实际是单行 `:444`，前一行 `:443` 是 `const after = orchestrator.store.get(taskId);`。
+- 五个调用点仍是 `index.ts:743 / 869 / 922 / 1048 / 1113`，未位移。
+- `session_shutdown` 钩子仍在 `index.ts:782-786`，函数体仍只有 `restoreSuppressedTools()`，
+  签名仍是 `async () => {}`（不接事件参数）。
+- **`p11-r052` 的 exactly-once 用例已位移到 `index.test.mjs:3441-3496`**（工单 29(a) 在它前面
+  插了 69 行）。票里原记的 3372-3427 已改正。它紧邻的上一块 `3400-3439` 是 29(a) 新增的
+  未绑定 validator 落盘用例，本票同样不得改动。
+- 宿主版本实测仍为 **0.84.4**（`node -p "require('./node_modules/@earendil-works/pi-coding-agent/package.json').version"`），
+  票里那段事件语义结论继续有效。
+
+round_id=p13（派活前核验，行号重钉）

@@ -388,6 +388,54 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 	assert.equal(defaults.structuredDelegationMode, "warn");
 }
 
+// require-review mode defaults to strict structured delegation
+{
+	const previous = process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW;
+	const previousStructured = process.env.PI_PLANNER_ONLY_STRUCTURED_DELEGATION;
+	try {
+		process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW = "1";
+		delete process.env.PI_PLANNER_ONLY_STRUCTURED_DELEGATION;
+		const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+		assert.equal(orch.structuredDelegationMode, "warn");
+		const before = orch.store.list().length;
+		const blocked = await orch.beginDelegation(
+			{ toolCallId: "call-r-review", input: { agent: "worker", task: "no TaskSpec" } },
+			BASE,
+		);
+		assert.ok(blocked.block);
+		assert.match(blocked.block.reason, /PI_PLANNER_ONLY_REQUIRE_REVIEW=1/);
+		assert.match(blocked.block.reason, /objective.*scope.*acceptanceCriteria/s);
+		assert.doesNotMatch(blocked.block.reason, /PI_PLANNER_ONLY_STRUCTURED_DELEGATION=warn/);
+		assert.equal(orch.store.list().length, before);
+		assert.equal(orch.store.list().some((task) => task.isPlaceholder), false);
+
+		// Strict review mode outranks the structured-delegation switch: with both
+		// set, the "set …=warn" hint would be false, so it must not be printed.
+		process.env.PI_PLANNER_ONLY_STRUCTURED_DELEGATION = "strict";
+		const blockedBoth = await orch.beginDelegation(
+			{ toolCallId: "call-r-review-both", input: { agent: "worker", task: "no TaskSpec" } },
+			BASE,
+		);
+		assert.ok(blockedBoth.block);
+		assert.match(blockedBoth.block.reason, /PI_PLANNER_ONLY_REQUIRE_REVIEW=1/);
+		assert.doesNotMatch(blockedBoth.block.reason, /PI_PLANNER_ONLY_STRUCTURED_DELEGATION=warn/);
+		delete process.env.PI_PLANNER_ONLY_STRUCTURED_DELEGATION;
+
+		for (const agent of ["oracle", "reviewer", "explorer", "scout"]) {
+			const outcome = await orch.beginDelegation(
+				{ toolCallId: `call-r-${agent}`, input: { agent, task: "no TaskSpec" } },
+				BASE,
+			);
+			assert.equal(outcome.block, undefined, `${agent} must remain unblocked`);
+		}
+	} finally {
+		if (previous === undefined) delete process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW;
+		else process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW = previous;
+		if (previousStructured === undefined) delete process.env.PI_PLANNER_ONLY_STRUCTURED_DELEGATION;
+		else process.env.PI_PLANNER_ONLY_STRUCTURED_DELEGATION = previousStructured;
+	}
+}
+
 // --------------------------------------------------------------------------
 // §P1-1 — a reviewer invocation never mutates the Task's original TaskSpec
 // --------------------------------------------------------------------------
