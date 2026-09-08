@@ -118,4 +118,11 @@ assert.match(orchestrate, /from "\.\/ledger-store\.ts"/, "C7: the orchestrator o
 assert.match(orchestrate, /new LedgerSnapshotStore\(deps\.ledgerDir\)/, "C8: the sink is constructed from deps.ledgerDir");
 assert.match(index, /task\.usage = usage;\s*\n\s*orchestrator\.store\.persist\(task\)/, "C9: syncUsage persists after the direct usage write");
 
+assert.match(reservations, /rekey\(/, "C37-1: BudgetReservations exposes rekey");
+assert.equal((orchestrate.match(/this\.reservations\.rekey\(/g) ?? []).length, 1, "C37-2: orchestrate rekeys in exactly one place");
+assert.match(orchestrate, /this\.store\.create\(storedSpec, spec\.taskId\);\s*\n\s*this\.reservations\.rekey\(spec\.taskId, task\.taskId, event\.toolCallId\);/, "C37-3: rekey runs immediately after the shouldReplaceTaskId create");
+assert.match(orchestrate, /emptyTaskUsage/, "C37-4: first-delegation budget is computed from emptyTaskUsage");
+assert.doesNotMatch(orchestrate, /this\.store\.create\(spec\);\s*\n\s*this\.reservations\.rekey/, "C37-5: the matching-id create does not rekey");
+assert.equal((orchestrate.match(/this\.store\.create\(/g) ?? []).length, 3, "C37-6: store.create sites stay three; only the replace site rekeys");
+
 console.log("planner-only architecture: PASS");

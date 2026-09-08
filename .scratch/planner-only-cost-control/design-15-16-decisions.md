@@ -202,3 +202,59 @@ second delegation blocked? YES: ... cumulative budget exhausted (costUsd).
 **定稿前还欠一次实跑核验**（cursor 占着写者位，等 p16-r075 收工再做）：
 `summarizeTaskBudget(emptyTaskUsage(), cumulativeBudget)` 产出的 `ReservationBudget`
 形状与既有调用一致，`limit` 有值、`known` 为 0。没核之前不许派工。
+
+### E.4 形状核验已做（2026-09-08，planner，探针 `p16-probe/r077-empty-budget-shape.mjs`）
+
+```
+tokens  dim: {"limit":200000,"remaining":200000,"known":0,"unknownParts":0,"debt":0}
+costUsd dim: {"limit":0.05,"remaining":0.05,"known":0,"unknownParts":0,"debt":0}
+reserve outcome: {"grant":{"tokens":100000,"costUsd":0.05}}
+inFlight after : {"tokens":100000,"costUsd":0.05}
+heldCount      : 1
+2nd reserve    : {"refused":{"dimension":"costUsd","available":0,"held":0.05,...}}
+```
+
+形状一致（`limit` 有值、`known` 为 0），**并且直接坐实了 B′ 的两个目标**：
+
+- 第一次 `reserve` 的 grant 被**夹到整份 Task 预算**（costUsd 0.05，而不是请求的 0.5）——
+  这正是 37 要修的那个十倍差；
+- 第一笔未结算时第二次 `reserve` 直接 `refused`、`available: 0`——闸门从第 1 次委派起就生效。
+
+代码侧确认（`orchestrate.ts:703/712`）：新 Task 时 `target.task` 为空，故
+`targetSpec === spec === target.spec`，新分支要读的就是 `spec.cumulativeBudget` / `spec.taskId`。
+
+**派工闸门解除。**
+
+### E.5 行号勘误与落地复核（2026-09-08，p16-r076，planner claude-pD）
+
+§E.1–E.3 里的行号是写稿当天的，落地后已全部漂移。以 `90e3b23` + p16-r076 工作树为准：
+
+| §E 旧引用 | 现行行号 | 内容 |
+|---|---|---|
+| `orchestrate.ts:727-733` | **740** | `const budgetTask = target?.task;`（闸门入口） |
+| `orchestrate.ts:997-1000` | **1016** | `task = this.store.create(storedSpec, spec.taskId);`（改名分支） |
+| `orchestrate.ts:1000/1005/1067` | **1016 / 1022 / 1084** | 三处 `store.create` |
+| `orchestrate.ts:564` | **576** | `endDelegation` 里的 `reservations.release(record.taskId, toolCallId)`（573 是方法声明） |
+| `orchestrate.ts:828、886、936` | **844 / 896 / 946** | 成功启动的 `delegations.set` 早退路径 |
+| （新增） | **1017** | `this.reservations.rekey(spec.taskId, task.taskId, event.toolCallId);` |
+
+**§E.3 第 1 条另有两处措辞要更正**（执行者提出，planner 复核后采纳）：
+
+1. 「第 1067 处入库 id 就是 `spec.taskId`」是错的。1084 走的是
+   `store.create(createTaskSpec({ objective, cwd }))`，id 来自 `nextTaskId()`/`createTaskId()`，
+   与 `spec.taskId` 无关——但那条路径压根没有 `spec`，因此也不会预留，
+   「只有改名分支需要 rekey」这个结论不变。
+2. 「新 Task 余额是满的，检查这一半必然通过」只对**真正全新**的 Task 成立。
+   同一个 Task 的第二次并发首派（第一次还没回执）会被 held 挡下——这正是 Z7/Z11 断言的行为。
+
+**§E.3 第 2 条漏写的一层保险，落地时才看清**：`beginDelegation` 外层有个 `finally`
+（`orchestrate.ts:656-669`），凡是没有留下 delegation 记录的返回路径都会
+`releaseByToolCall(event.toolCallId)` 把预留退回去。所以「预留之后、记录之前」的两条 block
+路径（792 的非法 TaskSpec、802 的缺验证定义）都不会泄漏预留。
+planner 侧探针 `p16-probe/r076-planner-block-after-reserve.mjs` 实跑证实：
+非法 validator 首派被 802 拦下后 `inFlight(spec.taskId) = {tokens:0, costUsd:0}`、`heldCount = 0`，
+改正 TaskSpec 重试立即通过。这条保险是工单 15 留下的，方案 B′ 直接受益。
+
+**观察（不是缺陷，记入 backlog）**：被闸门拒绝的那次委派，`input.usageBudget` 上仍留着
+上游 `prepareRoleDelegation` 盖的未夹紧的值（探针里 `call-second` 是 `costUsd.hard=0.5`）。
+因为该次 tool_call 被 block、宿主根本不会启动它，所以只是残留字段，没有实际后果。

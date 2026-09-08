@@ -94,7 +94,7 @@ import type {
 	StructuredDelegationMode,
 	WorkerReport,
 } from "./types.ts";
-import { summarizeTaskBudget } from "./usage.ts";
+import { emptyTaskUsage, summarizeTaskBudget } from "./usage.ts";
 import { BudgetReservations } from "./reservations.ts";
 import type { ReservationBudget } from "./reservations.ts";
 
@@ -738,21 +738,25 @@ export class PlannerOrchestrator {
 			});
 		}
 		const budgetTask = target?.task;
-		const cumulativeBudget = (budgetTask?.spec as unknown as { cumulativeBudget?: unknown } | undefined)?.cumulativeBudget;
+		const firstDelegationTask = !budgetTask && spec?.cumulativeBudget && typeof spec.cumulativeBudget === "object"
+			? { taskId: spec.taskId, usage: emptyTaskUsage(), spec, reports: [] as TaskRecord["reports"] }
+			: undefined;
+		const gateTask = budgetTask ?? firstDelegationTask;
+		const cumulativeBudget = (gateTask?.spec as unknown as { cumulativeBudget?: unknown } | undefined)?.cumulativeBudget;
 		// Reviewer does not reserve or consume the balance gate; exhausted Tasks must still be closable.
-		if (role !== "reviewer" && budgetTask?.usage && cumulativeBudget && typeof cumulativeBudget === "object") {
-			const budget = summarizeTaskBudget(budgetTask.usage, cumulativeBudget as Parameters<typeof summarizeTaskBudget>[1]);
-			const reservation = this.reservations.reserve(budgetTask.taskId, budget, {
+		if (role !== "reviewer" && gateTask?.usage && cumulativeBudget && typeof cumulativeBudget === "object") {
+			const budget = summarizeTaskBudget(gateTask.usage, cumulativeBudget as Parameters<typeof summarizeTaskBudget>[1]);
+			const reservation = this.reservations.reserve(gateTask.taskId, budget, {
 				toolCallId: event.toolCallId,
 				...(floorLimits?.tokens ? { tokens: floorLimits.tokens.value } : {}),
 				...(floorLimits?.costUsd ? { costUsd: floorLimits.costUsd.value } : {}),
 			});
 			if (reservation.refused) {
-				return { block: { reason: this.cumulativeBudgetRefusal(budgetTask.taskId, budget, reservation.refused) } };
+				return { block: { reason: this.cumulativeBudgetRefusal(gateTask.taskId, budget, reservation.refused) } };
 			}
 			floorLimits = resolveEffectiveLimits({
 				role,
-				reportsCount: budgetTask.reports.length,
+				reportsCount: gateTask.reports.length,
 				callerToolBudget: inputRecord.toolBudget,
 				callerUsageBudget: inputRecord.usageBudget,
 				taskSpecBudget: spec?.budget,
@@ -1010,6 +1014,7 @@ export class PlannerOrchestrator {
 				const generated = this.store.nextTaskId();
 				const storedSpec = { ...spec, taskId: generated };
 				task = this.store.create(storedSpec, spec.taskId);
+				this.reservations.rekey(spec.taskId, task.taskId, event.toolCallId);
 				warnings.push(
 					`Planner-only: TaskSpec id ${spec.taskId} replaced by ${generated} (generated); ${spec.taskId} is kept as an alias`,
 				);

@@ -105,6 +105,27 @@ export class BudgetReservations {
 		if (reservations.size === 0) this.held.delete(taskId);
 	}
 
+	/**
+	 * Move one in-flight reservation from one Task id to another.
+	 * Used when shouldReplaceTaskId mints a canonical id after the gate
+	 * reserved against spec.taskId. Missing source is a no-op.
+	 */
+	rekey(fromTaskId: string, toTaskId: string, toolCallId: string): void {
+		if (fromTaskId === toTaskId) return;
+		const source = this.held.get(fromTaskId);
+		if (!source) return;
+		const reservation = source.get(toolCallId);
+		if (!reservation) return;
+		source.delete(toolCallId);
+		if (source.size === 0) this.held.delete(fromTaskId);
+		let dest = this.held.get(toTaskId);
+		if (!dest) {
+			dest = new Map();
+			this.held.set(toTaskId, dest);
+		}
+		dest.set(toolCallId, reservation);
+	}
+
 	releaseByToolCall(toolCallId: string): void {
 		for (const [taskId, reservations] of this.held) {
 			if (reservations.delete(toolCallId) && reservations.size === 0) this.held.delete(taskId);

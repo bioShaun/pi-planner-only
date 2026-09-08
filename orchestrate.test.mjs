@@ -5533,3 +5533,195 @@ const oracle1ForegroundText = [
 	reservations.reserve("T-20260908-748", budget, { toolCallId: "call-b", tokens: 20, costUsd: 0.2 });
 	assert.equal(reservations.heldCount("T-20260908-748"), 2);
 }
+
+// --------------------------------------------------------------------------
+// Ticket 37: first delegation of a new Task must reserve and clamp; rekey
+// when shouldReplaceTaskId mints a canonical id.
+// --------------------------------------------------------------------------
+
+function emptyReservationBudget(tokens = 200000, costUsd = 0.05) {
+	return {
+		tokens: { known: 0, unknownParts: 0, debt: 0, limit: tokens, remaining: tokens },
+		costUsd: { known: 0, unknownParts: 0, debt: 0, limit: costUsd, remaining: costUsd },
+	};
+}
+
+{
+	// R1: rekey moves the named reservation onto the destination Task.
+	const r = new BudgetReservations();
+	r.reserve("from", emptyReservationBudget(), { toolCallId: "call-r1", tokens: 100000, costUsd: 0.05 });
+	r.rekey("from", "to", "call-r1");
+	assert.deepEqual(r.inFlight("to"), { tokens: 100000, costUsd: 0.05 }, "R1: rekey moves the reservation onto toTaskId");
+}
+
+{
+	// R2: after rekey, the source Task no longer holds it.
+	const r = new BudgetReservations();
+	r.reserve("from", emptyReservationBudget(), { toolCallId: "call-r2", tokens: 100000, costUsd: 0.05 });
+	r.rekey("from", "to", "call-r2");
+	assert.deepEqual(r.inFlight("from"), { tokens: 0, costUsd: 0 }, "R2: rekey clears the reservation from fromTaskId");
+}
+
+{
+	// R3: rekey of a Task that holds nothing is a no-op (does not create a dest entry).
+	const r = new BudgetReservations();
+	r.rekey("missing", "to", "call-r3");
+	assert.deepEqual(r.inFlight("to"), { tokens: 0, costUsd: 0 }, "R3: rekey with a missing source does not create a dest reservation");
+}
+
+{
+	// R4: rekey of an unknown toolCallId leaves the source reservation in place.
+	const r = new BudgetReservations();
+	r.reserve("from", emptyReservationBudget(), { toolCallId: "call-r4-keep", tokens: 100000, costUsd: 0.05 });
+	r.rekey("from", "to", "call-r4-absent");
+	assert.deepEqual(r.inFlight("from"), { tokens: 100000, costUsd: 0.05 }, "R4: rekey of a missing toolCallId is a no-op on the source");
+}
+
+{
+	// R5: rekey fromTaskId === toTaskId leaves the reservation where it is.
+	const r = new BudgetReservations();
+	r.reserve("same", emptyReservationBudget(), { toolCallId: "call-r5", tokens: 100000, costUsd: 0.05 });
+	r.rekey("same", "same", "call-r5");
+	assert.deepEqual(r.inFlight("same"), { tokens: 100000, costUsd: 0.05 }, "R5: rekey with identical ids is a no-op");
+}
+
+{
+	// R6: only the named toolCallId moves; a sibling stays on the source.
+	const r = new BudgetReservations();
+	const budget = emptyReservationBudget(200000, 1);
+	r.reserve("from", budget, { toolCallId: "call-r6-move", tokens: 10, costUsd: 0.1 });
+	r.reserve("from", budget, { toolCallId: "call-r6-stay", tokens: 20, costUsd: 0.2 });
+	r.rekey("from", "to", "call-r6-move");
+	assert.deepEqual(r.inFlight("from"), { tokens: 20, costUsd: 0.2 }, "R6a: sibling reservation stays on fromTaskId");
+}
+
+{
+	const r = new BudgetReservations();
+	const budget = emptyReservationBudget(200000, 1);
+	r.reserve("from", budget, { toolCallId: "call-r6-move", tokens: 10, costUsd: 0.1 });
+	r.reserve("from", budget, { toolCallId: "call-r6-stay", tokens: 20, costUsd: 0.2 });
+	r.rekey("from", "to", "call-r6-move");
+	assert.deepEqual(r.inFlight("to"), { tokens: 10, costUsd: 0.1 }, "R6b: only the named toolCallId is on toTaskId");
+}
+
+{
+	// Z1: creating a Task by delegating it clamps the first child's costUsd.hard to cumulativeBudget.
+	const spec = { ...specFor("T-20260905-370"), cumulativeBudget: { tokens: 200000, costUsd: 0.05 } };
+	const input = { task: JSON.stringify(spec) };
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	await orch.beginDelegation({ toolCallId: "call-z1", input }, BASE);
+	assert.equal(input.usageBudget?.costUsd?.hard, 0.05, "Z1: first delegation costUsd.hard is clamped to the Task cumulative budget");
+}
+
+{
+	// Z3: that first delegation holds an in-flight reservation on the new Task id.
+	const spec = { ...specFor("T-20260905-371"), cumulativeBudget: { tokens: 200000, costUsd: 0.05 } };
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	await orch.beginDelegation({ toolCallId: "call-z3", input: { task: JSON.stringify(spec) } }, BASE);
+	assert.deepEqual(orch.reservations.inFlight("T-20260905-371"), { tokens: 100000, costUsd: 0.05 }, "Z3: first delegation reserves on the new Task id");
+}
+
+{
+	// Z4: status D4 在途预留 line is visible after the first delegation of a new Task.
+	const spec = { ...specFor("T-20260905-372"), cumulativeBudget: { tokens: 200000, costUsd: 0.05 } };
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	await orch.beginDelegation({ toolCallId: "call-z4", input: { task: JSON.stringify(spec) } }, BASE);
+	const status = orch.renderTaskStatus(orch.store.require("T-20260905-372"));
+	assert.equal(status.split("\n").includes("  在途预留: tokens=100000, 费用 $0.0500（1 个子进程未回执）"), true, "Z4: first delegation is visible on the 在途预留 line");
+}
+
+{
+	// Z5: the first child of a new Task is stamped with a grant (ticket 15 bounded debt).
+	const spec = { ...specFor("T-20260905-373"), cumulativeBudget: { tokens: 200000, costUsd: 0.05 } };
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	await orch.beginDelegation({ toolCallId: "call-z5", input: { task: JSON.stringify(spec) } }, BASE);
+	assert.equal(orch.getDelegation("call-z5")?.grantedCostUsd, 0.05, "Z5: first delegation record carries grantedCostUsd");
+}
+
+{
+	// Z6: token grant is stamped too — the floor, not the unused remainder of the Task.
+	const spec = { ...specFor("T-20260905-374"), cumulativeBudget: { tokens: 200000, costUsd: 0.05 } };
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	await orch.beginDelegation({ toolCallId: "call-z6", input: { task: JSON.stringify(spec) } }, BASE);
+	assert.equal(orch.getDelegation("call-z6")?.grantedTokens, 100000, "Z6: first delegation record carries grantedTokens");
+}
+
+{
+	// Z7: a second in-flight delegation of the same new Task is refused.
+	const spec = { ...specFor("T-20260905-375"), cumulativeBudget: { tokens: 200000, costUsd: 0.05 } };
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	await orch.beginDelegation({ toolCallId: "call-z7-a", input: { task: JSON.stringify(spec) } }, BASE);
+	const second = await orch.beginDelegation({ toolCallId: "call-z7-b", input: { task: JSON.stringify(spec) } }, BASE);
+	assert.match(second.block?.reason ?? "", /cumulative budget exhausted \(costUsd\)/, "Z7: second concurrent first-Task delegation is refused");
+}
+
+{
+	// Z8: reviewer exemption still lets an exhausted Task close (D4).
+	const { store, task } = budgetTaskFixture("T-20260905-376", { tokens: 1, costUsd: 0.01 }, usageFixture(5_000, 0.50));
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const outcome = await orch.beginDelegation({ toolCallId: "call-z8", input: { agent: "reviewer", task: `Review ${task.taskId}` } }, BASE);
+	assert.equal(outcome.block, undefined, "Z8: reviewer is not blocked by an exhausted cumulative budget");
+}
+
+{
+	// Z9: shouldReplaceTaskId path must not leave the reservation on the alias.
+	const spec = { ...specFor("T-20260908-370"), cumulativeBudget: { tokens: 200000, costUsd: 0.05 } };
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	await orch.beginDelegation({ toolCallId: "call-z9", input: { task: JSON.stringify(spec) } }, BASE);
+	assert.deepEqual(orch.reservations.inFlight("T-20260908-370"), { tokens: 0, costUsd: 0 }, "Z9: reservation is not left on the replaced alias");
+}
+
+{
+	// Z10: the reservation is visible under the generated canonical id.
+	const spec = { ...specFor("T-20260908-371"), cumulativeBudget: { tokens: 200000, costUsd: 0.05 } };
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const outcome = await orch.beginDelegation({ toolCallId: "call-z10", input: { task: JSON.stringify(spec) } }, BASE);
+	assert.deepEqual(orch.reservations.inFlight(outcome.task.taskId), { tokens: 100000, costUsd: 0.05 }, "Z10: reservation sits on the canonical taskId");
+}
+
+{
+	// Z11: after rekey, a second concurrent delegation is still refused (gate counts the moved hold).
+	const spec = { ...specFor("T-20260908-372"), cumulativeBudget: { tokens: 200000, costUsd: 0.05 } };
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	await orch.beginDelegation({ toolCallId: "call-z11-a", input: { task: JSON.stringify(spec) } }, BASE);
+	const second = await orch.beginDelegation({ toolCallId: "call-z11-b", input: { task: JSON.stringify(spec) } }, BASE);
+	assert.match(second.block?.reason ?? "", /cumulative budget exhausted \(costUsd\)/, "Z11: second delegation after rekey is refused");
+}
+
+{
+	// Z12: D4 在途预留 on the canonical Task after a replaced-id first delegation.
+	const spec = { ...specFor("T-20260908-373"), cumulativeBudget: { tokens: 200000, costUsd: 0.05 } };
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const outcome = await orch.beginDelegation({ toolCallId: "call-z12", input: { task: JSON.stringify(spec) } }, BASE);
+	const status = orch.renderTaskStatus(orch.store.require(outcome.task.taskId));
+	assert.equal(status.split("\n").includes("  在途预留: tokens=100000, 费用 $0.0500（1 个子进程未回执）"), true, "Z12: 在途预留 is on the canonical Task after rekey");
+}
+
+{
+	// Z13: settling the replaced-id child releases the canonical reservation (no leak).
+	const spec = { ...specFor("T-20260908-374"), cumulativeBudget: { tokens: 200000, costUsd: 0.05 } };
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const outcome = await orch.beginDelegation({ toolCallId: "call-z13", input: { task: JSON.stringify(spec) } }, BASE);
+	const canonical = outcome.task.taskId;
+	await orch.handleSubagentResult(workerResult("call-z13", reportFor(canonical, "call-z13")));
+	assert.deepEqual(orch.reservations.inFlight(canonical), { tokens: 0, costUsd: 0 }, "Z13: endDelegation after rekey releases the canonical reservation");
+}
+
+{
+	// Z14: settling also leaves the alias empty (the leak the rekey exists to prevent).
+	const spec = { ...specFor("T-20260908-375"), cumulativeBudget: { tokens: 200000, costUsd: 0.05 } };
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const outcome = await orch.beginDelegation({ toolCallId: "call-z14", input: { task: JSON.stringify(spec) } }, BASE);
+	await orch.handleSubagentResult(workerResult("call-z14", reportFor(outcome.task.taskId, "call-z14")));
+	assert.deepEqual(orch.reservations.inFlight("T-20260908-375"), { tokens: 0, costUsd: 0 }, "Z14: alias holds nothing after the replaced-id child settles");
+}
+
+{
+	// Z15: D5 — a Task created before the delegation (task start) still clamps from recorded usage, not an empty ledger.
+	const { store, task } = budgetTaskFixture("T-20260908-376", { tokens: 50_000, costUsd: 0.20 }, boundedBudgetUsage(48_000, 0.19));
+	task.reports.push(reportFor(task.taskId, "old-report"));
+	const input = { task: JSON.stringify(task.spec), usageBudget: { tokens: { hard: 50_000 }, costUsd: { hard: 0.20 } } };
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	await orch.beginDelegation({ toolCallId: "call-z15", input }, BASE);
+	assert.equal(input.usageBudget.tokens.hard, 2_000, "Z15: existing Task still clamps from recorded usage, not emptyTaskUsage()");
+}

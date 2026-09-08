@@ -1,5 +1,7 @@
-// Ticket 15-b clause 2: same scene as r074-clause2-failed-launch-debt.mjs,
-// asserting the fixed behavior. Do not edit the original probe.
+// Ticket 37 baseline probe (the header used to misattribute this to ticket
+// 15-b clause 2; the scene is the first delegation of a brand-new Task).
+// Before p16-r076 it showed the first delegation escaping the cumulative
+// budget gate entirely. Do not edit: later rounds re-run it verbatim.
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
