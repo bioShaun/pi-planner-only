@@ -74,3 +74,61 @@ Parent: `.scratch/planner-only-cost-control/spec.md`（User Stories 37–38，�
   而 `touch()` 在每次 transition/report/review 上触发，`syncUsage` 更是每个工具调用都可能走。
   长 Task 上这是委派热路径上的同步 I/O，需要脏标记或节流。
 - `createRequire("fs")` 的测试耦合（见上第 4 条）。
+
+## 分期落地：16-b 回放与损坏判定 —— p16-r077 派工前的定稿（planner 实跑得出）
+
+**先做第 1、2 条；第 3、4 条留给 16-c。**
+
+### 缺口已实测坐实（探针 `p16-probe/r077-reload-loses-the-ledger.mjs`）
+
+同一个 `PI_CODING_AGENT_DIR` 上建两个扩展实例，session A 花掉 $0.0400 / $0.05：
+
+```
+session A: 费用 已用 $0.0400 / 上限 $0.0500，剩余 $0.0100
+盘上快照:  state=changes_requested  usage.children=1  budget={"tokens":200000,"costUsd":0.05}
+session B: 整个 Task 不见了（status 只剩 Session usage: tokens=0）
+           重新委派同一个 Task → blocked? no
+           usageBudget 下传 {"tokens":{"hard":100000},"costUsd":{"hard":0.05}}   ← 又是一整份预算
+```
+
+写入侧（16-a）什么都不缺，缺的只有读回来这一半。工单 37 把第一次委派也纳入闸门之后，
+**「重载一次换一份满预算」成了绕开累计上限最省事的路径**，所以这条排在 16-c 前面。
+
+### 定稿改法
+
+- `LedgerSnapshotStore.readAll(): { records, corrupt }`。**文件名 stem 是 taskId 的权威来源**
+  （损坏文件里读不出 id）；stem 非法、解析失败、`version!==1`、缺 `task`、`task.taskId!==stem`
+  一律进 `corrupt`。目录不存在是正常首启，返回空、不 warn。`readAll()` 不修复也不删除。
+- `TaskStore.restore(record)`：装进内部 map，**不 touch 不 persist**（装载不是变更），
+  已存在同 id 不覆盖。必须是真方法——`tasks` 是 `private readonly`（`task.ts:438`），
+  原型里能 `store.tasks.set` 只是因为 strip-types 不做运行时封装。
+- `session_start` 装载一次（`index.ts:903` 的 `loadSessionUsage` 之后）。
+- **在途预留一律不恢复**：上一轮会话的子进程已随进程消失，恢复预留等于凭空占住余额。
+- 损坏 → `untrustedBalances: Map<taskId, reason>`，**按 taskId 生效不是全局**；
+  该 Task 的受控付费委派被拒，理由必须与 `cumulativeBudgetRefusal` 明确区分
+  （用户要能分清「花超了」和「账不可信」）；reviewer 依旧豁免（同工单 37 的理由）；
+  status 里该 Task 不再把「剩余」当可信数字展示。
+
+### 遗留项的处置（上面四条，本轮一次性了结）
+
+1. **`lastWriteError` 粘性** —— 改成按 taskId 记写健康度（该 taskId 写成功即清），
+   `lastWriteError` 降级为纯诊断字段。16-b 做。
+2. **`warn()` 配额被非法 taskId 抢占** —— 拆成两个配额。非法 taskId 那条本来就 `throw`，
+   已经足够响亮，不该消耗 I/O 那一次 warn。16-b 做。
+3. **每次 `touch()` 同步全量写盘** —— **不做节流，此项就此关闭**。实测
+   （`p16-probe/r077-touch-write-cost.mjs`，本机 NVMe，每档 200 次取均值）：
+
+   | reports | 快照大小 | 每次 persist |
+   |---|---|---|
+   | 0 | 1026 B | 0.097 ms |
+   | 3 | 5162 B | 0.086 ms |
+   | 10 | 14837 B | 0.102 ms |
+   | 30 | 42497 B | 0.156 ms |
+
+   委派本身是秒级的，0.1 ms 可忽略；而脏标记/节流的失败模式是**丢写**，对账本更糟。
+4. **`createRequire("fs")` 测试耦合** —— 保留，记为既有负债，不在 16-b 处理。
+
+### 验收上的一个坑
+
+恢复后闸门夹出来的余额是 `0.010000000000000002`（$0.05 − $0.04 的浮点残差，
+`p16-probe/r077-restore-shape.mjs` 实测）。**断言必须用容差，不许写 `=== 0.01`，也不许 round 掉。**
