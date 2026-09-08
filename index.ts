@@ -319,7 +319,20 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		return join(AGENT_DIR, "planner-only", "usage.jsonl");
 	}
 
-	function pendingChild(kind: DelegationKind, ids: { runId?: string; agent?: string; toolCallId?: string }): ChildUsage {
+	/**
+	 * A child whose usage cannot be read yet.
+	 *
+	 * Ticket 15: it MUST carry a key (runId or toolCallId). An unkeyed child is
+	 * appended rather than upserted, so a second record of the same child adds a
+	 * second row -- and with debt attached that double-charges the Task and the
+	 * real usage can never replace it. `debt` is the budget granted at launch,
+	 * charged while the real value is missing.
+	 */
+	function pendingChild(
+		kind: DelegationKind,
+		ids: { runId?: string; agent?: string; toolCallId?: string },
+		debt?: { tokens?: number; costUsd?: number },
+	): ChildUsage {
 		return {
 			input: 0,
 			output: 0,
@@ -331,6 +344,16 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			...(ids.runId ? { runId: ids.runId } : {}),
 			...(ids.agent ? { agent: ids.agent } : {}),
 			...(ids.toolCallId ? { toolCallId: ids.toolCallId } : {}),
+			...(debt?.tokens !== undefined ? { tokensDebt: debt.tokens } : {}),
+			...(debt?.costUsd !== undefined ? { costDebtUsd: debt.costUsd } : {}),
+		};
+	}
+
+	/** The budget granted to this invocation, charged as debt while usage is unknown (ticket 15). */
+	function grantedDebt(record: DelegationRecord): { tokens?: number; costUsd?: number } {
+		return {
+			...(record.grantedTokens !== undefined ? { tokens: record.grantedTokens } : {}),
+			...(record.grantedCostUsd !== undefined ? { costUsd: record.grantedCostUsd } : {}),
 		};
 	}
 
@@ -573,7 +596,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			);
 		}
 		if (results.length === 0 && !runId) {
-			ledger.recordChild(taskId, pendingChild(delegation.kind, { agent: delegation.agent }));
+			// The toolCallId is the key here: without it this row can never be
+			// replaced by the real usage, and a repeat would add a second charge.
+			ledger.recordChild(taskId, pendingChild(
+				delegation.kind,
+				{ agent: delegation.agent, toolCallId: event.toolCallId },
+				grantedDebt(delegation),
+			));
 			syncUsage(taskId);
 			return;
 		}
@@ -614,12 +643,17 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		}
 	}
 
-	function recordAsyncChild(record: DelegationRecord, ctx: ExtensionContext, notifyAgent?: string): void {
+	function recordAsyncChild(
+		record: DelegationRecord,
+		ctx: ExtensionContext,
+		notifyAgent?: string,
+		toolCallId?: string,
+	): void {
 		const taskId = accountingTaskId(record);
 		const agent = notifyAgent || record.agent;
 		const runId = record.runId;
 		if (!runId) {
-			ledger.recordChild(taskId, pendingChild(record.kind, { agent, toolCallId: undefined }));
+			ledger.recordChild(taskId, pendingChild(record.kind, { agent, toolCallId }, grantedDebt(record)));
 			syncUsage(taskId);
 			return;
 		}
@@ -639,7 +673,11 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				return;
 			}
 		}
-		ledger.recordChild(taskId, pendingChild(record.kind, { runId, agent: agent || record.agent }));
+		ledger.recordChild(taskId, pendingChild(
+			record.kind,
+			{ runId, agent: agent || record.agent, ...(toolCallId ? { toolCallId } : {}) },
+			grantedDebt(record),
+		));
 		syncUsage(taskId);
 	}
 
@@ -997,7 +1035,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		for (const item of snapshot) {
 			if (remaining.has(item.toolCallId)) continue;
 			const usageTaskId = accountingTaskId(item.record);
-			recordAsyncChild(item.record, host, parsed?.agent);
+			recordAsyncChild(item.record, host, parsed?.agent, item.toolCallId);
 			let text = outcome?.content[0]?.text ?? "";
 			if (text) {
 				text = enrichDecisionText(text, item.record.taskId);

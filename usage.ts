@@ -613,6 +613,12 @@ export interface BudgetDimension {
 	known: number;
 	/** How many components could not be valued at all. Never folded into `known`. */
 	unknownParts: number;
+	/**
+	 * The part of `known` that is estimated debt rather than observed spend
+	 * (ticket 15). Always <= known. Disclosed separately so an operator is never
+	 * shown an estimate dressed up as a measurement.
+	 */
+	debt: number;
 	/** limit - known. undefined when limit is undefined. NEVER clamped: overspend must stay negative. */
 	remaining?: number;
 }
@@ -640,17 +646,28 @@ function usageTokens(counts: TokenCounts): number {
  * Summarize a Task without persisting a second accounting structure.
  * Token totals deliberately exclude `reasoning`: providers differ on whether
  * it is already included in `output`, so adding it can double-count usage.
- * Unknown components do not reduce remaining: treating them as debt is
- * reserved for a later budget policy.
+ *
+ * Ticket 15: a component whose value is unknown is charged its recorded debt
+ * (the budget granted at launch) instead of zero, and the debt is also reported
+ * separately in `debt`. Charging zero let a child that burned real money leave
+ * the gate reading a full balance. Debt is counted ONLY while the real value is
+ * absent, so a resolved child's stale debt field can never double-count.
  */
 export function summarizeTaskBudget(usage: TaskUsage, limits?: CumulativeBudgetLimits): TaskBudgetSummary {
 	const rootTokens = usageTokens(usage.root);
 	const childTokens = usage.children.reduce((sum, child) => sum + usageTokens(child), 0);
-	const tokenKnown = rootTokens + childTokens;
+	const unresolved = (child: ChildUsage): boolean => child.pending || child.source === "unavailable";
+	const tokenDebt = usage.children.reduce((sum, child) => sum + (unresolved(child) ? (child.tokensDebt ?? 0) : 0), 0);
+	const tokenKnown = rootTokens + childTokens + tokenDebt;
 	const tokenUnknown = usage.root.tokensUnknownTurns
-		+ usage.children.filter((child) => child.pending || child.source === "unavailable").length;
+		+ usage.children.filter(unresolved).length;
+	const costDebt = usage.children.reduce(
+		(sum, child) => sum + (child.costUsd === undefined ? (child.costDebtUsd ?? 0) : 0),
+		0,
+	);
 	const costKnown = (usage.root.costUsd ?? 0)
-		+ usage.children.reduce((sum, child) => sum + (child.costUsd ?? 0), 0);
+		+ usage.children.reduce((sum, child) => sum + (child.costUsd ?? 0), 0)
+		+ costDebt;
 	// Root cost is sticky-unknown across all its turns, so it contributes one
 	// unknown component at most; unknown parts are not folded into known/remaining.
 	// A Root bucket that never took a turn spent nothing: zero is not unknown,
@@ -658,10 +675,11 @@ export function summarizeTaskBudget(usage: TaskUsage, limits?: CumulativeBudgetL
 	const rootCostUnknown = usage.root.turns > 0 && usage.root.costUsd === undefined;
 	const costUnknown = (rootCostUnknown ? 1 : 0)
 		+ usage.children.filter((child) => child.costUsd === undefined).length;
-	const dimension = (known: number, unknownParts: number, limit?: number): BudgetDimension => ({
+	const dimension = (known: number, unknownParts: number, debt: number, limit?: number): BudgetDimension => ({
 		...(limit === undefined ? {} : { limit, remaining: limit - known }),
 		known,
 		unknownParts,
+		debt,
 	});
 	const byRole: Record<string, RoleUsageSummary> = {
 		root: {
@@ -679,14 +697,17 @@ export function summarizeTaskBudget(usage: TaskUsage, limits?: CumulativeBudgetL
 			costUnknownParts: 0,
 		});
 		role.calls += 1;
-		role.tokens += usageTokens(child);
-		role.costUsd += child.costUsd ?? 0;
+		// Ticket 15: the per-role figures carry the same debt the dimensions do.
+		// Leaving debt out here made the roles sum to less than 已用, which reads
+		// as an accounting bug rather than as an estimate.
+		role.tokens += usageTokens(child) + (unresolved(child) ? (child.tokensDebt ?? 0) : 0);
+		role.costUsd += child.costUsd ?? (child.costDebtUsd ?? 0);
 		if (child.costUsd === undefined) role.costUnknownParts += 1;
 	}
 	return {
 		configured: limits?.tokens !== undefined || limits?.costUsd !== undefined,
-		tokens: dimension(tokenKnown, tokenUnknown, limits?.tokens),
-		costUsd: dimension(costKnown, costUnknown, limits?.costUsd),
+		tokens: dimension(tokenKnown, tokenUnknown, tokenDebt, limits?.tokens),
+		costUsd: dimension(costKnown, costUnknown, costDebt, limits?.costUsd),
 		byRole,
 	};
 }

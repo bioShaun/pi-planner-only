@@ -2156,7 +2156,7 @@ function usageFixture(output = 0, costUsd) {
 {
 	const usage = usageFixture(10, 0.1);
 	usage.root.tokensUnknownTurns = 1;
-	assert.equal(statusWithBudget({ tokens: 20, costUsd: 1 }, usage).includes("剩余 10（不含 1 个未知项），未知项 1 项"), true);
+	assert.equal(statusWithBudget({ tokens: 20, costUsd: 1 }, usage).includes("已用 10（不含 1 个未知项） / 上限 20，剩余 10，未知项 1 项"), true);
 }
 {
 	const usage = usageFixture(10, 0.1);
@@ -5332,4 +5332,70 @@ const oracle1ForegroundText = [
 	assert.notEqual(updatedTask.state, "executing");
 	assert.equal(updatedTask.state, "failed");
 	assert.equal(orch.pendingDelegationCount(), 0);
+}
+
+// --------------------------------------------------------------------------
+// Ticket 15: status discloses debt as an estimate on 已用, never as remaining (X7–X10)
+// --------------------------------------------------------------------------
+
+{
+	const usage = usageFixture(0, 0.01);
+	usage.children = [{
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		kind: "worker",
+		pending: true,
+		source: "unavailable",
+		toolCallId: "call-ticket15-d1",
+		tokensDebt: 40000,
+		costDebtUsd: 0.12,
+	}];
+	const status = statusWithBudget({ tokens: 200000, costUsd: 0.5 }, usage);
+	const costLine = status.split("\n").find((line) => line.startsWith("  费用:"));
+	// X7: the estimate is labelled as such; it is never dressed up as a measurement.
+	assert.equal(costLine.includes("已用 $0.1300（其中 $0.1200 是 1 个未知项按授予额度估算，非实测） / 上限 $0.5000，剩余 $0.3700，未知项 1 项"), true);
+	// X8: the note hangs on 已用, the figure it qualifies — not on 剩余.
+	assert.equal(costLine.includes("剩余 $0.3700（其中"), false);
+}
+
+{
+	// X9: a negative remainder is `-$0.0300`, never `$-0.0300`.
+	const usage = usageFixture(0, 0.01);
+	usage.children = [1, 2, 3, 4].map((n) => ({
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		kind: "worker",
+		pending: true,
+		source: "unavailable",
+		toolCallId: `call-ticket15-d5-${n}`,
+		tokensDebt: n === 1 ? 40000 : undefined,
+		costDebtUsd: 0.13,
+	}));
+	const status = statusWithBudget({ tokens: 200000, costUsd: 0.5 }, usage);
+	const costLine = status.split("\n").find((line) => line.startsWith("  费用:"));
+	assert.equal(costLine.includes("剩余 -$0.0300"), true);
+	assert.equal(costLine.includes("$-0.0300"), false);
+}
+
+{
+	// X10: Budget by role carries the same debt the dimensions do.
+	const usage = usageFixture(0, 0.01);
+	usage.children = [{
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		kind: "worker",
+		pending: true,
+		source: "unavailable",
+		toolCallId: "call-ticket15-d1",
+		tokensDebt: 40000,
+		costDebtUsd: 0.12,
+	}];
+	const status = statusWithBudget({ tokens: 200000, costUsd: 0.5 }, usage);
+	assert.equal(status.includes("- worker: 1 calls, tokens=40000, 费用 $0.1200，费用未知 1 项"), true);
 }

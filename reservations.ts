@@ -80,6 +80,19 @@ export class BudgetReservations {
 		return { grant };
 	}
 
+	/**
+	 * What is currently held for one in-flight call, whichever Task holds it.
+	 * Ticket 15 charges an unresolved child this amount as debt, so the figure
+	 * has to be readable from outside without knowing the taskId.
+	 */
+	grantFor(toolCallId: string): HeldReservation | undefined {
+		for (const reservations of this.held.values()) {
+			const reservation = reservations.get(toolCallId);
+			if (reservation) return reservation;
+		}
+		return undefined;
+	}
+
 	release(taskId: string, toolCallId: string): void {
 		const reservations = this.held.get(taskId);
 		if (!reservations) return;

@@ -752,4 +752,138 @@ assert.equal(modelIdForPricing("volcengine/glm-5-3"), "volcengine/glm-5-3");
 	assert.equal(shouldFlushUsageOnShutdown({}), false);
 }
 
+// --------------------------------------------------------------------------
+// Ticket 15: unknown child spend is charged as bounded debt (X1–X6)
+// --------------------------------------------------------------------------
+
+const TICKET15_LIMITS = { tokens: 200000, costUsd: 0.5 };
+
+function ticket15PendingChild(overrides = {}) {
+	return {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		kind: "worker",
+		pending: true,
+		source: "unavailable",
+		toolCallId: "call-ticket15",
+		tokensDebt: 40000,
+		costDebtUsd: 0.12,
+		...overrides,
+	};
+}
+
+function ticket15ResolvedNoRate(overrides = {}) {
+	return {
+		input: 30000,
+		output: 9000,
+		cacheRead: 0,
+		cacheWrite: 0,
+		kind: "worker",
+		pending: false,
+		source: "sync-details",
+		toolCallId: "call-ticket15",
+		tokensDebt: 40000,
+		costDebtUsd: 0.12,
+		...overrides,
+	};
+}
+
+{
+	// X1 (ticket 15 clause 4): a pending child is charged its grant, not zero.
+	const u = ledger();
+	u.recordChild("T-ticket15-d1", ticket15PendingChild());
+	const d1 = summarizeTaskBudget(u.taskUsage("T-ticket15-d1"), TICKET15_LIMITS);
+	assert.equal(d1.costUsd.known, 0.12);
+	assert.equal(d1.costUsd.debt, 0.12);
+	assert.equal(d1.costUsd.remaining, 0.38);
+}
+
+{
+	// X2 (ticket 15 clause 5): real tokens settle; cost stays as debt while unpriced.
+	const u = ledger();
+	u.recordChild("T-ticket15-d2", ticket15PendingChild());
+	u.recordChild("T-ticket15-d2", ticket15ResolvedNoRate());
+	const d2 = summarizeTaskBudget(u.taskUsage("T-ticket15-d2"), TICKET15_LIMITS);
+	assert.equal(d2.tokens.known, 39000);
+	assert.equal(d2.tokens.debt, 0);
+	assert.equal(d2.costUsd.debt, 0.12);
+	assert.equal(d2.costUsd.unknownParts, 1);
+}
+
+{
+	// X3 (ticket 15 clause 1): a second completion for the same toolCallId is an upsert.
+	const u = ledger();
+	u.recordChild("T-ticket15-d3", ticket15PendingChild());
+	u.recordChild("T-ticket15-d3", ticket15ResolvedNoRate());
+	u.recordChild("T-ticket15-d3", ticket15ResolvedNoRate());
+	const taskUsage = u.taskUsage("T-ticket15-d3");
+	const d3 = summarizeTaskBudget(taskUsage, TICKET15_LIMITS);
+	assert.equal(taskUsage.children.length, 1);
+	assert.equal(d3.tokens.known, 39000);
+	assert.equal(d3.tokens.debt, 0);
+	assert.equal(d3.costUsd.known, 0.12);
+	assert.equal(d3.costUsd.debt, 0.12);
+	assert.equal(d3.costUsd.unknownParts, 1);
+}
+
+{
+	// X4: arriving real cost replaces debt, it does not add to it.
+	const u = ledger();
+	u.recordChild("T-ticket15-d4", ticket15PendingChild());
+	u.recordChild("T-ticket15-d4", ticket15ResolvedNoRate());
+	u.recordChild("T-ticket15-d4", {
+		input: 30000,
+		output: 9000,
+		cacheRead: 0,
+		cacheWrite: 0,
+		kind: "worker",
+		pending: false,
+		source: "sync-details",
+		toolCallId: "call-ticket15",
+		costUsd: 0.0731,
+	});
+	const d4 = summarizeTaskBudget(u.taskUsage("T-ticket15-d4"), TICKET15_LIMITS);
+	assert.notEqual(d4.costUsd.known, 0.12 + 0.0731);
+	assert.equal(d4.costUsd.known, 0.0731);
+	assert.equal(d4.costUsd.debt, 0);
+	assert.equal(d4.costUsd.unknownParts, 0);
+}
+
+{
+	// X5: four pending cost debts can drive remaining negative (the gate's view).
+	const u = ledger();
+	for (const n of [1, 2, 3, 4]) {
+		u.recordChild("T-ticket15-d5", ticket15PendingChild({
+			toolCallId: `call-ticket15-d5-${n}`,
+			tokensDebt: n === 1 ? 40000 : undefined,
+			costDebtUsd: 0.13,
+		}));
+	}
+	const d5 = summarizeTaskBudget(u.taskUsage("T-ticket15-d5"), TICKET15_LIMITS);
+	assert.equal(d5.costUsd.remaining < 0, true);
+}
+
+{
+	// X6: leftover debt fields on an already-resolved child are inert.
+	const u = ledger();
+	u.recordChild("T-ticket15-stale", {
+		input: 1000,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		kind: "worker",
+		pending: false,
+		source: "sync-details",
+		toolCallId: "call-ticket15-stale",
+		costUsd: 0.05,
+		tokensDebt: 40000,
+		costDebtUsd: 0.12,
+	});
+	const stale = summarizeTaskBudget(u.taskUsage("T-ticket15-stale"), TICKET15_LIMITS);
+	assert.equal(stale.tokens.debt, 0);
+	assert.equal(stale.costUsd.debt, 0);
+}
+
 console.log("planner-only usage: PASS");

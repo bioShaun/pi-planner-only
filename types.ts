@@ -352,6 +352,17 @@ export interface ChildUsage extends TokenCounts {
 	outcome?: "succeeded" | "failed" | "unknown";
 	turns?: number;
 	costUsd?: number;
+	/**
+	 * Ticket 15: what this child is charged while its real spend is unknown.
+	 * Set from the budget granted at launch, so the liability is bounded by
+	 * something the plugin actually decided rather than by a guess. It is an
+	 * ESTIMATE, not a ceiling: nothing proves the host stops the child at the
+	 * granted value (ticket 17). Counted only while the real value is absent,
+	 * so a resolved child's stale debt field is inert.
+	 */
+	costDebtUsd?: number;
+	/** As costDebtUsd, for the token dimension; counted only while usage is unresolved. */
+	tokensDebt?: number;
 	/** Usage not yet resolvable (async run, metadata file absent at consume time). */
 	pending: boolean;
 	source: "sync-details" | "bg-wait" | "meta-file" | "unavailable";

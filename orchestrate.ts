@@ -256,6 +256,14 @@ export interface DelegationRecord {
 	packetBinding?: { reportRevision: number; workspaceDigest?: string };
 	contextOverridden?: boolean;
 	reuseReason?: string;
+	/**
+	 * Budget reserved for this invocation at launch. Ticket 15 charges these
+	 * amounts as debt while the child's real usage is unknown, so that a child
+	 * which burned real money cannot leave the gate reading a full balance.
+	 * Absent when the Task has no cumulative budget (nothing was reserved).
+	 */
+	grantedTokens?: number;
+	grantedCostUsd?: number;
 	floorLimits?: EffectiveLimits;
 	floorSummary?: string;
 	/** Root prompt requested a full suite while the actual validator suite is bounded. */
@@ -626,8 +634,16 @@ export class PlannerOrchestrator {
 		} finally {
 			// Reservations happen before the launch decision. Any path that returns
 			// without recording a delegation must return its reservation as well.
-			if (!this.delegations.has(event.toolCallId)) {
+			const record = this.delegations.get(event.toolCallId);
+			if (!record) {
 				this.reservations.releaseByToolCall(event.toolCallId);
+			} else {
+				// Ticket 15: stamp the granted budget here rather than at the five
+				// delegations.set sites, for the same reason endDelegation is the one
+				// release point -- a per-site copy is a per-site chance to forget.
+				const grant = this.reservations.grantFor(event.toolCallId);
+				if (grant?.tokens !== undefined) record.grantedTokens = grant.tokens;
+				if (grant?.costUsd !== undefined) record.grantedCostUsd = grant.costUsd;
 			}
 		}
 	}
@@ -1241,12 +1257,19 @@ export class PlannerOrchestrator {
 		}
 		if (task.usage !== undefined) {
 			const budget = summarizeTaskBudget(task.usage, task.spec?.cumulativeBudget);
-			const money = (value: number): string => `$${value.toFixed(4)}`;
-			const dimensionLine = (label: string, dimension: { limit?: number; known: number; unknownParts: number; remaining?: number }, format: (value: number) => string): string => {
-				if (dimension.limit === undefined) return `  ${label}: 已用 ${format(dimension.known)}，未设累计上限，未知项 ${dimension.unknownParts} 项`;
-				const unknownNote = dimension.unknownParts > 0 ? `（不含 ${dimension.unknownParts} 个未知项）` : "";
+			const money = (value: number): string => `${value < 0 ? "-" : ""}$${Math.abs(value).toFixed(4)}`;
+			// Ticket 15: part of 已用 can be debt -- an estimate charged for a child
+			// whose real spend is unknown. It counts against the gate, so it is shown
+			// inside 已用, but it is never shown as if it had been measured.
+			const dimensionLine = (label: string, dimension: { limit?: number; known: number; unknownParts: number; debt: number; remaining?: number }, format: (value: number) => string): string => {
+				const debtNote = dimension.debt > 0
+					? `（其中 ${format(dimension.debt)} 是 ${dimension.unknownParts} 个未知项按授予额度估算，非实测）`
+					: dimension.unknownParts > 0 ? `（不含 ${dimension.unknownParts} 个未知项）` : "";
+				if (dimension.limit === undefined) return `  ${label}: 已用 ${format(dimension.known)}${debtNote}，未设累计上限，未知项 ${dimension.unknownParts} 项`;
 				const overBudget = (dimension.remaining ?? 0) < 0 ? "（已超支）" : "";
-				return `  ${label}: 已用 ${format(dimension.known)} / 上限 ${format(dimension.limit)}，剩余 ${format(dimension.remaining ?? 0)}${unknownNote}，未知项 ${dimension.unknownParts} 项${overBudget}`;
+				// The debt note sits on 已用, the figure it qualifies. Parked after 剩余
+				// it reads as if the estimate were part of what is left.
+				return `  ${label}: 已用 ${format(dimension.known)}${debtNote} / 上限 ${format(dimension.limit)}，剩余 ${format(dimension.remaining ?? 0)}，未知项 ${dimension.unknownParts} 项${overBudget}`;
 			};
 			// Ticket 14 clause 6 / ticket 17 clause 1: a configured limit is only a hard
 			// stop where the host actually halts the child. Enforcement is an explicit

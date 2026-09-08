@@ -89,4 +89,18 @@ assert.doesNotMatch(orchestrate, /UsageLedger/);
 assert.doesNotMatch(orchestrate, /recordRootTurn/);
 assert.doesNotMatch(orchestrate, /recordChild/);
 
+// Ticket 15 X11: every pendingChild call carries a key (runId or a defined toolCallId).
+assert.equal(index.includes("pendingChild(record.kind, { agent, toolCallId: undefined })"), false);
+{
+	const callRe = /(?<!function )pendingChild\(/g;
+	let match;
+	let calls = 0;
+	while ((match = callRe.exec(index))) {
+		calls += 1;
+		const expr = index.slice(match.index, match.index + 220);
+		assert.equal(/toolCallId(?!\s*:\s*undefined)|\brunId\b/.test(expr), true, `pendingChild call is unkeyed: ${expr.split("\n")[0]}`);
+	}
+	assert.equal(calls >= 3, true, "pendingChild must still be called from the adapter");
+}
+
 console.log("planner-only architecture: PASS");
