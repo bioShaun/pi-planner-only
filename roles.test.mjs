@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
 	MUTATING_TOOLS,
 	ROLE_AGENTS,
@@ -19,8 +21,16 @@ import {
 	wrapWorkerContract,
 } from "./roles.ts";
 import { createTaskSpec } from "./task.ts";
-import { validateWorkerReport, workerReportShapeReminder } from "./report.ts";
+import { validateWorkerReport, workerReportShapeReminder, extractWorkerReport } from "./report.ts";
 import { extractReviewRequest, reviewerPrompt } from "./review.ts";
+
+const RUN5_ARTIFACTS = join(process.cwd(), ".scratch/planner-only-cost-control/phase-a-08-run5/artifacts/subagent-artifacts");
+function readRun5Output(prefix) {
+	const name = prefix === "75d7ae1c"
+		? "75d7ae1c-1105-489c-9987-8522f1c3e006_delegate_output.md"
+		: "e63c7583-b530-4915-9a40-54564c188ff1_worker_output.md";
+	return readFileSync(join(RUN5_ARTIFACTS, name), "utf8");
+}
 
 assert.equal(hasMissingRequiredValidationCommands(createTaskSpec({ objective: "missing commands", cwd: process.cwd(), validation: { required: true } })), true);
 assert.equal(hasMissingRequiredValidationCommands(createTaskSpec({ objective: "empty commands", cwd: process.cwd(), validation: { required: true, commands: [] } })), true);
@@ -47,6 +57,24 @@ assert.equal(taskSpecRequestsFullSuite(createTaskSpec({ objective: "types", cwd:
 	assert.deepEqual(validateWorkerReport(reminderReport), []);
 	assert.equal(lastWorkerValidationPassed(reminderReport), false);
 	assert.deepEqual(missingTaskSpecValidationCommands(spec, reminderReport), ["npm test"]);
+}
+
+// Ticket 34: inferred passes from the real run5 reports do not satisfy either gate.
+for (const prefix of ["75d7ae1c", "e63c7583"]) {
+	const extracted = extractWorkerReport(readRun5Output(prefix));
+	const report = extracted.report;
+	const command = report.validation[0].command;
+	const spec = createTaskSpec({ objective: "inferred validation", cwd: process.cwd(), validation: { commands: [command] } });
+	assert.equal(lastWorkerValidationPassed(report), false, prefix);
+	assert.deepEqual(missingTaskSpecValidationCommands(spec, report), [command], prefix);
+}
+
+// Explicit worker-declared passes retain both gates.
+{
+	const explicit = { status: "completed", validation: [{ command: "npm test", status: "passed", exitCode: 0 }] };
+	const spec = createTaskSpec({ objective: "explicit validation", cwd: process.cwd(), validation: { commands: ["npm test"] } });
+	assert.equal(lastWorkerValidationPassed(explicit), true);
+	assert.deepEqual(missingTaskSpecValidationCommands(spec, explicit), []);
 }
 
 // Reviewer children launch with --no-extensions, so git_audit does not exist

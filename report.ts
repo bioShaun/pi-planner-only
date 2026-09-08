@@ -218,6 +218,7 @@ function repairValidationEntries(entries: unknown[], repairs: string[]): void {
 			repairs.push(`${label}.type "${formatRaw(rawType)}" → ${mappedType}`);
 		}
 		if (item.status !== undefined && item.status !== null && item.status !== "") {
+			delete item.inferred;
 			const mappedStatus = mapValidationStatusToken(item.status);
 			if (mappedStatus && item.status !== mappedStatus) {
 				const rawStatus = item.status;
@@ -229,6 +230,7 @@ function repairValidationEntries(entries: unknown[], repairs: string[]): void {
 			if (item.exitCode === 0) inferred = "passed";
 			else if (Number.isInteger(item.exitCode) && item.exitCode !== 0) inferred = "failed";
 			item.status = inferred;
+			item.inferred = true;
 			repairs.push(`${label}.status missing → ${inferred}`);
 		}
 		if (!isNonEmptyString(item.summary)) {

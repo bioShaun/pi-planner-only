@@ -434,6 +434,7 @@ function assertRepaired(raw, expectedPatch, notePattern, context) {
 		validation: [{ command: "x", type: "test", exitCode: 0, summary: "ok" }],
 	}));
 	assert.equal(passed.report.validation[0].status, "passed");
+	assert.ok(passed.report.validation[0].inferred);
 	assert.ok(passed.repairs.some((note) => /status/.test(note)));
 
 	const failed = normalizeWorkerReport(validShape({
@@ -445,6 +446,27 @@ function assertRepaired(raw, expectedPatch, notePattern, context) {
 		validation: [{ command: "x", type: "test", summary: "ok" }],
 	}));
 	assert.equal(notRun.report.validation[0].status, "not-run");
+	assert.ok(notRun.report.validation[0].inferred);
+}
+
+// Ticket 34: real run5 reports with omitted status remain inferred, not worker-declared.
+for (const prefix of ["75d7ae1c", "e63c7583"]) {
+	const extracted = extractWorkerReport(readRun5Output(prefix));
+	assert.equal(extracted.error, undefined, prefix);
+	assert.ok(extracted.report.validation.length > 0, prefix);
+	assert.ok(extracted.report.validation.every((item) => item.status === "passed" && item.inferred === true), prefix);
+}
+
+// L-1: normalizeWorkerReport validation[].status empty and null are inferred.
+{
+	for (const status of ["", null]) {
+		const result = normalizeWorkerReport(validShape({
+			validation: [{ command: "x", type: "test", status, exitCode: 0, summary: "ok" }],
+		}));
+		assert.equal(result.report.validation[0].status, "passed");
+		assert.equal(result.report.validation[0].inferred, true);
+		assert.ok(result.repairs.some((note) => /status missing → passed/.test(note)));
+	}
 }
 
 // L-1: normalizeWorkerReport validation[].summary missing → command, else raw type, else "(no summary)"

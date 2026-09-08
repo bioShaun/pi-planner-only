@@ -152,6 +152,8 @@ export interface ValidationResult {
 	status: ValidationStatus;
 	exitCode?: number;
 	summary: string;
+	/** Root normalization marker; worker-declared reports omit this field. */
+	inferred?: boolean;
 }
 
 /** Upward contract: the only structured thing a worker returns. */

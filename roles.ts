@@ -90,7 +90,7 @@ export function missingTaskSpecValidationCommands(
 	if (!required.length) return [];
 	const covered = new Set(
 		(report?.validation ?? [])
-			.filter((item) => Boolean(item.command) && item.status === "passed" && item.exitCode === 0)
+			.filter((item) => Boolean(item.command) && item.inferred !== true && item.status === "passed" && item.exitCode === 0)
 			.map((item) => item.command as string),
 	);
 	return required.filter((cmd) => !covered.has(cmd));
@@ -118,7 +118,7 @@ export function wrapOracleContract(
 export function lastWorkerValidationPassed(report: WorkerReport | undefined): boolean {
 	if (!report) return false;
 	if (!report.validation.length) return false;
-	return report.validation.every((item) => item.status === "passed" && item.exitCode === 0);
+	return report.validation.every((item) => item.inferred !== true && item.status === "passed" && item.exitCode === 0);
 }
 
 export const ORACLE_SUITE_CONFLICT_WARNING =

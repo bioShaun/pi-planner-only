@@ -50,26 +50,26 @@ e63c7583  ["validation[0].status missing → passed", "validation[1].status miss
 **Blocked by:** None（源码在 `report.ts:227-232`、`roles.ts:89-96`、`roles.ts:118-122`；
 渲染在 `report.ts:664-674`）。
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] 一份 validation 元素**没写 `status`**、只带 `exitCode: 0` 的报告，
+- [x] 一份 validation 元素**没写 `status`**、只带 `exitCode: 0` 的报告，
       归一化后不再满足 `lastWorkerValidationPassed`，也不再让
       `missingTaskSpecValidationCommands` 把该命令记成已覆盖；
       新增测试直接用 run5 的 `75d7ae1c-*_output.md` 与 `e63c7583-*_output.md` 做输入（不许手写 fixture）。
-- [ ] worker **明写** `status:"passed"` + `exitCode:0` 的既有行为逐字不变，两道门槛仍然放行。
-- [ ] `status` 写成空串、null 的情形与缺失情形同等处理，有测试覆盖。
-- [ ] 推断结果仍出现在 `repairs` 里（可读性不许倒退）。
+- [x] worker **明写** `status:"passed"` + `exitCode:0` 的既有行为逐字不变，两道门槛仍然放行。
+- [x] `status` 写成空串、null 的情形与缺失情形同等处理，有测试覆盖。
+- [x] 推断结果仍出现在 `repairs` 里（可读性不许倒退）。
       **渲染函数是 `renderValidationResults`（`report.ts:664-674`），它打印 `[${item.status}]`** ——
       所以「把缺失的 status 推断成 `not-run` 而不是 `passed`」这条路会改变这类报告的渲染文本，
       这是允许的；要求是 **worker 明写 `status` 的报告，渲染输出逐字不变**，
       且读者能看出该值是推断来的（放在 repairs 里即可，不强制改渲染格式）。
-- [ ] 工单 33 的不变量逐条保住：`JSON.parse(workerReportShapeReminder(id))` 仍过 `validateWorkerReport`，
+- [x] 工单 33 的不变量逐条保住：`JSON.parse(workerReportShapeReminder(id))` 仍过 `validateWorkerReport`，
       `lastWorkerValidationPassed` 仍为 false，`missingTaskSpecValidationCommands` 仍返回要求的命令；
       `roles.test.mjs` 里 33 新增的那一块**一行不改**仍然全绿。
-- [ ] 工单 28 的不变量逐条保住：`report.test.mjs` 里 run5 四份样本的断言一行不改仍然全绿，
+- [x] 工单 28 的不变量逐条保住：`report.test.mjs` 里 run5 四份样本的断言一行不改仍然全绿，
       `isCanonicalReportShape` 不动。
-- [ ] 修复前新增用例必须失败，回执贴出失败输出原文。
-- [ ] 不勾 08 checkbox、不改 08 Status、不改 `spec.md`。
+- [x] 修复前新增用例必须失败，回执贴出失败输出原文。
+- [x] 不勾 08 checkbox、不改 08 Status、不改 `spec.md`。
 
 ## Comments
 
@@ -91,3 +91,46 @@ round_id=p12-r056（工单 33 验收时开）
 （那条路必然改变这类报告的渲染文本）。已改成「明写 status 的报告渲染逐字不变」。
 
 round_id=p12-r057（派活前核验）
+
+2026-09-08 planner 验收（round_id=p12-r057，执行者 w2E:pG / pi）：**接受并提交。**
+
+执行者选的是「provenance 标记」路线：`ValidationResult` 新增可选 `inferred?: boolean`，
+`repairValidationEntries` 在推断分支写 `item.inferred = true`、在明写分支 `delete item.inferred`，
+两道门槛各加一个 `item.inferred !== true`。改动量 `report.ts` +2/-0、`roles.ts` +2/-2、
+`types.ts` +2/-0，测试 `report.test.mjs` +22/-0、`roles.test.mjs` +29/-1（那一处删除只是 import
+行加上 `extractWorkerReport`，33 新增的那一块一行未动）。
+
+planner 在自己 pane 里逐条复现（不是采信回执）：
+
+- 两处 RED 独立复现。只回滚 `report.ts` → `report.test.mjs:437` 在
+  `assert.ok(passed.report.validation[0].inferred)` 失败（actual undefined）；只回滚 `roles.ts`
+  → `roles.test.mjs:68` 报 `75d7ae1c` / `true !== false`。逐字节还原后 md5 与冻结快照一致，
+  numstat 与回执逐行相符（22/0、2/0、29/1、2/2、2/0）。
+  日志：`p12-r057-34-verify-red-report.log`、`p12-r057-34-verify-red-roles.log`。
+- 四条验收命令 `slot cpu -- npm run typecheck && npm test && npm run test:e2e && git diff --check`
+  一次跑通，exit 0，17 个测试文件全 PASS。日志：`p12-r057-34-verify-accept.log`。
+  slot 预检见 `p12-r057-verify-slot-audit.log` / `p12-r057-verify-slot-status.log`：
+  发现绕过 slot 的 `agy`（PID 3239052，RSS 0.4G），按规则未终止。
+
+对抗性探针（`p12-r057-34-verify-adversarial.log`，全部走完整 `extractWorkerReport` 管线）：
+
+| 探针 | 输入 | 结果 |
+|---|---|---|
+| P1 | worker 伪造 `inferred:false` 且不写 `status`，`exitCode:0` | 归一化仍强制 `inferred:true`，`lastWorkerValidationPassed=false`，missing `["npm test"]` |
+| P2 | worker 伪造 `inferred:true` 但明写 `status:"passed"` | 标记被删除，两道门槛照常放行（不会被反向拒绝） |
+| P3 | 伪造 `inferred:true` + 明写 `failed` | 标记删除，门槛按 `failed` 正确拒绝 |
+| P4 | `status:"banana"`（不可映射的垃圾值） | **不落进推断分支**，被 `validateWorkerReport` 直接拒收 |
+| P5 | `status: null` | 与缺失同等处理，标记为推断 |
+| P6 | 明写 `passed` 的渲染输出 | `[passed] test: npm test exit 0 — npm test ok`，与改动前逐字一致；`inferred` 不进渲染 |
+
+标记的伪造在两个方向上都关死了：向下伪造（P1）被归一化覆盖，向上伪造（P2/P3）被删除。
+另查 `clampValidation`（`report.ts:611-617`）用 `...item` 展开，`inferred` 能穿过
+`compactWorkerReport`，压缩后再读回不会重新洗白；`validateWorkerReport` 容忍这个多出来的字段。
+
+**留档的两点：** ① P1 里被推断的元素其 `exitCode:0` 仍然保留，`status` 也仍是 `passed`，
+只是多了 `inferred:true` —— 也就是说任何**将来新增**的、只看 `status`/`exitCode` 的消费点
+都会重新踩这个洞；本票只堵了现有两道门槛。② planner 写探针时把
+`missingTaskSpecValidationCommands(spec, report)` 的两个参数写反了，头一轮四条结果全是
+空数组的假绿，实跑对照签名才发现 —— 又一次印证「不能只读代码不实跑」。
+
+round_id=p12-r057
