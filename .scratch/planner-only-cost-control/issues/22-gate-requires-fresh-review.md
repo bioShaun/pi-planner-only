@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done（p10-r046 落地，planner 复核后逐条勾选）
 
 - [x] 设 `PI_PLANNER_ONLY_REQUIRE_REVIEW=1` 时，新建 Task 的 `reviewMode` 为 `fresh`，不是 `root`。
 - [x] 该模式下，没有 reviewer ReviewResult 入账时 `planner_verdict` 的 accept 被拒绝；拒绝文案指名缺的是 reviewer ReviewResult，不指向 slash 命令。

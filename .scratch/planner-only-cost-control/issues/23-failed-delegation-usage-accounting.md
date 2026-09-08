@@ -6,7 +6,7 @@
 
 **Blocked by:** None (can start immediately). Sequential with 21：不要与 21 同一轮抢改 `orchestrate.ts` / `roles.ts`；本票的验收全部走 fixture，不依赖 21 先落地。
 
-**Status:** ready-for-agent
+**Status:** done（p10-r047/r048 + p11-r049/r051/r052，planner 复核后逐条勾选）
 
 - [x] 一次 `isError: true` / Mission failed 的子委派，其 meta 文件中的用量出现在 `usage.jsonl` 的 children 里，条目的 `runId` 与 meta 文件名中的 runId 一致。
 - [x] 该条 child 带一个可区分成功与失败的字段；成功委派条目的既有字段一个不变。

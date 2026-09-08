@@ -1,0 +1,242 @@
+diff --git a/index.ts b/index.ts
+index 410e36a..ed4883c 100644
+--- a/index.ts
++++ b/index.ts
+@@ -1,4 +1,4 @@
+-import { existsSync } from "node:fs";
++import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+ import { appendFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+ import { homedir } from "node:os";
+ import { dirname, join, resolve } from "node:path";
+@@ -19,6 +19,8 @@ import { MAX_REVIEW_ROUNDS, WORKER_REPORT_VERSION, isFinalTaskState, isTerminalT
+ import type { ChildUsage, DelegationKind, ReviewFinding, ReviewMode, ReviewVerdict, TaskState } from "./types.ts";
+ import {
+ 	UsageLedger,
++	buildRunRecord,
++	summarizeRuns,
+ 	childUsageFromValue,
+ 	childOutcomeFromExitCode,
+ 	emptyTaskUsage,
+@@ -1297,6 +1299,49 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 					return lines.join("\n");
+ 				};
+ 
++				if (sub.toLowerCase() === "record") {
++					const tId = (parts[2] ?? "").trim() || store.active()?.taskId;
++					if (!tId) { notify(ctx, "Planner-only: no active task to record.", "warning"); return; }
++					const t = store.get(tId);
++					const u = ledger.taskUsage(t?.taskId ?? tId);
++					if (!t || !u) { notify(ctx, `Unknown planner-only task: ${tId}`, "warning"); return; }
++					const armIdx = parts.indexOf("--arm");
++					const record = buildRunRecord({
++						runId: `${t.taskId}-${Date.now()}`,
++						arm: armIdx > 0 ? (parts[armIdx + 1] ?? "unspecified") : "unspecified",
++						task: {
++							taskId: t.taskId,
++							objective: t.spec?.objective,
++							acceptanceCriteria: t.spec?.acceptanceCriteria ?? [],
++							state: t.state,
++							reviewRounds: t.reviewRound,
++							createdAt: t.createdAt,
++							updatedAt: t.updatedAt,
++							cwd: t.cwd,
++							baseGitRef: t.baseEvidence?.baseGitRef,
++							finalGitRef: t.baseEvidence?.finalGitRef,
++							gitStatusHash: t.baseEvidence?.gitStatusHash,
++						},
++						usage: u,
++						pricing: { path: pricingPath(), version: pricing.version, currency: pricing.currency, loadedAt: new Date().toISOString() },
++					});
++					const dir = join(AGENT_DIR, "planner-only", "runs");
++					mkdirSync(dir, { recursive: true });
++					const out = join(dir, `${record.runId}.json`);
++					writeFileSync(out, `${JSON.stringify(record, null, 2)}\n`, "utf8");
++					notify(ctx, `Planner-only: wrote run record ${out} (comparable: ${record.comparable}).`);
++					return;
++				}
++
++				if (sub.toLowerCase() === "summary") {
++					const dir = (parts[2] ?? "").trim() || join(AGENT_DIR, "planner-only", "runs");
++					if (!existsSync(dir)) { notify(ctx, `Planner-only: no run records at ${dir}.`, "warning"); return; }
++					const records = readdirSync(dir).filter((f) => f.endsWith(".json"))
++						.map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")));
++					notify(ctx, JSON.stringify(summarizeRuns(records), null, 2));
++					return;
++				}
++
+ 				if (sub.toLowerCase() === "session") {
+ 					notify(ctx, renderSessionView());
+ 					return;
+diff --git a/usage.ts b/usage.ts
+index 82ebcdd..61d227f 100644
+--- a/usage.ts
++++ b/usage.ts
+@@ -913,3 +913,168 @@ export function renderUsageLine(taskUsage: TaskUsage, currency: "USD" | "CNY" =
+ export function shouldFlushUsageOnShutdown(reason: unknown): boolean {
+ 	return reason === "quit" || reason === "new" || reason === "fork" || reason === "resume";
+ }
++
++// ---------------------------------------------------------------------------
++// Ticket 18: cost-comparison run records.
++//
++// A run record is the unit of comparison between the isolated baseline and the
++// role-split arm. It must be buildable from data the plugin already holds, so
++// nothing here reads the store or the host: the caller passes the Task facts in
++// structurally. usage.ts must stay free of a task.ts import -- task.ts already
++// imports this module (emptyTaskUsage), so the reverse edge would be a cycle.
++// ---------------------------------------------------------------------------
++
++export interface RunRecordTaskFacts {
++	taskId: string;
++	objective?: string;
++	acceptanceCriteria: string[];
++	state: string;
++	reviewRounds: number;
++	createdAt?: string;
++	updatedAt?: string;
++	cwd: string;
++	baseGitRef?: string;
++	finalGitRef?: string;
++	gitStatusHash?: string;
++}
++
++export interface RunRecordPricingSource {
++	path: string;
++	version?: number;
++	currency: "USD" | "CNY";
++	/** When the table backing this record was read. Pricing changes; a record without it is not replayable. */
++	loadedAt: string;
++}
++
++export interface RunRecord {
++	version: 1;
++	runId: string;
++	recordedAt: string;
++	/** Which comparison arm produced this run. Free text so a third arm needs no code change. */
++	arm: string;
++	task: RunRecordTaskFacts;
++	models: {
++		root?: string;
++		children: Array<{ kind: DelegationKind; agent?: string; model?: string; thinking?: string }>;
++	};
++	pricing: RunRecordPricingSource;
++	/** Cache conditions, measured rather than declared: what the provider actually billed as cache. */
++	cache: { cacheRead: number; cacheWrite: number };
++	tokens: TokenCounts & { total: number; turns: number };
++	cost: {
++		rootUsd?: number;
++		childrenUsd: number;
++		totalUsd?: number;
++		/** Part of the total that is ticket-15 debt (an estimate), not observed spend. */
++		debtUsd: number;
++		/** Components with no resolvable value. Never folded into the totals as zero. */
++		unknownParts: number;
++	};
++	outcome: { state: string; completed: boolean };
++	durationMs?: number;
++	/** False when any figure this record would be compared on is missing. */
++	comparable: boolean;
++	incomparableReasons: string[];
++}
++
++export function buildRunRecord(input: {
++	runId: string;
++	arm: string;
++	task: RunRecordTaskFacts;
++	usage: TaskUsage;
++	pricing: RunRecordPricingSource;
++	now?: () => Date;
++}): RunRecord {
++	const { usage } = input;
++	const unresolved = (child: ChildUsage): boolean => child.pending || child.source === "unavailable";
++	const rootCostUnknown = usage.root.turns > 0 && usage.root.costUsd === undefined;
++	const childrenUsd = usage.children.reduce((sum, child) => sum + (child.costUsd ?? (unresolved(child) ? child.costDebtUsd ?? 0 : 0)), 0);
++	const debtUsd = usage.children.reduce((sum, child) => sum + (child.costUsd === undefined && unresolved(child) ? child.costDebtUsd ?? 0 : 0), 0);
++	const unknownParts = (rootCostUnknown ? 1 : 0)
++		+ usage.children.filter((child) => child.costUsd === undefined && !(unresolved(child) && child.costDebtUsd !== undefined)).length;
++
++	const tokens = {
++		input: usage.root.input + usage.children.reduce((s, c) => s + c.input, 0),
++		output: usage.root.output + usage.children.reduce((s, c) => s + c.output, 0),
++		cacheRead: usage.root.cacheRead + usage.children.reduce((s, c) => s + c.cacheRead, 0),
++		cacheWrite: usage.root.cacheWrite + usage.children.reduce((s, c) => s + c.cacheWrite, 0),
++		total: 0,
++		turns: usage.root.turns + usage.children.reduce((s, c) => s + (c.turns ?? 0), 0),
++	};
++	tokens.total = tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite;
++
++	const incomparableReasons: string[] = [];
++	if (unknownParts > 0) incomparableReasons.push(`${unknownParts} cost component(s) have no resolvable rate`);
++	if (usage.root.tokensUnknownTurns > 0) incomparableReasons.push(`${usage.root.tokensUnknownTurns} root turn(s) reported no token counts`);
++	if (debtUsd > 0) incomparableReasons.push(`$${debtUsd} of the total is estimated debt, not observed spend`);
++
++	const started = input.task.createdAt ? Date.parse(input.task.createdAt) : Number.NaN;
++	const ended = input.task.updatedAt ? Date.parse(input.task.updatedAt) : Number.NaN;
++	const durationMs = Number.isFinite(started) && Number.isFinite(ended) && ended >= started ? ended - started : undefined;
++	if (durationMs === undefined) incomparableReasons.push("run duration is not derivable from the Task timestamps");
++	if (!input.task.baseGitRef) incomparableReasons.push("no baseline git ref: the starting repo state is unidentified");
++
++	const totalUsd = unknownParts > 0 ? undefined : (usage.root.costUsd ?? 0) + childrenUsd;
++
++	return {
++		version: 1,
++		runId: input.runId,
++		recordedAt: (input.now?.() ?? new Date()).toISOString(),
++		arm: input.arm,
++		task: input.task,
++		models: {
++			root: usage.rootModel,
++			children: usage.children.map((child) => ({ kind: child.kind, agent: child.agent, model: child.model, thinking: child.thinking })),
++		},
++		pricing: input.pricing,
++		cache: { cacheRead: tokens.cacheRead, cacheWrite: tokens.cacheWrite },
++		tokens,
++		cost: { rootUsd: usage.root.costUsd, childrenUsd, totalUsd, debtUsd, unknownParts },
++		outcome: { state: input.task.state, completed: input.task.state === "completed" },
++		durationMs,
++		comparable: incomparableReasons.length === 0,
++		incomparableReasons,
++	};
++}
++
++export interface RunSummary {
++	runs: number;
++	comparable: number;
++	incomparable: number;
++	completed: number;
++	/** Over ALL runs, comparable or not: a failure that cannot be priced is still a failure. */
++	passRate: number;
++	/** Comparable runs only, failures included. Ticket 18: failed runs and their cost stay in. */
++	totalSpendUsd: number;
++	/** totalSpendUsd / comparable completions. undefined when nothing completed comparably. */
++	costPerSuccessUsd?: number;
++	avgReviewRounds: number;
++	avgDurationMs?: number;
++	/** Why records were excluded from the cost aggregates, counted by reason. */
++	incomparableReasons: Record<string, number>;
++}
++
++export function summarizeRuns(records: readonly RunRecord[]): RunSummary {
++	const comparable = records.filter((r) => r.comparable);
++	const completed = records.filter((r) => r.outcome.completed);
++	const comparableCompleted = comparable.filter((r) => r.outcome.completed);
++	const totalSpendUsd = comparable.reduce((sum, r) => sum + (r.cost.totalUsd ?? 0), 0);
++	const durations = records.map((r) => r.durationMs).filter((d): d is number => d !== undefined);
++	const reasons: Record<string, number> = {};
++	for (const record of records) {
++		if (record.comparable) continue;
++		for (const reason of record.incomparableReasons) reasons[reason] = (reasons[reason] ?? 0) + 1;
++	}
++	return {
++		runs: records.length,
++		comparable: comparable.length,
++		incomparable: records.length - comparable.length,
++		completed: completed.length,
++		passRate: records.length === 0 ? 0 : completed.length / records.length,
++		totalSpendUsd,
++		costPerSuccessUsd: comparableCompleted.length === 0 ? undefined : totalSpendUsd / comparableCompleted.length,
++		avgReviewRounds: records.length === 0 ? 0 : records.reduce((s, r) => s + r.task.reviewRounds, 0) / records.length,
++		avgDurationMs: durations.length === 0 ? undefined : durations.reduce((s, d) => s + d, 0) / durations.length,
++		incomparableReasons: reasons,
++	};
++}

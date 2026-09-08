@@ -4,7 +4,7 @@
 
 **Blocked by:** 15。
 
-**Status:** ready-for-agent
+**Status:** done（16-a/b = p16-r075/r077/r078；16-c = p17-r079，planner 做完 23 条变异审计并修正后落地 `6d93821`）
 
 - [x] reload 后 status 显示的已用与预留与 reload 前一致。（16-b，p16-r077 落地 / p16-r078 补隔离）
 - [x] Usage 文件损坏：status 显示余额不可信，新的付费委派被拒绝。（同上；跨会话不自愈由 p16-r078 钉死）

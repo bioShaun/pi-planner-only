@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done（p04-r017 落地，planner 复核后逐条勾选）
 
 - [x] 异步 Reviewer 返回合法 ReviewResult：review round 推进，Verdict 可基于该结果产生，通知文案不含 WorkerReport 错误。
 - [x] 异步 Reviewer 返回 taskId 或 reportRevision 不匹配的 ReviewResult：被拒绝的原因与同步路径完全相同。

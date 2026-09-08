@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done（p06-r024 落地，planner 复核后逐条勾选）
 
 - [x] Root 模型无费率：启动通知与 status 输出各含一条警告，内容包含模型名与费率文件路径提示。
 - [x] Root 模型有费率：不出现警告。

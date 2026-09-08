@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done（第 2 条 2026-09-08 装上 pi-tui 后由真实 pi-subagents 公开入口取证，见 Comments）
 
 - [x] Root 历史中放入与 Task 无关的标记后委派 Worker：Worker 收到的执行包含 TaskSpec 与仓库约束，不含该标记；Validator 同理。
 - [x] settings 为 worker 配置 thinking high、oracle 配置 medium：宿主 meta 中实际值与之一致（通过真实 pi-subagents 公开入口或受控本地提供方验证，不以插件写入字段为证）。

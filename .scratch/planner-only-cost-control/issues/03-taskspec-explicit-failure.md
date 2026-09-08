@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done（p04-r018 落地，planner 复核后逐条勾选）
 
 - [x] 嵌入 JSON 含 taskId、acceptanceCriteria、scope 但缺 objective：委派被拒，原因指明缺 objective，未创建任何 Task，未启动子进程。
 - [x] 嵌入 JSON 的 validation.required 不是布尔值：委派被拒，原因指明字段与期望类型。

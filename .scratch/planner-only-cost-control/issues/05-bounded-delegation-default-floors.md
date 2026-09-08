@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done（p05-r021 + p14-r065，planner 复核后逐条勾选）
 
 - [x] 无任何预算的报告修正委派：宿主实际启动参数含默认 toolBudget.hard 与 usageBudget（公开分发包内、有导出符号的模块验证；措辞经用户 2026-09-08 拍板放宽，见文末）。
 - [x] 无任何预算的 Validator 与 Explorer 委派：同上；实现 Worker 首轮只含默认 usageBudget。

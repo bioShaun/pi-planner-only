@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done（p04-r017 落地，planner 复核后逐条勾选）
 
 - [x] 用 pi-subagents 0.65.1 真实前台结果文本（首行 `Run fan-out: …`、尾行 `Mission: … (completed)`，details 含 runId 不含 asyncId）分别以 validator、explorer、worker 角色返回：三种都走完成路径，Validator 结果被记录为验证结论，Explorer 结果原样返回，Worker 结果进入 WorkerReport 解析。
 - [x] 同一文本在调用方 `async:false` 时无论内容如何都不被判为回执。

@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done（p05-r023 落地，planner 复核后逐条勾选）
 
 - [x] Worker 合同文本包含依赖安装禁令、替代做法与 lockfile 申报要求（集成测试断言注入的任务文本）。
 - [x] 插件生成的纠偏提示包含目标状态与 revert 优先建议。
