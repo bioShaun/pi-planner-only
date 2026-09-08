@@ -1,0 +1,107 @@
+########## floors.ts
+--- /home/tcuni-claw/pi/pi-planner-only/floors.ts	2026-09-08 15:16:54.176615738 +0800
++++ floors.ts	2026-09-08 16:07:03.399358561 +0800
+@@ -75,6 +75,52 @@
+  * Load and validate floor config from environment variables.
+  * If any floor env var is set but empty, non-finite, or <= 0, throws an Error.
+  */
++/**
++ * Which cumulative-budget dimensions the HOST actually stops a child process at.
++ *
++ * Default false for both: as of pi-subagents 0.66.0 the only thing proven is
++ * that the host ACCEPTS the `usageBudget` parameter shape (ticket 05 note,
++ * ticket 36 F1). Nothing has ever proven it halts a child at `hard`. Declaring
++ * enforcement is therefore an explicit operator statement, never an inference.
++ * A dimension left undeclared is reported as post-hoc observation only.
++ */
++export interface HostEnforcement {
++	readonly tokens: boolean;
++	readonly costUsd: boolean;
++}
++
++export const HOST_ENFORCEMENT_ENV_VARS = {
++	TOKENS: "PI_PLANNER_ONLY_HOST_ENFORCES_TOKENS",
++	COST_USD: "PI_PLANNER_ONLY_HOST_ENFORCES_COST_USD",
++} as const;
++
++export const DEFAULT_HOST_ENFORCEMENT: HostEnforcement = Object.freeze({
++	tokens: false,
++	costUsd: false,
++});
++
++function readEnforcementFlag(raw: string | undefined, envVar: string, fallback: boolean): boolean {
++	if (raw === undefined) return fallback;
++	const value = raw.trim();
++	if (value === "") {
++		throw new Error(
++			`Host enforcement configuration error: ${envVar} is set but empty; must be 1 or 0.`,
++		);
++	}
++	if (value === "1") return true;
++	if (value === "0") return false;
++	throw new Error(
++		`Host enforcement configuration error: ${envVar}="${raw}" is invalid; must be 1 or 0.`,
++	);
++}
++
++export function loadHostEnforcement(env: NodeJS.ProcessEnv = process.env): HostEnforcement {
++	return Object.freeze({
++		tokens: readEnforcementFlag(env[HOST_ENFORCEMENT_ENV_VARS.TOKENS], HOST_ENFORCEMENT_ENV_VARS.TOKENS, DEFAULT_HOST_ENFORCEMENT.tokens),
++		costUsd: readEnforcementFlag(env[HOST_ENFORCEMENT_ENV_VARS.COST_USD], HOST_ENFORCEMENT_ENV_VARS.COST_USD, DEFAULT_HOST_ENFORCEMENT.costUsd),
++	});
++}
++
+ export function loadFloorConfig(env: NodeJS.ProcessEnv = process.env): FloorConfig {
+ 	return {
+ 		bounded: {
+########## orchestrate.ts
+--- /home/tcuni-claw/pi/pi-planner-only/orchestrate.ts	2026-09-08 15:52:11.256244940 +0800
++++ orchestrate.ts	2026-09-08 16:07:37.117878758 +0800
+@@ -34,7 +34,7 @@
+ 	stripDelegationKeys,
+ } from "./roles.ts";
+ import type { ContextReuseOutcome, DelegationTarget, PrepareRoleDelegationOptions } from "./roles.ts";
+-import { formatFloorLimitsSummary, resolveEffectiveLimits } from "./floors.ts";
++import { formatFloorLimitsSummary, loadHostEnforcement, resolveEffectiveLimits } from "./floors.ts";
+ import { loadRoleModelPolicy, requestedRoleModel, resolveRoleModel, compareResolvedRoleModel } from "./role-models.ts";
+ import type { EffectiveLimits } from "./floors.ts";
+ import {
+@@ -1248,10 +1248,37 @@
+ 				const overBudget = (dimension.remaining ?? 0) < 0 ? "（已超支）" : "";
+ 				return `  ${label}: 已用 ${format(dimension.known)} / 上限 ${format(dimension.limit)}，剩余 ${format(dimension.remaining ?? 0)}${unknownNote}，未知项 ${dimension.unknownParts} 项${overBudget}`;
+ 			};
++			// Ticket 14 clause 6 / ticket 17 clause 1: a configured limit is only a hard
++			// stop where the host actually halts the child. Enforcement is an explicit
++			// operator declaration (default: none), so an undeclared dimension is
++			// reported as post-hoc observation instead of being read as a hard cap.
++			const enforcement = loadHostEnforcement();
++			const enforcementNote = (enforced: boolean): string =>
++				enforced ? "；宿主在上限处强制停止" : "；宿主未强制该维度，仅事后观测";
+ 			if (!budget.configured) {
+ 				lines.push(`Budget: 未设累计上限（已知消耗 tokens=${budget.tokens.known}，费用 ${money(budget.costUsd.known)}；未知项 tokens ${budget.tokens.unknownParts} 项、费用 ${budget.costUsd.unknownParts} 项）`);
+ 			} else {
+-				lines.push("Budget (累计):", dimensionLine("tokens", budget.tokens, (value) => String(value)), dimensionLine("费用", budget.costUsd, money));
++				lines.push("Budget (累计):");
++				if (budget.tokens.limit !== undefined) {
++					lines.push(dimensionLine("tokens", budget.tokens, (value) => String(value)) + enforcementNote(enforcement.tokens));
++				} else {
++					lines.push(dimensionLine("tokens", budget.tokens, (value) => String(value)));
++				}
++				if (budget.costUsd.limit !== undefined) {
++					lines.push(dimensionLine("费用", budget.costUsd, money) + enforcementNote(enforcement.costUsd));
++				} else {
++					lines.push(dimensionLine("费用", budget.costUsd, money));
++				}
++				// Root is not a delegated child: the host offers no pre-call control over it,
++				// so its spend can only be counted after the fact and the overspend it has
++				// already caused must be stated rather than implied by the remaining figure.
++				const overspent: string[] = [];
++				if ((budget.tokens.remaining ?? 0) < 0) overspent.push(`tokens 超额 ${-(budget.tokens.remaining ?? 0)}`);
++				if ((budget.costUsd.remaining ?? 0) < 0) overspent.push(`费用超额 ${money(-(budget.costUsd.remaining ?? 0))}`);
++				lines.push(
++					`  Root: 无预调用控制，Root 自身消耗只能事后计入（已计入 tokens=${budget.byRole.root?.tokens ?? 0}、费用 ${money(budget.byRole.root?.costUsd ?? 0)}）`
++					+ (overspent.length > 0 ? `；当前${overspent.join("、")}` : ""),
++				);
+ 			}
+ 			const roles = (Object.entries(budget.byRole) as Array<[string, { calls: number; tokens: number; costUsd: number; costUnknownParts: number }]>)
+ 				.filter(([, usage]) => usage.calls > 0)

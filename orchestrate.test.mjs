@@ -2182,6 +2182,90 @@ function usageFixture(output = 0, costUsd) {
 	assert.equal(new PlannerOrchestrator({ gitRunner, store }).renderTaskStatus(task).split("\n").some((line) => line.startsWith("Budget")), false);
 }
 
+function withHostEnforcementEnv(overrides, fn) {
+	const keys = ["PI_PLANNER_ONLY_HOST_ENFORCES_TOKENS", "PI_PLANNER_ONLY_HOST_ENFORCES_COST_USD"];
+	const saved = {};
+	for (const key of keys) {
+		saved[key] = process.env[key];
+		delete process.env[key];
+	}
+	for (const [key, value] of Object.entries(overrides)) {
+		process.env[key] = value;
+	}
+	try {
+		return fn();
+	} finally {
+		for (const key of keys) {
+			if (saved[key] === undefined) delete process.env[key];
+			else process.env[key] = saved[key];
+		}
+	}
+}
+
+// Ticket 14B/17 W7 — configured limits without a declaration are labelled observation-only.
+{
+	const usage = usageFixture(700, 0.1234);
+	usage.children = [{ input: 0, output: 300, cacheRead: 0, cacheWrite: 0, kind: "worker", pending: false, source: "sync-details", costUsd: 0.4567 }];
+	const status = withHostEnforcementEnv({}, () => statusWithBudget({ tokens: 1500, costUsd: 1 }, usage));
+	assert.equal(status.split("\n").some((line) => line.startsWith("  tokens:") && line.endsWith("；宿主未强制该维度，仅事后观测")), true, "W7: tokens line is observation-only");
+	assert.equal(status.split("\n").some((line) => line.startsWith("  费用:") && line.endsWith("；宿主未强制该维度，仅事后观测")), true, "W7: cost line is observation-only");
+}
+
+// Ticket 14B/17 W8 — declaring tokens enforcement must not flip the cost line.
+{
+	const status = withHostEnforcementEnv({ PI_PLANNER_ONLY_HOST_ENFORCES_TOKENS: "1" }, () => statusWithBudget({ tokens: 1500, costUsd: 1 }, usageFixture(100, 0.1)));
+	const tokenLine = status.split("\n").find((line) => line.startsWith("  tokens:"));
+	const costLine = status.split("\n").find((line) => line.startsWith("  费用:"));
+	assert.equal(tokenLine.includes("；宿主在上限处强制停止"), true, "W8: tokens line is host-enforced");
+	assert.equal(costLine.includes("；宿主未强制该维度，仅事后观测"), true, "W8: cost line stays observation-only");
+}
+
+// Ticket 14B/17 W9 — a dimension without a limit carries no enforcement suffix.
+// The cost assertion is the positive anchor: without it the two negatives below
+// also hold when the enforcement suffix is removed from the renderer entirely,
+// so the block would pass against a feature that does not exist.
+{
+	const status = withHostEnforcementEnv({}, () => statusWithBudget({ costUsd: 2 }, usageFixture(7, 0.25)));
+	const tokenLine = status.split("\n").find((line) => line.startsWith("  tokens:"));
+	const costLine = status.split("\n").find((line) => line.startsWith("  费用:"));
+	assert.equal(costLine.endsWith("；宿主未强制该维度，仅事后观测"), true, "W9: the limited cost line in the same render does carry the observation suffix");
+	assert.equal(tokenLine.includes("；宿主未强制该维度，仅事后观测"), false, "W9: unlimited tokens line has no observation suffix");
+	assert.equal(tokenLine.includes("；宿主在上限处强制停止"), false, "W9: unlimited tokens line has no hard-stop suffix");
+}
+
+// Ticket 14B/17 W10 — Root spend on the disclosure line is the Root ledger, not the Task total.
+{
+	const usage = usageFixture(700, 0.1234);
+	usage.children = [{ input: 0, output: 300, cacheRead: 0, cacheWrite: 0, kind: "worker", pending: false, source: "sync-details", costUsd: 0.4567 }];
+	const status = withHostEnforcementEnv({}, () => statusWithBudget({ tokens: 1500, costUsd: 1 }, usage));
+	assert.equal(status.includes("  Root: 无预调用控制，Root 自身消耗只能事后计入（已计入 tokens=700、费用 $0.1234）"), true, "W10: Root line uses Root's own tokens and cost");
+}
+
+// Ticket 14B/17 W11 — the overspend named on the disclosure line is attributed to
+// the Task, not to Root: a child can exhaust the limit on its own.
+{
+	const status = withHostEnforcementEnv({}, () => statusWithBudget({ tokens: 10000, costUsd: 1 }, usageFixture(15000, 0.1)));
+	assert.equal(status.includes("；本 Task 当前已超额：tokens 5000"), true, "W11: tokens overspend suffix is frozen as ；本 Task 当前已超额：tokens 5000");
+	assert.equal(status.includes("；当前tokens"), false, "W11: the unattributed 当前tokens wording must not come back");
+}
+
+// Ticket 14B/17 W12 — both overspent dimensions are joined with an ideographic comma.
+{
+	const status = withHostEnforcementEnv({}, () => statusWithBudget({ tokens: 10000, costUsd: 1 }, usageFixture(15000, 1.5)));
+	assert.equal(status.includes("；本 Task 当前已超额：tokens 5000、费用 $0.5000"), true, "W12: both overspend items are joined with 、");
+}
+
+// Ticket 14B/17 W13 — the unconfigured-budget branch is byte-identical to before this ticket.
+{
+	const status = withHostEnforcementEnv({}, () => statusWithBudget(undefined, usageFixture(120, 0)));
+	assert.equal(status.includes("Budget: 未设累计上限（已知消耗 tokens=120，费用 $0.0000；未知项 tokens 0 项、费用 0 项）"), true, "W13: unconfigured budget line is unchanged");
+	assert.equal(status.includes("宿主未强制"), false, "W13: unconfigured branch has no observation suffix");
+	assert.equal(status.includes("宿主在上限处强制停止"), false, "W13: unconfigured branch has no hard-stop suffix");
+	assert.equal(status.includes("Root: 无预调用控制"), false, "W13: unconfigured branch has no Root disclosure line");
+}
+
+// Ticket 14B/17 W14 — the pre-existing Budget (累计) assertions above this block must still pass.
+
 // renderTaskStatus lists validator reports when present, omits the line when absent
 {
 	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });

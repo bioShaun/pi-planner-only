@@ -4,14 +4,14 @@
 
 **Blocked by:** 13。
 
-**Status:** 14A done（clauses 1-5，p15-r069/r070/r071）；clause 6 拆到 14B 未做
+**Status:** done（clauses 1-5 = 14A，p15-r069/r070/r071；clause 6 = 14B，p15-r072 + planner 收尾）
 
 - [x] 剩余额度小于默认地板：下传值为剩余额度；剩余额度大于调用方限制：下传值为调用方限制。
 - [x] 两个允许并发的委派同时启动：第二个只能拿到扣除第一个预留后的余额。
 - [x] 费用维度耗尽而 token 未耗尽：启动被拒绝，原因指明维度。
 - [x] 拒绝信息包含 Task、已知消耗、在途预留、未知项。
 - [x] 重试与 Reviewer 委派不重置累计值。
-- [ ] 宿主不支持某维度硬限制时，status 说明该维度仅事后观测。
+- [x] 宿主不支持某维度硬限制时，status 说明该维度仅事后观测。
 
 ## Comments
 
@@ -58,3 +58,33 @@ Parent: `.scratch/planner-only-cost-control/spec.md`（User Stories 31–32、36
 要等本分支合进 main、扩展更新后才会同步。其余 15 个套件、typecheck、e2e 全绿。
 
 round_id=p15-r069 / p15-r070 / p15-r071
+
+2026-09-08（p15-r072，工单 14B）：第 6 条证据，**不勾 checkbox**。
+
+status 在已配置维度上不再把剩余额度读成硬上限。未声明宿主强制时，`renderTaskStatus` 在该维度行末追加「；宿主未强制该维度，仅事后观测」；操作者把 `PI_PLANNER_ONLY_HOST_ENFORCES_TOKENS` / `PI_PLANNER_ONLY_HOST_ENFORCES_COST_USD` 设为 `1` 时才改为「；宿主在上限处强制停止」。默认两个维度都是 `false`（仅事后观测），声明只能由操作者显式给出，插件不检测、不推断。未配置上限的维度行不加任何强制后缀。W7–W9、W15 守这条。
+
+仍未证明（不要读成已闭合）：宿主运行时是否真的在 `hard` 处把子进程停下来。与工单 05 第 1、2 条同一个缺口。
+
+round_id=p15-r072
+
+2026-09-08（planner claude-pD 收尾，勾上第 6 条）：
+
+我在 planner pane 复跑了 p15-r072 的四条验收，并另做了一次执行者没做的**去功能审计**：
+把 `renderTaskStatus` 的强制后缀整段抹成空串后重跑，W7 立刻失败，说明这条不是空转。
+勾第 6 条的依据只有一句话——**status 说明该维度仅事后观测**，这是展示行为，本轮已逐字冻结；
+它**不**声称宿主真的会停子进程，那个缺口仍然开着（工单 36 的 F3，用户未拍板）。
+
+收尾时我自己改了两处（都是我原型里带进去的缺陷，执行者如实指出）：
+
+1. `floors.ts` 里 `/** Load and validate floor config … */` 这段 JSDoc 原本被 `HostEnforcement`
+   截胡，挂错了对象，已移回 `loadFloorConfig` 正上方。
+2. Root 披露行的超额后缀原文是「；当前tokens 超额 5000、费用超额 $0.5000」，
+   既缺空格，又把 **Task 级**超额写在一行讲 Root 的话里，容易被读成 Root 自己超的。
+   改为「；本 Task 当前已超额：tokens 5000、费用 $0.5000」，并在源码里写明这笔超额归属 Task
+   而不是 Root。W11 除了冻结新文案，还加了一条断言禁止旧措辞回潮。
+
+W9 原本只有两条否定断言，去功能后仍然全绿（不是 V10 那种恒真，但没有正向锚点）。
+已补一条正向锚点：同一次渲染里**有上限**的费用行必须带观测后缀。去功能后该条立即失败，逐字为
+`AssertionError [ERR_ASSERTION]: W9: the limited cost line in the same render does carry the observation suffix`。
+
+round_id=p15-r072（planner 收尾）

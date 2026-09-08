@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import {
 	DEFAULT_FLOORS,
+	DEFAULT_HOST_ENFORCEMENT,
 	FLOOR_ENV_VARS,
 	formatFloorLimitsSummary,
+	HOST_ENFORCEMENT_ENV_VARS,
 	loadFloorConfig,
+	loadHostEnforcement,
 	resolveEffectiveLimits,
 } from "./floors.ts";
 
@@ -241,5 +244,48 @@ for (const envVar of Object.values(FLOOR_ENV_VARS)) {
 	assert.deepEqual(reviewer.costUsd, { value: 0.01, source: "balance" });
 	assert.deepEqual(reviewer.toolBudget, { value: 7, source: "caller" });
 }
+
+// Ticket 14B/17 W1 — undeclared host enforcement is observation-only on both dimensions.
+{
+	const loaded = loadHostEnforcement({});
+	assert.equal(loaded.tokens, false, "W1: default tokens is observation-only");
+	assert.equal(loaded.costUsd, false, "W1: default costUsd is observation-only");
+}
+
+// Ticket 14B/17 W2 — declaring tokens enforcement must not flip costUsd.
+{
+	const loaded = loadHostEnforcement({ [HOST_ENFORCEMENT_ENV_VARS.TOKENS]: "1" });
+	assert.equal(loaded.tokens, true, "W2: tokens declared enforced");
+	assert.equal(loaded.costUsd, false, "W2: costUsd stays observation-only");
+}
+
+// Ticket 14B/17 W3 — an explicit "0" is off, not a truthy string.
+{
+	const loaded = loadHostEnforcement({
+		[HOST_ENFORCEMENT_ENV_VARS.TOKENS]: "0",
+		[HOST_ENFORCEMENT_ENV_VARS.COST_USD]: "0",
+	});
+	assert.equal(loaded.tokens, false, "W3: tokens \"0\" is off");
+	assert.equal(loaded.costUsd, false, "W3: costUsd \"0\" is off");
+}
+
+// Ticket 14B/17 W4 — set-but-empty is fail-closed.
+assert.throws(
+	() => loadHostEnforcement({ [HOST_ENFORCEMENT_ENV_VARS.TOKENS]: "" }),
+	(err) => err instanceof Error && err.message === "Host enforcement configuration error: PI_PLANNER_ONLY_HOST_ENFORCES_TOKENS is set but empty; must be 1 or 0.",
+	"W4: empty host-enforcement flag must throw the frozen empty-string message",
+);
+
+// Ticket 14B/17 W5 — any value other than 1/0 is fail-closed.
+assert.throws(
+	() => loadHostEnforcement({ [HOST_ENFORCEMENT_ENV_VARS.TOKENS]: "yes" }),
+	(err) => err instanceof Error && err.message === 'Host enforcement configuration error: PI_PLANNER_ONLY_HOST_ENFORCES_TOKENS="yes" is invalid; must be 1 or 0.',
+	"W5: invalid host-enforcement flag must throw the frozen invalid-value message",
+);
+
+// Ticket 14B/17 W6 — the default declaration is frozen observation-only.
+assert.equal(Object.isFrozen(DEFAULT_HOST_ENFORCEMENT), true, "W6: DEFAULT_HOST_ENFORCEMENT is frozen");
+assert.equal(DEFAULT_HOST_ENFORCEMENT.tokens, false, "W6: DEFAULT_HOST_ENFORCEMENT.tokens is false");
+assert.equal(DEFAULT_HOST_ENFORCEMENT.costUsd, false, "W6: DEFAULT_HOST_ENFORCEMENT.costUsd is false");
 
 console.log("planner-only floors: PASS");

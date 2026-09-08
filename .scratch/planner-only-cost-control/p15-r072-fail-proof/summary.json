@@ -1,0 +1,114 @@
+[
+  {
+    "id": "W1",
+    "failed": true,
+    "status": 1,
+    "logPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/p15-r072-W1-fail.log",
+    "head": "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: W1: default tokens is observation-only\n\ntrue !== false\n\n    at file:///home/tcuni-claw/pi/pi-planner-only/floors.test.mjs:251:9\n    at ModuleJob.run (node:internal/modules/esm/module_job:371:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:669:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: true,\n  expected: false,\n  operator: 'strictEqual'\n}\n\nNode.js v24.5.0"
+  },
+  {
+    "id": "W2",
+    "failed": true,
+    "status": 1,
+    "logPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/p15-r072-W2-fail.log",
+    "head": "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: W2: costUsd stays observation-only\n\ntrue !== false\n\n    at file:///home/tcuni-claw/pi/pi-planner-only/floors.test.mjs:259:9\n    at ModuleJob.run (node:internal/modules/esm/module_job:371:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:669:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: true,\n  expected: false,\n  operator: 'strictEqual'\n}\n\nNode.js v24.5.0"
+  },
+  {
+    "id": "W3",
+    "failed": true,
+    "status": 1,
+    "logPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/p15-r072-W3-fail.log",
+    "head": "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: W3: tokens \"0\" is off\n\ntrue !== false\n\n    at file:///home/tcuni-claw/pi/pi-planner-only/floors.test.mjs:268:9\n    at ModuleJob.run (node:internal/modules/esm/module_job:371:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:669:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: true,\n  expected: false,\n  operator: 'strictEqual'\n}\n\nNode.js v24.5.0"
+  },
+  {
+    "id": "W4",
+    "failed": true,
+    "status": 1,
+    "logPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/p15-r072-W4-fail.log",
+    "head": "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception: W4: empty host-enforcement flag must throw the frozen empty-string message\n    at file:///home/tcuni-claw/pi/pi-planner-only/floors.test.mjs:273:8\n    at ModuleJob.run (node:internal/modules/esm/module_job:371:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:669:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: undefined,\n  expected: [Function (anonymous)],\n  operator: 'throws'\n}\n\nNode.js v24.5.0"
+  },
+  {
+    "id": "W5",
+    "failed": true,
+    "status": 1,
+    "logPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/p15-r072-W5-fail.log",
+    "head": "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception: W5: invalid host-enforcement flag must throw the frozen invalid-value message\n    at file:///home/tcuni-claw/pi/pi-planner-only/floors.test.mjs:280:8\n    at ModuleJob.run (node:internal/modules/esm/module_job:371:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:669:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: undefined,\n  expected: [Function (anonymous)],\n  operator: 'throws'\n}\n\nNode.js v24.5.0"
+  },
+  {
+    "id": "W6",
+    "failed": true,
+    "status": 1,
+    "logPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/p15-r072-W6-fail.log",
+    "head": "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: W6: DEFAULT_HOST_ENFORCEMENT is frozen\n\nfalse !== true\n\n    at file:///home/tcuni-claw/pi/pi-planner-only/floors.test.mjs:287:8\n    at ModuleJob.run (node:internal/modules/esm/module_job:371:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:669:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: 'strictEqual'\n}\n\nNode.js v24.5.0"
+  },
+  {
+    "id": "W7",
+    "failed": true,
+    "status": 1,
+    "logPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/p15-r072-W7-fail.log",
+    "head": "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: W7: tokens line is observation-only\n\nfalse !== true\n\n    at file:///home/tcuni-claw/pi/pi-planner-only/orchestrate.test.mjs:2210:9 {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: 'strictEqual'\n}\n\nNode.js v24.5.0"
+  },
+  {
+    "id": "W8",
+    "failed": true,
+    "status": 1,
+    "logPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/p15-r072-W8-fail.log",
+    "head": "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: W8: tokens line is host-enforced\n\nfalse !== true\n\n    at file:///home/tcuni-claw/pi/pi-planner-only/orchestrate.test.mjs:2219:9 {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: 'strictEqual'\n}\n\nNode.js v24.5.0"
+  },
+  {
+    "id": "W9",
+    "failed": true,
+    "status": 1,
+    "logPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/p15-r072-W9-fail.log",
+    "head": "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: W9: unlimited tokens line has no observation suffix\n\ntrue !== false\n\n    at file:///home/tcuni-claw/pi/pi-planner-only/orchestrate.test.mjs:2227:9 {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: true,\n  expected: false,\n  operator: 'strictEqual'\n}\n\nNode.js v24.5.0"
+  },
+  {
+    "id": "W10",
+    "failed": true,
+    "status": 1,
+    "logPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/p15-r072-W10-fail.log",
+    "head": "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: W10: Root line uses Root's own tokens and cost\n\nfalse !== true\n\n    at file:///home/tcuni-claw/pi/pi-planner-only/orchestrate.test.mjs:2236:9 {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: 'strictEqual'\n}\n\nNode.js v24.5.0"
+  },
+  {
+    "id": "W11",
+    "failed": true,
+    "status": 1,
+    "logPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/p15-r072-W11-fail.log",
+    "head": "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: W11: tokens overspend suffix is frozen as ；当前tokens 超额 5000\n\nfalse !== true\n\n    at file:///home/tcuni-claw/pi/pi-planner-only/orchestrate.test.mjs:2242:9 {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: 'strictEqual'\n}\n\nNode.js v24.5.0"
+  },
+  {
+    "id": "W12",
+    "failed": true,
+    "status": 1,
+    "logPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/p15-r072-W12-fail.log",
+    "head": "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: W12: both overspend items are joined with 、\n\nfalse !== true\n\n    at file:///home/tcuni-claw/pi/pi-planner-only/orchestrate.test.mjs:2248:9 {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: 'strictEqual'\n}\n\nNode.js v24.5.0"
+  },
+  {
+    "id": "W13",
+    "failed": true,
+    "status": 1,
+    "logPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/p15-r072-W13-fail.log",
+    "head": "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: W13: unconfigured branch has no Root disclosure line\n\ntrue !== false\n\n    at file:///home/tcuni-claw/pi/pi-planner-only/orchestrate.test.mjs:2257:9 {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: true,\n  expected: false,\n  operator: 'strictEqual'\n}\n\nNode.js v24.5.0"
+  },
+  {
+    "id": "W14",
+    "failed": true,
+    "status": 1,
+    "logPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/p15-r072-W14-fail.log",
+    "head": "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\nfalse !== true\n\n    at file:///home/tcuni-claw/pi/pi-planner-only/orchestrate.test.mjs:2145:9 {\n  generatedMessage: true,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: 'strictEqual'\n}\n\nNode.js v24.5.0"
+  },
+  {
+    "id": "W15",
+    "failed": true,
+    "status": 1,
+    "logPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/p15-r072-W15-fail.log",
+    "head": "    '\\t\\t\\tfloorTokens = config.workerInitial.tokensHard;\\n' +\n    '\\t\\t\\tfloorCostUsd = config.workerInitial.costUsdHard;\\n' +\n    '\\t\\t}\\n' +\n    '\\t}\\n' +\n    '\\n' +\n    '\\tconst callerTool = extractCallerToolHard(options.callerToolBudget);\\n' +\n    '\\tconst callerTokens = extractCallerTokensHard(options.callerUsageBudget);\\n' +\n    '\\tconst callerCostUsd = extractCallerCostUsdHard(options.callerUsageBudget);\\n' +\n    '\\n' +\n    '\\tconst specTool = extractBudgetTool(options.taskSpecBudget);\\n' +\n    '\\tconst specTokens = extractBudgetTokens(options.taskSpecBudget);\\n' +\n    '\\tconst specCostUsd = extractBudgetCostUsd(options.taskSpecBudget);\\n' +\n    '\\n' +\n    '\\t// Dimension 1: toolBudget\\n' +\n    '\\tlet effectiveTool: EffectiveLimi'... 4272 more characters,\n  expected: /export const DEFAULT_HOST_ENFORCEMENT: HostEnforcement = Object\\.freeze\\(\\{\\s*tokens: false,\\s*costUsd: false,\\s*\\}\\)/,\n  operator: 'match'\n}\n\nNode.js v24.5.0"
+  },
+  {
+    "id": "W16",
+    "failed": true,
+    "status": 1,
+    "logPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/planner-only-cost-control/p15-r072-W16-fail.log",
+    "head": "    '\\t\\t\\t// Initial worker: no toolBudget floor\\n' +\n    '\\t\\t\\tfloorTokens = config.workerInitial.tokensHard;\\n' +\n    '\\t\\t\\tfloorCostUsd = config.workerInitial.costUsdHard;\\n' +\n    '\\t\\t}\\n' +\n    '\\t}\\n' +\n    '\\n' +\n    '\\tconst callerTool = extractCallerToolHard(options.callerToolBudget);\\n' +\n    '\\tconst callerTokens = extractCallerTokensHard(options.callerUsageBudget);\\n' +\n    '\\tconst callerCostUsd = extractCallerCostUsdHard(options.callerUsageBudget);\\n' +\n    '\\n' +\n    '\\tconst specTool = extractBudgetTool(options.taskSpecBudget);\\n' +\n    '\\tconst specTokens = extractBudgetTokens(options.taskSpecBudget);\\n' +\n    '\\tconst specCostUsd = extractBudgetCostUsd(options.taskSpecBudget);\\n' +\n    '\\n' +\n    '\\t// Dimension 1: toolBu'... 4310 more characters,\n  expected: /from \"\\.\\/index\\.ts\"|@earendil-works/,\n  operator: 'doesNotMatch'\n}\n\nNode.js v24.5.0"
+  }
+]

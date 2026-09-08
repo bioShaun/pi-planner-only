@@ -1272,16 +1272,12 @@ export class PlannerOrchestrator {
 				// Root is not a delegated child: the host offers no pre-call control over it,
 				// so its spend can only be counted after the fact and the overspend it has
 				// already caused must be stated rather than implied by the remaining figure.
-				// The overspend below is the TASK's, not necessarily Root's: a child can
-				// blow the limit on its own. It is stated on this line because that is
-				// where the absence of a pre-call stop is disclosed, so the attribution
-				// must be spelled out rather than left to the reader.
 				const overspent: string[] = [];
-				if ((budget.tokens.remaining ?? 0) < 0) overspent.push(`tokens ${-(budget.tokens.remaining ?? 0)}`);
-				if ((budget.costUsd.remaining ?? 0) < 0) overspent.push(`费用 ${money(-(budget.costUsd.remaining ?? 0))}`);
+				if ((budget.tokens.remaining ?? 0) < 0) overspent.push(`tokens 超额 ${-(budget.tokens.remaining ?? 0)}`);
+				if ((budget.costUsd.remaining ?? 0) < 0) overspent.push(`费用超额 ${money(-(budget.costUsd.remaining ?? 0))}`);
 				lines.push(
 					`  Root: 无预调用控制，Root 自身消耗只能事后计入（已计入 tokens=${budget.byRole.root?.tokens ?? 0}、费用 ${money(budget.byRole.root?.costUsd ?? 0)}）`
-					+ (overspent.length > 0 ? `；本 Task 当前已超额：${overspent.join("、")}` : ""),
+					+ (overspent.length > 0 ? `；当前${overspent.join("、")}` : ""),
 				);
 			}
 			const roles = (Object.entries(budget.byRole) as Array<[string, { calls: number; tokens: number; costUsd: number; costUnknownParts: number }]>)

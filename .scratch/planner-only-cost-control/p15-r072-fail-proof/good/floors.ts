@@ -72,6 +72,10 @@ function parsePositiveFiniteNumber(
 }
 
 /**
+ * Load and validate floor config from environment variables.
+ * If any floor env var is set but empty, non-finite, or <= 0, throws an Error.
+ */
+/**
  * Which cumulative-budget dimensions the HOST actually stops a child process at.
  *
  * Default false for both: as of pi-subagents 0.66.0 the only thing proven is
@@ -117,10 +121,6 @@ export function loadHostEnforcement(env: NodeJS.ProcessEnv = process.env): HostE
 	});
 }
 
-/**
- * Load and validate floor config from environment variables.
- * If any floor env var is set but empty, non-finite, or <= 0, throws an Error.
- */
 export function loadFloorConfig(env: NodeJS.ProcessEnv = process.env): FloorConfig {
 	return {
 		bounded: {
