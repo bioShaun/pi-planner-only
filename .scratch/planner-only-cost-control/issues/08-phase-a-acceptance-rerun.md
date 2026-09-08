@@ -4,24 +4,24 @@
 
 **Blocked by:** 01、02、03、04、05、06、07、22、23 —— **全部已落地**（23 于 2026-09-08 p10-r048 关闭，7/7）。账本一致性那条因此**不再是 not-run，是硬条件**。
 
-**Status:** ready-for-human
+**Status:** done（2026-09-08 r6 十四条全 pass，用户授权关票并进入阶段 B–E）
 
 运行约定（下面每条验收都按这三个路径写，`<N>` 为本次重跑序号）：`<RUN>`＝`.scratch/planner-only-cost-control/phase-a-08-run<N>`，`<LOG>`＝`<RUN>/artifacts/root-session.jsonl`，`<SA>`＝`<RUN>/artifacts/subagent-artifacts`，账本＝`<RUN>/artifacts/usage.jsonl`。子代理产物按 `<runId>_<agent>_<n>_{input,output,meta,transcript}` 命名，`agent` 是 pi 侧的子代理名 —— 角色到子代理名的映射见 `roles.ts` 的 `ROLE_AGENTS`／`AGENT_ROLES`：validator→`oracle`，reviewer/explorer→`reviewer`，worker 保留自身。**因此判断 oracle/reviewer 是否真的跑过，要认 meta.json 的 *顶层* `agent` 字段，既不要认文件名前缀，也不要用 `grep` 扫全文**（r4 只出现了 `worker`／`delegate`／`scout`；全文 grep 会命中 worker meta 里的 `acceptance.review.agent`）。**本次重跑必须带 `PI_PLANNER_ONLY_REQUIRE_REVIEW=1` 启动**（工单 22），且运行期间不得执行 `/planner-only review root` —— 那条 operator slash 命令能一步把两道门槛一起关掉。
 
-- [ ] 启动环境确实带了严格模式：运行日志里记下 `PI_PLANNER_ONLY_REQUIRE_REVIEW=1`，且 `grep -c "review mode: root" <LOG>` 为 **0**、`grep -c "review mode: fresh" <LOG>` **≥ 1**。
-- [ ] 一次运行产生 `planner_verdict` PASS，无人工 kill；`usage.jsonl` 末条 `state=completed`。
-- [ ] **Oracle 真的跑过**：`python3 -c 'import json,glob,sys; print(sum(json.load(open(f)).get("agent") in ("oracle","validator") for f in glob.glob(sys.argv[1])))' '<SA>/*_meta.json'` **≥ 1**。
-- [ ] **Reviewer 真的跑过**：`python3 -c 'import json,glob,sys; print(sum(json.load(open(f)).get("agent") in ("reviewer","explorer") for f in glob.glob(sys.argv[1])))' '<SA>/*_meta.json'` **≥ 1**。**必须读 meta 的顶层 `agent` 字段** —— 不要用 `grep -l '"agent": "reviewer"'`：worker 的 meta 里 `acceptance.review.agent` 也是 `"reviewer"`，那条命令会把每个 worker 都算成 reviewer（2026-09-08 r5 实测 11 vs 真实 4）。
-- [ ] **ReviewResult 真的由 reviewer 子代理产出**：上一条命中的 runId，其 `<SA>/<runId>_*_output.md` 能被 `review.ts` 的 `extractReviewResult` 解出（人工核对时看该文件里有 `"verdict"` 与 `"findings"` 字段即可）。**不接受在 `<LOG>` 里 `grep -c ReviewResult`** —— 这个词在 reviewer 提示词与合同文本里本来就会出现，计数不为零证明不了任何评审发生过；旧条款「ReviewResult 被记录（同步或异步均可）」正是败在这里，r4 里 Root 自封 verdict 时字面上能辩成满足。
-- [ ] **证据归因非零**：accept 回执 `evidence:` 行的 attributed paths **> 0**；取值 `grep -o "attributed [0-9]* path" <LOG> | tail -1`。
-- [ ] 无占位 Task：`grep -c "Placeholder task" <LOG>` 为 **0**；Worker 报告 taskId 与 canonical id 匹配或被识别为别名。
-- [ ] 无 WorkerReport 解析错误：`grep -c "not a valid WorkerReport" <LOG>` 为 **0**。
-- [ ] Validator 至多委派一次；不出现「Async delegation has started」后无法等待的情况。
-- [ ] 结束时工作树干净，无 lockfile 漂移（`git status --porcelain` 只剩本次运行的预期产物）。
-- [ ] 每次委派均在默认地板内；纠偏 Worker（如发生）轮次不超过工具上限。
-- [ ] **对照文件必须写出**：`test -f .scratch/planner-only-cost-control/phase-a-08-run<N>/comparison.md`。内容记录规划、实现、Validator、Reviewer 四段墙钟与子进程费用；参考值约 40 s / 2 min / 30–50 s / 70 s、约 $0.19，偏离不作为失败条件但需解释。
-- [ ] 运行前执行 `slot audit` 与 `slot status` 并记录。
-- [ ] 账本一致性（**硬条件**，23 已落地）：`usage.jsonl` 末条 children 的 runId 集合与 `<SA>` 中 `*_meta.json` 的 runId 集合**相等**。差集非空即本条 fail，且须把差集与漏记金额写进对照文件。scout／unbound explorer 那笔现在也必须在集合里 —— 23 关闭前它会掉进一个永远不写出的合成 taskId，正是本条要盯的。
+- [x] 启动环境确实带了严格模式：运行日志里记下 `PI_PLANNER_ONLY_REQUIRE_REVIEW=1`，且 `grep -c "review mode: root" <LOG>` 为 **0**、`grep -c "review mode: fresh" <LOG>` **≥ 1**。
+- [x] 一次运行产生**一次被记录的 PASS verdict**，无人工 kill；`usage.jsonl` 中**该 Task 的记录** `state=completed`。**（2026-09-08 改措辞，用户授权）** 被记录的 PASS 可以是 fresh reviewer 的 accept（工单 22／24 落地后这才是完成动作，Root 随后的 `planner_verdict` 会被按设计以 `refused: lifecycle` 拒收），也可以是无 reviewer 可仲裁时 Root 自己的 `planner_verdict`。**不要再认「末条」** —— 工单 35 的进程退出兜底会在末尾追加一行 `unattributed:true` 的快照，照旧写法会 `KeyError: 'state'`；该兜底行允许并存，不影响本条。
+- [x] **Oracle 真的跑过**：`python3 -c 'import json,glob,sys; print(sum(json.load(open(f)).get("agent") in ("oracle","validator") for f in glob.glob(sys.argv[1])))' '<SA>/*_meta.json'` **≥ 1**。
+- [x] **Reviewer 真的跑过**：`python3 -c 'import json,glob,sys; print(sum(json.load(open(f)).get("agent") in ("reviewer","explorer") for f in glob.glob(sys.argv[1])))' '<SA>/*_meta.json'` **≥ 1**。**必须读 meta 的顶层 `agent` 字段** —— 不要用 `grep -l '"agent": "reviewer"'`：worker 的 meta 里 `acceptance.review.agent` 也是 `"reviewer"`，那条命令会把每个 worker 都算成 reviewer（2026-09-08 r5 实测 11 vs 真实 4）。
+- [x] **ReviewResult 真的由 reviewer 子代理产出**：上一条命中的 runId，其 `<SA>/<runId>_*_output.md` 能被 `review.ts` 的 `extractReviewResult` 解出（人工核对时看该文件里有 `"verdict"` 与 `"findings"` 字段即可）。**不接受在 `<LOG>` 里 `grep -c ReviewResult`** —— 这个词在 reviewer 提示词与合同文本里本来就会出现，计数不为零证明不了任何评审发生过；旧条款「ReviewResult 被记录（同步或异步均可）」正是败在这里，r4 里 Root 自封 verdict 时字面上能辩成满足。
+- [x] **证据归因非零**：accept 回执 `evidence:` 行的 attributed paths **> 0**；取值 `grep -o "attributed [0-9]* path" <LOG> | tail -1`。
+- [x] 无占位 Task：`grep -c "Placeholder task" <LOG>` 为 **0**；Worker 报告 taskId 与 canonical id 匹配或被识别为别名。
+- [x] 无 WorkerReport 解析错误：`grep -c "not a valid WorkerReport" <LOG>` 为 **0**。
+- [x] Validator 至多委派一次；不出现「异步委派起了却等不到」的情况。**（2026-09-08 改命令，用户授权）** 真实回执是 `Async delegation for task <id> has started (runId: …)`，**不要 grep 字面串 `Async delegation has started`** —— 它恒不匹配，计数 0 是假阴性（2026-09-08 r6 实测：字面串 0，实际 1 次且被等到）。用两条对照：`grep -o 'Async delegation for task [^ ]* has started' <LOG> | sort | uniq -c` 与 `grep -o 'bg_wait id=[0-9a-f-]*' <LOG> | sort | uniq -c`，每个 started 都要有对应的 `bg_wait`。
+- [x] 结束时工作树干净，无 lockfile 漂移（`git status --porcelain` 只剩本次运行的预期产物）。
+- [x] 每次委派均在默认地板内；纠偏 Worker（如发生）轮次不超过工具上限。
+- [x] **对照文件必须写出**：`test -f .scratch/planner-only-cost-control/phase-a-08-run<N>/comparison.md`。内容记录规划、实现、Validator、Reviewer 四段墙钟与子进程费用；参考值约 40 s / 2 min / 30–50 s / 70 s、约 $0.19，偏离不作为失败条件但需解释。
+- [x] 运行前执行 `slot audit` 与 `slot status` 并记录。
+- [x] 账本一致性（**硬条件**，23 已落地）：`usage.jsonl` 末条 children 的 runId 集合与 `<SA>` 中 `*_meta.json` 的 runId 集合**相等**。差集非空即本条 fail，且须把差集与漏记金额写进对照文件。scout／unbound explorer 那笔现在也必须在集合里 —— 23 关闭前它会掉进一个永远不写出的合成 taskId，正是本条要盯的。
 
 判定规则：以上每条**分别**判 pass / fail / not-run，任一条 fail 即整轮 FAIL，不做整体印象判断。上面九条带命令的条款必须贴出实际命令输出，不接受「已确认」。
 
@@ -105,3 +105,13 @@ round_id=claude-pD-2026-09-08-fix-08-clauses
   **本票条款缺陷（未擅自修改，待授权）：** ① 条款 2 的「`usage.jsonl` 末条 `state=completed`」被工单 35 淘汰 —— 退出兜底会追加一行 `unattributed` 快照，末条不再是 Task 行（照字面跑会 `KeyError: 'state'`）；同条「一次运行产生 `planner_verdict` PASS」也被 22／24 淘汰 —— fresh reviewer 的 PASS 才是完成动作，Root 随后的 verdict 会被按设计拒收。建议改为「该 Task 的账本记录 `state=completed`，允许并存 `unattributed:true` 的兜底行」＋「产生一次被记录的 PASS verdict（fresh reviewer accept，或无 reviewer 可仲裁时的 `planner_verdict`）」。② 条款 9 的字面串 `Async delegation has started` 与真实回执 `Async delegation for task <id> has started (runId: …)` 对不上，grep 恒为 0（本轮 0 是假阴性，实际有 1 次并被等到）；建议改成 `grep -o 'Async delegation for task [^ ]* has started'` ＋ `grep -o 'bg_wait id=[0-9a-f-]*'`。两处只在 `judge.sh` 里按语义修正并加了注释，**票面一个字未动**。备份 `08-phase-a-acceptance-rerun.md.bak-20260908e`。
 
 round_id=claude-pD-2026-09-08-judge-08-r6
+
+### 2026-09-08 关票（用户授权）
+
+用户裁定：**关票并进入阶段 B–E**，并授权按上一条建议改写条款 2 与条款 9 的措辞。已执行：
+
+1. **条款 2、条款 9 就地改写**（备份 `08-phase-a-acceptance-rerun.md.bak-20260908f`）。两处都是**定位方式**的修正，门槛语义未变：条款 2 仍要求「一次被记录的 PASS + 该 Task 记录 `state=completed`」，只是不再把「末条」当作定位方式（工单 35 的退出兜底会追加 `unattributed:true` 行）；条款 9 仍要求「异步委派必须被等到」，只是把恒不匹配的字面串换成真实回执的措辞并补了 `bg_wait` 对照。判定仍然可机检。
+2. **十四条全部勾选，Status 置 done**。门槛依据是 **r6**：`phase-a-08-run6/comparison.md`，judge 十四条全 pass，记录在 commit `a6ba5d4`。要点：`review mode: root` 0／`fresh` 2；oracle 1、reviewer 1（认 meta 顶层 `agent`）；ReviewResult 由 `review.ts` 的 `extractReviewResult` 实跑解析成功；`attributed 2 path`；`Placeholder task` 0（r5 为 16）；`not a valid WorkerReport` 0（r5 为 6）；异步委派 1 次且有对应 `bg_wait`；账本 runId 集合与 `<SA>` meta runId 集合**相等，未记账 $0.00000000**（r5 漏 35.1%、r4 漏 30.1%）；实测 $0.15628，按主模型 5× 复算 $0.21907，都低于参照的 ~$0.19→~$0.29；总墙钟 7m23s。
+3. **遗留提示（未擅自改，留给后续票）**：条款 14 的「`usage.jsonl` **末条** children」与条款 2 原文是同一个「末条」定位缺陷。r6 判定时按语义取的是**所有行 children 的并集**（否则会因工单 35 的兜底行误报漏账 $0.10618）。本次未改这行票面 —— 若后续还要复用本票，请一并按并集改写。
+
+round_id=claude-pD-2026-09-08-close-08
