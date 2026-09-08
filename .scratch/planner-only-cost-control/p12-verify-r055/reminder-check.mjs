@@ -1,0 +1,12 @@
+import { workerReportShapeReminder, validateWorkerReport } from "../../../report.ts";
+import { missingTaskSpecValidationCommands, lastWorkerValidationPassed } from "../../../roles.ts";
+const s = workerReportShapeReminder("T-20260908-028");
+console.log("reminder:", s);
+console.log("length:", s.length);
+const OLD = `{"version":1,"taskId":"T-20260908-028","status":"completed|partial|blocked|failed","summary":"...","changedFiles":[],"validation":[],"evidence":{"taskId":"T-20260908-028"},"risks":[],"unresolved":[]}`;
+console.log("old length:", OLD.length, "delta:", s.length - OLD.length);
+const p = JSON.parse(s);
+console.log("validateWorkerReport:", JSON.stringify(validateWorkerReport(p)));
+const spec = { validation: { commands: ["npm test"] } };
+console.log("missingTaskSpecValidationCommands:", JSON.stringify(missingTaskSpecValidationCommands(spec, p)));
+console.log("lastWorkerValidationPassed:", lastWorkerValidationPassed(p));

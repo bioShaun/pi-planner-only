@@ -14,6 +14,7 @@ const roles = src("roles.ts");
 const usage = src("usage.ts");
 const roleModels = src("role-models.ts");
 const orchestrate = src("orchestrate.ts");
+const reservations = src("reservations.ts");
 const pkg = JSON.parse(src("package.json"));
 
 // Pi package contract (https://pi.dev/docs — packages.md).
@@ -76,6 +77,9 @@ assert.match(orchestrate, /from "\.\/role-models\.ts"/);
 assert.match(index, /from "\.\/role-models\.ts"/);
 assert.doesNotMatch(policy, /role-models|PI_PLANNER_ONLY_MODEL_|ROLE_MODELS/);
 assert.doesNotMatch(roleModels, /from "\.\/index\.ts"|@earendil-works/);
+assert.equal((orchestrate.match(/this\.delegations\.delete\(/g) ?? []).length, 1, "delegations must converge on one endDelegation delete");
+assert.equal(pkg.files.includes("reservations.ts"), true, "reservations.ts must ship in the package files list");
+assert.doesNotMatch(reservations, /from "\.\/index\.ts"|@earendil-works/);
 
 // Orchestration records no ledger mutations; the adapter owns capture.
 assert.doesNotMatch(orchestrate, /UsageLedger/);

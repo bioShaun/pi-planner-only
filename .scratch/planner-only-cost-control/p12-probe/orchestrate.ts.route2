@@ -93,9 +93,6 @@ import type {
 	StructuredDelegationMode,
 	WorkerReport,
 } from "./types.ts";
-import { summarizeTaskBudget } from "./usage.ts";
-import { BudgetReservations } from "./reservations.ts";
-import type { ReservationBudget } from "./reservations.ts";
 
 /** Worker output kept as a fallback when a report cannot be parsed at all. */
 const RAW_OUTPUT_FALLBACK_CHARS = 4000;
@@ -248,12 +245,6 @@ export interface DelegationRecord {
 	lockedAt?: string;
 	/** The ReviewRequest packet this reviewer invocation carries was truncated; a PASS over it is ineligible. */
 	packetTruncated?: boolean;
-	/**
-	 * Bindings from the ReviewRequest packet this reviewer actually received.
-	 * Used only to fill omitted ReviewResult fields; validation still compares
-	 * against the Task at record time.
-	 */
-	packetBinding?: { reportRevision: number; workspaceDigest?: string };
 	contextOverridden?: boolean;
 	reuseReason?: string;
 	floorLimits?: EffectiveLimits;
@@ -502,7 +493,6 @@ export class PlannerOrchestrator {
 	private readonly artifactDirs: () => readonly string[];
 	/** toolCallId -> delegated task + invocation kind. */
 	private readonly delegations = new Map<string, DelegationRecord>();
-	private readonly reservations = new BudgetReservations();
 	/** runIds whose subagent-notify (or sync result) has already been consumed. */
 	private readonly processedRunIds = new Set<string>();
 	/** taskId -> history of all delegations for that task. */
@@ -543,28 +533,6 @@ export class PlannerOrchestrator {
 		this.artifactDirs = deps.artifactDirs ?? (() => []);
 		this.structuredDelegationMode =
 			deps.structuredDelegationMode ?? readStructuredDelegationMode();
-	}
-
-	private endDelegation(toolCallId: string): void {
-		const record = this.delegations.get(toolCallId);
-		this.delegations.delete(toolCallId);
-		if (record) this.reservations.release(record.taskId, toolCallId);
-	}
-
-	private cumulativeBudgetRefusal(taskId: string, budget: ReservationBudget, refusal: { dimension: "tokens" | "costUsd" }): string {
-		const inFlight = this.reservations.inFlight(taskId);
-		const limit = (dimension: "tokens" | "costUsd"): string => {
-			const item = budget[dimension];
-			return item.limit === undefined ? "未设" : dimension === "tokens" ? String(item.limit) : item.limit.toFixed(4);
-		};
-		return [
-			`Planner-only guard: task ${taskId} cumulative budget exhausted (${refusal.dimension}).`,
-			`已知消耗: tokens=${budget.tokens.known}, 费用 $${budget.costUsd.known.toFixed(4)}`,
-			`在途预留: tokens=${inFlight.tokens}, 费用 $${inFlight.costUsd.toFixed(4)}`,
-			`未知项: tokens ${budget.tokens.unknownParts} 项, 费用 ${budget.costUsd.unknownParts} 项`,
-			`上限: tokens=${limit("tokens")}, 费用 $${limit("costUsd")}`,
-			"本次受控启动被拒绝；结束在途子进程或提高 cumulativeBudget 后重试。",
-		].join("\n");
 	}
 
 	pendingDelegationCount(): number {
@@ -618,21 +586,6 @@ export class PlannerOrchestrator {
 	}
 
 	async beginDelegation(
-		event: { toolCallId: string; input?: unknown },
-		baseCwd: string,
-	): Promise<DelegationOutcome> {
-		try {
-			return await this.beginDelegationInner(event, baseCwd);
-		} finally {
-			// Reservations happen before the launch decision. Any path that returns
-			// without recording a delegation must return its reservation as well.
-			if (!this.delegations.has(event.toolCallId)) {
-				this.reservations.releaseByToolCall(event.toolCallId);
-			}
-		}
-	}
-
-	private async beginDelegationInner(
 		event: { toolCallId: string; input?: unknown },
 		baseCwd: string,
 	): Promise<DelegationOutcome> {
@@ -698,33 +651,6 @@ export class PlannerOrchestrator {
 				callerUsageBudget: (input as Record<string, unknown>).usageBudget,
 				taskSpecBudget: spec?.budget,
 			});
-		}
-		const budgetTask = target?.task;
-		const cumulativeBudget = (budgetTask?.spec as unknown as { cumulativeBudget?: unknown } | undefined)?.cumulativeBudget;
-		// Reviewer does not reserve or consume the balance gate; exhausted Tasks must still be closable.
-		if (role !== "reviewer" && budgetTask?.usage && cumulativeBudget && typeof cumulativeBudget === "object") {
-			const budget = summarizeTaskBudget(budgetTask.usage, cumulativeBudget as Parameters<typeof summarizeTaskBudget>[1]);
-			const reservation = this.reservations.reserve(budgetTask.taskId, budget, {
-				toolCallId: event.toolCallId,
-				...(floorLimits?.tokens ? { tokens: floorLimits.tokens.value } : {}),
-				...(floorLimits?.costUsd ? { costUsd: floorLimits.costUsd.value } : {}),
-			});
-			if (reservation.refused) {
-				return { block: { reason: this.cumulativeBudgetRefusal(budgetTask.taskId, budget, reservation.refused) } };
-			}
-			floorLimits = resolveEffectiveLimits({
-				role,
-				reportsCount: budgetTask.reports.length,
-				callerToolBudget: inputRecord.toolBudget,
-				callerUsageBudget: inputRecord.usageBudget,
-				taskSpecBudget: spec?.budget,
-				balanceTokens: reservation.grant?.tokens,
-				balanceCostUsd: reservation.grant?.costUsd,
-			});
-			const usageBudget: Record<string, { hard: number }> = {};
-			if (floorLimits.tokens) usageBudget.tokens = { hard: floorLimits.tokens.value };
-			if (floorLimits.costUsd) usageBudget.costUsd = { hard: floorLimits.costUsd.value };
-			if (Object.keys(usageBudget).length > 0) inputRecord.usageBudget = usageBudget;
 		}
 		const floorSummary = floorLimits ? formatFloorLimitsSummary(floorLimits) : undefined;
 		const oracleConflict = oracleSuiteConflict || inputRecord.__oracleSuiteConflict === true;
@@ -793,12 +719,6 @@ export class PlannerOrchestrator {
 			const packet = extractReviewRequest(delegationPrompt(input));
 			const packetTruncated = packet?.evidencePacket?.patchTruncated === true
 				|| (packet?.evidencePacket?.patchOmittedPaths?.length ?? 0) > 0;
-			const packetBinding = packet !== undefined && typeof packet.reportRevision === "number"
-				? {
-					reportRevision: packet.reportRevision,
-					...(packet.workspaceDigest !== undefined ? { workspaceDigest: packet.workspaceDigest } : {}),
-				}
-				: undefined;
 			this.delegations.set(event.toolCallId, {
 				taskId,
 				kind: "reviewer",
@@ -806,7 +726,6 @@ export class PlannerOrchestrator {
 				...(isExplicitAsyncFalse(input) ? { asyncExplicitFalse: true } : {}),
 				...(inputAgent(input) ? { agent: inputAgent(input) } : {}),
 				...(packetTruncated ? { packetTruncated: true } : {}),
-				...(packetBinding ? { packetBinding } : {}),
 				...(contextOverridden ? { contextOverridden: true } : {}),
 				...(reuseOutcome?.reason ? { reuseReason: reuseOutcome.reason } : {}),
 				...(floorLimits ? { floorLimits } : {}),
@@ -835,26 +754,16 @@ export class PlannerOrchestrator {
 				const prompt = delegationPrompt(input);
 				const specId = (target?.spec ?? extractTaskSpec(prompt))?.taskId;
 				const named = promptTaskIds(prompt);
-				const syntheticId = `unbound-validator-${event.toolCallId}`;
 				const placeholder = specId
 					?? (named.length === 1 ? named[0] : undefined)
-					?? syntheticId;
+					?? `unbound-validator-${event.toolCallId}`;
 				const unboundConflict = await this.refuseOrClearWriteLock(cwd, "validator", warnings);
 				if (unboundConflict.conflict) {
 					return { conflict: unboundConflict, ...(warnings.length ? { warnings } : {}) };
 				}
-				// Only the synthetic placeholder is a ghost id. specId and a
-				// single named id are declared Task ids: hang usage there, even
-				// when they differ from (or are missing in) the store. Never
-				// copy explorer's `?? active` fallback — that would re-attribute
-				// onto another cwd's Task.
-				const accountingTask = placeholder === syntheticId
-					? this.store.activeForCwd(cwd)
-					: undefined;
 				this.delegations.set(event.toolCallId, {
 					taskId: placeholder,
 					kind: "validator",
-					...(accountingTask ? { accountingTaskId: accountingTask.taskId } : {}),
 					asyncRequested: isAsyncInput(input),
 					...(isExplicitAsyncFalse(input) ? { asyncExplicitFalse: true } : {}),
 					...(inputAgent(input) ? { agent: inputAgent(input) } : {}),
@@ -934,22 +843,13 @@ export class PlannerOrchestrator {
 
 		if (!spec) {
 			const detail = `role ${role} delegated without an embedded TaskSpec; task identity, scope, acceptance criteria, and the WorkerReport contract are unverified.`;
-			if (
-				role === "worker"
-				&& (this.structuredDelegationMode === "strict" || process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW === "1")
-			) {
+			if (role === "worker" && this.structuredDelegationMode === "strict") {
 				return {
 					block: {
 						reason: [
 							`Planner-only guard: ${detail}`,
 							"Embed the full TaskSpec JSON in the subagent task prompt.",
-							// Strict review mode outranks the structured-delegation switch:
-							// when it is on, telling the parent to set
-							// PI_PLANNER_ONLY_STRUCTURED_DELEGATION=warn would not lift
-							// the block, so never print that hint here.
-							...(process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW === "1"
-								? ["Strict mode (PI_PLANNER_ONLY_REQUIRE_REVIEW=1) requires objective, scope, and acceptanceCriteria in the embedded TaskSpec."]
-								: ["Set PI_PLANNER_ONLY_STRUCTURED_DELEGATION=warn to allow unstructured worker delegations."]),
+							"Set PI_PLANNER_ONLY_STRUCTURED_DELEGATION=warn to allow unstructured worker delegations.",
 						].join("\n"),
 					},
 				};
@@ -1239,32 +1139,6 @@ export class PlannerOrchestrator {
 				}
 			}
 		}
-		if (task.usage !== undefined) {
-			const budget = summarizeTaskBudget(task.usage, task.spec?.cumulativeBudget);
-			const money = (value: number): string => `$${value.toFixed(4)}`;
-			const dimensionLine = (label: string, dimension: { limit?: number; known: number; unknownParts: number; remaining?: number }, format: (value: number) => string): string => {
-				if (dimension.limit === undefined) return `  ${label}: 已用 ${format(dimension.known)}，未设累计上限，未知项 ${dimension.unknownParts} 项`;
-				const unknownNote = dimension.unknownParts > 0 ? `（不含 ${dimension.unknownParts} 个未知项）` : "";
-				const overBudget = (dimension.remaining ?? 0) < 0 ? "（已超支）" : "";
-				return `  ${label}: 已用 ${format(dimension.known)} / 上限 ${format(dimension.limit)}，剩余 ${format(dimension.remaining ?? 0)}${unknownNote}，未知项 ${dimension.unknownParts} 项${overBudget}`;
-			};
-			if (!budget.configured) {
-				lines.push(`Budget: 未设累计上限（已知消耗 tokens=${budget.tokens.known}，费用 ${money(budget.costUsd.known)}；未知项 tokens ${budget.tokens.unknownParts} 项、费用 ${budget.costUsd.unknownParts} 项）`);
-			} else {
-				lines.push("Budget (累计):", dimensionLine("tokens", budget.tokens, (value) => String(value)), dimensionLine("费用", budget.costUsd, money));
-			}
-			const roles = (Object.entries(budget.byRole) as Array<[string, { calls: number; tokens: number; costUsd: number; costUnknownParts: number }]>)
-				.filter(([, usage]) => usage.calls > 0)
-				.sort(([left], [right]) => left === "root" ? -1 : right === "root" ? 1 : left.localeCompare(right));
-			if (roles.length > 0) {
-				lines.push("Budget by role:");
-				for (const [role, usage] of roles) {
-					const countLabel = role === "root" ? "turns" : "calls";
-					const unknown = usage.costUnknownParts > 0 ? `，费用未知 ${usage.costUnknownParts} 项` : "";
-					lines.push(`  - ${role}: ${usage.calls} ${countLabel}, tokens=${usage.tokens}, 费用 ${money(usage.costUsd)}${unknown}`);
-				}
-			}
-		}
 		return lines.join("\n");
 	}
 
@@ -1474,7 +1348,7 @@ export class PlannerOrchestrator {
 		}
 		if (!meta || meta.exitCode === undefined) return false;
 		this.processedRunIds.add(record.runId);
-		this.endDelegation(toolCallId);
+		this.delegations.delete(toolCallId);
 		const task = this.store.get(record.taskId);
 		if (!task) return true;
 		const text = readLargestRunOutput(record.asyncDir, record.runId) ?? "";
@@ -1539,7 +1413,7 @@ export class PlannerOrchestrator {
 					continue;
 				}
 			}
-			this.endDelegation(toolCallId);
+			this.delegations.delete(toolCallId);
 			warnings.push(
 				`Planner-only: this re-delegation supersedes the pending child run ${record.runId ?? toolCallId} for task ${taskId}; a late notice for it will be ignored.`,
 			);
@@ -1665,7 +1539,7 @@ export class PlannerOrchestrator {
 					}],
 				};
 			}
-			this.endDelegation(event.toolCallId);
+			this.delegations.delete(event.toolCallId);
 			const task = this.store.get(delegation.taskId);
 			const firstLine = (text.split(/\r?\n/, 1)[0] ?? "").trim();
 			if (task && !isFinalTaskState(task.state)) {
@@ -1718,7 +1592,7 @@ export class PlannerOrchestrator {
 				}],
 			};
 		}
-		this.endDelegation(event.toolCallId);
+		this.delegations.delete(event.toolCallId);
 		const receiptId = runIdFromReceipt(event);
 		if (receiptId) {
 			this.processedRunIds.add(receiptId);
@@ -1761,7 +1635,7 @@ export class PlannerOrchestrator {
 		for (const found of this.matchAsyncDelegations(parsed)) {
 			const runId = found.record.runId;
 			if (runId) this.processedRunIds.add(runId);
-			this.endDelegation(found.toolCallId);
+			this.delegations.delete(found.toolCallId);
 			const fileText = runId ? readLargestRunOutput(found.record.asyncDir, runId) : undefined;
 			const chosen = fileText ?? parsed.preview;
 
@@ -1910,21 +1784,16 @@ export class PlannerOrchestrator {
 
 		// FR-03 / D09 — the verdict is bound to the report revision and the
 		// workspace snapshot digest it reviewed. A stale PASS cannot complete a
-		// Task that has a newer report. Ticket 27/32: omitted bindings are filled
-		// from the ReviewRequest this reviewer was shown (persisted on the
-		// DelegationRecord); validation still compares against the Task at
-		// record time. A missing packet is not filled from record-time values.
-		const currentBinding = {
+		// Task that has a newer report. Ticket 27: omitted bindings are filled
+		// from the ReviewRequest this reviewer was shown; an explicit mismatch
+		// is still refused. HEAD/status hashes are not a substitute: a missing
+		// bound snapshot is unknown, never a digest of porcelain.
+		const expectedBinding = {
 			reportRevision: task.reports.length,
 			...(task.snapshot ? { workspaceDigest: task.snapshot.digest } : {}),
 		};
-		const packetBinding = record?.packetBinding;
-		const hasPacketBinding = packetBinding !== undefined
-			&& typeof packetBinding.reportRevision === "number";
-		const boundReview = hasPacketBinding
-			? bindReviewResultFromRequest(review, packetBinding)
-			: review;
-		const bindingErrors = validateReviewResultBinding(boundReview, currentBinding);
+		const boundReview = bindReviewResultFromRequest(review, expectedBinding);
+		const bindingErrors = validateReviewResultBinding(boundReview, expectedBinding);
 		if (bindingErrors.length > 0) {
 			return {
 				content: [{
@@ -1932,9 +1801,7 @@ export class PlannerOrchestrator {
 					text: [
 						`[PLANNER-ONLY] Reviewer verdict was rejected: ${bindingErrors.join("; ")}.`,
 						"The verdict was not recorded and no task state changed.",
-						hasPacketBinding
-							? `Re-delegate review for task ${task.taskId} so the reviewer receives the current ReviewRequest.`
-							: `This delegation carries no usable ReviewRequest binding, so omitted bindings were not filled. Re-delegate review for task ${task.taskId} so the reviewer receives the current ReviewRequest.`,
+						`Re-delegate review for task ${task.taskId} so the reviewer receives the current ReviewRequest.`,
 						"",
 						truncate(text, RAW_OUTPUT_FALLBACK_CHARS),
 					].join("\n"),

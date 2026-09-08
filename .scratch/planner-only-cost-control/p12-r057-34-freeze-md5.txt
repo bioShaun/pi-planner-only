@@ -1,0 +1,5 @@
+690b7202f09bc554caa51d52e12c5f4c  report.ts
+fd05ee3a998b9aa60b8fead1b3217bb5  roles.ts
+6a8cf4dc7614a3a7d9942752d9232018  types.ts
+c5e262cc3df3523f311af35d2476402f  report.test.mjs
+9bc96429fac35c228e319fa3b30c6923  roles.test.mjs

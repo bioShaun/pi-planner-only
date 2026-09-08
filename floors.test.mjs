@@ -210,4 +210,36 @@ for (const envVar of Object.values(FLOOR_ENV_VARS)) {
 	assert.equal(summary, "toolBudget.hard=10 (caller), usageBudget.tokens.hard=25000 (taskSpec), usageBudget.costUsd.hard=0.1 (floor)");
 }
 
+// Ticket 14A V1-V4 — cumulative balance can only lower usage limits.
+{
+	const common = {
+		role: "worker",
+		reportsCount: 1,
+		callerToolBudget: { hard: 7 },
+		callerUsageBudget: { tokens: { hard: 50_000 }, costUsd: { hard: 0.20 } },
+		taskSpecBudget: { tokens: 45_000, costUsd: 0.18 },
+	};
+	const below = resolveEffectiveLimits({ ...common, balanceTokens: 1_000, balanceCostUsd: 0.01 });
+	assert.deepEqual(below.tokens, { value: 1_000, source: "balance" });
+	assert.deepEqual(below.costUsd, { value: 0.01, source: "balance" });
+	assert.deepEqual(below.toolBudget, { value: 7, source: "caller" });
+
+	const above = resolveEffectiveLimits({ ...common, balanceTokens: 500_000, balanceCostUsd: 2 });
+	assert.deepEqual(above.tokens, { value: 40_000, source: "floor" });
+	assert.deepEqual(above.costUsd, { value: 0.10, source: "floor" });
+	assert.notEqual(above.tokens?.source, "balance");
+	assert.notEqual(above.costUsd?.source, "balance");
+
+	const reviewer = resolveEffectiveLimits({
+		role: "reviewer",
+		callerToolBudget: { hard: 7 },
+		callerUsageBudget: { tokens: { hard: 50_000 }, costUsd: { hard: 0.20 } },
+		balanceTokens: 1_000,
+		balanceCostUsd: 0.01,
+	});
+	assert.deepEqual(reviewer.tokens, { value: 1_000, source: "balance" });
+	assert.deepEqual(reviewer.costUsd, { value: 0.01, source: "balance" });
+	assert.deepEqual(reviewer.toolBudget, { value: 7, source: "caller" });
+}
+
 console.log("planner-only floors: PASS");

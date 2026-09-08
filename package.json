@@ -35,6 +35,7 @@
     "task.ts",
     "types.ts",
     "usage.ts",
+    "reservations.ts",
     "workspace-snapshot.ts"
   ],
   "pi": {

@@ -2,14 +2,11 @@ import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { PlannerOrchestrator, isDelegationCall } from "./orchestrate.ts";
-import { createTaskSpec, isExecutingStale, isHolderStale } from "./task.ts";
-import { TaskStore } from "./task.ts";
-import { hashStatus, workspaceSummaryDigest, describeComparison } from "./evidence.ts";
-import { extractReviewRequest } from "./review.ts";
-import { workerReportShapeReminder } from "./report.ts";
-import { emptyTaskUsage } from "./usage.ts";
-import { MISSING_VALIDATION_DEFINITION_REASON } from "./roles.ts";
+import { PlannerOrchestrator, isDelegationCall } from "../../../orchestrate.ts";
+import { createTaskSpec, isExecutingStale, isHolderStale } from "../../../task.ts";
+import { TaskStore } from "../../../task.ts";
+import { hashStatus, workspaceSummaryDigest, describeComparison } from "../../../evidence.ts";
+import { extractReviewRequest } from "../../../review.ts";
 
 // Fixture ids are stamped 2026-09-05; pin the store clock so id replacement
 // never depends on the wall clock of the machine running the suite.
@@ -388,54 +385,6 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 	}
 	const defaults = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	assert.equal(defaults.structuredDelegationMode, "warn");
-}
-
-// require-review mode defaults to strict structured delegation
-{
-	const previous = process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW;
-	const previousStructured = process.env.PI_PLANNER_ONLY_STRUCTURED_DELEGATION;
-	try {
-		process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW = "1";
-		delete process.env.PI_PLANNER_ONLY_STRUCTURED_DELEGATION;
-		const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
-		assert.equal(orch.structuredDelegationMode, "warn");
-		const before = orch.store.list().length;
-		const blocked = await orch.beginDelegation(
-			{ toolCallId: "call-r-review", input: { agent: "worker", task: "no TaskSpec" } },
-			BASE,
-		);
-		assert.ok(blocked.block);
-		assert.match(blocked.block.reason, /PI_PLANNER_ONLY_REQUIRE_REVIEW=1/);
-		assert.match(blocked.block.reason, /objective.*scope.*acceptanceCriteria/s);
-		assert.doesNotMatch(blocked.block.reason, /PI_PLANNER_ONLY_STRUCTURED_DELEGATION=warn/);
-		assert.equal(orch.store.list().length, before);
-		assert.equal(orch.store.list().some((task) => task.isPlaceholder), false);
-
-		// Strict review mode outranks the structured-delegation switch: with both
-		// set, the "set …=warn" hint would be false, so it must not be printed.
-		process.env.PI_PLANNER_ONLY_STRUCTURED_DELEGATION = "strict";
-		const blockedBoth = await orch.beginDelegation(
-			{ toolCallId: "call-r-review-both", input: { agent: "worker", task: "no TaskSpec" } },
-			BASE,
-		);
-		assert.ok(blockedBoth.block);
-		assert.match(blockedBoth.block.reason, /PI_PLANNER_ONLY_REQUIRE_REVIEW=1/);
-		assert.doesNotMatch(blockedBoth.block.reason, /PI_PLANNER_ONLY_STRUCTURED_DELEGATION=warn/);
-		delete process.env.PI_PLANNER_ONLY_STRUCTURED_DELEGATION;
-
-		for (const agent of ["oracle", "reviewer", "explorer", "scout"]) {
-			const outcome = await orch.beginDelegation(
-				{ toolCallId: `call-r-${agent}`, input: { agent, task: "no TaskSpec" } },
-				BASE,
-			);
-			assert.equal(outcome.block, undefined, `${agent} must remain unblocked`);
-		}
-	} finally {
-		if (previous === undefined) delete process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW;
-		else process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW = previous;
-		if (previousStructured === undefined) delete process.env.PI_PLANNER_ONLY_STRUCTURED_DELEGATION;
-		else process.env.PI_PLANNER_ONLY_STRUCTURED_DELEGATION = previousStructured;
-	}
 }
 
 // --------------------------------------------------------------------------
@@ -1129,160 +1078,6 @@ function truncatedPreview() {
 	);
 	assert.equal(outcome.task, undefined);
 	assert.equal(orch.getDelegation("call-explorer-fallback")?.accountingTaskId, task.taskId);
-}
-
-// p12-r058: an unbound validator whose placeholder is the synthetic
-// `unbound-validator-<toolCallId>` string attributes usage to the live Task
-// in the delegated cwd (not the store-wide active Task in another cwd).
-{
-	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
-	const cwdA = "/repo/v-acct-cwd";
-	const cwdB = "/repo/v-acct-other";
-	const taskA = orch.store.create(specFor("T-20260908-581", "worker", cwdA));
-	const taskB = orch.store.create(specFor("T-20260908-582", "worker", cwdB));
-	taskA.updatedAt = "2026-09-05T00:00:00.000Z";
-	taskB.updatedAt = "2026-09-05T00:01:00.000Z";
-	assert.equal(orch.store.active()?.taskId, taskB.taskId);
-	const outcome = await orch.beginDelegation(
-		{
-			toolCallId: "call-v-acct-synthetic",
-			input: { agent: "oracle", cwd: cwdA, task: "validate the claim with no task named" },
-		},
-		BASE,
-	);
-	assert.equal(outcome.task, undefined);
-	assert.equal(orch.getDelegation("call-v-acct-synthetic")?.taskId, "unbound-validator-call-v-acct-synthetic");
-	assert.equal(orch.getDelegation("call-v-acct-synthetic")?.kind, "validator");
-	assert.equal(orch.getDelegation("call-v-acct-synthetic")?.accountingTaskId, taskA.taskId);
-}
-
-// p12-r058: placeholder is an existing specId different from the cwd-active
-// Task. Bound validator keeps that specId; do not re-attribute to activeForCwd.
-{
-	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
-	const cwdActive = "/repo/v-acct-active";
-	const cwdSpec = "/repo/v-acct-spec";
-	const activeTask = orch.store.create(specFor("T-20260908-583", "worker", cwdActive));
-	const specTask = orch.store.create(specFor("T-20260908-584", "worker", cwdSpec));
-	activeTask.updatedAt = "2026-09-05T00:01:00.000Z";
-	specTask.updatedAt = "2026-09-05T00:00:00.000Z";
-	assert.equal(orch.store.activeForCwd(cwdActive)?.taskId, activeTask.taskId);
-	const outcome = await orch.beginDelegation(
-		{
-			toolCallId: "call-v-acct-specid",
-			input: {
-				agent: "oracle",
-				cwd: cwdActive,
-				task: JSON.stringify(specFor("T-20260908-584", "validator", cwdSpec)),
-			},
-		},
-		BASE,
-	);
-	assert.equal(outcome.task?.taskId, specTask.taskId, "validator must stay bound to the named specId");
-	assert.equal(orch.getDelegation("call-v-acct-specid")?.taskId, specTask.taskId);
-	assert.equal(
-		orch.getDelegation("call-v-acct-specid")?.accountingTaskId,
-		undefined,
-		"existing specId must not be re-attributed to activeForCwd",
-	);
-}
-
-// p12-r058: declared specId that is not in the store (unbound placeholder is
-// that id) must not be re-hung onto the cwd-active Task.
-{
-	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
-	const cwdA = "/repo/v-acct-declared";
-	const live = orch.store.create(specFor("T-20260908-585", "worker", cwdA));
-	const outcome = await orch.beginDelegation(
-		{
-			toolCallId: "call-v-acct-declared",
-			input: {
-				agent: "oracle",
-				cwd: cwdA,
-				task: JSON.stringify(specFor("T-20260908-586", "validator", cwdA)),
-			},
-		},
-		BASE,
-	);
-	assert.equal(outcome.task, undefined);
-	assert.equal(orch.getDelegation("call-v-acct-declared")?.taskId, "T-20260908-586");
-	assert.equal(
-		orch.getDelegation("call-v-acct-declared")?.accountingTaskId,
-		undefined,
-		`declared specId must stay on T-20260908-586, not ${live.taskId}`,
-	);
-}
-
-// p12-r058: a single named Task id in the prompt that exists in the store,
-// different from the cwd-active Task, keeps that named id (no re-hang).
-{
-	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
-	const cwdNamed = "/repo/v-acct-named";
-	const cwdActive = "/repo/v-acct-named-active";
-	const namedTask = orch.store.create(specFor("T-20260908-587", "worker", cwdNamed));
-	const activeTask = orch.store.create(specFor("T-20260908-588", "worker", cwdActive));
-	namedTask.updatedAt = "2026-09-05T00:00:00.000Z";
-	activeTask.updatedAt = "2026-09-05T00:01:00.000Z";
-	const outcome = await orch.beginDelegation(
-		{
-			toolCallId: "call-v-acct-named",
-			input: { agent: "oracle", cwd: cwdActive, task: "Validate T-20260908-587." },
-		},
-		BASE,
-	);
-	assert.equal(outcome.task?.taskId, namedTask.taskId);
-	assert.equal(orch.getDelegation("call-v-acct-named")?.taskId, namedTask.taskId);
-	assert.equal(orch.getDelegation("call-v-acct-named")?.accountingTaskId, undefined);
-}
-
-// p12-r058: same cwd has no live Task; another cwd does. Do not attach to the
-// other cwd's Task and do not invent a silent drop of the delegation record.
-{
-	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
-	const other = orch.store.create(specFor("T-20260908-589", "worker", "/repo/v-acct-foreign"));
-	const outcome = await orch.beginDelegation(
-		{
-			toolCallId: "call-v-acct-nocwd",
-			input: { agent: "oracle", cwd: "/repo/v-acct-empty", task: "validate the claim with no task named" },
-		},
-		BASE,
-	);
-	assert.equal(outcome.task, undefined);
-	assert.equal(orch.getDelegation("call-v-acct-nocwd")?.taskId, "unbound-validator-call-v-acct-nocwd");
-	assert.equal(
-		orch.getDelegation("call-v-acct-nocwd")?.accountingTaskId,
-		undefined,
-		`must not hang onto other-cwd Task ${other.taskId}`,
-	);
-}
-
-// p12-r058: a bound validator (resolveValidatorReviewedTask hit via report)
-// keeps taskId = reviewed Task and does not set accountingTaskId.
-{
-	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
-	const taskId = "T-20260905-590";
-	setCleanTree();
-	await orch.beginDelegation(
-		{ toolCallId: "call-v-acct-bound-w", input: { task: JSON.stringify(specFor(taskId, "worker", BASE)) } },
-		BASE,
-	);
-	setDirtyTree();
-	const workerReport = {
-		...reportFor(taskId, "call-v-acct-bound-w"),
-		evidence: { ...reportFor(taskId, "call-v-acct-bound-w").evidence, cwd: BASE },
-	};
-	await orch.handleSubagentResult(workerResult("call-v-acct-bound-w", workerReport));
-	const outcome = await orch.beginDelegation(
-		{
-			toolCallId: "call-v-acct-bound-v",
-			input: { agent: "oracle", task: "validate the claim with no task named" },
-		},
-		BASE,
-	);
-	assert.equal(outcome.task?.taskId, taskId);
-	assert.equal(orch.getDelegation("call-v-acct-bound-v")?.taskId, taskId);
-	assert.equal(orch.getDelegation("call-v-acct-bound-v")?.kind, "validator");
-	assert.equal(orch.getDelegation("call-v-acct-bound-v")?.accountingTaskId, undefined);
 }
 
 // Unbound explorer delegation creates no Task at all: it is recorded as the
@@ -2020,168 +1815,6 @@ function reportT3(taskId, toolCallId) {
 	assert.equal(task.state, "reviewing");
 }
 
-// Ticket 14A V5-V11 — bounded cumulative budget and lifecycle behavior.
-function budgetTaskFixture(taskId, cumulativeBudget, usage, role = "worker") {
-	const store = pinnedStore();
-	const task = store.create({ ...specFor(taskId, role), cumulativeBudget });
-	task.usage = usage;
-	return { store, task };
-}
-function boundedBudgetUsage(tokens, costUsd) {
-	const usage = usageFixture(tokens, costUsd);
-	usage.children = [{ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, kind: "worker", pending: false, source: "sync-details", costUsd: 0 }];
-	return usage;
-}
-{
-	const { store, task } = budgetTaskFixture("T-20260908-v5", { tokens: 50_000, costUsd: 0.20 }, boundedBudgetUsage(48_000, 0.19));
-	task.reports.push(reportFor(task.taskId, "old-report"));
-	const input = { task: JSON.stringify(task.spec), usageBudget: { tokens: { hard: 50_000 }, costUsd: { hard: 0.20 } } };
-	const orch = new PlannerOrchestrator({ gitRunner, store });
-	await orch.beginDelegation({ toolCallId: "call-v5", input }, BASE);
-	assert.equal(input.usageBudget.tokens.hard, 2_000);
-	assert.ok(Math.abs(input.usageBudget.costUsd.hard - 0.01) < 1e-9);
-}
-{
-	const { store, task } = budgetTaskFixture("T-20260908-v6", { tokens: 50_000, costUsd: 0.20 }, boundedBudgetUsage(48_000, 0.19));
-	task.reports.push(reportFor(task.taskId, "old-report"));
-	const orch = new PlannerOrchestrator({ gitRunner, store });
-	await orch.beginDelegation({ toolCallId: "call-v6-a", input: { task: JSON.stringify(task.spec) } }, BASE);
-	const blocked = await orch.beginDelegation({ toolCallId: "call-v6-b", input: { task: JSON.stringify(task.spec) } }, BASE);
-	assert.ok(blocked.block);
-	assert.match(blocked.block.reason, /cumulative budget exhausted \(tokens\)/);
-}
-{
-	const { store, task } = budgetTaskFixture("T-20260908-v7", { tokens: 100_000, costUsd: 0.20 }, boundedBudgetUsage(1_000, 0.20));
-	task.reports.push(reportFor(task.taskId, "old-report"));
-	const orch = new PlannerOrchestrator({ gitRunner, store });
-	const blocked = await orch.beginDelegation({ toolCallId: "call-v7", input: { task: JSON.stringify(task.spec) } }, BASE);
-	assert.match(blocked.block?.reason ?? "", /cumulative budget exhausted \(costUsd\)/);
-	assert.equal((blocked.block?.reason ?? "").split(String.fromCharCode(10)).slice(0, 6).join(String.fromCharCode(10)), [
-		`Planner-only guard: task ${task.taskId} cumulative budget exhausted (costUsd).`,
-		"已知消耗: tokens=1000, 费用 $0.2000",
-		"在途预留: tokens=0, 费用 $0.0000",
-		"未知项: tokens 0 项, 费用 0 项",
-		"上限: tokens=100000, 费用 $0.2000",
-		"本次受控启动被拒绝；结束在途子进程或提高 cumulativeBudget 后重试。",
-	].join(String.fromCharCode(10)));
-}
-{
-	const { store, task } = budgetTaskFixture("T-20260908-v9", { tokens: 50_000, costUsd: 0.20 }, boundedBudgetUsage(48_000, 0.19));
-	task.reports.push(reportFor(task.taskId, "old-report"));
-	const orch = new PlannerOrchestrator({ gitRunner, store });
-	await orch.beginDelegation({ toolCallId: "call-v9-a", input: { task: JSON.stringify(task.spec) } }, BASE);
-	await orch.handleSubagentResult(workerResult("call-v9-a", reportFor(task.taskId, "call-v9-a")));
-	const retry = await orch.beginDelegation({ toolCallId: "call-v9-b", input: { task: JSON.stringify(task.spec) } }, BASE);
-	assert.equal(retry.block, undefined);
-}
-{
-	const { store, task } = budgetTaskFixture("T-20260908-v10", { tokens: 1, costUsd: 0.01 }, usageFixture(5_000, 0.50));
-	const orch = new PlannerOrchestrator({ gitRunner, store });
-	const reviewerInput = { agent: "reviewer", task: `Review ${task.taskId}` };
-	const outcome = await orch.beginDelegation({ toolCallId: "call-v10-reviewer", input: reviewerInput }, BASE);
-	assert.equal(outcome.block, undefined);
-	assert.deepEqual(orch.reservations.inFlight(task.taskId), { tokens: 0, costUsd: 0 });
-	const workerOutcome = await orch.beginDelegation({ toolCallId: "call-v10-worker", input: { task: JSON.stringify(task.spec) } }, BASE);
-	assert.match(workerOutcome.block?.reason ?? "", /cumulative budget exhausted/);
-}
-{
-	const before = { usageBudget: { tokens: { hard: 123 }, costUsd: { hard: 0.12 } } };
-	const expectedBefore = JSON.parse(JSON.stringify(before));
-	const input = { ...before, task: JSON.stringify(specFor("T-20260908-v11")) };
-	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
-	await orch.beginDelegation({ toolCallId: "call-v11", input }, BASE);
-	assert.deepEqual(input.usageBudget, expectedBefore.usageBudget);
-}
-
-// Ticket 14A V14 — an empty usageBudget object is never written to the payload.
-{
-	const { store, task } = budgetTaskFixture("T-20260908-v14", {}, usageFixture(0, 0));
-	const input = { task: JSON.stringify(task.spec) };
-	const orch = new PlannerOrchestrator({ gitRunner, store });
-	await orch.beginDelegation({ toolCallId: "call-v14", input }, BASE);
-	assert.ok(input.usageBudget === undefined || Object.keys(input.usageBudget).length > 0);
-}
-
-// Ticket 14A V13 — rejected validator launches do not leak reservations.
-{
-	const taskId = "T-20260908-v13";
-	const store = pinnedStore();
-	const task = store.create({ ...specFor(taskId), cumulativeBudget: { tokens: 50_000, costUsd: 0.20 } });
-	task.usage = boundedBudgetUsage(0, 0);
-	const orch = new PlannerOrchestrator({ gitRunner, store });
-	const before = orch.pendingDelegationCount();
-	for (let i = 0; i < 5; i++) {
-		const invalid = { ...task.spec, role: "validator", validation: { required: true } };
-		const outcome = await orch.beginDelegation({ toolCallId: `call-v13-${i}`, input: { agent: "oracle", task: JSON.stringify(invalid) } }, BASE);
-		assert.equal(outcome.block?.reason, MISSING_VALIDATION_DEFINITION_REASON);
-	}
-	assert.equal(orch.pendingDelegationCount(), before);
-	const normal = await orch.beginDelegation({ toolCallId: "call-v13-ok", input: { task: JSON.stringify(task.spec) } }, BASE);
-	assert.equal(normal.block, undefined);
-	await orch.handleSubagentResult(workerResult("call-v13-ok", reportFor(taskId, "call-v13-ok")));
-	assert.equal(orch.pendingDelegationCount(), before);
-}
-
-function statusWithBudget(cumulativeBudget, usage) {
-	const store = pinnedStore();
-	const task = store.create({ ...specFor("T-20260908-budget"), cumulativeBudget });
-	task.usage = usage;
-	return new PlannerOrchestrator({ gitRunner, store }).renderTaskStatus(task);
-}
-function usageFixture(output = 0, costUsd) {
-	const usage = emptyTaskUsage();
-	usage.root = { ...usage.root, turns: output ? 1 : 0, output, ...(costUsd === undefined ? {} : { costUsd }) };
-	return usage;
-}
-{
-	const status = statusWithBudget(undefined, usageFixture(120, 0));
-	assert.equal(status.includes("Budget: 未设累计上限（已知消耗 tokens=120，费用 $0.0000；未知项 tokens 0 项、费用 0 项）"), true);
-	assert.equal(status.includes("剩余"), false);
-}
-{
-	const usage = usageFixture(700, 0.1234);
-	usage.children = [{ input: 0, output: 300, cacheRead: 0, cacheWrite: 0, kind: "worker", pending: false, source: "sync-details", costUsd: 0.4567 }];
-	const status = statusWithBudget({ tokens: 1500, costUsd: 1 }, usage);
-	assert.equal(status.includes("  tokens: 已用 1000 / 上限 1500，剩余 500，未知项 0 项"), true);
-	assert.equal(status.includes("  费用: 已用 $0.5801 / 上限 $1.0000，剩余 $0.4199，未知项 0 项"), true);
-}
-{
-	assert.equal(statusWithBudget({ tokens: 1000 }, usageFixture(1200, 0.5)).includes("剩余 -200，未知项 0 项（已超支）"), true);
-}
-{
-	const status = statusWithBudget({ costUsd: 2 }, usageFixture(7, 0.25));
-	assert.equal(status.includes("  tokens: 已用 7，未设累计上限，未知项 0 项"), true);
-	assert.equal(status.includes("  费用: 已用 $0.2500 / 上限 $2.0000，剩余 $1.7500，未知项 0 项"), true);
-}
-{
-	const usage = usageFixture(10, 0.1);
-	usage.root.tokensUnknownTurns = 1;
-	assert.equal(statusWithBudget({ tokens: 20, costUsd: 1 }, usage).includes("剩余 10（不含 1 个未知项），未知项 1 项"), true);
-}
-{
-	const usage = usageFixture(10, 0.1);
-	usage.children = [1, 2].map((output) => ({ input: 0, output, cacheRead: 0, cacheWrite: 0, kind: "worker", pending: false, source: "sync-details", costUsd: 0.2 }));
-	const status = statusWithBudget({ tokens: 100 }, usage);
-	assert.equal(status.includes("  - root: 1 turns, tokens=10, 费用 $0.1000"), true);
-	assert.equal(status.includes("  - worker: 2 calls, tokens=3, 费用 $0.4000"), true);
-	assert.equal(status.includes("reviewer"), false);
-}
-{
-	// A role with zero calls is absent, not zero-filled: children arrived before
-	// any Root turn, so there must be no "root: 0 turns" row.
-	const usage = usageFixture(0);
-	usage.children = [{ input: 0, output: 5, cacheRead: 0, cacheWrite: 0, kind: "explorer", pending: false, source: "sync-details", costUsd: 0.01 }];
-	const status = statusWithBudget({ tokens: 100 }, usage);
-	assert.equal(status.includes("  - explorer: 1 calls, tokens=5, 费用 $0.0100"), true);
-	assert.equal(status.split("\n").some((line) => line.startsWith("  - root:")), false, "a Root with zero turns must not get a role row");
-}
-{
-	const store = pinnedStore();
-	const task = store.create(specFor("T-20260908-no-usage"));
-	task.usage = undefined;
-	assert.equal(new PlannerOrchestrator({ gitRunner, store }).renderTaskStatus(task).split("\n").some((line) => line.startsWith("Budget")), false);
-}
-
 // renderTaskStatus lists validator reports when present, omits the line when absent
 {
 	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
@@ -2317,7 +1950,8 @@ function reportT6(taskId) {
 // I-2 — reactive JSON reminder after the first prose-only report strike
 // --------------------------------------------------------------------------
 
-const jsonReminder = (taskId) => `JSON only: ${workerReportShapeReminder(taskId)}`;
+const jsonReminder = (taskId) =>
+	`JSON only: {"version":1,"taskId":"${taskId}","status":"completed|partial|blocked|failed","summary":"...","changedFiles":[],"validation":[],"evidence":{"taskId":"${taskId}"},"risks":[],"unresolved":[]}`;
 const rawResult = (toolCallId, text) => ({
 	toolCallId,
 	toolName: "subagent",
@@ -3045,6 +2679,53 @@ function realGitRunnerOf(dir) {
 	);
 }
 
+
+// PLANNER PROBE (p12) — a reviewer that returns the contract-shaped pass
+// (no reportRevision, no workspaceDigest) after a NEWER report landed.
+// Under route 1 (contract echo) the reviewer would have echoed revision 1 and
+// been refused by the mismatch branch. Under route 2 as implemented, the
+// binding is filled from task.reports.length AT RECORD TIME (= 2), so a PASS
+// that reviewed revision 1 completes a Task whose current report is revision 2.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-901";
+	await delegateWorker(orch, "call-p12-1", taskId);
+	await orch.handleSubagentResult(workerResult("call-p12-1", reportFor(taskId, "call-p12-1")));
+	orch.store.setReviewMode(taskId, "fresh");
+
+	// review is delegated while the stored revision is 1
+	await orch.beginDelegation(
+		{ toolCallId: "call-p12-1r", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) } },
+		BASE,
+	);
+	const packetAtDelegation = orch.store.require(taskId).reports.length;
+
+	// a new WorkerReport N+1 lands while the review is outstanding
+	console.log("PROBE reviewer delegation tracked before worker:", orch.delegations.has("call-p12-1r"));
+	setCleanTree();
+	const second = await orch.beginDelegation(
+		{ toolCallId: "call-p12-2", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	console.log("PROBE second delegation outcome:", JSON.stringify(second)?.slice(0, 300));
+	console.log("PROBE reviewer delegation tracked after worker:", orch.delegations.has("call-p12-1r"));
+	setDirtyTree();
+	await orch.handleSubagentResult(workerResult("call-p12-2", reportFor(taskId, "call-p12-2")));
+	console.log("PROBE packet revision at delegation:", packetAtDelegation);
+	console.log("PROBE stored revision at record time:", orch.store.require(taskId).reports.length);
+
+	const unbound = await orch.handleSubagentResult({
+		toolCallId: "call-p12-1r",
+		toolName: "subagent",
+		input: {},
+		content: [{ type: "text", text: JSON.stringify({ taskId, verdict: "pass", summary: "contract-shaped pass, reviewed revision 1", evidenceFresh: true, findings: [] }) }],
+		isError: false,
+	});
+	console.log("PROBE raw outcome:", JSON.stringify(unbound)?.slice(0, 400));
+	console.log("PROBE reviews recorded:", orch.store.require(taskId).reviews.length);
+	console.log("PROBE recorded reportRevision:", orch.store.require(taskId).reviews.at(-1)?.reportRevision);
+	console.log("PROBE task state:", orch.store.require(taskId).state);
+}
 // A ReviewResult whose workspace digest does not match the latest report is refused.
 {
 	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
@@ -3070,9 +2751,10 @@ function realGitRunnerOf(dir) {
 	const taskId = "T-20260905-998";
 	await delegateWorker(orch, "call-t8-4", taskId);
 	await orch.handleSubagentResult(workerResult("call-t8-4", reportFor(taskId, "call-t8-4")));
-	const probeInput = { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) };
-	await orch.prepareRoleDelegation(probeInput);
-	await orch.beginDelegation({ toolCallId: "call-t8-4r", input: probeInput }, BASE);
+	await orch.beginDelegation(
+		{ toolCallId: "call-t8-4r", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) } },
+		BASE,
+	);
 	const unbound = await orch.handleSubagentResult({
 		toolCallId: "call-t8-4r",
 		toolName: "subagent",
@@ -3101,41 +2783,6 @@ function realGitRunnerOf(dir) {
 	assert.match(outcome.content[0].text, /decision: accept/);
 	assert.equal(orch.store.require(taskId).state, "completed");
 	assert.equal(orch.store.require(taskId).reviews.at(-1).reportRevision, 1);
-}
-
-// Ticket 32 — an omitted-binding pass must fill from the ReviewRequest the
-// reviewer was shown (revision N), not from the Task at record time (N+1).
-// The one-task-one-delegation lock would drop the reviewer if a second worker
-// began, so the newer report is injected on the store while the reviewer record
-// stays live. The lock itself is not relaxed.
-{
-	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
-	const taskId = "T-20260905-032";
-	await delegateWorker(orch, "call-t32-w1", taskId);
-	await orch.handleSubagentResult(workerResult("call-t32-w1", reportFor(taskId, "call-t32-w1")));
-	assert.equal(orch.store.require(taskId).reports.length, 1);
-
-	const reviewerInput = { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer")) };
-	await orch.prepareRoleDelegation(reviewerInput);
-	await orch.beginDelegation({ toolCallId: "call-t32-r", input: reviewerInput }, BASE);
-
-	orch.store.recordReport(taskId, reportFor(taskId, "call-t32-w2"));
-	const snap = orch.store.require(taskId).snapshot;
-	assert.ok(snap, "the N report left a bound snapshot");
-	orch.store.setSnapshot(taskId, { ...snap, reportRevision: 2 });
-	assert.equal(orch.store.require(taskId).reports.length, 2);
-
-	const unbound = await orch.handleSubagentResult({
-		toolCallId: "call-t32-r",
-		toolName: "subagent",
-		input: {},
-		content: [{ type: "text", text: JSON.stringify({ taskId, verdict: "pass", summary: "unbound pass over N", evidenceFresh: true, findings: [] }) }],
-		isError: false,
-	});
-	assert.ok(unbound, "the reviewer result is consumed, not dropped");
-	assert.match(unbound.content[0].text, /reportRevision mismatch/);
-	assert.equal(orch.store.require(taskId).reviews.length, 0, "the omitted pass is not stamped as N+1");
-	assert.equal(orch.store.require(taskId).state, "reviewing", "the Task does not complete");
 }
 
 // --------------------------------------------------------------------------
@@ -5066,97 +4713,6 @@ const oracle1ForegroundText = [
 		assert.equal(outcome.block, undefined);
 		assert.equal(workerInput.model, "policy-test/worker");
 		assert.equal(workerInput.thinking, "medium");
-	} finally {
-		for (const [key, value] of Object.entries({
-			PI_PLANNER_ONLY_ROLE_MODELS: saved.flag,
-			PI_PLANNER_ONLY_MODEL_WORKER: saved.workerModel,
-			PI_PLANNER_ONLY_THINKING_WORKER: saved.workerThinking,
-		})) {
-			if (value === undefined) delete process.env[key]; else process.env[key] = value;
-		}
-	}
-}
-
-// p13-r063: every role-model rejection path blocks before launch without mutating caller input.
-{
-	const saved = {
-		flag: process.env.PI_PLANNER_ONLY_ROLE_MODELS,
-		workerModel: process.env.PI_PLANNER_ONLY_MODEL_WORKER,
-		workerThinking: process.env.PI_PLANNER_ONLY_THINKING_WORKER,
-		reviewerModel: process.env.PI_PLANNER_ONLY_MODEL_REVIEWER,
-		reviewerThinking: process.env.PI_PLANNER_ONLY_THINKING_REVIEWER,
-	};
-	try {
-		process.env.PI_PLANNER_ONLY_ROLE_MODELS = "1";
-		delete process.env.PI_PLANNER_ONLY_MODEL_WORKER;
-		delete process.env.PI_PLANNER_ONLY_THINKING_WORKER;
-		process.env.PI_PLANNER_ONLY_MODEL_REVIEWER = "policy-test/reviewer";
-		process.env.PI_PLANNER_ONLY_THINKING_REVIEWER = "low";
-		const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
-		const input = { agent: "worker", task: JSON.stringify(specFor("T-20260905-932")) };
-		const blocked = await orch.beginDelegation({ toolCallId: "call-policy-worker-missing", input }, BASE);
-		assert.match(blocked.block?.reason ?? "", /role model policy is enabled but worker is missing model and thinking/);
-		assert.equal("model" in input, false);
-		assert.equal("thinking" in input, false);
-	} finally {
-		for (const [key, value] of Object.entries({
-			PI_PLANNER_ONLY_ROLE_MODELS: saved.flag,
-			PI_PLANNER_ONLY_MODEL_WORKER: saved.workerModel,
-			PI_PLANNER_ONLY_THINKING_WORKER: saved.workerThinking,
-			PI_PLANNER_ONLY_MODEL_REVIEWER: saved.reviewerModel,
-			PI_PLANNER_ONLY_THINKING_REVIEWER: saved.reviewerThinking,
-		})) {
-			if (value === undefined) delete process.env[key]; else process.env[key] = value;
-		}
-	}
-}
-
-{
-	const saved = {
-		flag: process.env.PI_PLANNER_ONLY_ROLE_MODELS,
-		workerModel: process.env.PI_PLANNER_ONLY_MODEL_WORKER,
-		workerThinking: process.env.PI_PLANNER_ONLY_THINKING_WORKER,
-	};
-	try {
-		process.env.PI_PLANNER_ONLY_ROLE_MODELS = "1";
-		process.env.PI_PLANNER_ONLY_MODEL_WORKER = "policy-test/worker";
-		process.env.PI_PLANNER_ONLY_THINKING_WORKER = "medium level";
-		const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
-		const input = { agent: "worker", task: JSON.stringify(specFor("T-20260905-933")) };
-		const blocked = await orch.beginDelegation({ toolCallId: "call-policy-worker-invalid", input }, BASE);
-		assert.match(blocked.block?.reason ?? "", /cannot resolve worker thinking medium level/);
-		assert.equal("model" in input, false);
-		assert.equal("thinking" in input, false);
-	} finally {
-		for (const [key, value] of Object.entries({
-			PI_PLANNER_ONLY_ROLE_MODELS: saved.flag,
-			PI_PLANNER_ONLY_MODEL_WORKER: saved.workerModel,
-			PI_PLANNER_ONLY_THINKING_WORKER: saved.workerThinking,
-		})) {
-			if (value === undefined) delete process.env[key]; else process.env[key] = value;
-		}
-	}
-}
-
-{
-	const saved = {
-		flag: process.env.PI_PLANNER_ONLY_ROLE_MODELS,
-		workerModel: process.env.PI_PLANNER_ONLY_MODEL_WORKER,
-		workerThinking: process.env.PI_PLANNER_ONLY_THINKING_WORKER,
-	};
-	try {
-		process.env.PI_PLANNER_ONLY_ROLE_MODELS = "1";
-		process.env.PI_PLANNER_ONLY_MODEL_WORKER = "policy-test/worker";
-		process.env.PI_PLANNER_ONLY_THINKING_WORKER = "medium";
-		const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
-		const input = {
-			agent: "worker",
-			model: "caller/model",
-			task: JSON.stringify(specFor("T-20260905-934")),
-		};
-		const blocked = await orch.beginDelegation({ toolCallId: "call-policy-worker-conflict", input }, BASE);
-		assert.match(blocked.block?.reason ?? "", /conflict for worker: caller=caller\/model policy=policy-test\/worker/);
-		assert.equal(input.model, "caller/model");
 	} finally {
 		for (const [key, value] of Object.entries({
 			PI_PLANNER_ONLY_ROLE_MODELS: saved.flag,

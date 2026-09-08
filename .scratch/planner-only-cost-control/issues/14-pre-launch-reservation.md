@@ -4,15 +4,57 @@
 
 **Blocked by:** 13。
 
-**Status:** ready-for-agent
+**Status:** 14A done（clauses 1-5，p15-r069/r070/r071）；clause 6 拆到 14B 未做
 
-- [ ] 剩余额度小于默认地板：下传值为剩余额度；剩余额度大于调用方限制：下传值为调用方限制。
-- [ ] 两个允许并发的委派同时启动：第二个只能拿到扣除第一个预留后的余额。
-- [ ] 费用维度耗尽而 token 未耗尽：启动被拒绝，原因指明维度。
-- [ ] 拒绝信息包含 Task、已知消耗、在途预留、未知项。
-- [ ] 重试与 Reviewer 委派不重置累计值。
+- [x] 剩余额度小于默认地板：下传值为剩余额度；剩余额度大于调用方限制：下传值为调用方限制。
+- [x] 两个允许并发的委派同时启动：第二个只能拿到扣除第一个预留后的余额。
+- [x] 费用维度耗尽而 token 未耗尽：启动被拒绝，原因指明维度。
+- [x] 拒绝信息包含 Task、已知消耗、在途预留、未知项。
+- [x] 重试与 Reviewer 委派不重置累计值。
 - [ ] 宿主不支持某维度硬限制时，status 说明该维度仅事后观测。
 
 ## Comments
 
 Parent: `.scratch/planner-only-cost-control/spec.md`（User Stories 31–32、36，阶段 D 决策第 3 条）。
+
+2026-09-08（planner claude-pD 复核，p15-r069 + p15-r070 + p15-r071 三轮，pi `w2E:pG` 落地）：
+**第 1–5 条勾上，第 6 条拆出去做 14B，本票不勾。**
+
+实现：新增 `reservations.ts`（同步 `BudgetReservations`：`inFlight` / `reserve` / `release` /
+`releaseByToolCall`），`floors.ts` 的 `LimitSource` 增加 `"balance"` 来源并参与 tokens/costUsd 取最严
+（含无地板的 else 分支），`beginDelegation` 在 `stripDelegationKeys` 之前做 check-and-reserve，
+5 个终结路径收敛成 `endDelegation`（全文件只剩 1 处 `this.delegations.delete(`）。
+
+逐条证据（全部是我在 planner pane 实跑的，不是执行者报告的转述）：
+
+- 第 1 条：V5 —— 上限 50000/$0.20、已耗 48000/$0.19 时，地板本来要下发 40000，
+  实际发出的载荷逐字是 `{"tokens":{"hard":2000},"costUsd":{"hard":0.01…}}`。
+  「余额宽裕时调用方更严者胜」由 floors.test.mjs 的 V1–V4 与 05 遗留的更严者胜用例共同覆盖。
+- 第 2 条：`p15-probe/r071-partial2.mjs` —— 余额 52000 时第一个子进程拿 40000（地板），
+  第二个只拿到 **12000**，两者之和 52000 **恰好等于余额**，没有超订。
+- 第 3 条：V7 —— 费用见底而 token 宽裕时按 `costUsd` 维度拒绝。
+- 第 4 条：V8 —— 拒绝文案逐字断言六行，含 Task、已知消耗、在途预留、未知项、上限、下一步。
+- 第 5 条：V9（子进程终结后预留归还，累计已知消耗不回退）+ V10（reviewer 不受闸门约束）。
+
+过程里被实跑推翻的两处，记下来免得以后重犯：
+
+1. **预留在拒绝路径上永久泄漏**（r069 交付里就有，r070 修）。预留发生在 `beginDelegation` 靠前，
+   `delegations.set` 在两百行之后，中间的每一条 `return`（TaskSpec 非法、缺验证定义、写锁冲突）
+   都会留下一笔没人能释放的预留。实测 6 次**从未启动任何子进程**的委派把 200000 的上限占满，
+   已知消耗还是 0，Task 从此永久卡死。修法是 `beginDelegation` 外壳 try/finally：
+   没有被记进 `this.delegations` 的调用一律 `releaseByToolCall`。V13 守这条。
+2. **reviewer 会被余额闸门拒掉**（r070 的 V10 声称不会、且测试是绿的，实际相反）。
+   V10 当时用裸 taskId 当正文，那条路径根本绑不上 Task，整段逻辑被跳过，断言恒真。
+   真实行为是 reviewer 在余额耗尽时被拒——而 reviewer 是 Task 收尾的唯一途径，
+   这会让超预算的 Task 既不能通过也不能失败。r071 在调用点按 `role !== "reviewer"` 豁免，
+   并把 V10 重写成「reviewer 放行 + 预留为零 + 同状态下 worker 阳性对照确实被拒」三条。
+
+**仍未证明（不要读成已闭合）**：宿主运行时是否真的在 `hard` 处把子进程停下来。
+与工单 05 第 1、2 条同一个缺口——只证明了宿主**接受**这个参数形状。要闭合需要一次真实子进程
+跑到上限，要花模型钱（工单 36 的 F3），用户尚未拍板。
+
+`naming.test.mjs` 因新增 `reservations.ts` 而失败是预期内的：它校验的是仓库外的安装副本
+`~/.pi/agent/git/github.com/bioShaun/pi-planner-only`，那是个跟着 **main** 走的克隆，
+要等本分支合进 main、扩展更新后才会同步。其余 15 个套件、typecheck、e2e 全绿。
+
+round_id=p15-r069 / p15-r070 / p15-r071

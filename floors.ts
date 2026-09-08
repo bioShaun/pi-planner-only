@@ -109,7 +109,7 @@ export function loadFloorConfig(env: NodeJS.ProcessEnv = process.env): FloorConf
 	};
 }
 
-export type LimitSource = "floor" | "caller" | "taskSpec";
+export type LimitSource = "floor" | "caller" | "taskSpec" | "balance";
 
 export interface EffectiveLimit {
 	readonly value: number;
@@ -128,6 +128,8 @@ export interface ResolveLimitsOptions {
 	callerToolBudget?: unknown;
 	callerUsageBudget?: unknown;
 	taskSpecBudget?: unknown;
+	balanceTokens?: number;
+	balanceCostUsd?: number;
 	config?: FloorConfig;
 }
 
@@ -270,6 +272,7 @@ export function resolveEffectiveLimits(options: ResolveLimitsOptions): Effective
 		];
 		if (callerTokens !== undefined) candidates.push({ value: callerTokens, source: "caller" });
 		if (specTokens !== undefined) candidates.push({ value: specTokens, source: "taskSpec" });
+		if (options.balanceTokens !== undefined) candidates.push({ value: options.balanceTokens, source: "balance" });
 
 		let best = candidates[0];
 		for (let i = 1; i < candidates.length; i++) {
@@ -280,10 +283,13 @@ export function resolveEffectiveLimits(options: ResolveLimitsOptions): Effective
 		}
 		effectiveTokens = best;
 	} else {
-		if (callerTokens !== undefined && (specTokens === undefined || callerTokens <= specTokens)) {
+		if (callerTokens !== undefined && (specTokens === undefined || callerTokens <= specTokens)
+			&& (options.balanceTokens === undefined || callerTokens <= options.balanceTokens)) {
 			effectiveTokens = { value: callerTokens, source: "caller" };
-		} else if (specTokens !== undefined) {
+		} else if (specTokens !== undefined && (options.balanceTokens === undefined || specTokens <= options.balanceTokens)) {
 			effectiveTokens = { value: specTokens, source: "taskSpec" };
+		} else if (options.balanceTokens !== undefined) {
+			effectiveTokens = { value: options.balanceTokens, source: "balance" };
 		}
 	}
 
@@ -295,6 +301,7 @@ export function resolveEffectiveLimits(options: ResolveLimitsOptions): Effective
 		];
 		if (callerCostUsd !== undefined) candidates.push({ value: callerCostUsd, source: "caller" });
 		if (specCostUsd !== undefined) candidates.push({ value: specCostUsd, source: "taskSpec" });
+		if (options.balanceCostUsd !== undefined) candidates.push({ value: options.balanceCostUsd, source: "balance" });
 
 		let best = candidates[0];
 		for (let i = 1; i < candidates.length; i++) {
@@ -305,10 +312,13 @@ export function resolveEffectiveLimits(options: ResolveLimitsOptions): Effective
 		}
 		effectiveCostUsd = best;
 	} else {
-		if (callerCostUsd !== undefined && (specCostUsd === undefined || callerCostUsd <= specCostUsd)) {
+		if (callerCostUsd !== undefined && (specCostUsd === undefined || callerCostUsd <= specCostUsd)
+			&& (options.balanceCostUsd === undefined || callerCostUsd <= options.balanceCostUsd)) {
 			effectiveCostUsd = { value: callerCostUsd, source: "caller" };
-		} else if (specCostUsd !== undefined) {
+		} else if (specCostUsd !== undefined && (options.balanceCostUsd === undefined || specCostUsd <= options.balanceCostUsd)) {
 			effectiveCostUsd = { value: specCostUsd, source: "taskSpec" };
+		} else if (options.balanceCostUsd !== undefined) {
+			effectiveCostUsd = { value: options.balanceCostUsd, source: "balance" };
 		}
 	}
 

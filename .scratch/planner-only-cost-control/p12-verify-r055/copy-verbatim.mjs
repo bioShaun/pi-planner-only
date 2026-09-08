@@ -1,0 +1,13 @@
+import { workerReportShapeReminder } from "../../../report.ts";
+import { wrapOracleContract, lastWorkerValidationPassed, missingTaskSpecValidationCommands, oracleSuiteMode } from "../../../roles.ts";
+const verbatim = JSON.parse(workerReportShapeReminder("T-20260908-028"));
+const spec = { validation: { commands: ["npm test"] } };
+const missing = missingTaskSpecValidationCommands(spec, verbatim);
+const passed = lastWorkerValidationPassed(verbatim);
+console.log("--- worker copies the contract example verbatim ---");
+console.log("lastWorkerValidationPassed:", passed, " missingCommands:", JSON.stringify(missing));
+console.log(wrapOracleContract("verify task", oracleSuiteMode({}), passed, missing).split("\n")[1]);
+const oldStyle = { ...verbatim, validation: [] };
+console.log("--- pre-fix behaviour (validation: []) ---");
+console.log("lastWorkerValidationPassed:", lastWorkerValidationPassed(oldStyle));
+console.log(wrapOracleContract("verify task", oracleSuiteMode({}), lastWorkerValidationPassed(oldStyle), missingTaskSpecValidationCommands(spec, oldStyle)).split("\n")[1]);
