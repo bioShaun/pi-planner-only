@@ -35,7 +35,8 @@ import { register } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { applyRoleDelegation, ROLE_TOOL_PROFILES } from "./roles.ts";
+import { Check } from "typebox/value";
+import { applyRoleDelegation, ROLE_TOOL_PROFILES, stripDelegationKeys } from "./roles.ts";
 import { loadRoleModelPolicy, resolveRoleModel } from "./role-models.ts";
 import { filterPlannerTools } from "./index.ts";
 
@@ -301,29 +302,103 @@ try {
 
 	// ------------------------------------------------------------------
 	// §F — Budget contract verification
+	// pi-subagents 0.66.0 has no exported subpath that reaches the delegation
+	// parameter schema, so this asserts the non-exported internal path
+	// src/extension/schemas.ts. The assertion is bound to the package.json
+	// pi-planner-only.piSubagents declaration range: an upstream move or shape
+	// change must turn this gate red rather than silently turning it green.
+	// This proves only that the host accepts the budget parameter shapes we send;
+	// it does not prove a runtime child actually stops at hard (separate work).
 	// ------------------------------------------------------------------
-	let budgetResolver = null;
-	const budgetPreflight = installedManifest.exports?.["./budget"] ?? installedManifest.exports?.["./preflight"];
-	if (budgetPreflight) {
+	const schemaPath = join(pkgCopy, "src", "extension", "schemas.ts");
+	let budgetSchema;
+	let budgetSchemaFailure;
+	if (!existsSync(schemaPath)) {
+		budgetSchemaFailure = `内部 schema 文件不存在: ${schemaPath}`;
+	} else {
 		try {
-			const mod = await import(pathToFileURL(join(pkgCopy, budgetPreflight)).href);
-			if (typeof mod.resolveSubagentBudgetContract === "function") {
-				budgetResolver = mod.resolveSubagentBudgetContract;
+			const schemaModule = await import(pathToFileURL(schemaPath).href);
+			if (typeof schemaModule.createSubagentParamsSchema !== "function") {
+				budgetSchemaFailure = "内部 schema 未导出 createSubagentParamsSchema";
+			} else {
+				budgetSchema = schemaModule.createSubagentParamsSchema();
 			}
-		} catch {
-			budgetResolver = null;
+		} catch (error) {
+			budgetSchemaFailure = `导入内部 schema 失败: ${error instanceof Error ? error.message : String(error)}`;
 		}
 	}
 
-	if (typeof budgetResolver === "function") {
-		const budgetContract = await budgetResolver({
-			agent: "worker",
-			toolBudget: { hard: 20 },
-			usageBudget: { tokens: { hard: 40000 }, costUsd: { hard: 0.1 } },
-		});
-		assert.equal(budgetContract.toolBudget?.hard, 20);
+	if (budgetSchemaFailure) {
+		markContractUnverified("F", budgetSchemaFailure);
 	} else {
-		markContractUnverified("F", "pi-subagents 未暴露无模型调用的 budget 契约公开接口");
+		const toolBudgetSchema = budgetSchema.properties?.toolBudget;
+		assert.ok(toolBudgetSchema, "host schema must define toolBudget");
+		assert.ok(toolBudgetSchema.required?.includes("hard"), "toolBudget must require hard");
+		assert.equal(toolBudgetSchema.properties?.hard?.type, "integer");
+		assert.equal(toolBudgetSchema.properties?.hard?.minimum, 1);
+		assert.equal(toolBudgetSchema.additionalProperties, false);
+
+		const usageBudgetSchema = budgetSchema.properties?.usageBudget;
+		assert.ok(usageBudgetSchema, "host schema must define usageBudget");
+		assert.equal(usageBudgetSchema.additionalProperties, false);
+		for (const branch of ["tokens", "costUsd"]) {
+			const branchSchema = usageBudgetSchema.properties?.[branch];
+			assert.ok(branchSchema, `usageBudget must define ${branch}`);
+			assert.ok(branchSchema.required?.includes("hard"), `${branch} must require hard`);
+			assert.equal(branchSchema.properties?.hard?.type, "number");
+			assert.equal(branchSchema.properties?.hard?.exclusiveMinimum, 0);
+			assert.equal(branchSchema.additionalProperties, false);
+		}
+
+		// The host top-level object permits extra keys, so Check can never prove the
+		// internal delegation key is absent; assert the strip itself, and validate
+		// the payload in the state it is actually sent in — after the strip.
+		const validatorPayload = { agent: "worker", context: "fork", task: "validate" };
+		applyRoleDelegation(validatorPayload, { role: "validator" });
+		assert.equal("__floorLimits" in validatorPayload, true, "the floors seam must set the internal key before the strip");
+		stripDelegationKeys(validatorPayload);
+		assert.equal("__floorLimits" in validatorPayload, false);
+		assert.equal(Check(budgetSchema, validatorPayload), true);
+		assert.equal(validatorPayload.toolBudget?.hard, 20);
+		assert.equal(validatorPayload.usageBudget?.tokens?.hard, 40000);
+		assert.equal(validatorPayload.usageBudget?.costUsd?.hard, 0.1);
+
+		const boundedWorkerPayload = { agent: "worker", context: "fork", task: "bounded" };
+		applyRoleDelegation(boundedWorkerPayload, { role: "worker", reportsCount: 1 });
+		assert.equal("__floorLimits" in boundedWorkerPayload, true, "the floors seam must set the internal key before the strip");
+		stripDelegationKeys(boundedWorkerPayload);
+		assert.equal("__floorLimits" in boundedWorkerPayload, false);
+		assert.equal(Check(budgetSchema, boundedWorkerPayload), true);
+		assert.equal(boundedWorkerPayload.toolBudget?.hard, 20);
+		assert.equal(boundedWorkerPayload.usageBudget?.tokens?.hard, 40000);
+		assert.equal(boundedWorkerPayload.usageBudget?.costUsd?.hard, 0.1);
+
+		assert.equal(
+			Check(budgetSchema, { ...boundedWorkerPayload, toolBudget: { soft: 5 } }),
+			false,
+			"toolBudget must reject a payload missing hard",
+		);
+		assert.equal(
+			Check(budgetSchema, { ...boundedWorkerPayload, toolBudget: { hard: 0 } }),
+			false,
+			"toolBudget must reject hard=0",
+		);
+		assert.equal(
+			Check(budgetSchema, {
+				...boundedWorkerPayload,
+				usageBudget: { tokens: { soft: 1 }, costUsd: { hard: 0.1 } },
+			}),
+			false,
+			"usageBudget.tokens must reject a payload missing hard",
+		);
+		assert.equal(
+			Check(budgetSchema, {
+				...boundedWorkerPayload,
+				usageBudget: { tokens: { hard: 40000 }, costUsd: { hard: 0.1 }, nope: 1 },
+			}),
+			false,
+			"usageBudget must reject unknown keys",
+		);
 	}
 
 	// ------------------------------------------------------------------
