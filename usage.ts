@@ -601,6 +601,139 @@ export class UsageLedger {
 	}
 }
 
+export interface CumulativeBudgetLimits {
+	tokens?: number;
+	costUsd?: number;
+}
+
+export interface BudgetDimension {
+	/** undefined when this dimension is not configured. */
+	limit?: number;
+	/** Sum of the components whose value is known. */
+	known: number;
+	/** How many components could not be valued at all. Never folded into `known`. */
+	unknownParts: number;
+	/** limit - known. undefined when limit is undefined. NEVER clamped: overspend must stay negative. */
+	remaining?: number;
+}
+
+export interface RoleUsageSummary {
+	calls: number;
+	tokens: number;
+	costUsd: number;
+	costUnknownParts: number;
+}
+
+export interface TaskBudgetSummary {
+	configured: boolean;
+	tokens: BudgetDimension;
+	costUsd: BudgetDimension;
+	/** "root" plus one key per DelegationKind actually seen. Absent roles are absent, not zero-filled. */
+	byRole: Record<string, RoleUsageSummary>;
+}
+
+function usageTokens(counts: TokenCounts): number {
+	return counts.input + counts.output + counts.cacheRead + counts.cacheWrite;
+}
+
+/**
+ * Summarize a Task without persisting a second accounting structure.
+ * Token totals deliberately exclude `reasoning`: providers differ on whether
+ * it is already included in `output`, so adding it can double-count usage.
+ * Unknown components do not reduce remaining: treating them as debt is
+ * reserved for a later budget policy.
+ */
+export function summarizeTaskBudget(usage: TaskUsage, limits?: CumulativeBudgetLimits): TaskBudgetSummary {
+	const rootTokens = usageTokens(usage.root);
+	const childTokens = usage.children.reduce((sum, child) => sum + usageTokens(child), 0);
+	const tokenKnown = rootTokens + childTokens;
+	const tokenUnknown = usage.root.tokensUnknownTurns
+		+ usage.children.filter((child) => child.pending || child.source === "unavailable").length;
+	const costKnown = (usage.root.costUsd ?? 0)
+		+ usage.children.reduce((sum, child) => sum + (child.costUsd ?? 0), 0);
+	// Root cost is sticky-unknown across all its turns, so it contributes one
+	// unknown component at most; unknown parts are not folded into known/remaining.
+	// A Root bucket that never took a turn spent nothing: zero is not unknown,
+	// so it must not fabricate an unknown component (renderUsage guards the same way).
+	const rootCostUnknown = usage.root.turns > 0 && usage.root.costUsd === undefined;
+	const costUnknown = (rootCostUnknown ? 1 : 0)
+		+ usage.children.filter((child) => child.costUsd === undefined).length;
+	const dimension = (known: number, unknownParts: number, limit?: number): BudgetDimension => ({
+		...(limit === undefined ? {} : { limit, remaining: limit - known }),
+		known,
+		unknownParts,
+	});
+	const byRole: Record<string, RoleUsageSummary> = {
+		root: {
+			calls: usage.root.turns,
+			tokens: rootTokens,
+			costUsd: usage.root.costUsd ?? 0,
+			costUnknownParts: rootCostUnknown ? 1 : 0,
+		},
+	};
+	for (const child of usage.children) {
+		const role = byRole[child.kind] ?? (byRole[child.kind] = {
+			calls: 0,
+			tokens: 0,
+			costUsd: 0,
+			costUnknownParts: 0,
+		});
+		role.calls += 1;
+		role.tokens += usageTokens(child);
+		role.costUsd += child.costUsd ?? 0;
+		if (child.costUsd === undefined) role.costUnknownParts += 1;
+	}
+	return {
+		configured: limits?.tokens !== undefined || limits?.costUsd !== undefined,
+		tokens: dimension(tokenKnown, tokenUnknown, limits?.tokens),
+		costUsd: dimension(costKnown, costUnknown, limits?.costUsd),
+		byRole,
+	};
+}
+
+export interface SessionUsageSummary {
+	/** Session-level usage that belongs to no Task (pre-Task Root turns, unattributable children). */
+	unattributed: { turns: number; tokens: number; costUsd: number; costUnknown: boolean };
+	tasks: string[];
+	/** Whole-session tokens: unattributed + every task's root and children. */
+	totalTokens: number;
+	/** Whole-session known cost. Unknown components are counted in costUnknownParts, never as 0 spend. */
+	totalCostUsd: number;
+	costUnknownParts: number;
+}
+
+export function summarizeSessionUsage(ledger: UsageLedger): SessionUsageSummary {
+	const session = ledger.sessionUsage();
+	const unattributed = session.untasked;
+	const unattributedTokens = usageTokens(unattributed);
+	let totalTokens = unattributedTokens;
+	let totalCostUsd = unattributed.costUsd ?? 0;
+	// Same rule as summarizeTaskBudget: a bucket with no turns spent nothing,
+	// so an empty unattributed bucket is known-zero, not unknown.
+	const unattributedCostUnknown = unattributed.turns > 0 && unattributed.costUsd === undefined;
+	let costUnknownParts = unattributedCostUnknown ? 1 : 0;
+	for (const taskId of session.tasks) {
+		const usage = ledger.taskUsage(taskId);
+		if (!usage) continue;
+		totalTokens += usageTokens(usage.root) + usage.children.reduce((sum, child) => sum + usageTokens(child), 0);
+		totalCostUsd += (usage.root.costUsd ?? 0) + usage.children.reduce((sum, child) => sum + (child.costUsd ?? 0), 0);
+		costUnknownParts += (usage.root.turns > 0 && usage.root.costUsd === undefined ? 1 : 0)
+			+ usage.children.filter((child) => child.costUsd === undefined).length;
+	}
+	return {
+		unattributed: {
+			turns: unattributed.turns,
+			tokens: unattributedTokens,
+			costUsd: unattributed.costUsd ?? 0,
+			costUnknown: unattributedCostUnknown,
+		},
+		tasks: session.tasks,
+		totalTokens,
+		totalCostUsd,
+		costUnknownParts,
+	};
+}
+
 function formatTokens(n: number): string {
 	const abs = Math.abs(n);
 	if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;

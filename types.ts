@@ -144,6 +144,15 @@ export interface TaskSpec {
 		tokens?: number;
 		costUsd?: number;
 	};
+	/**
+	 * Cumulative budget for the whole Task: every role, every retry, one balance.
+	 * Distinct from `budget`, which bounds a single delegation and keeps its
+	 * existing meaning unchanged.
+	 */
+	cumulativeBudget?: {
+		tokens?: number;
+		costUsd?: number;
+	};
 }
 
 export interface ValidationResult {

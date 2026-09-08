@@ -180,6 +180,23 @@ export function validateTaskSpec(value: unknown): string[] {
 			}
 		}
 	}
+	if (value.cumulativeBudget !== undefined) {
+		if (!isPlainObject(value.cumulativeBudget)) {
+			errors.push("cumulativeBudget must be an object when present");
+		} else {
+			const cumulativeBudget = value.cumulativeBudget as Record<string, unknown>;
+			if (cumulativeBudget.tokens !== undefined) {
+				if (typeof cumulativeBudget.tokens !== "number" || !Number.isFinite(cumulativeBudget.tokens) || cumulativeBudget.tokens <= 0) {
+					errors.push("cumulativeBudget.tokens must be a positive finite number");
+				}
+			}
+			if (cumulativeBudget.costUsd !== undefined) {
+				if (typeof cumulativeBudget.costUsd !== "number" || !Number.isFinite(cumulativeBudget.costUsd) || cumulativeBudget.costUsd <= 0) {
+					errors.push("cumulativeBudget.costUsd must be a positive finite number");
+				}
+			}
+		}
+	}
 	return errors;
 }
 
@@ -315,6 +332,9 @@ export function extractTaskSpecDetails(
 			);
 			if (isPlainObject(parsed.budget)) {
 				(spec as { budget?: unknown }).budget = parsed.budget;
+			}
+			if (isPlainObject(parsed.cumulativeBudget)) {
+				(spec as { cumulativeBudget?: unknown }).cumulativeBudget = parsed.cumulativeBudget;
 			}
 			return {
 				spec,

@@ -97,7 +97,17 @@ assert.deepEqual(validateTaskSpec({ ...spec, budget: { tokens: 10_000 } }), []);
 assert.deepEqual(validateTaskSpec({ ...spec, budget: { costUsd: 0.25 } }), []);
 assert.ok(validateTaskSpec({ ...spec, budget: "not-an-object" }).some((e) => /budget must be an object/.test(e)));
 assert.ok(validateTaskSpec({ ...spec, budget: { tokens: 0 } }).some((e) => /budget\.tokens must be a positive finite number/.test(e)));
-assert.ok(validateTaskSpec({ ...spec, budget: { tokens: -100 } }).some((e) => /budget\.tokens must be a positive finite number/.test(e)));
+assert.deepEqual(validateTaskSpec({ ...spec, cumulativeBudget: { tokens: 50_000, costUsd: 1.5 } }), []);
+assert.ok(validateTaskSpec({ ...spec, cumulativeBudget: "not-an-object" }).includes("cumulativeBudget must be an object when present"));
+
+
+assert.ok(validateTaskSpec({ ...spec, cumulativeBudget: { tokens: 0 } }).includes("cumulativeBudget.tokens must be a positive finite number"));
+assert.ok(validateTaskSpec({ ...spec, cumulativeBudget: { tokens: -1 } }).includes("cumulativeBudget.tokens must be a positive finite number"));
+assert.ok(validateTaskSpec({ ...spec, cumulativeBudget: { costUsd: "x" } }).includes("cumulativeBudget.costUsd must be a positive finite number"));
+const extractedCumulative = extractTaskSpecDetails(JSON.stringify({ taskId: "T-cumulative", objective: "budgeted", cwd, role: "worker", cumulativeBudget: { tokens: 100, costUsd: 2 } }));
+assert.deepEqual(extractedCumulative.spec.cumulativeBudget, { tokens: 100, costUsd: 2 });
+assert.equal(extractTaskSpecDetails(JSON.stringify({ ...spec, budget: { tokens: 10 } })).spec.cumulativeBudget, undefined);
+
 assert.ok(validateTaskSpec({ ...spec, budget: { tokens: Number.POSITIVE_INFINITY } }).some((e) => /budget\.tokens must be a positive finite number/.test(e)));
 assert.ok(validateTaskSpec({ ...spec, budget: { tokens: "5000" } }).some((e) => /budget\.tokens must be a positive finite number/.test(e)));
 assert.ok(validateTaskSpec({ ...spec, budget: { costUsd: 0 } }).some((e) => /budget\.costUsd must be a positive finite number/.test(e)));

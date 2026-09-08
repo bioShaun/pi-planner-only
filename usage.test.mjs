@@ -3,6 +3,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
 	UsageLedger,
+	summarizeTaskBudget,
+	summarizeSessionUsage,
 	childUsageFromValue,
 	childOutcomeFromExitCode,
 	emptyTaskUsage,
@@ -36,8 +38,93 @@ function piUsage(overrides = {}) {
 }
 
 // --------------------------------------------------------------------------
-// empty TaskUsage
+// Task cumulative budget summaries (T1-T5, T7)
 // --------------------------------------------------------------------------
+
+{
+	const u = ledger({ "m": { input: 0.001, output: 0.001, cacheRead: 0.001, cacheWrite: 0.001 } });
+	const taskId = "T-summary";
+	const component = (input, output, cacheRead = 0, cacheWrite = 0) => ({ input, output, cacheRead, cacheWrite, cost: { total: (input + output + cacheRead + cacheWrite) * 0.001 } });
+	u.recordRootTurn({ taskId, state: "planning", model: "m", usage: component(10, 2, 3, 4) });
+	u.recordRootTurn({ taskId, state: "executing", model: "m", usage: component(20, 2, 3, 4) });
+	u.recordRootTurn({ taskId, state: "reviewing", model: "m", usage: component(30, 2, 3, 4) });
+	for (const [kind, id] of [["worker", "w1"], ["validator", "v1"], ["reviewer", "r1"], ["explorer", "e1"], ["worker", "w2"]]) {
+		u.recordChild(taskId, { kind, runId: id, source: "sync-details", pending: false, input: 1, output: 2, cacheRead: 3, cacheWrite: 4, costUsd: 0.01 });
+	}
+	const summary = summarizeTaskBudget(u.taskUsage(taskId), { tokens: 200, costUsd: 1 });
+	assert.equal(summary.tokens.known, 137);
+	assert.equal(summary.byRole.worker.calls, 2);
+	assert.deepEqual(Object.keys(summary.byRole).sort(), ["explorer", "reviewer", "root", "validator", "worker"]);
+	assert.equal(summary.tokens.limit, 200);
+	assert.equal(summary.tokens.remaining, 63);
+	assert.equal(summary.costUsd.limit, 1);
+	assert.equal(summary.costUsd.remaining, 0.863);
+	assert.equal(summarizeTaskBudget(u.taskUsage(taskId), { tokens: 1 }).tokens.remaining, -136);
+	assert.equal(summarizeTaskBudget(u.taskUsage(taskId)).configured, false);
+	assert.equal(summarizeTaskBudget(u.taskUsage(taskId)).tokens.remaining, undefined);
+	assert.equal(summarizeTaskBudget(u.taskUsage(taskId)).costUsd.remaining, undefined);
+}
+
+{
+	const u = ledger();
+
+	u.recordRootTurn({ model: "m", usage: { input: 7, output: 3, cacheRead: 2, cacheWrite: 1 } });
+	u.recordRootTurn({ taskId: "T-created", state: "planning", model: "m", usage: { input: 11, output: 5, cacheRead: 2, cacheWrite: 1 } });
+	u.recordChild("T-created", { kind: "worker", source: "unavailable", pending: true, input: 4, output: 1, cacheRead: 0, cacheWrite: 0 });
+	const taskSummary = summarizeTaskBudget(u.taskUsage("T-created"));
+	assert.equal(taskSummary.tokens.known, 24);
+
+	assert.equal(taskSummary.tokens.unknownParts, 1);
+	assert.equal(summarizeSessionUsage(u).unattributed.turns, 1);
+	assert.equal(summarizeSessionUsage(u).unattributed.tokens, 13);
+	assert.equal(taskSummary.costUsd.unknownParts, 2);
+	assert.equal(taskSummary.costUsd.known, 0);
+	assert.equal(taskSummary.tokens.unknownParts, 1);
+	assert.equal(summarizeSessionUsage(u).totalTokens, 37);
+}
+
+// --------------------------------------------------------------------------
+// unknown cost and zero-token root remain separate dimensions (T5)
+// --------------------------------------------------------------------------
+
+{
+	const u = ledger();
+	u.recordRootTurn({ taskId: "T-unknown", state: "planning", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } });
+	u.recordChild("T-unknown", { kind: "worker", source: "unavailable", pending: false, input: 9, output: 1, cacheRead: 0, cacheWrite: 0 });
+	const summary = summarizeTaskBudget(u.taskUsage("T-unknown"));
+	assert.equal(summary.tokens.known, 10);
+	assert.equal(summary.tokens.unknownParts, 2);
+	assert.equal(summary.costUsd.known, 0);
+	assert.equal(summary.costUsd.unknownParts, 2);
+}
+
+// --------------------------------------------------------------------------
+// zero is not unknown: a bucket that never took a turn spent nothing, and must
+// not fabricate an unknown cost component (planner fix on top of p14-r067)
+// --------------------------------------------------------------------------
+
+{
+	const u = ledger({ "m": { input: 0.001, output: 0.001, cacheRead: 0.001, cacheWrite: 0.001 } });
+	// An ordinary session: every Root turn is attributed and every cost is priced.
+	u.recordRootTurn({ taskId: "T-priced", state: "planning", model: "m", usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, cost: { total: 0.012 } } });
+	u.recordChild("T-priced", { kind: "worker", runId: "w1", source: "sync-details", pending: false, input: 1, output: 1, cacheRead: 0, cacheWrite: 0, costUsd: 0.002 });
+	const session = summarizeSessionUsage(u);
+	assert.equal(session.unattributed.turns, 0);
+	assert.equal(session.unattributed.costUnknown, false, "an empty unattributed bucket is known-zero, not unknown");
+	assert.equal(session.costUnknownParts, 0, "nothing in this session is unknown");
+
+	// A Task whose children arrived before any Root turn: Root spent nothing.
+	u.recordChild("T-no-root", { kind: "explorer", runId: "e1", source: "sync-details", pending: false, input: 1, output: 1, cacheRead: 0, cacheWrite: 0, costUsd: 0.001 });
+	const noRoot = summarizeTaskBudget(u.taskUsage("T-no-root"), { costUsd: 1 });
+	assert.equal(noRoot.byRole.root.calls, 0);
+	assert.equal(noRoot.costUsd.unknownParts, 0, "a Root with zero turns contributes no unknown cost");
+	assert.equal(noRoot.byRole.root.costUnknownParts, 0);
+	// The sticky-unknown Root case still reports exactly one unknown component.
+	u.recordRootTurn({ taskId: "T-unpriced", state: "planning", model: "no-such-model", usage: { input: 5, output: 1, cacheRead: 0, cacheWrite: 0 } });
+	u.recordRootTurn({ taskId: "T-unpriced", state: "executing", model: "no-such-model", usage: { input: 5, output: 1, cacheRead: 0, cacheWrite: 0 } });
+	assert.equal(summarizeTaskBudget(u.taskUsage("T-unpriced")).costUsd.unknownParts, 1);
+}
+
 
 {
 	const empty = emptyTaskUsage();
