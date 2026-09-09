@@ -24,6 +24,12 @@ export const MAX_REVIEW_ROUNDS = 3;
 /** A malformed report gets one report-only correction, then blocks. */
 export const MAX_REPORT_CORRECTIONS = 1;
 
+/**
+ * Soft cap on how many intact ledger snapshots session_start restores into the
+ * live TaskStore (ticket 38 / F6). Corrupt quarantine placeholders are separate.
+ */
+export const MAX_LEDGER_RESTORE_PER_SESSION = 64;
+
 /** Tasks that remain executing this long no longer hold a writer lock. */
 export const EXECUTING_STALE_MS = (() => {
 	const configured = Number(process.env.PI_PLANNER_ONLY_EXECUTING_STALE_MS);

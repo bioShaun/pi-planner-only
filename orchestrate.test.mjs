@@ -3731,8 +3731,6 @@ for (const [suffix, validation] of [
 	assert.equal(orch.getDelegation("call-06-oracle-silent")?.oracleSuiteConflict, undefined);
 }
 
-console.log("planner-only orchestration: PASS");
-
 // --------------------------------------------------------------------------
 // Ticket 01 — a lost child completion no longer deadlocks Task verdicts
 // --------------------------------------------------------------------------
@@ -6004,3 +6002,76 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	const b = await new PlannerOrchestrator({ gitRunner, store: ample.store }).recordRootVerdict(ample.task, "blocked", "same", { source: "root" });
 	assert.equal(a.task.state, b.task.state, "B10: stop does not alter the state machine");
 }
+
+// --------------------------------------------------------------------------
+// Ticket 38 / F6 — session_start restore is capped and skips empty-cwd ghosts
+// --------------------------------------------------------------------------
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-38-restore-"));
+	try {
+		const ledger = new LedgerSnapshotStore(dir);
+		const real = spentTaskRecord("T-20260908-38a", 0.01, 0.05);
+		ledger.write(real);
+		const ghostPath = join(dir, "planner-only", "ledger", "T-20260908-38ghost.json");
+		writeFileSync(ghostPath, JSON.stringify({
+			version: 1,
+			writtenAt: "2026-09-08T00:00:00.000Z",
+			task: {
+				taskId: "T-20260908-38ghost",
+				role: "worker",
+				cwd: "",
+				state: "planning",
+				reviewRound: 0,
+				reviewMode: "root",
+				reports: [],
+				validatorReports: [],
+				reviews: [],
+				overrides: [],
+				aliases: [],
+				reportCorrections: 0,
+				usage: emptyTaskUsage(),
+				createdAt: "1970-01-01T00:00:00.000Z",
+				updatedAt: "1970-01-01T00:00:00.000Z",
+				stateReason: "stray placeholder",
+			},
+		}), "utf8");
+		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
+		const result = orch.restoreFromLedger();
+		assert.equal(result.restored, 1, "38-a: only the real Task is restored");
+		assert.equal(orch.store.get("T-20260908-38a")?.taskId, "T-20260908-38a", "38-b: real Task is present");
+		assert.equal(orch.store.get("T-20260908-38ghost"), undefined, "38-c: empty-cwd ghost without TaskSpec is skipped");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-38-cap-"));
+	try {
+		const ledger = new LedgerSnapshotStore(dir);
+		const { MAX_LEDGER_RESTORE_PER_SESSION } = await import("./types.ts");
+		for (let i = 0; i < MAX_LEDGER_RESTORE_PER_SESSION + 3; i += 1) {
+			const id = `T-20260908-38c${String(i).padStart(3, "0")}`;
+			const task = spentTaskRecord(id, 0.01, 0.05);
+			task.updatedAt = new Date(Date.UTC(2026, 8, 8, 0, 0, i)).toISOString();
+			ledger.write(task);
+		}
+		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
+		const result = orch.restoreFromLedger();
+		assert.equal(result.restored, MAX_LEDGER_RESTORE_PER_SESSION, "38-d: restore is capped at MAX_LEDGER_RESTORE_PER_SESSION");
+		assert.ok(orch.store.get("T-20260908-38c066"), "38-e: freshest records are preferred");
+		assert.equal(orch.store.get("T-20260908-38c000"), undefined, "38-f: oldest beyond the cap are skipped");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+{
+	const store = pinnedStore();
+	const task = store.create(specFor("T-20260908-28ro"));
+	task.reports.push(reportFor(task.taskId, "prior"));
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const prompt = `Do not modify files. Return only a valid WorkerReport for task ${task.taskId}.`;
+	await orch.beginDelegation({ toolCallId: "call-28ro", input: { task: prompt } }, BASE);
+	assert.equal(orch.getDelegation("call-28ro")?.reportOnly, true, "28-A wire: report-only prompt marks the delegation");
+}
+
+console.log("planner-only orchestration: PASS");

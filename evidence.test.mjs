@@ -10,6 +10,7 @@ import {
 	evidenceAction,
 	hashStatus,
 	isEvidenceStale,
+	isOutsideWorkspacePath,
 	parseChangedPaths,
 	parseUntrackedPaths,
 	probeGit,
@@ -808,5 +809,67 @@ function boundReport(taskId, toolCallId, sample, cwd, changedPaths) {
 		rmSync(dir, { recursive: true, force: true });
 	}
 }
+
+// --------------------------------------------------------------------------
+// Ticket 28 field variants (2026-09-09) — report-only attribution + out-of-repo
+// --------------------------------------------------------------------------
+
+assert.equal(isOutsideWorkspacePath("/home/user/.pi/agent/planner-only/pricing.json", "/repo"), true);
+assert.equal(isOutsideWorkspacePath("/repo/src/a.ts", "/repo"), false);
+assert.equal(isOutsideWorkspacePath("src/a.ts", "/repo"), false);
+
+// Variant A — report-only restates prior-run dirty files that are not in the
+// per-run truthSet (already dirty at the re-sampled base). Without reportOnly,
+// extraDeclared marks unexplained and deadlocks schema-only corrections.
+{
+	const reportOnlyOver = compareEvidence(
+		makeBase({ changedPaths: ["src/a.ts", "src/b.ts"], dirtyPathHashes: { "src/a.ts": "h1", "src/b.ts": "h2" }, gitStatusHash: "hash-base" }),
+		makeCurrent({ changedPaths: ["src/a.ts", "src/b.ts"], dirtyPathHashes: { "src/a.ts": "h1", "src/b.ts": "h2" }, gitStatusHash: "hash-base" }),
+		makeReport({
+			finalGitRef: "abc1234",
+			gitStatusHash: "hash-base",
+			changedPaths: ["src/a.ts", "src/b.ts"],
+		}),
+		{ reportOnly: true },
+	);
+	assert.deepEqual(reportOnlyOver.truthPaths, []);
+	assert.deepEqual(reportOnlyOver.extraDeclaredPaths, ["/repo/src/a.ts", "/repo/src/b.ts"]);
+	assert.equal(reportOnlyOver.unexplained, false, "28-A: report-only over-report is not unexplained");
+	assert.equal(evidenceAction(reportOnlyOver), "review", "28-A: report-only may continue to review");
+	assert.match(describeComparison(reportOnlyOver), /over-reported/);
+}
+
+// Same shape without reportOnly stays unexplained (regression pin).
+{
+	const normalOver = compareEvidence(
+		makeBase({ changedPaths: ["src/a.ts"], dirtyPathHashes: { "src/a.ts": "h1" }, gitStatusHash: "hash-base" }),
+		makeCurrent({ changedPaths: ["src/a.ts"], dirtyPathHashes: { "src/a.ts": "h1" }, gitStatusHash: "hash-base" }),
+		makeReport({ finalGitRef: "abc1234", gitStatusHash: "hash-base", changedPaths: ["src/a.ts"] }),
+	);
+	assert.equal(normalOver.unexplained, true, "28-A control: non-report-only over-report stays unexplained");
+	assert.equal(evidenceAction(normalOver), "revalidate");
+}
+
+// Variant B — absolute out-of-repo declarations never appear in the workspace
+// porcelain digest; they must not force missing/unexplained forever.
+{
+	const homePricing = "/home/user/.pi/agent/planner-only/pricing.json";
+	const outOfRepo = compareEvidence(
+		makeBase({ changedPaths: [], gitStatusHash: "hash-clean" }),
+		makeCurrent({ changedPaths: ["src/a.ts"], gitStatusHash: "hash-one" }),
+		makeReport({
+			finalGitRef: "abc1234",
+			gitStatusHash: "hash-one",
+			changedPaths: ["src/a.ts", homePricing],
+		}),
+	);
+	assert.deepEqual(outOfRepo.truthPaths, ["/repo/src/a.ts"]);
+	assert.equal(outOfRepo.extraDeclaredPaths.includes(homePricing), false, "28-B: out-of-repo path is not extraDeclared");
+	assert.equal(outOfRepo.missingPaths.includes(homePricing), false, "28-B: out-of-repo path is not missing");
+	assert.equal(outOfRepo.unexplained, false, "28-B: out-of-repo declaration does not mark unexplained");
+	assert.match(describeComparison(outOfRepo), /out-of-repo declaration exempt/);
+	assert.equal(evidenceAction(outOfRepo), "review");
+}
+
 
 console.log("planner-only evidence: PASS");

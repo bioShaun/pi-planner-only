@@ -81,6 +81,7 @@ import type { TaskRecord, WriterConflict } from "./task.ts";
 import {
 	DEFAULT_STRUCTURED_DELEGATION_MODE,
 	EXECUTING_STALE_MS,
+	MAX_LEDGER_RESTORE_PER_SESSION,
 	MAX_REVIEW_ROUNDS,
 	MAX_WORKER_REPORT_CHARS,
 	canRebindNamedTask,
@@ -193,16 +194,24 @@ function snapshotPathKey(path: string): string {
 	return key;
 }
 
+function isReportOnlyPrompt(prompt: string): boolean {
+	return /\bDo not modify files\b/i.test(prompt) || /\breport-only correction\b/i.test(prompt);
+}
+
 function compareWithRootSamples(
 	task: TaskRecord,
 	current: EvidenceRef,
 	report: WorkerReport,
+	options: { reportOnly?: boolean } = {},
 ) {
 	return compareEvidence(
 		task.baseEvidence ?? missingBaseEvidence(task, current.workerRunId),
 		current,
 		report,
-		task.spec?.scope ? { scope: task.spec.scope } : {},
+		{
+			...(task.spec?.scope ? { scope: task.spec.scope } : {}),
+			...(options.reportOnly ? { reportOnly: true } : {}),
+		},
 	);
 }
 
@@ -272,6 +281,11 @@ export interface DelegationRecord {
 	floorSummary?: string;
 	/** Root prompt requested a full suite while the actual validator suite is bounded. */
 	oracleSuiteConflict?: boolean;
+	/**
+	 * True when the prompt is a report-only correction ("Do not modify files").
+	 * Evidence comparison then skips per-run over-report unexplained marking.
+	 */
+	reportOnly?: boolean;
 }
 
 export interface DelegationHistoryEntry {
@@ -536,11 +550,17 @@ export class PlannerOrchestrator {
 	/** toolCallId -> delegated task + invocation kind. */
 	private readonly delegations = new Map<string, DelegationRecord>();
 	private readonly reservations = new BudgetReservations();
-	/** runIds whose subagent-notify (or sync result) has already been consumed. */
+	/**
+	 * runIds whose subagent-notify (or sync result) has already been consumed.
+	 * Intentionally unbounded for the session (ticket 38): eviction would let a
+	 * replayed completion notice settle twice — this Set is the settlement
+	 * idempotency key. Memory upper bound is O(delegations in this session);
+	 * a new session allocates a fresh orchestrator and drops both Sets.
+	 */
 	private readonly processedRunIds = new Set<string>();
 	/**
 	 * toolCallIds whose launch the host confirmed never happened.
-	 * Session-scoped Set, same treatment as processedRunIds (no numeric cap).
+	 * Same intentional unbounded session policy as processedRunIds (ticket 38).
 	 */
 	private readonly confirmedNotLaunchedIds = new Set<string>();
 	/** taskId -> history of all delegations for that task. */
@@ -599,8 +619,24 @@ export class PlannerOrchestrator {
 	restoreFromLedger(): { restored: number; corrupt: LedgerCorrupt[] } {
 		if (!this.snapshots) return { restored: 0, corrupt: [] };
 		const { records, corrupt } = this.snapshots.readAll();
+		// Cap + filter (ticket 38 / F6): empty-cwd snapshots without a TaskSpec are
+		// ghost placeholders; restoring every historical Task unbounded floods the
+		// session store. Prefer the freshest eligible records up to the soft cap.
+		const eligible = records
+			.filter((record) => {
+				if (record.cwd && record.cwd.trim() !== "") return true;
+				if (record.spec) return true;
+				return false;
+			})
+			.sort((left, right) => {
+				const delta = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+				return Number.isFinite(delta) && delta !== 0
+					? delta
+					: left.taskId.localeCompare(right.taskId);
+			})
+			.slice(0, MAX_LEDGER_RESTORE_PER_SESSION);
 		let restored = 0;
-		for (const record of records) {
+		for (const record of eligible) {
 			if (this.store.get(record.taskId)) continue;
 			this.store.restore(record);
 			restored += 1;
@@ -1199,6 +1235,7 @@ export class PlannerOrchestrator {
 		// A writable begin was gated by writerConflict above; a read-only role
 		// was not, so protect live writable waiters from supersede (ticket 01).
 		await this.supersedePendingDelegations(task.taskId, event.toolCallId, warnings, isWriterRole(role) ? {} : { protectWriters: true });
+		const reportOnly = isReportOnlyPrompt(delegationPrompt(event.input));
 		this.delegations.set(event.toolCallId, {
 			taskId: task.taskId,
 			kind: role,
@@ -1215,6 +1252,7 @@ export class PlannerOrchestrator {
 			...(reuseOutcome?.reason ? { reuseReason: reuseOutcome.reason } : {}),
 			...(floorLimits ? { floorLimits } : {}),
 			...(floorSummary ? { floorSummary } : {}),
+			...(reportOnly ? { reportOnly: true } : {}),
 		});
 		this.recordHistory(task.taskId, {
 			toolCallId: event.toolCallId,
@@ -2266,7 +2304,9 @@ export class PlannerOrchestrator {
 			}
 		}
 		const comparison = report
-			? compareWithRootSamples(task, current, report)
+			? compareWithRootSamples(task, current, report, {
+				...(options.delegation?.reportOnly ? { reportOnly: true } : {}),
+			})
 			: undefined;
 		if (comparison) this.store.setLastComparison(task.taskId, comparison);
 		const { decision } = advanceReview({
