@@ -319,15 +319,21 @@ export async function captureEvidence(
 	let statusFailed = probe.statusFailed;
 	const diffStatParts: string[] = [];
 	if (probe.diffStat) diffStatParts.push(probe.diffStat);
+	// A declared root that cannot be probed is unknown state, never clean: it
+	// is recorded so compareEvidence refuses to verify the combined sample.
+	const unavailableRoots: string[] = [];
 
 	for (const root of additionalRoots) {
 		let extra: GitProbe;
 		try {
 			extra = await probeGit(run, root);
 		} catch {
+			extra = unavailableProbe();
+		}
+		if (!extra.available) {
+			unavailableRoots.push(root);
 			continue;
 		}
-		if (!extra.available) continue;
 		if (extra.statusFailed) statusFailed = true;
 		if (extra.statusPorcelain !== null) porcelainParts.push(extra.statusPorcelain);
 		const absChanged = absolutizePaths(root, extra.changedPaths);
@@ -369,6 +375,7 @@ export async function captureEvidence(
 		...(probe.head ? { finalGitRef: probe.head } : {}),
 		...(statusHash ? { gitStatusHash: statusHash } : {}),
 		...(statusFailed ? { statusProbeFailed: true } : {}),
+		...(unavailableRoots.length ? { unavailableWorktreeRoots: unavailableRoots } : {}),
 		changedPaths,
 		...(hasDirty ? { dirtyPathHashes: mergedDirty } : {}),
 		...(committedMerged ? { committedPaths: committedMerged } : {}),
@@ -399,6 +406,38 @@ function clip(value: string | null | undefined, limit: number): string | undefin
 export interface ReviewPacketOptions {
 	/** Task start ref the patch is computed against (the delegation-time A sample). */
 	baselineRef?: string;
+	/**
+	 * Declared additional worktree roots (Variant C). Each is sampled into the
+	 * same packet with absolute paths; a root that cannot be sampled marks the
+	 * packet truncated so a PASS over it is ineligible.
+	 */
+	additionalWorktreeRoots?: readonly string[];
+}
+
+interface RootDiffCheck {
+	root: string | undefined;
+	result: DiffCheckResult;
+}
+
+/** Merge per-root `diff --check` results; any failing root fails the merged check. */
+function mergeDiffChecks(parts: readonly RootDiffCheck[]): DiffCheckResult {
+	if (parts.length === 1) return parts[0].result;
+	const exitCode = parts.map((part) => part.result.exitCode).find((code) => code !== 0) ?? 0;
+	const label = (part: RootDiffCheck, text: string) =>
+		part.root ? `# worktree ${part.root}\n${text}` : text;
+	const stdout = clip(
+		parts.filter((part) => part.result.stdout).map((part) => label(part, part.result.stdout ?? "")).join("\n"),
+		MAX_REVIEW_PACKET_DIFF_CHARS,
+	);
+	const stderr = clip(
+		parts.filter((part) => part.result.stderr).map((part) => label(part, part.result.stderr ?? "")).join("\n"),
+		400,
+	);
+	return {
+		exitCode,
+		...(stdout ? { stdout } : {}),
+		...(stderr ? { stderr } : {}),
+	};
 }
 
 export async function captureReviewEvidencePacket(
@@ -408,6 +447,7 @@ export async function captureReviewEvidencePacket(
 	options: ReviewPacketOptions = {},
 ): Promise<ReviewEvidencePacket> {
 	const target = resolve(cwd);
+	const additionalRoots = normalizeAdditionalWorktreeRoots(target, options.additionalWorktreeRoots);
 	let probe: GitProbe;
 	try {
 		probe = await probeGit(run, target);
@@ -418,24 +458,66 @@ export async function captureReviewEvidencePacket(
 	const attribution = attributionFields(comparison);
 	if (!probe.available) return { gitAvailable: false, ...attribution };
 
-	const diffCheck = await boundedDiffCheck(run, target, GIT_READ_ARGV.diffCheck);
-	const diffCheckStaged = await boundedDiffCheck(run, target, GIT_READ_ARGV.diffCheckStaged);
-	const patch = await boundedPatchAgainstBaseline(run, target, options.baselineRef);
+	const diffChecks: RootDiffCheck[] = [
+		{ root: undefined, result: await boundedDiffCheck(run, target, GIT_READ_ARGV.diffCheck) },
+	];
+	const diffChecksStaged: RootDiffCheck[] = [
+		{ root: undefined, result: await boundedDiffCheck(run, target, GIT_READ_ARGV.diffCheckStaged) },
+	];
+	const patchSources: PatchSource[] = [await collectPatchSource(run, target, options.baselineRef)];
+
+	const statusParts: string[] = [];
+	if (probe.statusPorcelain) statusParts.push(probe.statusPorcelain);
+	const changedFiles = [...probe.changedPaths];
+	const diffStatParts: string[] = [];
+	if (probe.diffStat) diffStatParts.push(probe.diffStat);
+	const unavailableRoots: string[] = [];
+
+	for (const root of additionalRoots) {
+		let extra: GitProbe;
+		try {
+			extra = await probeGit(run, root);
+		} catch {
+			extra = unavailableProbe();
+		}
+		if (!extra.available || extra.statusFailed) {
+			unavailableRoots.push(root);
+			continue;
+		}
+		if (extra.statusPorcelain) statusParts.push(`# worktree ${root}\n${extra.statusPorcelain}`);
+		changedFiles.push(...absolutizePaths(root, extra.changedPaths));
+		if (extra.diffStat) diffStatParts.push(`# worktree ${root}\n${extra.diffStat}`);
+		diffChecks.push({ root, result: await boundedDiffCheck(run, root, GIT_READ_ARGV.diffCheck) });
+		diffChecksStaged.push({ root, result: await boundedDiffCheck(run, root, GIT_READ_ARGV.diffCheckStaged) });
+		patchSources.push(await collectPatchSource(run, root, options.baselineRef, root));
+	}
+
+	const patch = await boundedPatchFromSources(run, patchSources);
+	const status = clip(statusParts.join("\n"), MAX_REVIEW_PACKET_STATUS_CHARS);
+	const diffStat = clip(diffStatParts.join("\n"), MAX_REVIEW_PACKET_DIFF_CHARS);
 
 	return {
 		gitAvailable: true,
 		...(probe.head ? { head: probe.head } : {}),
-		...(probe.statusPorcelain
-			? { status: clip(probe.statusPorcelain, MAX_REVIEW_PACKET_STATUS_CHARS) }
+		...(additionalRoots.length ? { worktreeRoots: additionalRoots } : {}),
+		...(status ? { status } : {}),
+		...(changedFiles.length
+			? { changedFiles: changedFiles.slice(0, MAX_REVIEW_PACKET_FILES) }
 			: {}),
-		...(probe.changedPaths.length
-			? { changedFiles: probe.changedPaths.slice(0, MAX_REVIEW_PACKET_FILES) }
-			: {}),
-		...(probe.diffStat ? { diffStat: clip(probe.diffStat, MAX_REVIEW_PACKET_DIFF_CHARS) } : {}),
-		diffCheck,
-		diffCheckStaged,
+		...(diffStat ? { diffStat } : {}),
+		diffCheck: mergeDiffChecks(diffChecks),
+		diffCheckStaged: mergeDiffChecks(diffChecksStaged),
 		...(options.baselineRef ? { baselineRef: options.baselineRef } : {}),
 		...patch,
+		// A declared root Root could not sample is an explicit omission: the
+		// packet is truncated, never presented as complete.
+		...(unavailableRoots.length
+			? {
+				unavailableWorktreeRoots: unavailableRoots,
+				patchTruncated: true,
+				patchOmittedPaths: [...(patch.patchOmittedPaths ?? []), ...unavailableRoots],
+			}
+			: {}),
 		...attribution,
 	};
 }
@@ -482,36 +564,49 @@ function splitPatchChunks(patch: string): { path: string; text: string }[] {
 }
 
 /**
- * Bounded patch against the Task baseline. Oversized or over-budget files are
- * omitted by name (never silently), binary changes become fingerprints, and
- * the returned/total counts say whether the packet is whole.
+ * Raw patch material for one worktree root: per-file chunks (paths absolute
+ * when `pathRoot` is set) plus binary paths, or the reason none could be read.
  */
-async function boundedPatchAgainstBaseline(
+interface PatchSource {
+	cwd: string;
+	pathRoot?: string;
+	chunks: { path: string; text: string }[];
+	binaryPaths: string[];
+	unavailable?: string;
+}
+
+async function collectPatchSource(
 	run: GitRunner,
 	cwd: string,
 	baselineRef: string | undefined,
-): Promise<Partial<ReviewEvidencePacket>> {
-	if (!baselineRef) return {};
+	pathRoot?: string,
+): Promise<PatchSource> {
+	const source: PatchSource = { cwd, ...(pathRoot ? { pathRoot } : {}), chunks: [], binaryPaths: [] };
+	if (!baselineRef) return source;
 	if (!GIT_REF_PATTERN.test(baselineRef)) {
-		return { patchUnavailable: "task baseline ref is not a valid commit ref" };
+		return { ...source, unavailable: "task baseline ref is not a valid commit ref" };
 	}
+	const where = pathRoot ? ` in ${pathRoot}` : "";
 
 	let patchText: string;
 	try {
 		const result = await run([...GIT_READ_ARGV.patchBetween, baselineRef], cwd);
 		if (result.code !== 0) {
 			return {
-				patchUnavailable: `git diff ${baselineRef} failed (exit ${result.code})${
+				...source,
+				unavailable: `git diff ${baselineRef} failed${where} (exit ${result.code})${
 					result.stderr ? `: ${clip(result.stderr, 200) ?? ""}` : ""
 				}`,
 			};
 		}
 		patchText = result.stdout;
 	} catch (error) {
-		return { patchUnavailable: `git diff failed: ${error instanceof Error ? error.message : String(error)}` };
+		return {
+			...source,
+			unavailable: `git diff failed${where}: ${error instanceof Error ? error.message : String(error)}`,
+		};
 	}
 
-	const binaryPaths: string[] = [];
 	try {
 		const numstat = await run([...GIT_READ_ARGV.numstatBetween, baselineRef], cwd);
 		if (numstat.code === 0) {
@@ -519,7 +614,7 @@ async function boundedPatchAgainstBaseline(
 				// Binary entries are `-\t-\t<path>` in numstat output.
 				if (line.startsWith("-\t")) {
 					const path = line.split("\t")[2]?.trim();
-					if (path) binaryPaths.push(path);
+					if (path) source.binaryPaths.push(path);
 				}
 			}
 		}
@@ -527,7 +622,30 @@ async function boundedPatchAgainstBaseline(
 		// Fingerprints are best-effort; the patch itself stays honest.
 	}
 
-	const chunks = splitPatchChunks(patchText);
+	source.chunks = splitPatchChunks(patchText).map((chunk) =>
+		pathRoot
+			? { path: resolve(pathRoot, chunk.path), text: `# worktree ${pathRoot}\n${chunk.text}` }
+			: chunk,
+	);
+	return source;
+}
+
+/**
+ * Bounded patch against the Task baseline. Oversized or over-budget files are
+ * omitted by name (never silently), binary changes become fingerprints, and
+ * the returned/total counts say whether the packet is whole. Sources from
+ * declared additional roots share one budget with the primary worktree; a
+ * source that could not be read leaves the packet truncated.
+ */
+async function boundedPatchFromSources(
+	run: GitRunner,
+	sources: readonly PatchSource[],
+): Promise<Partial<ReviewEvidencePacket>> {
+	const [primary, ...extras] = sources;
+	if (primary.unavailable) return { patchUnavailable: primary.unavailable };
+	const unavailableExtras = extras.filter((source) => source.unavailable);
+
+	const chunks = sources.flatMap((source) => source.chunks);
 	const total = chunks.length;
 	const omittedPaths: string[] = [];
 	const included: string[] = [];
@@ -550,18 +668,32 @@ async function boundedPatchAgainstBaseline(
 		.join("\n");
 
 	const fingerprints: BinaryChange[] = [];
-	if (binaryPaths.length > 0) {
-		const hashes = await hashDirtyPaths(run, cwd, binaryPaths.slice(0, MAX_REVIEW_PACKET_FILES));
-		if (hashes) {
-			for (const [path, hash] of Object.entries(hashes)) {
-				fingerprints.push({ path, ...(hash ? { fingerprint: hash } : {}) });
-			}
+	for (const source of sources) {
+		if (source.binaryPaths.length === 0 || fingerprints.length >= MAX_REVIEW_PACKET_FILES) continue;
+		const hashes = await hashDirtyPaths(
+			run,
+			source.cwd,
+			source.binaryPaths.slice(0, MAX_REVIEW_PACKET_FILES - fingerprints.length),
+		);
+		if (!hashes) continue;
+		for (const [path, hash] of Object.entries(hashes)) {
+			fingerprints.push({
+				path: source.pathRoot ? resolve(source.pathRoot, path) : path,
+				...(hash ? { fingerprint: hash } : {}),
+			});
 		}
+	}
+
+	for (const source of unavailableExtras) {
+		if (source.pathRoot) omittedPaths.push(source.pathRoot);
 	}
 
 	return {
 		...(patch.trim() ? { patch: patch.trimEnd() } : {}),
 		...(omittedPaths.length > 0 ? { patchOmittedPaths: omittedPaths, patchTruncated: true } : {}),
+		...(unavailableExtras.length > 0
+			? { patchUnavailable: unavailableExtras.map((source) => source.unavailable).join("; ") }
+			: {}),
 		patchReturnedFiles: included.length,
 		patchTotalFiles: total,
 		...(fingerprints.length > 0 ? { binaryFiles: fingerprints } : {}),
@@ -750,6 +882,18 @@ export function compareEvidence(
 		verifiable = false;
 		reasons.push("git status probe failed — workspace state unknown");
 	}
+	// Variant C — a declared additional worktree root Root could not sample is
+	// unknown state as well; the combined sample must not pass as clean.
+	const unavailableRoots = sorted([
+		...new Set([
+			...(base.unavailableWorktreeRoots ?? []),
+			...(current.unavailableWorktreeRoots ?? []),
+		]),
+	]);
+	if (unavailableRoots.length > 0) {
+		verifiable = false;
+		reasons.push(`declared worktree root unavailable — state unknown: ${unavailableRoots.join(", ")}`);
+	}
 
 	let headChanged = false;
 	if (verifiable && reported.finalGitRef && current.finalGitRef && reported.finalGitRef !== current.finalGitRef) {
@@ -836,9 +980,16 @@ export function compareEvidence(
 			resolveDeclaredPath(path, declareCwd, additionalRoots, knownForDeclare),
 		),
 	);
+	// Variant C — a relative allow-list entry names the same file in cwd and
+	// in every declared root, so a matching linked-worktree change is in scope.
 	const allowedPaths = new Set(
-		normalizeEvidencePaths(options.scope?.allowedPaths ?? [], reported.cwd || pathCwd),
+		normalizeEvidencePaths(options.scope?.allowedPaths ?? [], declareCwd),
 	);
+	for (const root of additionalRoots) {
+		for (const path of options.scope?.allowedPaths ?? []) {
+			if (!isAbsolute(path)) allowedPaths.add(normalizeEvidencePaths([path], root)[0]);
+		}
+	}
 	const hasAllowList = allowedPaths.size > 0;
 	const inScope = (path: string): boolean => (hasAllowList ? allowedPaths.has(path) : true);
 	const outOfRepoDeclared = [...declaredPaths].filter((path) =>

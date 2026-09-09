@@ -128,6 +128,12 @@ export interface EvidenceRef {
 	committedPaths?: string[];
 	/** True when the status probe itself failed at sample time; state is unknown, not clean. */
 	statusProbeFailed?: boolean;
+	/**
+	 * Declared additional worktree roots (absolute) that could not be probed
+	 * at sample time. A sample missing any declared root is unverifiable: the
+	 * state of that root is unknown, never implicitly clean.
+	 */
+	unavailableWorktreeRoots?: string[];
 	diffStat?: string;
 	gitAvailable?: boolean;
 	generatedAt: string;
@@ -221,6 +227,10 @@ export interface BinaryChange {
 export interface ReviewEvidencePacket {
 	gitAvailable: boolean;
 	head?: string;
+	/** Declared additional worktree roots sampled into this packet (absolute). */
+	worktreeRoots?: string[];
+	/** Declared roots that could not be sampled; the packet is then truncated. */
+	unavailableWorktreeRoots?: string[];
 	status?: string;
 	changedFiles?: string[];
 	diffStat?: string;

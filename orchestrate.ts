@@ -203,6 +203,19 @@ function additionalWorktreeRootsOf(task: TaskRecord): readonly string[] | undefi
 	return roots?.length ? roots : undefined;
 }
 
+/**
+ * Write-lock identities a writable invocation over `task` holds: the Task cwd
+ * plus every declared additional worktree root, since the Worker may edit any
+ * of them (Variant C).
+ */
+function lockWorktreesOf(task: TaskRecord, ...extraCwds: string[]): string[] {
+	return [...new Set([
+		...extraCwds.map((cwd) => normalizeWorkspaceIdentity(cwd)),
+		normalizeWorkspaceIdentity(task.cwd),
+		...(additionalWorktreeRootsOf(task) ?? []).map((root) => normalizeWorkspaceIdentity(root)),
+	])];
+}
+
 function captureEvidenceOptionsFor(
 	task: TaskRecord,
 	workerRunId: string,
@@ -750,7 +763,12 @@ export class PlannerOrchestrator {
 				task.lastComparison,
 				// The patch is bounded against the Task's start baseline, not the
 				// current HEAD, so committed Task changes stay reviewable (R03).
-				{ ...(task.baseEvidence?.finalGitRef ? { baselineRef: task.baseEvidence.finalGitRef } : {}) },
+				{
+					...(task.baseEvidence?.finalGitRef ? { baselineRef: task.baseEvidence.finalGitRef } : {}),
+					...(additionalWorktreeRootsOf(task)
+						? { additionalWorktreeRoots: additionalWorktreeRootsOf(task) }
+						: {}),
+				},
 			);
 			if (task.lastComparison) {
 				options.evidence = describeComparison(task.lastComparison);
@@ -1059,11 +1077,8 @@ export class PlannerOrchestrator {
 			// is reconciled from child-run artifacts before contending for the
 			// lock, so a finished run is never mistaken for a live writer.
 			await this.reconcileBeforeLock(reviewed.taskId, warnings);
-			let validatorConflict = await this.refuseOrClearWriteLock(cwd, "validator", warnings, reviewed.taskId);
-			if (!validatorConflict.conflict
-				&& normalizeWorkspaceIdentity(cwd) !== normalizeWorkspaceIdentity(reviewed.cwd)) {
-				validatorConflict = await this.refuseOrClearWriteLock(reviewed.cwd, "validator", warnings, reviewed.taskId);
-			}
+			const validatorWorktrees = lockWorktreesOf(reviewed, cwd);
+			const validatorConflict = await this.refuseOrClearWriteLocks(validatorWorktrees, "validator", warnings, reviewed.taskId);
 			if (validatorConflict.conflict) {
 				return { task: reviewed, conflict: validatorConflict, ...(warnings.length ? { warnings } : {}) };
 			}
@@ -1074,10 +1089,7 @@ export class PlannerOrchestrator {
 				asyncRequested: isAsyncInput(input),
 				...(isExplicitAsyncFalse(input) ? { asyncExplicitFalse: true } : {}),
 				...(inputAgent(input) ? { agent: inputAgent(input) } : {}),
-				worktrees: [...new Set([
-					normalizeWorkspaceIdentity(cwd),
-					normalizeWorkspaceIdentity(reviewed.cwd),
-				])],
+				worktrees: validatorWorktrees,
 				lockedAt: this.store.now().toISOString(),
 				...(contextOverridden ? { contextOverridden: true } : {}),
 				...(reuseOutcome?.reason ? { reuseReason: reuseOutcome.reason } : {}),
@@ -1230,7 +1242,8 @@ export class PlannerOrchestrator {
 		// FR-04 — write coordination follows actual write ability, not the
 		// presence of a TaskSpec: a warn-mode unstructured worker and a
 		// shell-capable validator take the same lock as a structured worker.
-		const conflict = await this.refuseOrClearWriteLock(task.cwd, role, warnings, task.taskId);
+		const workerWorktrees = lockWorktreesOf(task);
+		const conflict = await this.refuseOrClearWriteLocks(workerWorktrees, role, warnings, task.taskId);
 		if (conflict.conflict) {
 			return { task, conflict, ...(warnings.length ? { warnings } : {}) };
 		}
@@ -1266,7 +1279,7 @@ export class PlannerOrchestrator {
 			// Writable invocations become the lock holder for the Task's
 			// worktree; explorers hold nothing.
 			...(isWriterRole(role) ? {
-				worktrees: [normalizeWorkspaceIdentity(task.cwd)],
+				worktrees: workerWorktrees,
 				lockedAt: this.store.now().toISOString(),
 			} : {}),
 			...(contextOverridden ? { contextOverridden: true } : {}),
@@ -1620,6 +1633,20 @@ export class PlannerOrchestrator {
 		}
 		if (conflict.conflict) this.noteStaleHolder(conflict, againstTaskId);
 		return conflict;
+	}
+
+	/** `refuseOrClearWriteLock` over every worktree identity the invocation would hold. */
+	private async refuseOrClearWriteLocks(
+		worktrees: readonly string[],
+		role: DelegationKind,
+		warnings: string[],
+		againstTaskId?: string,
+	): Promise<WriterConflict> {
+		for (const worktree of worktrees) {
+			const conflict = await this.refuseOrClearWriteLock(worktree, role, warnings, againstTaskId);
+			if (conflict.conflict) return conflict;
+		}
+		return { conflict: false };
 	}
 
 	/**
