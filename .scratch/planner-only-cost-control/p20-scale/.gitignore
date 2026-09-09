@@ -1,0 +1,6 @@
+# Host transcripts; keep them out of git.
+runs/
+*-stdout.log
+*-stderr.log
+gate.log
+.agent-dir-*/

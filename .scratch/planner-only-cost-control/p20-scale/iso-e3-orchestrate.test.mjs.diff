@@ -1,0 +1,24 @@
+diff --git a/orchestrate.test.mjs b/orchestrate.test.mjs
+index fa78d27..fbf7c79 100644
+--- a/orchestrate.test.mjs
++++ b/orchestrate.test.mjs
+@@ -2076,6 +2076,19 @@ function boundedBudgetUsage(tokens, costUsd) {
+ 	const retry = await orch.beginDelegation({ toolCallId: "call-v9-b", input: { task: JSON.stringify(task.spec) } }, BASE);
+ 	assert.equal(retry.block, undefined);
+ }
++{
++	const { store, task } = budgetTaskFixture("T-20260908-p20", { tokens: 100_000, costUsd: 0.20 }, boundedBudgetUsage(1_000, 0.20));
++	const input = {
++		task: JSON.stringify(task.spec),
++		usageBudget: { tokens: { hard: 100_000 }, costUsd: { hard: 0.20 } },
++		__floorLimits: { marker: true },
++	};
++	const orch = new PlannerOrchestrator({ gitRunner, store });
++	const blocked = await orch.beginDelegation({ toolCallId: "call-p20", input }, BASE);
++	assert.match(blocked.block?.reason ?? "", /cumulative budget exhausted/);
++	assert.equal(input.usageBudget, undefined);
++	assert.equal(input.__floorLimits, undefined);
++}
+ {
+ 	const { store, task } = budgetTaskFixture("T-20260908-v10", { tokens: 1, costUsd: 0.01 }, usageFixture(5_000, 0.50));
+ 	const orch = new PlannerOrchestrator({ gitRunner, store });

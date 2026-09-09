@@ -1,0 +1,12 @@
+diff --git a/orchestrate.test.mjs b/orchestrate.test.mjs
+index fa78d27..4fa0157 100644
+--- a/orchestrate.test.mjs
++++ b/orchestrate.test.mjs
+@@ -5855,6 +5855,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
+ 
+ 		orch.store.persist(placeholder);
+ 		assert.equal(readFileSync(path, "utf8"), "this is not json", "L15: persist of the placeholder does not rewrite the corrupt snapshot");
++		assert.match(orch.renderTaskStatus(placeholder), /本会话无法写入该 taskId 的账本/, "L15b: status exposes the per-task ledger write error");
+ 		writeFileSync(path, "this is not json", "utf8");
+ 
+ 		const reviewer = await orch.beginDelegation({ toolCallId: "call-l16", input: { agent: "reviewer", task: `Review ${bad.taskId}` } }, BASE);

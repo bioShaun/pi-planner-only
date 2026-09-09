@@ -1,0 +1,12 @@
+diff --git a/orchestrate.ts b/orchestrate.ts
+index c21df04..689d0e2 100644
+--- a/orchestrate.ts
++++ b/orchestrate.ts
+@@ -1300,6 +1300,7 @@ export class PlannerOrchestrator {
+ 			...(isExplicitlyNoValidation(task.spec) ? ["Validation: not required (TaskSpec 明确不要求验证)"] : []),
+ 			...(report && !isExplicitlyNoValidation(task.spec) && lastWorkerValidationPassed(report) && task.lastComparison?.fresh === true && taskSpecValidationComplete ? ["Validation: passed"] : []),
+ 			`Changed files: ${report?.changedFiles.length ?? 0}`,
++			...(this.snapshots?.writeErrorFor(task.taskId) ? ["Ledger write: 本会话无法写入该 taskId 的账本（writeErrorFor）"] : []),
+ 			...(task.validatorReports.length > 0 ? [`Validator reports: ${task.validatorReports.length}`] : []),
+ 		];
+ 		if (task.aliases.length > 0) {
