@@ -166,6 +166,13 @@ export interface CaptureEvidenceOptions {
 	taskId: string;
 	workerRunId: string;
 	baseGitRef?: string;
+	/**
+	 * Explicit additional linked-worktree roots declared on the TaskSpec.
+	 * Each root is probed independently; dirty paths from those roots are
+	 * recorded as absolute paths under that root. Arbitrary sibling
+	 * directories are never scanned — only these declared roots.
+	 */
+	additionalWorktreeRoots?: readonly string[];
 }
 
 function isHashableFilePath(path: string): boolean {
@@ -241,8 +248,39 @@ async function diffNamesBetweenRefs(
 }
 
 /**
+ * Normalize and dedupe declared additional worktree roots. Drops empties,
+ * resolves to absolute paths, and omits any root that is the same as `cwd`.
+ */
+function normalizeAdditionalWorktreeRoots(
+	cwd: string,
+	roots: readonly string[] | undefined,
+): string[] {
+	if (!roots?.length) return [];
+	const primary = resolve(cwd);
+	const seen = new Set<string>();
+	const normalized: string[] = [];
+	for (const root of roots) {
+		const trimmed = root.trim();
+		if (!trimmed) continue;
+		const absolute = resolve(trimmed);
+		if (absolute === primary) continue;
+		if (seen.has(absolute)) continue;
+		seen.add(absolute);
+		normalized.push(absolute);
+	}
+	return normalized;
+}
+
+/** Prefix relative porcelain paths with an absolute worktree root. */
+function absolutizePaths(root: string, paths: readonly string[]): string[] {
+	return paths.map((path) => (isAbsolute(path) ? resolve(path) : resolve(root, path)));
+}
+
+/**
  * Snapshot the workspace. Non-Git directories degrade to a cwd-only ref rather
- * than failing the lifecycle (spec §19.4).
+ * than failing the lifecycle (spec §19.4). When `additionalWorktreeRoots` is
+ * set, each declared root is probed too and its dirty paths are merged in as
+ * absolute paths (Variant C). Undeclared siblings are never scanned.
  */
 export async function captureEvidence(
 	run: GitRunner,
@@ -250,6 +288,7 @@ export async function captureEvidence(
 ): Promise<EvidenceRef> {
 	const cwd = resolve(options.cwd);
 	const generatedAt = new Date().toISOString();
+	const additionalRoots = normalizeAdditionalWorktreeRoots(cwd, options.additionalWorktreeRoots);
 	let probe: GitProbe;
 	try {
 		probe = await probeGit(run, cwd);
@@ -269,22 +308,82 @@ export async function captureEvidence(
 		? await diffNamesBetweenRefs(run, cwd, options.baseGitRef, probe.head)
 		: undefined;
 
+	const mergedChanged = [...probe.changedPaths];
+	const mergedUntracked = [...probe.untrackedPaths];
+	const mergedDirty: Record<string, string | null> = { ...(dirtyPathHashes ?? {}) };
+	let hasDirty = dirtyPathHashes !== undefined;
+	const mergedCommitted = [...(committedPaths ?? [])];
+	let hasCommitted = committedPaths !== undefined;
+	const porcelainParts: string[] = [];
+	if (probe.statusPorcelain !== null) porcelainParts.push(probe.statusPorcelain);
+	let statusFailed = probe.statusFailed;
+	const diffStatParts: string[] = [];
+	if (probe.diffStat) diffStatParts.push(probe.diffStat);
+	// A declared root that cannot be probed is unknown state, never clean: it
+	// is recorded so compareEvidence refuses to verify the combined sample.
+	const unavailableRoots: string[] = [];
+
+	for (const root of additionalRoots) {
+		let extra: GitProbe;
+		try {
+			extra = await probeGit(run, root);
+		} catch {
+			extra = unavailableProbe();
+		}
+		if (!extra.available) {
+			unavailableRoots.push(root);
+			continue;
+		}
+		if (extra.statusFailed) statusFailed = true;
+		if (extra.statusPorcelain !== null) porcelainParts.push(extra.statusPorcelain);
+		const absChanged = absolutizePaths(root, extra.changedPaths);
+		const absUntracked = absolutizePaths(root, extra.untrackedPaths);
+		mergedChanged.push(...absChanged);
+		mergedUntracked.push(...absUntracked);
+		const extraHashes = await hashDirtyPaths(run, root, extra.changedPaths);
+		if (extraHashes) {
+			hasDirty = true;
+			for (const [rel, hash] of Object.entries(extraHashes)) {
+				mergedDirty[isAbsolute(rel) ? resolve(rel) : resolve(root, rel)] = hash;
+			}
+		}
+		if (options.baseGitRef && extra.head) {
+			const extraCommitted = await diffNamesBetweenRefs(run, root, options.baseGitRef, extra.head);
+			if (extraCommitted) {
+				hasCommitted = true;
+				mergedCommitted.push(...absolutizePaths(root, extraCommitted));
+			}
+		}
+		if (extra.diffStat) diffStatParts.push(extra.diffStat);
+	}
+
+	const changedPaths = [...new Set(mergedChanged.filter(Boolean))].sort();
+	const untrackedPaths = [...new Set(mergedUntracked.filter(Boolean))].sort();
+	const committedMerged = hasCommitted
+		? [...new Set(mergedCommitted.filter(Boolean))].sort()
+		: undefined;
+	const statusHash = porcelainParts.length > 0 ? hashStatus(porcelainParts.join("\n")) : probe.statusHash;
+	const diffStat = diffStatParts.length
+		? diffStatParts.join("\n").trim().slice(-MAX_DIFF_STAT_CHARS)
+		: null;
+
 	const sample: EvidenceRef = {
 		cwd,
 		taskId: options.taskId,
 		workerRunId: options.workerRunId,
 		...(options.baseGitRef ? { baseGitRef: options.baseGitRef } : {}),
 		...(probe.head ? { finalGitRef: probe.head } : {}),
-		...(probe.statusHash ? { gitStatusHash: probe.statusHash } : {}),
-		...(probe.statusFailed ? { statusProbeFailed: true } : {}),
-		changedPaths: probe.changedPaths,
-		...(dirtyPathHashes ? { dirtyPathHashes } : {}),
-		...(committedPaths ? { committedPaths } : {}),
-		...(probe.diffStat ? { diffStat: probe.diffStat } : {}),
+		...(statusHash ? { gitStatusHash: statusHash } : {}),
+		...(statusFailed ? { statusProbeFailed: true } : {}),
+		...(unavailableRoots.length ? { unavailableWorktreeRoots: unavailableRoots } : {}),
+		changedPaths,
+		...(hasDirty ? { dirtyPathHashes: mergedDirty } : {}),
+		...(committedMerged ? { committedPaths: committedMerged } : {}),
+		...(diffStat ? { diffStat } : {}),
 		gitAvailable: true,
 		generatedAt,
 	};
-	untrackedPathsBySample.set(sample, probe.untrackedPaths);
+	untrackedPathsBySample.set(sample, untrackedPaths);
 	return sample;
 }
 
@@ -307,6 +406,38 @@ function clip(value: string | null | undefined, limit: number): string | undefin
 export interface ReviewPacketOptions {
 	/** Task start ref the patch is computed against (the delegation-time A sample). */
 	baselineRef?: string;
+	/**
+	 * Declared additional worktree roots (Variant C). Each is sampled into the
+	 * same packet with absolute paths; a root that cannot be sampled marks the
+	 * packet truncated so a PASS over it is ineligible.
+	 */
+	additionalWorktreeRoots?: readonly string[];
+}
+
+interface RootDiffCheck {
+	root: string | undefined;
+	result: DiffCheckResult;
+}
+
+/** Merge per-root `diff --check` results; any failing root fails the merged check. */
+function mergeDiffChecks(parts: readonly RootDiffCheck[]): DiffCheckResult {
+	if (parts.length === 1) return parts[0].result;
+	const exitCode = parts.map((part) => part.result.exitCode).find((code) => code !== 0) ?? 0;
+	const label = (part: RootDiffCheck, text: string) =>
+		part.root ? `# worktree ${part.root}\n${text}` : text;
+	const stdout = clip(
+		parts.filter((part) => part.result.stdout).map((part) => label(part, part.result.stdout ?? "")).join("\n"),
+		MAX_REVIEW_PACKET_DIFF_CHARS,
+	);
+	const stderr = clip(
+		parts.filter((part) => part.result.stderr).map((part) => label(part, part.result.stderr ?? "")).join("\n"),
+		400,
+	);
+	return {
+		exitCode,
+		...(stdout ? { stdout } : {}),
+		...(stderr ? { stderr } : {}),
+	};
 }
 
 export async function captureReviewEvidencePacket(
@@ -316,6 +447,7 @@ export async function captureReviewEvidencePacket(
 	options: ReviewPacketOptions = {},
 ): Promise<ReviewEvidencePacket> {
 	const target = resolve(cwd);
+	const additionalRoots = normalizeAdditionalWorktreeRoots(target, options.additionalWorktreeRoots);
 	let probe: GitProbe;
 	try {
 		probe = await probeGit(run, target);
@@ -326,24 +458,66 @@ export async function captureReviewEvidencePacket(
 	const attribution = attributionFields(comparison);
 	if (!probe.available) return { gitAvailable: false, ...attribution };
 
-	const diffCheck = await boundedDiffCheck(run, target, GIT_READ_ARGV.diffCheck);
-	const diffCheckStaged = await boundedDiffCheck(run, target, GIT_READ_ARGV.diffCheckStaged);
-	const patch = await boundedPatchAgainstBaseline(run, target, options.baselineRef);
+	const diffChecks: RootDiffCheck[] = [
+		{ root: undefined, result: await boundedDiffCheck(run, target, GIT_READ_ARGV.diffCheck) },
+	];
+	const diffChecksStaged: RootDiffCheck[] = [
+		{ root: undefined, result: await boundedDiffCheck(run, target, GIT_READ_ARGV.diffCheckStaged) },
+	];
+	const patchSources: PatchSource[] = [await collectPatchSource(run, target, options.baselineRef)];
+
+	const statusParts: string[] = [];
+	if (probe.statusPorcelain) statusParts.push(probe.statusPorcelain);
+	const changedFiles = [...probe.changedPaths];
+	const diffStatParts: string[] = [];
+	if (probe.diffStat) diffStatParts.push(probe.diffStat);
+	const unavailableRoots: string[] = [];
+
+	for (const root of additionalRoots) {
+		let extra: GitProbe;
+		try {
+			extra = await probeGit(run, root);
+		} catch {
+			extra = unavailableProbe();
+		}
+		if (!extra.available || extra.statusFailed) {
+			unavailableRoots.push(root);
+			continue;
+		}
+		if (extra.statusPorcelain) statusParts.push(`# worktree ${root}\n${extra.statusPorcelain}`);
+		changedFiles.push(...absolutizePaths(root, extra.changedPaths));
+		if (extra.diffStat) diffStatParts.push(`# worktree ${root}\n${extra.diffStat}`);
+		diffChecks.push({ root, result: await boundedDiffCheck(run, root, GIT_READ_ARGV.diffCheck) });
+		diffChecksStaged.push({ root, result: await boundedDiffCheck(run, root, GIT_READ_ARGV.diffCheckStaged) });
+		patchSources.push(await collectPatchSource(run, root, options.baselineRef, root));
+	}
+
+	const patch = await boundedPatchFromSources(run, patchSources);
+	const status = clip(statusParts.join("\n"), MAX_REVIEW_PACKET_STATUS_CHARS);
+	const diffStat = clip(diffStatParts.join("\n"), MAX_REVIEW_PACKET_DIFF_CHARS);
 
 	return {
 		gitAvailable: true,
 		...(probe.head ? { head: probe.head } : {}),
-		...(probe.statusPorcelain
-			? { status: clip(probe.statusPorcelain, MAX_REVIEW_PACKET_STATUS_CHARS) }
+		...(additionalRoots.length ? { worktreeRoots: additionalRoots } : {}),
+		...(status ? { status } : {}),
+		...(changedFiles.length
+			? { changedFiles: changedFiles.slice(0, MAX_REVIEW_PACKET_FILES) }
 			: {}),
-		...(probe.changedPaths.length
-			? { changedFiles: probe.changedPaths.slice(0, MAX_REVIEW_PACKET_FILES) }
-			: {}),
-		...(probe.diffStat ? { diffStat: clip(probe.diffStat, MAX_REVIEW_PACKET_DIFF_CHARS) } : {}),
-		diffCheck,
-		diffCheckStaged,
+		...(diffStat ? { diffStat } : {}),
+		diffCheck: mergeDiffChecks(diffChecks),
+		diffCheckStaged: mergeDiffChecks(diffChecksStaged),
 		...(options.baselineRef ? { baselineRef: options.baselineRef } : {}),
 		...patch,
+		// A declared root Root could not sample is an explicit omission: the
+		// packet is truncated, never presented as complete.
+		...(unavailableRoots.length
+			? {
+				unavailableWorktreeRoots: unavailableRoots,
+				patchTruncated: true,
+				patchOmittedPaths: [...(patch.patchOmittedPaths ?? []), ...unavailableRoots],
+			}
+			: {}),
 		...attribution,
 	};
 }
@@ -390,36 +564,49 @@ function splitPatchChunks(patch: string): { path: string; text: string }[] {
 }
 
 /**
- * Bounded patch against the Task baseline. Oversized or over-budget files are
- * omitted by name (never silently), binary changes become fingerprints, and
- * the returned/total counts say whether the packet is whole.
+ * Raw patch material for one worktree root: per-file chunks (paths absolute
+ * when `pathRoot` is set) plus binary paths, or the reason none could be read.
  */
-async function boundedPatchAgainstBaseline(
+interface PatchSource {
+	cwd: string;
+	pathRoot?: string;
+	chunks: { path: string; text: string }[];
+	binaryPaths: string[];
+	unavailable?: string;
+}
+
+async function collectPatchSource(
 	run: GitRunner,
 	cwd: string,
 	baselineRef: string | undefined,
-): Promise<Partial<ReviewEvidencePacket>> {
-	if (!baselineRef) return {};
+	pathRoot?: string,
+): Promise<PatchSource> {
+	const source: PatchSource = { cwd, ...(pathRoot ? { pathRoot } : {}), chunks: [], binaryPaths: [] };
+	if (!baselineRef) return source;
 	if (!GIT_REF_PATTERN.test(baselineRef)) {
-		return { patchUnavailable: "task baseline ref is not a valid commit ref" };
+		return { ...source, unavailable: "task baseline ref is not a valid commit ref" };
 	}
+	const where = pathRoot ? ` in ${pathRoot}` : "";
 
 	let patchText: string;
 	try {
 		const result = await run([...GIT_READ_ARGV.patchBetween, baselineRef], cwd);
 		if (result.code !== 0) {
 			return {
-				patchUnavailable: `git diff ${baselineRef} failed (exit ${result.code})${
+				...source,
+				unavailable: `git diff ${baselineRef} failed${where} (exit ${result.code})${
 					result.stderr ? `: ${clip(result.stderr, 200) ?? ""}` : ""
 				}`,
 			};
 		}
 		patchText = result.stdout;
 	} catch (error) {
-		return { patchUnavailable: `git diff failed: ${error instanceof Error ? error.message : String(error)}` };
+		return {
+			...source,
+			unavailable: `git diff failed${where}: ${error instanceof Error ? error.message : String(error)}`,
+		};
 	}
 
-	const binaryPaths: string[] = [];
 	try {
 		const numstat = await run([...GIT_READ_ARGV.numstatBetween, baselineRef], cwd);
 		if (numstat.code === 0) {
@@ -427,7 +614,7 @@ async function boundedPatchAgainstBaseline(
 				// Binary entries are `-\t-\t<path>` in numstat output.
 				if (line.startsWith("-\t")) {
 					const path = line.split("\t")[2]?.trim();
-					if (path) binaryPaths.push(path);
+					if (path) source.binaryPaths.push(path);
 				}
 			}
 		}
@@ -435,7 +622,30 @@ async function boundedPatchAgainstBaseline(
 		// Fingerprints are best-effort; the patch itself stays honest.
 	}
 
-	const chunks = splitPatchChunks(patchText);
+	source.chunks = splitPatchChunks(patchText).map((chunk) =>
+		pathRoot
+			? { path: resolve(pathRoot, chunk.path), text: `# worktree ${pathRoot}\n${chunk.text}` }
+			: chunk,
+	);
+	return source;
+}
+
+/**
+ * Bounded patch against the Task baseline. Oversized or over-budget files are
+ * omitted by name (never silently), binary changes become fingerprints, and
+ * the returned/total counts say whether the packet is whole. Sources from
+ * declared additional roots share one budget with the primary worktree; a
+ * source that could not be read leaves the packet truncated.
+ */
+async function boundedPatchFromSources(
+	run: GitRunner,
+	sources: readonly PatchSource[],
+): Promise<Partial<ReviewEvidencePacket>> {
+	const [primary, ...extras] = sources;
+	if (primary.unavailable) return { patchUnavailable: primary.unavailable };
+	const unavailableExtras = extras.filter((source) => source.unavailable);
+
+	const chunks = sources.flatMap((source) => source.chunks);
 	const total = chunks.length;
 	const omittedPaths: string[] = [];
 	const included: string[] = [];
@@ -458,18 +668,32 @@ async function boundedPatchAgainstBaseline(
 		.join("\n");
 
 	const fingerprints: BinaryChange[] = [];
-	if (binaryPaths.length > 0) {
-		const hashes = await hashDirtyPaths(run, cwd, binaryPaths.slice(0, MAX_REVIEW_PACKET_FILES));
-		if (hashes) {
-			for (const [path, hash] of Object.entries(hashes)) {
-				fingerprints.push({ path, ...(hash ? { fingerprint: hash } : {}) });
-			}
+	for (const source of sources) {
+		if (source.binaryPaths.length === 0 || fingerprints.length >= MAX_REVIEW_PACKET_FILES) continue;
+		const hashes = await hashDirtyPaths(
+			run,
+			source.cwd,
+			source.binaryPaths.slice(0, MAX_REVIEW_PACKET_FILES - fingerprints.length),
+		);
+		if (!hashes) continue;
+		for (const [path, hash] of Object.entries(hashes)) {
+			fingerprints.push({
+				path: source.pathRoot ? resolve(source.pathRoot, path) : path,
+				...(hash ? { fingerprint: hash } : {}),
+			});
 		}
+	}
+
+	for (const source of unavailableExtras) {
+		if (source.pathRoot) omittedPaths.push(source.pathRoot);
 	}
 
 	return {
 		...(patch.trim() ? { patch: patch.trimEnd() } : {}),
 		...(omittedPaths.length > 0 ? { patchOmittedPaths: omittedPaths, patchTruncated: true } : {}),
+		...(unavailableExtras.length > 0
+			? { patchUnavailable: unavailableExtras.map((source) => source.unavailable).join("; ") }
+			: {}),
 		patchReturnedFiles: included.length,
 		patchTotalFiles: total,
 		...(fingerprints.length > 0 ? { binaryFiles: fingerprints } : {}),
@@ -503,11 +727,30 @@ export function normalizeEvidencePaths(paths: readonly string[], cwd: string): s
  * never appear in the workspace Git porcelain digest, so attribution against
  * truthPaths / currentPaths would forever mark them missing or over-reported.
  */
-export function isOutsideWorkspacePath(path: string, cwd: string): boolean {
-	const root = resolve(cwd);
-	const target = resolve(cwd, path);
-	const rel = relative(root, target);
+function isOutsideSingleRoot(target: string, root: string): boolean {
+	const resolvedRoot = resolve(root);
+	const rel = relative(resolvedRoot, target);
 	return rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel);
+}
+
+/**
+ * Absolute paths outside the Task cwd (e.g. ~/.pi/agent/planner-only/pricing.json)
+ * never appear in the workspace Git porcelain digest, so attribution against
+ * truthPaths / currentPaths would forever mark them missing or over-reported.
+ * Paths under a declared additional worktree root (Variant C) are inside the
+ * attribution workspace and are not exempted.
+ */
+export function isOutsideWorkspacePath(
+	path: string,
+	cwd: string,
+	additionalWorktreeRoots: readonly string[] = [],
+): boolean {
+	const target = resolve(cwd, path);
+	if (!isOutsideSingleRoot(target, cwd)) return false;
+	for (const root of additionalWorktreeRoots) {
+		if (!isOutsideSingleRoot(target, root)) return false;
+	}
+	return true;
 }
 
 export interface EvidenceComparison {
@@ -540,6 +783,12 @@ export interface CompareEvidenceOptions {
 	 * so a schema fix cannot deadlock on attribution (F6 / ticket 28 variant A).
 	 */
 	reportOnly?: boolean;
+	/**
+	 * Declared additional worktree roots from the TaskSpec (Variant C). Used to
+	 * treat paths under those roots as in-workspace and to remap relative
+	 * Worker declarations onto a root when the primary cwd form is absent.
+	 */
+	additionalWorktreeRoots?: readonly string[];
 }
 
 function sameCwd(left: string, right: string): boolean {
@@ -548,6 +797,29 @@ function sameCwd(left: string, right: string): boolean {
 
 function sorted(paths: readonly string[]): string[] {
 	return [...paths].sort();
+}
+
+/**
+ * Variant C — map a Worker-declared path onto the sample vocabulary.
+ * Absolute declarations stay absolute. Relative declarations resolve against
+ * `cwd` first; when that form is absent from `known` but a declared
+ * additional worktree root carries the same relative path, prefer the
+ * absolute form under that root so linked-worktree edits attribute.
+ */
+function resolveDeclaredPath(
+	path: string,
+	cwd: string,
+	additionalRoots: readonly string[],
+	known: Set<string>,
+): string {
+	const primary = normalizeEvidencePaths([path], cwd)[0];
+	if (isAbsolute(path) || additionalRoots.length === 0) return primary;
+	if (known.has(primary)) return primary;
+	for (const root of additionalRoots) {
+		const candidate = normalizeEvidencePaths([path], root)[0];
+		if (known.has(candidate)) return candidate;
+	}
+	return primary;
 }
 
 /** RF-1 — normalize a dirtyPathHashes record into absolute-path keys. */
@@ -610,6 +882,18 @@ export function compareEvidence(
 		verifiable = false;
 		reasons.push("git status probe failed — workspace state unknown");
 	}
+	// Variant C — a declared additional worktree root Root could not sample is
+	// unknown state as well; the combined sample must not pass as clean.
+	const unavailableRoots = sorted([
+		...new Set([
+			...(base.unavailableWorktreeRoots ?? []),
+			...(current.unavailableWorktreeRoots ?? []),
+		]),
+	]);
+	if (unavailableRoots.length > 0) {
+		verifiable = false;
+		reasons.push(`declared worktree root unavailable — state unknown: ${unavailableRoots.join(", ")}`);
+	}
 
 	let headChanged = false;
 	if (verifiable && reported.finalGitRef && current.finalGitRef && reported.finalGitRef !== current.finalGitRef) {
@@ -619,6 +903,10 @@ export function compareEvidence(
 	}
 
 	const pathCwd = current.cwd || reported.cwd || base.cwd;
+	const additionalRoots = normalizeAdditionalWorktreeRoots(
+		pathCwd,
+		options.additionalWorktreeRoots,
+	);
 	const basePaths = new Set(normalizeEvidencePaths(base.changedPaths ?? [], base.cwd || pathCwd));
 	const currentPaths = new Set(normalizeEvidencePaths(current.changedPaths ?? [], current.cwd || pathCwd));
 	// RF-1 — truthPaths is the union of three Root-derived sets:
@@ -685,16 +973,31 @@ export function compareEvidence(
 		reasons.push("report evidence incomplete — no HEAD/status/content binding to verify");
 	}
 
+	const knownForDeclare = new Set([...basePaths, ...currentPaths, ...truthSet, ...committedPaths]);
+	const declareCwd = reported.cwd || pathCwd;
 	const declaredPaths = new Set(
-		normalizeEvidencePaths(reported.changedPaths ?? report.changedFiles ?? [], reported.cwd || pathCwd),
+		(reported.changedPaths ?? report.changedFiles ?? []).map((path) =>
+			resolveDeclaredPath(path, declareCwd, additionalRoots, knownForDeclare),
+		),
 	);
+	// Variant C — a relative allow-list entry names the same file in cwd and
+	// in every declared root, so a matching linked-worktree change is in scope.
 	const allowedPaths = new Set(
-		normalizeEvidencePaths(options.scope?.allowedPaths ?? [], reported.cwd || pathCwd),
+		normalizeEvidencePaths(options.scope?.allowedPaths ?? [], declareCwd),
 	);
+	for (const root of additionalRoots) {
+		for (const path of options.scope?.allowedPaths ?? []) {
+			if (!isAbsolute(path)) allowedPaths.add(normalizeEvidencePaths([path], root)[0]);
+		}
+	}
 	const hasAllowList = allowedPaths.size > 0;
 	const inScope = (path: string): boolean => (hasAllowList ? allowedPaths.has(path) : true);
-	const outOfRepoDeclared = [...declaredPaths].filter((path) => isOutsideWorkspacePath(path, pathCwd));
-	const inRepoDeclared = [...declaredPaths].filter((path) => !isOutsideWorkspacePath(path, pathCwd));
+	const outOfRepoDeclared = [...declaredPaths].filter((path) =>
+		isOutsideWorkspacePath(path, pathCwd, additionalRoots),
+	);
+	const inRepoDeclared = [...declaredPaths].filter((path) =>
+		!isOutsideWorkspacePath(path, pathCwd, additionalRoots),
+	);
 
 	const undeclaredPaths: string[] = [];
 	for (const path of truthSet) {

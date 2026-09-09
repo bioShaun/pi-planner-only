@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
 	captureEvidence,
 	captureReviewEvidencePacket,
@@ -871,5 +871,285 @@ assert.equal(isOutsideWorkspacePath("src/a.ts", "/repo"), false);
 	assert.equal(evidenceAction(outOfRepo), "review");
 }
 
+
+// --------------------------------------------------------------------------
+// Ticket 28 / F6 Variant C — declared additional worktree roots
+// --------------------------------------------------------------------------
+
+assert.equal(
+	isOutsideWorkspacePath("/worktrees/review/src/a.ts", "/repo", ["/worktrees/review"]),
+	false,
+	"28-C: path under a declared additional root is inside the attribution workspace",
+);
+assert.equal(
+	isOutsideWorkspacePath("/worktrees/other/src/a.ts", "/repo", ["/worktrees/review"]),
+	true,
+	"28-C: undeclared sibling worktree paths stay outside",
+);
+
+// Blind spot: linked-worktree edits are invisible when Root only samples cwd.
+{
+	const main = "/repo";
+	const wt = "/worktrees/review";
+	const wtFile = resolve(wt, "src/wt-only.ts");
+	const base = makeBase({ changedPaths: [], gitStatusHash: "hash-clean" });
+	const blindCurrent = makeCurrent({
+		changedPaths: [],
+		gitStatusHash: "hash-clean",
+		finalGitRef: "abc1234",
+	});
+	const report = makeReport({
+		finalGitRef: "abc1234",
+		gitStatusHash: "hash-clean",
+		changedPaths: ["src/wt-only.ts"],
+	});
+	const blind = compareEvidence(base, blindCurrent, report);
+	assert.ok(blind.missingPaths.includes(resolve(main, "src/wt-only.ts")), "28-C blind: relative declare resolves to main and is missing");
+	assert.ok(blind.extraDeclaredPaths.includes(resolve(main, "src/wt-only.ts")), "28-C blind: over-reported against empty truthSet");
+	assert.equal(blind.unexplained, true, "28-C blind: unexplained without declared roots");
+	assert.equal(evidenceAction(blind), "revalidate");
+	assert.match(describeComparison(blind), /reported changes no longer present|over-reported/);
+
+	const fixedCurrent = makeCurrent({
+		changedPaths: [wtFile],
+		gitStatusHash: "hash-wt",
+		finalGitRef: "abc1234",
+	});
+	const fixedReport = makeReport({
+		finalGitRef: "abc1234",
+		gitStatusHash: "hash-wt",
+		changedPaths: ["src/wt-only.ts"],
+	});
+	const fixed = compareEvidence(base, fixedCurrent, fixedReport, {
+		additionalWorktreeRoots: [wt],
+	});
+	assert.deepEqual(fixed.truthPaths, [wtFile]);
+	assert.deepEqual(fixed.missingPaths, []);
+	assert.deepEqual(fixed.extraDeclaredPaths, []);
+	assert.equal(fixed.unexplained, false, "28-C fix: declared roots attribute the worktree edit");
+	assert.equal(evidenceAction(fixed), "review");
+	assert.equal(fixed.fresh, true);
+}
+
+// captureEvidence probes only declared additional roots (never arbitrary siblings).
+{
+	const main = "/repo-main";
+	const declared = "/repo-wt-declared";
+	const sibling = "/repo-wt-sibling";
+	const mainPorcelain = "# branch.oid abc\n# branch.head main\n";
+	const wtPorcelain = "# branch.oid abc\n# branch.head wt\n1 .M N... 100644 100644 100644 1111111 2222222 src/wt-only.ts\n";
+	const probed = [];
+	const multiRunner = async (args, cwd) => {
+		probed.push(cwd);
+		const key = args.join(" ");
+		if (key === "rev-parse --git-dir") return { stdout: ".git\n", code: 0 };
+		if (key === "rev-parse HEAD") return { stdout: "abc1234\n", code: 0 };
+		if (key === "status --porcelain=v2 --branch") {
+			if (cwd === declared) return { stdout: wtPorcelain, code: 0 };
+			return { stdout: mainPorcelain, code: 0 };
+		}
+		if (key === "diff HEAD --stat") return { stdout: "", code: 0 };
+		if (args[0] === "hash-object") return { stdout: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n", code: 0 };
+		return { stdout: "", code: 128 };
+	};
+
+	const without = await captureEvidence(multiRunner, {
+		cwd: main,
+		taskId: "T-c-blind",
+		workerRunId: "call-c1",
+	});
+	assert.ok(!probed.includes(declared), "28-C: undeclared worktree is not probed");
+	assert.ok(!probed.includes(sibling), "28-C: arbitrary sibling is never probed");
+	assert.deepEqual(without.changedPaths ?? [], []);
+
+	probed.length = 0;
+	const withRoots = await captureEvidence(multiRunner, {
+		cwd: main,
+		taskId: "T-c-fix",
+		workerRunId: "call-c2",
+		additionalWorktreeRoots: [declared],
+	});
+	assert.ok(probed.includes(main), "28-C: primary cwd is probed");
+	assert.ok(probed.includes(declared), "28-C: declared additional root is probed");
+	assert.ok(!probed.includes(sibling), "28-C: undeclared sibling still not probed");
+	assert.ok(
+		(withRoots.changedPaths ?? []).includes(resolve(declared, "src/wt-only.ts")),
+		"28-C: additional-root dirty paths are recorded absolute",
+	);
+}
+
+// Real linked worktree: blind spot vs declared-roots fix end-to-end.
+{
+	const main = initRealRepo();
+	const wtParent = mkdtempSync(join(process.cwd(), ".planner-only-realwt-"));
+	const wt = join(wtParent, "linked");
+	try {
+		realGit(main, "worktree", "add", "-b", "variant-c-wt", wt);
+		const base = await captureEvidence(realGitRunnerOf(main), {
+			cwd: main,
+			taskId: "T-c-real",
+			workerRunId: "call-real",
+			additionalWorktreeRoots: [wt],
+		});
+		writeFileSync(join(wt, "tracked.txt"), "worktree edit\n");
+
+		const blindSample = await captureEvidence(realGitRunnerOf(main), {
+			cwd: main,
+			taskId: "T-c-real",
+			workerRunId: "call-real",
+			baseGitRef: base.finalGitRef,
+		});
+		const blindReport = boundReport("T-c-real", "call-real", blindSample, main, ["tracked.txt"]);
+		const blindCmp = compareEvidence(base, blindSample, blindReport);
+		assert.equal(blindCmp.unexplained, true, "28-C real blind: main-only sample cannot see worktree edit");
+		assert.ok(
+			blindCmp.missingPaths.length > 0 || blindCmp.extraDeclaredPaths.length > 0,
+			"28-C real blind: missing or over-reported",
+		);
+
+		const fixedSample = await captureEvidence(realGitRunnerOf(main), {
+			cwd: main,
+			taskId: "T-c-real",
+			workerRunId: "call-real",
+			baseGitRef: base.finalGitRef,
+			additionalWorktreeRoots: [wt],
+		});
+		assert.ok(
+			(fixedSample.changedPaths ?? []).some((p) => resolve(p) === resolve(wt, "tracked.txt")),
+			"28-C real fix: sample includes absolute worktree path",
+		);
+		const fixedReport = boundReport("T-c-real", "call-real", fixedSample, main, ["tracked.txt"]);
+		const fixedCmp = compareEvidence(base, fixedSample, fixedReport, {
+			additionalWorktreeRoots: [wt],
+		});
+		assert.equal(fixedCmp.unexplained, false, "28-C real fix: declared roots clear the blind spot");
+		assert.deepEqual(fixedCmp.missingPaths, []);
+		assert.ok(fixedCmp.truthPaths.some((p) => resolve(p) === resolve(wt, "tracked.txt")));
+		assert.equal(evidenceAction(fixedCmp), "review");
+	} finally {
+		spawnSync("git", ["-C", main, "worktree", "remove", "--force", wt], { encoding: "utf8" });
+		rmSync(wtParent, { recursive: true, force: true });
+		rmSync(main, { recursive: true, force: true });
+	}
+}
+
+// Declared roots are mandatory evidence: an unprobeable root is unknown state,
+// never silently skipped as clean.
+{
+	const main = "/repo-main";
+	const missing = "/repo-wt-missing";
+	const runnerWhere = (behavior) => async (args, cwd) => {
+		if (cwd === missing) return behavior(args);
+		const key = args.join(" ");
+		if (key === "rev-parse --git-dir") return { stdout: ".git\n", code: 0 };
+		if (key === "rev-parse HEAD") return { stdout: "abc1234\n", code: 0 };
+		if (key === "status --porcelain=v2 --branch") return { stdout: "# branch.oid abc\n", code: 0 };
+		if (key === "diff HEAD --stat") return { stdout: "", code: 0 };
+		return { stdout: "", code: 128 };
+	};
+	const nonGit = runnerWhere(async () => ({ stdout: "", code: 128 }));
+	const throwing = runnerWhere(async () => { throw new Error("ENOENT"); });
+	const opts = { cwd: main, taskId: "T-c-missing", workerRunId: "call-missing", additionalWorktreeRoots: [missing] };
+
+	const baseNonGit = await captureEvidence(nonGit, opts);
+	assert.deepEqual(baseNonGit.unavailableWorktreeRoots, [missing], "28-C: non-Git declared root is recorded unavailable");
+	assert.equal(baseNonGit.gitAvailable, true, "28-C: primary cwd stays available");
+	const baseThrow = await captureEvidence(throwing, opts);
+	assert.deepEqual(baseThrow.unavailableWorktreeRoots, [missing], "28-C: runner exception on a declared root is recorded unavailable");
+
+	const goodBase = makeBase({ cwd: main, changedPaths: [], gitStatusHash: "hash-clean" });
+	const report = makeReport({ cwd: main, finalGitRef: "abc1234", gitStatusHash: "hash-clean", changedPaths: [] });
+	for (const [label, base, current] of [
+		["base unavailable", { ...goodBase, unavailableWorktreeRoots: [missing] }, makeCurrent({ cwd: main, changedPaths: [], gitStatusHash: "hash-clean" })],
+		["current unavailable", goodBase, makeCurrent({ cwd: main, changedPaths: [], gitStatusHash: "hash-clean", unavailableWorktreeRoots: [missing] })],
+	]) {
+		const cmp = compareEvidence(base, current, report, { additionalWorktreeRoots: [missing] });
+		assert.equal(cmp.verifiable, false, `28-C ${label}: combined sample is unverifiable`);
+		assert.match(cmp.reasons.join("; "), /declared worktree root unavailable/, `28-C ${label}: reason names the root`);
+		assert.equal(evidenceAction(cmp), "revalidate", `28-C ${label}: never passes as clean`);
+	}
+	const clean = compareEvidence(goodBase, makeCurrent({ cwd: main, changedPaths: [], gitStatusHash: "hash-clean" }), report, { additionalWorktreeRoots: [missing] });
+	assert.equal(clean.verifiable, true, "28-C: samples that saw every declared root stay verifiable");
+}
+
+// Relative allowedPaths match the same file under each declared root.
+{
+	const main = "/repo";
+	const wt = "/worktrees/review";
+	const base = makeBase({ changedPaths: [], gitStatusHash: "hash-clean" });
+	const report = makeReport({ finalGitRef: "abc1234", gitStatusHash: "hash-clean", changedPaths: [] });
+	const wtEdit = makeCurrent({ changedPaths: [resolve(wt, "src/a.ts")], gitStatusHash: "hash-wt" });
+
+	const relative = compareEvidence(base, wtEdit, report, {
+		scope: { allowedPaths: ["src/a.ts"], forbiddenPaths: [] },
+		additionalWorktreeRoots: [wt],
+	});
+	assert.deepEqual(relative.overlappingPaths, [resolve(wt, "src/a.ts")], "28-C scope: relative allow entry covers the declared-root form");
+	assert.deepEqual(relative.unrelatedPaths, []);
+	assert.equal(evidenceAction(relative), "revalidate", "28-C scope: undeclared in-scope worktree change forces revalidation");
+
+	const absolute = compareEvidence(base, wtEdit, report, {
+		scope: { allowedPaths: [resolve(wt, "src/a.ts")], forbiddenPaths: [] },
+		additionalWorktreeRoots: [wt],
+	});
+	assert.deepEqual(absolute.overlappingPaths, [resolve(wt, "src/a.ts")], "28-C scope: absolute allow entry matches directly");
+
+	const other = compareEvidence(base, wtEdit, report, {
+		scope: { allowedPaths: ["src/b.ts"], forbiddenPaths: [] },
+		additionalWorktreeRoots: [wt],
+	});
+	assert.deepEqual(other.unrelatedPaths, [resolve(wt, "src/a.ts")], "28-C scope: unrelated worktree change stays out of scope");
+	assert.equal(evidenceAction(other), "review");
+
+	const undeclaredRoot = compareEvidence(base, wtEdit, report, {
+		scope: { allowedPaths: ["src/a.ts"], forbiddenPaths: [] },
+	});
+	assert.deepEqual(undeclaredRoot.overlappingPaths, [], "28-C scope: undeclared roots do not widen the allow-list");
+	void main;
+}
+
+// Review packet covers declared roots; an unsampled root truncates the packet.
+{
+	const main = initRealRepo();
+	const wtParent = mkdtempSync(join(process.cwd(), ".planner-only-reviewwt-"));
+	const wt = join(wtParent, "linked");
+	try {
+		realGit(main, "worktree", "add", "-b", "variant-c-review", wt);
+		const baseline = realGit(main, "rev-parse", "HEAD").trim();
+		writeFileSync(join(wt, "tracked.txt"), "worktree edit \n");
+
+		const blind = await captureReviewEvidencePacket(realGitRunnerOf(main), main, undefined, { baselineRef: baseline });
+		assert.deepEqual(patchNames(blind.patch), [], "28-C packet blind: main-only packet misses the worktree edit");
+		assert.equal(blind.patchTruncated, undefined);
+
+		const packet = await captureReviewEvidencePacket(realGitRunnerOf(main), main, undefined, {
+			baselineRef: baseline,
+			additionalWorktreeRoots: [wt],
+		});
+		assert.deepEqual(packet.worktreeRoots, [resolve(wt)]);
+		assert.ok(
+			(packet.changedFiles ?? []).some((p) => resolve(p) === resolve(wt, "tracked.txt")),
+			"28-C packet: changedFiles carries the absolute worktree path",
+		);
+		assert.match(packet.patch ?? "", /tracked\.txt/, "28-C packet: patch includes the worktree edit");
+		assert.match(packet.patch ?? "", new RegExp(`# worktree ${resolve(wt).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`), "28-C packet: worktree chunk is labelled");
+		assert.equal(packet.patchTotalFiles, 1);
+		assert.equal(packet.patchTruncated, undefined, "28-C packet: fully sampled roots are not truncated");
+		assert.notEqual(packet.diffCheck?.exitCode, 0, "28-C packet: trailing whitespace in the worktree fails the merged diff --check");
+
+		const missing = join(wtParent, "gone");
+		const truncated = await captureReviewEvidencePacket(realGitRunnerOf(main), main, undefined, {
+			baselineRef: baseline,
+			additionalWorktreeRoots: [missing],
+		});
+		assert.deepEqual(truncated.unavailableWorktreeRoots, [resolve(missing)]);
+		assert.equal(truncated.patchTruncated, true, "28-C packet: an unsampled declared root truncates the packet");
+		assert.ok(truncated.patchOmittedPaths?.includes(resolve(missing)));
+	} finally {
+		spawnSync("git", ["-C", main, "worktree", "remove", "--force", wt], { encoding: "utf8" });
+		rmSync(wtParent, { recursive: true, force: true });
+		rmSync(main, { recursive: true, force: true });
+	}
+}
 
 console.log("planner-only evidence: PASS");
