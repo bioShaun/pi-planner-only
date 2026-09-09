@@ -5,4 +5,3 @@ B10: stop does not alter the state machine
 
 + 'changes_requested'
 - 'blocked'
-

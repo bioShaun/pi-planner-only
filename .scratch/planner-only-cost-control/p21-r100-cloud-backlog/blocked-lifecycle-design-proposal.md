@@ -73,4 +73,3 @@ No product change in this proposal round beyond documenting that path.
 
 - **Default proposal:** Option 0 now (document) + schedule Option 3 (abandon from `blocked`) as a small follow-up ticket; defer Option 1 seal until a real late-receipt incident is reproduced under budget stop.
 - **Do not** take Option 2 without a replacement reopen hatch.
-
