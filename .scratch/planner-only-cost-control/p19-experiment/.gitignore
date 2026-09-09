@@ -1,7 +1,9 @@
 # Host transcripts and driver logs; conclusions go in a tracked extract later.
 session-*/
+runs/
 *-stdout.log
 *-stderr.log
+gate.log
 pi-was-invoked
 gate-probe-work/
 .agent-dir-*/
