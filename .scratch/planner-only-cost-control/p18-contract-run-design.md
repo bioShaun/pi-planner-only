@@ -301,7 +301,7 @@ total_spend_usd=0.033797
 
 | 组 | Root 模型 | Worker 模型 | `usageBudget.tokens.hard` | 委派时已用 | 结果 |
 |---|---|---|---|---|---|
-| A  | luna（付费） | qwen-local（0 费率） | **1** | Root 19,031 tok | **子进程照常启动并跑完** |
+| A  | luna（付费） | qwen-local（0 费率） | **1** | Root 19,031 tok（注1） | **子进程照常启动并跑完** |
 | B  | luna | qwen-local | 200000 | Root 19,858 tok | 启动并跑完（阳性对照） |
 | A2 | luna | **luna（付费）** | **1** | Root 3.7k，**子进程自身 9.3k** | **启动并跑完，未被拒、未被停** |
 | B2 | luna | luna | 200000 | Root 4k，子进程 9.3k | 启动并跑完（阳性对照） |
@@ -309,6 +309,10 @@ total_spend_usd=0.033797
 A/B 与 A2/B2 各自只差一个数字，四组的 `usageBudget.costUsd.hard=0.05` 恒定。
 
 ### 结论：宿主收下 `usageBudget`，但不执行它
+
+> **注1（2026-09-09 补）**：19,031 / 19,858 是**宿主口径的单回合 `totalTokens`**（含 cacheRead），
+> 取自委派发生的那一回合；插件 `status` 印的 `root 3.8k / 4.3k` 是**插件自己的口径**（不含 cacheRead）。
+> 两个数不是同一个量，都对。完整逐回合序列已补进 `p18-contract-run/evidence-extract.md`。
 
 - **按「任务已用量」解读**：A 组委派发出前，Root 那一回合就报了 `totalTokens=19031`，
   相对 `hard=1` 超了四个数量级。宿主文档写的是
@@ -333,7 +337,10 @@ A/B 与 A2/B2 各自只差一个数字，四组的 `usageBudget.costUsd.hard=0.0
 ### 本轮未闭合的部分（诚实记录）
 
 - 没有拿到一份实跑的 `/planner-only status` 完整文本（见 §9 遗留观测缺口）。
-- 只测了 `tokens.hard`。`costUsd.hard` 是否同样不被执行，本轮**没有单独证明**——
+- 只测了 `tokens.hard`。`costUsd.hard` 是否同样不被执行，**写下这段时**没有单独证明——
+  > **【2026-09-09 追注，已被 §12 推翻】** 下面这句「没有单独证明」只在 §11 写成的那一刻成立。
+  > §12 的 A3 组随后用 `costUsd.hard=0.0001` 单独证明了 costUsd 维度同样不被执行。
+  > **读到这里不要停，必须往下读 §12。**
   四组的 `costUsd.hard` 都是 0.05 且从未被突破（子进程最贵一次 $0.0023）。
   要证需要再来一组把 `PI_PLANNER_ONLY_FLOOR_WORKER_COST_USD_HARD` 压到子进程必然超过的值。
 - 未测宿主对**运行中**子进程的处置（文档原话说不停）。A2 的子进程超限后跑完，
