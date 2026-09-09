@@ -921,4 +921,50 @@ function ticket15ResolvedNoRate(overrides = {}) {
 	assert.equal(stale.costUsd.debt, 0);
 }
 
+
+// Ticket 40 — sessionRootSpend aggregates untasked + Task roots, excludes children
+{
+	const u = ledger();
+	u.recordRootTurn({ usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0 }, model: "m", provider: "p" });
+	// Force a known cost via a second turn with pricing... usage ledger may leave cost undefined without rates.
+	const spend0 = u.sessionRootSpend();
+	assert.equal(spend0.untaskedTurns, 1);
+	assert.equal(spend0.turns, 1);
+	assert.equal(spend0.tokens, 150);
+	assert.equal(spend0.untaskedTokens, 150);
+
+	u.recordRootTurn({
+		taskId: "T-40-root",
+		state: "planning",
+		usage: { input: 200, output: 100, cacheRead: 0, cacheWrite: 0 },
+		model: "m",
+		provider: "p",
+	});
+	u.recordChild("T-40-root", {
+		input: 9999,
+		output: 9999,
+		cacheRead: 0,
+		cacheWrite: 0,
+		kind: "worker",
+		pending: false,
+		source: "sync-details",
+		costUsd: 9.99,
+		toolCallId: "child-40",
+	});
+	const spend = u.sessionRootSpend();
+	assert.equal(spend.turns, 2, "40-u1: tasked + untasked root turns");
+	assert.equal(spend.tokens, 150 + 300, "40-u2: child tokens excluded");
+	assert.equal(spend.untaskedTurns, 1);
+	assert.equal(spend.untaskedTokens, 150);
+}
+
+{
+	// costUnknown propagates when any root bucket lacks cost
+	const u = ledger();
+	u.recordRootTurn({ usage: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0 } });
+	const spend = u.sessionRootSpend();
+	assert.equal(spend.costUnknown, true, "40-u3: unpriced root is costUnknown");
+	assert.equal(spend.costUsd, undefined);
+}
+
 console.log("planner-only usage: PASS");

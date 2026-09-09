@@ -34,7 +34,17 @@ import {
 	stripDelegationKeys,
 } from "./roles.ts";
 import type { ContextReuseOutcome, DelegationTarget, PrepareRoleDelegationOptions } from "./roles.ts";
-import { formatFloorLimitsSummary, loadHostEnforcement, resolveEffectiveLimits } from "./floors.ts";
+import {
+	evaluateSessionRootBudget,
+	formatFloorLimitsSummary,
+	formatSessionRootBudgetRefusal,
+	formatSessionRootBudgetSoftWarning,
+	formatSessionRootBudgetStatus,
+	loadHostEnforcement,
+	loadSessionRootBudgetConfig,
+	resolveEffectiveLimits,
+} from "./floors.ts";
+import type { SessionRootSpend } from "./floors.ts";
 import { loadRoleModelPolicy, requestedRoleModel, resolveRoleModel, compareResolvedRoleModel } from "./role-models.ts";
 import type { EffectiveLimits } from "./floors.ts";
 import {
@@ -236,6 +246,12 @@ export interface OrchestratorDeps {
 	 * needs them to detect runs that finished without delivering a notice.
 	 */
 	artifactDirs?: () => readonly string[];
+	/**
+	 * Ticket 40 — session-level root cumulative spend for the soft/hard gate.
+	 * Supplied by the Pi adapter from the session root spend snapshot; absent in
+	 * unit tests that do not exercise the session root budget.
+	 */
+	getSessionRootUsage?: () => SessionRootSpend;
 }
 
 export type { DelegationKind };
@@ -547,6 +563,7 @@ export class PlannerOrchestrator {
 	readonly structuredDelegationMode: StructuredDelegationMode;
 	private readonly gitRunner: GitRunner;
 	private readonly artifactDirs: () => readonly string[];
+	private readonly getSessionRootUsage?: () => SessionRootSpend;
 	/** toolCallId -> delegated task + invocation kind. */
 	private readonly delegations = new Map<string, DelegationRecord>();
 	private readonly reservations = new BudgetReservations();
@@ -612,6 +629,7 @@ export class PlannerOrchestrator {
 		}
 		this.gitRunner = deps.gitRunner;
 		this.artifactDirs = deps.artifactDirs ?? (() => []);
+		this.getSessionRootUsage = deps.getSessionRootUsage;
 		this.structuredDelegationMode =
 			deps.structuredDelegationMode ?? readStructuredDelegationMode();
 	}
@@ -832,6 +850,22 @@ export class PlannerOrchestrator {
 			? { taskId: spec.taskId, usage: emptyTaskUsage(), spec, reports: [] as TaskRecord["reports"] }
 			: undefined;
 		const gateTask = budgetTask ?? firstDelegationTask;
+		// Ticket 40: session-level root cumulative soft/hard gate. Soft warns;
+		// hard refuses new paid delegations. Reviewer stays exempt so Tasks can close.
+		// Never kills the current root turn or session — only the launch gate fires.
+		if (role !== "reviewer" && this.getSessionRootUsage) {
+			const evaluation = evaluateSessionRootBudget(this.getSessionRootUsage(), loadSessionRootBudgetConfig());
+			if (evaluation.level === "hard") {
+				if (input && typeof input === "object" && !Array.isArray(input)) {
+					delete (input as Record<string, unknown>).usageBudget;
+					delete (input as Record<string, unknown>).__floorLimits;
+				}
+				return { block: { reason: formatSessionRootBudgetRefusal(evaluation) } };
+			}
+			if (evaluation.level === "soft") {
+				warnings.push(formatSessionRootBudgetSoftWarning(evaluation));
+			}
+		}
 		const untrustedTaskId = target?.task?.taskId ?? target?.taskId ?? spec?.taskId;
 		// Reviewer stays exempt: an unreadable ledger must not prevent closing the Task.
 		if (role !== "reviewer" && untrustedTaskId && this.untrustedBalances.has(untrustedTaskId)) {
@@ -1326,6 +1360,16 @@ export class PlannerOrchestrator {
 		lines.push("");
 		lines.push(...decision.guidance);
 		return lines.join("\n");
+	}
+
+	/**
+	 * Ticket 40 — session root budget disclosure for /planner-only status.
+	 * Returns undefined when the adapter did not supply getSessionRootUsage.
+	 */
+	renderSessionRootBudgetStatus(): string | undefined {
+		if (!this.getSessionRootUsage) return undefined;
+		const evaluation = evaluateSessionRootBudget(this.getSessionRootUsage(), loadSessionRootBudgetConfig());
+		return formatSessionRootBudgetStatus(evaluation);
 	}
 
 	renderTaskStatus(task: TaskRecord): string {

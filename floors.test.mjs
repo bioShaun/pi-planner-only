@@ -2,11 +2,18 @@ import assert from "node:assert/strict";
 import {
 	DEFAULT_FLOORS,
 	DEFAULT_HOST_ENFORCEMENT,
+	DEFAULT_SESSION_ROOT_MULTIPLIERS,
 	FLOOR_ENV_VARS,
+	SESSION_ROOT_BUDGET_ENV_VARS,
+	evaluateSessionRootBudget,
 	formatFloorLimitsSummary,
+	formatSessionRootBudgetRefusal,
+	formatSessionRootBudgetSoftWarning,
+	formatSessionRootBudgetStatus,
 	HOST_ENFORCEMENT_ENV_VARS,
 	loadFloorConfig,
 	loadHostEnforcement,
+	loadSessionRootBudgetConfig,
 	resolveEffectiveLimits,
 } from "./floors.ts";
 
@@ -287,5 +294,83 @@ assert.throws(
 assert.equal(Object.isFrozen(DEFAULT_HOST_ENFORCEMENT), true, "W6: DEFAULT_HOST_ENFORCEMENT is frozen");
 assert.equal(DEFAULT_HOST_ENFORCEMENT.tokens, false, "W6: DEFAULT_HOST_ENFORCEMENT.tokens is false");
 assert.equal(DEFAULT_HOST_ENFORCEMENT.costUsd, false, "W6: DEFAULT_HOST_ENFORCEMENT.costUsd is false");
+
+// Ticket 40 — session root budget derived from workerInitial × multipliers
+
+assert.equal(DEFAULT_SESSION_ROOT_MULTIPLIERS.soft, 3);
+assert.equal(DEFAULT_SESSION_ROOT_MULTIPLIERS.hard, 5);
+
+{
+	const config = loadSessionRootBudgetConfig({});
+	assert.equal(config.softMultiplier, 3);
+	assert.equal(config.hardMultiplier, 5);
+	assert.equal(config.baseCostUsd, DEFAULT_FLOORS.workerInitial.costUsdHard);
+	assert.equal(config.baseTokens, DEFAULT_FLOORS.workerInitial.tokensHard);
+	assert.equal(config.softCostUsd, 0.50 * 3);
+	assert.equal(config.hardCostUsd, 0.50 * 5);
+	assert.equal(config.softTokens, 100_000 * 3);
+	assert.equal(config.hardTokens, 100_000 * 5);
+}
+
+{
+	const config = loadSessionRootBudgetConfig({
+		[SESSION_ROOT_BUDGET_ENV_VARS.SOFT_MULTIPLIER]: "2",
+		[SESSION_ROOT_BUDGET_ENV_VARS.HARD_MULTIPLIER]: "4",
+		[FLOOR_ENV_VARS.WORKER_COST_USD_HARD]: "0.40",
+		[FLOOR_ENV_VARS.WORKER_TOKENS_HARD]: "80000",
+	});
+	assert.equal(config.softCostUsd, 0.80);
+	assert.equal(config.hardCostUsd, 1.60);
+	assert.equal(config.softTokens, 160_000);
+	assert.equal(config.hardTokens, 320_000);
+}
+
+{
+	assert.throws(
+		() => loadSessionRootBudgetConfig({
+			[SESSION_ROOT_BUDGET_ENV_VARS.SOFT_MULTIPLIER]: "5",
+			[SESSION_ROOT_BUDGET_ENV_VARS.HARD_MULTIPLIER]: "3",
+		}),
+		/hard multiplier .* must be >= soft/,
+	);
+}
+
+{
+	const config = loadSessionRootBudgetConfig({});
+	const ok = evaluateSessionRootBudget({
+		turns: 1, tokens: 100, costUsd: 0.01, costUnknown: false,
+		untaskedTurns: 1, untaskedTokens: 100, untaskedCostUsd: 0.01,
+	}, config);
+	assert.equal(ok.level, "ok");
+
+	const soft = evaluateSessionRootBudget({
+		turns: 10, tokens: config.softTokens, costUsd: config.softCostUsd, costUnknown: false,
+		untaskedTurns: 10, untaskedTokens: config.softTokens, untaskedCostUsd: config.softCostUsd,
+	}, config);
+	assert.equal(soft.level, "soft");
+	assert.equal(soft.dimension, "costUsd");
+	assert.match(formatSessionRootBudgetSoftWarning(soft), /软顶警告/);
+	assert.match(formatSessionRootBudgetStatus(soft), /会话 root 预算软顶警告/);
+
+	const hard = evaluateSessionRootBudget({
+		turns: 20, tokens: config.hardTokens, costUsd: config.hardCostUsd, costUnknown: false,
+		untaskedTurns: 20, untaskedTokens: config.hardTokens, untaskedCostUsd: config.hardCostUsd,
+	}, config);
+	assert.equal(hard.level, "hard");
+	assert.match(formatSessionRootBudgetRefusal(hard), /session root budget exhausted/);
+	assert.match(formatSessionRootBudgetRefusal(hard), /不会被掐断/);
+	assert.match(formatSessionRootBudgetStatus(hard), /会话 root 预算已停止/);
+}
+
+{
+	// Unknown cost skips the cost dimension; tokens alone can still trip hard.
+	const config = loadSessionRootBudgetConfig({});
+	const unknownSoftTokens = evaluateSessionRootBudget({
+		turns: 2, tokens: config.softTokens, costUsd: undefined, costUnknown: true,
+		untaskedTurns: 2, untaskedTokens: config.softTokens, untaskedCostUsd: undefined,
+	}, config);
+	assert.equal(unknownSoftTokens.level, "soft");
+	assert.equal(unknownSoftTokens.dimension, "tokens");
+}
 
 console.log("planner-only floors: PASS");

@@ -571,6 +571,47 @@ export class UsageLedger {
 		return { untasked: this.untasked, tasks: [...this.tasks.keys()] };
 	}
 
+	/**
+	 * Ticket 40 — session-level root cumulative spend (untasked + every Task root).
+	 * Child spend is excluded: those are gated by Task cumulativeBudget.
+	 */
+	sessionRootSpend(): {
+		turns: number;
+		tokens: number;
+		costUsd: number | undefined;
+		costUnknown: boolean;
+		untaskedTurns: number;
+		untaskedTokens: number;
+		untaskedCostUsd: number | undefined;
+	} {
+		const untaskedTokens = usageTokens(this.untasked);
+		let turns = this.untasked.turns;
+		let tokens = untaskedTokens;
+		let costUnknown = this.untasked.turns > 0 && this.untasked.costUsd === undefined;
+		let costUsd: number | undefined = costUnknown ? undefined : (this.untasked.costUsd ?? 0);
+		for (const task of this.tasks.values()) {
+			const root = task.root;
+			turns += root.turns;
+			tokens += usageTokens(root);
+			const rootUnknown = root.turns > 0 && root.costUsd === undefined;
+			if (rootUnknown || costUnknown) {
+				costUnknown = true;
+				costUsd = undefined;
+			} else {
+				costUsd = (costUsd ?? 0) + (root.costUsd ?? 0);
+			}
+		}
+		return {
+			turns,
+			tokens,
+			costUsd,
+			costUnknown,
+			untaskedTurns: this.untasked.turns,
+			untaskedTokens,
+			untaskedCostUsd: this.untasked.costUsd,
+		};
+	}
+
 	load(records: UsageEntry[]): void {
 		for (const entry of records) {
 			if (!entry || typeof entry !== "object" || !entry.id || !entry.kind) continue;
