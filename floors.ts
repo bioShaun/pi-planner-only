@@ -455,12 +455,20 @@ export function loadSessionRootBudgetConfig(
 	});
 }
 
+export type SessionRootCurrency = "USD" | "CNY";
+
 export interface SessionRootSpend {
 	readonly turns: number;
 	readonly tokens: number;
-	/** Known cost; undefined when any contributing root bucket has unknown cost. */
+	/** Known cost in `currency`; undefined when any contributing root bucket has unknown cost. */
 	readonly costUsd: number | undefined;
 	readonly costUnknown: boolean;
+	/**
+	 * Currency the ledger's pricing table is declared in. The soft/hard cost caps
+	 * are USD-denominated, so the cost dimension is only gated when this is USD;
+	 * other currencies fall back to the tokens dimension alone.
+	 */
+	readonly currency: SessionRootCurrency;
 	readonly untaskedTurns: number;
 	readonly untaskedTokens: number;
 	readonly untaskedCostUsd: number | undefined;
@@ -476,16 +484,23 @@ export interface SessionRootBudgetEvaluation {
 	readonly config: SessionRootBudgetConfig;
 }
 
+/** True when the spend's cost can be compared against the USD-denominated caps. */
+export function sessionRootCostComparable(spend: SessionRootSpend): boolean {
+	return spend.currency === "USD" && !spend.costUnknown && spend.costUsd !== undefined;
+}
+
 /**
  * Evaluate session root spend against soft (×3) and hard (×5) caps.
- * Hard takes precedence over soft. Cost is skipped when costUnknown.
+ * Hard takes precedence over soft. Cost is skipped when costUnknown or when
+ * the ledger currency is not USD.
  */
 export function evaluateSessionRootBudget(
 	spend: SessionRootSpend,
 	config: SessionRootBudgetConfig = loadSessionRootBudgetConfig(),
 ): SessionRootBudgetEvaluation {
+	const costComparable = sessionRootCostComparable(spend);
 	const tokensHard = spend.tokens >= config.hardTokens;
-	const costHard = !spend.costUnknown && spend.costUsd !== undefined && spend.costUsd >= config.hardCostUsd;
+	const costHard = costComparable && spend.costUsd !== undefined && spend.costUsd >= config.hardCostUsd;
 	if (tokensHard || costHard) {
 		return {
 			level: "hard",
@@ -495,7 +510,7 @@ export function evaluateSessionRootBudget(
 		};
 	}
 	const tokensSoft = spend.tokens >= config.softTokens;
-	const costSoft = !spend.costUnknown && spend.costUsd !== undefined && spend.costUsd >= config.softCostUsd;
+	const costSoft = costComparable && spend.costUsd !== undefined && spend.costUsd >= config.softCostUsd;
 	if (tokensSoft || costSoft) {
 		return {
 			level: "soft",
@@ -507,8 +522,12 @@ export function evaluateSessionRootBudget(
 	return { level: "ok", spend, config };
 }
 
-function money4(value: number): string {
-	return `$${value.toFixed(4)}`;
+function money4(value: number, currency: SessionRootCurrency = "USD"): string {
+	return `${currency === "CNY" ? "¥" : "$"}${value.toFixed(4)}`;
+}
+
+function spendCost(spend: SessionRootSpend): string {
+	return spend.costUnknown ? "不可知" : money4(spend.costUsd ?? 0, spend.currency);
 }
 
 /** Status / operator disclosure for the session root budget (ticket 40 / E1–E2). */
@@ -516,13 +535,16 @@ export function formatSessionRootBudgetStatus(evaluation: SessionRootBudgetEvalu
 	const { spend, config, level } = evaluation;
 	const costPart = spend.costUnknown
 		? "费用不可知"
-		: `费用 ${money4(spend.costUsd ?? 0)}`;
+		: `费用 ${money4(spend.costUsd ?? 0, spend.currency)}`;
 	const lines = [
 		`Session root budget (累计 root): turns=${spend.turns}, tokens=${spend.tokens}, ${costPart}`,
 		`  软顶 ×${config.softMultiplier}: tokens=${config.softTokens}, 费用 ${money4(config.softCostUsd)}（警告，不阻止委派）`,
 		`  硬顶 ×${config.hardMultiplier}: tokens=${config.hardTokens}, 费用 ${money4(config.hardCostUsd)}（拒绝新的受控付费委派；不掐断当前 root 回合）`,
-		`  其中 untasked: turns=${spend.untaskedTurns}, tokens=${spend.untaskedTokens}, 费用 ${spend.untaskedCostUsd === undefined && spend.untaskedTurns > 0 ? "不可知" : money4(spend.untaskedCostUsd ?? 0)}`,
+		`  其中 untasked: turns=${spend.untaskedTurns}, tokens=${spend.untaskedTokens}, 费用 ${spend.untaskedCostUsd === undefined && spend.untaskedTurns > 0 ? "不可知" : money4(spend.untaskedCostUsd ?? 0, spend.currency)}`,
 	];
+	if (spend.currency !== "USD") {
+		lines.push(`  费率表币种为 ${spend.currency}，与 USD 计价的费用顶无法直接比较；费用维度不参与门控，仅按 tokens 判定。`);
+	}
 	if (level === "hard") {
 		const dimension = evaluation.dimension === "tokens" ? "tokens" : "费用";
 		lines.push(
@@ -541,10 +563,9 @@ export function formatSessionRootBudgetStatus(evaluation: SessionRootBudgetEvalu
 export function formatSessionRootBudgetRefusal(evaluation: SessionRootBudgetEvaluation): string {
 	const { spend, config, dimension } = evaluation;
 	const dim = dimension === "tokens" ? "tokens" : "costUsd";
-	const costKnown = spend.costUnknown ? "不可知" : money4(spend.costUsd ?? 0);
 	return [
 		`Planner-only guard: session root budget exhausted (${dim}).`,
-		`会话 root 累计: tokens=${spend.tokens}, 费用 ${costKnown}, turns=${spend.turns}`,
+		`会话 root 累计: tokens=${spend.tokens}, 费用 ${spendCost(spend)}, turns=${spend.turns}`,
 		`硬顶: tokens=${config.hardTokens} (×${config.hardMultiplier}), 费用 ${money4(config.hardCostUsd)} (×${config.hardMultiplier})`,
 		`软顶: tokens=${config.softTokens} (×${config.softMultiplier}), 费用 ${money4(config.softCostUsd)} (×${config.softMultiplier})`,
 		"本次受控付费委派被拒绝；当前会话与当前 root 回合不会被掐断。reviewer 仍可启动以关闭 Task。",
@@ -555,6 +576,5 @@ export function formatSessionRootBudgetRefusal(evaluation: SessionRootBudgetEval
 export function formatSessionRootBudgetSoftWarning(evaluation: SessionRootBudgetEvaluation): string {
 	const { spend, config, dimension } = evaluation;
 	const dim = dimension === "tokens" ? "tokens" : "费用";
-	const costKnown = spend.costUnknown ? "不可知" : money4(spend.costUsd ?? 0);
-	return `Planner-only: 会话 root 预算软顶警告（${dim}）。已累计 tokens=${spend.tokens}, 费用 ${costKnown}；软顶 tokens=${config.softTokens}/费用 ${money4(config.softCostUsd)}。新的委派仍允许，硬顶为 ×${config.hardMultiplier}。`;
+	return `Planner-only: 会话 root 预算软顶警告（${dim}）。已累计 tokens=${spend.tokens}, 费用 ${spendCost(spend)}；软顶 tokens=${config.softTokens}/费用 ${money4(config.softCostUsd)}。新的委派仍允许，硬顶为 ×${config.hardMultiplier}。`;
 }

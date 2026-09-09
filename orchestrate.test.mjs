@@ -11,7 +11,7 @@ import { hashStatus, workspaceSummaryDigest, describeComparison } from "./eviden
 import { extractReviewRequest } from "./review.ts";
 import { workerReportShapeReminder } from "./report.ts";
 import { emptyTaskUsage } from "./usage.ts";
-import { loadSessionRootBudgetConfig } from "./floors.ts";
+import { SESSION_ROOT_BUDGET_ENV_VARS, loadSessionRootBudgetConfig } from "./floors.ts";
 import { MISSING_VALIDATION_DEFINITION_REASON } from "./roles.ts";
 
 // Fixture ids are stamped 2026-09-05; pin the store clock so id replacement
@@ -6085,6 +6085,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 		tokens: config.softTokens,
 		costUsd: config.softCostUsd,
 		costUnknown: false,
+		currency: "USD",
 		untaskedTurns: 10,
 		untaskedTokens: config.softTokens,
 		untaskedCostUsd: config.softCostUsd,
@@ -6094,6 +6095,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 		tokens: config.hardTokens,
 		costUsd: config.hardCostUsd,
 		costUnknown: false,
+		currency: "USD",
 		untaskedTurns: 20,
 		untaskedTokens: config.hardTokens,
 		untaskedCostUsd: config.hardCostUsd,
@@ -6103,6 +6105,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 		tokens: 10,
 		costUsd: 0.01,
 		costUnknown: false,
+		currency: "USD",
 		untaskedTurns: 1,
 		untaskedTokens: 10,
 		untaskedCostUsd: 0.01,
@@ -6160,6 +6163,57 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 		assert.equal(orch.renderSessionRootBudgetStatus(), undefined, "40-n: no session root status without supplier");
 		const outcome = await orch.beginDelegation({ toolCallId: "call-40-off", input: { task: JSON.stringify(task.spec) } }, BASE);
 		assert.equal(outcome.block, undefined, "40-o: absent supplier does not refuse");
+	}
+
+	{
+		// Hard cap only refuses paid or unknown-price launches; verified zero-rate launches pass.
+		const rateKind = (model) => {
+			if (model === "free/model") return "free";
+			if (model === "paid/model") return "paid";
+			return "unknown";
+		};
+		for (const [role, agent] of [["worker", undefined], ["explorer", "explorer"], ["validator", "validator"]]) {
+			const { store, task } = budgetTaskFixture(`T-20260909-40free-${role}`, { tokens: 200_000, costUsd: 5 }, boundedBudgetUsage(0, 0), role);
+			if (role !== "worker") task.reports.push(reportFor(task.taskId, `40-free-${role}`));
+			const orch = new PlannerOrchestrator({ gitRunner, store, getSessionRootUsage: () => hardSpend, delegationRateKind: rateKind });
+			const taskInput = role === "worker" ? JSON.stringify(task.spec) : JSON.stringify({ taskId: task.taskId, role });
+			const input = { ...(agent ? { agent } : {}), task: taskInput, model: "free/model", usageBudget: { tokens: { hard: 1000 } } };
+			const outcome = await orch.beginDelegation({ toolCallId: `call-40-free-${role}` , input }, BASE);
+			assert.equal(outcome.block, undefined, `40-p: zero-rate ${role} passes the hard gate`);
+			assert.equal((outcome.warnings ?? []).some((w) => /会话 root 预算已停止/.test(w)), true, `40-q: zero-rate ${role} still sees the hard disclosure`);
+		}
+		{
+			const { store, task } = budgetTaskFixture("T-20260909-40paid", { tokens: 200_000, costUsd: 5 }, boundedBudgetUsage(0, 0));
+			const orch = new PlannerOrchestrator({ gitRunner, store, getSessionRootUsage: () => hardSpend, delegationRateKind: rateKind });
+			const outcome = await orch.beginDelegation({ toolCallId: "call-40-paid", input: { task: JSON.stringify(task.spec), model: "paid/model" } }, BASE);
+			assert.match(outcome.block?.reason ?? "", /session root budget exhausted/, "40-r: paid launch refused at hard");
+		}
+		{
+			const { store, task } = budgetTaskFixture("T-20260909-40unk", { tokens: 200_000, costUsd: 5 }, boundedBudgetUsage(0, 0));
+			const orch = new PlannerOrchestrator({ gitRunner, store, getSessionRootUsage: () => hardSpend, delegationRateKind: rateKind });
+			const outcome = await orch.beginDelegation({ toolCallId: "call-40-unk", input: { task: JSON.stringify(task.spec), model: "mystery/model" } }, BASE);
+			assert.match(outcome.block?.reason ?? "", /session root budget exhausted/, "40-s: unknown-rate launch refused at hard");
+		}
+		{
+			// Zero-rate passes at hard even when soft-level; no hard disclosure below hard.
+			const { store, task } = budgetTaskFixture("T-20260909-40freesoft", { tokens: 200_000, costUsd: 5 }, boundedBudgetUsage(0, 0));
+			const orch = new PlannerOrchestrator({ gitRunner, store, getSessionRootUsage: () => softSpend, delegationRateKind: rateKind });
+			const outcome = await orch.beginDelegation({ toolCallId: "call-40-freesoft", input: { task: JSON.stringify(task.spec), model: "free/model" } }, BASE);
+			assert.equal(outcome.block, undefined);
+			assert.equal((outcome.warnings ?? []).some((w) => /软顶警告/.test(w)), true, "40-t: soft warning still emitted for zero-rate launch");
+		}
+	}
+
+	{
+		// A pre-validated config is reused instead of re-reading env at the gate.
+		const tightConfig = loadSessionRootBudgetConfig({
+			[SESSION_ROOT_BUDGET_ENV_VARS.SOFT_MULTIPLIER]: "1",
+			[SESSION_ROOT_BUDGET_ENV_VARS.HARD_MULTIPLIER]: "1",
+		});
+		const { store, task } = budgetTaskFixture("T-20260909-40cfg", { tokens: 200_000, costUsd: 5 }, boundedBudgetUsage(0, 0));
+		const orch = new PlannerOrchestrator({ gitRunner, store, getSessionRootUsage: () => softSpend, sessionRootBudgetConfig: tightConfig });
+		const outcome = await orch.beginDelegation({ toolCallId: "call-40-cfg", input: { task: JSON.stringify(task.spec) } }, BASE);
+		assert.match(outcome.block?.reason ?? "", /session root budget exhausted/, "40-u: injected config (×1 hard) refuses spend at default soft level");
 	}
 }
 

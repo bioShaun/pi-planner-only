@@ -339,12 +339,14 @@ assert.equal(DEFAULT_SESSION_ROOT_MULTIPLIERS.hard, 5);
 	const config = loadSessionRootBudgetConfig({});
 	const ok = evaluateSessionRootBudget({
 		turns: 1, tokens: 100, costUsd: 0.01, costUnknown: false,
+		currency: "USD",
 		untaskedTurns: 1, untaskedTokens: 100, untaskedCostUsd: 0.01,
 	}, config);
 	assert.equal(ok.level, "ok");
 
 	const soft = evaluateSessionRootBudget({
 		turns: 10, tokens: config.softTokens, costUsd: config.softCostUsd, costUnknown: false,
+		currency: "USD",
 		untaskedTurns: 10, untaskedTokens: config.softTokens, untaskedCostUsd: config.softCostUsd,
 	}, config);
 	assert.equal(soft.level, "soft");
@@ -354,6 +356,7 @@ assert.equal(DEFAULT_SESSION_ROOT_MULTIPLIERS.hard, 5);
 
 	const hard = evaluateSessionRootBudget({
 		turns: 20, tokens: config.hardTokens, costUsd: config.hardCostUsd, costUnknown: false,
+		currency: "USD",
 		untaskedTurns: 20, untaskedTokens: config.hardTokens, untaskedCostUsd: config.hardCostUsd,
 	}, config);
 	assert.equal(hard.level, "hard");
@@ -366,11 +369,37 @@ assert.equal(DEFAULT_SESSION_ROOT_MULTIPLIERS.hard, 5);
 	// Unknown cost skips the cost dimension; tokens alone can still trip hard.
 	const config = loadSessionRootBudgetConfig({});
 	const unknownSoftTokens = evaluateSessionRootBudget({
-		turns: 2, tokens: config.softTokens, costUsd: undefined, costUnknown: true,
+		turns: 2, tokens: config.softTokens, costUsd: undefined, costUnknown: true, currency: "USD",
 		untaskedTurns: 2, untaskedTokens: config.softTokens, untaskedCostUsd: undefined,
 	}, config);
 	assert.equal(unknownSoftTokens.level, "soft");
 	assert.equal(unknownSoftTokens.dimension, "tokens");
+}
+
+{
+	// CNY pricing table: cost is not comparable against USD caps, so only tokens gate.
+	const config = loadSessionRootBudgetConfig({});
+	const cnySoftCost = evaluateSessionRootBudget({
+		turns: 3, tokens: 100, costUsd: config.softCostUsd * 100, costUnknown: false, currency: "CNY",
+		untaskedTurns: 3, untaskedTokens: 100, untaskedCostUsd: config.softCostUsd * 100,
+	}, config);
+	assert.equal(cnySoftCost.level, "ok", "40-cny-a: CNY cost above USD soft cap does not trip soft");
+	const cnyHardCost = evaluateSessionRootBudget({
+		turns: 3, tokens: 100, costUsd: config.hardCostUsd * 100, costUnknown: false, currency: "CNY",
+		untaskedTurns: 3, untaskedTokens: 100, untaskedCostUsd: config.hardCostUsd * 100,
+	}, config);
+	assert.equal(cnyHardCost.level, "ok", "40-cny-b: CNY cost above USD hard cap does not trip hard");
+	const cnyTokensHard = evaluateSessionRootBudget({
+		turns: 3, tokens: config.hardTokens, costUsd: 0.01, costUnknown: false, currency: "CNY",
+		untaskedTurns: 3, untaskedTokens: config.hardTokens, untaskedCostUsd: 0.01,
+	}, config);
+	assert.equal(cnyTokensHard.level, "hard", "40-cny-c: tokens still gate under CNY");
+	assert.equal(cnyTokensHard.dimension, "tokens");
+	const status = formatSessionRootBudgetStatus(cnyTokensHard);
+	assert.match(status, /¥0\.0100/, "40-cny-d: status renders CNY symbol for spend");
+	assert.match(status, /费率表币种为 CNY/, "40-cny-e: status discloses cost dimension not gated");
+	assert.doesNotMatch(status.split("\n")[0], /\$/, "40-cny-f: spend line has no dollar sign");
+	assert.match(formatSessionRootBudgetRefusal(cnyTokensHard), /¥0\.0100/, "40-cny-g: refusal renders CNY symbol");
 }
 
 console.log("planner-only floors: PASS");

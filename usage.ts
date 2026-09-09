@@ -221,6 +221,19 @@ export function hasUsableRate(pricing: PricingTable, provider: string | undefine
 	return tableCost(lookupRates(pricing, provider, model), emptyTokenCounts()) !== undefined;
 }
 
+export type DelegationRateKind = "paid" | "free" | "unknown";
+
+/**
+ * Classify a delegation model's price from the pricing table: "free" when all
+ * four rates are finite and zero, "paid" when usable and any rate is positive,
+ * "unknown" when the table has no usable entry (callers treat unknown as paid).
+ */
+export function delegationRateKind(pricing: PricingTable, provider: string | undefined, model: string | undefined): DelegationRateKind {
+	const rates = lookupRates(pricing, provider, model);
+	if (!hasUsableRates(rates)) return "unknown";
+	return rates.input === 0 && rates.output === 0 && rates.cacheRead === 0 && rates.cacheWrite === 0 ? "free" : "paid";
+}
+
 function resolveCost(
 	pricing: PricingTable,
 	usage: PiUsageLike | undefined,
@@ -580,6 +593,7 @@ export class UsageLedger {
 		tokens: number;
 		costUsd: number | undefined;
 		costUnknown: boolean;
+		currency: PricingTable["currency"];
 		untaskedTurns: number;
 		untaskedTokens: number;
 		untaskedCostUsd: number | undefined;
@@ -606,6 +620,7 @@ export class UsageLedger {
 			tokens,
 			costUsd,
 			costUnknown,
+			currency: this.pricing.currency,
 			untaskedTurns: this.untasked.turns,
 			untaskedTokens,
 			untaskedCostUsd: this.untasked.costUsd,

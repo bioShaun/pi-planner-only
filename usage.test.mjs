@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+	delegationRateKind,
 	UsageLedger,
 	summarizeTaskBudget,
 	summarizeSessionUsage,
@@ -965,6 +966,37 @@ function ticket15ResolvedNoRate(overrides = {}) {
 	const spend = u.sessionRootSpend();
 	assert.equal(spend.costUnknown, true, "40-u3: unpriced root is costUnknown");
 	assert.equal(spend.costUsd, undefined);
+	assert.equal(spend.currency, "USD", "40-u4: default table currency carried");
+}
+
+{
+	// sessionRootSpend carries the pricing table currency so USD caps are not compared to CNY.
+	const rates = { m: { input: 10, output: 10, cacheRead: 0, cacheWrite: 0 } };
+	const u = ledger(rates, "CNY");
+	u.recordRootTurn({ usage: piUsage({ cost: undefined }), model: "m" });
+	const spend = u.sessionRootSpend();
+	assert.equal(spend.currency, "CNY", "40-u5: CNY table currency carried");
+	assert.equal(spend.costUnknown, false);
+	assert.ok((spend.costUsd ?? 0) > 0, "40-u6: table-derived CNY cost is recorded");
+}
+
+{
+	// delegationRateKind: zero-rate is free, positive is paid, missing/null is unknown.
+	const pricing = {
+		version: 1,
+		currency: "USD",
+		rates: {
+			"free/model": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			"paid/model": { input: 0, output: 1, cacheRead: 0, cacheWrite: 0 },
+			"partial/model": { input: 0, output: null, cacheRead: 0, cacheWrite: 0 },
+		},
+	};
+	assert.equal(delegationRateKind(pricing, undefined, "free/model"), "free");
+	assert.equal(delegationRateKind(pricing, undefined, "free/model:high"), "free", "thinking suffix stripped");
+	assert.equal(delegationRateKind(pricing, undefined, "paid/model"), "paid");
+	assert.equal(delegationRateKind(pricing, undefined, "partial/model"), "unknown");
+	assert.equal(delegationRateKind(pricing, undefined, "missing/model"), "unknown");
+	assert.equal(delegationRateKind(pricing, undefined, undefined), "unknown");
 }
 
 console.log("planner-only usage: PASS");

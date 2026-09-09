@@ -24,6 +24,7 @@ import {
 	renderRunSummary,
 	childUsageFromValue,
 	childOutcomeFromExitCode,
+	delegationRateKind,
 	hasUsableRate,
 	loadPricingTable,
 	lookupRates,
@@ -164,7 +165,8 @@ function sameToolOrder(left: readonly string[], right: readonly string[]): boole
 }
 
 export default function plannerOnly(pi: ExtensionAPI): void {
-	loadFloorConfig();
+	const floorConfig = loadFloorConfig();
+	const sessionRootBudget = loadSessionRootBudgetConfig(process.env, floorConfig);
 	// Foreground children do not load ambient extensions. Background children
 	// may; this extension no-ops when PI_SUBAGENT_CHILD=1 so it cannot
 	// recurse into a child that loaded it. Workers must retain their
@@ -186,6 +188,8 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		artifactDirs: () => artifactDirsFor(latestCtx ?? ({ hasUI: false, cwd: process.cwd() } as ExtensionContext)),
 		ledgerDir: AGENT_DIR,
 		getSessionRootUsage: () => ledger.sessionRootSpend(),
+		sessionRootBudgetConfig: sessionRootBudget,
+		delegationRateKind: (model) => delegationRateKind(pricing, undefined, model),
 	});
 	const allSessionEntries: UsageEntry[] = [];
 	/** Ticket 40: emit soft/hard disclosures once per crossing until spend drops below the level. */
@@ -1041,7 +1045,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			if (active) syncUsage(active.taskId);
 			persistSessionEntries();
 			// Ticket 40: soft-cap warning after root accounting (never blocks the turn).
-			const rootEval = evaluateSessionRootBudget(ledger.sessionRootSpend(), loadSessionRootBudgetConfig());
+			const rootEval = evaluateSessionRootBudget(ledger.sessionRootSpend(), sessionRootBudget);
 			if (rootEval.level === "ok") {
 				sessionRootSoftWarned = false;
 				sessionRootHardWarned = false;
@@ -1183,7 +1187,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				if (sessionUsage.unattributed.turns > 0 || sessionUsage.unattributed.costUnknown) {
 					lines.push(`Unattributed (会话级，未归入任何 Task): ${sessionUsage.unattributed.turns} turns, tokens=${sessionUsage.unattributed.tokens}, 费用 $${sessionUsage.unattributed.costUsd.toFixed(4)}${sessionUsage.unattributed.costUnknown ? "，费用不可知" : ""}`);
 				}
-				const sessionRootEval = evaluateSessionRootBudget(ledger.sessionRootSpend(), loadSessionRootBudgetConfig());
+				const sessionRootEval = evaluateSessionRootBudget(ledger.sessionRootSpend(), sessionRootBudget);
 				lines.push("", formatSessionRootBudgetStatus(sessionRootEval));
 				notify(ctx, lines.join("\n"), rateWarning || sessionRootEval.level !== "ok" ? "warning" : "info");
 				return;
