@@ -1,0 +1,39 @@
+
+> pi-planner-only@0.3.3 test
+> node --experimental-strip-types policy.test.mjs && node --experimental-strip-types roles.test.mjs && node --experimental-strip-types floors.test.mjs && node --experimental-strip-types role-models.test.mjs && node --experimental-strip-types task.test.mjs && node --experimental-strip-types ledger-store.test.mjs && node --experimental-strip-types report.test.mjs && node --experimental-strip-types review.test.mjs && node --experimental-strip-types notify.test.mjs && node --experimental-strip-types usage.test.mjs && node --experimental-strip-types orchestrate.test.mjs && node --experimental-strip-types evidence.test.mjs && node --experimental-strip-types git-audit.test.mjs && node --experimental-strip-types index.test.mjs && node --experimental-strip-types workspace-snapshot.test.mjs && node --experimental-strip-types architecture.test.mjs && node --experimental-strip-types naming.test.mjs
+
+planner-only policy: PASS
+planner-only roles: PASS
+planner-only floors: PASS
+role-models: PASS
+planner-only task lifecycle: PASS
+planner-only ledger-store: PASS
+planner-only report: PASS
+planner-only review: PASS
+planner-only notify: PASS
+run4 fixture: children 0.24052828 total 0.29581593
+planner-only usage: PASS
+planner-only orchestration: PASS
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: L25: the quarantined task's status discloses the ledger quarantine
+    at file:///home/tcuni-claw/pi/pi-planner-only/orchestrate.test.mjs:5918:10 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 'Task: T-20260908-965\n' +
+    'State: planning\n' +
+    'Worker round: 0/3\n' +
+    'Review mode: root\n' +
+    'Evidence: no report yet\n' +
+    'Changed files: 0\n' +
+    'State reason: ledger snapshot unreadable\n' +
+    'Budget: 余额不可信（账本快照无法读取，拒绝把剩余当作可信数字）\n' +
+    '  原因: unparseable JSON',
+  expected: /本会话拒绝写入该 taskId 的账本/,
+  operator: 'match',
+  diff: 'simple'
+}
+
+Node.js v24.14.0

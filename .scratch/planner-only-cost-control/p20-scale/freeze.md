@@ -119,4 +119,4 @@ L14–L24 既有断言一个不动；不许删既有 assert。
 - **SPLIT-E1（r098）通过**：去重 `0.009859`（根 6 / worker 29 回合），快照 `split-e1-*.diff`，执行者首次完整贴出 restore 前后原样输出。
 - **E1 两臂字节不同**（插入位置与测试块结构不同），行为等价，照记质量差；E1 比值 ≈ **0.07**，p20 三票合计 ≈ **0.18**。
 - p20 `runs/` 合计 `0.747121`；用户 `$3` 剩 `2.121844`。**驱动已解除武装**（argv 空与点名均 `exit 2`）。
-- E1 的产品修复**只在 worktree 快照**，是否落地主仓由用户拍板（E2/E3 已由 r095 落地为 `8b22568`）。
+- **E1 已由 r099 落地主仓**（用户 2026-09-09 拍板）：产品 commit `c44e7e4`，验收门与 r095 同套（typecheck / npm test 仅既有 naming 基线 / contract e2e / diff --check / 无断言删除 / 失败证明 L25 红后还原），reviewer 五点 PASS、oracle 复验 fresh。**E 档三条（E1/E2/E3）全部入库。**注：r099 在扩展账本里因 WorkerReport 解析层问题记为 blocked，实质验收由 root git_audit + reviewer + oracle 独立完成，用户已操作员 override；细节见 deferred-backlog F6 新增条。

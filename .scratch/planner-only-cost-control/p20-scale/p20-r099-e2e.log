@@ -1,0 +1,5 @@
+
+> pi-planner-only@0.3.3 test:e2e
+> node --experimental-strip-types e2e.pi-subagents.test.mjs
+
+planner-only pi-subagents E2E: PASS

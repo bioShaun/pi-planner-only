@@ -1,0 +1,42 @@
+
+> pi-planner-only@0.3.3 test
+> node --experimental-strip-types policy.test.mjs && node --experimental-strip-types roles.test.mjs && node --experimental-strip-types floors.test.mjs && node --experimental-strip-types role-models.test.mjs && node --experimental-strip-types task.test.mjs && node --experimental-strip-types ledger-store.test.mjs && node --experimental-strip-types report.test.mjs && node --experimental-strip-types review.test.mjs && node --experimental-strip-types notify.test.mjs && node --experimental-strip-types usage.test.mjs && node --experimental-strip-types orchestrate.test.mjs && node --experimental-strip-types evidence.test.mjs && node --experimental-strip-types git-audit.test.mjs && node --experimental-strip-types index.test.mjs && node --experimental-strip-types workspace-snapshot.test.mjs && node --experimental-strip-types architecture.test.mjs && node --experimental-strip-types naming.test.mjs
+
+planner-only policy: PASS
+planner-only roles: PASS
+planner-only floors: PASS
+role-models: PASS
+planner-only task lifecycle: PASS
+planner-only ledger-store: PASS
+planner-only report: PASS
+planner-only review: PASS
+planner-only notify: PASS
+run4 fixture: children 0.24052828 total 0.29581593
+planner-only usage: PASS
+planner-only orchestration: PASS
+planner-only evidence: PASS
+planner-only git_audit: PASS
+planner-only extension: PASS
+planner-only workspace snapshot: PASS
+planner-only architecture: PASS
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: extension install is missing ledger-store.ts
+
+false !== true
+
+    at file:///home/tcuni-claw/pi/pi-planner-only/naming.test.mjs:26:10
+    at ModuleJob.run (node:internal/modules/esm/module_job:430:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:661:26)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.14.0

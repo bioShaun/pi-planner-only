@@ -207,7 +207,8 @@ cursor 在本仓做执行者的记录是好的（p16-r074…r078 五轮全部 ac
 - **`orchestrate.test.mjs` 的 PASS 横幅**在 3717 行，建议移到文件末尾（见 F1 规则一）。
 - E 档三条（隔离在会话内不解除且 status 不提示 / `writeErrorFor()` 是死接口 /
   两条 block 路径的 `input.usageBudget` 残留不一致）——第三条本轮又复现了一次：
-  预算耗尽被拒时，`input.usageBudget` 仍留着 `{"tokens":{"hard":100000},"costUsd":{"hard":0.5}}`。
+  预算耗尽被拒时，`input.usageBudget` 仍留着 `{"tokens":{"hard":100000},"costUsd":{"hard":0.5}}`。**2026-09-09 更新**：三条修复均已落地主仓（E2/E3 → `8b22568`，E1 → r099 commit `c44e7e4`），本条目关闭，仅作历史记录。
+- **工单 28 类故障在 r099 复发（2026-09-09），且发现新变体**：worker 的 WorkerReport 三次被解析层拒收，对外报错仍是误导性的 `status must be one of ...`（真实原因是 `validation` 元素为字符串），与工单 28 的 A/B 机制一致——但工单 28 已标 done，需核实**当前安装的扩展副本是否真的含 28 的修复**（G5 第 1 条记录过安装副本过期）。新变体：report-only 纠正轮不产生文件变更，而证据按 run 归因，导致它对前序 run 改动的声明被判 `over-reported / unreliable declaration`；叠加「执行报告 .md 被后续轮触碰即 stale」，三次纠正额度耗尽后，Task 在「验收门全绿 + oracle 复验 fresh」的状态下被记 blocked。需要给 report-only 纠正一条不触发 per-run 归因判定的通道，或允许 root 以 git_audit + oracle 证据直接结案。
 - **ledger 每次 `session_start` 恢复历史上写过的每一个 Task**（无上限，与工单 38 相关）；
   占位 Task 带 `cwd: ""`；任何命名安全的散落 `.json` 都可能变成幽灵 Task。
 - **`blocked` 之后的生命周期**：`blocked` 的 Task 无法 abandon
