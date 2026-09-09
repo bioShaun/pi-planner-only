@@ -36,7 +36,18 @@ import {
 	stripDelegationKeys,
 } from "./roles.ts";
 import type { ContextReuseOutcome, DelegationTarget, PrepareRoleDelegationOptions } from "./roles.ts";
-import { formatFloorLimitsSummary, loadHostEnforcement, resolveEffectiveLimits } from "./floors.ts";
+import {
+	evaluateSessionRootBudget,
+	formatFloorLimitsSummary,
+	formatSessionRootBudgetRefusal,
+	formatSessionRootBudgetSoftWarning,
+	formatSessionRootBudgetStatus,
+	loadHostEnforcement,
+	loadSessionRootBudgetConfig,
+	resolveEffectiveLimits,
+} from "./floors.ts";
+import type { SessionRootBudgetConfig, SessionRootSpend } from "./floors.ts";
+import type { DelegationRateKind } from "./usage.ts";
 import { loadRoleModelPolicy, requestedRoleModel, resolveRoleModel, compareResolvedRoleModel } from "./role-models.ts";
 import type { EffectiveLimits } from "./floors.ts";
 import {
@@ -196,12 +207,46 @@ function snapshotPathKey(path: string): string {
 	return key;
 }
 
+function additionalWorktreeRootsOf(task: TaskRecord): readonly string[] | undefined {
+	const roots = task.spec?.additionalWorktreeRoots;
+	return roots?.length ? roots : undefined;
+}
+
+/**
+ * Write-lock identities a writable invocation over `task` holds: the Task cwd
+ * plus every declared additional worktree root, since the Worker may edit any
+ * of them (Variant C).
+ */
+function lockWorktreesOf(task: TaskRecord, ...extraCwds: string[]): string[] {
+	return [...new Set([
+		...extraCwds.map((cwd) => normalizeWorkspaceIdentity(cwd)),
+		normalizeWorkspaceIdentity(task.cwd),
+		...(additionalWorktreeRootsOf(task) ?? []).map((root) => normalizeWorkspaceIdentity(root)),
+	])];
+}
+
+function captureEvidenceOptionsFor(
+	task: TaskRecord,
+	workerRunId: string,
+	extra: { baseGitRef?: string } = {},
+) {
+	const roots = additionalWorktreeRootsOf(task);
+	return {
+		cwd: task.cwd,
+		taskId: task.taskId,
+		workerRunId,
+		...(extra.baseGitRef ? { baseGitRef: extra.baseGitRef } : {}),
+		...(roots ? { additionalWorktreeRoots: roots } : {}),
+	};
+}
+
 function compareWithRootSamples(
 	task: TaskRecord,
 	current: EvidenceRef,
 	report: WorkerReport,
 	options: { reportOnly?: boolean } = {},
 ) {
+	const roots = additionalWorktreeRootsOf(task);
 	return compareEvidence(
 		task.baseEvidence ?? missingBaseEvidence(task, current.workerRunId),
 		current,
@@ -209,6 +254,7 @@ function compareWithRootSamples(
 		{
 			...(task.spec?.scope ? { scope: task.spec.scope } : {}),
 			...(options.reportOnly ? { reportOnly: true } : {}),
+			...(roots ? { additionalWorktreeRoots: roots } : {}),
 		},
 	);
 }
@@ -234,6 +280,24 @@ export interface OrchestratorDeps {
 	 * needs them to detect runs that finished without delivering a notice.
 	 */
 	artifactDirs?: () => readonly string[];
+	/**
+	 * Ticket 40 — session-level root cumulative spend for the soft/hard gate.
+	 * Supplied by the Pi adapter from the session root spend snapshot; absent in
+	 * unit tests that do not exercise the session root budget.
+	 */
+	getSessionRootUsage?: () => SessionRootSpend;
+	/**
+	 * Ticket 40 — validated soft/hard multipliers. The adapter resolves this once
+	 * at startup so malformed env values fail there; when absent it is loaded on
+	 * construction (only if getSessionRootUsage is supplied).
+	 */
+	sessionRootBudgetConfig?: SessionRootBudgetConfig;
+	/**
+	 * Ticket 40 — price class of the model a delegation would launch with. The
+	 * hard gate refuses "paid" and "unknown" launches but lets "free" (verified
+	 * zero-rate) ones through. Absent: every non-reviewer launch is treated as paid.
+	 */
+	delegationRateKind?: (model: string | undefined) => DelegationRateKind;
 }
 
 export type { DelegationKind };
@@ -546,6 +610,9 @@ export class PlannerOrchestrator {
 	readonly structuredDelegationMode: StructuredDelegationMode;
 	private readonly gitRunner: GitRunner;
 	private readonly artifactDirs: () => readonly string[];
+	private readonly getSessionRootUsage?: () => SessionRootSpend;
+	private readonly sessionRootBudgetConfig?: SessionRootBudgetConfig;
+	private readonly delegationRateKind: (model: string | undefined) => DelegationRateKind;
 	/** toolCallId -> delegated task + invocation kind. */
 	private readonly delegations = new Map<string, DelegationRecord>();
 	private readonly reservations = new BudgetReservations();
@@ -611,6 +678,10 @@ export class PlannerOrchestrator {
 		}
 		this.gitRunner = deps.gitRunner;
 		this.artifactDirs = deps.artifactDirs ?? (() => []);
+		this.getSessionRootUsage = deps.getSessionRootUsage;
+		this.sessionRootBudgetConfig = deps.sessionRootBudgetConfig
+			?? (deps.getSessionRootUsage ? loadSessionRootBudgetConfig() : undefined);
+		this.delegationRateKind = deps.delegationRateKind ?? (() => "unknown");
 		this.structuredDelegationMode =
 			deps.structuredDelegationMode ?? readStructuredDelegationMode();
 	}
@@ -729,7 +800,12 @@ export class PlannerOrchestrator {
 				task.lastComparison,
 				// The patch is bounded against the Task's start baseline, not the
 				// current HEAD, so committed Task changes stay reviewable (R03).
-				{ ...(task.baseEvidence?.finalGitRef ? { baselineRef: task.baseEvidence.finalGitRef } : {}) },
+				{
+					...(task.baseEvidence?.finalGitRef ? { baselineRef: task.baseEvidence.finalGitRef } : {}),
+					...(additionalWorktreeRootsOf(task)
+						? { additionalWorktreeRoots: additionalWorktreeRootsOf(task) }
+						: {}),
+				},
 			);
 			if (task.lastComparison) {
 				options.evidence = describeComparison(task.lastComparison);
@@ -869,6 +945,25 @@ export class PlannerOrchestrator {
 			? { taskId: spec.taskId, usage: emptyTaskUsage(), spec, reports: [] as TaskRecord["reports"] }
 			: undefined;
 		const gateTask = budgetTask ?? firstDelegationTask;
+		// Ticket 40: session-level root cumulative soft/hard gate. Soft warns;
+		// hard refuses new paid delegations. Reviewer stays exempt so Tasks can close.
+		// Never kills the current root turn or session — only the launch gate fires.
+		if (role !== "reviewer" && this.getSessionRootUsage) {
+			const evaluation = evaluateSessionRootBudget(this.getSessionRootUsage(), this.sessionRootBudgetConfig);
+			const launchModel = resolved?.model ?? requested.model;
+			if (evaluation.level === "hard") {
+				if (this.delegationRateKind(launchModel) !== "free") {
+					if (input && typeof input === "object" && !Array.isArray(input)) {
+						delete (input as Record<string, unknown>).usageBudget;
+						delete (input as Record<string, unknown>).__floorLimits;
+					}
+					return { block: { reason: formatSessionRootBudgetRefusal(evaluation) } };
+				}
+				warnings.push(formatSessionRootBudgetStatus(evaluation));
+			} else if (evaluation.level === "soft") {
+				warnings.push(formatSessionRootBudgetSoftWarning(evaluation));
+			}
+		}
 		const untrustedTaskId = target?.task?.taskId ?? target?.taskId ?? spec?.taskId;
 		// Reviewer stays exempt: an unreadable ledger must not prevent closing the Task.
 		if (role !== "reviewer" && untrustedTaskId && this.untrustedBalances.has(untrustedTaskId)) {
@@ -1074,11 +1169,8 @@ export class PlannerOrchestrator {
 			// is reconciled from child-run artifacts before contending for the
 			// lock, so a finished run is never mistaken for a live writer.
 			await this.reconcileBeforeLock(reviewed.taskId, warnings);
-			let validatorConflict = await this.refuseOrClearWriteLock(cwd, "validator", warnings, reviewed.taskId);
-			if (!validatorConflict.conflict
-				&& normalizeWorkspaceIdentity(cwd) !== normalizeWorkspaceIdentity(reviewed.cwd)) {
-				validatorConflict = await this.refuseOrClearWriteLock(reviewed.cwd, "validator", warnings, reviewed.taskId);
-			}
+			const validatorWorktrees = lockWorktreesOf(reviewed, cwd);
+			const validatorConflict = await this.refuseOrClearWriteLocks(validatorWorktrees, "validator", warnings, reviewed.taskId);
 			if (validatorConflict.conflict) {
 				return { task: reviewed, conflict: validatorConflict, ...(warnings.length ? { warnings } : {}) };
 			}
@@ -1089,10 +1181,7 @@ export class PlannerOrchestrator {
 				asyncRequested: isAsyncInput(input),
 				...(isExplicitAsyncFalse(input) ? { asyncExplicitFalse: true } : {}),
 				...(inputAgent(input) ? { agent: inputAgent(input) } : {}),
-				worktrees: [...new Set([
-					normalizeWorkspaceIdentity(cwd),
-					normalizeWorkspaceIdentity(reviewed.cwd),
-				])],
+				worktrees: validatorWorktrees,
 				lockedAt: this.store.now().toISOString(),
 				...(contextOverridden ? { contextOverridden: true } : {}),
 				...(reuseOutcome?.reason ? { reuseReason: reuseOutcome.reason } : {}),
@@ -1220,6 +1309,7 @@ export class PlannerOrchestrator {
 					});
 					return {
 						warnings: [
+							...warnings,
 							"Planner-only: explorer delegation is not attached to any Task; its output is returned as-is.",
 						],
 					};
@@ -1248,7 +1338,8 @@ export class PlannerOrchestrator {
 		// FR-04 — write coordination follows actual write ability, not the
 		// presence of a TaskSpec: a warn-mode unstructured worker and a
 		// shell-capable validator take the same lock as a structured worker.
-		const conflict = await this.refuseOrClearWriteLock(task.cwd, role, warnings, task.taskId);
+		const workerWorktrees = lockWorktreesOf(task);
+		const conflict = await this.refuseOrClearWriteLocks(workerWorktrees, role, warnings, task.taskId);
 		if (conflict.conflict) {
 			return { task, conflict, ...(warnings.length ? { warnings } : {}) };
 		}
@@ -1265,11 +1356,10 @@ export class PlannerOrchestrator {
 			task = this.store.require(task.taskId);
 		}
 		if (role !== "explorer" && !task.baseEvidence) {
-			const base: EvidenceRef = await captureEvidence(this.gitRunner, {
-				cwd: task.cwd,
-				taskId: task.taskId,
-				workerRunId: event.toolCallId,
-			});
+			const base: EvidenceRef = await captureEvidence(
+				this.gitRunner,
+				captureEvidenceOptionsFor(task, event.toolCallId),
+			);
 			this.store.setBaseEvidence(task.taskId, base);
 		}
 		// A writable begin was gated by writerConflict above; a read-only role
@@ -1288,7 +1378,7 @@ export class PlannerOrchestrator {
 			// Writable invocations become the lock holder for the Task's
 			// worktree; explorers hold nothing.
 			...(isWriterRole(role) ? {
-				worktrees: [normalizeWorkspaceIdentity(task.cwd)],
+				worktrees: workerWorktrees,
 				lockedAt: this.store.now().toISOString(),
 			} : {}),
 			...(contextOverridden ? { contextOverridden: true } : {}),
@@ -1369,6 +1459,16 @@ export class PlannerOrchestrator {
 		lines.push("");
 		lines.push(...decision.guidance);
 		return lines.join("\n");
+	}
+
+	/**
+	 * Ticket 40 — session root budget disclosure for /planner-only status.
+	 * Returns undefined when the adapter did not supply getSessionRootUsage.
+	 */
+	renderSessionRootBudgetStatus(): string | undefined {
+		if (!this.getSessionRootUsage) return undefined;
+		const evaluation = evaluateSessionRootBudget(this.getSessionRootUsage(), this.sessionRootBudgetConfig);
+		return formatSessionRootBudgetStatus(evaluation);
 	}
 
 	renderTaskStatus(task: TaskRecord): string {
@@ -1650,6 +1750,20 @@ export class PlannerOrchestrator {
 		return conflict;
 	}
 
+	/** `refuseOrClearWriteLock` over every worktree identity the invocation would hold. */
+	private async refuseOrClearWriteLocks(
+		worktrees: readonly string[],
+		role: DelegationKind,
+		warnings: string[],
+		againstTaskId?: string,
+	): Promise<WriterConflict> {
+		for (const worktree of worktrees) {
+			const conflict = await this.refuseOrClearWriteLock(worktree, role, warnings, againstTaskId);
+			if (conflict.conflict) return conflict;
+		}
+		return { conflict: false };
+	}
+
 	/**
 	 * Consume same-Task pending children from child-run artifacts before the
 	 * write lock is taken, so a finished leftover is not refused as a live writer.
@@ -1890,14 +2004,14 @@ export class PlannerOrchestrator {
 		let evidence: string | undefined;
 
 		if (verdict === "pass" && report) {
-			const currentSample = await captureEvidence(this.gitRunner, {
-				cwd: current.cwd,
-				taskId: current.taskId,
-				workerRunId: report.evidence.workerRunId,
-				...(current.baseEvidence?.finalGitRef
-					? { baseGitRef: current.baseEvidence.finalGitRef }
-					: {}),
-			});
+			const currentSample = await captureEvidence(
+				this.gitRunner,
+				captureEvidenceOptionsFor(current, report.evidence.workerRunId, {
+					...(current.baseEvidence?.finalGitRef
+						? { baseGitRef: current.baseEvidence.finalGitRef }
+						: {}),
+				}),
+			);
 			comparison = compareWithRootSamples(current, currentSample, report);
 			// Ticket 10 — acceptance compares the workspace snapshot digest, not
 			// HEAD/status hashes. Unknown or stale bindings refuse the PASS.
@@ -2283,12 +2397,12 @@ export class PlannerOrchestrator {
 		const report = task.reports.at(-1);
 		let comparison: EvidenceComparison | undefined;
 		if (report) {
-			const currentSample = await captureEvidence(this.gitRunner, {
-				cwd: task.cwd,
-				taskId: task.taskId,
-				workerRunId: report.evidence.workerRunId,
-				...(task.baseEvidence?.finalGitRef ? { baseGitRef: task.baseEvidence.finalGitRef } : {}),
-			});
+			const currentSample = await captureEvidence(
+				this.gitRunner,
+				captureEvidenceOptionsFor(task, report.evidence.workerRunId, {
+					...(task.baseEvidence?.finalGitRef ? { baseGitRef: task.baseEvidence.finalGitRef } : {}),
+				}),
+			);
 			comparison = compareWithRootSamples(task, currentSample, report);
 			if (review.verdict === "pass") {
 				// Ticket 02 / story 26 — accept re-samples the workspace. A PASS
@@ -2382,12 +2496,12 @@ export class PlannerOrchestrator {
 				? `task identity rejected: ${identityErrors.join("; ")}`
 				: extracted.error;
 
-		const current = await captureEvidence(this.gitRunner, {
-			cwd: task.cwd,
-			taskId: task.taskId,
-			workerRunId: toolCallId,
-			...(task.baseEvidence?.finalGitRef ? { baseGitRef: task.baseEvidence.finalGitRef } : {}),
-		});
+		const current = await captureEvidence(
+			this.gitRunner,
+			captureEvidenceOptionsFor(task, toolCallId, {
+				...(task.baseEvidence?.finalGitRef ? { baseGitRef: task.baseEvidence.finalGitRef } : {}),
+			}),
+		);
 		if (report) {
 			// Bind before recording so the stored report carries Root's own
 			// report-time content hashes for the acceptance-boundary comparison.

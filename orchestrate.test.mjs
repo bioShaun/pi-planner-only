@@ -11,6 +11,7 @@ import { hashStatus, workspaceSummaryDigest, describeComparison } from "./eviden
 import { extractReviewRequest } from "./review.ts";
 import { workerReportShapeReminder } from "./report.ts";
 import { emptyTaskUsage } from "./usage.ts";
+import { SESSION_ROOT_BUDGET_ENV_VARS, loadSessionRootBudgetConfig } from "./floors.ts";
 import { MISSING_VALIDATION_DEFINITION_REASON } from "./roles.ts";
 
 // Fixture ids are stamped 2026-09-05; pin the store clock so id replacement
@@ -2800,6 +2801,160 @@ function realGitRunnerOf(dir) {
 	} finally {
 		rmSync(real, { recursive: true, force: true });
 		rmSync(aliasParent, { recursive: true, force: true });
+	}
+}
+
+// Variant C: declared additionalWorktreeRoots are write-lock identities. A
+// Task declaring root B collides with a writer whose cwd is B, in both orders,
+// and its bound validator locks the same set.
+{
+	const rootA = mkdtempSync(join(process.cwd(), ".planner-only-wlock-"));
+	const rootB = mkdtempSync(join(process.cwd(), ".planner-only-wlock-"));
+	const rootC = mkdtempSync(join(process.cwd(), ".planner-only-wlock-"));
+	try {
+		// Task A (cwd A, declares B) holds; a writer on B is refused.
+		{
+			const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+			setCleanTree();
+			const declaring = await orch.beginDelegation(
+				{ toolCallId: "call-wl-c1", input: { task: JSON.stringify({ ...specFor("T-20260905-501", "worker", rootA), additionalWorktreeRoots: [rootB] }) } },
+				BASE,
+			);
+			assert.equal(declaring.conflict, undefined);
+			const record = orch.getDelegation("call-wl-c1");
+			assert.equal(record.worktrees.length, 2, "the record holds cwd and every declared root");
+			const onB = await orch.beginDelegation(
+				{ toolCallId: "call-wl-c2", input: { task: JSON.stringify(specFor("T-20260905-502", "worker", rootB)) } },
+				BASE,
+			);
+			assert.equal(onB.conflict?.conflict, true, "a writer on a declared root of a live Task is refused");
+			assert.match(onB.conflict.reason, /T-20260905-501/);
+			const onC = await orch.beginDelegation(
+				{ toolCallId: "call-wl-c3", input: { task: JSON.stringify(specFor("T-20260905-503", "worker", rootC)) } },
+				BASE,
+			);
+			assert.equal(onC.conflict, undefined, "an unrelated worktree is not locked");
+			assert.equal(orch.pendingDelegationCount(), 2);
+		}
+		// Writer on B holds; Task A declaring B is refused before launch.
+		{
+			const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+			setCleanTree();
+			await orch.beginDelegation(
+				{ toolCallId: "call-wl-c4", input: { task: JSON.stringify(specFor("T-20260905-504", "worker", rootB)) } },
+				BASE,
+			);
+			const declaring = await orch.beginDelegation(
+				{ toolCallId: "call-wl-c5", input: { task: JSON.stringify({ ...specFor("T-20260905-505", "worker", rootA), additionalWorktreeRoots: [rootB] }) } },
+				BASE,
+			);
+			assert.equal(declaring.conflict?.conflict, true, "declaring a locked root is refused");
+			assert.match(declaring.conflict.reason, /T-20260905-504/);
+			assert.equal(orch.store.get("T-20260905-505")?.state, "planning");
+			assert.equal(orch.pendingDelegationCount(), 1);
+		}
+		// A bound validator for Task A locks A and B: a writer on B is refused
+		// while the validator runs.
+		{
+			const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+			setCleanTree();
+			const taskId = "T-20260905-506";
+			await orch.beginDelegation(
+				{ toolCallId: "call-wl-c6", input: { task: JSON.stringify({ ...specFor(taskId, "worker", rootA), additionalWorktreeRoots: [rootB] }) } },
+				BASE,
+			);
+			await orch.handleSubagentResult(workerResult("call-wl-c6", { ...reportFor(taskId, "call-wl-c6"), evidence: { ...reportFor(taskId, "call-wl-c6").evidence, cwd: rootA } }));
+			const validator = await orch.beginDelegation(
+				{ toolCallId: "call-wl-c7", input: { agent: "oracle", cwd: rootA, task: JSON.stringify(specFor(taskId, "validator", rootA)) } },
+				BASE,
+			);
+			assert.equal(validator.conflict, undefined, "the bound validator starts once the worker is done");
+			assert.equal(orch.getDelegation("call-wl-c7").worktrees.length, 2, "the validator locks cwd and the declared root");
+			const onB = await orch.beginDelegation(
+				{ toolCallId: "call-wl-c8", input: { task: JSON.stringify(specFor("T-20260905-507", "worker", rootB)) } },
+				BASE,
+			);
+			assert.equal(onB.conflict?.conflict, true, "the validator's declared-root lock refuses a writer on B");
+		}
+	} finally {
+		for (const dir of [rootA, rootB, rootC]) rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// Variant C: the fresh-review packet samples declared roots, so a
+// linked-worktree-only edit reaches the ReviewRequest; when a declared root
+// cannot be sampled the packet is truncated and PASS is ineligible.
+{
+	const main = mkdtempSync(join(process.cwd(), ".planner-only-reviewwt-"));
+	const wtParent = mkdtempSync(join(process.cwd(), ".planner-only-reviewwt-"));
+	const wt = join(wtParent, "linked");
+	const git = (...args) => spawnSync("git", ["-C", main, ...args], { encoding: "utf8" });
+	try {
+		git("init", "-q");
+		git("config", "user.email", "test@example.com");
+		git("config", "user.name", "Test");
+		git("config", "commit.gpgsign", "false");
+		writeFileSync(join(main, "tracked.txt"), "base\n");
+		git("add", ".");
+		git("commit", "-m", "base", "-q");
+		git("worktree", "add", "-q", "-b", "variant-c-orch", wt);
+
+		const runner = realGitRunnerOf(main);
+		const taskId = "T-20260905-510";
+		const orch = new PlannerOrchestrator({ gitRunner: runner, store: pinnedStore() });
+		const spec = { ...specFor(taskId, "worker", main), scope: { allowedPaths: ["tracked.txt"] }, additionalWorktreeRoots: [wt] };
+		await orch.beginDelegation({ toolCallId: "call-rw-1", input: { task: JSON.stringify(spec) } }, BASE);
+		writeFileSync(join(wt, "tracked.txt"), "worktree-only edit\n");
+		const wtFile = join(wt, "tracked.txt");
+		await orch.handleSubagentResult(workerResult("call-rw-1", {
+			version: 1,
+			taskId,
+			status: "completed",
+			summary: "edited the linked worktree",
+			changedFiles: [wtFile],
+			validation: [{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "ok" }],
+			evidence: { cwd: main, taskId, workerRunId: "call-rw-1", changedPaths: [wtFile], gitAvailable: true, generatedAt: new Date().toISOString() },
+			risks: [],
+			unresolved: [],
+		}));
+
+		const reviewerInput = { agent: "worker", task: JSON.stringify(specFor(taskId, "reviewer", main)) };
+		await orch.prepareRoleDelegation(reviewerInput);
+		assert.equal(reviewerInput.agent, "reviewer");
+		assert.ok(reviewerInput.task.includes("+worktree-only edit"), "the reviewer sees the linked-worktree patch");
+		assert.ok(reviewerInput.task.includes(JSON.stringify(wtFile)), "the packet keeps the absolute worktree path");
+		assert.ok(!reviewerInput.task.includes('"patchTruncated": true'), "a fully sampled packet is not truncated");
+
+		// Blind spot check: without the declaration the same edit is invisible.
+		const blind = new PlannerOrchestrator({ gitRunner: runner, store: pinnedStore() });
+		const blindId = "T-20260905-511";
+		await blind.beginDelegation({ toolCallId: "call-rw-b", input: { task: JSON.stringify({ ...specFor(blindId, "worker", main), scope: { allowedPaths: ["tracked.txt"] } }) } }, BASE);
+		await blind.handleSubagentResult(workerResult("call-rw-b", {
+			version: 1, taskId: blindId, status: "completed", summary: "s", changedFiles: ["tracked.txt"],
+			validation: [{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "ok" }],
+			evidence: { cwd: main, taskId: blindId, workerRunId: "call-rw-b", changedPaths: ["tracked.txt"], gitAvailable: true, generatedAt: new Date().toISOString() },
+			risks: [], unresolved: [],
+		}));
+		const blindInput = { agent: "worker", task: JSON.stringify(specFor(blindId, "reviewer", main)) };
+		await blind.prepareRoleDelegation(blindInput);
+		assert.ok(!blindInput.task.includes("+worktree-only edit"), "an undeclared linked worktree stays out of the packet");
+
+		// Remove the linked worktree: the declared root is now unsampleable.
+		git("worktree", "remove", "--force", wt);
+		const gone = { agent: "worker", task: JSON.stringify(specFor(taskId, "reviewer", main)) };
+		await orch.prepareRoleDelegation(gone);
+		assert.ok(gone.task.includes('"patchTruncated": true'), "an unsampleable declared root truncates the packet");
+		assert.ok(gone.task.includes('"unavailableWorktreeRoots"'), "the packet names the missing root");
+		await orch.beginDelegation({ toolCallId: "call-rw-2", input: gone }, BASE);
+		const digest = orch.store.require(taskId).snapshot?.digest;
+		const pass = await orch.handleSubagentResult(reviewerResult("call-rw-2", taskId, "pass", { workspaceDigest: digest }));
+		assert.match(pass.content[0].text, /truncated/, "PASS over a packet missing a declared root is refused");
+		assert.equal(orch.store.require(taskId).reviews.length, 0);
+		assert.equal(orch.store.require(taskId).state, "reviewing");
+	} finally {
+		spawnSync("git", ["-C", main, "worktree", "remove", "--force", wt], { encoding: "utf8" });
+		rmSync(wtParent, { recursive: true, force: true });
+		rmSync(main, { recursive: true, force: true });
 	}
 }
 
@@ -6459,5 +6614,148 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	assert.match(outcome?.content?.[0]?.text ?? "", /Late explorer receipt .* parked into history/, "41r-n: async explorer completion is parked");
 	assert.equal(store.require(taskId).state, "blocked", "41r-o: async explorer completion does not move the blocked Task");
 }
+
+// --------------------------------------------------------------------------
+// Ticket 40 — session-level root cumulative soft/hard gate at beginDelegation
+// --------------------------------------------------------------------------
+{
+	const config = loadSessionRootBudgetConfig({});
+	const softSpend = {
+		turns: 10,
+		tokens: config.softTokens,
+		costUsd: config.softCostUsd,
+		costUnknown: false,
+		currency: "USD",
+		untaskedTurns: 10,
+		untaskedTokens: config.softTokens,
+		untaskedCostUsd: config.softCostUsd,
+	};
+	const hardSpend = {
+		turns: 20,
+		tokens: config.hardTokens,
+		costUsd: config.hardCostUsd,
+		costUnknown: false,
+		currency: "USD",
+		untaskedTurns: 20,
+		untaskedTokens: config.hardTokens,
+		untaskedCostUsd: config.hardCostUsd,
+	};
+	const okSpend = {
+		turns: 1,
+		tokens: 10,
+		costUsd: 0.01,
+		costUnknown: false,
+		currency: "USD",
+		untaskedTurns: 1,
+		untaskedTokens: 10,
+		untaskedCostUsd: 0.01,
+	};
+
+	{
+		const { store, task } = budgetTaskFixture("T-20260909-40soft", { tokens: 200_000, costUsd: 5 }, boundedBudgetUsage(0, 0));
+		const orch = new PlannerOrchestrator({ gitRunner, store, getSessionRootUsage: () => softSpend });
+		const input = { task: JSON.stringify(task.spec) };
+		const outcome = await orch.beginDelegation({ toolCallId: "call-40-soft", input }, BASE);
+		assert.equal(outcome.block, undefined, "40-a: soft cap does not block new delegations");
+		assert.equal(Array.isArray(outcome.warnings) && outcome.warnings.some((w) => /软顶警告/.test(w)), true, "40-b: soft cap warns");
+		const status = orch.renderSessionRootBudgetStatus();
+		assert.match(status ?? "", /会话 root 预算软顶警告/, "40-c: status discloses soft");
+	}
+
+	{
+		const { store, task } = budgetTaskFixture("T-20260909-40hard", { tokens: 200_000, costUsd: 5 }, boundedBudgetUsage(0, 0));
+		const orch = new PlannerOrchestrator({ gitRunner, store, getSessionRootUsage: () => hardSpend });
+		const input = { task: JSON.stringify(task.spec), usageBudget: { tokens: { hard: 1000 }, costUsd: { hard: 0.05 } } };
+		const outcome = await orch.beginDelegation({ toolCallId: "call-40-hard", input }, BASE);
+		assert.equal(Boolean(outcome.block), true, "40-d: hard cap refuses paid delegation");
+		assert.match(outcome.block?.reason ?? "", /session root budget exhausted/, "40-e: refusal names the session root gate");
+		assert.match(outcome.block?.reason ?? "", /不会被掐断/, "40-f: refusal discloses non-kill semantics");
+		assert.equal(input.usageBudget, undefined, "40-g: E2 — exhausted refusal strips usageBudget");
+		assert.equal(orch.reservations.heldCount(task.taskId), 0, "40-h: hard refuse holds no reservation");
+		assert.equal(task.state, "planning", "40-i: hard refuse does not change Task state");
+		assert.match(orch.renderSessionRootBudgetStatus() ?? "", /会话 root 预算已停止/, "40-j: status discloses hard stop");
+	}
+
+	{
+		// Reviewer remains exempt at hard so Tasks can still close (parity with Task budget).
+		const { store, task } = budgetTaskFixture("T-20260909-40rev", { tokens: 200_000, costUsd: 5 }, boundedBudgetUsage(0, 0), "reviewer");
+		task.reports.push(reportFor(task.taskId, "40-prior"));
+		const orch = new PlannerOrchestrator({ gitRunner, store, getSessionRootUsage: () => hardSpend });
+		const outcome = await orch.beginDelegation({
+			toolCallId: "call-40-rev",
+			input: { agent: "reviewer", task: JSON.stringify({ taskId: task.taskId, role: "reviewer" }) },
+		}, BASE);
+		assert.equal(outcome.block, undefined, "40-k: reviewer exempt from session root hard gate");
+	}
+
+	{
+		const { store, task } = budgetTaskFixture("T-20260909-40ok", { tokens: 200_000, costUsd: 5 }, boundedBudgetUsage(0, 0));
+		const orch = new PlannerOrchestrator({ gitRunner, store, getSessionRootUsage: () => okSpend });
+		const outcome = await orch.beginDelegation({ toolCallId: "call-40-ok", input: { task: JSON.stringify(task.spec) } }, BASE);
+		assert.equal(outcome.block, undefined, "40-l: under soft is allowed");
+		assert.equal((outcome.warnings ?? []).some((w) => /软顶警告/.test(w)), false, "40-m: under soft has no soft warning");
+	}
+
+	{
+		// Without getSessionRootUsage the gate is inactive (unit-test default).
+		const { store, task } = budgetTaskFixture("T-20260909-40off", { tokens: 200_000, costUsd: 5 }, boundedBudgetUsage(0, 0));
+		const orch = new PlannerOrchestrator({ gitRunner, store });
+		assert.equal(orch.renderSessionRootBudgetStatus(), undefined, "40-n: no session root status without supplier");
+		const outcome = await orch.beginDelegation({ toolCallId: "call-40-off", input: { task: JSON.stringify(task.spec) } }, BASE);
+		assert.equal(outcome.block, undefined, "40-o: absent supplier does not refuse");
+	}
+
+	{
+		// Hard cap only refuses paid or unknown-price launches; verified zero-rate launches pass.
+		const rateKind = (model) => {
+			if (model === "free/model") return "free";
+			if (model === "paid/model") return "paid";
+			return "unknown";
+		};
+		for (const [role, agent] of [["worker", undefined], ["explorer", "explorer"], ["validator", "validator"]]) {
+			const { store, task } = budgetTaskFixture(`T-20260909-40free-${role}`, { tokens: 200_000, costUsd: 5 }, boundedBudgetUsage(0, 0), role);
+			if (role !== "worker") task.reports.push(reportFor(task.taskId, `40-free-${role}`));
+			const orch = new PlannerOrchestrator({ gitRunner, store, getSessionRootUsage: () => hardSpend, delegationRateKind: rateKind });
+			const taskInput = role === "worker" ? JSON.stringify(task.spec) : JSON.stringify({ taskId: task.taskId, role });
+			const input = { ...(agent ? { agent } : {}), task: taskInput, model: "free/model", usageBudget: { tokens: { hard: 1000 } } };
+			const outcome = await orch.beginDelegation({ toolCallId: `call-40-free-${role}` , input }, BASE);
+			assert.equal(outcome.block, undefined, `40-p: zero-rate ${role} passes the hard gate`);
+			assert.equal((outcome.warnings ?? []).some((w) => /会话 root 预算已停止/.test(w)), true, `40-q: zero-rate ${role} still sees the hard disclosure`);
+		}
+		{
+			const { store, task } = budgetTaskFixture("T-20260909-40paid", { tokens: 200_000, costUsd: 5 }, boundedBudgetUsage(0, 0));
+			const orch = new PlannerOrchestrator({ gitRunner, store, getSessionRootUsage: () => hardSpend, delegationRateKind: rateKind });
+			const outcome = await orch.beginDelegation({ toolCallId: "call-40-paid", input: { task: JSON.stringify(task.spec), model: "paid/model" } }, BASE);
+			assert.match(outcome.block?.reason ?? "", /session root budget exhausted/, "40-r: paid launch refused at hard");
+		}
+		{
+			const { store, task } = budgetTaskFixture("T-20260909-40unk", { tokens: 200_000, costUsd: 5 }, boundedBudgetUsage(0, 0));
+			const orch = new PlannerOrchestrator({ gitRunner, store, getSessionRootUsage: () => hardSpend, delegationRateKind: rateKind });
+			const outcome = await orch.beginDelegation({ toolCallId: "call-40-unk", input: { task: JSON.stringify(task.spec), model: "mystery/model" } }, BASE);
+			assert.match(outcome.block?.reason ?? "", /session root budget exhausted/, "40-s: unknown-rate launch refused at hard");
+		}
+		{
+			// Zero-rate passes at hard even when soft-level; no hard disclosure below hard.
+			const { store, task } = budgetTaskFixture("T-20260909-40freesoft", { tokens: 200_000, costUsd: 5 }, boundedBudgetUsage(0, 0));
+			const orch = new PlannerOrchestrator({ gitRunner, store, getSessionRootUsage: () => softSpend, delegationRateKind: rateKind });
+			const outcome = await orch.beginDelegation({ toolCallId: "call-40-freesoft", input: { task: JSON.stringify(task.spec), model: "free/model" } }, BASE);
+			assert.equal(outcome.block, undefined);
+			assert.equal((outcome.warnings ?? []).some((w) => /软顶警告/.test(w)), true, "40-t: soft warning still emitted for zero-rate launch");
+		}
+	}
+
+	{
+		// A pre-validated config is reused instead of re-reading env at the gate.
+		const tightConfig = loadSessionRootBudgetConfig({
+			[SESSION_ROOT_BUDGET_ENV_VARS.SOFT_MULTIPLIER]: "1",
+			[SESSION_ROOT_BUDGET_ENV_VARS.HARD_MULTIPLIER]: "1",
+		});
+		const { store, task } = budgetTaskFixture("T-20260909-40cfg", { tokens: 200_000, costUsd: 5 }, boundedBudgetUsage(0, 0));
+		const orch = new PlannerOrchestrator({ gitRunner, store, getSessionRootUsage: () => softSpend, sessionRootBudgetConfig: tightConfig });
+		const outcome = await orch.beginDelegation({ toolCallId: "call-40-cfg", input: { task: JSON.stringify(task.spec) } }, BASE);
+		assert.match(outcome.block?.reason ?? "", /session root budget exhausted/, "40-u: injected config (×1 hard) refuses spend at default soft level");
+	}
+}
+
 
 console.log("planner-only orchestration: PASS");

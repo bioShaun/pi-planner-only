@@ -128,6 +128,12 @@ export interface EvidenceRef {
 	committedPaths?: string[];
 	/** True when the status probe itself failed at sample time; state is unknown, not clean. */
 	statusProbeFailed?: boolean;
+	/**
+	 * Declared additional worktree roots (absolute) that could not be probed
+	 * at sample time. A sample missing any declared root is unverifiable: the
+	 * state of that root is unknown, never implicitly clean.
+	 */
+	unavailableWorktreeRoots?: string[];
 	diffStat?: string;
 	gitAvailable?: boolean;
 	generatedAt: string;
@@ -146,6 +152,17 @@ export interface TaskSpec {
 	expectedEvidence: ExpectedEvidence;
 	stopConditions: string[];
 	parentEvidenceRef?: EvidenceRef;
+	/**
+	 * Extra linked Git worktree roots Root must sample for evidence
+	 * attribution, in addition to `cwd`. Paths are absolute (resolved when
+	 * the TaskSpec is created). Only these declared roots are probed —
+	 * siblings of `cwd` are never discovered via `git worktree list` or
+	 * directory scanning. Changes under a declared root are recorded as
+	 * absolute paths under that root; relative Worker declarations are
+	 * remapped onto a declared root when the primary `cwd` resolution is
+	 * absent from the sample but the root-relative form is present.
+	 */
+	additionalWorktreeRoots?: string[];
 	budget?: {
 		tokens?: number;
 		costUsd?: number;
@@ -215,6 +232,10 @@ export interface BinaryChange {
 export interface ReviewEvidencePacket {
 	gitAvailable: boolean;
 	head?: string;
+	/** Declared additional worktree roots sampled into this packet (absolute). */
+	worktreeRoots?: string[];
+	/** Declared roots that could not be sampled; the packet is then truncated. */
+	unavailableWorktreeRoots?: string[];
 	status?: string;
 	changedFiles?: string[];
 	diffStat?: string;
