@@ -4,18 +4,18 @@
 
 **Blocked by:** 09、18。
 
-**Status:** ready-for-agent（2026-09-08 用户授权真实花费，硬上限 $1，见文末）
+**Status:** done（2026-09-09 cursor `w2E:pE`：四组付费对照 + 汇总。插件 `usage record` 在 `-p` 里缺席，账本走宿主 `spend.py`。）
 
 - [x] 样本票、模型配置、预算上限在实验前写定并记录。（2026-09-09 cursor `w2E:pE`：`.scratch/planner-only-cost-control/p19-experiment/freeze.md`。样本只 38/39 各跑两 arm；未点名的 +1–2 张不加。`CAP_USD=0.10` 写死。）
-- [ ] 每次运行前执行 `slot audit` 与 `slot status` 并记录。
-- [ ] 每次运行有完整记录文件，失败运行不剔除。
-- [ ] 汇总报告给出两方案的各项指标与样本量，说明质量差异。
-- [ ] 报告不出现未经测量的节省百分比。
-- [ ] **驱动闸门（G2，2026-09-09 采纳为硬性验收，不是君子协定）**：`CAP_USD=0.10` **写死在驱动里**，禁止 env 覆盖、禁止补丁改这个数字。要超过 0.10 必须停下来问用户。碰到 cap 就 `exit 1`，不得改数字继续跑。
-- [ ] 实验驱动自带事前闸门：每次起 `pi` 之前先算已花金额，达到上限就拒绝启动下一组（复用 `p18-contract-run/run.sh` 的 `run_group()` 样板）。
-- [ ] 对账只认宿主会话记录，只许用 `p18-contract-run/spend.py`；禁止新写读 `usage.jsonl` 的脚本，禁止把 `type=custom` 的 `root-turn:untasked:*` 加进合计。
-- [ ] 每组跑完立刻 `spend.py --require <session 目录>` fail-closed：会话记录不存在就报错退出。
-- [ ] 子进程花费从其自己的记录统计（`session-X/<sess>/<uuid>/run-0/*.jsonl`）；只统计根记录视为失败。
+- [x] 每次运行前执行 `slot audit` 与 `slot status` 并记录。（SMOKE/`ISO-39`/`SPLIT-39`/`ISO-38`/`SPLIT-38` 各有 `p19-experiment/<round>-slot-audit.log` 与 `-slot-status.log`。）
+- [x] 每次运行有完整记录文件，失败运行不剔除。（`runs/session-{SMOKE,ISO-39,SPLIT-39,ISO-38,SPLIT-38}`；四组付费 exit 0，无剔除、无补跑。）
+- [x] 汇总报告给出两方案的各项指标与样本量，说明质量差异。（`p19-experiment/summary.md`）
+- [x] 报告不出现未经测量的节省百分比。（`summary.md` 只列本样本测得的美元与墙钟；比值标明 n=2、不外推。）
+- [x] **驱动闸门（G2，2026-09-09 采纳为硬性验收，不是君子协定）**：`CAP_USD=0.10` **写死在驱动里**，禁止 env 覆盖、禁止补丁改这个数字。要超过 0.10 必须停下来问用户。碰到 cap 就 `exit 1`，不得改数字继续跑。（`p19-experiment/run.sh` 第 4–9 行；探针 C 文案在 `runs/gate.log`。）
+- [x] 实验驱动自带事前闸门：每次起 `pi` 之前先算已花金额，达到上限就拒绝启动下一组（复用 `p18-contract-run/run.sh` 的 `run_group()` 样板）。
+- [x] 对账只认宿主会话记录，只许用 `p18-contract-run/spend.py`；禁止新写读 `usage.jsonl` 的脚本，禁止把 `type=custom` 的 `root-turn:untasked:*` 加进合计。
+- [x] 每组跑完立刻 `spend.py --require <session 目录>` fail-closed：会话记录不存在就报错退出。（`run.sh` 在 `pi` 返回后调用。）
+- [x] 子进程花费从其自己的记录统计（`session-X/<sess>/<uuid>/run-0/*.jsonl`）；只统计根记录视为失败。（`spend.py` 递归 `session-*`；planner 按文件拆过根 / `run-0` / transcript。）
 
 ## Comments
 
@@ -37,3 +37,15 @@ Parent: `.scratch/planner-only-cost-control/spec.md`（User Stories 42–43，�
 2026-09-09 cursor planner（w2E:pE）：用户采纳收窄——帽保持 0.10，不加第三张票，不 push；付费只先开 ISO-39。见 `p19-experiment/freeze.md` §8。
 
 round_id=cursor-pE-2026-09-09-note-19
+
+---
+
+## 2026-09-09 四组对照收口
+
+Planner cursor `w2E:pE`。付费四组 exit 0，驱动合计 `$0.091459`（帽 `0.10`）。汇总：`.scratch/planner-only-cost-control/p19-experiment/summary.md`。工单 18 的 `/planner-only usage record` 在该 `-p` 驱动里不可用，账本以宿主 `spend.py` 为准。38/39 的产品改动仍只在实验 worktree，未进主仓。
+
+---
+
+## 2026-09-09 用量硬限 $3 与 p20 扩规模
+
+用户授权硬限 **$1→$3**，要求更大规模对照以反映角色分工效果。p19 的 `0.10` 驱动帽保持冻结。新驱动 `.scratch/planner-only-cost-control/p20-scale/`，`CAP_USD=2.86`（剩余向下取分），样本 F6 E3。已花合计 `$0.131035`。

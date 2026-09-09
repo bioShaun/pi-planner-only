@@ -1,0 +1,25 @@
+diff --git a/orchestrate.ts b/orchestrate.ts
+index c21df04..4a052ab 100644
+--- a/orchestrate.ts
++++ b/orchestrate.ts
+@@ -536,12 +536,15 @@ export class PlannerOrchestrator {
+ 	/** toolCallId -> delegated task + invocation kind. */
+ 	private readonly delegations = new Map<string, DelegationRecord>();
+ 	private readonly reservations = new BudgetReservations();
+-	/** runIds whose subagent-notify (or sync result) has already been consumed. */
++	// Intentionally unbounded session-scoped Sets. A FIFO cap would evict IDs and
++	// allow a repeated completion/not-launched event to be settled twice.
++	// Boundedness and idempotency are in tension here; until that is resolved
++	// in product, no prune and no max.
+ 	private readonly processedRunIds = new Set<string>();
+-	/**
+-	 * toolCallIds whose launch the host confirmed never happened.
+-	 * Session-scoped Set, same treatment as processedRunIds (no numeric cap).
+-	 */
++	// Intentionally unbounded session-scoped Sets. A FIFO cap would evict IDs and
++	// allow a repeated completion/not-launched event to be settled twice.
++	// Boundedness and idempotency are in tension here; until that is resolved
++	// in product, no prune and no max.
+ 	private readonly confirmedNotLaunchedIds = new Set<string>();
+ 	/** taskId -> history of all delegations for that task. */
+ 	private readonly delegationHistory = new Map<string, DelegationHistoryEntry[]>();

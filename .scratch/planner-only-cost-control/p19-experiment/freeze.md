@@ -137,4 +137,67 @@ p18-r085 **禁止**实现 38/39。它们是付费对照的样本，驱动闸门�
 
 驱动剩余约 `$0.062`。下一步只开 `SPLIT-39`（同一基线 SHA `45d9493`，worktree 已 restore）。不开 38。
 
+## 10. SPLIT-39 实测（p18-r088，planner 重算）
+
+`spend.py` 原文：`--require session-SPLIT-39` = `0.009766`；`runs/` 合计 `0.047220`（ISO-39 `0.037454` + SPLIT-39 `0.009766` + SMOKE `0.000000`）。
+
+拆开宿主 jsonl（只计 `type=message`）：
+
+| 文件 | ISO-39 | SPLIT-39 |
+|---|---|---|
+| 根会话 | `0.025638`（luna 7 轮 assistant `0.013823` + toolResult 镜像 worker `0.011816`） | `0.009766`（luna 7 轮 assistant；toolResult 费用 `0`） |
+| `run-0/session.jsonl` | `0.011816`（luna worker，9 轮） | `0.000000`（`qwen3.8-27b`，9 轮，宿主 usage 全 0） |
+| worker_transcript | `0`（不入账） | `0` |
+| **spend.py 合计** | **`0.037454`** | **`0.009766`** |
+
+`spend.py` 会把 isolation arm 的 worker 费用算两遍（根 `toolResult` + `run-0`）。去重后的一次生成口径：ISO root luna `0.013823` + ISO worker luna `0.011816` = `0.025639`；SPLIT root luna `0.009766` + SPLIT worker qwen `0`。根输入 token ISO `49480` / SPLIT `27548`；根输出 `1506` / `1567`。两边都是 7 个 root assistant 回合、9 个 worker assistant 回合。
+
+首轮 root（开场）ISO `0.003842`、SPLIT `0.003816`，量级相同。isolation 账单里 worker 约占去重后的一半，**不满足** §8「开场主导所以不必跑 38」的字面条件；role-split 之后剩余账单才是 100% root。
+
+样本：worktree HEAD 保持冻结基线 `45d9493`（主仓 `54cc814` 只超前「Accept ISO-39 and arm role-split」这一笔 bookkeeping，执行者未擅自 checkout，正确）。`orchestrate.test.mjs` 与 ISO-39 快照 **字节相同**（`fa78d27..c6c8f3e`，PASS 挪到文件末行，无 `assert` 删除）。快照：`split-39-orchestrate.test.mjs.diff`。主仓 `index.ts` / `orchestrate.ts` / `orchestrate.test.mjs` 无 diff。
+
+`/planner-only usage record` 在该 `-p` 会话里仍不可用。对照口径仍是宿主 `spend.py` + 样本 diff + 模型字段。
+
+驱动已花 `0.047220`，帽内剩余 `0.052780`。用户 $1 账：p18 `0.039576` + p19 `0.047220` = `0.086796`，剩余约 `0.913`。
+
+## 11. 用户继续：只开 ISO-38（2026-09-09 cursor `w2E:pE`）
+
+用户对「停 / 跑 38 / 抬帽」回复「继续」。**不抬帽**（仍 `0.10`）。下一步只开 `ISO-38`（同一基线 SHA `45d9493`；先 restore `orchestrate.test.mjs`，避免 39 样本残留）。不开 `SPLIT-38`，直到看完 ISO-38 账单。不开第三张票。
+
+## 12. ISO-38 实测（p19-r089，planner 重算）
+
+`spend.py` 原文：`--require session-ISO-38` = `0.030139`；`runs/` 合计 `0.077359`。拆开：根会话 `0.023772`（luna assistant `0.017406`，11 轮；toolResult 镜像 worker `0.006366`），`run-0` luna worker `0.006366`（5 轮）。去重一次生成：root `0.017406` + worker `0.006366` = `0.023772`。
+
+样本：worktree HEAD `45d9493` 未动。`orchestrate.ts` 两处字段换成同一段冻结四行注释，Set 构造与 add/has 无改。快照：`iso-38-orchestrate.ts.diff`。主仓三文件无 diff。
+
+帽内剩余 `0.022641`。SPLIT-39 同类是 `0.009766`，下一步只开 `SPLIT-38`（同一基线，planner 已 restore `orchestrate.ts`）。不开第三张票、不抬帽。
+
+## 13. SPLIT-38 实测（p19-r090，planner 重算）
+
+`spend.py` 原文：`--require session-SPLIT-38` = `0.014101`；`runs/` 合计 `0.091459`。拆开：根会话 luna assistant `0.014101`（8 轮）；`run-0` `qwen3.8-27b` 6 轮、费用 `0`。去重一次生成即 `0.014101`。
+
+样本：worktree HEAD `45d9493` 未动。`orchestrate.ts` 与 ISO-38 快照 **字节相同**（`c21df04..4a052ab`）。快照：`split-38-orchestrate.ts.diff`。主仓三文件无 diff。
+
+### 四组对照（点名样本已齐）
+
+闸门口径（`spend.py`，isolation 会把 worker 算两遍）：
+
+| 组 | spend.py | 去重一次生成 | root luna | worker |
+|---|---|---|---|---|
+| ISO-39 | `0.037454` | `0.025639` | `0.013823`（7 轮） | luna `0.011816`（9 轮） |
+| SPLIT-39 | `0.009766` | `0.009766` | `0.009766`（7 轮） | qwen `0`（9 轮） |
+| ISO-38 | `0.030139` | `0.023772` | `0.017406`（11 轮） | luna `0.006366`（5 轮） |
+| SPLIT-38 | `0.014101` | `0.014101` | `0.014101`（8 轮） | qwen `0`（6 轮） |
+| SMOKE | `0.000000` | — | 不计对照 | — |
+
+驱动合计 `0.091459`，帽内剩余 `0.008541`（不够再开一组 isolation 量级）。用户 $1 账：p18 `0.039576` + p19 `0.091459` = `0.131035`，剩余约 `0.869`。`run.sh` 已卸武装全部付费组。按 §1：38×2 + 39×2 已齐，不加第三张票。
+
+## 14. 汇总（p19 收口，planner 2026-09-09）
+
+用户再「继续」：不抬帽、不加第三张票。写汇总并勾工单 19：`.scratch/planner-only-cost-control/p19-experiment/summary.md`。通过率 2/2 vs 2/2；去重合计 isolation `$0.049411`、role-split `$0.023867`；平均根墙钟 98 s vs 555 s；样本 diff 两臂字节相同。工单 19 `Status: done`。
+
+## 15. 用户把用量硬限改到 $3（2026-09-09）
+
+p19 的 `CAP_USD=0.10` **不再改**（那批 38/39 对照冻结）。扩规模另开 `p20-scale/`，驱动帽 `2.86`，样本 E3。见 `p20-scale/freeze.md`。
+
 
