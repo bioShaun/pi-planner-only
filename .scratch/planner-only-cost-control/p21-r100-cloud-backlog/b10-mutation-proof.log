@@ -1,0 +1,7 @@
+{"a":"changes_requested","b":"blocked","aDecision":"request_changes","bDecision":"blocked"}
+B10 FAILED under narrow mutation — NON-VACUOUS OK
+B10: stop does not alter the state machine
++ actual - expected
+
++ 'changes_requested'
+- 'blocked'

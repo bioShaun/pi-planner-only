@@ -10,7 +10,7 @@
 
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { GIT_READ_ARGV, GIT_REF_PATTERN } from "./git-audit.ts";
 import type { GitRunner } from "./git-audit.ts";
 import { MAX_BASELINE_HASH_PATHS } from "./types.ts";
@@ -498,6 +498,18 @@ export function normalizeEvidencePaths(paths: readonly string[], cwd: string): s
 	return paths.map((path) => (path.startsWith("/") ? path : resolve(cwd, path)));
 }
 
+/**
+ * Absolute paths outside the Task cwd (e.g. ~/.pi/agent/planner-only/pricing.json)
+ * never appear in the workspace Git porcelain digest, so attribution against
+ * truthPaths / currentPaths would forever mark them missing or over-reported.
+ */
+export function isOutsideWorkspacePath(path: string, cwd: string): boolean {
+	const root = resolve(cwd);
+	const target = resolve(cwd, path);
+	const rel = relative(root, target);
+	return rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel);
+}
+
 export interface EvidenceComparison {
 	/** False when Git state could not be sampled on Root's A or C endpoint. */
 	verifiable: boolean;
@@ -522,6 +534,12 @@ export interface EvidenceComparison {
 export interface CompareEvidenceOptions {
 	scope?: TaskScope;
 	superseded?: boolean;
+	/**
+	 * Report-only correction rounds declare prior-run changes without producing
+	 * a new per-run dirty delta. Skip the per-run over-report unexplained mark
+	 * so a schema fix cannot deadlock on attribution (F6 / ticket 28 variant A).
+	 */
+	reportOnly?: boolean;
 }
 
 function sameCwd(left: string, right: string): boolean {
@@ -675,13 +693,15 @@ export function compareEvidence(
 	);
 	const hasAllowList = allowedPaths.size > 0;
 	const inScope = (path: string): boolean => (hasAllowList ? allowedPaths.has(path) : true);
+	const outOfRepoDeclared = [...declaredPaths].filter((path) => isOutsideWorkspacePath(path, pathCwd));
+	const inRepoDeclared = [...declaredPaths].filter((path) => !isOutsideWorkspacePath(path, pathCwd));
 
 	const undeclaredPaths: string[] = [];
 	for (const path of truthSet) {
 		if (!declaredPaths.has(path)) undeclaredPaths.push(path);
 	}
 	const extraDeclaredPaths: string[] = [];
-	for (const path of declaredPaths) {
+	for (const path of inRepoDeclared) {
 		if (!truthSet.has(path)) extraDeclaredPaths.push(path);
 	}
 
@@ -693,7 +713,7 @@ export function compareEvidence(
 
 	const missingPaths: string[] = [];
 	if (verifiable && !headChanged) {
-		for (const path of declaredPaths) {
+		for (const path of inRepoDeclared) {
 			if (currentPaths.has(path)) continue;
 			// RF-1 — paths committed (T2) or content-changed on a baseline-dirty
 			// path (T3) are still present as far as attribution is concerned.
@@ -714,7 +734,14 @@ export function compareEvidence(
 	}
 	if (extraDeclaredPaths.length > 0) {
 		reasons.push(`over-reported / unreliable declaration: ${sorted(extraDeclaredPaths).join(", ")}`);
-		unexplained = true;
+		// Report-only corrections restate prior-run files without a new T1/T2/T3
+		// delta; marking that unexplained deadlocks schema-only fix rounds.
+		if (!options.reportOnly) unexplained = true;
+	}
+	if (outOfRepoDeclared.length > 0) {
+		reasons.push(
+			`out-of-repo declaration exempt from attribution: ${sorted(outOfRepoDeclared).join(", ")}`,
+		);
 	}
 
 	if (verifiable && reported.gitStatusHash && current.gitStatusHash) {
