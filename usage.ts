@@ -221,6 +221,19 @@ export function hasUsableRate(pricing: PricingTable, provider: string | undefine
 	return tableCost(lookupRates(pricing, provider, model), emptyTokenCounts()) !== undefined;
 }
 
+export type DelegationRateKind = "paid" | "free" | "unknown";
+
+/**
+ * Classify a delegation model's price from the pricing table: "free" when all
+ * four rates are finite and zero, "paid" when usable and any rate is positive,
+ * "unknown" when the table has no usable entry (callers treat unknown as paid).
+ */
+export function delegationRateKind(pricing: PricingTable, provider: string | undefined, model: string | undefined): DelegationRateKind {
+	const rates = lookupRates(pricing, provider, model);
+	if (!hasUsableRates(rates)) return "unknown";
+	return rates.input === 0 && rates.output === 0 && rates.cacheRead === 0 && rates.cacheWrite === 0 ? "free" : "paid";
+}
+
 function resolveCost(
 	pricing: PricingTable,
 	usage: PiUsageLike | undefined,
@@ -569,6 +582,49 @@ export class UsageLedger {
 
 	sessionUsage(): { untasked: RootUsage; tasks: string[] } {
 		return { untasked: this.untasked, tasks: [...this.tasks.keys()] };
+	}
+
+	/**
+	 * Ticket 40 — session-level root cumulative spend (untasked + every Task root).
+	 * Child spend is excluded: those are gated by Task cumulativeBudget.
+	 */
+	sessionRootSpend(): {
+		turns: number;
+		tokens: number;
+		costUsd: number | undefined;
+		costUnknown: boolean;
+		currency: PricingTable["currency"];
+		untaskedTurns: number;
+		untaskedTokens: number;
+		untaskedCostUsd: number | undefined;
+	} {
+		const untaskedTokens = usageTokens(this.untasked);
+		let turns = this.untasked.turns;
+		let tokens = untaskedTokens;
+		let costUnknown = this.untasked.turns > 0 && this.untasked.costUsd === undefined;
+		let costUsd: number | undefined = costUnknown ? undefined : (this.untasked.costUsd ?? 0);
+		for (const task of this.tasks.values()) {
+			const root = task.root;
+			turns += root.turns;
+			tokens += usageTokens(root);
+			const rootUnknown = root.turns > 0 && root.costUsd === undefined;
+			if (rootUnknown || costUnknown) {
+				costUnknown = true;
+				costUsd = undefined;
+			} else {
+				costUsd = (costUsd ?? 0) + (root.costUsd ?? 0);
+			}
+		}
+		return {
+			turns,
+			tokens,
+			costUsd,
+			costUnknown,
+			currency: this.pricing.currency,
+			untaskedTurns: this.untasked.turns,
+			untaskedTokens,
+			untaskedCostUsd: this.untasked.costUsd,
+		};
 	}
 
 	load(records: UsageEntry[]): void {

@@ -24,6 +24,7 @@ import {
 	renderRunSummary,
 	childUsageFromValue,
 	childOutcomeFromExitCode,
+	delegationRateKind,
 	hasUsableRate,
 	loadPricingTable,
 	lookupRates,
@@ -35,7 +36,13 @@ import {
 } from "./usage.ts";
 import type { PiUsageLike, UsageEntry } from "./usage.ts";
 import { oracleSuiteMode } from "./roles.ts";
-import { loadFloorConfig } from "./floors.ts";
+import {
+	evaluateSessionRootBudget,
+	formatSessionRootBudgetSoftWarning,
+	formatSessionRootBudgetStatus,
+	loadFloorConfig,
+	loadSessionRootBudgetConfig,
+} from "./floors.ts";
 import { configuredRoleModelSummaries, loadRoleModelPolicy } from "./role-models.ts";
 
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
@@ -158,7 +165,8 @@ function sameToolOrder(left: readonly string[], right: readonly string[]): boole
 }
 
 export default function plannerOnly(pi: ExtensionAPI): void {
-	loadFloorConfig();
+	const floorConfig = loadFloorConfig();
+	const sessionRootBudget = loadSessionRootBudgetConfig(process.env, floorConfig);
 	// Foreground children do not load ambient extensions. Background children
 	// may; this extension no-ops when PI_SUBAGENT_CHILD=1 so it cannot
 	// recurse into a child that loaded it. Workers must retain their
@@ -173,14 +181,20 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	// Most recent host context, kept so reconcile can find session artifact
 	// directories even when it runs from planner_verdict.
 	let latestCtx: ExtensionContext | undefined;
+	let pricing = loadPricingTable();
+	let ledger = new UsageLedger({ pricing });
 	const orchestrator = new PlannerOrchestrator({
 		gitRunner,
 		artifactDirs: () => artifactDirsFor(latestCtx ?? ({ hasUI: false, cwd: process.cwd() } as ExtensionContext)),
 		ledgerDir: AGENT_DIR,
+		getSessionRootUsage: () => ledger.sessionRootSpend(),
+		sessionRootBudgetConfig: sessionRootBudget,
+		delegationRateKind: (model) => delegationRateKind(pricing, undefined, model),
 	});
-	let pricing = loadPricingTable();
-	let ledger = new UsageLedger({ pricing });
 	const allSessionEntries: UsageEntry[] = [];
+	/** Ticket 40: emit soft/hard disclosures once per crossing until spend drops below the level. */
+	let sessionRootSoftWarned = false;
+	let sessionRootHardWarned = false;
 	let usageLogWriteFailed = false;
 	const terminalUsageLogged = new Set<string>();
 	const openUsageLogged = new Set<string>();
@@ -1030,6 +1044,24 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			});
 			if (active) syncUsage(active.taskId);
 			persistSessionEntries();
+			// Ticket 40: soft-cap warning after root accounting (never blocks the turn).
+			const rootEval = evaluateSessionRootBudget(ledger.sessionRootSpend(), sessionRootBudget);
+			if (rootEval.level === "ok") {
+				sessionRootSoftWarned = false;
+				sessionRootHardWarned = false;
+			} else if (rootEval.level === "soft") {
+				sessionRootHardWarned = false;
+				if (!sessionRootSoftWarned) {
+					sessionRootSoftWarned = true;
+					notify(host, formatSessionRootBudgetSoftWarning(rootEval), "warning");
+				}
+			} else if (rootEval.level === "hard" && !sessionRootHardWarned) {
+				// Hard is enforced at the next paid-delegation gate; disclose here so the
+				// operator sees the stop even before a launch attempt (E1/E2 disclosure).
+				sessionRootHardWarned = true;
+				sessionRootSoftWarned = true;
+				notify(host, formatSessionRootBudgetStatus(rootEval), "warning");
+			}
 		}
 		if (!isSubagentNotifyMessage(event.message)) return;
 		const snapshot = orchestrator.listDelegations();
@@ -1155,7 +1187,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				if (sessionUsage.unattributed.turns > 0 || sessionUsage.unattributed.costUnknown) {
 					lines.push(`Unattributed (会话级，未归入任何 Task): ${sessionUsage.unattributed.turns} turns, tokens=${sessionUsage.unattributed.tokens}, 费用 $${sessionUsage.unattributed.costUsd.toFixed(4)}${sessionUsage.unattributed.costUnknown ? "，费用不可知" : ""}`);
 				}
-				notify(ctx, lines.join("\n"), rateWarning ? "warning" : "info");
+				const sessionRootEval = evaluateSessionRootBudget(ledger.sessionRootSpend(), sessionRootBudget);
+				lines.push("", formatSessionRootBudgetStatus(sessionRootEval));
+				notify(ctx, lines.join("\n"), rateWarning || sessionRootEval.level !== "ok" ? "warning" : "info");
 				return;
 			}
 			if (action === "on") {

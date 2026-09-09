@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+	delegationRateKind,
 	UsageLedger,
 	summarizeTaskBudget,
 	summarizeSessionUsage,
@@ -919,6 +920,83 @@ function ticket15ResolvedNoRate(overrides = {}) {
 	const stale = summarizeTaskBudget(u.taskUsage("T-ticket15-stale"), TICKET15_LIMITS);
 	assert.equal(stale.tokens.debt, 0);
 	assert.equal(stale.costUsd.debt, 0);
+}
+
+
+// Ticket 40 — sessionRootSpend aggregates untasked + Task roots, excludes children
+{
+	const u = ledger();
+	u.recordRootTurn({ usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0 }, model: "m", provider: "p" });
+	// Force a known cost via a second turn with pricing... usage ledger may leave cost undefined without rates.
+	const spend0 = u.sessionRootSpend();
+	assert.equal(spend0.untaskedTurns, 1);
+	assert.equal(spend0.turns, 1);
+	assert.equal(spend0.tokens, 150);
+	assert.equal(spend0.untaskedTokens, 150);
+
+	u.recordRootTurn({
+		taskId: "T-40-root",
+		state: "planning",
+		usage: { input: 200, output: 100, cacheRead: 0, cacheWrite: 0 },
+		model: "m",
+		provider: "p",
+	});
+	u.recordChild("T-40-root", {
+		input: 9999,
+		output: 9999,
+		cacheRead: 0,
+		cacheWrite: 0,
+		kind: "worker",
+		pending: false,
+		source: "sync-details",
+		costUsd: 9.99,
+		toolCallId: "child-40",
+	});
+	const spend = u.sessionRootSpend();
+	assert.equal(spend.turns, 2, "40-u1: tasked + untasked root turns");
+	assert.equal(spend.tokens, 150 + 300, "40-u2: child tokens excluded");
+	assert.equal(spend.untaskedTurns, 1);
+	assert.equal(spend.untaskedTokens, 150);
+}
+
+{
+	// costUnknown propagates when any root bucket lacks cost
+	const u = ledger();
+	u.recordRootTurn({ usage: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0 } });
+	const spend = u.sessionRootSpend();
+	assert.equal(spend.costUnknown, true, "40-u3: unpriced root is costUnknown");
+	assert.equal(spend.costUsd, undefined);
+	assert.equal(spend.currency, "USD", "40-u4: default table currency carried");
+}
+
+{
+	// sessionRootSpend carries the pricing table currency so USD caps are not compared to CNY.
+	const rates = { m: { input: 10, output: 10, cacheRead: 0, cacheWrite: 0 } };
+	const u = ledger(rates, "CNY");
+	u.recordRootTurn({ usage: piUsage({ cost: undefined }), model: "m" });
+	const spend = u.sessionRootSpend();
+	assert.equal(spend.currency, "CNY", "40-u5: CNY table currency carried");
+	assert.equal(spend.costUnknown, false);
+	assert.ok((spend.costUsd ?? 0) > 0, "40-u6: table-derived CNY cost is recorded");
+}
+
+{
+	// delegationRateKind: zero-rate is free, positive is paid, missing/null is unknown.
+	const pricing = {
+		version: 1,
+		currency: "USD",
+		rates: {
+			"free/model": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			"paid/model": { input: 0, output: 1, cacheRead: 0, cacheWrite: 0 },
+			"partial/model": { input: 0, output: null, cacheRead: 0, cacheWrite: 0 },
+		},
+	};
+	assert.equal(delegationRateKind(pricing, undefined, "free/model"), "free");
+	assert.equal(delegationRateKind(pricing, undefined, "free/model:high"), "free", "thinking suffix stripped");
+	assert.equal(delegationRateKind(pricing, undefined, "paid/model"), "paid");
+	assert.equal(delegationRateKind(pricing, undefined, "partial/model"), "unknown");
+	assert.equal(delegationRateKind(pricing, undefined, "missing/model"), "unknown");
+	assert.equal(delegationRateKind(pricing, undefined, undefined), "unknown");
 }
 
 console.log("planner-only usage: PASS");

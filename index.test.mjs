@@ -3212,6 +3212,37 @@ assert.match(
 	}
 }
 
+{
+	// Ticket 40: invalid session root multipliers reject initialization, not live handlers.
+	const SOFT = "PI_PLANNER_ONLY_SESSION_ROOT_SOFT_MULTIPLIER";
+	const HARD = "PI_PLANNER_ONLY_SESSION_ROOT_HARD_MULTIPLIER";
+	const saved = { [SOFT]: process.env[SOFT], [HARD]: process.env[HARD] };
+	const bareHost = () => ({
+		on() {},
+		registerCommand() {},
+		registerTool() {},
+		exec: async () => ({ stdout: "", stderr: "", code: 0 }),
+	});
+	try {
+		process.env[SOFT] = "not-a-number";
+		delete process.env[HARD];
+		assert.throws(() => plannerOnly(bareHost()), /PI_PLANNER_ONLY_SESSION_ROOT_SOFT_MULTIPLIER.*is invalid/, "40-i1: invalid soft multiplier fails startup");
+
+		process.env[SOFT] = "5";
+		process.env[HARD] = "3";
+		assert.throws(() => plannerOnly(bareHost()), /hard multiplier .* must be >= soft/, "40-i2: hard < soft fails startup");
+
+		process.env[SOFT] = "2";
+		process.env[HARD] = "";
+		assert.throws(() => plannerOnly(bareHost()), /PI_PLANNER_ONLY_SESSION_ROOT_HARD_MULTIPLIER is set but empty/, "40-i3: empty hard multiplier fails startup");
+	} finally {
+		for (const [key, value] of Object.entries(saved)) {
+			if (value !== undefined) process.env[key] = value;
+			else delete process.env[key];
+		}
+	}
+}
+
 // --------------------------------------------------------------------------
 // Issue 07: Root model with no pricing rate — startup & status warning
 // --------------------------------------------------------------------------
