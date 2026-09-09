@@ -159,6 +159,11 @@ export interface TaskSpec {
 		tokens?: number;
 		costUsd?: number;
 	};
+	/**
+	 * Explicit report-only correction marker (ticket 42). Prefer this over
+	 * sniffing prompt text; machine-generated correction rounds stamp it.
+	 */
+	reportOnly?: boolean;
 }
 
 export interface ValidationResult {
