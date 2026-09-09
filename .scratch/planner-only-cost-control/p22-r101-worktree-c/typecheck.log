@@ -1,0 +1,5 @@
+
+> pi-planner-only@0.3.3 typecheck
+> tsc --noEmit
+
+typecheck:0
