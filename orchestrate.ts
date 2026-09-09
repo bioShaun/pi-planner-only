@@ -815,6 +815,10 @@ export class PlannerOrchestrator {
 				...(floorLimits?.costUsd ? { costUsd: floorLimits.costUsd.value } : {}),
 			});
 			if (reservation.refused) {
+				if (input && typeof input === "object" && !Array.isArray(input)) {
+					delete (input as Record<string, unknown>).usageBudget;
+					delete (input as Record<string, unknown>).__floorLimits;
+				}
 				return { block: { reason: this.cumulativeBudgetRefusal(gateTask.taskId, budget, reservation.refused) } };
 			}
 			floorLimits = resolveEffectiveLimits({
@@ -1300,6 +1304,7 @@ export class PlannerOrchestrator {
 			...(isExplicitlyNoValidation(task.spec) ? ["Validation: not required (TaskSpec 明确不要求验证)"] : []),
 			...(report && !isExplicitlyNoValidation(task.spec) && lastWorkerValidationPassed(report) && task.lastComparison?.fresh === true && taskSpecValidationComplete ? ["Validation: passed"] : []),
 			`Changed files: ${report?.changedFiles.length ?? 0}`,
+			...(this.snapshots?.writeErrorFor(task.taskId) ? ["Ledger write: 本会话无法写入该 taskId 的账本（writeErrorFor）"] : []),
 			...(task.validatorReports.length > 0 ? [`Validator reports: ${task.validatorReports.length}`] : []),
 		];
 		if (task.aliases.length > 0) {

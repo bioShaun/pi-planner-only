@@ -2104,6 +2104,23 @@ function boundedBudgetUsage(tokens, costUsd) {
 	assert.ok(input.usageBudget === undefined || Object.keys(input.usageBudget).length > 0);
 }
 
+// A cumulative budget refusal strips usageBudget and __floorLimits from the input
+// before returning, matching the untrusted-ledger refusal path.
+{
+	const { store, task } = budgetTaskFixture("T-20260908-v16", { tokens: 100_000, costUsd: 0.20 }, boundedBudgetUsage(1_000, 0.20));
+	task.reports.push(reportFor(task.taskId, "old-report"));
+	const input = {
+		task: JSON.stringify(task.spec),
+		usageBudget: { tokens: { hard: 100_000 }, costUsd: { hard: 0.20 } },
+		__floorLimits: { tokens: { value: 100_000, source: "floor" }, costUsd: { value: 0.2, source: "floor" } },
+	};
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const blocked = await orch.beginDelegation({ toolCallId: "call-v16", input }, BASE);
+	assert.match(blocked.block?.reason ?? "", /cumulative budget exhausted/);
+	assert.equal(input.usageBudget, undefined, "refused cumulative launch does not leave a usageBudget on the input");
+	assert.equal(input.__floorLimits, undefined, "refused cumulative launch does not leave __floorLimits on the input");
+}
+
 // Ticket 14A V13 — rejected validator launches do not leak reservations.
 {
 	const taskId = "T-20260908-v13";
@@ -5855,6 +5872,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 
 		orch.store.persist(placeholder);
 		assert.equal(readFileSync(path, "utf8"), "this is not json", "L15: persist of the placeholder does not rewrite the corrupt snapshot");
+		assert.match(orch.renderTaskStatus(placeholder), /本会话无法写入该 taskId 的账本/, "L15b: status exposes the per-task ledger write error");
 		writeFileSync(path, "this is not json", "utf8");
 
 		const reviewer = await orch.beginDelegation({ toolCallId: "call-l16", input: { agent: "reviewer", task: `Review ${bad.taskId}` } }, BASE);
