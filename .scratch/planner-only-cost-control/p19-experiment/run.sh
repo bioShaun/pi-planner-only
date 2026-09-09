@@ -88,7 +88,10 @@ for group in "$@"; do
     SMOKE)
       run_group SMOKE "$DRIVER/root-prompt-smoke.md" "${ROOT_MODEL}"
       ;;
-    ISO-38|ISO-39|SPLIT-38|SPLIT-39)
+    ISO-39)
+      run_group ISO-39 "$DRIVER/prompt-39-isolated-baseline.md" tcuni/gpt-5.6-luna
+      ;;
+    ISO-38|SPLIT-38|SPLIT-39)
       echo "group $group is not armed: ticket prompt is not installed" >&2
       exit 2
       ;;

@@ -34,6 +34,6 @@ Parent: `.scratch/planner-only-cost-control/spec.md`（User Stories 42–43，�
 
 ---
 
-2026-09-09 cursor planner（w2E:pE）：H2 采纳「`CAP_USD=0.10` 写死在驱动」为硬性验收，但交棒时本票还只有前五条君子协定。现已补进票面 checkbox。剩余 $0.96 是余额不是预算。未派本票。
+2026-09-09 cursor planner（w2E:pE）：用户采纳收窄——帽保持 0.10，不加第三张票，不 push；付费只先开 ISO-39。见 `p19-experiment/freeze.md` §8。
 
 round_id=cursor-pE-2026-09-09-note-19
