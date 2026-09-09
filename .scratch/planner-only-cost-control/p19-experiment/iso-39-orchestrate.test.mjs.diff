@@ -1,0 +1,19 @@
+diff --git a/orchestrate.test.mjs b/orchestrate.test.mjs
+index fa78d27..c6c8f3e 100644
+--- a/orchestrate.test.mjs
++++ b/orchestrate.test.mjs
+@@ -3714,8 +3714,6 @@ for (const [suffix, validation] of [
+ 	assert.equal(orch.getDelegation("call-06-oracle-silent")?.oracleSuiteConflict, undefined);
+ }
+ 
+-console.log("planner-only orchestration: PASS");
+-
+ // --------------------------------------------------------------------------
+ // Ticket 01 — a lost child completion no longer deadlocks Task verdicts
+ // --------------------------------------------------------------------------
+@@ -5964,3 +5962,5 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
+ 	const b = await new PlannerOrchestrator({ gitRunner, store: ample.store }).recordRootVerdict(ample.task, "blocked", "same", { source: "root" });
+ 	assert.equal(a.task.state, b.task.state, "B10: stop does not alter the state machine");
+ }
++
++console.log("planner-only orchestration: PASS");

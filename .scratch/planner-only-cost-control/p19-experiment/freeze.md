@@ -127,4 +127,14 @@ p18-r085 **禁止**实现 38/39。它们是付费对照的样本，驱动闸门�
 2. **只开 `ISO-39`**。撞帽或看完账单之前，不开 `SPLIT-39` / 任何 38 组。
 3. 38 整票可降级：若 39 已经说明「账单被 root 开场开销主导」，不再为对照去跑 38。
 
+## 9. ISO-39 实测（p18-r087，planner 重算）
+
+`spend.py` 全文：`--require session-ISO-39` = `0.037454`，`runs/` 合计相同（SMOKE 为 `0.000000`）。拆开宿主 jsonl：根记录 `0.025638`，子进程 `run-0` `0.011816`。worker meta 模型为 `tcuni/gpt-5.6-luna:high`，费用 `0.01181556`，与子进程 jsonl 一致。
+
+样本：worktree `orchestrate.test.mjs` 把 PASS 从中段挪到文件末尾；`git diff | grep '^-.*assert'` 为空。快照：`iso-39-orchestrate.test.mjs.diff`。主仓三文件无 diff。
+
+`/planner-only usage record` 在该 `-p` 会话里不可用，工单 18 的 JSON 记录缺席。对照口径以宿主 `spend.py` + 样本 diff + worker meta 为准，不编节省百分比。
+
+驱动剩余约 `$0.062`。下一步只开 `SPLIT-39`（同一基线 SHA `45d9493`，worktree 已 restore）。不开 38。
+
 

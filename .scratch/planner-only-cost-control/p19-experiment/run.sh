@@ -91,7 +91,10 @@ for group in "$@"; do
     ISO-39)
       run_group ISO-39 "$DRIVER/prompt-39-isolated-baseline.md" tcuni/gpt-5.6-luna
       ;;
-    ISO-38|SPLIT-38|SPLIT-39)
+    SPLIT-39)
+      run_group SPLIT-39 "$DRIVER/prompt-39-role-split.md" qwen-local/qwen3.8-27b
+      ;;
+    ISO-38|SPLIT-38)
       echo "group $group is not armed: ticket prompt is not installed" >&2
       exit 2
       ;;
