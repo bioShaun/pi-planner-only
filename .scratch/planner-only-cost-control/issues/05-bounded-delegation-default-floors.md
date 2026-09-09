@@ -48,3 +48,13 @@ p14-r065（pi `w2E:pG` 落地，planner 复跑核验并自行修正后提交 `a8
 `npm run test:release` 从 §F 的红转绿；§E / §G 的闸门分支与 `markContractUnverified`（工单 26）一字未动。
 
 round_id=p14-r065
+
+---
+
+2026-09-09 cursor planner（w2E:pE）：F3 已闭合，补在「仍未证明」那句后面，**不改本票 checkbox**。
+
+契约实跑（A2/A3，证据在 `p18-contract-run/evidence-extract.md`）：宿主接受 `usageBudget` 但不执行。tokens.hard=1 时子进程跑完 9.3k token；costUsd.hard=0.0001 时子进程花掉 $0.0022（22 倍）。第 1、2 条仍按 F1「宿主接受该参数形状」计，**不要读成运行时强制**。运行途中越线仍未专测。
+
+`floors.ts` 的 hard 上限实际约束力全部来自本插件自己的记账。`PI_PLANNER_ONLY_HOST_ENFORCES_*` 保持默认 false。
+
+round_id=cursor-pE-2026-09-09-note-05

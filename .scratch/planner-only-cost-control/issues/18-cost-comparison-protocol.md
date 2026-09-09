@@ -4,12 +4,12 @@
 
 **Blocked by:** 10、13。
 
-**Status:** ready-for-agent
+**Status:** done（2026-09-09 cursor planner 按产物复核，代码在 p17-r080/r081，基线 `6715e03`）
 
-- [ ] 一次运行结束后可生成含全部规定字段的记录文件。
-- [ ] 给定一组确定性记录（含失败与返工），汇总输出通过率、成功完成成本、总支出、平均返工、平均耗时。
-- [ ] 缺少费率或用量的记录在汇总中标记为不可比，不按零计入。
-- [ ] 记录规范写入 docs，说明隔离基线与模型分工方案各自的运行方式。
+- [x] 一次运行结束后可生成含全部规定字段的记录文件。
+- [x] 给定一组确定性记录（含失败与返工），汇总输出通过率、成功完成成本、总支出、平均返工、平均耗时。
+- [x] 缺少费率或用量的记录在汇总中标记为不可比，不按零计入。
+- [x] 记录规范写入 docs，说明隔离基线与模型分工方案各自的运行方式。
 
 ## Comments
 
@@ -42,3 +42,14 @@ Parent: `.scratch/planner-only-cost-control/spec.md`（User Stories 40–41，�
    `naming.test.mjs`（预期）；`PI_PLANNER_ONLY_REQUIRE_CONTRACT=1 npm run test:e2e` = 0；
    `npm run typecheck` = 0；`git diff --check` = 0。**新增子命令与新增导出没有打红任何既有断言。**
 7. 记录文件落在 `AGENT_DIR/planner-only/runs/`，实测在 `PI_CODING_AGENT_DIR` 隔离夹具下正确改道。
+
+---
+
+2026-09-09 cursor planner（w2E:pE）按产物复核后勾四条。代码在 p17-r080/r081，基线 `6715e03`：
+
+- 第 1 条：`usage.ts` 的 `buildRunRecord` + `index.ts` 的 `usage record` 写 `AGENT_DIR/planner-only/runs/`；`index.test.mjs` 覆盖 `usage record` 与 `usage record --arm`。
+- 第 2 条：`usage.ts` 的 `RunSummary` / 汇总渲染（通过率、成功完成成本、总支出、平均返工、平均耗时）。
+- 第 3 条：`usage.test.mjs` 缺 `baseGitRef` ⇒ `comparable === false` 且 `incomparableReasons` 含 baseline 原因；不可比不按零计入。
+- 第 4 条：`docs/pi-planner-only-cost-comparison-protocol.md` 已入库。
+
+`p17-r082-baseline.log` 在该代码基线上 typecheck=0、architecture PASS、唯一 AssertionError 为 naming。未改代码。

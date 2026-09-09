@@ -11,6 +11,11 @@
 - [ ] 每次运行有完整记录文件，失败运行不剔除。
 - [ ] 汇总报告给出两方案的各项指标与样本量，说明质量差异。
 - [ ] 报告不出现未经测量的节省百分比。
+- [ ] **驱动闸门（G2，2026-09-09 采纳为硬性验收，不是君子协定）**：`CAP_USD=0.10` **写死在驱动里**，禁止 env 覆盖、禁止补丁改这个数字。要超过 0.10 必须停下来问用户。碰到 cap 就 `exit 1`，不得改数字继续跑。
+- [ ] 实验驱动自带事前闸门：每次起 `pi` 之前先算已花金额，达到上限就拒绝启动下一组（复用 `p18-contract-run/run.sh` 的 `run_group()` 样板）。
+- [ ] 对账只认宿主会话记录，只许用 `p18-contract-run/spend.py`；禁止新写读 `usage.jsonl` 的脚本，禁止把 `type=custom` 的 `root-turn:untasked:*` 加进合计。
+- [ ] 每组跑完立刻 `spend.py --require <session 目录>` fail-closed：会话记录不存在就报错退出。
+- [ ] 子进程花费从其自己的记录统计（`session-X/<sess>/<uuid>/run-0/*.jsonl`）；只统计根记录视为失败。
 
 ## Comments
 
@@ -26,3 +31,9 @@ Parent: `.scratch/planner-only-cost-control/spec.md`（User Stories 42–43，�
 - 19 的样本票取**本仓库自己的小票**（38、39 + 1-2 张同量级 backlog 小票）：
   验收标准已写死在工单里，通过/失败是客观的，不需要另造评分。
 - 执行者路由：cursor 额度告急，自本日起优先 pi `w2E:pG`、agy `w2E:pF`。
+
+---
+
+2026-09-09 cursor planner（w2E:pE）：H2 采纳「`CAP_USD=0.10` 写死在驱动」为硬性验收，但交棒时本票还只有前五条君子协定。现已补进票面 checkbox。剩余 $0.96 是余额不是预算。未派本票。
+
+round_id=cursor-pE-2026-09-09-note-19

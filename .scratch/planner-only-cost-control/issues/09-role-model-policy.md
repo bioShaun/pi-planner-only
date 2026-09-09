@@ -140,3 +140,13 @@ round_id=p13-r063
 - 19 的样本票取**本仓库自己的小票**（38、39 + 1-2 张同量级 backlog 小票）：
   验收标准已写死在工单里，通过/失败是客观的，不需要另造评分。
 - 执行者路由：cursor 额度告急，自本日起优先 pi `w2E:pG`、agy `w2E:pF`。
+
+---
+
+2026-09-09 cursor planner（w2E:pE）按 round-3 证据写结论，**第 2 条继续留空**（H3：没有真实 `/planner-only status` 输出的条款不许勾；产品目前仍把策略配置值印成既成事实，§9 修法尚未落地）。
+
+- **对 Root 不伪称**：C/D 两组 Root 回答都说上下文里没有自己的模型标识（逐字在 `p18-contract-run/evidence-extract.md`）。插件不往 Root 上下文写 root 模型。`PI_PLANNER_ONLY_MODEL_ROOT` 换不掉正在跑的 root（唯一调用点是委派入参）。
+- **对操作者目前有误导**：status 无限定地印 `root: model=…`。这不是第 2 条的通过条件，是 §9 要修的缺陷。
+- **诚实缺口**：没有一份真实交互式 `/planner-only status` 全文；没测运行途中越线。
+
+round_id=cursor-pE-2026-09-09-note-09

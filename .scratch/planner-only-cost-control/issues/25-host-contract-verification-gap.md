@@ -4,13 +4,13 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent（2026-09-08 用户授权真实花费；剩余三条改由一次契约实跑取证，见文末）
+**Status:** done（2026-09-09 cursor planner：第 3–5 条按 round-3 证据勾上；09 第 2 条仍留空，见该票）
 
 - [x] 判定 §G 是否可以在本机修复：`@earendil-works/pi-tui` 装进宿主 node_modules 后，公开 `./preflight` 能否导入 `resolveSubagentLaunchContract`。
 - [x] 若可修复：修复后 `npm run test:e2e` 的 §G 不再打印「未验证」，且 `PI_PLANNER_ONLY_REQUIRE_CONTRACT=1` 下 `npm run test:release` 仍为 0。
-- [ ] §E（thinking 契约）与 §F（预算宿主契约）给出结论：是等 pi-subagents 暴露公开接口，还是改写 04-2 / 05-1 / 05-2 的验收措辞。结论写进各自工单，不静默勾选。
-- [ ] 工单 09 的宿主侧角色模型核对给出同样的结论。
-- [ ] 不勾 08 checkbox、不改 08 Status、不改 `spec.md`。
+- [x] §E（thinking 契约）与 §F（预算宿主契约）给出结论：是等 pi-subagents 暴露公开接口，还是改写 04-2 / 05-1 / 05-2 的验收措辞。结论写进各自工单，不静默勾选。
+- [x] 工单 09 的宿主侧角色模型核对给出同样的结论。
+- [x] 不勾 08 checkbox、不改 08 Status、不改 `spec.md`。
 
 ## Comments
 
@@ -130,3 +130,18 @@ round_id=claude-pD-2026-09-08-install-pitui
 - 19 的样本票取**本仓库自己的小票**（38、39 + 1-2 张同量级 backlog 小票）：
   验收标准已写死在工单里，通过/失败是客观的，不需要另造评分。
 - 执行者路由：cursor 额度告急，自本日起优先 pi `w2E:pG`、agy `w2E:pF`。
+
+---
+
+2026-09-09 cursor planner（w2E:pE）勾第 3–5 条。依据 round-3 契约实跑（`p18-contract-run-design.md` §9–§13 + `evidence-extract.md`），不是新代码。
+
+**第 3 条结论（写入 04 / 05，不静默改它们的 checkbox）：**
+
+- **§E**：已是真验证（pi-tui 安装之后）。04 第 2 条维持已勾。不必等新公开接口，也不必再改措辞。
+- **§F**：公开 `resolveSubagentBudgetContract` 仍不存在。05 第 1、2 条按 F1（schema 接受 `usageBudget` 形状）已经勾上，**维持**。F3 现已闭合：宿主收下字段但不执行（tokens 与 costUsd，委派时已超与子进程自身用量两条路径）。**不要把 05-1/05-2 改写成「宿主会在 hard 处停下」**。运行途中越线仍未专测（G1 诚实缺口）。
+
+**第 4 条：** 09 宿主侧结论已写入该票 Comments。09 第 2 条 checkbox **不勾**（见该票 2026-09-09 注）。
+
+**第 5 条：** `git diff 6715e03 -- spec.md .scratch/planner-only-cost-control/issues/08-phase-a-acceptance-rerun.md` 为空。契约实跑未勾 08、未改 spec。
+
+round_id=cursor-pE-2026-09-09-note-25
