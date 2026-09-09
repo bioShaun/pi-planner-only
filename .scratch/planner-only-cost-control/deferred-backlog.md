@@ -215,3 +215,124 @@ cursor 在本仓做执行者的记录是好的（p16-r074…r078 五轮全部 ac
   导致 HEAD 上每天必红。**注意**：一度怀疑这是「跨午夜可重置已用满的预算」的绕过，
   `p17-probe/r079-midnight-budget-bypass.mjs` 实测证伪——ledger 恢复的 Task 保留身份
   与已用额度，id 替换只发生在 store 不认识该 id 时。别再重复这个误判。
+
+---
+
+# G. 交棒给 cursor（2026-09-09，claude planner 因额度不足退出）
+
+用户 2026-09-09：**「你将当前的进度总结下来交接给 cursor，我的 opus 额度不足了」**。
+本节是那份交接。**F 节仍然全部有效**，G 节只做三件事：更新事实基线、记录轮 3 的结果、
+把 F4 里「不能交给 cursor」的两轮重新裁决。
+
+## G0. 事实基线（2026-09-09 交棒时刻）
+
+- 分支 `planner-only-cost-control`，**HEAD `6715e03`**（F0 记的 `6d93821` 已过期：
+  其后 p17-r080/r081 落地了工单 18，p18 落地了契约实跑产物）。工作区干净。
+- 阶段 17，pairctl 记 `phase_round_count=3`，`rounds_total=81`。
+- **验收基线已在 `6715e03` 上实跑复核**（日志 `p17-r082-baseline.log`，slot 前置
+  `p17-r082-slot-audit.log` / `p17-r082-slot-status.log`，当时无绕过 slot 的重进程）：
+  `npm run typecheck` = 0；`npm test` = 1，输出里出现 `planner-only architecture: PASS`
+  且**唯一**的 `AssertionError` 是 `naming.test.mjs:26` 的
+  `extension install is missing ledger-store.ts`（符合 F1 规则一的预期）；
+  `PI_PLANNER_ONLY_REQUIRE_CONTRACT=1 npm run test:e2e` = 0；`git diff --check` = 0。
+  **这是接手者可以直接引用的干净基线**——任何一轮之后跑出别的形状，都是那一轮引入的。
+- **真实模型花费累计 `$0.039576`**，用户 $1 硬顶**剩余约 `$0.96`**。
+  权威口径只有一个：`p18-contract-run/spend.py`（读宿主会话记录，不读插件账本，理由见该文件 docstring）。
+
+## G1. 轮 3 契约实跑：已完成，三票有结论
+
+产物全部在 `p18-contract-run/`（脚本与摘录已入库，960K 原始会话记录留盘不入库），
+设计与推理过程在 `p18-contract-run-design.md`（§8–§13），逐字证据在
+`p18-contract-run/evidence-extract.md`（可由该目录脚本重跑复现，合计数与 `spend.py` 对得上）。
+
+### 结论 1：**36-F3 闭合 —— 宿主接受 `usageBudget` 字段，但不执行它**
+
+两个预算维度 × 两种「谁的用量算数」的解读，四条路径全部实测放行：
+
+| 组 | 发到线上的 hard 上限 | 子进程实际用量 | 结果 |
+|---|---|---|---|
+| A2 | `tokens.hard=1` | 9.3k token | 启动、跑完，没被停 |
+| B2 | `tokens.hard=200000` | 9.3k token | 启动（对照） |
+| A3 | `costUsd.hard=0.0001` | **$0.0022（上限的 22 倍）** | 启动、跑完，没被停 |
+
+**A 组单独看是空转的，记录里保留了这个判断**：A 组的子进程跑本地模型，自报 0 token，
+`0 < 1` 成立，一个正确执行上限的宿主同样会放行——「A 组启动了」无法区分
+「宿主不执行」与「宿主执行了但确实没超」。A2/A3 才是真正有判别力的两条。
+
+**后果（必须写进任何相关工单）**：`floors.ts` 里的 hard 上限**只由本插件自己的记账兜底**，
+宿主不提供任何强制。`PI_PLANNER_ONLY_HOST_ENFORCES_TOKENS` / `..._COST_USD` 保持默认 false。
+
+### 结论 2：工单 09 第 2 条 —— 对 Root 不伪称，对操作者措辞误导
+
+C/D 两组对 root 模型的配置故意相左，Root 给出的回答**完全一致**（都说不出自己是什么模型），
+说明插件不往 Root 上下文里写 root 模型，**不存在对 Root 的伪称**。
+但 `/planner-only status` 会无限定地印出配置值 `root: model=tcuni/gpt-5.6-luna thinking=low`，
+而宿主此刻实跑的可能是 `qwen-local/qwen3.8-27b`。**修法见设计文档 §9 的三条**，未实施。
+
+顺带查实的两条机制（都在 `preflight-output.md` 里有逐字输出，免费探针，没花模型钱）：
+- `loadRoleModelPolicy()` 在 `PI_PLANNER_ONLY_ROLE_MODELS` 不为 1/true/on 时返回 `enabled=false`，
+  此时 `PI_PLANNER_ONLY_MODEL_WORKER` / `..._MODEL_ROOT` **被静默忽略**；
+  策略开启但缺 `THINKING_*` 时 `resolveRoleModel` 直接抛错。
+- 唯一活的调用点是 `orchestrate.ts:752`，作用在**委派入参**上——所以
+  `PI_PLANNER_ONLY_MODEL_ROOT` 只是展示值，**换不掉正在跑的 root**。
+
+### 结论 3：诚实记录的两个缺口（别当成已验证）
+
+- **没有拿到 `/planner-only status` 的真实完整输出**：`pi -p` 模式下 Root 没有任何工具，
+  也没有 slash 命令派发能力（C/D 记录里工具调用集合为空即是证据）。
+  §9 的三条修法因此**尚未在真实 status 输出上验证过**。
+- **没有专门测「正在运行中的子进程超预算」**：四组都是「委派时就已超」，
+  宿主对**运行途中**越线的处理未取证。
+
+## G2. F4 的重新裁决：轮 4 现在必须交出去，但授权要收窄
+
+F4 写过「轮 3、轮 4 不能交给 cursor」，第一条理由是**花钱的授权不可转授**。
+现在用户 opus 额度不足、主动要求交棒，这条前提变了。裁决：
+
+- **轮 3 已完成**，该理由自然消解。
+- **轮 4（工单 19）确实要交出去**，但**接手者不继承「$1 随便花」**。
+  用户当初授权的是「≤$1 且最小化花费」，剩余 $0.96 是余额不是预算。
+
+**给接手 planner 的硬闸门（照抄进工单 19 的执行工单）**：
+
+1. **单轮驱动闸门 `CAP_USD` 默认 `0.10`，不许调高**。要超过 0.10，**停下来问用户**。
+2. **实验驱动脚本必须自带事前闸门**，不能只靠事后对账：
+   每次起 `pi` 之前先算已花金额，达到上限就 `exit 1` 拒绝启动下一组
+   （`p18-contract-run/run.sh` 的 `run_group()` 就是可直接复用的样板）。
+3. **对账只认宿主会话记录**。直接复用 `p18-contract-run/spend.py`，
+   **不要自己写一个读 `usage.jsonl` 的**——`writeUsageLog()`（`index.ts:442`）
+   在没有 Task 时提前返回，纯 root 轮次一行都不写，那样的对账在关键组上是瞎的。
+   同样别把插件镜像的 `type=custom` 记录（`root-turn:untasked:*`）也加进去，会把每个 root 轮次**算两遍**。
+4. **每组跑完立刻 `spend.py --require <session 目录>` 做 fail-closed 检查**：
+   会话记录不存在就报错退出，避免「花了钱但对账看不见」被当成「没花钱」。
+5. **子进程的花费记在它自己的记录里**（`session-X/<sess>/<uuid>/run-0/*.jsonl`），
+   不在根记录里。只统计根记录会漏掉子进程那一半——这是本轮实际踩过的坑。
+
+## G3. 接手后建议的顺序
+
+| 顺序 | 事项 | 花钱 | 说明 |
+|---|---|---|---|
+| 1 | F3 轮 1：工单 18 —— **已完成**（p17-r080/r081，HEAD 内） | 否 | 不用再派 |
+| 2 | F3 轮 2：记账性勾选（10/11/12/20/21） | 否 | planner 自己逐条按产物复核后勾，别派轮次，也别不复核就勾 |
+| 3 | 设计文档 §9 三条：status 的 role-model 措辞加限定、无条件打印真实 root 模型 | 否 | 轮 3 直接带出来的用户可见问题，改动小，可派 pi |
+| 4 | 工单 19 真实费用对照实验 | **是** | 按 G2 五条闸门；样本＝本仓库小票 38、39 + 1–2 张同量级 backlog 小票（用户 2026-09-08 选定）。**失败样本不剔除；报告里不许出现未经测量的节省比例** |
+| 5 | F6 未了项 | 否 | B10 的窄变异、PASS 横幅移到文件末尾、E 档三条 |
+
+## G4. 交棒时必须一起带走的纪律（F5 之外新增的两条）
+
+1. **判一条断言「空转」之前先怀疑自己的变异**（F2 已写，本轮再次应验：
+   变异过宽会先打红无关的既有断言，看起来像目标断言没反应）。
+2. **实验驱动自己就得带闸门**。轮 3 我第一版驱动有两个静默失效，都是在花钱之前靠免费探针发现的：
+   驱动没开 `PI_PLANNER_ONLY_ROLE_MODELS=1`，于是 `MODEL_WORKER` 全程无效、
+   子进程本会跑在**付费的 root 模型**上；对账脚本读的是插件账本，在不委派的 C/D 组**恒为 0**。
+   **凡是要花钱的实验，先用免费模型或纯离线探针把每一条机制走通一遍再开钱。**
+
+## G5. 已知会误导接手者的三件事
+
+1. **`~/.pi/agent/git/github.com/bioShaun/pi-planner-only` 是过期的安装副本**（停在 `9027d8f`，
+   `grep -c 'usageBudget' orchestrate.ts` = 0）。已发布/已安装的插件**不含**预算契约特性。
+   `naming.test.mjs` 必红就是因为它对着这份副本跑（见 F1 规则一）。
+2. **`p18-contract-run/session-*/` 未入库**（960K，`.gitignore` 挡住）。
+   结论所依据的逐字数字在 `evidence-extract.md` 里，那份**已入库**。原始记录还在盘上，可审计。
+3. **本 cwd 四个 agent 共用**（pD/pE/pF/pG）。散落的 `.planner-only-test-*` 目录可能是
+   别人正在跑的沙箱，**不要批量删**；要清理就 `mv` 进 `quarantine/`（F5 第 6 条）。
