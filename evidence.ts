@@ -166,6 +166,13 @@ export interface CaptureEvidenceOptions {
 	taskId: string;
 	workerRunId: string;
 	baseGitRef?: string;
+	/**
+	 * Explicit additional linked-worktree roots declared on the TaskSpec.
+	 * Each root is probed independently; dirty paths from those roots are
+	 * recorded as absolute paths under that root. Arbitrary sibling
+	 * directories are never scanned — only these declared roots.
+	 */
+	additionalWorktreeRoots?: readonly string[];
 }
 
 function isHashableFilePath(path: string): boolean {
@@ -241,8 +248,39 @@ async function diffNamesBetweenRefs(
 }
 
 /**
+ * Normalize and dedupe declared additional worktree roots. Drops empties,
+ * resolves to absolute paths, and omits any root that is the same as `cwd`.
+ */
+function normalizeAdditionalWorktreeRoots(
+	cwd: string,
+	roots: readonly string[] | undefined,
+): string[] {
+	if (!roots?.length) return [];
+	const primary = resolve(cwd);
+	const seen = new Set<string>();
+	const normalized: string[] = [];
+	for (const root of roots) {
+		const trimmed = root.trim();
+		if (!trimmed) continue;
+		const absolute = resolve(trimmed);
+		if (absolute === primary) continue;
+		if (seen.has(absolute)) continue;
+		seen.add(absolute);
+		normalized.push(absolute);
+	}
+	return normalized;
+}
+
+/** Prefix relative porcelain paths with an absolute worktree root. */
+function absolutizePaths(root: string, paths: readonly string[]): string[] {
+	return paths.map((path) => (isAbsolute(path) ? resolve(path) : resolve(root, path)));
+}
+
+/**
  * Snapshot the workspace. Non-Git directories degrade to a cwd-only ref rather
- * than failing the lifecycle (spec §19.4).
+ * than failing the lifecycle (spec §19.4). When `additionalWorktreeRoots` is
+ * set, each declared root is probed too and its dirty paths are merged in as
+ * absolute paths (Variant C). Undeclared siblings are never scanned.
  */
 export async function captureEvidence(
 	run: GitRunner,
@@ -250,6 +288,7 @@ export async function captureEvidence(
 ): Promise<EvidenceRef> {
 	const cwd = resolve(options.cwd);
 	const generatedAt = new Date().toISOString();
+	const additionalRoots = normalizeAdditionalWorktreeRoots(cwd, options.additionalWorktreeRoots);
 	let probe: GitProbe;
 	try {
 		probe = await probeGit(run, cwd);
@@ -269,22 +308,75 @@ export async function captureEvidence(
 		? await diffNamesBetweenRefs(run, cwd, options.baseGitRef, probe.head)
 		: undefined;
 
+	const mergedChanged = [...probe.changedPaths];
+	const mergedUntracked = [...probe.untrackedPaths];
+	const mergedDirty: Record<string, string | null> = { ...(dirtyPathHashes ?? {}) };
+	let hasDirty = dirtyPathHashes !== undefined;
+	const mergedCommitted = [...(committedPaths ?? [])];
+	let hasCommitted = committedPaths !== undefined;
+	const porcelainParts: string[] = [];
+	if (probe.statusPorcelain !== null) porcelainParts.push(probe.statusPorcelain);
+	let statusFailed = probe.statusFailed;
+	const diffStatParts: string[] = [];
+	if (probe.diffStat) diffStatParts.push(probe.diffStat);
+
+	for (const root of additionalRoots) {
+		let extra: GitProbe;
+		try {
+			extra = await probeGit(run, root);
+		} catch {
+			continue;
+		}
+		if (!extra.available) continue;
+		if (extra.statusFailed) statusFailed = true;
+		if (extra.statusPorcelain !== null) porcelainParts.push(extra.statusPorcelain);
+		const absChanged = absolutizePaths(root, extra.changedPaths);
+		const absUntracked = absolutizePaths(root, extra.untrackedPaths);
+		mergedChanged.push(...absChanged);
+		mergedUntracked.push(...absUntracked);
+		const extraHashes = await hashDirtyPaths(run, root, extra.changedPaths);
+		if (extraHashes) {
+			hasDirty = true;
+			for (const [rel, hash] of Object.entries(extraHashes)) {
+				mergedDirty[isAbsolute(rel) ? resolve(rel) : resolve(root, rel)] = hash;
+			}
+		}
+		if (options.baseGitRef && extra.head) {
+			const extraCommitted = await diffNamesBetweenRefs(run, root, options.baseGitRef, extra.head);
+			if (extraCommitted) {
+				hasCommitted = true;
+				mergedCommitted.push(...absolutizePaths(root, extraCommitted));
+			}
+		}
+		if (extra.diffStat) diffStatParts.push(extra.diffStat);
+	}
+
+	const changedPaths = [...new Set(mergedChanged.filter(Boolean))].sort();
+	const untrackedPaths = [...new Set(mergedUntracked.filter(Boolean))].sort();
+	const committedMerged = hasCommitted
+		? [...new Set(mergedCommitted.filter(Boolean))].sort()
+		: undefined;
+	const statusHash = porcelainParts.length > 0 ? hashStatus(porcelainParts.join("\n")) : probe.statusHash;
+	const diffStat = diffStatParts.length
+		? diffStatParts.join("\n").trim().slice(-MAX_DIFF_STAT_CHARS)
+		: null;
+
 	const sample: EvidenceRef = {
 		cwd,
 		taskId: options.taskId,
 		workerRunId: options.workerRunId,
 		...(options.baseGitRef ? { baseGitRef: options.baseGitRef } : {}),
 		...(probe.head ? { finalGitRef: probe.head } : {}),
-		...(probe.statusHash ? { gitStatusHash: probe.statusHash } : {}),
-		...(probe.statusFailed ? { statusProbeFailed: true } : {}),
-		changedPaths: probe.changedPaths,
-		...(dirtyPathHashes ? { dirtyPathHashes } : {}),
-		...(committedPaths ? { committedPaths } : {}),
-		...(probe.diffStat ? { diffStat: probe.diffStat } : {}),
+		...(statusHash ? { gitStatusHash: statusHash } : {}),
+		...(statusFailed ? { statusProbeFailed: true } : {}),
+		changedPaths,
+		...(hasDirty ? { dirtyPathHashes: mergedDirty } : {}),
+		...(committedMerged ? { committedPaths: committedMerged } : {}),
+		...(diffStat ? { diffStat } : {}),
 		gitAvailable: true,
 		generatedAt,
 	};
-	untrackedPathsBySample.set(sample, probe.untrackedPaths);
+	untrackedPathsBySample.set(sample, untrackedPaths);
 	return sample;
 }
 
@@ -503,11 +595,30 @@ export function normalizeEvidencePaths(paths: readonly string[], cwd: string): s
  * never appear in the workspace Git porcelain digest, so attribution against
  * truthPaths / currentPaths would forever mark them missing or over-reported.
  */
-export function isOutsideWorkspacePath(path: string, cwd: string): boolean {
-	const root = resolve(cwd);
-	const target = resolve(cwd, path);
-	const rel = relative(root, target);
+function isOutsideSingleRoot(target: string, root: string): boolean {
+	const resolvedRoot = resolve(root);
+	const rel = relative(resolvedRoot, target);
 	return rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel);
+}
+
+/**
+ * Absolute paths outside the Task cwd (e.g. ~/.pi/agent/planner-only/pricing.json)
+ * never appear in the workspace Git porcelain digest, so attribution against
+ * truthPaths / currentPaths would forever mark them missing or over-reported.
+ * Paths under a declared additional worktree root (Variant C) are inside the
+ * attribution workspace and are not exempted.
+ */
+export function isOutsideWorkspacePath(
+	path: string,
+	cwd: string,
+	additionalWorktreeRoots: readonly string[] = [],
+): boolean {
+	const target = resolve(cwd, path);
+	if (!isOutsideSingleRoot(target, cwd)) return false;
+	for (const root of additionalWorktreeRoots) {
+		if (!isOutsideSingleRoot(target, root)) return false;
+	}
+	return true;
 }
 
 export interface EvidenceComparison {
@@ -540,6 +651,12 @@ export interface CompareEvidenceOptions {
 	 * so a schema fix cannot deadlock on attribution (F6 / ticket 28 variant A).
 	 */
 	reportOnly?: boolean;
+	/**
+	 * Declared additional worktree roots from the TaskSpec (Variant C). Used to
+	 * treat paths under those roots as in-workspace and to remap relative
+	 * Worker declarations onto a root when the primary cwd form is absent.
+	 */
+	additionalWorktreeRoots?: readonly string[];
 }
 
 function sameCwd(left: string, right: string): boolean {
@@ -548,6 +665,29 @@ function sameCwd(left: string, right: string): boolean {
 
 function sorted(paths: readonly string[]): string[] {
 	return [...paths].sort();
+}
+
+/**
+ * Variant C — map a Worker-declared path onto the sample vocabulary.
+ * Absolute declarations stay absolute. Relative declarations resolve against
+ * `cwd` first; when that form is absent from `known` but a declared
+ * additional worktree root carries the same relative path, prefer the
+ * absolute form under that root so linked-worktree edits attribute.
+ */
+function resolveDeclaredPath(
+	path: string,
+	cwd: string,
+	additionalRoots: readonly string[],
+	known: Set<string>,
+): string {
+	const primary = normalizeEvidencePaths([path], cwd)[0];
+	if (isAbsolute(path) || additionalRoots.length === 0) return primary;
+	if (known.has(primary)) return primary;
+	for (const root of additionalRoots) {
+		const candidate = normalizeEvidencePaths([path], root)[0];
+		if (known.has(candidate)) return candidate;
+	}
+	return primary;
 }
 
 /** RF-1 — normalize a dirtyPathHashes record into absolute-path keys. */
@@ -619,6 +759,10 @@ export function compareEvidence(
 	}
 
 	const pathCwd = current.cwd || reported.cwd || base.cwd;
+	const additionalRoots = normalizeAdditionalWorktreeRoots(
+		pathCwd,
+		options.additionalWorktreeRoots,
+	);
 	const basePaths = new Set(normalizeEvidencePaths(base.changedPaths ?? [], base.cwd || pathCwd));
 	const currentPaths = new Set(normalizeEvidencePaths(current.changedPaths ?? [], current.cwd || pathCwd));
 	// RF-1 — truthPaths is the union of three Root-derived sets:
@@ -685,16 +829,24 @@ export function compareEvidence(
 		reasons.push("report evidence incomplete — no HEAD/status/content binding to verify");
 	}
 
+	const knownForDeclare = new Set([...basePaths, ...currentPaths, ...truthSet, ...committedPaths]);
+	const declareCwd = reported.cwd || pathCwd;
 	const declaredPaths = new Set(
-		normalizeEvidencePaths(reported.changedPaths ?? report.changedFiles ?? [], reported.cwd || pathCwd),
+		(reported.changedPaths ?? report.changedFiles ?? []).map((path) =>
+			resolveDeclaredPath(path, declareCwd, additionalRoots, knownForDeclare),
+		),
 	);
 	const allowedPaths = new Set(
 		normalizeEvidencePaths(options.scope?.allowedPaths ?? [], reported.cwd || pathCwd),
 	);
 	const hasAllowList = allowedPaths.size > 0;
 	const inScope = (path: string): boolean => (hasAllowList ? allowedPaths.has(path) : true);
-	const outOfRepoDeclared = [...declaredPaths].filter((path) => isOutsideWorkspacePath(path, pathCwd));
-	const inRepoDeclared = [...declaredPaths].filter((path) => !isOutsideWorkspacePath(path, pathCwd));
+	const outOfRepoDeclared = [...declaredPaths].filter((path) =>
+		isOutsideWorkspacePath(path, pathCwd, additionalRoots),
+	);
+	const inRepoDeclared = [...declaredPaths].filter((path) =>
+		!isOutsideWorkspacePath(path, pathCwd, additionalRoots),
+	);
 
 	const undeclaredPaths: string[] = [];
 	for (const path of truthSet) {

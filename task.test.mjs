@@ -108,6 +108,26 @@ const extractedCumulative = extractTaskSpecDetails(JSON.stringify({ taskId: "T-c
 assert.deepEqual(extractedCumulative.spec.cumulativeBudget, { tokens: 100, costUsd: 2 });
 assert.equal(extractTaskSpecDetails(JSON.stringify({ ...spec, budget: { tokens: 10 } })).spec.cumulativeBudget, undefined);
 
+// Variant C — additionalWorktreeRoots on TaskSpec
+assert.deepEqual(validateTaskSpec({ ...spec, additionalWorktreeRoots: ["/worktrees/review"] }), []);
+assert.ok(validateTaskSpec({ ...spec, additionalWorktreeRoots: "nope" }).includes("additionalWorktreeRoots must be an array of strings"));
+assert.ok(validateTaskSpec({ ...spec, additionalWorktreeRoots: ["", "  "] }).includes("additionalWorktreeRoots entries must be non-empty strings"));
+const withRoots = createTaskSpec({
+	objective: "cross-worktree",
+	cwd,
+	additionalWorktreeRoots: ["/worktrees/review", "/worktrees/review", cwd, "  "],
+}, "T-worktree-c");
+assert.deepEqual(withRoots.additionalWorktreeRoots, [resolve("/worktrees/review")]);
+const extractedRoots = extractTaskSpecDetails(JSON.stringify({
+	taskId: "T-worktree-c2",
+	objective: "cross-worktree extract",
+	cwd,
+	role: "worker",
+	additionalWorktreeRoots: ["/worktrees/review"],
+}));
+assert.deepEqual(extractedRoots.spec.additionalWorktreeRoots, [resolve("/worktrees/review")]);
+assert.equal(extractTaskSpecDetails(JSON.stringify({ ...spec, budget: { tokens: 10 } })).spec.additionalWorktreeRoots, undefined);
+
 assert.ok(validateTaskSpec({ ...spec, budget: { tokens: Number.POSITIVE_INFINITY } }).some((e) => /budget\.tokens must be a positive finite number/.test(e)));
 assert.ok(validateTaskSpec({ ...spec, budget: { tokens: "5000" } }).some((e) => /budget\.tokens must be a positive finite number/.test(e)));
 assert.ok(validateTaskSpec({ ...spec, budget: { costUsd: 0 } }).some((e) => /budget\.costUsd must be a positive finite number/.test(e)));

@@ -86,6 +86,8 @@ export interface CreateTaskSpecInput {
 	expectedEvidence?: ExpectedEvidence;
 	stopConditions?: string[];
 	parentEvidenceRef?: EvidenceRef;
+	/** Explicit additional linked-worktree roots; resolved absolute, cwd omitted. */
+	additionalWorktreeRoots?: string[];
 }
 
 export function createTaskId(now: Date = new Date(), sequence = 1): string {
@@ -122,7 +124,21 @@ export function createTaskSpec(input: CreateTaskSpecInput, taskId = createTaskId
 		expectedEvidence: input.expectedEvidence ?? {},
 		stopConditions: uniqueNonEmpty(input.stopConditions ?? []),
 		...(input.parentEvidenceRef ? { parentEvidenceRef: input.parentEvidenceRef } : {}),
+		...(input.additionalWorktreeRoots?.length
+			? {
+				additionalWorktreeRoots: [
+					...new Set(
+						uniqueNonEmpty(input.additionalWorktreeRoots)
+							.map((root) => resolve(root))
+							.filter((root) => root !== resolve(input.cwd)),
+					),
+				],
+			}
+			: {}),
 	};
+	if (spec.additionalWorktreeRoots && spec.additionalWorktreeRoots.length === 0) {
+		delete (spec as { additionalWorktreeRoots?: string[] }).additionalWorktreeRoots;
+	}
 	if (input.validation?.required === false) explicitlyNoValidation.add(spec);
 	return spec;
 }
@@ -151,6 +167,13 @@ export function validateTaskSpec(value: unknown): string[] {
 	}
 	if (value.stopConditions !== undefined && !isStringArray(value.stopConditions)) {
 		errors.push("stopConditions must be an array of strings");
+	}
+	if (value.additionalWorktreeRoots !== undefined) {
+		if (!isStringArray(value.additionalWorktreeRoots)) {
+			errors.push("additionalWorktreeRoots must be an array of strings");
+		} else if (value.additionalWorktreeRoots.some((root) => !root.trim())) {
+			errors.push("additionalWorktreeRoots entries must be non-empty strings");
+		}
 	}
 	if (value.validation !== undefined) {
 		if (!isPlainObject(value.validation)) errors.push("validation must be an object when present");
@@ -327,6 +350,9 @@ export function extractTaskSpecDetails(
 					validation: isPlainObject(parsed.validation) ? (parsed.validation as Partial<TaskValidation>) : undefined,
 					expectedEvidence: isPlainObject(parsed.expectedEvidence) ? (parsed.expectedEvidence as ExpectedEvidence) : undefined,
 					stopConditions: isStringArray(parsed.stopConditions) ? parsed.stopConditions : undefined,
+					additionalWorktreeRoots: isStringArray(parsed.additionalWorktreeRoots)
+						? parsed.additionalWorktreeRoots
+						: undefined,
 				},
 				isNonEmptyString(parsed.taskId) ? parsed.taskId : undefined,
 			);

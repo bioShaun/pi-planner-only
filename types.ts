@@ -146,6 +146,17 @@ export interface TaskSpec {
 	expectedEvidence: ExpectedEvidence;
 	stopConditions: string[];
 	parentEvidenceRef?: EvidenceRef;
+	/**
+	 * Extra linked Git worktree roots Root must sample for evidence
+	 * attribution, in addition to `cwd`. Paths are absolute (resolved when
+	 * the TaskSpec is created). Only these declared roots are probed —
+	 * siblings of `cwd` are never discovered via `git worktree list` or
+	 * directory scanning. Changes under a declared root are recorded as
+	 * absolute paths under that root; relative Worker declarations are
+	 * remapped onto a declared root when the primary `cwd` resolution is
+	 * absent from the sample but the root-relative form is present.
+	 */
+	additionalWorktreeRoots?: string[];
 	budget?: {
 		tokens?: number;
 		costUsd?: number;

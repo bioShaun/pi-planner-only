@@ -198,12 +198,33 @@ function isReportOnlyPrompt(prompt: string): boolean {
 	return /\bDo not modify files\b/i.test(prompt) || /\breport-only correction\b/i.test(prompt);
 }
 
+function additionalWorktreeRootsOf(task: TaskRecord): readonly string[] | undefined {
+	const roots = task.spec?.additionalWorktreeRoots;
+	return roots?.length ? roots : undefined;
+}
+
+function captureEvidenceOptionsFor(
+	task: TaskRecord,
+	workerRunId: string,
+	extra: { baseGitRef?: string } = {},
+) {
+	const roots = additionalWorktreeRootsOf(task);
+	return {
+		cwd: task.cwd,
+		taskId: task.taskId,
+		workerRunId,
+		...(extra.baseGitRef ? { baseGitRef: extra.baseGitRef } : {}),
+		...(roots ? { additionalWorktreeRoots: roots } : {}),
+	};
+}
+
 function compareWithRootSamples(
 	task: TaskRecord,
 	current: EvidenceRef,
 	report: WorkerReport,
 	options: { reportOnly?: boolean } = {},
 ) {
+	const roots = additionalWorktreeRootsOf(task);
 	return compareEvidence(
 		task.baseEvidence ?? missingBaseEvidence(task, current.workerRunId),
 		current,
@@ -211,6 +232,7 @@ function compareWithRootSamples(
 		{
 			...(task.spec?.scope ? { scope: task.spec.scope } : {}),
 			...(options.reportOnly ? { reportOnly: true } : {}),
+			...(roots ? { additionalWorktreeRoots: roots } : {}),
 		},
 	);
 }
@@ -1225,11 +1247,10 @@ export class PlannerOrchestrator {
 			task = this.store.require(task.taskId);
 		}
 		if (role !== "explorer" && !task.baseEvidence) {
-			const base: EvidenceRef = await captureEvidence(this.gitRunner, {
-				cwd: task.cwd,
-				taskId: task.taskId,
-				workerRunId: event.toolCallId,
-			});
+			const base: EvidenceRef = await captureEvidence(
+				this.gitRunner,
+				captureEvidenceOptionsFor(task, event.toolCallId),
+			);
 			this.store.setBaseEvidence(task.taskId, base);
 		}
 		// A writable begin was gated by writerConflict above; a read-only role
@@ -1796,14 +1817,14 @@ export class PlannerOrchestrator {
 		let evidence: string | undefined;
 
 		if (verdict === "pass" && report) {
-			const currentSample = await captureEvidence(this.gitRunner, {
-				cwd: current.cwd,
-				taskId: current.taskId,
-				workerRunId: report.evidence.workerRunId,
-				...(current.baseEvidence?.finalGitRef
-					? { baseGitRef: current.baseEvidence.finalGitRef }
-					: {}),
-			});
+			const currentSample = await captureEvidence(
+				this.gitRunner,
+				captureEvidenceOptionsFor(current, report.evidence.workerRunId, {
+					...(current.baseEvidence?.finalGitRef
+						? { baseGitRef: current.baseEvidence.finalGitRef }
+						: {}),
+				}),
+			);
 			comparison = compareWithRootSamples(current, currentSample, report);
 			// Ticket 10 — acceptance compares the workspace snapshot digest, not
 			// HEAD/status hashes. Unknown or stale bindings refuse the PASS.
@@ -2176,12 +2197,12 @@ export class PlannerOrchestrator {
 		const report = task.reports.at(-1);
 		let comparison: EvidenceComparison | undefined;
 		if (report) {
-			const currentSample = await captureEvidence(this.gitRunner, {
-				cwd: task.cwd,
-				taskId: task.taskId,
-				workerRunId: report.evidence.workerRunId,
-				...(task.baseEvidence?.finalGitRef ? { baseGitRef: task.baseEvidence.finalGitRef } : {}),
-			});
+			const currentSample = await captureEvidence(
+				this.gitRunner,
+				captureEvidenceOptionsFor(task, report.evidence.workerRunId, {
+					...(task.baseEvidence?.finalGitRef ? { baseGitRef: task.baseEvidence.finalGitRef } : {}),
+				}),
+			);
 			comparison = compareWithRootSamples(task, currentSample, report);
 			if (review.verdict === "pass") {
 				// Ticket 02 / story 26 — accept re-samples the workspace. A PASS
@@ -2275,12 +2296,12 @@ export class PlannerOrchestrator {
 				? `task identity rejected: ${identityErrors.join("; ")}`
 				: extracted.error;
 
-		const current = await captureEvidence(this.gitRunner, {
-			cwd: task.cwd,
-			taskId: task.taskId,
-			workerRunId: toolCallId,
-			...(task.baseEvidence?.finalGitRef ? { baseGitRef: task.baseEvidence.finalGitRef } : {}),
-		});
+		const current = await captureEvidence(
+			this.gitRunner,
+			captureEvidenceOptionsFor(task, toolCallId, {
+				...(task.baseEvidence?.finalGitRef ? { baseGitRef: task.baseEvidence.finalGitRef } : {}),
+			}),
+		);
 		if (report) {
 			// Bind before recording so the stored report carries Root's own
 			// report-time content hashes for the acceptance-boundary comparison.
