@@ -1,0 +1,7 @@
+# Host transcripts and driver logs; conclusions go in a tracked extract later.
+session-*/
+*-stdout.log
+*-stderr.log
+pi-was-invoked
+gate-probe-work/
+.agent-dir-*/

@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent（2026-09-08 用户授权真实花费，硬上限 $1，见文末）
 
-- [ ] 样本票、模型配置、预算上限在实验前写定并记录。
+- [x] 样本票、模型配置、预算上限在实验前写定并记录。（2026-09-09 cursor `w2E:pE`：`.scratch/planner-only-cost-control/p19-experiment/freeze.md`。样本只 38/39 各跑两 arm；未点名的 +1–2 张不加。`CAP_USD=0.10` 写死。）
 - [ ] 每次运行前执行 `slot audit` 与 `slot status` 并记录。
 - [ ] 每次运行有完整记录文件，失败运行不剔除。
 - [ ] 汇总报告给出两方案的各项指标与样本量，说明质量差异。
