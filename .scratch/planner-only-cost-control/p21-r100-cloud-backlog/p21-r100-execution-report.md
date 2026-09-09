@@ -4,7 +4,7 @@
 - taskId: `p21-r100-cloud-backlog`
 - branch: `cloud-backlog-2026-09-09`
 - start HEAD: `7de849add0e6cc9ea8e126e81aa18b086f4aca72`
-- end HEAD: 
+- end HEAD: `2475429fcb8a0c6c947c8954dcb0cb15f49fafb0` (product landing; docs tip is branch HEAD at PR open)
 - base for PR: `planner-only-cost-control`
 
 ## Change summary
