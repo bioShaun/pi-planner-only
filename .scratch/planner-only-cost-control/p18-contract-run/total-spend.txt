@@ -1,0 +1,1 @@
+total_spend_usd=0.039576

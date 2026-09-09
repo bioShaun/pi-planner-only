@@ -1,0 +1,6 @@
+# Raw host session transcripts: 960K, reproducible by re-running run.sh.
+# The conclusions they support are extracted verbatim into evidence-extract.md,
+# which IS tracked. Keep the raw records on disk for audit, out of the repo.
+session-*/
+*-stdout.log
+*-stderr.log
