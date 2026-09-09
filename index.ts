@@ -1116,12 +1116,26 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				const log = usageLogPath();
 				const logStatus = log ? `${log} (enabled)` : "disabled";
 				const roleModelPolicy = loadRoleModelPolicy();
+				const rootIdentity = rootModelIdentity(ctx.model) ?? selectedModel;
+				const actualRootDisplay = rootIdentity
+					? rootIdentity.provider ? `${rootIdentity.provider}/${rootIdentity.id}` : rootIdentity.id
+					: "未知（宿主未提供 ctx.model）";
+				const configuredLines = roleModelPolicy.enabled
+					? configuredRoleModelSummaries(roleModelPolicy).map((line) =>
+						line.startsWith("root:")
+							? `${line}（策略配置值；root 不经委派，此值不改变实际运行的模型）`
+							: line,
+					)
+					: ["无模型成本保证"];
 				const lines = [
 					`Planner-only mode is ${isDisabled() ? "off" : "on"} (source: ${guardDecisionSource()}).`,
-					...(roleModelPolicy.enabled
-						? configuredRoleModelSummaries(roleModelPolicy)
-						: ["无模型成本保证"]),
+					...configuredLines,
+					`实际运行的 root: ${actualRootDisplay}`,
 				];
+				const configuredRoot = roleModelPolicy.enabled ? roleModelPolicy.roles.root?.model : undefined;
+				if (roleModelPolicy.enabled && configuredRoot && rootIdentity && configuredRoot !== actualRootDisplay) {
+					lines.push("root 策略配置与实际运行的模型不一致");
+				}
 				const forcing = envForcingValue();
 				if (forcing !== undefined) {
 					lines.push(`Environment: PI_PLANNER_ONLY=${forcing} forces planner-only ${envForcesGuard() ? "on" : "off"}.`);

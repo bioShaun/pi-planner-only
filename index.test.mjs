@@ -760,6 +760,9 @@ try {
 		process.env.PI_PLANNER_ONLY_THINKING_ROOT = "off";
 		await commands.get("planner-only").handler("status", ctx);
 		assert.match(notices.at(-1).message, /root: model=policy-test\/root thinking=off/);
+		assert.match(notices.at(-1).message, /（策略配置值；root 不经委派，此值不改变实际运行的模型）/);
+		assert.match(notices.at(-1).message, /实际运行的 root: 未知（宿主未提供 ctx\.model）/);
+		assert.doesNotMatch(notices.at(-1).message, /root 策略配置与实际运行的模型不一致/);
 		assert.doesNotMatch(notices.at(-1).message, /Root .*已切换|Root.*switched/);
 		assert.equal(ctx.model, originalModel, "status must not mutate the host Root model");
 	} finally {
@@ -767,6 +770,40 @@ try {
 			PI_PLANNER_ONLY_ROLE_MODELS: saved.flag,
 			PI_PLANNER_ONLY_MODEL_ROOT: saved.rootModel,
 			PI_PLANNER_ONLY_THINKING_ROOT: saved.rootThinking,
+		})) {
+			if (value === undefined) delete process.env[key]; else process.env[key] = value;
+		}
+	}
+}
+
+// p18-r084: Status distinguishes configured Root policy from actual host identity.
+{
+	const saved = {
+		flag: process.env.PI_PLANNER_ONLY_ROLE_MODELS,
+		rootModel: process.env.PI_PLANNER_ONLY_MODEL_ROOT,
+	};
+	try {
+		process.env.PI_PLANNER_ONLY_ROLE_MODELS = "1";
+		process.env.PI_PLANNER_ONLY_MODEL_ROOT = "policy-test/root";
+		ctx.model = { provider: "actual", id: "root" };
+		notices.length = 0;
+		await commands.get("planner-only").handler("status", ctx);
+		assert.match(notices.at(-1).message, /root 策略配置与实际运行的模型不一致/);
+
+		ctx.model = { provider: "policy-test", id: "root" };
+		notices.length = 0;
+		await commands.get("planner-only").handler("status", ctx);
+		assert.doesNotMatch(notices.at(-1).message, /root 策略配置与实际运行的模型不一致/);
+
+		process.env.PI_PLANNER_ONLY_ROLE_MODELS = "0";
+		delete ctx.model;
+		notices.length = 0;
+		await commands.get("planner-only").handler("status", ctx);
+		assert.match(notices.at(-1).message, /实际运行的 root: 未知（宿主未提供 ctx\.model）/);
+	} finally {
+		for (const [key, value] of Object.entries({
+			PI_PLANNER_ONLY_ROLE_MODELS: saved.flag,
+			PI_PLANNER_ONLY_MODEL_ROOT: saved.rootModel,
 		})) {
 			if (value === undefined) delete process.env[key]; else process.env[key] = value;
 		}
