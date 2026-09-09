@@ -1,0 +1,14 @@
+diff --git a/orchestrate.ts b/orchestrate.ts
+index c21df04..7017c1b 100644
+--- a/orchestrate.ts
++++ b/orchestrate.ts
+@@ -1429,6 +1429,9 @@ export class PlannerOrchestrator {
+ 				}
+ 			}
+ 		}
++		if (this.snapshots?.isQuarantined(task.taskId)) {
++			lines.push("Ledger quarantine: 本会话拒绝写入该 taskId 的账本（隔离在会话内不解除）");
++		}
+ 		return lines.join("\n");
+ 	}
+ 

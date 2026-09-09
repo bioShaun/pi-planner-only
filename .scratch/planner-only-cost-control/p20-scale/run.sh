@@ -33,6 +33,12 @@ link_agent_dir() {
 run_group() {
   local group=$1 prompt=$2 worker=$3
   shift 3
+  # Baseline gate (r096 lesson): the sample worktree must be clean, or the
+  # leftover sample gets misread as this run's product. Refuse, never auto-restore.
+  if ! git -C "$WT" diff --quiet -- orchestrate.ts orchestrate.test.mjs; then
+    echo "WORKTREE BASELINE GATE: $WT has tracked diff in orchestrate.ts/orchestrate.test.mjs; restore it first" >&2
+    exit 1
+  fi
   local before
   before=$(spend_total)
   if python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) < float(sys.argv[2]) else 1)' "$before" "$CAP_USD"; then
@@ -77,13 +83,13 @@ run_group() {
 }
 
 if [[ $# -eq 0 ]]; then
-  echo "no group supplied; driver disarmed after E2/E3 comparison" >&2
+  echo "no group supplied; driver disarmed after E1/E2/E3 comparison" >&2
   exit 2
 fi
 
 for group in "$@"; do
   case "$group" in
-    SPLIT-E2|ISO-E2|ISO-E3|SPLIT-E3|ISO-E1|SPLIT-E1)
+    ISO-E1|ISO-E1R2|SPLIT-E1|SPLIT-E2|ISO-E2|ISO-E3|SPLIT-E3)
       echo "group $group is not armed" >&2
       exit 2
       ;;

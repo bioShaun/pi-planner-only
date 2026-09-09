@@ -1,0 +1,33 @@
+diff --git a/orchestrate.test.mjs b/orchestrate.test.mjs
+index fa78d27..cd88c72 100644
+--- a/orchestrate.test.mjs
++++ b/orchestrate.test.mjs
+@@ -5886,6 +5886,28 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
+ 	}
+ }
+ 
++{
++	const dir = mkdtempSync(join(process.cwd(), ".planner-only-16b-l25-"));
++	try {
++		const bad = spentTaskRecord("T-20260908-965", 0.04, 0.05);
++		new LedgerSnapshotStore(dir).write(bad);
++		const path = join(dir, "planner-only", "ledger", `${bad.taskId}.json`);
++		writeFileSync(path, "this is not json", "utf8");
++		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
++		const result = orch.restoreFromLedger();
++		assert.equal(result.corrupt.some((item) => item.taskId === "T-20260908-965"), true, "L25a: restoreFromLedger reports the unreadable file as corrupt");
++		const statusBeforeRepair = orch.renderTaskStatus(orch.store.require("T-20260908-965"));
++		assert.match(statusBeforeRepair, /本会话拒绝写入该 taskId 的账本/, "L25: the quarantined task's status discloses the ledger quarantine");
++		new LedgerSnapshotStore(dir).write(bad);
++		const repaired = JSON.parse(readFileSync(path, "utf8"));
++		assert.equal(repaired.task.taskId, "T-20260908-965", "L25c: the fresh store repairs the snapshot on disk mid-session");
++		const statusAfterRepair = orch.renderTaskStatus(orch.store.require("T-20260908-965"));
++		assert.match(statusAfterRepair, /本会话拒绝写入该 taskId 的账本/, "L25b: the session still discloses the quarantine after the mid-session repair");
++	} finally {
++		rmSync(dir, { recursive: true, force: true });
++	}
++}
++
+ // Ticket 16-c: budget stop aftermath and status semantics.
+ {
+ 	const r = new BudgetReservations();

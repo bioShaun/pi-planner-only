@@ -1,0 +1,31 @@
+diff --git a/orchestrate.test.mjs b/orchestrate.test.mjs
+index fa78d27..5d9b646 100644
+--- a/orchestrate.test.mjs
++++ b/orchestrate.test.mjs
+@@ -5886,6 +5886,26 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
+ 	}
+ }
+ 
++{
++	const dir = mkdtempSync(join(process.cwd(), ".planner-only-16b-l25-"));
++	try {
++		const task = spentTaskRecord("T-20260908-965");
++		const path = join(dir, "planner-only", "ledger", `${task.taskId}.json`);
++		new LedgerSnapshotStore(dir).write(task);
++		writeFileSync(path, "this is not json", "utf8");
++		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
++		const result = orch.restoreFromLedger();
++		assert.equal(result.corrupt.some((item) => item.taskId === task.taskId), true, "L25: restoreFromLedger quarantines the corrupt snapshot");
++
++		new LedgerSnapshotStore(dir).write(task);
++		assert.equal(JSON.parse(readFileSync(path, "utf8")).task.taskId, task.taskId, "L25a: a fresh LedgerSnapshotStore repairs the file");
++		const status = orch.renderTaskStatus(orch.store.require(task.taskId));
++		assert.match(status, /本会话拒绝写入该 taskId 的账本/, "L25b: the in-session quarantine disclosure persists after repair");
++	} finally {
++		rmSync(dir, { recursive: true, force: true });
++	}
++}
++
+ // Ticket 16-c: budget stop aftermath and status semantics.
+ {
+ 	const r = new BudgetReservations();

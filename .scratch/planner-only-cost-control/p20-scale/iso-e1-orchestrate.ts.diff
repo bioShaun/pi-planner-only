@@ -1,0 +1,14 @@
+diff --git a/orchestrate.ts b/orchestrate.ts
+index c21df04..6fa4bf9 100644
+--- a/orchestrate.ts
++++ b/orchestrate.ts
+@@ -1302,6 +1302,9 @@ export class PlannerOrchestrator {
+ 			`Changed files: ${report?.changedFiles.length ?? 0}`,
+ 			...(task.validatorReports.length > 0 ? [`Validator reports: ${task.validatorReports.length}`] : []),
+ 		];
++		if (this.snapshots?.isQuarantined(task.taskId)) {
++			lines.push("Ledger quarantine: 本会话拒绝写入该 taskId 的账本（隔离在会话内不解除）");
++		}
+ 		if (task.aliases.length > 0) {
+ 			lines.push(`aliases: ${task.aliases.join(", ")} (Root-provided id is kept as alias; canonical id is ${task.taskId})`);
+ 		}
