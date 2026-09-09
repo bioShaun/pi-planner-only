@@ -13,7 +13,7 @@ budget 字样**（`grep -c 'budget\|Budget' src/api/preflight.ts` → 0），它
 
 **Blocked by:** 26（已落地，闸门现在真的会拦）。
 
-**Status:** ready-for-planner-prototype —— 派活前 planner 必须先自己跑通一版，证明新 §F 可检验。
+**Status:** done —— F1 路径 p14-r065 落地（内部 schema 断言，planner 复核 + 两处修正后收下）；F3 由 p18 契约实跑闭合（2026-09-09，见文末）。
 
 - [x] §F 的断言对象换成 pi-subagents 公开面上**实际存在**的预算契约，或者 §F 被明确标注为上游缺口
       并从发布闸门里按名单豁免（豁免必须写清豁免的是哪一节、为什么、什么条件下解除）。
@@ -173,3 +173,15 @@ round_id=p14-r065
 - 19 的样本票取**本仓库自己的小票**（38、39 + 1-2 张同量级 backlog 小票）：
   验收标准已写死在工单里，通过/失败是客观的，不需要另造评分。
 - 执行者路由：cursor 额度告急，自本日起优先 pi `w2E:pG`、agy `w2E:pF`。
+
+---
+
+## 2026-09-09 F3 闭合（p18 契约实跑，planner cursor `w2E:pE` 记账）
+
+「宿主是否在 hard 处真的停」由 `p18-contract-run/` 实测回答：**宿主接受 `usageBudget` 字段但完全不执行**——
+A2（`tokens.hard=1`，实际 9.3k）、A3（`costUsd.hard=0.0001`，实际 $0.0022，上限的 22 倍）均启动、跑完、未被停。
+证据：`p18-contract-run/evidence-extract.md`（可由该目录脚本重跑复现）。后果已写进相关工单：
+`floors.ts` 的 hard 上限只由本插件自己的记账兜底，`PI_PLANNER_ONLY_HOST_ENFORCES_TOKENS` / `..._COST_USD` 保持默认 false。
+两个诚实缺口（无真实 `/planner-only status` 输出、未测运行途中越线）记在 G1，凡依赖这两点的条款不许据此勾选。
+
+round_id=cursor-pE-2026-09-09-close-36

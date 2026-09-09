@@ -4,7 +4,7 @@
 
 **Blocked by:** 04、08。
 
-**Status:** ready-for-agent
+**Status:** 第 1、3–8 条 done；第 2 条 blocked-on-host（验证手段不存在，见文末 2026-09-09 记账）
 
 - [x] **四个子代理角色**（worker / reviewer / validator / explorer）配置不同模型与 thinking：
       宿主实际启动参数与之一致（真实公开宿主入口 `resolveSubagentLaunchContract` 验证，
@@ -150,3 +150,19 @@ round_id=p13-r063
 - **诚实缺口**：没有一份真实交互式 `/planner-only status` 全文；没测运行途中越线。
 
 round_id=cursor-pE-2026-09-09-note-09
+
+---
+
+## 2026-09-09 记账：第 2 条按 blocked-on-host 处理（用户拍板）
+
+对齐工单 17 第 2 条的处理方式。「不伪称已切换」的义务已在 p18-r084（`574aa07`）落实为 status 措辞限定，
+但第 2 条 checkbox 要求的**宿主可接受性校验证据**至今拿不到，两个缺口（G1）：
+
+1. 没有真实交互式 `/planner-only status` 全文——`pi -p` 模式下 Root 没有工具也没有 slash 派发能力；
+2. 「运行途中越线」未取证（p18 四组都是委派时就已超）。
+
+处置：**留空、不再为它专门花钱**。等日常真实使用 pi 时顺手抓一份交互式 status 输出
+（顺带覆盖宿主对 Root 配置的真实反应），再评估是否可勾。Status 同步改为
+「第 1、3–8 条 done；第 2 条 blocked-on-host」。
+
+round_id=cursor-pE-2026-09-09-blocked-09
