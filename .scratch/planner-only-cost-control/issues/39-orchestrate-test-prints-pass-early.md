@@ -9,7 +9,7 @@
 
 Evidence: PR #1 / `bea8b47` / p21-r100 report.
 
-- [ ] PASS 只在该文件全部断言跑完之后打印。
+- [x] PASS 只在该文件全部断言跑完之后打印。（p21-r100：`console.log("planner-only orchestration: PASS")` 挪到 `orchestrate.test.mjs` 文件末尾。）
 
 ## Comments
 

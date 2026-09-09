@@ -9,8 +9,8 @@
 
 Evidence: PR #1 / `bea8b47` / p21-r100 report.
 
-- [ ] 两个集合采用同一套有界策略（或同一句「有意无界」的理由）。
-- [ ] 若加上限，重复事件在被逐出之后不会被重复结算。
+- [x] 两个集合采用同一套有界策略（或同一句「有意无界」的理由）。（p21-r100：`processedRunIds` / `confirmedNotLaunchedIds` 写明 **intentional unbounded**——逐出会导致重复结算。）
+- [x] 若加上限，重复事件在被逐出之后不会被重复结算。（会话 Set 不加 cap，正是为这条；ledger 恢复另有 `MAX_LEDGER_RESTORE_PER_SESSION=64`，空 cwd 幽灵跳过。）
 
 ## Comments
 

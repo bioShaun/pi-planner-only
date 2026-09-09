@@ -12,6 +12,10 @@
 
 **Design basis:** 病态日实测 root 总计约 `$2.36`（Task root `$1.17` + untasked root `$1.19`，包含协议故障税）；正常日应远低于软顶，软顶用于提示异常，硬顶用于限制继续派发。
 
-**Blocked by:** 无（参数已由用户 2026-09-09 拍板；实现仍待 agent）。
+**Blocked by:** 无。
 
-**Status:** ready-for-agent
+**Status:** done（2026-09-09 p22-r101 / PR #2 `4e5506b`，review follow-up `554e29c`，合入 `2a6cda4`。）
+
+## Comments
+
+2026-09-09 planner intake：云端 PR #2 已合进 `planner-only-cost-control`。会话级 root 累计走 `UsageLedger.sessionRootSpend()`；软顶 ×3 警告、硬顶 ×5 拒绝新的付费委派；reviewer 豁免；status / 拒绝文案按 E1/E2 披露。B1–B10 未改。e2e 契约门仍标「待本机终验」（云端未装 pi-subagents）。

@@ -13,4 +13,8 @@
 
 **Blocked by:** 无。
 
-**Status:** ready-for-agent
+**Status:** done（2026-09-09 p22-r101 / PR #4 `5d80e1d`，Devin review `e5fd9a6`，合入 `f90836e`。）
+
+## Comments
+
+2026-09-09 planner intake：云端 PR #4 已合进 `planner-only-cost-control`。`blocked → failed` abandon 特判、`sealedAt` 封印、迟到回执 `parkBlockedReceipt`（不 `advanceReview`）、`planner_verdict` 逃生门保留、status 披露新语义。B1–B10 未改。e2e 契约门仍标「待本机终验」（云端未装 pi-subagents）。

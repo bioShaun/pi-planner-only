@@ -12,4 +12,8 @@
 
 **Blocked by:** 无。
 
-**Status:** ready-for-agent
+**Status:** done（2026-09-09 p22-r101 / PR #4 `5d80e1d`，Devin review `e5fd9a6`，合入 `f90836e`。）
+
+## Comments
+
+2026-09-09 planner intake：云端 PR #4 已合进 `planner-only-cost-control`。纠正轮由 `stampReportOnlyCorrectionInput` 机器盖 `reportOnly` 并嵌入原 TaskSpec；`isReportOnlyPrompt` 降为 `roles.ts` 兼容 shim，只用来识别 Root 手写纠正散文以便盖章。evidence 走显式 `DelegationRecord.reportOnly`。e2e 契约门仍标「待本机终验」（云端未装 pi-subagents）。
