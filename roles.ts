@@ -497,6 +497,26 @@ export function stampReportOnlyCorrectionInput(rawInput: unknown): void {
 	}
 }
 
+/**
+ * True when the delegation carries no Task identity at all: no `taskId`, no
+ * embedded TaskSpec / ReviewRequest, and no Task id named in the prose. Only
+ * such requests may bind to an active fallback Task; an explicit but
+ * unresolved identity (unknown, completed) must not be redirected.
+ */
+export function isUnnamedDelegationTarget(target: DelegationTarget | undefined): boolean {
+	if (!target) return true;
+	return !target.taskId && !target.spec && !target.request && (target.namedTaskIds?.length ?? 0) === 0;
+}
+
+/** Bind a report-only correction that names no Task to the active fallback Task. */
+export function bindReportOnlyFallback(
+	target: DelegationTarget | undefined,
+	fallbackTask: TaskRecord | undefined,
+): DelegationTarget | undefined {
+	if (!fallbackTask || !isUnnamedDelegationTarget(target)) return target;
+	return { role: target?.role ?? "worker", taskId: fallbackTask.taskId, task: fallbackTask };
+}
+
 export interface PrepareRoleDelegationOptions {
 	/** Bounded Git-read sample for a reviewer packet. Root supplies it. */
 	git?: ReviewEvidencePacket;
@@ -506,9 +526,9 @@ export interface PrepareRoleDelegationOptions {
 	oracleMode?: "bounded" | "full";
 	reportsCount?: number;
 	/**
-	 * Ticket 42 — when a report-only correction names no live Task, bind to this
-	 * active Task (typically changes_requested / reviewing) so its TaskSpec can
-	 * be machine-embedded.
+	 * Ticket 42 — when a report-only correction names no Task at all, bind to
+	 * this active Task (typically changes_requested / reviewing) so its TaskSpec
+	 * can be machine-embedded. Never overrides an explicit but unresolved id.
 	 */
 	fallbackTask?: TaskRecord;
 }
@@ -535,18 +555,9 @@ export function prepareRoleDelegation(
 	let target = resolveDelegationTarget(rawInput, lookup);
 	const input = rawInput as Record<string, unknown>;
 	const reportOnly = input.reportOnly === true;
-	// Machine-generate binding: report-only with no resolved Task uses the
+	// Machine-generate binding: an unnamed report-only correction uses the
 	// active fallback Task so the original TaskSpec can be embedded.
-	if (reportOnly && (!target || !target.task) && options.fallbackTask) {
-		const fb = options.fallbackTask;
-		target = {
-			role: target?.role ?? "worker",
-			taskId: fb.taskId,
-			task: fb,
-			...(target?.spec ? { spec: target.spec } : {}),
-			...(target?.namedTaskIds ? { namedTaskIds: target.namedTaskIds } : {}),
-		};
-	}
+	if (reportOnly) target = bindReportOnlyFallback(target, options.fallbackTask);
 	if (!target) return;
 	// An existing Task's spec is authoritative; without one the embedded spec is
 	// the only description available.
