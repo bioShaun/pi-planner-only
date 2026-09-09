@@ -201,9 +201,7 @@ cursor 在本仓做执行者的记录是好的（p16-r074…r078 五轮全部 ac
 
 ## F6. 未了项（不阻塞，接手者按需取用）
 
-- **B10 未证明**：`orchestrate.test.mjs` 里「预算停止不改变状态机」那条，我的变异过宽
-  （直接报错），没能证明它非空转。需要一个更窄的变异：只让「已停止」的 Task 走不同的
-  verdict 分支。
+- **B10 已证明非空转**（云端 p21-r100，窄变异：仅对 wouldRefuse 的已停止 Task 强制 request_changes，B10 如期变红；证据 `p21-r100-cloud-backlog/b10-mutation-proof.log`，已随 PR #1 合并 `bea8b47`）。
 - **`orchestrate.test.mjs` 的 PASS 横幅**在 3717 行，建议移到文件末尾（见 F1 规则一）。
 - E 档三条（隔离在会话内不解除且 status 不提示 / `writeErrorFor()` 是死接口 /
   两条 block 路径的 `input.usageBudget` 残留不一致）——第三条本轮又复现了一次：
@@ -220,6 +218,7 @@ cursor 在本仓做执行者的记录是好的（p16-r074…r078 五轮全部 ac
   导致 HEAD 上每天必红。**注意**：一度怀疑这是「跨午夜可重置已用满的预算」的绕过，
   `p17-probe/r079-midnight-budget-bypass.mjs` 实测证伪——ledger 恢复的 Task 保留身份
   与已用额度，id 替换只发生在 store 不认识该 id 时。别再重复这个误判。
+- **证据系统变体 C：跨 worktree 盲区**（2026-09-09 实录）：改动发生在链接 worktree（如 `pi-planner-only-cloud-review`）时，证据采样只覆盖主仓 cwd，对 worktree 内路径恒报 `reported changes no longer present` / `over-reported`，纠正轮结构性无解。变体 A/B 已随 PR #1（`bea8b47`）修复；C 待修——需要让证据采样支持声明的附加 worktree 根，或在 TaskSpec 里显式声明 cwd 并按声明采样。另：工单 28 修复**是否已部署进运行中的扩展**仍未核实（G5 安装副本过期问题），修复合并后需重装/重启会话验证。
 
 ---
 

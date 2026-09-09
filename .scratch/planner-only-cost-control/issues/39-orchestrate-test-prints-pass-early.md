@@ -5,7 +5,9 @@
 
 **Blocked by:** 无。
 
-**Status:** backlog（卫生问题，不影响正确性）
+**Status:** done
+
+Evidence: PR #1 / `bea8b47` / p21-r100 report.
 
 - [ ] PASS 只在该文件全部断言跑完之后打印。
 

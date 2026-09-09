@@ -5,7 +5,9 @@
 
 **Blocked by:** 无。
 
-**Status:** backlog（低优先，非用户可见）
+**Status:** done
+
+Evidence: PR #1 / `bea8b47` / p21-r100 report.
 
 - [ ] 两个集合采用同一套有界策略（或同一句「有意无界」的理由）。
 - [ ] 若加上限，重复事件在被逐出之后不会被重复结算。
