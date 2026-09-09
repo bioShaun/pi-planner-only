@@ -1434,6 +1434,9 @@ export class PlannerOrchestrator {
 				}
 			}
 		}
+		if (this.snapshots?.isQuarantined(task.taskId)) {
+			lines.push("Ledger quarantine: 本会话拒绝写入该 taskId 的账本（隔离在会话内不解除）");
+		}
 		return lines.join("\n");
 	}
 
