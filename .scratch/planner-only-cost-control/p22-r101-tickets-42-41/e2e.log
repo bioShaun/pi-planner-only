@@ -1,0 +1,6 @@
+
+> pi-planner-only@0.3.3 test:e2e
+> node --experimental-strip-types e2e.pi-subagents.test.mjs
+
+planner-only pi-subagents E2E: §G 角色模型启动契约未验证 (pi-subagents is not installed; public host contract is unavailable)
+planner-only pi-subagents E2E: FAIL — release gate requires §G contract coverage: pi-subagents is not installed; public host contract is unavailable

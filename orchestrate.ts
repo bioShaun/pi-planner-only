@@ -3,7 +3,7 @@
  * Delegation launch, the Review loop, and Task memory writes.
  */
 
-import { resolve, join } from "node:path";
+import { isAbsolute, resolve, join } from "node:path";
 import {
 	captureEvidence,
 	captureReviewEvidencePacket,
@@ -28,9 +28,11 @@ import {
 	ORACLE_CONTRACT_MARKER,
 	ORACLE_SUITE_CONFLICT_WARNING,
 	oracleSuiteMode,
+	bindReportOnlyFallback,
 	prepareRoleDelegation,
 	promptTaskIds,
 	resolveDelegationTarget,
+	stampReportOnlyCorrectionInput,
 	stripDelegationKeys,
 } from "./roles.ts";
 import type { ContextReuseOutcome, DelegationTarget, PrepareRoleDelegationOptions } from "./roles.ts";
@@ -205,10 +207,6 @@ function snapshotPathKey(path: string): string {
 	return key;
 }
 
-function isReportOnlyPrompt(prompt: string): boolean {
-	return /\bDo not modify files\b/i.test(prompt) || /\breport-only correction\b/i.test(prompt);
-}
-
 function additionalWorktreeRootsOf(task: TaskRecord): readonly string[] | undefined {
 	const roots = task.spec?.additionalWorktreeRoots;
 	return roots?.length ? roots : undefined;
@@ -346,8 +344,9 @@ export interface DelegationRecord {
 	/** Root prompt requested a full suite while the actual validator suite is bounded. */
 	oracleSuiteConflict?: boolean;
 	/**
-	 * True when the prompt is a report-only correction ("Do not modify files").
-	 * Evidence comparison then skips per-run over-report unexplained marking.
+	 * Explicit report-only correction flag (ticket 42). Set from `input.reportOnly`
+	 * / embedded TaskSpec.reportOnly after machine-generation — not from prompt
+	 * sniffing. Evidence comparison then skips per-run over-report unexplained marking.
 	 */
 	reportOnly?: boolean;
 }
@@ -775,7 +774,7 @@ export class PlannerOrchestrator {
 	 * ReviewRequest packet. Async because Root samples Git evidence for the
 	 * packet: reviewer children have no `git_audit` of their own (§P1-2).
 	 */
-	async prepareRoleDelegation(rawInput: unknown): Promise<void> {
+	async prepareRoleDelegation(rawInput: unknown, baseCwd?: string): Promise<void> {
 		if (compositeWorkflowBlockReason(rawInput)) return;
 		const lookup = (taskId: string): TaskRecord | undefined => this.store.get(taskId);
 		const target = resolveDelegationTarget(rawInput, lookup);
@@ -791,6 +790,8 @@ export class PlannerOrchestrator {
 		if (task) {
 			options.reportsCount = task.reports.length;
 		}
+		const fallback = target?.task ?? this.reportOnlyFallbackTask(this.delegationCwd(rawInput, baseCwd));
+		if (fallback) options.fallbackTask = fallback;
 		const cwd = task?.cwd;
 		if (target?.role === "reviewer" && cwd) {
 			options.git = await captureReviewEvidencePacket(
@@ -811,6 +812,30 @@ export class PlannerOrchestrator {
 			}
 		}
 		prepareRoleDelegation(rawInput, lookup, options);
+	}
+
+	/** Delegation cwd resolved against the Root cwd; undefined when neither is known. */
+	private delegationCwd(rawInput: unknown, baseCwd: string | undefined): string | undefined {
+		const rawCwd = rawInput && typeof rawInput === "object" && !Array.isArray(rawInput)
+			? (rawInput as { cwd?: unknown }).cwd
+			: undefined;
+		const rel = typeof rawCwd === "string" && rawCwd.trim() ? rawCwd.trim() : undefined;
+		if (baseCwd) return rel ? resolve(baseCwd, rel) : baseCwd;
+		return rel && isAbsolute(rel) ? rel : undefined;
+	}
+
+	/**
+	 * Ticket 42 — the Task an unnamed report-only correction may bind to: the
+	 * live Task of the delegation's own workspace. Without a known cwd nothing
+	 * is offered rather than guessing across workspaces.
+	 */
+	private reportOnlyFallbackTask(cwd: string | undefined): TaskRecord | undefined {
+		if (!cwd) return undefined;
+		const candidate = this.store.activeForCwd(cwd);
+		if (!candidate) return undefined;
+		return candidate.state === "changes_requested" || candidate.state === "reviewing" || candidate.state === "executing"
+			? candidate
+			: undefined;
 	}
 
 	async beginDelegation(
@@ -841,6 +866,9 @@ export class PlannerOrchestrator {
 		baseCwd: string,
 	): Promise<DelegationOutcome> {
 		const input = event.input ?? {};
+		// Ticket 42 — stamp explicit reportOnly before composite/target checks so
+		// machine-generated corrections bind even when prepareRoleDelegation was skipped.
+		stampReportOnlyCorrectionInput(input);
 		const composite = compositeWorkflowBlockReason(input);
 		if (composite) {
 			return { block: { reason: composite } };
@@ -850,7 +878,10 @@ export class PlannerOrchestrator {
 			? resolve(baseCwd, rawCwd.trim())
 			: baseCwd;
 		const inputRecord = input as Record<string, unknown>;
-		const target = resolveDelegationTarget(input, (taskId) => this.store.get(taskId));
+		let target = resolveDelegationTarget(input, (taskId) => this.store.get(taskId));
+		if (inputRecord.reportOnly === true) {
+			target = bindReportOnlyFallback(target, this.reportOnlyFallbackTask(cwd));
+		}
 		const role = target?.role ?? "worker";
 		const roleModelPolicy = loadRoleModelPolicy();
 		this.roleModelPolicyEnabled = roleModelPolicy.enabled;
@@ -866,7 +897,13 @@ export class PlannerOrchestrator {
 				return { block: { reason: error instanceof Error ? error.message : String(error) } };
 			}
 		}
-		const spec = target?.spec;
+		// Ticket 42 — report-only corrections may omit an embedded TaskSpec in
+		// Root prose; use the live Task's spec so binding does not warn/placeholder.
+		const reportOnlyInput = inputRecord.reportOnly === true;
+		const spec = target?.spec
+			?? (reportOnlyInput && target?.task?.spec
+				? { ...target.task.spec, reportOnly: true }
+				: undefined);
 		const promptNow = delegationPrompt(input);
 		const requestedOracleMode = inputRecord.oracleMode === "full" || inputRecord.oracleMode === "bounded"
 			? inputRecord.oracleMode
@@ -1195,24 +1232,27 @@ export class PlannerOrchestrator {
 
 		let task: TaskRecord;
 		if (spec) {
+			// reportOnly is invocation-scoped: the persisted TaskSpec never carries
+			// it, so later normal delegations do not inherit report-only leniency.
+			const { reportOnly: _invocationOnly, ...persisted } = spec;
 			const existing = this.store.get(spec.taskId);
 			if (existing) {
 				task = existing;
 				this.store.bindSpec(
 					existing.taskId,
-					spec.taskId === existing.taskId ? spec : { ...spec, taskId: existing.taskId },
+					spec.taskId === existing.taskId ? persisted : { ...persisted, taskId: existing.taskId },
 				);
 			} else if (shouldReplaceTaskId(spec.taskId, this.store.now())) {
 				const generated = this.store.nextTaskId();
-				const storedSpec = { ...spec, taskId: generated };
+				const storedSpec = { ...persisted, taskId: generated };
 				task = this.store.create(storedSpec, spec.taskId);
 				this.reservations.rekey(spec.taskId, task.taskId, event.toolCallId);
 				warnings.push(
 					`Planner-only: TaskSpec id ${spec.taskId} replaced by ${generated} (generated); ${spec.taskId} is kept as an alias`,
 				);
 			} else {
-				task = this.store.create(spec);
-				this.store.bindSpec(task.taskId, spec);
+				task = this.store.create(persisted);
+				this.store.bindSpec(task.taskId, persisted);
 			}
 			if (specDetails.titleAliasUsed) {
 				task.titleAliasUsed = true;
@@ -1325,7 +1365,10 @@ export class PlannerOrchestrator {
 		// A writable begin was gated by writerConflict above; a read-only role
 		// was not, so protect live writable waiters from supersede (ticket 01).
 		await this.supersedePendingDelegations(task.taskId, event.toolCallId, warnings, isWriterRole(role) ? {} : { protectWriters: true });
-		const reportOnly = isReportOnlyPrompt(delegationPrompt(event.input));
+		const inputRec = (event.input && typeof event.input === "object" && !Array.isArray(event.input))
+			? event.input as Record<string, unknown>
+			: undefined;
+		const reportOnly = inputRec?.reportOnly === true || spec?.reportOnly === true;
 		this.delegations.set(event.toolCallId, {
 			taskId: task.taskId,
 			kind: role,
@@ -1447,6 +1490,12 @@ export class PlannerOrchestrator {
 		];
 		if (task.aliases.length > 0) {
 			lines.push(`aliases: ${task.aliases.join(", ")} (Root-provided id is kept as alias; canonical id is ${task.taskId})`);
+		}
+		if (task.state === "blocked") {
+			lines.push(
+				"Blocked lifecycle: still accepts Root planner_verdict; late child receipts are parked into history only (no reopen); abandon → failed is allowed.",
+			);
+			if (task.sealedAt) lines.push(`Sealed at: ${task.sealedAt}`);
 		}
 		if (task.stateReason) lines.push(`State reason: ${task.stateReason}`);
 		if (task.reviews.length > 0) {
@@ -1769,6 +1818,47 @@ export class PlannerOrchestrator {
 		return false;
 	}
 
+	/**
+	 * Ticket 41 — on `blocked`, late child receipts are parked into history only.
+	 * No advanceReview, no state advance. sealedAt / state === blocked is the seal.
+	 */
+	private parkBlockedReceipt(
+		task: TaskRecord,
+		toolCallId: string,
+		kind: DelegationKind,
+		preview: string,
+	): { content: { type: "text"; text: string }[] } {
+		const snippet = preview.replace(/\s+/g, " ").trim().slice(0, 120);
+		this.recordHistory(task.taskId, {
+			toolCallId,
+			role: kind,
+			floorSummary: `parked late receipt while blocked${snippet ? `: ${snippet}` : ""}`,
+		});
+		const reasonNote = `late ${kind} receipt ${toolCallId} parked (blocked sealed)`;
+		const existing = task.stateReason ?? "";
+		if (!existing.includes(reasonNote)) {
+			this.store.setStateReason(
+				task.taskId,
+				existing ? `${existing}; ${reasonNote}` : reasonNote,
+			);
+		}
+		return {
+			content: [{
+				type: "text",
+				text: [
+					`[PLANNER-ONLY] Late ${kind} receipt for blocked task ${task.taskId} was parked into history.`,
+					"Task state was not advanced and advanceReview was not called.",
+					"Root may still record planner_verdict, or abandon the task to failed.",
+				].join("\n"),
+			}],
+		};
+	}
+
+	/** Ticket 41 — sealed blocked Tasks reject state-advancing receipt handling. */
+	private isBlockedReceiptSealed(task: TaskRecord | undefined): task is TaskRecord & { state: "blocked" } {
+		return Boolean(task && task.state === "blocked");
+	}
+
 	private delegationArtifactDirs(record: DelegationRecord): string[] {
 		const dirs = [...this.artifactDirs()];
 		if (record.asyncDir) {
@@ -1802,6 +1892,10 @@ export class PlannerOrchestrator {
 		const task = this.store.get(record.taskId);
 		if (!task) return true;
 		const text = readLargestRunOutput(record.asyncDir, record.runId) ?? "";
+		if (this.isBlockedReceiptSealed(task)) {
+			this.parkBlockedReceipt(task, toolCallId, record.kind, text);
+			return true;
+		}
 		if (record.kind === "validator") await this.handleValidatorResult(task, text, record);
 		else if (record.kind === "reviewer") await this.handleReviewerResult(task, text, record);
 		else if (record.kind === "explorer") { /* explorer output returned as-is */ }
@@ -1992,6 +2086,9 @@ export class PlannerOrchestrator {
 			this.endDelegation(event.toolCallId);
 			if (!isBudgetStop) this.confirmedNotLaunchedIds.add(event.toolCallId);
 			const task = this.store.get(delegation.taskId);
+			if (this.isBlockedReceiptSealed(task)) {
+				return this.parkBlockedReceipt(task, event.toolCallId, delegation.kind, text);
+			}
 			const firstLine = (text.split(/\r?\n/, 1)[0] ?? "").trim();
 			if (task && !isFinalTaskState(task.state)) {
 				this.store.transition(task.taskId, "failed");
@@ -2053,11 +2150,15 @@ export class PlannerOrchestrator {
 		}
 		if (delegation.runId) this.processedRunIds.add(delegation.runId);
 
+		const task = this.store.get(delegation.taskId);
+		if (this.isBlockedReceiptSealed(task)) {
+			return this.parkBlockedReceipt(task, event.toolCallId, delegation.kind, text);
+		}
+
 		if (delegation.kind === "explorer") {
 			return { content: [{ type: "text", text }] };
 		}
 
-		const task = this.store.get(delegation.taskId);
 		if (!task) {
 			return {
 				content: [{
@@ -2089,6 +2190,12 @@ export class PlannerOrchestrator {
 			this.endDelegation(found.toolCallId);
 			const fileText = runId ? readLargestRunOutput(found.record.asyncDir, runId) : undefined;
 			const chosen = fileText ?? parsed.preview;
+
+			const sealedTask = this.store.get(found.record.taskId);
+			if (this.isBlockedReceiptSealed(sealedTask)) {
+				outcome = this.parkBlockedReceipt(sealedTask, found.toolCallId, found.record.kind, chosen);
+				continue;
+			}
 
 			if (found.record.kind === "explorer") {
 				outcome = { content: [{ type: "text", text: chosen }] };

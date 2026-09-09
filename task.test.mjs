@@ -251,6 +251,7 @@ assert.equal(canTransition("blocked", "reviewing"), true);
 assert.equal(canTransition("failed", "reviewing"), true);
 assert.equal(canTransition("blocked", "executing"), true);
 assert.equal(canTransition("failed", "executing"), true);
+assert.equal(canTransition("blocked", "failed"), true); // ticket 41 Option 3
 {
 	const hop = new TaskStore();
 	const blocked = hop.create(createTaskSpec({ objective: "blocked hop", cwd }, "T-20260905-hop-b"));
@@ -387,6 +388,18 @@ store.abandon(abandoned.taskId, "operator reset");
 assert.equal(store.require(abandoned.taskId).state, "failed");
 assert.equal(store.require(abandoned.taskId).stateReason, "operator reset");
 assert.throws(() => store.abandon(abandoned.taskId), /terminal task/);
+
+// Ticket 41: abandon allows blocked → failed
+{
+	const blockedStore = new TaskStore();
+	const blocked = blockedStore.create(createTaskSpec({ objective: "blocked abandon", cwd }, "T-abandon-blocked"));
+	blockedStore.transition(blocked.taskId, "executing");
+	blockedStore.transition(blocked.taskId, "blocked");
+	assert.ok(blockedStore.require(blocked.taskId).sealedAt);
+	blockedStore.abandon(blocked.taskId, "stop-loss");
+	assert.equal(blockedStore.require(blocked.taskId).state, "failed");
+	assert.equal(blockedStore.require(blocked.taskId).stateReason, "stop-loss");
+}
 
 // L-2: setBaseEvidence is write-once; clearBaseEvidence then set takes the new ref
 {

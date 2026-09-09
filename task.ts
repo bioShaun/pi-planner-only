@@ -86,6 +86,8 @@ export interface CreateTaskSpecInput {
 	expectedEvidence?: ExpectedEvidence;
 	stopConditions?: string[];
 	parentEvidenceRef?: EvidenceRef;
+	/** Ticket 42 — explicit report-only correction marker. */
+	reportOnly?: boolean;
 	/** Explicit additional linked-worktree roots; resolved absolute, cwd omitted. */
 	additionalWorktreeRoots?: string[];
 }
@@ -124,6 +126,7 @@ export function createTaskSpec(input: CreateTaskSpecInput, taskId = createTaskId
 		expectedEvidence: input.expectedEvidence ?? {},
 		stopConditions: uniqueNonEmpty(input.stopConditions ?? []),
 		...(input.parentEvidenceRef ? { parentEvidenceRef: input.parentEvidenceRef } : {}),
+		...(input.reportOnly ? { reportOnly: true } : {}),
 		...(input.additionalWorktreeRoots?.length
 			? {
 				additionalWorktreeRoots: [
@@ -362,6 +365,9 @@ export function extractTaskSpecDetails(
 			if (isPlainObject(parsed.cumulativeBudget)) {
 				(spec as { cumulativeBudget?: unknown }).cumulativeBudget = parsed.cumulativeBudget;
 			}
+			if (parsed.reportOnly === true) {
+				spec.reportOnly = true;
+			}
 			return {
 				spec,
 				hasCharacteristics: true,
@@ -410,7 +416,7 @@ export const TASK_TRANSITIONS: Record<TaskState, readonly TaskState[]> = {
 	executing: ["reviewing", "blocked", "failed"],
 	reviewing: ["completed", "changes_requested", "blocked", "failed"],
 	changes_requested: ["executing", "blocked", "failed"],
-	blocked: ["executing", "reviewing"],
+	blocked: ["executing", "reviewing", "failed"],
 	failed: ["executing", "reviewing"],
 	completed: [],
 };
@@ -445,6 +451,12 @@ export interface TaskRecord {
 	snapshot?: WorkspaceSnapshotBinding;
 	/** Reason for an operator-forced terminal state, when applicable. */
 	stateReason?: string;
+	/**
+	 * Set when the Task enters `blocked` (ticket 41). Marks the Task as sealed
+	 * against late child receipts without a new state enum: receipts park into
+	 * history only. Cleared when leaving `blocked` (e.g. Root verdict reopen).
+	 */
+	sealedAt?: string;
 	/** Per-task usage snapshot; live totals live in UsageLedger. Initialised empty. */
 	usage: TaskUsage;
 	createdAt: string;
@@ -578,6 +590,11 @@ export class TaskStore {
 			throw new Error(`illegal task transition: ${record.state} -> ${next}`);
 		}
 		record.state = next;
+		if (next === "blocked") {
+			if (!record.sealedAt) record.sealedAt = this.now().toISOString();
+		} else if (record.sealedAt) {
+			delete record.sealedAt;
+		}
 		return this.touch(record);
 	}
 
@@ -703,10 +720,14 @@ export class TaskStore {
 		return this.require(taskId).reportCorrections < MAX_REPORT_CORRECTIONS;
 	}
 
-	/** Release a stuck task through the operator escape hatch. */
+	/**
+	 * Release a stuck task through the operator escape hatch.
+	 * Ticket 41 / Option 3: `blocked` stays final for automatic success paths
+	 * and launch gates, but operators may abandon `blocked → failed`.
+	 */
 	abandon(taskId: string, reason = "abandoned by operator"): TaskRecord {
 		const record = this.require(taskId);
-		if (isFinalTaskState(record.state)) {
+		if (record.state !== "blocked" && isFinalTaskState(record.state)) {
 			throw new Error(`cannot abandon terminal task: ${record.state}`);
 		}
 		this.transition(taskId, "failed");
@@ -714,6 +735,7 @@ export class TaskStore {
 		delete record.baseEvidence;
 		delete record.baseReportCount;
 		delete record.snapshot;
+		delete record.sealedAt;
 		return this.touch(record);
 	}
 }

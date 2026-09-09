@@ -956,8 +956,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					if (ctx.hasUI) ctx.ui.notify("Blocked composite subagent workflow", "warning");
 					return { block: true, reason: composite };
 				}
-				await orchestrator.prepareRoleDelegation(event.input);
-				const outcome = await orchestrator.beginDelegation(event, ctx.cwd || process.cwd());
+				const rootCwd = ctx.cwd || process.cwd();
+				await orchestrator.prepareRoleDelegation(event.input, rootCwd);
+				const outcome = await orchestrator.beginDelegation(event, rootCwd);
 				if (outcome.block) {
 					if (ctx.hasUI) ctx.ui.notify("Blocked unstructured delegation", "warning");
 					return { block: true, reason: outcome.block.reason };

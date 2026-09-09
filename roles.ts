@@ -466,6 +466,57 @@ export function buildPreviousExecutionContext(task: TaskRecord, spec?: TaskSpec)
 	return lines.join("\n");
 }
 
+/**
+ * Ticket 42 — labeled shim for detecting Root-authored report-only correction
+ * prose. Prefer the explicit `reportOnly` field; this sniff only triggers
+ * machine-generation of that field + TaskSpec embedding.
+ */
+export function isReportOnlyPrompt(prompt: string): boolean {
+	return /\bDo not modify files\b/i.test(prompt) || /\breport-only correction\b/i.test(prompt);
+}
+
+/** True when the delegation input carries or implies report-only correction. */
+export function isReportOnlyDelegationInput(rawInput: unknown): boolean {
+	if (!rawInput || typeof rawInput !== "object" || Array.isArray(rawInput)) return false;
+	const input = rawInput as Record<string, unknown>;
+	if (input.reportOnly === true) return true;
+	return isReportOnlyPrompt(delegationPrompt(input));
+}
+
+/**
+ * Ticket 42 — stamp explicit `reportOnly` and ensure a worker agent so
+ * `resolveDelegationTarget` can bind, enabling TaskSpec auto-embedding.
+ */
+export function stampReportOnlyCorrectionInput(rawInput: unknown): void {
+	if (!rawInput || typeof rawInput !== "object" || Array.isArray(rawInput)) return;
+	if (!isReportOnlyDelegationInput(rawInput)) return;
+	const input = rawInput as Record<string, unknown>;
+	input.reportOnly = true;
+	if (typeof input.agent !== "string" || !input.agent.trim()) {
+		input.agent = "worker";
+	}
+}
+
+/**
+ * True when the delegation carries no Task identity at all: no `taskId`, no
+ * embedded TaskSpec / ReviewRequest, and no Task id named in the prose. Only
+ * such requests may bind to an active fallback Task; an explicit but
+ * unresolved identity (unknown, completed) must not be redirected.
+ */
+export function isUnnamedDelegationTarget(target: DelegationTarget | undefined): boolean {
+	if (!target) return true;
+	return !target.taskId && !target.spec && !target.request && (target.namedTaskIds?.length ?? 0) === 0;
+}
+
+/** Bind a report-only correction that names no Task to the active fallback Task. */
+export function bindReportOnlyFallback(
+	target: DelegationTarget | undefined,
+	fallbackTask: TaskRecord | undefined,
+): DelegationTarget | undefined {
+	if (!fallbackTask || !isUnnamedDelegationTarget(target)) return target;
+	return { role: target?.role ?? "worker", taskId: fallbackTask.taskId, task: fallbackTask };
+}
+
 export interface PrepareRoleDelegationOptions {
 	/** Bounded Git-read sample for a reviewer packet. Root supplies it. */
 	git?: ReviewEvidencePacket;
@@ -474,6 +525,12 @@ export interface PrepareRoleDelegationOptions {
 	/** Override oracle suite mode; defaults to PI_PLANNER_ONLY_ORACLE. */
 	oracleMode?: "bounded" | "full";
 	reportsCount?: number;
+	/**
+	 * Ticket 42 — when a report-only correction names no Task at all, bind to
+	 * this active Task (typically changes_requested / reviewing) so its TaskSpec
+	 * can be machine-embedded. Never overrides an explicit but unresolved id.
+	 */
+	fallbackTask?: TaskRecord;
 }
 
 /**
@@ -488,18 +545,30 @@ export function prepareRoleDelegation(
 	options: PrepareRoleDelegationOptions = {},
 ): void {
 	if (!rawInput || typeof rawInput !== "object" || Array.isArray(rawInput)) return;
+	// Ticket 42 — stamp explicit reportOnly before target resolution so a
+	// Root-authored correction prose still binds and embeds the TaskSpec.
+	stampReportOnlyCorrectionInput(rawInput);
 	const prompt = delegationPrompt(rawInput);
 	const specDetails = extractTaskSpecDetails(prompt);
 	if (specDetails.hasCharacteristics && !specDetails.spec) return;
 
-	const target = resolveDelegationTarget(rawInput, lookup);
-	if (!target) return;
+	let target = resolveDelegationTarget(rawInput, lookup);
 	const input = rawInput as Record<string, unknown>;
+	const reportOnly = input.reportOnly === true;
+	// Machine-generate binding: an unnamed report-only correction uses the
+	// active fallback Task so the original TaskSpec can be embedded.
+	if (reportOnly) target = bindReportOnlyFallback(target, options.fallbackTask);
+	if (!target) return;
 	// An existing Task's spec is authoritative; without one the embedded spec is
 	// the only description available.
-	const packetSpec = target.role === "reviewer"
+	let packetSpec = target.role === "reviewer"
 		? (target.task?.spec ?? target.spec)
 		: (target.spec ?? target.task?.spec);
+	// Ticket 42 — machine-generated correction carries explicit reportOnly on
+	// the embedded TaskSpec so evidence compare does not sniff prompt text.
+	if (reportOnly && packetSpec && !packetSpec.reportOnly) {
+		packetSpec = { ...packetSpec, reportOnly: true };
+	}
 	const report = target.task?.reports.at(-1);
 	let packet: string | undefined;
 	let effectiveWorkerValidationPassed = false;
@@ -594,9 +663,18 @@ export function prepareRoleDelegation(
 		}
 
 		if (packetSpec) {
-			const packetBody = reuseOutcome?.reused && target.task
+			let packetBody = reuseOutcome?.reused && target.task
 				? `${buildPreviousExecutionContext(target.task, packetSpec)}\n\n${JSON.stringify(packetSpec, null, 2)}`
 				: JSON.stringify(packetSpec, null, 2);
+			// Ticket 42 — machine-generated corrections keep the report-only instruction
+			// ahead of the embedded TaskSpec so the child still knows not to edit files.
+			if (reportOnly && target.role === "worker") {
+				const correctionLead = [
+					`Do not modify files. Return only a valid WorkerReport for task ${target.task?.taskId ?? target.taskId ?? packetSpec.taskId}.`,
+					"This is a report-only correction round.",
+				].join("\n");
+				packetBody = `${correctionLead}\n\n${packetBody}`;
+			}
 
 			if (target.role === "worker") {
 				packet = wrapWorkerContract(packetBody, target.task?.taskId ?? target.taskId ?? packetSpec.taskId);

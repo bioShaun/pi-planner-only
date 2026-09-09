@@ -936,12 +936,18 @@ function truncatedPreview() {
 
 // --------------------------------------------------------------------------
 // RF-7 — correction prompt without TaskSpec binds to the named live Task
+// Ticket 42: report-only corrections are machine-generated with the original
+// TaskSpec + explicit reportOnly, so the historical "without an embedded
+// TaskSpec" warn-mode notice no longer fires on this path.
 // --------------------------------------------------------------------------
 
 {
 	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
 	const taskId = "T-20260905-902";
 	await delegateWorker(orch, "call-902", taskId);
+	// Finish the first worker so the correction round can take the write lock
+	// (a real report-only correction always follows a completed child).
+	await orch.handleSubagentResult(workerResult("call-902", reportFor(taskId, "call-902")));
 	const outcome = await orch.beginDelegation(
 		{
 			toolCallId: "call-902-fix",
@@ -953,13 +959,13 @@ function truncatedPreview() {
 		BASE,
 	);
 	assert.equal(outcome.task.taskId, taskId);
-	assert.ok(
-		(outcome.warnings ?? []).some((warning) =>
-			/without an embedded TaskSpec/.test(warning)
-			&& /attached to task T-20260905-902 named in the prompt/.test(warning),
-		),
+	assert.equal(outcome.conflict?.conflict, undefined, outcome.conflict?.reason);
+	assert.equal(
+		(outcome.warnings ?? []).some((warning) => /without an embedded TaskSpec/.test(warning)),
+		false,
 		outcome.warnings?.join(" | "),
 	);
+	assert.equal(orch.getDelegation("call-902-fix")?.reportOnly, true, "RF-7/42: report-only correction stamps reportOnly");
 	assert.equal(orch.store.list().length, 1);
 }
 
@@ -6227,6 +6233,386 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	const prompt = `Do not modify files. Return only a valid WorkerReport for task ${task.taskId}.`;
 	await orch.beginDelegation({ toolCallId: "call-28ro", input: { task: prompt } }, BASE);
 	assert.equal(orch.getDelegation("call-28ro")?.reportOnly, true, "28-A wire: report-only prompt marks the delegation");
+}
+
+// --------------------------------------------------------------------------
+// Ticket 42 — machine-generated report-only correction embeds TaskSpec + reportOnly
+// --------------------------------------------------------------------------
+{
+	const store = pinnedStore();
+	const task = store.create(specFor("T-20260908-42mg"));
+	store.transition(task.taskId, "executing");
+	store.transition(task.taskId, "reviewing");
+	store.transition(task.taskId, "changes_requested");
+	task.reports.push(reportFor(task.taskId, "prior-42"));
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	// Root-authored correction prose: no TaskSpec, no agent — historically warned twice.
+	// The id is not in canonical T-YYYYMMDD-NNN shape, so the prose names no
+	// Task; binding comes from the Root cwd's live Task (the fallback is cwd-scoped).
+	const input = {
+		task: `Do not modify files. Return only a valid WorkerReport for task ${task.taskId}.`,
+	};
+	await orch.prepareRoleDelegation(input, task.cwd);
+	assert.equal(input.reportOnly, true, "42-a: machine stamp sets explicit reportOnly on input");
+	assert.match(String(input.task), /"taskId": "T-20260908-42mg"/, "42-b: prepareRoleDelegation embeds original TaskSpec");
+	assert.match(String(input.task), /"reportOnly": true/, "42-c: embedded TaskSpec carries reportOnly");
+	const outcome = await orch.beginDelegation({ toolCallId: "call-42mg", input }, task.cwd);
+	assert.equal(outcome.warnings?.some((w) => /without an embedded TaskSpec/.test(w)) ?? false, false, "42-d: no missing-TaskSpec warning");
+	assert.equal(outcome.warnings?.some((w) => /no single live Task matched/.test(w)) ?? false, false, "42-e: no unmatched-name warning");
+	assert.equal(orch.getDelegation("call-42mg")?.reportOnly, true, "42-f: DelegationRecord.reportOnly from explicit field");
+	assert.equal(orch.getDelegation("call-42mg")?.taskId, task.taskId, "42-g: bound to the original Task");
+}
+
+{
+	// Explicit reportOnly (no sniff) reaches DelegationRecord and evidence compare.
+	const store = pinnedStore();
+	const taskId = "T-20260908-42ev";
+	const task = store.create(specFor(taskId));
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	setDirtyTree();
+	const correctionInput = {
+		agent: "worker",
+		reportOnly: true,
+		task: JSON.stringify({ ...specFor(taskId), reportOnly: true }),
+	};
+	await orch.beginDelegation({ toolCallId: "call-42ev", input: correctionInput }, `/fixture/${taskId}`);
+	assert.equal(orch.getDelegation("call-42ev")?.reportOnly, true, "42-h: explicit reportOnly without sniff");
+	const overReport = {
+		...reportFor(taskId, "call-42ev"),
+		summary: "report-only restatement",
+		changedFiles: ["src/parser.ts", "src/extra.ts"],
+	};
+	await orch.handleSubagentResult({
+		toolCallId: "call-42ev",
+		toolName: "subagent",
+		content: [{ type: "text", text: JSON.stringify(overReport) }],
+	});
+	const comparison = store.require(taskId).lastComparison;
+	assert.ok(comparison, "42-i: comparison recorded");
+	assert.equal(comparison.unexplained, false, "42-j: evidence compare received reportOnly (over-report not unexplained)");
+	assert.ok((comparison.extraDeclaredPaths ?? []).length > 0, "42-k: over-report still surfaced as extraDeclared");
+	setCleanTree();
+}
+
+// --------------------------------------------------------------------------
+// Ticket 41 — blocked lifecycle: abandon, receipt parking, verdict, status
+// --------------------------------------------------------------------------
+{
+	const store = pinnedStore();
+	const task = store.create(specFor("T-20260908-41ab"));
+	store.transition(task.taskId, "executing");
+	store.transition(task.taskId, "blocked");
+	assert.ok(store.require(task.taskId).sealedAt, "41-a: entering blocked sets sealedAt");
+	const abandoned = store.abandon(task.taskId, "operator stop-loss");
+	assert.equal(abandoned.state, "failed", "41-b: abandon allows blocked → failed");
+	assert.equal(abandoned.stateReason, "operator stop-loss");
+	assert.equal(abandoned.sealedAt, undefined, "41-c: sealedAt cleared on abandon");
+	assert.throws(() => store.abandon(task.taskId), /terminal task: failed/, "41-d: failed remains non-abandonable");
+}
+
+{
+	const store = pinnedStore();
+	const task = store.create(specFor("T-20260908-41pk"));
+	store.transition(task.taskId, "executing");
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	await orch.beginDelegation({
+		toolCallId: "call-41pk",
+		input: { agent: "worker", task: JSON.stringify(specFor("T-20260908-41pk")) },
+	}, `/fixture/T-20260908-41pk`);
+	// Block the Task while the child is still pending (simulates report-correction exhaustion).
+	store.transition(task.taskId, "blocked");
+	assert.equal(store.require(task.taskId).state, "blocked");
+	const beforeRound = store.require(task.taskId).reviewRound;
+	const beforeReports = store.require(task.taskId).reports.length;
+	const lateReport = {
+		version: 1,
+		taskId: "T-20260908-41pk",
+		status: "completed",
+		summary: "late arrival",
+		changedFiles: ["src/parser.ts"],
+		validation: [{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "ok" }],
+		evidence: {
+			cwd: `/fixture/T-20260908-41pk`,
+			taskId: "T-20260908-41pk",
+			workerRunId: "call-41pk",
+			generatedAt: new Date().toISOString(),
+		},
+		risks: [],
+		unresolved: [],
+	};
+	const parked = await orch.handleSubagentResult({
+		toolCallId: "call-41pk",
+		toolName: "subagent",
+		content: [{ type: "text", text: JSON.stringify(lateReport) }],
+	});
+	assert.match(parked?.content?.[0]?.text ?? "", /parked into history/, "41-e: late receipt discloses parking");
+	const after = store.require(task.taskId);
+	assert.equal(after.state, "blocked", "41-f: late receipt does not advance state");
+	assert.equal(after.reviewRound, beforeRound, "41-g: reviewRound unchanged");
+	assert.equal(after.reports.length, beforeReports, "41-h: report not recorded via advanceReview path");
+	assert.match(after.stateReason ?? "", /parked/, "41-i: parking noted in stateReason");
+}
+
+{
+	const store = pinnedStore();
+	const task = store.create(specFor("T-20260908-41vd"));
+	store.transition(task.taskId, "executing");
+	store.recordReport(task.taskId, reportFor(task.taskId, "r-41vd"));
+	store.transition(task.taskId, "blocked");
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	setDirtyTree();
+	const outcome = await orch.recordRootVerdict(store.require(task.taskId), "blocked", "independent close", { source: "root" });
+	// planner_verdict on blocked remains open — decision applied (escape hatch).
+	assert.ok(outcome.decision, "41-j: planner_verdict still accepted on blocked");
+	assert.equal(store.require(task.taskId).reviews.at(-1)?.verdict, "blocked", "41-k: verdict recorded");
+	setCleanTree();
+}
+
+{
+	const store = pinnedStore();
+	const task = store.create(specFor("T-20260908-41st"));
+	store.transition(task.taskId, "executing");
+	store.transition(task.taskId, "blocked");
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const status = orch.renderTaskStatus(store.require(task.taskId));
+	assert.match(status, /Blocked lifecycle:.*planner_verdict/, "41-l: status discloses verdict still accepted");
+	assert.match(status, /late child receipts are parked/, "41-m: status discloses receipt parking");
+	assert.match(status, /abandon → failed/, "41-n: status discloses abandon path");
+	assert.match(status, /Sealed at:/, "41-o: status shows sealedAt");
+}
+
+// --------------------------------------------------------------------------
+// Ticket 42 review — report-only fallback never overrides an explicit identity
+// and is scoped to the delegation cwd
+// --------------------------------------------------------------------------
+{
+	// Unknown canonical id named in the prose while another Task is active in the same cwd.
+	const store = pinnedStore();
+	const activeId = "T-20260908-421";
+	const active = store.create(specFor(activeId));
+	store.transition(activeId, "executing");
+	store.transition(activeId, "reviewing");
+	store.transition(activeId, "changes_requested");
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const input = { task: "Do not modify files. Return only a valid WorkerReport for task T-20260908-999." };
+	await orch.prepareRoleDelegation(input, active.cwd);
+	assert.equal(input.reportOnly, true, "42r-a: still stamped report-only");
+	assert.doesNotMatch(String(input.task), /"taskId": "T-20260908-421"/, "42r-b: unknown named Task is not redirected to the active Task's spec");
+	const outcome = await orch.beginDelegation({ toolCallId: "call-42r-unknown", input }, active.cwd);
+	assert.notEqual(outcome.task?.taskId, activeId, "42r-c: unknown named Task does not bind to the active Task");
+	assert.ok(
+		(outcome.warnings ?? []).some((w) => /names task T-20260908-999 but no single live Task matched/.test(w)),
+		`42r-d: unmatched name is disclosed: ${outcome.warnings?.join(" | ")}`,
+	);
+	assert.equal(orch.getDelegation("call-42r-unknown")?.taskId === activeId, false, "42r-e: delegation not recorded against the active Task");
+}
+
+{
+	// Completed Task named in the prose while another Task is active in the same cwd.
+	const store = pinnedStore();
+	const cwd = "/fixture/shared-42r";
+	const doneId = "T-20260908-422";
+	store.create(specFor(doneId, "worker", cwd));
+	store.transition(doneId, "executing");
+	store.transition(doneId, "reviewing");
+	store.transition(doneId, "completed");
+	const activeId = "T-20260908-423";
+	store.create(specFor(activeId, "worker", cwd));
+	store.transition(activeId, "executing");
+	store.transition(activeId, "reviewing");
+	store.transition(activeId, "changes_requested");
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const input = { task: `Do not modify files. Return only a valid WorkerReport for task ${doneId}.` };
+	await orch.prepareRoleDelegation(input, cwd);
+	assert.doesNotMatch(String(input.task), /"taskId": "T-20260908-423"/, "42r-f: completed named Task is not redirected to the active Task's spec");
+	const outcome = await orch.beginDelegation({ toolCallId: "call-42r-done", input }, cwd);
+	assert.notEqual(outcome.task?.taskId, activeId, "42r-g: completed named Task does not bind to the active Task");
+	assert.equal(store.require(doneId).state, "completed", "42r-h: completed Task untouched");
+}
+
+{
+	// Explicit input.taskId that resolves to nothing is an identity, not an omission.
+	const store = pinnedStore();
+	const activeId = "T-20260908-424";
+	const active = store.create(specFor(activeId));
+	store.transition(activeId, "executing");
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const input = { taskId: "T-20260908-998", task: "Do not modify files. Return only a valid WorkerReport." };
+	await orch.prepareRoleDelegation(input, active.cwd);
+	assert.doesNotMatch(String(input.task), /"taskId": "T-20260908-424"/, "42r-i: explicit unknown taskId is not redirected");
+	const outcome = await orch.beginDelegation({ toolCallId: "call-42r-explicit", input }, active.cwd);
+	assert.notEqual(outcome.task?.taskId, activeId, "42r-j: explicit unknown taskId does not bind to the active Task");
+}
+
+{
+	// Unnamed report-only prose from a different workspace must not bind to
+	// another workspace's active Task.
+	const store = pinnedStore();
+	const activeId = "T-20260908-425";
+	store.create(specFor(activeId, "worker", "/fixture/ws-a"));
+	store.transition(activeId, "executing");
+	store.transition(activeId, "reviewing");
+	store.transition(activeId, "changes_requested");
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const input = { task: "Do not modify files. Return only a valid WorkerReport." };
+	await orch.prepareRoleDelegation(input, "/fixture/ws-b");
+	assert.doesNotMatch(String(input.task), /"taskId": "T-20260908-425"/, "42r-k: cross-cwd fallback is not offered");
+	const outcome = await orch.beginDelegation({ toolCallId: "call-42r-xcwd", input }, "/fixture/ws-b");
+	assert.notEqual(outcome.task?.taskId, activeId, "42r-l: cross-cwd request does not bind to the other workspace's Task");
+
+	// Same prose from the Task's own workspace still binds (the intended fallback).
+	const same = { task: "Do not modify files. Return only a valid WorkerReport." };
+	await orch.prepareRoleDelegation(same, "/fixture/ws-a");
+	assert.match(String(same.task), /"taskId": "T-20260908-425"/, "42r-m: same-cwd unnamed fallback still embeds the Task's spec");
+}
+
+// --------------------------------------------------------------------------
+// Ticket 42 review — reportOnly is invocation-scoped, never persisted on the Task
+// --------------------------------------------------------------------------
+{
+	const store = pinnedStore();
+	const taskId = "T-20260908-426";
+	store.create(specFor(taskId));
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const cwd = `/fixture/${taskId}`;
+	setDirtyTree();
+	await orch.beginDelegation({
+		toolCallId: "call-42p-ro",
+		input: { agent: "worker", reportOnly: true, task: JSON.stringify({ ...specFor(taskId), reportOnly: true }) },
+	}, cwd);
+	assert.equal(orch.getDelegation("call-42p-ro")?.reportOnly, true, "42p-a: correction round is report-only");
+	assert.equal(store.require(taskId).spec.reportOnly, undefined, "42p-b: persisted TaskSpec does not carry reportOnly");
+	await orch.handleSubagentResult({
+		toolCallId: "call-42p-ro",
+		toolName: "subagent",
+		content: [{ type: "text", text: JSON.stringify(reportFor(taskId, "call-42p-ro")) }],
+	});
+	assert.equal(store.require(taskId).spec.reportOnly, undefined, "42p-c: still not persisted after the round settles");
+
+	// A normal follow-up delegation with the original TaskSpec is not report-only.
+	await orch.beginDelegation({
+		toolCallId: "call-42p-normal",
+		input: { agent: "worker", task: JSON.stringify(specFor(taskId)) },
+	}, cwd);
+	assert.equal(orch.getDelegation("call-42p-normal")?.reportOnly, undefined, "42p-d: normal delegation does not inherit reportOnly");
+	const overReport = {
+		...reportFor(taskId, "call-42p-normal"),
+		changedFiles: ["src/parser.ts", "src/extra.ts"],
+	};
+	await orch.handleSubagentResult({
+		toolCallId: "call-42p-normal",
+		toolName: "subagent",
+		content: [{ type: "text", text: JSON.stringify(overReport) }],
+	});
+	const comparison = store.require(taskId).lastComparison;
+	assert.ok(comparison, "42p-e: comparison recorded");
+	assert.equal(comparison.unexplained, true, "42p-f: unexplained over-report is rejected again on the normal round");
+	setCleanTree();
+}
+
+// --------------------------------------------------------------------------
+// Ticket 41 review — every late receipt on a blocked Task is parked
+// --------------------------------------------------------------------------
+{
+	// Error receipt without a runId (confirmed start failure).
+	const store = pinnedStore();
+	const taskId = "T-20260908-411";
+	store.create(specFor(taskId));
+	store.transition(taskId, "executing");
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	await orch.beginDelegation({ toolCallId: "call-41r-err", input: { agent: "worker", task: JSON.stringify(specFor(taskId)) } }, `/fixture/${taskId}`);
+	store.transition(taskId, "blocked");
+	const outcome = await orch.handleSubagentResult({
+		toolCallId: "call-41r-err",
+		toolName: "subagent",
+		isError: true,
+		content: [{ type: "text", text: "spawn failed" }],
+	});
+	assert.match(outcome?.content?.[0]?.text ?? "", /parked into history/, "41r-a: error receipt is parked");
+	assert.equal(store.require(taskId).state, "blocked", "41r-b: error receipt does not move the blocked Task");
+	assert.match(store.require(taskId).stateReason ?? "", /parked/, "41r-c: parking noted");
+	assert.equal(orch.pendingDelegationCount(), 0, "41r-d: delegation still ended");
+}
+
+{
+	// Budget-stop receipt.
+	const store = pinnedStore();
+	const taskId = "T-20260908-412";
+	store.create(specFor(taskId));
+	store.transition(taskId, "executing");
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	await orch.beginDelegation({ toolCallId: "call-41r-budget", input: { agent: "worker", task: JSON.stringify(specFor(taskId)) } }, `/fixture/${taskId}`);
+	store.transition(taskId, "blocked");
+	const outcome = await orch.handleSubagentResult({
+		toolCallId: "call-41r-budget",
+		toolName: "subagent",
+		isError: true,
+		content: [{ type: "text", text: "Subagent stopped: toolBudget exhausted" }],
+	});
+	assert.match(outcome?.content?.[0]?.text ?? "", /parked into history/, "41r-e: budget-stop receipt is parked");
+	assert.equal(store.require(taskId).state, "blocked", "41r-f: budget-stop does not move the blocked Task");
+	assert.doesNotMatch(store.require(taskId).stateReason ?? "", /subagent stopped/, "41r-g: no stopped reason recorded on a sealed Task");
+}
+
+{
+	// Explorer receipt attached to a blocked Task.
+	const store = pinnedStore();
+	const taskId = "T-20260908-413";
+	store.create(specFor(taskId));
+	store.transition(taskId, "executing");
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	await orch.beginDelegation({ toolCallId: "call-41r-explore", input: { agent: "explorer", task: `Investigate task ${taskId}.` } }, `/fixture/${taskId}`);
+	assert.equal(orch.getDelegation("call-41r-explore")?.taskId, taskId, "41r-h: explorer attached to the named Task");
+	store.transition(taskId, "blocked");
+	const outcome = await orch.handleSubagentResult({
+		toolCallId: "call-41r-explore",
+		toolName: "subagent",
+		content: [{ type: "text", text: "Findings: nothing to report." }],
+	});
+	assert.match(outcome?.content?.[0]?.text ?? "", /Late explorer receipt .* parked into history/, "41r-i: explorer receipt is parked");
+	assert.equal(store.require(taskId).state, "blocked", "41r-j: explorer receipt does not move the blocked Task");
+}
+
+{
+	// Async notify: stopped and explorer completions on a blocked Task.
+	const store = pinnedStore();
+	const taskId = "T-20260908-414";
+	store.create(specFor(taskId));
+	store.transition(taskId, "executing");
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const runId = "run-41r-00000000-0000-0000-000000000414";
+	await orch.beginDelegation({ toolCallId: "call-41r-async", input: { agent: "worker", task: JSON.stringify(specFor(taskId)) } }, `/fixture/${taskId}`);
+	await orch.handleSubagentResult({
+		toolCallId: "call-41r-async",
+		toolName: "subagent",
+		details: { asyncId: runId, runId, asyncDir: "/no-such-async-dir" },
+		content: [{ type: "text", text: `Async: worker [${runId}]\nThe async run is detached and running in the background.` }],
+	});
+	store.transition(taskId, "blocked");
+	const outcome = await orch.handleAsyncNotify(`Background task stopped: **worker**\n\ntoolBudget exhausted before a report`);
+	assert.match(outcome?.content?.[0]?.text ?? "", /parked into history/, "41r-k: async stopped notice is parked");
+	assert.equal(store.require(taskId).state, "blocked", "41r-l: async stopped notice does not move the blocked Task");
+	assert.equal(orch.pendingDelegationCount(), 0, "41r-m: async delegation ended");
+}
+
+{
+	const store = pinnedStore();
+	const taskId = "T-20260908-415";
+	store.create(specFor(taskId));
+	store.transition(taskId, "executing");
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const runId = "run-41r-00000000-0000-0000-000000000415";
+	await orch.beginDelegation({ toolCallId: "call-41r-async-x", input: { agent: "explorer", task: `Investigate task ${taskId}.` } }, `/fixture/${taskId}`);
+	await orch.handleSubagentResult({
+		toolCallId: "call-41r-async-x",
+		toolName: "subagent",
+		details: { asyncId: runId, runId, asyncDir: "/no-such-async-dir" },
+		content: [{ type: "text", text: `Async: explorer [${runId}]\nThe async run is detached and running in the background.` }],
+	});
+	store.transition(taskId, "blocked");
+	const outcome = await orch.handleAsyncNotify(`Background task completed: **explorer**\n\nFindings for task ${taskId}: none.`);
+	assert.match(outcome?.content?.[0]?.text ?? "", /Late explorer receipt .* parked into history/, "41r-n: async explorer completion is parked");
+	assert.equal(store.require(taskId).state, "blocked", "41r-o: async explorer completion does not move the blocked Task");
 }
 
 // --------------------------------------------------------------------------
