@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0 - 2026-09-10
+
+- Task-level cumulative budget: ledger, atomic pre-launch reservation, refuse new paid work when exhausted, and restore the same budget after reload.
+- Session-level root spend gate: warn at 3× a single-task floor, refuse new paid delegations at 5×; reviewer stays exempt so Tasks can still close.
+- Default floors on paid delegations; failed launches still settle; `/planner-only status` discloses budget stop, isolation, and write errors.
+- Machine-generated report-only correction rounds embed the original TaskSpec and an explicit `reportOnly` flag instead of sniffing the prompt.
+- `blocked` Tasks can be abandoned to `failed`; late child receipts are parked and do not reopen the Task; Root `planner_verdict` remains the escape hatch.
+- Evidence sampling covers declared additional worktree roots; report-only rounds do not treat over-reported declarations as unexplained.
+- The host still does not enforce `usageBudget`; hard caps are plugin-side only.
+
 ## 0.3.3 - 2026-09-07
 
 - Worker tasks now receive a compact WorkerReport JSON shape up front and are told not to run `/code-review`; review stays on the plugin Reviewer.
