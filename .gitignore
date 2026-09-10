@@ -20,3 +20,6 @@ node_modules/
 # local leftovers (untracked dumps; p19 agent-dir contains auth.json)
 .scratch/oracle-no-bash-repro/
 .scratch/planner-only-cost-control/quarantine/p19-wt-leftover-r085-agent-dir/
+
+# local pre-pull backup dumps
+.scratch/.local-backup*/
