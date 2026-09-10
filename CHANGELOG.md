@@ -9,6 +9,7 @@
 - `blocked` Tasks can be abandoned to `failed`; late child receipts are parked and do not reopen the Task; Root `planner_verdict` remains the escape hatch.
 - Evidence sampling covers declared additional worktree roots; report-only rounds do not treat over-reported declarations as unexplained.
 - The host still does not enforce `usageBudget`; hard caps are plugin-side only.
+- Bundled `pricing.defaults.json` seeds `~/.pi/agent/planner-only/pricing.json` on first load (bare model keys; `provider/model` only as an override). Existing keys are never overwritten.
 
 ## 0.3.3 - 2026-09-07
 

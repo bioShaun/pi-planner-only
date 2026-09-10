@@ -11,10 +11,12 @@ import {
 	buildRunRecord,
 	summarizeRuns,
 	emptyTaskUsage,
+	ensurePricingFile,
 	hasUsableRate,
 	loadPricingTable,
 	lookupRates,
 	modelIdForPricing,
+	pricingPath,
 	renderUsage,
 	renderUsageLine,
 	shouldFlushUsageOnShutdown,
@@ -166,6 +168,42 @@ assert.equal(modelIdForPricing("volcengine/glm-5-3"), "volcengine/glm-5-3");
 	assert.equal(lookupRates(pricing, "volcengine", "glm-5-3"), pricing.rates["volcengine/glm-5-3"]);
 	assert.equal(lookupRates(pricing, undefined, "bare-model"), pricing.rates["bare-model"]);
 	assert.equal(lookupRates(pricing, "volcengine", "glm-5-3:high"), pricing.rates["volcengine/glm-5-3"]);
+}
+
+{
+	const pricing = {
+		version: 1,
+		currency: "USD",
+		rates: {
+			"glm-5-3": { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 0.5 },
+			"volcengine/glm-5-3": { input: 9, output: 9, cacheRead: 9, cacheWrite: 9 },
+			"MiniMax-M3": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		},
+	};
+	assert.equal(
+		lookupRates(pricing, "volcengine", "glm-5-3"),
+		pricing.rates["volcengine/glm-5-3"],
+		"explicit provider/model beats the bare model",
+	);
+	assert.equal(
+		lookupRates(pricing, "tcuni", "tcuni/gpt-5.6-luna"),
+		undefined,
+	);
+	assert.equal(
+		lookupRates(pricing, "tcuni", "glm-5-3"),
+		pricing.rates["glm-5-3"],
+		"bare model matches when the provider-specific key is absent",
+	);
+	assert.equal(
+		lookupRates(pricing, "tcuni", "tcuni/glm-5-3"),
+		pricing.rates["glm-5-3"],
+		"provider-prefixed runtime ids still match a bare table key",
+	);
+	assert.equal(
+		lookupRates(pricing, "gmicloud", "gmicloud/MiniMaxAI/MiniMax-M3"),
+		pricing.rates["MiniMax-M3"],
+		"multi-segment ids fall back to the last segment",
+	);
 }
 
 // --------------------------------------------------------------------------
@@ -687,6 +725,58 @@ assert.equal(modelIdForPricing("volcengine/glm-5-3"), "volcengine/glm-5-3");
 		const missing = loadPricingTable({ PI_PLANNER_ONLY_PRICING: join(dir, "nope.json") });
 		assert.equal(missing.currency, "USD");
 		assert.deepEqual(missing.rates, {});
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+	try {
+		const env = { PI_CODING_AGENT_DIR: dir };
+		const dest = pricingPath(env);
+		ensurePricingFile(env);
+		assert.equal(loadPricingTable(env).rates["gpt-5.6-luna"].input, 0.2, "missing file is seeded from bundled defaults");
+		assert.equal(lookupRates(loadPricingTable(env), "tcuni", "tcuni/gpt-5.6-luna:high")?.input, 0.2);
+
+		writeFileSync(dest, JSON.stringify({
+			version: 1,
+			currency: "USD",
+			_howto: ["keep me"],
+			rates: {
+				"gpt-5.6-luna": { input: 99, output: 99, cacheRead: 99, cacheWrite: 99 },
+				"custom-only": { input: 1, output: 1, cacheRead: 1, cacheWrite: 1 },
+			},
+		}, null, 2));
+		ensurePricingFile(env);
+		const merged = JSON.parse(readFileSync(dest, "utf8"));
+		assert.deepEqual(merged._howto, ["keep me"]);
+		assert.equal(merged.rates["gpt-5.6-luna"].input, 99, "existing keys are not overwritten");
+		assert.equal(merged.rates["custom-only"].input, 1);
+		assert.equal(merged.rates["claude-opus-5"].input, 5, "missing default keys are filled in");
+
+		const overrideDir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+		try {
+			ensurePricingFile({
+				PI_CODING_AGENT_DIR: overrideDir,
+				PI_PLANNER_ONLY_PRICING: join(dir, "override.json"),
+			});
+			assert.equal(loadPricingTable({ PI_CODING_AGENT_DIR: overrideDir }).rates["gpt-5.6-luna"], undefined, "override env must not seed the default path");
+		} finally {
+			rmSync(overrideDir, { recursive: true, force: true });
+		}
+
+		const skipDir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+		try {
+			ensurePricingFile({ PI_CODING_AGENT_DIR: skipDir, PI_PLANNER_ONLY_SEED_PRICING: "0" });
+			assert.equal(
+				loadPricingTable({ PI_CODING_AGENT_DIR: skipDir }).rates["gpt-5.6-luna"],
+				undefined,
+				"SEED_PRICING=0 must not seed the default path",
+			);
+		} finally {
+			rmSync(skipDir, { recursive: true, force: true });
+		}
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

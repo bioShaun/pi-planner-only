@@ -223,12 +223,14 @@ The pricing table format:
   "currency": "USD",
   "rates": {
     "example-provider/expensive-root-model": { "input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 3.75 },
-    "example-provider/cheap-worker-model":   { "input": null, "output": null, "cacheRead": null, "cacheWrite": null }
+    "cheap-worker-model": { "input": 0.2, "output": 1.2, "cacheRead": 0.02, "cacheWrite": 0.2 }
   }
 }
 ```
 
-- Keys are `provider/model` or bare `model` names.
+- Keys are bare model names by default (`gpt-5.6-luna`). Write `provider/model` only when that provider's price differs.
+- On first load the plugin copies bundled defaults into `~/.pi/agent/planner-only/pricing.json` if the file is missing; later upgrades add missing keys and never overwrite yours.
+- Lookup prefers an explicit `provider/model` key, then the bare model name.
 - Rates are expressed per million tokens in `currency` (`USD` or `CNY`).
 - A `null` rate means the rate is unknown (yields `cost unknown`); `0` indicates free.
 - Keys starting with `_` are ignored (useful for comments).

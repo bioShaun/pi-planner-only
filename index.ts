@@ -27,6 +27,7 @@ import {
 	delegationRateKind,
 	hasUsableRate,
 	loadPricingTable,
+	ensurePricingFile,
 	lookupRates,
 	pricingPath,
 	renderUsage,
@@ -181,6 +182,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	// Most recent host context, kept so reconcile can find session artifact
 	// directories even when it runs from planner_verdict.
 	let latestCtx: ExtensionContext | undefined;
+	ensurePricingFile();
 	let pricing = loadPricingTable();
 	let ledger = new UsageLedger({ pricing });
 	const orchestrator = new PlannerOrchestrator({
@@ -1308,6 +1310,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				const sub = (parts[1] ?? "").trim();
 				if (sub.toLowerCase() === "reload") {
 					persistSessionEntries();
+					ensurePricingFile();
 					pricing = loadPricingTable();
 					ledger = new UsageLedger({ pricing });
 					ledger.load(allSessionEntries);

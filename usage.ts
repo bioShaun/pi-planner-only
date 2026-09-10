@@ -3,9 +3,10 @@
  * No Pi host imports.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
 	ChildUsage,
 	DelegationKind,
@@ -173,14 +174,20 @@ function piReportedCost(usage: PiUsageLike): number | undefined {
 
 export function lookupRates(pricing: PricingTable, provider: string | undefined, model: string | undefined): PricingRates | undefined {
 	if (!model) return undefined;
-	const stripped = modelIdForPricing(model);
+	const full = modelIdForPricing(model);
+	const slash = full.indexOf("/");
+	const inferredProvider = slash > 0 ? full.slice(0, slash) : undefined;
+	const bare = slash > 0 ? full.slice(slash + 1) : full;
+	const last = full.includes("/") ? full.slice(full.lastIndexOf("/") + 1) : full;
+	const resolvedProvider = provider?.trim() || inferredProvider;
 	const keys: string[] = [];
-	if (provider) keys.push(`${provider}/${stripped}`);
-	keys.push(stripped);
-	if (stripped.includes("/")) {
-		const bare = stripped.slice(stripped.indexOf("/") + 1);
-		if (bare) keys.push(bare);
-	}
+	const push = (key: string) => {
+		if (key && !keys.includes(key)) keys.push(key);
+	};
+	if (resolvedProvider && bare) push(`${resolvedProvider}/${bare}`);
+	push(full);
+	push(bare);
+	if (last !== bare) push(last);
 	for (const key of keys) {
 		if (key in pricing.rates) return pricing.rates[key];
 	}
@@ -312,6 +319,48 @@ export function loadPricingTable(env: NodeJS.ProcessEnv = process.env): PricingT
 	} catch {
 		return emptyPricingTable();
 	}
+}
+
+export function bundledPricingPath(): string {
+	return join(dirname(fileURLToPath(import.meta.url)), "pricing.defaults.json");
+}
+
+export function ensurePricingFile(env: NodeJS.ProcessEnv = process.env): void {
+	if (env.PI_PLANNER_ONLY_PRICING?.trim()) return;
+	const seedFlag = (env.PI_PLANNER_ONLY_SEED_PRICING ?? "").trim().toLowerCase();
+	if (seedFlag === "0" || seedFlag === "false" || seedFlag === "off") return;
+	const dest = pricingPath(env);
+	const bundledRaw = readFileSync(bundledPricingPath(), "utf8");
+	if (!existsSync(dest)) {
+		mkdirSync(dirname(dest), { recursive: true });
+		writeFileSync(dest, bundledRaw.endsWith("\n") ? bundledRaw : `${bundledRaw}\n`, "utf8");
+		return;
+	}
+	let userParsed: Record<string, unknown>;
+	try {
+		userParsed = JSON.parse(readFileSync(dest, "utf8")) as Record<string, unknown>;
+	} catch {
+		return;
+	}
+	const bundled = JSON.parse(bundledRaw) as Record<string, unknown>;
+	const userRates = userParsed.rates && typeof userParsed.rates === "object" && !Array.isArray(userParsed.rates)
+		? userParsed.rates as Record<string, unknown>
+		: {};
+	const bundledRates = bundled.rates && typeof bundled.rates === "object" && !Array.isArray(bundled.rates)
+		? bundled.rates as Record<string, unknown>
+		: {};
+	let added = false;
+	const merged = { ...userRates };
+	for (const [key, value] of Object.entries(bundledRates)) {
+		if (key.startsWith("_")) continue;
+		if (!(key in userRates)) {
+			merged[key] = value;
+			added = true;
+		}
+	}
+	if (!added) return;
+	userParsed.rates = merged;
+	writeFileSync(dest, `${JSON.stringify(userParsed, null, 2)}\n`, "utf8");
 }
 
 function providerFromModel(model: string | undefined): string | undefined {

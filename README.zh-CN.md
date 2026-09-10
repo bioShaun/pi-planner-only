@@ -143,12 +143,14 @@ Token 数为准，美元/人民币金额是推导值。扩展跟踪 Root 各生�
   "currency": "USD",
   "rates": {
     "example-provider/expensive-root-model": { "input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 3.75 },
-    "example-provider/cheap-worker-model":   { "input": null, "output": null, "cacheRead": null, "cacheWrite": null }
+    "cheap-worker-model": { "input": 0.2, "output": 1.2, "cacheRead": 0.02, "cacheWrite": 0.2 }
   }
 }
 ```
 
-- 键为 `provider/model` 或单独的 `model` 名称。
+- 键默认是裸模型名（如 `gpt-5.6-luna`）。只有该 provider 价格不同时才写 `provider/model`。
+- 首次加载时，若 `~/.pi/agent/planner-only/pricing.json` 不存在，插件会把内置默认表拷过去；之后升级只补缺失的键，不覆盖你改过的。
+- 查找优先用显式 `provider/model`，否则用裸模型名。
 - 费率为 `currency`（`USD` 或 `CNY`）下每百万 Token 的价格。
 - 费率为 `null` 表示费率未知（展示为 `cost unknown`）；`0` 表示免费。
 - 以 `_` 开头的键会被忽略（可用于注释）。

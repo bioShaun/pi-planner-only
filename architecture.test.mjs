@@ -74,6 +74,8 @@ assert.doesNotMatch(usage, /from "\.\/index\.ts"/);
 assert.doesNotMatch(usage, /@earendil-works/);
 assert.doesNotMatch(usage, /from "\.\/task\.ts"/);
 assert.equal(pkg.files.includes("usage.ts"), true, "usage.ts must ship in the package files list");
+assert.equal(pkg.files.includes("pricing.defaults.json"), true, "bundled pricing defaults must ship in the package files list");
+assert.match(index, /ensurePricingFile\(\)/, "the adapter must seed the local pricing table at startup");
 assert.equal(pkg.files.includes("floors.ts"), true, "floors.ts must ship in the package files list");
 assert.equal(pkg.files.includes("role-models.ts"), true, "role-models.ts must ship in the package files list");
 assert.match(orchestrate, /from "\.\/role-models\.ts"/);

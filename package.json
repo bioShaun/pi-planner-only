@@ -37,7 +37,8 @@
     "usage.ts",
     "reservations.ts",
     "ledger-store.ts",
-    "workspace-snapshot.ts"
+    "workspace-snapshot.ts",
+    "pricing.defaults.json"
   ],
   "pi": {
     "extensions": [

@@ -9,6 +9,7 @@ import { emptyTaskUsage } from "./usage.ts";
 
 const isolatedAgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
 process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
+process.env.PI_PLANNER_ONLY_SEED_PRICING = "0";
 
 delete process.env.PI_SUBAGENT_CHILD;
 const { default: plannerOnly, filterPlannerTools, restorePlannerTools, PLANNER_PROMPT } = await import("./index.ts");
