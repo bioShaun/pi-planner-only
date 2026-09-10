@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { PlannerOrchestrator, isDelegationCall } from "./orchestrate.ts";
 import { LedgerSnapshotStore } from "./ledger-store.ts";
 import { BudgetReservations } from "./reservations.ts";
-import { createTaskSpec, isExecutingStale, isHolderStale } from "./task.ts";
+import { createTaskSpec, isExecutingStale, isHolderStale, TASKSPEC_EXAMPLE_SENTINEL, validateTaskSpec } from "./task.ts";
 import { TaskStore } from "./task.ts";
 import { hashStatus, workspaceSummaryDigest, describeComparison } from "./evidence.ts";
 import { extractReviewRequest } from "./review.ts";
@@ -7257,6 +7257,70 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	assert.equal(verdict.decision.action, "blocked", verdict.decision.reason);
 	assert.equal(verdict.decision.failureClass, "environment");
 	assert.equal(verdict.task.state, "blocked");
+}
+
+
+// ==========================================================================
+// R01 — pasteable TaskSpec example JSON and the non-aliasing sentinel
+// ==========================================================================
+
+// R01 — a characteristic-but-invalid TaskSpec refusal carries the shared
+// validating example JSON, creates no Task, and starts no child.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const outcome = await orch.beginDelegation(
+		{
+			toolCallId: "call-r01-invalid",
+			input: {
+				agent: "worker",
+				task: JSON.stringify({ taskId: "T-20260905-993", objective: "do it", validation: { required: "yes" } }),
+			},
+		},
+		BASE,
+	);
+	assert.ok(outcome.block, "characteristic-but-invalid TaskSpec refuses before launch");
+	assert.match(outcome.block.reason, /embedded TaskSpec is invalid/);
+	const match = outcome.block.reason.match(/```json\n([\s\S]*?)\n```/);
+	assert.ok(match, "the refusal carries a fenced JSON example");
+	const example = JSON.parse(match[1]);
+	assert.deepEqual(validateTaskSpec(example), [], "the refusal example passes TaskSpec validation");
+	assert.deepEqual(example.validation, { required: false }, "an invalid validation object collapses to the minimal shape");
+	assert.equal(orch.pendingDelegationCount(), 0, "no child was started");
+}
+
+// R01 — the sentinel: replaced by a canonical id, never stored as an alias,
+// and a second paste starts a different Task even after the first completed.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const SENTRY_TASK_ID = TASKSPEC_EXAMPLE_SENTINEL;
+	const specSentinel = () => ({ ...specFor(SENTRY_TASK_ID, "worker", "/fixture/r01") });
+	const first = await orch.beginDelegation(
+		{ toolCallId: "call-r01-a", input: { agent: "worker", task: JSON.stringify(specSentinel()) } },
+		BASE,
+	);
+	const firstId = first.task.taskId;
+	assert.notEqual(firstId, SENTRY_TASK_ID, "the sentinel is replaced by a generated canonical id");
+	assert.equal(first.task.aliases.includes(SENTRY_TASK_ID), false, "the sentinel is not stored as an alias");
+	assert.equal(orch.store.get(SENTRY_TASK_ID), undefined, "store.get does not resolve the sentinel");
+
+	// The accepted launch packet names the canonical id, never the sentinel.
+	await orch.handleSubagentResult(workerResult("call-r01-a", {
+		...reportFor(firstId, "call-r01-a"),
+		evidence: { ...reportFor(firstId, "call-r01-a").evidence, cwd: "/fixture/r01" },
+	}));
+	assert.equal(orch.store.require(firstId).spec.taskId, firstId, "the persisted spec carries the canonical id");
+	await orch.recordRootVerdict(orch.store.require(firstId), "pass", "done");
+
+	// A second paste of the same example JSON starts a new Task.
+	setCleanTree();
+	const second = await orch.beginDelegation(
+		{ toolCallId: "call-r01-b", input: { agent: "worker", task: JSON.stringify(specSentinel()) } },
+		BASE,
+	);
+	assert.ok(second.task, "the second paste creates a Task");
+	assert.notEqual(second.task.taskId, firstId, "the second paste does not rebind to the first Task");
+	assert.equal(orch.store.get(SENTRY_TASK_ID), undefined);
+	setCleanTree();
 }
 
 

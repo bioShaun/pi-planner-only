@@ -1,4 +1,5 @@
 import { isSafeAuditCommand } from "./git-audit.ts";
+import { appendTaskSpecExample, buildTaskSpecExample } from "./task.ts";
 
 export { isSafeAuditCommand };
 
@@ -33,6 +34,8 @@ export interface PolicyInput {
 	input?: unknown;
 	isChild: boolean;
 	disabled: boolean;
+	/** R01 — adapter workspace (`ctx.cwd || process.cwd()`), used by the example JSON. */
+	cwd?: string;
 }
 
 export interface PolicyDecision {
@@ -71,6 +74,12 @@ export function decidePolicy(policy: PolicyInput): PolicyDecision {
 	if (toolName === "subagent" && subagentDelegatesToChildren(policy.input)) {
 		return { block: false };
 	}
+	// R01 — a composite subagent call keeps its plain refusal here: the
+	// composite-workflow block reason is Orchestration's and does not gain the
+	// example JSON.
+	if (toolName === "subagent") {
+		return { block: true, reason: blockedReason(toolName) };
+	}
 	if (
 		READ_ONLY_TOOLS.has(toolName) ||
 		ORCHESTRATION_TOOLS.has(toolName) ||
@@ -83,5 +92,11 @@ export function decidePolicy(policy: PolicyInput): PolicyDecision {
 		return { block: false };
 	}
 
-	return { block: true, reason: blockedReason(toolName) };
+	return {
+		block: true,
+		reason: appendTaskSpecExample(
+			blockedReason(toolName),
+			buildTaskSpecExample({ toolName, input: policy.input, cwd: policy.cwd }),
+		),
+	};
 }

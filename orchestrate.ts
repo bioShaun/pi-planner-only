@@ -84,6 +84,9 @@ import { LedgerSnapshotStore, SAFE_TASK_ID } from "./ledger-store.ts";
 import type { LedgerCorrupt } from "./ledger-store.ts";
 import {
 	TaskStore,
+	TASKSPEC_EXAMPLE_SENTINEL,
+	appendTaskSpecExample,
+	buildTaskSpecExample,
 	createTaskSpec,
 	executingStaleMinutes,
 	extractTaskSpec,
@@ -1431,12 +1434,23 @@ export class PlannerOrchestrator {
 		const prompt = delegationPrompt(input);
 		const specDetails = extractTaskSpecDetails(prompt, cwd);
 		if (target?.role !== "reviewer" && specDetails.hasCharacteristics && !specDetails.spec) {
+			// R01 — the refusal shares the Policy example renderer: still no Task,
+			// no child, but the reason carries a validating TaskSpec JSON built
+			// from the invalid candidate's own fields.
 			return {
 				block: {
-					reason: [
-						`Planner-only guard: embedded TaskSpec is invalid (${specDetails.errors.join("; ")}).`,
-						"Embed a valid TaskSpec JSON in the subagent task prompt.",
-					].join("\n"),
+					reason: appendTaskSpecExample(
+						[
+							`Planner-only guard: embedded TaskSpec is invalid (${specDetails.errors.join("; ")}).`,
+							"Embed a valid TaskSpec JSON in the subagent task prompt.",
+						].join("\n"),
+						buildTaskSpecExample({
+							toolName: "subagent",
+							input: event.input,
+							cwd,
+							submitted: specDetails.candidate as Record<string, unknown> | undefined,
+						}),
+					),
 				},
 			};
 		}
@@ -1659,15 +1673,21 @@ export class PlannerOrchestrator {
 					existing.taskId,
 					spec.taskId === existing.taskId ? persisted : { ...persisted, taskId: existing.taskId },
 				);
-			} else if (shouldReplaceTaskId(spec.taskId, this.store.now())) {
-				const generated = this.store.nextTaskId();
-				const storedSpec = { ...persisted, taskId: generated };
-				task = this.store.create(storedSpec, spec.taskId);
-				this.reservations.rekey(spec.taskId, task.taskId, event.toolCallId);
-				warnings.push(
-					`Planner-only: TaskSpec id ${spec.taskId} replaced by ${generated} (generated); ${spec.taskId} is kept as an alias`,
-				);
-			} else {
+		} else if (shouldReplaceTaskId(spec.taskId, this.store.now())) {
+			const generated = this.store.nextTaskId();
+			const storedSpec = { ...persisted, taskId: generated };
+			// R01 — the example sentinel is never stored as an alias, so pasting
+			// the same example JSON a second time starts a new Task instead of
+			// rebinding to the first one.
+			const alias = spec.taskId === TASKSPEC_EXAMPLE_SENTINEL ? undefined : spec.taskId;
+			task = this.store.create(storedSpec, alias);
+			this.reservations.rekey(spec.taskId, task.taskId, event.toolCallId);
+			warnings.push(
+				alias
+					? `Planner-only: TaskSpec id ${spec.taskId} replaced by ${generated} (generated); ${spec.taskId} is kept as an alias`
+					: `Planner-only: TaskSpec id ${spec.taskId} replaced by ${generated} (generated); the example sentinel is not stored as an alias`,
+			);
+		} else {
 				task = this.store.create(persisted);
 				this.store.bindSpec(task.taskId, persisted);
 			}

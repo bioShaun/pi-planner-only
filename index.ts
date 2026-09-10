@@ -961,6 +961,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			input: event.input,
 			isChild: IS_SUBAGENT,
 			disabled: isDisabled(),
+			cwd: ctx?.cwd || process.cwd(),
 		});
 		if (!decision.block) {
 			if (event.toolName === "subagent" && !isDisabled() && isDelegationCall(event.input)) {

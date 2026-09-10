@@ -257,6 +257,185 @@ export const TASKSPEC_CHARACTERISTIC_FIELDS = [
 	"budget",
 ] as const;
 
+/**
+ * R01 — the documented example-JSON `taskId` sentinel. Orchestration always
+ * replaces it with a generated canonical id and never stores it as an alias,
+ * so pasting the same example JSON a second time starts a new Task.
+ */
+export const TASKSPEC_EXAMPLE_SENTINEL = "T-pending";
+
+const EXAMPLE_INSPECT_TOOLS = new Set(["read", "grep", "find", "ls"]);
+
+const EXAMPLE_WORKER_REPORT_CONTRACT =
+	"Return only a valid WorkerReport JSON object (version, taskId, status, summary, changedFiles, validation, evidence, risks, unresolved) using the canonical Task id from your launch packet.";
+
+export interface TaskSpecExampleInput {
+	toolName: string;
+	/** The refused tool call's input (inspect path, bash command, edit target…). */
+	input?: unknown;
+	/** Adapter workspace the refusal happened in. */
+	cwd?: string;
+	/** An invalid TaskSpec candidate whose valid fields should be preserved. */
+	submitted?: Record<string, unknown>;
+}
+
+function exampleStringField(input: unknown, keys: readonly string[]): string | undefined {
+	if (!input || typeof input !== "object") return undefined;
+	const record = input as Record<string, unknown>;
+	for (const key of keys) {
+		const value = record[key];
+		if (typeof value === "string" && value.trim()) return value.trim();
+	}
+	return undefined;
+}
+
+function validBudget(value: unknown): boolean {
+	if (!isPlainObject(value)) return false;
+	const budget = value as Record<string, unknown>;
+	const dimension = (raw: unknown): boolean =>
+		raw === undefined || (typeof raw === "number" && Number.isFinite(raw) && raw > 0);
+	return dimension(budget.tokens) && dimension(budget.costUsd);
+}
+
+function validValidation(value: unknown): boolean {
+	if (!isPlainObject(value)) return false;
+	const validation = value as Record<string, unknown>;
+	if (typeof validation.required !== "boolean") return false;
+	if (validation.commands !== undefined && !isStringArray(validation.commands)) return false;
+	return true;
+}
+
+/**
+ * R01 — the one example-TaskSpec renderer shared by the Policy parent-tool
+ * refusal and the Orchestration invalid-TaskSpec refusal. The returned object
+ * always passes `validateTaskSpec`. Fields are filled from the refused tool
+ * input (inspect path → constraints + Explorer; shell command → objective +
+ * Explorer; write/edit → Worker; anything else → placeholder objective +
+ * Explorer unless the submitted candidate carries a valid role); submitted
+ * fields that already pass per-field validation are preserved, except the
+ * example sentinel `taskId`. Budget, evidence, extra worktree roots, and test
+ * commands are never invented.
+ */
+export function buildTaskSpecExample(options: TaskSpecExampleInput): Record<string, unknown> {
+	const toolName = options.toolName;
+	const submitted = isPlainObject(options.submitted) ? options.submitted : undefined;
+	const adapterCwd = typeof options.cwd === "string" && options.cwd.trim() ? options.cwd.trim() : undefined;
+
+	const isInspect = EXAMPLE_INSPECT_TOOLS.has(toolName);
+	const isShell = toolName === "bash";
+	const isMutate = toolName === "write" || toolName === "edit";
+
+	const path = exampleStringField(options.input, ["path", "file", "filePath", "file_path", "pattern", "glob"]);
+	const command = exampleStringField(options.input, ["command", "cmd"]);
+
+	const submittedRole = submitted && isNonEmptyString(submitted.role) && TASK_ROLES.includes(submitted.role as TaskRole)
+		? (submitted.role as TaskRole)
+		: undefined;
+	const role: TaskRole = isMutate
+		? "worker"
+		: isInspect || isShell
+			? "explorer"
+			: submittedRole ?? "explorer";
+
+	const submittedObjective = submitted && isNonEmptyString(submitted.objective)
+		? submitted.objective
+		: submitted && isNonEmptyString(submitted.title)
+			? submitted.title
+			: undefined;
+	const objective = submittedObjective
+		?? (isShell && command
+			? `Run this command and report its output: ${command}`
+			: isMutate && path
+				? `Apply the requested change to ${path}.`
+				: isInspect && path
+					? `Inspect ${path} and report the findings.`
+					: "Describe the requested work for the worker in one or two sentences.");
+
+	const constraints: string[] = submitted && isStringArray(submitted.constraints)
+		? submitted.constraints.filter((item) => item.trim())
+		: [];
+	if (isInspect && path) constraints.push(`Inspect ${path} and report the findings; do not modify it.`);
+	if (role === "explorer") constraints.push(EXAMPLE_WORKER_REPORT_CONTRACT);
+	if (isMutate) constraints.push("Stay inside the objective and list every changed file in the WorkerReport.");
+
+	// Invalid validation shapes (array, non-boolean required, non-string-array
+	// commands) collapse to the minimal legal object; commands are omitted, not
+	// guessed.
+	const validation: { required: boolean; commands?: string[] } = submitted && validValidation(submitted.validation)
+		? (() => {
+			const raw = submitted.validation as Record<string, unknown>;
+			return {
+				required: raw.required as boolean,
+				...(isStringArray(raw.commands) && raw.commands.length > 0 ? { commands: raw.commands } : {}),
+			};
+		})()
+		: { required: false };
+
+	const example: Record<string, unknown> = {
+		// The documented sentinel: replaced by a generated canonical id at
+		// Delegation, never stored as an alias.
+		taskId: TASKSPEC_EXAMPLE_SENTINEL,
+		objective,
+		cwd: adapterCwd ?? (submitted && isNonEmptyString(submitted.cwd) ? submitted.cwd : undefined) ?? (typeof process !== "undefined" ? process.cwd() : "."),
+		role,
+		...(submitted && isPlainObject(submitted.scope) ? { scope: submitted.scope } : {}),
+		constraints,
+		...(submitted && isStringArray(submitted.acceptanceCriteria)
+			? { acceptanceCriteria: submitted.acceptanceCriteria.filter((item) => item.trim()) }
+			: {}),
+		validation,
+		...(submitted && isPlainObject(submitted.expectedEvidence) ? { expectedEvidence: submitted.expectedEvidence } : {}),
+		...(submitted && isStringArray(submitted.stopConditions)
+			? { stopConditions: submitted.stopConditions.filter((item) => item.trim()) }
+			: {}),
+		...(submitted && isStringArray(submitted.additionalWorktreeRoots)
+			? { additionalWorktreeRoots: submitted.additionalWorktreeRoots.filter((item) => item.trim()) }
+			: {}),
+		...(submitted && validBudget(submitted.budget) ? { budget: submitted.budget } : {}),
+		...(submitted && validBudget(submitted.cumulativeBudget) ? { cumulativeBudget: submitted.cumulativeBudget } : {}),
+	};
+
+	// A submitted taskId that already passes validation is preserved; the
+	// example sentinel itself is never treated as a submitted identity.
+	const submittedTaskId = submitted && isNonEmptyString(submitted.taskId) ? submitted.taskId.trim() : undefined;
+	if (submittedTaskId && submittedTaskId !== TASKSPEC_EXAMPLE_SENTINEL) {
+		example.taskId = submittedTaskId;
+	}
+
+	// Safety net: the renderer's contract is a zero-error example. If some
+	// preserved field slipped through, fall back to the guaranteed-minimal shape.
+	if (validateTaskSpec(example).length > 0) {
+		const minimal: Record<string, unknown> = {
+			taskId: TASKSPEC_EXAMPLE_SENTINEL,
+			objective,
+			cwd: adapterCwd ?? (typeof process !== "undefined" ? process.cwd() : "."),
+			role,
+			constraints,
+			acceptanceCriteria: [],
+			validation: { required: false },
+			stopConditions: [],
+		};
+		return minimal;
+	}
+	return example;
+}
+
+/**
+ * R01 — append the shared example JSON to a block reason. The reason's
+ * existing first lines are kept; the instruction tells Root to embed the
+ * object in the next Delegation.
+ */
+export function appendTaskSpecExample(reason: string, example: Record<string, unknown>): string {
+	return [
+		reason,
+		"",
+		"Embed this in the subagent task prompt as the TaskSpec JSON:",
+		"```json",
+		JSON.stringify(example, null, 2),
+		"```",
+	].join("\n");
+}
+
 export interface ExtractedTaskSpecResult {
 	spec?: TaskSpec;
 	hasCharacteristics: boolean;
