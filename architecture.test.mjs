@@ -86,6 +86,7 @@ assert.equal((orchestrate.match(/this\.delegations\.delete\(/g) ?? []).length, 1
 assert.equal(pkg.files.includes("reservations.ts"), true, "reservations.ts must ship in the package files list");
 assert.doesNotMatch(reservations, /from "\.\/index\.ts"|@earendil-works/);
 assert.match(floors, /export const DEFAULT_HOST_ENFORCEMENT: HostEnforcement = Object\.freeze\(\{\s*tokens: false,\s*costUsd: false,\s*\}\)/, "W15: DEFAULT_HOST_ENFORCEMENT must stay false,false in source");
+assert.match(floors, /export const DEFAULT_SESSION_ROOT_BUDGET_ENABLED = false/, "session root budget must default off");
 assert.doesNotMatch(floors, /from "\.\/index\.ts"|@earendil-works/, "W16: floors.ts must not import the adapter or the Pi host");
 
 // Orchestration records no ledger mutations; the adapter owns capture.

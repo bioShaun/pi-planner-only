@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
 	DEFAULT_FLOORS,
 	DEFAULT_HOST_ENFORCEMENT,
+	DEFAULT_SESSION_ROOT_BUDGET_ENABLED,
 	DEFAULT_SESSION_ROOT_MULTIPLIERS,
 	FLOOR_ENV_VARS,
 	SESSION_ROOT_BUDGET_ENV_VARS,
@@ -15,6 +16,7 @@ import {
 	loadHostEnforcement,
 	loadSessionRootBudgetConfig,
 	resolveEffectiveLimits,
+	sessionRootBudgetWithEnabled,
 } from "./floors.ts";
 
 // 1. Frozen default constants
@@ -295,13 +297,22 @@ assert.equal(Object.isFrozen(DEFAULT_HOST_ENFORCEMENT), true, "W6: DEFAULT_HOST_
 assert.equal(DEFAULT_HOST_ENFORCEMENT.tokens, false, "W6: DEFAULT_HOST_ENFORCEMENT.tokens is false");
 assert.equal(DEFAULT_HOST_ENFORCEMENT.costUsd, false, "W6: DEFAULT_HOST_ENFORCEMENT.costUsd is false");
 
-// Ticket 40 — session root budget derived from workerInitial × multipliers
+// Ticket 40 — session root budget derived from workerInitial × multipliers; gate off by default
 
+assert.equal(DEFAULT_SESSION_ROOT_BUDGET_ENABLED, false);
 assert.equal(DEFAULT_SESSION_ROOT_MULTIPLIERS.soft, 3);
 assert.equal(DEFAULT_SESSION_ROOT_MULTIPLIERS.hard, 5);
 
+const enabledSessionRootEnv = { [SESSION_ROOT_BUDGET_ENV_VARS.ENABLED]: "1" };
+
 {
 	const config = loadSessionRootBudgetConfig({});
+	assert.equal(config.enabled, false, "session root budget is off unless opted in");
+}
+
+{
+	const config = loadSessionRootBudgetConfig(enabledSessionRootEnv);
+	assert.equal(config.enabled, true);
 	assert.equal(config.softMultiplier, 3);
 	assert.equal(config.hardMultiplier, 5);
 	assert.equal(config.baseCostUsd, DEFAULT_FLOORS.workerInitial.costUsdHard);
@@ -314,6 +325,7 @@ assert.equal(DEFAULT_SESSION_ROOT_MULTIPLIERS.hard, 5);
 
 {
 	const config = loadSessionRootBudgetConfig({
+		...enabledSessionRootEnv,
 		[SESSION_ROOT_BUDGET_ENV_VARS.SOFT_MULTIPLIER]: "2",
 		[SESSION_ROOT_BUDGET_ENV_VARS.HARD_MULTIPLIER]: "4",
 		[FLOOR_ENV_VARS.WORKER_COST_USD_HARD]: "0.40",
@@ -328,6 +340,7 @@ assert.equal(DEFAULT_SESSION_ROOT_MULTIPLIERS.hard, 5);
 {
 	assert.throws(
 		() => loadSessionRootBudgetConfig({
+			...enabledSessionRootEnv,
 			[SESSION_ROOT_BUDGET_ENV_VARS.SOFT_MULTIPLIER]: "5",
 			[SESSION_ROOT_BUDGET_ENV_VARS.HARD_MULTIPLIER]: "3",
 		}),
@@ -336,7 +349,30 @@ assert.equal(DEFAULT_SESSION_ROOT_MULTIPLIERS.hard, 5);
 }
 
 {
-	const config = loadSessionRootBudgetConfig({});
+	assert.throws(
+		() => loadSessionRootBudgetConfig({ [SESSION_ROOT_BUDGET_ENV_VARS.ENABLED]: "yes" }),
+		/PI_PLANNER_ONLY_SESSION_ROOT_BUDGET.*must be 1 or 0/,
+	);
+}
+
+{
+	const offConfig = loadSessionRootBudgetConfig({});
+	const hardSpend = {
+		turns: 20, tokens: offConfig.hardTokens, costUsd: offConfig.hardCostUsd, costUnknown: false,
+		currency: "USD",
+		untaskedTurns: 20, untaskedTokens: offConfig.hardTokens, untaskedCostUsd: offConfig.hardCostUsd,
+	};
+	const off = evaluateSessionRootBudget(hardSpend, offConfig);
+	assert.equal(off.level, "ok", "disabled gate never trips, even above the derived hard cap");
+	assert.match(formatSessionRootBudgetStatus(off), /会话 root 预算未开启/);
+	assert.match(formatSessionRootBudgetStatus(off), /\/planner-only budget on/);
+	assert.doesNotMatch(formatSessionRootBudgetStatus(off), /会话 root 预算已停止/);
+	assert.equal(sessionRootBudgetWithEnabled(offConfig, false), offConfig);
+	assert.equal(sessionRootBudgetWithEnabled(offConfig, true).enabled, true);
+}
+
+{
+	const config = loadSessionRootBudgetConfig(enabledSessionRootEnv);
 	const ok = evaluateSessionRootBudget({
 		turns: 1, tokens: 100, costUsd: 0.01, costUnknown: false,
 		currency: "USD",
@@ -367,7 +403,7 @@ assert.equal(DEFAULT_SESSION_ROOT_MULTIPLIERS.hard, 5);
 
 {
 	// Unknown cost skips the cost dimension; tokens alone can still trip hard.
-	const config = loadSessionRootBudgetConfig({});
+	const config = loadSessionRootBudgetConfig(enabledSessionRootEnv);
 	const unknownSoftTokens = evaluateSessionRootBudget({
 		turns: 2, tokens: config.softTokens, costUsd: undefined, costUnknown: true, currency: "USD",
 		untaskedTurns: 2, untaskedTokens: config.softTokens, untaskedCostUsd: undefined,
@@ -378,7 +414,7 @@ assert.equal(DEFAULT_SESSION_ROOT_MULTIPLIERS.hard, 5);
 
 {
 	// CNY pricing table: cost is not comparable against USD caps, so only tokens gate.
-	const config = loadSessionRootBudgetConfig({});
+	const config = loadSessionRootBudgetConfig(enabledSessionRootEnv);
 	const cnySoftCost = evaluateSessionRootBudget({
 		turns: 3, tokens: 100, costUsd: config.softCostUsd * 100, costUnknown: false, currency: "CNY",
 		untaskedTurns: 3, untaskedTokens: 100, untaskedCostUsd: config.softCostUsd * 100,

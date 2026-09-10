@@ -2341,6 +2341,59 @@ assert.match(
 	assert.match(notices.at(-1).message, /Planner-only mode is on/);
 	assert.match(notices.at(-1).message, /Usage log: .*usage\.jsonl \(enabled\)/);
 	assert.match(notices.at(-1).message, /无模型成本保证/);
+	assert.match(notices.at(-1).message, /会话 root 预算未开启/);
+}
+
+{
+	const marker = join(isolatedAgentDir, "planner-only", "session-root-budget.on");
+	notices.length = 0;
+	await commands.get("planner-only").handler("budget", ctx);
+	assert.match(notices.at(-1).message, /会话 root 预算未开启/);
+	assert.equal(existsSync(marker), false);
+
+	notices.length = 0;
+	await commands.get("planner-only").handler("budget on", ctx);
+	assert.match(notices.at(-1).message, /Session root budget enabled/);
+	assert.doesNotMatch(notices.at(-1).message, /会话 root 预算未开启/);
+	assert.equal(existsSync(marker), true, "budget on persists an on-marker");
+
+	notices.length = 0;
+	await commands.get("planner-only").handler("status", ctx);
+	assert.doesNotMatch(notices.at(-1).message, /会话 root 预算未开启/);
+	assert.match(notices.at(-1).message, /软顶 ×3/);
+
+	notices.length = 0;
+	await commands.get("planner-only").handler("budget nope", ctx);
+	assert.match(notices.at(-1).message, /Usage: \/planner-only budget \[on\|off\]/);
+
+	const savedBudgetEnv = process.env.PI_PLANNER_ONLY_SESSION_ROOT_BUDGET;
+	try {
+		process.env.PI_PLANNER_ONLY_SESSION_ROOT_BUDGET = "0";
+		notices.length = 0;
+		await commands.get("planner-only").handler("budget on", ctx);
+		assert.match(notices.at(-1).message, /Session root budget remains off/);
+		assert.match(notices.at(-1).message, /PI_PLANNER_ONLY_SESSION_ROOT_BUDGET/);
+	} finally {
+		if (savedBudgetEnv === undefined) delete process.env.PI_PLANNER_ONLY_SESSION_ROOT_BUDGET;
+		else process.env.PI_PLANNER_ONLY_SESSION_ROOT_BUDGET = savedBudgetEnv;
+	}
+
+	notices.length = 0;
+	await commands.get("planner-only").handler("budget off", ctx);
+	assert.match(notices.at(-1).message, /Session root budget disabled/);
+	assert.match(notices.at(-1).message, /会话 root 预算未开启/);
+	assert.equal(existsSync(marker), false);
+
+	try {
+		process.env.PI_PLANNER_ONLY_SESSION_ROOT_BUDGET = "1";
+		notices.length = 0;
+		await commands.get("planner-only").handler("budget off", ctx);
+		assert.match(notices.at(-1).message, /Session root budget remains on/);
+	} finally {
+		if (savedBudgetEnv === undefined) delete process.env.PI_PLANNER_ONLY_SESSION_ROOT_BUDGET;
+		else process.env.PI_PLANNER_ONLY_SESSION_ROOT_BUDGET = savedBudgetEnv;
+		await commands.get("planner-only").handler("budget off", ctx);
+	}
 }
 
 {
@@ -3217,7 +3270,8 @@ assert.match(
 	// Ticket 40: invalid session root multipliers reject initialization, not live handlers.
 	const SOFT = "PI_PLANNER_ONLY_SESSION_ROOT_SOFT_MULTIPLIER";
 	const HARD = "PI_PLANNER_ONLY_SESSION_ROOT_HARD_MULTIPLIER";
-	const saved = { [SOFT]: process.env[SOFT], [HARD]: process.env[HARD] };
+	const ENABLED = "PI_PLANNER_ONLY_SESSION_ROOT_BUDGET";
+	const saved = { [SOFT]: process.env[SOFT], [HARD]: process.env[HARD], [ENABLED]: process.env[ENABLED] };
 	const bareHost = () => ({
 		on() {},
 		registerCommand() {},
@@ -3236,6 +3290,11 @@ assert.match(
 		process.env[SOFT] = "2";
 		process.env[HARD] = "";
 		assert.throws(() => plannerOnly(bareHost()), /PI_PLANNER_ONLY_SESSION_ROOT_HARD_MULTIPLIER is set but empty/, "40-i3: empty hard multiplier fails startup");
+
+		delete process.env[SOFT];
+		delete process.env[HARD];
+		process.env.PI_PLANNER_ONLY_SESSION_ROOT_BUDGET = "yes";
+		assert.throws(() => plannerOnly(bareHost()), /PI_PLANNER_ONLY_SESSION_ROOT_BUDGET.*must be 1 or 0/, "40-i4: invalid enable flag fails startup");
 	} finally {
 		for (const [key, value] of Object.entries(saved)) {
 			if (value !== undefined) process.env[key] = value;

@@ -287,8 +287,9 @@ export interface OrchestratorDeps {
 	 */
 	getSessionRootUsage?: () => SessionRootSpend;
 	/**
-	 * Ticket 40 — validated soft/hard multipliers. The adapter resolves this once
-	 * at startup so malformed env values fail there; when absent it is loaded on
+	 * Ticket 40 — validated soft/hard multipliers. The adapter resolves multipliers
+	 * at startup so malformed env values fail there, then may toggle `enabled`
+	 * in-session via `/planner-only budget on|off`. When absent it is loaded on
 	 * construction (only if getSessionRootUsage is supplied).
 	 */
 	sessionRootBudgetConfig?: SessionRootBudgetConfig;
@@ -611,7 +612,7 @@ export class PlannerOrchestrator {
 	private readonly gitRunner: GitRunner;
 	private readonly artifactDirs: () => readonly string[];
 	private readonly getSessionRootUsage?: () => SessionRootSpend;
-	private readonly sessionRootBudgetConfig?: SessionRootBudgetConfig;
+	private sessionRootBudgetConfig?: SessionRootBudgetConfig;
 	private readonly delegationRateKind: (model: string | undefined) => DelegationRateKind;
 	/** toolCallId -> delegated task + invocation kind. */
 	private readonly delegations = new Map<string, DelegationRecord>();
@@ -684,6 +685,10 @@ export class PlannerOrchestrator {
 		this.delegationRateKind = deps.delegationRateKind ?? (() => "unknown");
 		this.structuredDelegationMode =
 			deps.structuredDelegationMode ?? readStructuredDelegationMode();
+	}
+
+	setSessionRootBudgetConfig(config: SessionRootBudgetConfig): void {
+		this.sessionRootBudgetConfig = config;
 	}
 
 	restoreFromLedger(): { restored: number; corrupt: LedgerCorrupt[] } {

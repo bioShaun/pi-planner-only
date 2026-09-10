@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1 - 2026-09-10
+
+- Session root budget is off by default. `/planner-only budget on` / `off` toggles it (persisted as `session-root-budget.on`); `PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` or `=0` overrides the marker. Per-delegation worker floors are unchanged.
+
 ## 0.4.0 - 2026-09-10
 
 - Task-level cumulative budget: ledger, atomic pre-launch reservation, refuse new paid work when exhausted, and restore the same budget after reload.

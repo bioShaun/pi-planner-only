@@ -43,6 +43,8 @@ import {
 	formatSessionRootBudgetStatus,
 	loadFloorConfig,
 	loadSessionRootBudgetConfig,
+	SESSION_ROOT_BUDGET_ENV_VARS,
+	sessionRootBudgetWithEnabled,
 } from "./floors.ts";
 import { configuredRoleModelSummaries, loadRoleModelPolicy } from "./role-models.ts";
 
@@ -50,6 +52,7 @@ const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
 	? resolve(process.env.PI_CODING_AGENT_DIR)
 	: join(homedir(), ".pi", "agent");
 const OFF_MARKER = join(AGENT_DIR, "planner-only.off");
+const SESSION_ROOT_BUDGET_ON_MARKER = join(AGENT_DIR, "planner-only", "session-root-budget.on");
 const STATUS_KEY = "planner-only";
 const IS_SUBAGENT = process.env.PI_SUBAGENT_CHILD === "1";
 const PLANNER_SAFE_TOOLS = new Set([
@@ -167,7 +170,24 @@ function sameToolOrder(left: readonly string[], right: readonly string[]): boole
 
 export default function plannerOnly(pi: ExtensionAPI): void {
 	const floorConfig = loadFloorConfig();
-	const sessionRootBudget = loadSessionRootBudgetConfig(process.env, floorConfig);
+	const sessionRootBudgetBase = loadSessionRootBudgetConfig(process.env, floorConfig);
+	function envSessionRootBudgetOverride(): boolean | undefined {
+		const raw = process.env[SESSION_ROOT_BUDGET_ENV_VARS.ENABLED];
+		if (raw === undefined) return undefined;
+		const value = raw.trim();
+		if (value === "1") return true;
+		if (value === "0") return false;
+		return sessionRootBudgetBase.enabled;
+	}
+	function sessionRootBudgetEnabledNow(): boolean {
+		const envOverride = envSessionRootBudgetOverride();
+		if (envOverride !== undefined) return envOverride;
+		return existsSync(SESSION_ROOT_BUDGET_ON_MARKER);
+	}
+	function currentSessionRootBudget() {
+		return sessionRootBudgetWithEnabled(sessionRootBudgetBase, sessionRootBudgetEnabledNow());
+	}
+	let sessionRootBudget = currentSessionRootBudget();
 	// Foreground children do not load ambient extensions. Background children
 	// may; this extension no-ops when PI_SUBAGENT_CHILD=1 so it cannot
 	// recurse into a child that loaded it. Workers must retain their
@@ -1141,7 +1161,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	};
 
 	pi.registerCommand("planner-only", {
-		description: "Show, enable, or temporarily disable planner-only mode; inspect task lifecycle",
+		description: "Show, enable, or temporarily disable planner-only mode; inspect task lifecycle; toggle session root budget",
 		handler: async (args, ctx) => {
 			const parts = args.trim().split(/\s+/).filter(Boolean);
 			const action = (parts[0] ?? "status").toLowerCase();
@@ -1218,6 +1238,54 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				restoreSuppressedTools();
 				updateStatus(ctx);
 				notify(ctx, "Planner-only mode disabled. Run /planner-only on to re-enable it.", "warning");
+				return;
+			}
+			if (action === "budget") {
+				const sub = (parts[1] ?? "").toLowerCase();
+				const applyLive = () => {
+					sessionRootBudget = currentSessionRootBudget();
+					orchestrator.setSessionRootBudgetConfig(sessionRootBudget);
+					sessionRootSoftWarned = false;
+					sessionRootHardWarned = false;
+				};
+				if (sub === "on") {
+					await mkdir(dirname(SESSION_ROOT_BUDGET_ON_MARKER), { recursive: true });
+					await writeFile(SESSION_ROOT_BUDGET_ON_MARKER, "Enabled by /planner-only budget on\n", "utf8");
+					applyLive();
+					if (envSessionRootBudgetOverride() === false) {
+						notify(ctx, [
+							"Session root budget remains off.",
+							`Environment: ${SESSION_ROOT_BUDGET_ENV_VARS.ENABLED}=${process.env[SESSION_ROOT_BUDGET_ENV_VARS.ENABLED]} forces it off; clear the variable to use /planner-only budget on.`,
+						].join("\n"), "warning");
+						return;
+					}
+					notify(ctx, [
+						"Session root budget enabled (软顶 ×3 警告 / 硬顶 ×5 拒绝新的受控付费委派).",
+						formatSessionRootBudgetStatus(evaluateSessionRootBudget(ledger.sessionRootSpend(), sessionRootBudget)),
+					].join("\n"));
+					return;
+				}
+				if (sub === "off") {
+					await rm(SESSION_ROOT_BUDGET_ON_MARKER, { force: true });
+					applyLive();
+					if (envSessionRootBudgetOverride() === true) {
+						notify(ctx, [
+							"Session root budget remains on.",
+							`Environment: ${SESSION_ROOT_BUDGET_ENV_VARS.ENABLED}=${process.env[SESSION_ROOT_BUDGET_ENV_VARS.ENABLED]} forces it on; clear the variable to use /planner-only budget off.`,
+						].join("\n"), "warning");
+						return;
+					}
+					notify(ctx, [
+						"Session root budget disabled. Run /planner-only budget on to re-enable it.",
+						formatSessionRootBudgetStatus(evaluateSessionRootBudget(ledger.sessionRootSpend(), sessionRootBudget)),
+					].join("\n"), "warning");
+					return;
+				}
+				if (sub) {
+					notify(ctx, "Usage: /planner-only budget [on|off]", "warning");
+					return;
+				}
+				notify(ctx, formatSessionRootBudgetStatus(evaluateSessionRootBudget(ledger.sessionRootSpend(), sessionRootBudget)));
 				return;
 			}
 			if (action === "task") {
@@ -1429,7 +1497,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				notify(ctx, renderSessionView());
 				return;
 			}
-			notify(ctx, "Usage: /planner-only [status|on|off|task [abandon|reset <taskId>]|review|usage] [args]", "warning");
+			notify(ctx, "Usage: /planner-only [status|on|off|budget [on|off]|task [abandon|reset <taskId>]|review|usage] [args]", "warning");
 		},
 	});
 }

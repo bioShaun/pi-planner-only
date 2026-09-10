@@ -62,6 +62,7 @@ out of range) fails the release gate instead of exiting 0.
 - `/planner-only task [taskId]` — lifecycle state
 - `/planner-only task abandon|reset <taskId>` — abandon active or specified task
 - `/planner-only review [taskId] [root|fresh|pass|request_changes|blocked] [summary]`
+- `/planner-only budget [on|off]` — session root spend gate (off by default)
 - `/planner-only usage [taskId | session | reload]`
 
 Per-session override: `PI_PLANNER_ONLY=1` (also `true`, `on`) forces the guard on regardless of the marker; `PI_PLANNER_ONLY=0` (`false`, `off`) disables it. Persistent off marker:
@@ -235,6 +236,8 @@ The pricing table format:
 - A `null` rate means the rate is unknown (yields `cost unknown`); `0` indicates free.
 - Keys starting with `_` are ignored (useful for comments).
 - Reload rates in-session with `/planner-only usage reload`.
+
+Session-level root spend gating is **off by default**. `/planner-only budget on` turns it on for this machine (marker: `~/.pi/agent/planner-only/session-root-budget.on`); `/planner-only budget off` turns it off. Soft cap warns at 3× the worker-initial floor; hard refuses new paid delegations at 5×. `PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` or `=0` overrides the marker. Per-delegation `usageBudget` floors on workers, explorers, and validators stay on.
 
 **Alternative:** The preferred approach is to specify `cost` directly in `~/.pi/agent/models.json`. This enables native cost calculation across both Pi and `pi-subagents` (e.g. `/subagent-cost`). The plugin table serves as a fallback or override when you prefer not to modify `models.json`.
 

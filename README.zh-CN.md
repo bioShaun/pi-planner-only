@@ -47,6 +47,7 @@ pi -e .
 - `/planner-only task [taskId]` — 任务生命周期
 - `/planner-only task abandon|reset <taskId>` — 放弃活跃或指定任务
 - `/planner-only review [taskId] [root|fresh|pass|request_changes|blocked] [summary]`
+- `/planner-only budget [on|off]` — 会话级 root 累计预算（默认关闭）
 - `/planner-only usage [taskId | session | reload]`
 
 单次会话覆盖：`PI_PLANNER_ONLY=1`（亦支持 `true`、`on`）无论是否存在标记均强制开启；`PI_PLANNER_ONLY=0`（`false`、`off`）禁用。持久关闭标记：`~/.pi/agent/planner-only.off`。
@@ -155,6 +156,8 @@ Token 数为准，美元/人民币金额是推导值。扩展跟踪 Root 各生�
 - 费率为 `null` 表示费率未知（展示为 `cost unknown`）；`0` 表示免费。
 - 以 `_` 开头的键会被忽略（可用于注释）。
 - 可在会话内通过 `/planner-only usage reload` 重新加载费率表。
+
+会话级 root 累计预算**默认关闭**。`/planner-only budget on` 打开（标记文件 `~/.pi/agent/planner-only/session-root-budget.on`），`/planner-only budget off` 关闭。开启后按 worker 初始 floor 的 ×3 软顶警告、×5 硬顶拒绝新的受控付费委派。`PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` 或 `=0` 会覆盖标记。单次委派的 `usageBudget` floor（worker / explorer / validator）不受影响。
 
 **替代方案：** 推荐直接在 `~/.pi/agent/models.json` 里配置 `cost`。这样 Pi 和 `pi-subagents` 的原生命令（如 `/subagent-cost`）都能直接计价。插件自带的定价表仅作为不需要改动 `models.json` 时的备用与覆盖机制。
 

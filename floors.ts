@@ -396,11 +396,14 @@ export function formatFloorLimitsSummary(limits: EffectiveLimits): string {
 /**
  * Ticket 40 — session-level root cumulative budget.
  *
- * Soft/hard caps are derived from the single-Task initial worker delegation
- * floor (workerInitial) × multipliers. Soft warns; hard refuses new paid
- * delegations at the beginDelegation gate. Never kills the current root turn.
+ * Off by default. When enabled, soft/hard caps are derived from the
+ * single-Task initial worker delegation floor (workerInitial) × multipliers.
+ * Soft warns; hard refuses new paid delegations at the beginDelegation gate.
+ * Never kills the current root turn.
  */
 export interface SessionRootBudgetConfig {
+	/** Soft/hard gate at beginDelegation. Off unless the operator opts in. */
+	readonly enabled: boolean;
 	readonly softMultiplier: number;
 	readonly hardMultiplier: number;
 	readonly softTokens: number;
@@ -412,12 +415,15 @@ export interface SessionRootBudgetConfig {
 	readonly baseCostUsd: number;
 }
 
+export const DEFAULT_SESSION_ROOT_BUDGET_ENABLED = false;
+
 export const DEFAULT_SESSION_ROOT_MULTIPLIERS = Object.freeze({
 	soft: 3,
 	hard: 5,
 });
 
 export const SESSION_ROOT_BUDGET_ENV_VARS = {
+	ENABLED: "PI_PLANNER_ONLY_SESSION_ROOT_BUDGET",
 	SOFT_MULTIPLIER: "PI_PLANNER_ONLY_SESSION_ROOT_SOFT_MULTIPLIER",
 	HARD_MULTIPLIER: "PI_PLANNER_ONLY_SESSION_ROOT_HARD_MULTIPLIER",
 } as const;
@@ -426,6 +432,11 @@ export function loadSessionRootBudgetConfig(
 	env: NodeJS.ProcessEnv = process.env,
 	floors: FloorConfig = loadFloorConfig(env),
 ): SessionRootBudgetConfig {
+	const enabled = readEnforcementFlag(
+		env[SESSION_ROOT_BUDGET_ENV_VARS.ENABLED],
+		SESSION_ROOT_BUDGET_ENV_VARS.ENABLED,
+		DEFAULT_SESSION_ROOT_BUDGET_ENABLED,
+	);
 	const softMultiplier = parsePositiveFiniteNumber(
 		SESSION_ROOT_BUDGET_ENV_VARS.SOFT_MULTIPLIER,
 		env[SESSION_ROOT_BUDGET_ENV_VARS.SOFT_MULTIPLIER],
@@ -444,6 +455,7 @@ export function loadSessionRootBudgetConfig(
 	const baseTokens = floors.workerInitial.tokensHard;
 	const baseCostUsd = floors.workerInitial.costUsdHard;
 	return Object.freeze({
+		enabled,
 		softMultiplier,
 		hardMultiplier,
 		baseTokens,
@@ -453,6 +465,14 @@ export function loadSessionRootBudgetConfig(
 		softCostUsd: baseCostUsd * softMultiplier,
 		hardCostUsd: baseCostUsd * hardMultiplier,
 	});
+}
+
+export function sessionRootBudgetWithEnabled(
+	config: SessionRootBudgetConfig,
+	enabled: boolean,
+): SessionRootBudgetConfig {
+	if (config.enabled === enabled) return config;
+	return Object.freeze({ ...config, enabled });
 }
 
 export type SessionRootCurrency = "USD" | "CNY";
@@ -498,6 +518,9 @@ export function evaluateSessionRootBudget(
 	spend: SessionRootSpend,
 	config: SessionRootBudgetConfig = loadSessionRootBudgetConfig(),
 ): SessionRootBudgetEvaluation {
+	if (!config.enabled) {
+		return { level: "ok", spend, config };
+	}
 	const costComparable = sessionRootCostComparable(spend);
 	const tokensHard = spend.tokens >= config.hardTokens;
 	const costHard = costComparable && spend.costUsd !== undefined && spend.costUsd >= config.hardCostUsd;
@@ -538,11 +561,21 @@ export function formatSessionRootBudgetStatus(evaluation: SessionRootBudgetEvalu
 		: `费用 ${money4(spend.costUsd ?? 0, spend.currency)}`;
 	const lines = [
 		`Session root budget (累计 root): turns=${spend.turns}, tokens=${spend.tokens}, ${costPart}`,
-		`  软顶 ×${config.softMultiplier}: tokens=${config.softTokens}, 费用 ${money4(config.softCostUsd)}（警告，不阻止委派）`,
-		`  硬顶 ×${config.hardMultiplier}: tokens=${config.hardTokens}, 费用 ${money4(config.hardCostUsd)}（拒绝新的受控付费委派；不掐断当前 root 回合）`,
-		`  其中 untasked: turns=${spend.untaskedTurns}, tokens=${spend.untaskedTokens}, 费用 ${spend.untaskedCostUsd === undefined && spend.untaskedTurns > 0 ? "不可知" : money4(spend.untaskedCostUsd ?? 0, spend.currency)}`,
 	];
-	if (spend.currency !== "USD") {
+	if (!config.enabled) {
+		lines.push(
+			`  会话 root 预算未开启。运行 /planner-only budget on 启用（软顶 ×${config.softMultiplier} / 硬顶 ×${config.hardMultiplier}）。`,
+		);
+	} else {
+		lines.push(
+			`  软顶 ×${config.softMultiplier}: tokens=${config.softTokens}, 费用 ${money4(config.softCostUsd)}（警告，不阻止委派）`,
+			`  硬顶 ×${config.hardMultiplier}: tokens=${config.hardTokens}, 费用 ${money4(config.hardCostUsd)}（拒绝新的受控付费委派；不掐断当前 root 回合）`,
+		);
+	}
+	lines.push(
+		`  其中 untasked: turns=${spend.untaskedTurns}, tokens=${spend.untaskedTokens}, 费用 ${spend.untaskedCostUsd === undefined && spend.untaskedTurns > 0 ? "不可知" : money4(spend.untaskedCostUsd ?? 0, spend.currency)}`,
+	);
+	if (config.enabled && spend.currency !== "USD") {
 		lines.push(`  费率表币种为 ${spend.currency}，与 USD 计价的费用顶无法直接比较；费用维度不参与门控，仅按 tokens 判定。`);
 	}
 	if (level === "hard") {
