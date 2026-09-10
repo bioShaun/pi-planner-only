@@ -20,6 +20,7 @@ import type {
 	DiffCheckResult,
 	EvidenceRef,
 	ReviewEvidencePacket,
+	ReviewRoundAttribution,
 	TaskScope,
 	WorkerReport,
 } from "./types.ts";
@@ -37,6 +38,8 @@ export interface GitProbe {
 	diffStat: string | null;
 	/** True when the status command itself failed; empty output is then unknown, not clean. */
 	statusFailed: boolean;
+	/** Repository top-level this probe resolved; porcelain paths hang off it. */
+	repoRoot: string | null;
 }
 
 const MAX_DIFF_STAT_CHARS = 2000;
@@ -57,6 +60,55 @@ export function hashStatus(porcelain: string): string {	const entries = porcelai
 	return createHash("sha256").update(entries).digest("hex").slice(0, 16);
 }
 
+const GIT_PATH_ESCAPES: Record<string, number> = {
+	a: 7,
+	b: 8,
+	f: 12,
+	n: 10,
+	r: 13,
+	t: 9,
+	v: 11,
+	"\\": 92,
+	'"': 34,
+};
+
+/**
+ * E01 — decode Git's C-style path quoting (`core.quotePath`, default on).
+ * Quoted paths arrive as `"..."` with octal escapes for non-ASCII bytes; a
+ * non-ASCII path must compare equal to the same path typed as UTF-8, not to
+ * its escaped text.
+ */
+export function unquoteGitPath(path: string): string {
+	if (path.length < 2 || !path.startsWith('"') || !path.endsWith('"')) return path;
+	const body = path.slice(1, -1);
+	const bytes: number[] = [];
+	for (let index = 0; index < body.length; index += 1) {
+		const char = body[index] as string;
+		if (char !== "\\") {
+			bytes.push(...Buffer.from(char, "utf8"));
+			continue;
+		}
+		const next = body[index + 1];
+		if (next === undefined) break;
+		if (next >= "0" && next <= "7") {
+			let digits = next;
+			let cursor = index + 2;
+			while (cursor < body.length && digits.length < 3 && body[cursor] >= "0" && body[cursor] <= "7") {
+				digits += body[cursor] as string;
+				cursor += 1;
+			}
+			bytes.push(Number.parseInt(digits, 8) & 0xff);
+			index = cursor - 1;
+			continue;
+		}
+		const mapped = GIT_PATH_ESCAPES[next];
+		if (mapped !== undefined) bytes.push(mapped);
+		else bytes.push(...Buffer.from(next, "utf8"));
+		index += 1;
+	}
+	return Buffer.from(bytes).toString("utf8");
+}
+
 /**
  * Parse `git status --porcelain=v2` into changed paths.
  *
@@ -69,7 +121,7 @@ export function parseChangedPaths(porcelain: string): string[] {
 		const line = rawLine.replace(/\r$/, "");
 		if (!line || line.startsWith("#")) continue;
 		if (line.startsWith("? ")) {
-			paths.push(line.slice(2));
+			paths.push(unquoteGitPath(line.slice(2)));
 			continue;
 		}
 		const fields = line.split(" ");
@@ -80,7 +132,7 @@ export function parseChangedPaths(porcelain: string): string[] {
 		const pathIndex = kind === "1" ? 8 : kind === "2" ? 9 : kind === "u" ? 7 : -1;
 		if (pathIndex === -1 || fields.length <= pathIndex) continue;
 		// Renames carry "new<SEP>old"; keep the new path.
-		paths.push(fields.slice(pathIndex).join(" ").split(/[\0\t]/)[0]);
+		paths.push(unquoteGitPath(fields.slice(pathIndex).join(" ").split(/[\0\t]/)[0] as string));
 	}
 	return [...new Set(paths.filter(Boolean))].sort();
 }
@@ -95,7 +147,7 @@ export function parseUntrackedPaths(porcelain: string): string[] {
 	const paths: string[] = [];
 	for (const rawLine of porcelain.split("\n")) {
 		const line = rawLine.replace(/\r$/, "");
-		if (line.startsWith("? ")) paths.push(line.slice(2));
+		if (line.startsWith("? ")) paths.push(unquoteGitPath(line.slice(2)));
 	}
 	return [...new Set(paths.filter(Boolean))].sort();
 }
@@ -124,6 +176,7 @@ function unavailableProbe(): GitProbe {
 		untrackedPaths: [],
 		diffStat: null,
 		statusFailed: false,
+		repoRoot: null,
 	};
 }
 
@@ -137,6 +190,16 @@ export async function probeGit(run: GitRunner, cwd: string): Promise<GitProbe> {
 		return empty;
 	}
 	if (gitDir.code !== 0) return empty;
+
+	// Best-effort: older hosts and non-repo fixtures answer with an error or
+	// empty output; callers then fall back to `cwd` for path normalization.
+	let repoRoot: string | null = null;
+	try {
+		const top = await run([...GIT_READ_ARGV.topLevel], cwd);
+		if (top.code === 0 && top.stdout.trim()) repoRoot = top.stdout.trim();
+	} catch {
+		repoRoot = null;
+	}
 
 	const head = await run([...GIT_READ_ARGV.head], cwd);
 	const status = await run([...GIT_READ_ARGV.status], cwd);
@@ -158,6 +221,7 @@ export async function probeGit(run: GitRunner, cwd: string): Promise<GitProbe> {
 				? diffStat.stdout.trim().slice(-MAX_DIFF_STAT_CHARS)
 				: null,
 		statusFailed,
+		repoRoot,
 	};
 }
 
@@ -376,6 +440,7 @@ export async function captureEvidence(
 		...(statusHash ? { gitStatusHash: statusHash } : {}),
 		...(statusFailed ? { statusProbeFailed: true } : {}),
 		...(unavailableRoots.length ? { unavailableWorktreeRoots: unavailableRoots } : {}),
+		...(probe.repoRoot ? { repoRoot: probe.repoRoot } : {}),
 		changedPaths,
 		...(hasDirty ? { dirtyPathHashes: mergedDirty } : {}),
 		...(committedMerged ? { committedPaths: committedMerged } : {}),
@@ -412,6 +477,15 @@ export interface ReviewPacketOptions {
 	 * packet truncated so a PASS over it is ineligible.
 	 */
 	additionalWorktreeRoots?: readonly string[];
+	/** E01 — per-execution attribution rounds the packet covers. */
+	rounds?: readonly ReviewRoundAttribution[];
+	/** E01 — findings that survived earlier rounds and are not yet closed. */
+	unresolvedFindings?: readonly string[];
+	/**
+	 * E01 — why the per-round material is incomplete. A packet missing part of
+	 * the Task's execution chain is truncated, never presented as whole.
+	 */
+	attributionIncomplete?: string;
 }
 
 interface RootDiffCheck {
@@ -495,6 +569,12 @@ export async function captureReviewEvidencePacket(
 	const patch = await boundedPatchFromSources(run, patchSources);
 	const status = clip(statusParts.join("\n"), MAX_REVIEW_PACKET_STATUS_CHARS);
 	const diffStat = clip(diffStatParts.join("\n"), MAX_REVIEW_PACKET_DIFF_CHARS);
+	// E01 — a packet missing part of the execution chain is truncated, never
+	// presented as a complete review of the Task's cumulative delivery.
+	const attributionIssue = options.attributionIncomplete;
+	const patchUnavailable = [patch.patchUnavailable, attributionIssue]
+		.filter((value): value is string => Boolean(value))
+		.join("; ");
 
 	return {
 		gitAvailable: true,
@@ -509,6 +589,8 @@ export async function captureReviewEvidencePacket(
 		diffCheckStaged: mergeDiffChecks(diffChecksStaged),
 		...(options.baselineRef ? { baselineRef: options.baselineRef } : {}),
 		...patch,
+		...(patchUnavailable ? { patchUnavailable } : {}),
+		...(attributionIssue ? { patchTruncated: true } : {}),
 		// A declared root Root could not sample is an explicit omission: the
 		// packet is truncated, never presented as complete.
 		...(unavailableRoots.length
@@ -518,6 +600,11 @@ export async function captureReviewEvidencePacket(
 				patchOmittedPaths: [...(patch.patchOmittedPaths ?? []), ...unavailableRoots],
 			}
 			: {}),
+		...(options.rounds?.length ? { rounds: [...options.rounds] } : {}),
+		...(options.unresolvedFindings?.length
+			? { unresolvedFindings: [...options.unresolvedFindings] }
+			: {}),
+		...(attributionIssue ? { attributionIncomplete: attributionIssue } : {}),
 		...attribution,
 	};
 }
@@ -772,6 +859,20 @@ export interface EvidenceComparison {
 	missingPaths: string[];
 	/** True when the drift cannot be fully attributed to out-of-scope paths. */
 	unexplained: boolean;
+	/**
+	 * E01 — open Task findings (under-report, scope, over-declaration, missing,
+	 * drift) that must survive later rounds and block PASS until a review
+	 * closes them.
+	 */
+	truthFindings?: TruthFindingDraft[];
+	/**
+	 * E01 — the per-execution A_run/C_report material that binds the latest
+	 * report is missing (legacy or unrestored record). Automatic PASS is then
+	 * impossible; the Task needs a new revision or a new Task.
+	 */
+	missingMaterials?: string;
+	/** E01 — freshness of the bound C_report against the boundary sample. */
+	freshness?: FreshnessComparison;
 }
 
 export interface CompareEvidenceOptions {
@@ -789,6 +890,12 @@ export interface CompareEvidenceOptions {
 	 * Worker declarations onto a root when the primary cwd form is absent.
 	 */
 	additionalWorktreeRoots?: readonly string[];
+	/**
+	 * E01 — paths already attributed to earlier executions of the same Task.
+	 * The final report declares cumulative delivery, so restating them is not
+	 * an over-report and their absence from this window is not a miss.
+	 */
+	priorTruthPaths?: readonly string[];
 }
 
 function sameCwd(left: string, right: string): boolean {
@@ -1081,6 +1188,345 @@ export function isEvidenceStale(
 	options: CompareEvidenceOptions = {},
 ): boolean {
 	return !compareEvidence(base, current, report, options).fresh;
+}
+
+/** The root a sample's relative paths hang off: the repo top-level when known. */
+function sampleRoot(sample: EvidenceRef, fallback: string): string {
+	return sample.repoRoot || sample.cwd || fallback;
+}
+
+export type TruthFindingDraftKind = "undeclared" | "scope" | "over-declared" | "missing" | "drift";
+
+export interface TruthFindingDraft {
+	kind: TruthFindingDraftKind;
+	paths: string[];
+}
+
+/**
+ * E01 — Truth/scope of one execution window, a pure function of Root's own
+ * A_run and C_report samples plus the report declaration. No freshness terms:
+ * anything that happened before A_run is outside this window by construction,
+ * and anything after C_report is the freshness function's business.
+ */
+export interface ExecutionTruthComparison {
+	verifiable: boolean;
+	reasons: string[];
+	/** Attributed paths (T1 ∪ T2 ∪ T3) minus untracked runtime noise. */
+	truthPaths: string[];
+	/** Untracked out-of-scope runtime noise: recorded, never attributed. */
+	externalPaths: string[];
+	/** Attributed in-scope paths the declaration omitted. */
+	undeclaredPaths: string[];
+	/** Attributed paths outside the TaskSpec scope. */
+	outOfScopePaths: string[];
+	/** Declared in-repo paths absent from the attributed delta. */
+	extraDeclaredPaths: string[];
+	/** Declared paths whose changes are no longer present. */
+	missingPaths: string[];
+	/** The report declares another cwd than the one its result arrived in. */
+	declarationMismatch: boolean;
+	findings: TruthFindingDraft[];
+}
+
+/**
+ * Compare Root's pre-execution sample with the result-receive sample of the
+ * same execution, then cross-check the report declaration. This is the only
+ * function that answers "did the worker do what it said" — pre-existing dirt
+ * and earlier unrelated history never enter the window.
+ */
+export function compareExecutionTruth(
+	aRun: EvidenceRef,
+	cReport: EvidenceRef,
+	report: WorkerReport | undefined,
+	options: CompareEvidenceOptions = {},
+): ExecutionTruthComparison {
+	const reasons: string[] = [];
+	let verifiable = aRun.gitAvailable !== false && cReport.gitAvailable !== false;
+	if (!verifiable) reasons.push("git evidence unavailable — execution window cannot be verified");
+	if (aRun.statusProbeFailed || cReport.statusProbeFailed) {
+		verifiable = false;
+		reasons.push("git status probe failed — workspace state unknown");
+	}
+	const unavailableRoots = sorted([
+		...new Set([
+			...(aRun.unavailableWorktreeRoots ?? []),
+			...(cReport.unavailableWorktreeRoots ?? []),
+		]),
+	]);
+	if (unavailableRoots.length > 0) {
+		verifiable = false;
+		reasons.push(`declared worktree root unavailable — state unknown: ${unavailableRoots.join(", ")}`);
+	}
+	if (aRun.cwd && cReport.cwd && !sameCwd(aRun.cwd, cReport.cwd)) {
+		verifiable = false;
+		reasons.push(`cwd changed (${aRun.cwd} -> ${cReport.cwd})`);
+	}
+	// The report must speak for the workspace it was received in: a claim
+	// under another cwd is a declaration mismatch, not a freshness drift, and
+	// the declared paths resolve under the wrong root (out-of-repo exempt).
+	let declarationMismatch = false;
+	if (report?.evidence.cwd && cReport.cwd && !sameCwd(report.evidence.cwd, cReport.cwd)) {
+		declarationMismatch = true;
+		reasons.push(`cwd changed (${report.evidence.cwd} -> ${cReport.cwd})`);
+	}
+
+	const pathCwd = cReport.cwd || aRun.cwd;
+	// Status porcelain paths hang off the cwd git ran in; the committed delta
+	// (`diff --name-only`) hangs off the repository root. Normalize each
+	// against its own base so a subdirectory cwd cannot mis-resolve either.
+	const additionalRoots = normalizeAdditionalWorktreeRoots(pathCwd, options.additionalWorktreeRoots);
+	const basePaths = new Set(normalizeEvidencePaths(aRun.changedPaths ?? [], aRun.cwd || pathCwd));
+	const currentPaths = new Set(normalizeEvidencePaths(cReport.changedPaths ?? [], cReport.cwd || pathCwd));
+
+	// T1 newly dirty, T2 committed between the refs, T3 baseline-dirty content change.
+	const t1 = [...currentPaths].filter((path) => !basePaths.has(path));
+	const committedPaths = new Set(normalizeEvidencePaths(cReport.committedPaths ?? [], sampleRoot(cReport, pathCwd)));
+	const t2 = [...committedPaths];
+	const t3: string[] = [];
+	const baselineDirtyCount = aRun.changedPaths?.length ?? 0;
+	if (baselineDirtyCount > MAX_BASELINE_HASH_PATHS) {
+		reasons.push(`baseline hash skipped (${baselineDirtyCount} dirty paths)`);
+	} else {
+		const baselineHashes = normalizedDirtyHashes(aRun.dirtyPathHashes, aRun.cwd || pathCwd);
+		const resultHashes = normalizedDirtyHashes(cReport.dirtyPathHashes, cReport.cwd || pathCwd);
+		for (const path of basePaths) {
+			if (!currentPaths.has(path)) continue;
+			const baseHash = baselineHashes.get(path);
+			const currentHash = resultHashes.get(path);
+			if (baseHash === undefined || currentHash === undefined) continue;
+			if (baseHash !== currentHash) t3.push(path);
+		}
+	}
+	const truthSet = new Set([...t1, ...t2, ...t3]);
+
+	const declaredPaths = new Set(
+		[
+			...(report?.evidence.changedPaths ?? []),
+			...(report?.changedFiles ?? []),
+		].map((path) =>
+			resolveDeclaredPath(
+				path,
+				report?.evidence.cwd || pathCwd,
+				additionalRoots,
+				new Set([...basePaths, ...currentPaths, ...truthSet, ...committedPaths]),
+			),
+		),
+	);
+
+	const allowedPaths = new Set(normalizeEvidencePaths(options.scope?.allowedPaths ?? [], pathCwd));
+	for (const root of additionalRoots) {
+		for (const path of options.scope?.allowedPaths ?? []) {
+			if (!isAbsolute(path)) allowedPaths.add(normalizeEvidencePaths([path], root)[0]);
+		}
+	}
+	const hasAllowList = allowedPaths.size > 0;
+	const untrackedResult = new Set(
+		untrackedPathsOf(cReport).map((path) => normalizeEvidencePaths([path], cReport.cwd || pathCwd)[0]),
+	);
+
+	// Runtime noise rewritten by every delegation (session dirs, isolated agent
+	// dirs) is untracked, out of the declared scope, and undeclared: it is
+	// recorded as external, never attributed to this execution (ticket 20).
+	const truthPaths: string[] = [];
+	const externalPaths: string[] = [];
+	for (const path of truthSet) {
+		const untracked = untrackedResult.has(path);
+		const declared = declaredPaths.has(path);
+		const inAllowList = hasAllowList && allowedPaths.has(path);
+		if (untracked && !declared && !inAllowList) {
+			externalPaths.push(path);
+			continue;
+		}
+		truthPaths.push(path);
+	}
+	truthPaths.sort();
+	externalPaths.sort();
+	const attributed = new Set(truthPaths);
+
+	const outOfScopePaths = hasAllowList
+		? truthPaths.filter((path) => !allowedPaths.has(path))
+		: [];
+	const undeclaredPaths = truthPaths.filter((path) => !declaredPaths.has(path));
+	const outOfRepoDeclared = [...declaredPaths].filter((path) =>
+		isOutsideWorkspacePath(path, pathCwd, additionalRoots),
+	);
+	const inRepoDeclared = [...declaredPaths].filter((path) =>
+		!isOutsideWorkspacePath(path, pathCwd, additionalRoots),
+	);
+	const priorTruth = new Set(
+		(options.priorTruthPaths ?? []).map((path) =>
+			normalizeEvidencePaths([path], pathCwd)[0],
+		),
+	);
+	const extraDeclaredPaths = inRepoDeclared.filter(
+		(path) => !attributed.has(path) && !truthSet.has(path) && !priorTruth.has(path),
+	);
+
+	const headChanged = Boolean(
+		aRun.finalGitRef && cReport.finalGitRef && aRun.finalGitRef !== cReport.finalGitRef,
+	);
+	const missingPaths: string[] = [];
+	if (verifiable && !headChanged) {
+		for (const path of inRepoDeclared) {
+			if (currentPaths.has(path)) continue;
+			if (committedPaths.has(path) || t3.includes(path)) continue;
+			if (priorTruth.has(path)) continue;
+			missingPaths.push(path);
+		}
+	}
+
+	if (undeclaredPaths.length > 0) {
+		reasons.push(`under-reported: ${sorted(undeclaredPaths).join(", ")}`);
+	}
+	if (outOfScopePaths.length > 0) {
+		reasons.push(`out-of-scope paths changed: ${sorted(outOfScopePaths).join(", ")}`);
+	}
+	if (extraDeclaredPaths.length > 0) {
+		reasons.push(`over-reported / unreliable declaration: ${sorted(extraDeclaredPaths).join(", ")}`);
+	}
+	if (missingPaths.length > 0) {
+		reasons.push(`reported changes no longer present: ${sorted(missingPaths).join(", ")}`);
+	}
+	if (outOfRepoDeclared.length > 0) {
+		reasons.push(`out-of-repo declaration exempt from attribution: ${sorted(outOfRepoDeclared).join(", ")}`);
+	}
+	if (externalPaths.length > 0) {
+		reasons.push(`external untracked changes (not attributed): ${externalPaths.join(", ")}`);
+	}
+
+	const findings: TruthFindingDraft[] = [];
+	if (verifiable) {
+		if (undeclaredPaths.length > 0) findings.push({ kind: "undeclared", paths: sorted(undeclaredPaths) });
+		if (outOfScopePaths.length > 0) findings.push({ kind: "scope", paths: sorted(outOfScopePaths) });
+		// A report-only restatement is not required to re-prove presence: the
+		// drift check governs the workspace, and its over/missing declarations
+		// stay visible in the fields above without becoming findings.
+		if (!options.reportOnly && extraDeclaredPaths.length > 0) {
+			findings.push({ kind: "over-declared", paths: sorted(extraDeclaredPaths) });
+		}
+		if (!options.reportOnly && missingPaths.length > 0) {
+			findings.push({ kind: "missing", paths: sorted(missingPaths) });
+		}
+	}
+
+	return {
+		verifiable,
+		reasons,
+		truthPaths,
+		externalPaths,
+		undeclaredPaths: sorted(undeclaredPaths),
+		outOfScopePaths: sorted(outOfScopePaths),
+		extraDeclaredPaths: sorted(extraDeclaredPaths),
+		missingPaths: sorted(missingPaths),
+		declarationMismatch,
+		findings,
+	};
+}
+
+/**
+ * E01 — Freshness of a report: did the workspace move between Root's
+ * result-receive sample (C_report) and a later boundary sample (C_now)?
+ * Worker-declared fields never participate.
+ */
+export interface FreshnessComparison {
+	verifiable: boolean;
+	fresh: boolean;
+	reasons: string[];
+	driftPaths: string[];
+	headChanged: boolean;
+}
+
+export function compareFreshness(
+	cReport: EvidenceRef,
+	cNow: EvidenceRef,
+	options: { additionalWorktreeRoots?: readonly string[]; scope?: TaskScope } = {},
+): FreshnessComparison {
+	const reasons: string[] = [];
+	const driftPaths = new Set<string>();
+	let verifiable = cReport.gitAvailable !== false && cNow.gitAvailable !== false;
+	if (!verifiable) reasons.push("git evidence unavailable — freshness cannot be verified");
+	if (cReport.statusProbeFailed || cNow.statusProbeFailed) {
+		verifiable = false;
+		reasons.push("git status probe failed — workspace state unknown");
+	}
+	const unavailableRoots = sorted([
+		...new Set([
+			...(cReport.unavailableWorktreeRoots ?? []),
+			...(cNow.unavailableWorktreeRoots ?? []),
+		]),
+	]);
+	if (unavailableRoots.length > 0) {
+		verifiable = false;
+		reasons.push(`declared worktree root unavailable — state unknown: ${unavailableRoots.join(", ")}`);
+	}
+	const pathCwd = cNow.cwd || cReport.cwd;
+	const rootReport = cReport.cwd || pathCwd;
+	const rootNow = cNow.cwd || pathCwd;
+	if (cReport.cwd && cNow.cwd && !sameCwd(cReport.cwd, cNow.cwd)) {
+		verifiable = false;
+		reasons.push(`cwd changed (${cReport.cwd} -> ${cNow.cwd})`);
+	}
+	if (!verifiable) {
+		return { verifiable: false, fresh: false, reasons, driftPaths: [], headChanged: false };
+	}
+
+	const headChanged = Boolean(
+		cReport.finalGitRef && cNow.finalGitRef && cReport.finalGitRef !== cNow.finalGitRef,
+	);
+	if (headChanged) reasons.push(`HEAD changed (${cReport.finalGitRef} -> ${cNow.finalGitRef})`);
+
+	// Ticket 20 — untracked runtime noise outside the declared scope (session
+	// dirs, isolated agent dirs) is rewritten by every delegation. It neither
+	// invalidates a report nor becomes an attribution path.
+	const allowed = new Set(normalizeEvidencePaths(options.scope?.allowedPaths ?? [], pathCwd));
+	const untrackedReport = new Set(
+		untrackedPathsOf(cReport).map((path) => normalizeEvidencePaths([path], rootReport)[0]),
+	);
+	const untrackedNow = new Set(
+		untrackedPathsOf(cNow).map((path) => normalizeEvidencePaths([path], rootNow)[0]),
+	);
+	const isNoise = (path: string): boolean =>
+		(untrackedReport.has(path) || untrackedNow.has(path)) && !allowed.has(path);
+
+	const reportPaths = new Set(normalizeEvidencePaths(cReport.changedPaths ?? [], rootReport));
+	const nowPaths = new Set(normalizeEvidencePaths(cNow.changedPaths ?? [], rootNow));
+	for (const path of nowPaths) {
+		if (!reportPaths.has(path) && !isNoise(path)) driftPaths.add(path);
+	}
+	for (const path of reportPaths) {
+		if (!nowPaths.has(path) && !isNoise(path)) driftPaths.add(path);
+	}
+	const reportHashes = normalizedDirtyHashes(cReport.dirtyPathHashes, rootReport);
+	const nowHashes = normalizedDirtyHashes(cNow.dirtyPathHashes, rootNow);
+	for (const [path, hash] of reportHashes) {
+		if (!nowPaths.has(path) || isNoise(path)) continue;
+		const nowHash = nowHashes.get(path);
+		if (nowHash === undefined) continue;
+		if (hash !== nowHash) driftPaths.add(path);
+	}
+	if (driftPaths.size > 0) {
+		reasons.push(`content changed since the report: ${sorted([...driftPaths]).join(", ")}`);
+	}
+	// A status-hash change with an identical raw path set is a real workspace
+	// change the path comparison cannot see (mode/index-only edits, fixtures).
+	// When the raw sets differ only by runtime noise, the hash difference is
+	// explained and must not stale the report (ticket 20).
+	const rawSetsEqual = reportPaths.size === nowPaths.size
+		&& [...reportPaths].every((path) => nowPaths.has(path));
+	const unexplainedStatus = cReport.gitStatusHash !== cNow.gitStatusHash && rawSetsEqual;
+	if (unexplainedStatus) {
+		reasons.push("working tree changed since the report");
+	}
+
+	const fresh = !headChanged && driftPaths.size === 0 && !unexplainedStatus;
+	return { verifiable, fresh, reasons, driftPaths: sorted([...driftPaths]), headChanged };
+}
+
+export function describeFreshness(comparison: FreshnessComparison): string {
+	if (!comparison.verifiable) return `freshness unverifiable: ${comparison.reasons.join("; ")}`;
+	return comparison.fresh
+		? "fresh since the report"
+		: `drift since the report: ${comparison.reasons.join("; ")}`;
 }
 
 /**

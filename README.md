@@ -155,14 +155,20 @@ Both child contracts are checked against the delegation they answer:
 - A `ReviewResult` is accepted only when its `taskId` matches the reviewed
   task; mismatched verdicts are never recorded and no state changes.
 
-Evidence is authoritative only at the acceptance boundary. Root samples Git
-when a delegation starts (A) and again when the result is handled or a Root
-`pass` is recorded (C). The A-to-C delta is the scope denominator; Worker
-`changedFiles` and Git fingerprints are a declaration, cross-checked but not
-authoritative. Missing Worker `gitStatusHash` / `finalGitRef` does not disable
-Root attribution. Stale or unverifiable evidence forces `revalidate` instead
-of completion, and a fresh reviewer's `evidenceFresh: true` never bypasses
-that Root-side check. The writer lock follows the worktree's real path:
+Evidence is per-execution and Root-owned. Each actual child execution gets an
+evidence record: Root samples Git immediately before it starts (`A_run`) and
+again when the execution's final result arrives (`C_report`), even when the
+report cannot be parsed. Truth and scope are the pure `diff(A_run, C_report)`
+cross-checked against the report declaration — anything predating `A_run`
+(including unrelated history on the branch) is outside the window by
+construction. Freshness is the separate `diff(C_report, C_now)`: Root
+re-samples at review and at the acceptance boundary, and drift after the
+report forces `revalidate` instead of completion. A fresh reviewer's
+`evidenceFresh: true` never bypasses that Root-side check. Findings
+(under-report, out-of-scope changes, drift) persist across correction rounds
+and block PASS until a review confirms the repair; ledger records written
+before per-execution evidence existed are marked unverifiable and cannot
+complete automatically. The writer lock follows the worktree's real path:
 aliases of one worktree (relative path, symlink) share the lock, while
 independent worktrees stay independent.
 

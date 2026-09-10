@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Per-execution Evidence (truth/scope vs freshness): every actual child execution gets Root-owned `A_run` (pre-execution) and `C_report` (result-receive) samples, even when the report cannot be parsed. Truth/scope is the pure `diff(A_run, C_report)` against the report declaration; freshness is the separate `diff(C_report, C_now)` re-sampled at review and acceptance. Unrelated history that predates `A_run` can no longer be attributed to an execution (baseline-lag fix).
+- Evidence findings (under-report, out-of-scope, over-declaration, missing, drift) persist across correction rounds and block PASS until a review confirms an evidence-proven repair; report-only corrections inherit the original execution window, and drift during a correction is explicit drift handling.
+- Reviewer packets carry per-round attribution (`rounds`), the cumulative attributed set, and unresolved findings; a packet missing part of the execution chain is truncated and a PASS over it is ineligible. Ledger records written before per-execution evidence existed are marked unverifiable and cannot complete automatically.
+- Subdirectory `cwd` and quoted non-ASCII Git paths are normalized correctly (status paths against the probed cwd, committed deltas against the repository top-level).
 - Stop stripping Root `bash`/`edit`/`write` via `setActiveTools`. The host applies that change on the next turn, so a launch-window restore could not give children a mutation ceiling in the same turn. Policy still blocks Root; children inherit the parent's active tools.
 
 ## 0.4.1 - 2026-09-10

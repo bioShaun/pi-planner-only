@@ -39,8 +39,8 @@ The structured verdict a Reviewer returns.
 _Avoid_: review comments, PR review
 
 **Evidence**:
-A point-in-time fingerprint of the workspace a WorkerReport refers to. Freshness is re-sampled by Root at the acceptance boundary; a pass over stale evidence is rejected.
-_Avoid_: artifact, snapshot (unless talking about the Git working tree sample itself)
+Root's own Git samples, never the Worker's word. Each execution record carries a pre-execution sample (`A_run`) and a result-receive sample (`C_report`); Truth/scope is the pure `diff(A_run, C_report)` against the report declaration, and freshness is the separate `diff(C_report, C_now)` re-sampled at review and acceptance. Findings (under-report, scope, drift) survive later rounds; only a review closes one.
+_Avoid_: artifact, snapshot (unless talking about the Git working tree sample itself), the old single Task-level A sample
 
 **ReviewRequest**:
 The transient packet a reviewer invocation carries: the Task's original spec (read-only), the latest WorkerReport, and Root's Git evidence. It names the Task; it never rebinds one.

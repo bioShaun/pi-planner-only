@@ -8,10 +8,14 @@ import {
 	captureEvidence,
 	captureReviewEvidencePacket,
 	compareEvidence,
+	compareExecutionTruth,
+	compareFreshness,
 	describeComparison,
+	describeFreshness,
+	normalizeEvidencePaths,
 	untrackedPathsOf,
 } from "./evidence.ts";
-import type { EvidenceComparison } from "./evidence.ts";
+import type { EvidenceComparison, ExecutionTruthComparison, FreshnessComparison } from "./evidence.ts";
 import {
 	captureWorkspaceSnapshot,
 	compareSnapshotBinding,
@@ -105,8 +109,11 @@ import type {
 	EvidenceRef,
 	ReviewFinding,
 	ReviewResult,
+	ReviewRoundAttribution,
 	ReviewVerdict,
 	StructuredDelegationMode,
+	TaskExecutionRecord,
+	TaskFinding,
 	WorkerReport,
 } from "./types.ts";
 import { emptyTaskUsage, summarizeTaskBudget } from "./usage.ts";
@@ -599,6 +606,8 @@ function untrustedPlaceholder(taskId: string): TaskRecord {
 		overrides: [],
 		aliases: [],
 		reportCorrections: 0,
+		executions: [],
+		findings: [],
 		usage: emptyTaskUsage(),
 		createdAt: "1970-01-01T00:00:00.000Z",
 		updatedAt: "1970-01-01T00:00:00.000Z",
@@ -633,6 +642,13 @@ export class PlannerOrchestrator {
 	/** taskId -> history of all delegations for that task. */
 	private readonly delegationHistory = new Map<string, DelegationHistoryEntry[]>();
 	private readonly snapshots?: LedgerSnapshotStore;
+	/**
+	 * E01 — Tasks whose record came from the ledger. A restored record missing
+	 * per-execution A_run/C_report material cannot be verified and must not
+	 * complete through the automatic PASS gate; only fresh evidence from a new
+	 * execution (or a new Task) recovers it.
+	 */
+	private readonly restoredTaskIds = new Set<string>();
 	/** Per-task: snapshot unreadable, so remaining balance must not be claimed. */
 	private readonly untrustedBalances = new Map<string, string>();
 
@@ -714,6 +730,7 @@ export class PlannerOrchestrator {
 		for (const record of eligible) {
 			if (this.store.get(record.taskId)) continue;
 			this.store.restore(record);
+			this.restoredTaskIds.add(record.taskId);
 			restored += 1;
 		}
 		for (const item of corrupt) {
@@ -721,6 +738,7 @@ export class PlannerOrchestrator {
 			this.snapshots.quarantine(item.taskId, item.reason);
 			if (SAFE_TASK_ID.test(item.taskId) && !this.store.get(item.taskId)) {
 				this.store.restore(untrustedPlaceholder(item.taskId));
+				this.restoredTaskIds.add(item.taskId);
 			}
 		}
 		return { restored, corrupt };
@@ -775,6 +793,62 @@ export class PlannerOrchestrator {
 	}
 
 	/**
+	 * E01 — the cumulative attribution a Fresh Reviewer must see: per-round
+	 * windows, the earliest trustworthy baseline ref, and the findings that
+	 * survived earlier rounds. A chain with missing material is truncated, so
+	 * a PASS over it is ineligible.
+	 */
+	private reviewAttribution(task: TaskRecord): {
+		baselineRef?: string;
+		rounds: ReviewRoundAttribution[];
+		unresolvedFindings: string[];
+		attributionIncomplete?: string;
+	} {
+		const executions = task.executions.filter((execution) => !execution.auxiliary && !execution.reportOnly);
+		const rounds: ReviewRoundAttribution[] = executions.map((execution) => ({
+			executionId: execution.executionId,
+			role: execution.kind,
+			...(execution.runId ? { runId: execution.runId } : {}),
+			...(execution.reportIndex !== undefined ? { reportRevision: execution.reportIndex + 1 } : {}),
+			...(execution.aRun.finalGitRef ? { aRef: execution.aRun.finalGitRef } : {}),
+			...(execution.cReport?.finalGitRef ? { cRef: execution.cReport.finalGitRef } : {}),
+			attributedFiles: execution.truthPaths ?? [],
+			undeclaredFiles: execution.undeclaredPaths ?? [],
+			outOfScopeFiles: execution.outOfScopePaths ?? [],
+			...(execution.freshness
+				? {
+					freshness: execution.freshness.fresh
+						? "fresh" as const
+						: execution.freshness.verifiable ? "stale" as const : "unknown" as const,
+				}
+				: {}),
+		}));
+		const incomplete: string[] = [];
+		if (executions.length === 0) {
+			incomplete.push("no per-execution attribution record exists for this Task");
+		}
+		for (const execution of executions) {
+			if (!execution.aRun.finalGitRef) incomplete.push(`execution ${execution.executionId} has no A_run ref`);
+			if (!execution.cReport) incomplete.push(`execution ${execution.executionId} has no C_report sample`);
+		}
+		const baselineRef = executions.find((execution) => execution.aRun.finalGitRef)?.aRun.finalGitRef
+			?? task.baseEvidence?.finalGitRef;
+		const unresolvedFindings = task.findings
+			.filter((finding) => finding.status === "open")
+			.map((finding) =>
+				`${finding.kind}: ${finding.paths.join(", ") || "revised workspace"}${
+					finding.evidenceResolvedBy ? " (restore proven; review confirmation pending)" : ""
+				}`,
+			);
+		return {
+			...(baselineRef ? { baselineRef } : {}),
+			rounds,
+			unresolvedFindings,
+			...(incomplete.length > 0 ? { attributionIncomplete: incomplete.join("; ") } : {}),
+		};
+	}
+
+	/**
 	 * Remap the child agent and, for reviewers, replace the payload with a
 	 * ReviewRequest packet. Async because Root samples Git evidence for the
 	 * packet: reviewer children have no `git_audit` of their own (§P1-2).
@@ -799,6 +873,7 @@ export class PlannerOrchestrator {
 		if (fallback) options.fallbackTask = fallback;
 		const cwd = task?.cwd;
 		if (target?.role === "reviewer" && cwd) {
+			const attribution = this.reviewAttribution(task);
 			options.git = await captureReviewEvidencePacket(
 				this.gitRunner,
 				cwd,
@@ -806,9 +881,16 @@ export class PlannerOrchestrator {
 				// The patch is bounded against the Task's start baseline, not the
 				// current HEAD, so committed Task changes stay reviewable (R03).
 				{
-					...(task.baseEvidence?.finalGitRef ? { baselineRef: task.baseEvidence.finalGitRef } : {}),
+					...(attribution.baselineRef ? { baselineRef: attribution.baselineRef } : {}),
 					...(additionalWorktreeRootsOf(task)
 						? { additionalWorktreeRoots: additionalWorktreeRootsOf(task) }
+						: {}),
+					...(attribution.rounds.length > 0 ? { rounds: attribution.rounds } : {}),
+					...(attribution.unresolvedFindings.length > 0
+						? { unresolvedFindings: attribution.unresolvedFindings }
+						: {}),
+					...(attribution.attributionIncomplete
+						? { attributionIncomplete: attribution.attributionIncomplete }
 						: {}),
 				},
 			);
@@ -841,6 +923,310 @@ export class PlannerOrchestrator {
 		return candidate.state === "changes_requested" || candidate.state === "reviewing" || candidate.state === "executing"
 			? candidate
 			: undefined;
+	}
+
+	/**
+	 * E01 — the latest execution that carries Task attribution: worker rounds
+	 * only. Report-only corrections and auxiliary validator/explorer runs link
+	 * to this chain but never replace its window.
+	 */
+	private latestAttributionExecution(task: TaskRecord): TaskExecutionRecord | undefined {
+		for (let index = task.executions.length - 1; index >= 0; index -= 1) {
+			const execution = task.executions[index] as TaskExecutionRecord;
+			if (!execution.auxiliary && !execution.reportOnly) return execution;
+		}
+		return undefined;
+	}
+
+	/** E01 — the execution that produced report revision `task.reports.length`. */
+	private executionForLatestReport(task: TaskRecord): TaskExecutionRecord | undefined {
+		const revision = task.reports.length - 1;
+		if (revision < 0) return undefined;
+		for (let index = task.executions.length - 1; index >= 0; index -= 1) {
+			const execution = task.executions[index] as TaskExecutionRecord;
+			if (execution.reportIndex === revision) return execution;
+		}
+		return undefined;
+	}
+
+	/**
+	 * E01 — start this execution's evidence record from Root's own A_run. A
+	 * report-only correction keeps the original attribution window; a normal
+	 * execution starts a new one linked to the previous.
+	 */
+	private beginExecutionRecord(
+		task: TaskRecord,
+		executionId: string,
+		kind: DelegationKind,
+		aRun: EvidenceRef,
+		options: { reportOnly?: boolean; auxiliary?: boolean; runId?: string } = {},
+	): void {
+		const prior = this.latestAttributionExecution(task);
+		if (!options.reportOnly) {
+			// A new baseline after drift is the explicit recovery path: the
+			// drifted paths are now part of the revision under review, so the
+			// drift finding awaits review confirmation instead of blocking.
+			const driftPaths = this.store
+				.openFindings(task.taskId)
+				.filter((finding) => finding.kind === "drift" && !finding.evidenceResolvedBy)
+				.flatMap((finding) => finding.paths);
+			if (driftPaths.length > 0) {
+				this.store.markFindingEvidenceResolved(task.taskId, driftPaths, executionId, ["drift"]);
+			}
+		}
+		this.store.beginExecution(task.taskId, {
+			executionId,
+			kind,
+			cwd: task.cwd,
+			worktreeRoots: lockWorktreesOf(task),
+			aRun,
+			...(options.runId ? { runId: options.runId } : {}),
+			...(options.reportOnly ? { reportOnly: true } : {}),
+			...(options.auxiliary ? { auxiliary: true } : {}),
+			...(prior ? { previousExecutionId: prior.executionId } : {}),
+		});
+	}
+
+	/** E01 — record this execution's C_report; kept even when the report cannot be parsed. */
+	private completeExecutionSample(
+		task: TaskRecord,
+		executionId: string,
+		cReport: EvidenceRef,
+		patch: Partial<Omit<TaskExecutionRecord, "taskId" | "executionId">> = {},
+	): void {
+		this.store.completeExecution(task.taskId, executionId, { cReport, ...patch });
+	}
+
+	/**
+	 * E01 — bind a recorded report to its execution's truth window and refresh
+	 * this revision's findings. A report-only correction reuses the original
+	 * execution's window; drift during the correction is handled by freshness.
+	 */
+	private recordReportExecutionTruth(
+		task: TaskRecord,
+		execution: TaskExecutionRecord,
+		cReport: EvidenceRef,
+		report: WorkerReport,
+		reportIndex: number,
+	): void {
+		const origin = execution.reportOnly
+			? this.store.executionById(task.taskId, execution.previousExecutionId ?? "")
+			: execution;
+		const truthRun = origin?.aRun ?? execution.aRun;
+		const truthBase = origin?.cReport ?? cReport;
+		const roots = additionalWorktreeRootsOf(task);
+		// The final report declares cumulative delivery: paths attributed to
+		// earlier rounds may be restated without becoming findings.
+		const priorTruthPaths = task.executions
+			.filter((item) => item !== execution && !item.auxiliary && item.truthPaths?.length)
+			.flatMap((item) => item.truthPaths ?? []);
+		const truth = compareExecutionTruth(truthRun, truthBase, report, {
+			...(task.spec?.scope ? { scope: task.spec.scope } : {}),
+			...(roots ? { additionalWorktreeRoots: roots } : {}),
+			...(execution.reportOnly ? { reportOnly: true } : {}),
+			...(priorTruthPaths.length > 0 ? { priorTruthPaths } : {}),
+		});
+		this.store.completeExecution(task.taskId, execution.executionId, {
+			reportIndex,
+			truthPaths: truth.truthPaths,
+			undeclaredPaths: truth.undeclaredPaths,
+			outOfScopePaths: truth.outOfScopePaths,
+			extraDeclaredPaths: truth.extraDeclaredPaths,
+			externalPaths: truth.externalPaths,
+		});
+		const findingOwner = execution.reportOnly && origin ? origin.executionId : execution.executionId;
+		this.store.recordExecutionFindings(
+			task.taskId,
+			findingOwner,
+			truth.findings,
+			this.store.now().toISOString(),
+			// Declaration findings are recomputed as a set: a repaired report
+			// clears the finding kinds it no longer trips.
+			["undeclared", "scope", "over-declared", "missing"],
+		);
+		// A path dirty at A_run and clean at C_report (without being committed)
+		// was restored in this window; an earlier scope finding on it now has
+		// evidence of the restore, and a review still has to confirm it.
+		if (truth.verifiable) {
+			const dirtyAtStart = new Set(
+				normalizeEvidencePaths(truthRun.changedPaths ?? [], truthRun.repoRoot ?? truthRun.cwd),
+			);
+			const dirtyNow = new Set(
+				normalizeEvidencePaths(cReport.changedPaths ?? [], cReport.repoRoot ?? cReport.cwd),
+			);
+			const committedNow = new Set(
+				normalizeEvidencePaths(cReport.committedPaths ?? [], cReport.repoRoot ?? cReport.cwd),
+			);
+			const restored = [...dirtyAtStart].filter(
+				(path) => !dirtyNow.has(path) && !committedNow.has(path),
+			);
+			if (restored.length > 0) {
+				this.store.markFindingEvidenceResolved(task.taskId, restored, execution.executionId);
+			}
+		}
+	}
+
+	/**
+	 * E01 — replace the legacy mixed A↔C comparison with the per-execution
+	 * contract when execution material exists:
+	 *   Truth/scope  = compareExecutionTruth(A_run, C_report, report)
+	 *   Freshness    = compareFreshness(C_report, C_now)
+	 * Findings survive later rounds and must block PASS until a review closes
+	 * them; missing material fails closed instead of being guessed from the
+	 * current tree.
+	 */
+	private async augmentExecutionEvidence(
+		task: TaskRecord,
+		currentSample: EvidenceRef,
+		comparison: EvidenceComparison,
+	): Promise<EvidenceComparison> {
+		const report = task.reports.at(-1);
+		if (!report) return comparison;
+		const latest = this.executionForLatestReport(task);
+		if (!latest) {
+			const reason = `report revision ${task.reports.length} has no per-execution A_run/C_report evidence record`;
+			if (task.executions.length === 0 && !this.restoredTaskIds.has(task.taskId)) {
+				return comparison;
+			}
+			return {
+				...comparison,
+				verifiable: false,
+				missingMaterials: reason,
+				reasons: [...comparison.reasons, `missing execution evidence — ${reason}`],
+			};
+		}
+		const origin = latest.reportOnly
+			? this.store.executionById(task.taskId, latest.previousExecutionId ?? "")
+			: latest;
+		const truthRun = origin?.aRun ?? latest.aRun;
+		const truthBase = origin?.cReport ?? latest.cReport;
+		const roots = additionalWorktreeRootsOf(task);
+		const priorTruthPaths = task.executions
+			.filter((item) => item !== latest && !item.auxiliary && !item.reportOnly && item.truthPaths?.length)
+			.flatMap((item) => item.truthPaths ?? []);
+		const truth = compareExecutionTruth(truthRun, truthBase ?? currentSample, report, {
+			...(task.spec?.scope ? { scope: task.spec.scope } : {}),
+			...(roots ? { additionalWorktreeRoots: roots } : {}),
+			...(latest.reportOnly ? { reportOnly: true } : {}),
+			...(priorTruthPaths.length > 0 ? { priorTruthPaths } : {}),
+		});
+		const freshness: FreshnessComparison = truthBase
+			? compareFreshness(truthBase, currentSample, {
+				...(roots ? { additionalWorktreeRoots: roots } : {}),
+				...(task.spec?.scope ? { scope: task.spec.scope } : {}),
+			})
+			: {
+				verifiable: false,
+				fresh: false,
+				reasons: [`execution ${latest.executionId} has no C_report sample; freshness cannot be verified`],
+				driftPaths: [],
+				headChanged: false,
+			};
+		this.store.completeExecution(task.taskId, latest.executionId, {
+			freshness: {
+				verifiable: freshness.verifiable,
+				fresh: freshness.fresh,
+				reasons: freshness.reasons,
+				driftPaths: freshness.driftPaths,
+			},
+		});
+		if (freshness.verifiable && !freshness.fresh) {
+			this.store.setExecutionDrift(task.taskId, latest.executionId, {
+				detectedAt: this.store.now().toISOString(),
+				paths: freshness.driftPaths,
+				reasons: freshness.reasons,
+			});
+			this.store.recordExecutionFindings(
+				task.taskId,
+				latest.executionId,
+				[{ kind: "drift", paths: freshness.driftPaths }],
+				this.store.now().toISOString(),
+			);
+		}
+
+		// Scope classification for the shared comparison fields: an undeclared
+		// in-scope path is overlapping (under-report), an out-of-scope one is
+		// an independent scope finding.
+		const pathCwd = currentSample.cwd || task.cwd;
+		const allowedPaths = new Set(normalizeEvidencePaths(task.spec?.scope?.allowedPaths ?? [], pathCwd));
+		for (const root of roots ?? []) {
+			for (const path of task.spec?.scope?.allowedPaths ?? []) {
+				if (!isAbsolute(path)) allowedPaths.add(normalizeEvidencePaths([path], root)[0]);
+			}
+		}
+		const hasAllowList = allowedPaths.size > 0;
+		const overlappingPaths = truth.undeclaredPaths.filter((path) => !hasAllowList || allowedPaths.has(path));
+		const unrelatedPaths = truth.undeclaredPaths.filter((path) => hasAllowList && !allowedPaths.has(path));
+
+		const open = this.store.openFindings(task.taskId);
+		const reasons = [...truth.reasons, ...freshness.reasons];
+		for (const finding of open) {
+			reasons.push(
+				`evidence finding (${finding.kind}): ${finding.paths.length > 0 ? finding.paths.join(", ") : "workspace revision changed"}${
+					finding.evidenceResolvedBy ? " [restore proven; needs review confirmation]" : ""
+				}`,
+			);
+		}
+		const verifiable = truth.verifiable && freshness.verifiable;
+		const fresh = verifiable
+			&& truth.findings.length === 0
+			&& !truth.declarationMismatch
+			&& freshness.fresh
+			&& open.length === 0;
+		// Over-declaration and vanished declared changes make the report itself
+		// unreliable (legacy semantics): the comparison is unexplained, not just
+		// finding-bearing. Under-report and scope findings are repairs, not
+		// revalidations, and stay unexplained=false. A report that claims
+		// another cwd than the one its result arrived in is equally unreliable.
+		const unreliable = truth.declarationMismatch
+			|| truth.findings.some(
+				(finding) => finding.kind === "over-declared" || finding.kind === "missing",
+			);
+		// The comparison shows the Task's cumulative delivery: every
+		// attribution window up to and including this revision, deduped.
+		const cumulative = [...new Set([...priorTruthPaths, ...truth.truthPaths])].sort();
+		return {
+			verifiable,
+			fresh,
+			reasons,
+			truthPaths: cumulative,
+			undeclaredPaths: truth.undeclaredPaths,
+			extraDeclaredPaths: truth.extraDeclaredPaths,
+			overlappingPaths,
+			unrelatedPaths,
+			missingPaths: truth.missingPaths,
+			unexplained: !verifiable || !freshness.fresh || unreliable,
+			truthFindings: open.map((finding) => ({ kind: finding.kind, paths: finding.paths })),
+			missingMaterials: comparison.missingMaterials,
+			freshness,
+		};
+	}
+
+	/**
+	 * E01 — close evidence-proven findings once a PASS review confirms them.
+	 * Findings with no proving evidence stay open and keep blocking PASS.
+	 */
+	private preparePassFindings(
+		task: TaskRecord,
+		comparison: EvidenceComparison | undefined,
+	): EvidenceComparison | undefined {
+		if (!comparison) return comparison;
+		if (comparison.missingMaterials) return comparison;
+		if (comparison.freshness && (!comparison.freshness.verifiable || !comparison.freshness.fresh)) {
+			return comparison;
+		}
+		const open = this.store.openFindings(task.taskId);
+		if (open.length === 0) return comparison;
+		if (open.some((finding) => !finding.evidenceResolvedBy)) return comparison;
+		this.store.resolveFindings(task.taskId, `pass-revision-${task.reports.length}`);
+		// The findings were the only blocker: the comparison is fresh again now
+		// that the review has confirmed the evidence-proven restores.
+		return {
+			...comparison,
+			fresh: comparison.verifiable && (comparison.freshness?.fresh ?? true),
+			reasons: comparison.reasons.filter((reason) => !reason.startsWith("evidence finding")),
+			truthFindings: [],
+		};
 	}
 
 	async beginDelegation(
@@ -1180,6 +1566,15 @@ export class PlannerOrchestrator {
 				return { task: reviewed, conflict: validatorConflict, ...(warnings.length ? { warnings } : {}) };
 			}
 			await this.supersedePendingDelegations(reviewed.taskId, event.toolCallId, warnings);
+			// E01 — a validator is auxiliary: its A_run/C_report record any
+			// writes it makes without ever resetting the Worker attribution.
+			const validatorSample = await captureEvidence(
+				this.gitRunner,
+				captureEvidenceOptionsFor(reviewed, event.toolCallId),
+			);
+			this.beginExecutionRecord(reviewed, event.toolCallId, "validator", validatorSample, {
+				auxiliary: true,
+			});
 			this.delegations.set(event.toolCallId, {
 				taskId: reviewed.taskId,
 				kind: "validator",
@@ -1354,18 +1749,35 @@ export class PlannerOrchestrator {
 		}
 
 		task = this.store.require(task.taskId);
+		const executionReportOnly = inputRecord.reportOnly === true || spec?.reportOnly === true;
 		if (role !== "explorer" && this.store.baseRoundEnded(task.taskId)) {
 			// A report was recorded against the current base: that review round
 			// is over and the next one gets its own A.
 			this.store.clearBaseEvidence(task.taskId);
 			task = this.store.require(task.taskId);
 		}
+		let roundSample: EvidenceRef | undefined;
 		if (role !== "explorer" && !task.baseEvidence) {
-			const base: EvidenceRef = await captureEvidence(
+			roundSample = await captureEvidence(
 				this.gitRunner,
 				captureEvidenceOptionsFor(task, event.toolCallId),
 			);
-			this.store.setBaseEvidence(task.taskId, base);
+			this.store.setBaseEvidence(task.taskId, roundSample);
+		}
+		// E01 — every actual execution gets its own A_run. The round base is
+		// reused when it was just taken; otherwise (correction round after an
+		// unparsed report, report-only rebuild) this execution starts its own
+		// window, so an old round baseline can never absorb later history.
+		if (role !== "reviewer") {
+			const executionSample = roundSample ?? await captureEvidence(
+				this.gitRunner,
+				captureEvidenceOptionsFor(task, event.toolCallId),
+			);
+			this.beginExecutionRecord(task, event.toolCallId, role, executionSample, {
+				...(executionReportOnly ? { reportOnly: true } : {}),
+				...(role === "explorer" || role === "validator" ? { auxiliary: true } : {}),
+			});
+			task = this.store.require(task.taskId);
 		}
 		// A writable begin was gated by writerConflict above; a read-only role
 		// was not, so protect live writable waiters from supersede (ticket 01).
@@ -1505,6 +1917,21 @@ export class PlannerOrchestrator {
 		if (task.stateReason) lines.push(`State reason: ${task.stateReason}`);
 		if (task.reviews.length > 0) {
 			lines.push(`Reviews: ${task.reviews.map((review) => `${review.verdict} (${review.source ?? "reviewer"})`).join(", ")}`);
+		}
+		const openFindings = task.findings.filter((finding) => finding.status === "open");
+		if (openFindings.length > 0) {
+			lines.push(`Evidence findings: ${openFindings.length} open`);
+			for (const finding of openFindings) {
+				lines.push(
+					`  - ${finding.kind}: ${finding.paths.join(", ") || "revised workspace"}${
+						finding.evidenceResolvedBy ? " (restore proven; review confirmation pending)" : ""
+					}`,
+				);
+			}
+		}
+		if (task.executions.length > 0) {
+			const attribution = task.executions.filter((execution) => !execution.auxiliary).length;
+			lines.push(`Executions: ${task.executions.length} (${attribution} attribution windows)`);
 		}
 		if (task.overrides.length > 0) {
 			lines.push(`Overrides: ${task.overrides.length}`);
@@ -1901,7 +2328,7 @@ export class PlannerOrchestrator {
 			this.parkBlockedReceipt(task, toolCallId, record.kind, text);
 			return true;
 		}
-		if (record.kind === "validator") await this.handleValidatorResult(task, text, record);
+		if (record.kind === "validator") await this.handleValidatorResult(task, text, record, toolCallId);
 		else if (record.kind === "reviewer") await this.handleReviewerResult(task, text, record);
 		else if (record.kind === "explorer") { /* explorer output returned as-is */ }
 		else await this.handleWorkerResult(task, text, toolCallId, { delegation: record });
@@ -2026,6 +2453,9 @@ export class PlannerOrchestrator {
 				comparison,
 				`verdict-${report.evidence.workerRunId}`,
 			);
+			// E01 — freshness of the bound C_report and surviving findings.
+			comparison = await this.augmentExecutionEvidence(current, currentSample, comparison);
+			comparison = this.preparePassFindings(current, comparison) ?? comparison;
 			this.store.setLastComparison(current.taskId, comparison);
 			evidence = describeComparison(comparison);
 		}
@@ -2179,7 +2609,7 @@ export class PlannerOrchestrator {
 		return delegation.kind === "reviewer"
 			? this.handleReviewerResult(task, text, delegation)
 			: delegation.kind === "validator"
-				? this.handleValidatorResult(task, text, delegation)
+				? this.handleValidatorResult(task, text, delegation, event.toolCallId)
 				: this.handleWorkerResult(task, text, event.toolCallId, { delegation });
 	}
 
@@ -2234,7 +2664,7 @@ export class PlannerOrchestrator {
 				continue;
 			}
 			if (found.record.kind === "validator") {
-				outcome = await this.handleValidatorResult(task, chosen, found.record);
+				outcome = await this.handleValidatorResult(task, chosen, found.record, found.toolCallId);
 				continue;
 			}
 
@@ -2409,7 +2839,11 @@ export class PlannerOrchestrator {
 				}),
 			);
 			comparison = compareWithRootSamples(task, currentSample, report);
+			// E01 — the reviewer re-samples the workspace: the bound C_report
+			// must still match it, independently of the content snapshot.
+			comparison = await this.augmentExecutionEvidence(this.store.require(task.taskId), currentSample, comparison);
 			if (review.verdict === "pass") {
+				comparison = this.preparePassFindings(task, comparison) ?? comparison;
 				// Ticket 02 / story 26 — accept re-samples the workspace. A PASS
 				// whose digest does not match (or is unknown / pre-snapshot) is
 				// refused the same way a truncated packet is: not recorded, Task
@@ -2436,6 +2870,10 @@ export class PlannerOrchestrator {
 						}],
 					};
 				}
+				// E01 — post-report drift, open findings, and missing material are
+				// folded into the comparison above: the review is recorded, but
+				// the decision is revalidate/blocked, never accept. A PASS over
+				// them is not eligible.
 			}
 		}
 
@@ -2507,6 +2945,25 @@ export class PlannerOrchestrator {
 				...(task.baseEvidence?.finalGitRef ? { baseGitRef: task.baseEvidence.finalGitRef } : {}),
 			}),
 		);
+		// E01 — the result-receive sample (C_report) is stored even when the
+		// report cannot be parsed, so a later report-only correction still has
+		// the original execution window to inherit. The window's own delta is
+		// attributed without a declaration cross-check (there is no report to
+		// compare), so the next execution's cumulative report is not an
+		// over-report of work this Task already delivered.
+		const execution = this.store.executionById(task.taskId, toolCallId);
+		if (execution) this.completeExecutionSample(task, toolCallId, current);
+		if (!report && execution) {
+			const rootsForWindow = additionalWorktreeRootsOf(task);
+			const windowTruth = compareExecutionTruth(execution.aRun, current, undefined, {
+				...(task.spec?.scope ? { scope: task.spec.scope } : {}),
+				...(rootsForWindow ? { additionalWorktreeRoots: rootsForWindow } : {}),
+			});
+			this.store.completeExecution(task.taskId, toolCallId, {
+				truthPaths: windowTruth.truthPaths,
+				externalPaths: windowTruth.externalPaths,
+			});
+		}
 		if (report) {
 			// Bind before recording so the stored report carries Root's own
 			// report-time content hashes for the acceptance-boundary comparison.
@@ -2528,12 +2985,18 @@ export class PlannerOrchestrator {
 					capturedAt: snapshot.capturedAt,
 				});
 			}
+			if (execution) {
+				this.recordReportExecutionTruth(task, execution, current, report, revision - 1);
+			}
 		}
-		const comparison = report
+		let comparison = report
 			? compareWithRootSamples(task, current, report, {
 				...(options.delegation?.reportOnly ? { reportOnly: true } : {}),
 			})
 			: undefined;
+		if (comparison) {
+			comparison = await this.augmentExecutionEvidence(this.store.require(task.taskId), current, comparison);
+		}
 		if (comparison) this.store.setLastComparison(task.taskId, comparison);
 		const { decision } = advanceReview({
 			store: this.store,
@@ -2630,11 +3093,27 @@ export class PlannerOrchestrator {
 		};
 	}
 
-	private handleValidatorResult(
+	private async handleValidatorResult(
 		task: TaskRecord,
 		text: string,
 		delegation?: DelegationRecord,
-	): { content: { type: "text"; text: string }[] } {
+		toolCallId?: string,
+	): Promise<{ content: { type: "text"; text: string }[] }> {
+		// E01 — record the validator's own C_report. Any files it wrote show up
+		// here and break the Worker report's freshness at the acceptance
+		// boundary; they never merge into the Worker's attribution window.
+		if (toolCallId) {
+			const execution = this.store.executionById(task.taskId, toolCallId);
+			if (execution) {
+				const current = await captureEvidence(
+					this.gitRunner,
+					captureEvidenceOptionsFor(task, toolCallId, {
+						...(task.baseEvidence?.finalGitRef ? { baseGitRef: task.baseEvidence.finalGitRef } : {}),
+					}),
+				);
+				this.completeExecutionSample(task, toolCallId, current);
+			}
+		}
 		const extracted = extractWorkerReport(text, { expectedTaskId: task.taskId });
 		let report: WorkerReport | undefined;
 		if (extracted.report) {

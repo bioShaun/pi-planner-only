@@ -869,7 +869,9 @@ function delegationSpec(taskId, role = "worker", cwd = `/fixture/${taskId}`) {
 		objective: `do ${taskId}`,
 		cwd,
 		role,
-		scope: { allowedPaths: ["src/parser.ts"] },
+		// Both fixture paths are declared so the shared report is in scope;
+		// scope violations have their own E01 lifecycle coverage.
+		scope: { allowedPaths: ["src/parser.ts", "src/parser.test.ts"] },
 		constraints: ["no new deps"],
 		acceptanceCriteria: ["tests pass"],
 		validation: { required: true, commands: ["npm test"] },
@@ -1534,7 +1536,9 @@ gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr
 const freshReport = {
 	...workerReport,
 	taskId: "T-20260905-400",
-	evidence: { ...workerReport.evidence, taskId: "T-20260905-400", workerRunId: "call-400", cwd: "/fixture/T-20260905-400", changedPaths: ["src/parser.ts"] },
+	// The declaration must match the fixture worktree exactly: an in-scope
+	// path missing from changedPaths is an E01 under-report finding.
+	evidence: { ...workerReport.evidence, taskId: "T-20260905-400", workerRunId: "call-400", cwd: "/fixture/T-20260905-400" },
 };
 const raceWorker = await handlers.get("tool_result")(
 	{ toolCallId: "call-400", toolName: "subagent", input: {}, content: [{ type: "text", text: JSON.stringify(freshReport) }], isError: false },
@@ -1729,7 +1733,7 @@ gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\n", stderr
 const v10Report = {
 	...workerReport,
 	taskId: "T-20260905-510",
-	evidence: { ...workerReport.evidence, taskId: "T-20260905-510", workerRunId: "call-v10", cwd: "/fixture/T-20260905-510", changedPaths: ["src/parser.ts"] },
+	evidence: { ...workerReport.evidence, taskId: "T-20260905-510", workerRunId: "call-v10", cwd: "/fixture/T-20260905-510" },
 };
 const v10Worker = await handlers.get("tool_result")(
 	{ toolCallId: "call-v10", toolName: "subagent", input: {}, content: [{ type: "text", text: JSON.stringify(v10Report) }], isError: false },
@@ -2162,7 +2166,7 @@ assert.match(
 			content: `Background task completed: **worker**\n\n${JSON.stringify({
 				...workerReport,
 				taskId,
-				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-meta", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-meta", cwd: `/fixture/${taskId}`,  },
 			})}`,
 		},
 	}, ctx);
@@ -2206,7 +2210,7 @@ assert.match(
 			content: [{ type: "text", text: JSON.stringify({
 				...workerReport,
 				taskId,
-				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-ou-w", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-ou-w", cwd: `/fixture/${taskId}`,  },
 			}) }],
 			isError: false,
 		},
@@ -2281,7 +2285,7 @@ assert.match(
 			content: `Background task completed: **worker**\n\n${JSON.stringify({
 				...workerReport,
 				taskId,
-				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-pend", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-pend", cwd: `/fixture/${taskId}`,  },
 			})}`,
 		},
 	}, ctx);
@@ -2511,7 +2515,7 @@ assert.match(
 			content: [{ type: "text", text: JSON.stringify({
 				...workerReport,
 				taskId,
-				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-wboth-1", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-wboth-1", cwd: `/fixture/${taskId}`,  },
 			}) }],
 			isError: false,
 		},
@@ -2561,7 +2565,7 @@ assert.match(
 				...workerReport,
 				taskId,
 				changedFiles: ["src/parser.ts"],
-				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-wboth-2", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-wboth-2", cwd: `/fixture/${taskId}`,  },
 			}) }],
 			isError: false,
 		},
@@ -2594,7 +2598,7 @@ assert.match(
 			content: [{ type: "text", text: JSON.stringify({
 				...workerReport,
 				taskId,
-				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-wll-1", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-wll-1", cwd: `/fixture/${taskId}`,  },
 			}) }],
 			isError: false,
 		},
@@ -2637,7 +2641,7 @@ assert.match(
 				...workerReport,
 				taskId,
 				changedFiles: ["src/parser.ts"],
-				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-wll-2", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-wll-2", cwd: `/fixture/${taskId}`,  },
 			}) }],
 			isError: false,
 		},
@@ -2669,7 +2673,7 @@ assert.match(
 			content: [{ type: "text", text: JSON.stringify({
 				...workerReport,
 				taskId,
-				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-wls-1", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-wls-1", cwd: `/fixture/${taskId}`,  },
 			}) }],
 			isError: false,
 		},
@@ -2713,7 +2717,7 @@ assert.match(
 				...workerReport,
 				taskId,
 				changedFiles: ["src/parser.ts"],
-				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-wls-2", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+				evidence: { ...workerReport.evidence, taskId, workerRunId: "call-wls-2", cwd: `/fixture/${taskId}`,  },
 			}) }],
 			isError: false,
 		},
@@ -2765,7 +2769,7 @@ assert.match(
 				...workerReport,
 				taskId: canonWorker,
 				changedFiles: ["src/parser.ts"],
-				evidence: { ...workerReport.evidence, taskId: canonWorker, workerRunId: "call-ora-w", cwd: `/fixture/${taskIdWorker}`, changedPaths: ["src/parser.ts"] },
+				evidence: { ...workerReport.evidence, taskId: canonWorker, workerRunId: "call-ora-w", cwd: `/fixture/${taskIdWorker}`,  },
 			}) }],
 			isError: false,
 		},
@@ -2816,7 +2820,7 @@ assert.match(
 				...workerReport,
 				taskId: canonValidator,
 				changedFiles: ["src/parser.ts"],
-				evidence: { ...workerReport.evidence, taskId: canonValidator, workerRunId: "call-ora-vw", cwd: `/fixture/${taskIdValidator}`, changedPaths: ["src/parser.ts"] },
+				evidence: { ...workerReport.evidence, taskId: canonValidator, workerRunId: "call-ora-vw", cwd: `/fixture/${taskIdValidator}`,  },
 			}) }],
 			isError: false,
 		},
@@ -2895,7 +2899,7 @@ assert.match(
 					...workerReport,
 					taskId: canon,
 					changedFiles: ["src/parser.ts"],
-					evidence: { ...workerReport.evidence, taskId: canon, workerRunId: "call-explicit-false", cwd: `/fixture/${taskId}`, changedPaths: ["src/parser.ts"] },
+					evidence: { ...workerReport.evidence, taskId: canon, workerRunId: "call-explicit-false", cwd: `/fixture/${taskId}`,  },
 				})}\n\`\`\``,
 			}],
 			isError: false,
@@ -2933,7 +2937,7 @@ assert.match(
 				...workerReport,
 				taskId: canonAsync,
 				changedFiles: ["src/parser.ts"],
-				evidence: { ...workerReport.evidence, taskId: canonAsync, workerRunId: "call-w-806", cwd: `/fixture/${taskAsyncId}`, changedPaths: ["src/parser.ts"] },
+				evidence: { ...workerReport.evidence, taskId: canonAsync, workerRunId: "call-w-806", cwd: `/fixture/${taskAsyncId}`,  },
 			}) }],
 			isError: false,
 		},
@@ -3007,7 +3011,7 @@ assert.match(
 				...workerReport,
 				taskId: canonSync,
 				changedFiles: ["src/parser.ts"],
-				evidence: { ...workerReport.evidence, taskId: canonSync, workerRunId: "call-w-807", cwd: `/fixture/${taskSyncId}`, changedPaths: ["src/parser.ts"] },
+				evidence: { ...workerReport.evidence, taskId: canonSync, workerRunId: "call-w-807", cwd: `/fixture/${taskSyncId}`,  },
 			}) }],
 			isError: false,
 		},
@@ -3072,7 +3076,7 @@ assert.match(
 				...workerReport,
 				taskId: canonTrunc,
 				changedFiles: ["src/parser.ts"],
-				evidence: { ...workerReport.evidence, taskId: canonTrunc, workerRunId: "call-w-808", cwd: `/fixture/${taskTruncId}`, changedPaths: ["src/parser.ts"] },
+				evidence: { ...workerReport.evidence, taskId: canonTrunc, workerRunId: "call-w-808", cwd: `/fixture/${taskTruncId}`,  },
 			}) }],
 			isError: false,
 		},

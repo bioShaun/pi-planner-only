@@ -2615,7 +2615,7 @@ function realGitRunnerOf(dir) {
 
 		const runner = realGitRunnerOf(dir);
 		const orch = new PlannerOrchestrator({ gitRunner: runner, store: pinnedStore() });
-		const spec = { ...specFor("T-20260905-960"), cwd: dir };
+		const spec = { ...specFor("T-20260905-960"), cwd: dir, scope: { allowedPaths: ["tracked.txt"] } };
 		await orch.beginDelegation(
 			{ toolCallId: "call-pb-1", input: { task: JSON.stringify(spec) } },
 			BASE,
@@ -2664,7 +2664,7 @@ function realGitRunnerOf(dir) {
 			return realGitRunnerOf(dir)(args, cwd);
 		};
 		const orch = new PlannerOrchestrator({ gitRunner: runner, store: pinnedStore() });
-		const spec = { ...specFor("T-20260905-961"), cwd: dir };
+		const spec = { ...specFor("T-20260905-961"), cwd: dir, scope: { allowedPaths: ["tracked.txt"] } };
 		await orch.beginDelegation(
 			{ toolCallId: "call-pb-2", input: { task: JSON.stringify(spec) } },
 			BASE,
@@ -6781,6 +6781,356 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 		const outcome = await orch.beginDelegation({ toolCallId: "call-40-cfg", input: { task: JSON.stringify(task.spec) } }, BASE);
 		assert.match(outcome.block?.reason ?? "", /session root budget exhausted/, "40-u: injected config (×1 hard) refuses spend at default soft level");
 	}
+}
+
+
+// ==========================================================================
+// E01 — per-execution Evidence: truth/scope and freshness as separate contracts
+// ==========================================================================
+
+// E01 accident shape: unrelated history that predates A_run is never
+// attributed to the execution, never reaches the Reviewer patch, and the Task
+// completes with one review — no baseline-lag Validator spin.
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-e01-lag-"));
+	const git = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+	try {
+		git("init", "-q");
+		git("config", "user.email", "test@example.com");
+		git("config", "user.name", "Test");
+		writeFileSync(join(dir, "release.txt"), "release v1\n");
+		git("add", ".");
+		git("commit", "-m", "release prep", "-q");
+		const runner = realGitRunnerOf(dir);
+		const orch = new PlannerOrchestrator({ gitRunner: runner, store: pinnedStore() });
+		const spec = { ...specFor("T-20260905-970"), cwd: dir, scope: { allowedPaths: ["src.txt"] }, validation: { required: false } };
+		await orch.beginDelegation(
+			{ toolCallId: "call-e01-lag", input: { task: JSON.stringify(spec) } },
+			BASE,
+		);
+		writeFileSync(join(dir, "src.txt"), "worker work\n");
+		git("add", ".");
+		git("commit", "-m", "worker work", "-q");
+		const head = git("rev-parse", "HEAD").stdout.trim();
+		const outcome = await orch.handleSubagentResult(workerResult("call-e01-lag", {
+			version: 1,
+			taskId: "T-20260905-970",
+			status: "completed",
+			summary: "edited src.txt",
+			changedFiles: ["src.txt"],
+			validation: [{ command: "npm test", type: "test", status: "not-run", exitCode: 0, summary: "not run" }],
+			evidence: { cwd: dir, taskId: "T-20260905-970", workerRunId: "call-e01-lag", finalGitRef: head, changedPaths: ["src.txt"], gitAvailable: true, generatedAt: new Date().toISOString() },
+			risks: [],
+			unresolved: [],
+		}));
+		assert.match(outcome.content[0].text, /decision: review_pending/, outcome.content[0].text);
+
+		// The Reviewer packet covers this execution's window only: the earlier
+		// release commit is outside A_run and never enters the patch.
+		const reviewerInput = { agent: "reviewer", task: JSON.stringify(specFor("T-20260905-970", "reviewer", dir)) };
+		await orch.prepareRoleDelegation(reviewerInput, BASE);
+		assert.ok(reviewerInput.task.includes('"rounds"'), "packet carries per-round attribution");
+		assert.ok(!reviewerInput.task.includes("release v1"), "unrelated pre-execution history stays out of the packet");
+		assert.ok(!reviewerInput.task.includes("+release"), "the patch does not drag in the release diff");
+
+		// One review and one verdict finish the Task; no Validator in between.
+		assert.equal(orch.rootVerdictRefusal(orch.store.require("T-20260905-970"), "pass"), undefined);
+		const verdict = await orch.recordRootVerdict(orch.store.require("T-20260905-970"), "pass", "scoped work only");
+		assert.equal(verdict.decision.action, "accept", verdict.decision.reason);
+		assert.equal(verdict.task.state, "completed");
+		assert.equal(orch.pendingDelegationCount(), 0, "no invalid re-validation was spawned");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// E01 under-report: a committed in-scope file the report omits is a finding
+// that refuses PASS; a report-only correction that declares it repairs the
+// revision without re-editing files, and the review then completes.
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-e01-under-"));
+	const git = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+	try {
+		git("init", "-q");
+		git("config", "user.email", "test@example.com");
+		git("config", "user.name", "Test");
+		writeFileSync(join(dir, "src.txt"), "base\n");
+		writeFileSync(join(dir, "extra.txt"), "base\n");
+		git("add", ".");
+		git("commit", "-m", "base", "-q");
+		const runner = realGitRunnerOf(dir);
+		const orch = new PlannerOrchestrator({ gitRunner: runner, store: pinnedStore() });
+		const spec = { ...specFor("T-20260905-971"), cwd: dir, scope: { allowedPaths: ["src.txt", "extra.txt"] }, validation: { required: false } };
+		await orch.beginDelegation(
+			{ toolCallId: "call-e01-under", input: { task: JSON.stringify(spec) } },
+			BASE,
+		);
+		writeFileSync(join(dir, "src.txt"), "declared work\n");
+		writeFileSync(join(dir, "extra.txt"), "undeclared work\n");
+		git("add", ".");
+		git("commit", "-m", "work", "-q");
+		const outcome = await orch.handleSubagentResult(workerResult("call-e01-under", {
+			version: 1,
+			taskId: "T-20260905-971",
+			status: "completed",
+			summary: "edited src.txt",
+			changedFiles: ["src.txt"],
+			validation: [{ command: "npm test", type: "test", status: "not-run", exitCode: 0, summary: "not run" }],
+			evidence: { cwd: dir, taskId: "T-20260905-971", workerRunId: "call-e01-under", changedPaths: ["src.txt"], gitAvailable: true, generatedAt: new Date().toISOString() },
+			risks: [],
+			unresolved: [],
+		}));
+		assert.match(outcome.content[0].text, /decision: request_changes/, outcome.content[0].text);
+		assert.match(outcome.content[0].text, /under-reported/);
+		const refused = await orch.recordRootVerdict(orch.store.require("T-20260905-971"), "pass", "empty declaration");
+		assert.notEqual(refused.decision.action, "accept", "an empty-ish declaration cannot PASS over committed work");
+
+		// Report-only correction: same files, complete declaration.
+		await orch.beginDelegation(
+			{ toolCallId: "call-e01-under-fix", input: { task: JSON.stringify({ ...spec, reportOnly: true }), reportOnly: true } },
+			BASE,
+		);
+		const fixed = await orch.handleSubagentResult(workerResult("call-e01-under-fix", {
+			version: 1,
+			taskId: "T-20260905-971",
+			status: "completed",
+			summary: "full declaration of the same work",
+			changedFiles: ["src.txt", "extra.txt"],
+			validation: [{ command: "npm test", type: "test", status: "not-run", exitCode: 0, summary: "not run" }],
+			evidence: { cwd: dir, taskId: "T-20260905-971", workerRunId: "call-e01-under-fix", changedPaths: ["src.txt", "extra.txt"], gitAvailable: true, generatedAt: new Date().toISOString() },
+			risks: [],
+			unresolved: [],
+		}));
+		assert.doesNotMatch(fixed.content[0].text, /under-reported/);
+		const verdict = await orch.recordRootVerdict(orch.store.require("T-20260905-971"), "pass", "declared now");
+		assert.equal(verdict.decision.action, "accept", verdict.decision.reason);
+		assert.equal(verdict.task.state, "completed");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// E01 two rounds: a round-1 scope finding survives the round-2 baseline; the
+// revert round proves the restore; the PASS review closes the finding.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-975";
+	const spec = { ...specFor(taskId, "worker", BASE), scope: { allowedPaths: ["src/parser.ts"] } };
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-e01-r1", input: { task: JSON.stringify(spec) } },
+		BASE,
+	);
+	const dirtyBoth = [
+		"1 .M N... 100644 100644 100644 1111111 2222222 src/parser.ts",
+		"1 .M N... 100644 100644 100644 3333333 4444444 docs/extra.md",
+		"",
+	].join("\n");
+	gitOverrides.set("status --porcelain=v2 --branch", dirtyBoth);
+	gitOverrides.set("diff HEAD --stat", " src/parser.ts | 2 +-\n docs/extra.md | 2 +-\n");
+	const r1 = await orch.handleSubagentResult(workerResult("call-e01-r1", {
+		...reportFor(taskId, "call-e01-r1"),
+		evidence: { ...reportFor(taskId, "call-e01-r1").evidence, cwd: BASE, changedPaths: ["src/parser.ts"] },
+	}));
+	assert.match(r1.content[0].text, /decision: request_changes/, r1.content[0].text);
+	assert.match(r1.content[0].text, /out-of-scope paths changed/);
+	const refused = await orch.recordRootVerdict(orch.store.require(taskId), "pass", "no");
+	assert.notEqual(refused.decision.action, "accept", "round-1 findings refuse PASS");
+
+	// Round 2 starts on the tree that still carries round 1's out-of-scope edit;
+	// the worker reverts docs/extra.md and touches nothing else.
+	await orch.beginDelegation(
+		{ toolCallId: "call-e01-r2", input: { task: JSON.stringify(spec) } },
+		BASE,
+	);
+	gitOverrides.set("status --porcelain=v2 --branch", dirtyStatus);
+	gitOverrides.set("diff HEAD --stat", " src/parser.ts | 2 +-\n");
+	await orch.handleSubagentResult(workerResult("call-e01-r2", {
+		...reportFor(taskId, "call-e01-r2"),
+		changedFiles: [],
+		evidence: { ...reportFor(taskId, "call-e01-r2").evidence, cwd: BASE, changedPaths: [] },
+	}));
+	const round2 = orch.store.require(taskId);
+	const openFindings = round2.findings.filter((finding) => finding.status === "open");
+	assert.ok(openFindings.length >= 1, "round-1 findings survive the round-2 baseline");
+	assert.ok(openFindings.every((finding) => finding.evidenceResolvedBy === "call-e01-r2"), "the revert round proves the restore");
+	// Net diff disappearance alone never closes them; the PASS review does.
+	const verdict = await orch.recordRootVerdict(round2, "pass", "reverted and reviewed");
+	assert.equal(verdict.decision.action, "accept", verdict.decision.reason);
+	assert.equal(verdict.task.state, "completed");
+	assert.ok(orch.store.require(taskId).findings.every((finding) => finding.status === "resolved"));
+	setCleanTree();
+}
+
+// E01 report-only correction: the original C_report is kept; drift during the
+// correction is explicit drift handling, never a pure report pass.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-976";
+	const spec = specFor(taskId, "worker", BASE);
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-e01-ro1", input: { task: JSON.stringify(spec) } },
+		BASE,
+	);
+	setDirtyTree();
+	await orch.handleSubagentResult(workerResult("call-e01-ro1", {
+		...reportFor(taskId, "call-e01-ro1"),
+		status: "unknown",
+		evidence: { ...reportFor(taskId, "call-e01-ro1").evidence, cwd: BASE },
+	}));
+	const exec1 = orch.store.require(taskId).executions.at(-1);
+	assert.ok(exec1?.cReport, "an unparseable report still stores the execution's C_report");
+
+	await orch.beginDelegation(
+		{ toolCallId: "call-e01-ro2", input: { task: JSON.stringify({ ...spec, reportOnly: true }), reportOnly: true } },
+		BASE,
+	);
+	const drifted = [
+		"1 .M N... 100644 100644 100644 1111111 9999999 src/parser.ts",
+		"",
+	].join("\n");
+	gitOverrides.set("status --porcelain=v2 --branch", drifted);
+	await orch.handleSubagentResult(workerResult("call-e01-ro2", {
+		...reportFor(taskId, "call-e01-ro2"),
+		evidence: { ...reportFor(taskId, "call-e01-ro2").evidence, cwd: BASE },
+	}));
+	const verdict = await orch.recordRootVerdict(orch.store.require(taskId), "pass", "accept correction");
+	assert.notEqual(verdict.decision.action, "accept", "drift during a report-only correction is not a pure report pass");
+	assert.match(`${verdict.decision.reason} ${verdict.evidence ?? ""}`, /working tree changed since the report|content changed since the report/);
+	assert.ok(
+		orch.store.require(taskId).findings.some((finding) => finding.kind === "drift" && finding.status === "open"),
+		"the drift is recorded as an open finding",
+	);
+	setCleanTree();
+}
+
+// E01 validator writes: an auxiliary validator execution never resets the
+// Worker attribution window, but its writes break the report's freshness.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-977";
+	const spec = { ...specFor(taskId, "worker", BASE) };
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-e01-vw", input: { task: JSON.stringify(spec) } },
+		BASE,
+	);
+	setDirtyTree();
+	await orch.handleSubagentResult(workerResult("call-e01-vw", {
+		...reportFor(taskId, "call-e01-vw"),
+		evidence: { ...reportFor(taskId, "call-e01-vw").evidence, cwd: BASE },
+	}));
+	const workerExec = orch.store.require(taskId).executions.find((execution) => execution.executionId === "call-e01-vw");
+	assert.ok(workerExec?.cReport, "worker execution carries C_report");
+	const truthBefore = JSON.stringify(workerExec.truthPaths);
+
+	await orch.beginDelegation(
+		{ toolCallId: "call-e01-vv", input: { agent: "oracle", task: JSON.stringify(specFor(taskId, "validator", BASE)) } },
+		BASE,
+	);
+	const validatorExec = orch.store.require(taskId).executions.find((execution) => execution.executionId === "call-e01-vv");
+	assert.ok(validatorExec?.auxiliary, "the validator execution is auxiliary");
+	const withWrite = [
+		"1 .M N... 100644 100644 100644 1111111 2222222 src/parser.ts",
+		"1 .M N... 100644 100644 100644 3333333 4444444 notes.md",
+		"",
+	].join("\n");
+	gitOverrides.set("status --porcelain=v2 --branch", withWrite);
+	gitOverrides.set("diff HEAD --stat", " src/parser.ts | 2 +-\n notes.md | 2 +-\n");
+	await orch.handleSubagentResult({
+		toolCallId: "call-e01-vv",
+		toolName: "subagent",
+		content: [{ type: "text", text: "Validator completed the checks." }],
+		isError: false,
+	});
+	assert.equal(JSON.stringify(orch.store.require(taskId).executions.find((e) => e.executionId === "call-e01-vw")?.truthPaths), truthBefore, "the validator never rewrites the worker's attribution window");
+	const verdict = await orch.recordRootVerdict(orch.store.require(taskId), "pass", "accept after validation");
+	assert.equal(verdict.decision.action, "revalidate", verdict.decision.reason);
+	assert.match(verdict.decision.reason, /notes\.md/, "the validator's write is named as drift");
+	assert.notEqual(verdict.task.state, "completed");
+	setCleanTree();
+}
+
+// E01 ledger restore: a pre-E01 record without per-execution material cannot
+// complete through the PASS gate; a restored record with full material can.
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-e01-ledger-"));
+	try {
+		const ledgerDir = join(dir, "state");
+		mkdirSync(join(ledgerDir, "planner-only", "ledger"), { recursive: true });
+		const legacyTask = {
+			taskId: "T-20260905-980",
+			role: "worker",
+			cwd: BASE,
+			state: "reviewing",
+			reviewRound: 0,
+			reviewMode: "root",
+			reports: [{
+				version: 1,
+				taskId: "T-20260905-980",
+				status: "completed",
+				summary: "done long ago",
+				changedFiles: ["src/parser.ts"],
+				validation: [{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "1 passed" }],
+				evidence: { cwd: BASE, taskId: "T-20260905-980", workerRunId: "call-old", gitAvailable: false, generatedAt: "2026-09-01T10:00:00.000Z" },
+				risks: [],
+				unresolved: [],
+			}],
+			validatorReports: [],
+			reviews: [],
+			overrides: [],
+			aliases: [],
+			reportCorrections: 0,
+			usage: emptyTaskUsage(),
+			createdAt: "2026-09-01T10:00:00.000Z",
+			updatedAt: "2026-09-01T10:00:00.000Z",
+		};
+		writeFileSync(
+			join(ledgerDir, "planner-only", "ledger", "T-20260905-980.json"),
+			JSON.stringify({ version: 1, writtenAt: "2026-09-01T10:00:00.000Z", task: legacyTask }),
+		);
+		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir });
+		const restored = orch.restoreFromLedger();
+		assert.equal(restored.restored, 1);
+		const verdict = await orch.recordRootVerdict(orch.store.require("T-20260905-980"), "pass", "trust the tree");
+		assert.equal(verdict.decision.action, "blocked", verdict.decision.reason);
+		assert.match(verdict.decision.reason, /evidence material missing/);
+		assert.notEqual(verdict.task.state, "completed", "a restored record without A_run/C_report never auto-completes");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// E01 async: the launch receipt produces no C_report; the final receive binds
+// it exactly once, and a replayed notice neither moves the sample nor spends a round.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-981";
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-e01-async", input: { task: JSON.stringify(specFor(taskId)), async: true } },
+		BASE,
+	);
+	assert.equal(orch.store.require(taskId).executions.at(-1)?.cReport, undefined, "no C_report before the final result");
+	await orch.handleSubagentResult({
+		toolCallId: "call-e01-async",
+		toolName: "subagent",
+		input: {},
+		details: { asyncId: "run-e01", runId: "run-e01" },
+		content: [{ type: "text", text: "Async: worker [run-e01]\nThe async run is detached and running in the background." }],
+		isError: false,
+	});
+	assert.equal(orch.store.require(taskId).executions.at(-1)?.cReport, undefined, "the launch receipt is not a result");
+	setDirtyTree();
+	await orch.handleAsyncNotify(asyncNotify("run-e01", JSON.stringify(reportFor(taskId, "call-e01-async"))));
+	const bound = orch.store.require(taskId).executions.at(-1)?.cReport;
+	assert.ok(bound, "the final receive binds C_report once");
+	const dup = await orch.handleAsyncNotify(asyncNotify("run-e01", JSON.stringify({ ...reportFor(taskId, "call-e01-async"), summary: "replay" })));
+	assert.equal(dup, undefined, "a replayed notice matches nothing");
+	assert.equal(JSON.stringify(orch.store.require(taskId).executions.at(-1)?.cReport), JSON.stringify(bound), "the bound sample never moves");
+	assert.equal(orch.store.require(taskId).reports.length, 1, "the replay does not spend a second round");
+	setCleanTree();
 }
 
 

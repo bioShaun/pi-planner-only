@@ -27,6 +27,11 @@ export type GitRunner = (
  */
 export const GIT_READ_ARGV = {
 	gitDir: ["rev-parse", "--git-dir"],
+	/**
+	 * E01 — porcelain paths are relative to the repository root; a sample
+	 * taken from a subdirectory must normalize them against this root.
+	 */
+	topLevel: ["rev-parse", "--show-toplevel"],
 	head: ["rev-parse", "HEAD"],
 	status: ["status", "--porcelain=v2", "--branch"],
 	evidenceDiffStat: ["diff", "HEAD", "--stat"],

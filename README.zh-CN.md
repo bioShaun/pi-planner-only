@@ -102,7 +102,7 @@ Validator（`oracle`）在 Worker 校验已 exit 0 时默认做有界复核：`g
 - `WorkerReport` 只有在 `taskId`、`evidence.taskId` 以及（存在时的）`evidence.workerRunId` 与被委派任务和 subagent 调用一致时才被接受。结构合法但属于别的任务的报告按畸形处理：不存储，只给一次 report-only 修正。
 - `ReviewResult` 只有在 `taskId` 与被评审任务一致时才被记录；不匹配的裁决不落库、任何状态都不变。
 
-证据只在接受边界权威。Root 在委派开始时采样 Git（A），在结果处理或 Root `pass` 时再采一次（C）。A 到 C 的差集是 scope 分母；Worker 的 `changedFiles` 和 Git 指纹只是声明，交叉核对但不作权威。Worker 缺 `gitStatusHash` / `finalGitRef` 不会关掉 Root 归因。证据过期或不可验证则强制 `revalidate` 而非完成；fresh reviewer 的 `evidenceFresh: true` 永远绕不过这道 Root 侧检查。写锁按 worktree 的真实路径生效：同一 worktree 的别名（相对路径、符号链接）共享同一把锁，独立 worktree 互不影响。
+证据按执行记录归属，全部由 Root 采集。每次实际子进程执行都有独立证据记录：Root 在执行真正开始前采样（`A_run`），在该执行的最终结果到达时再采一次（`C_report`）——即使报告无法解析也会保存。Truth/scope 是纯函数 `diff(A_run, C_report)` 与报告声明的交叉核对——`A_run` 之前的一切（包括分支上早已存在的无关提交）天然不在窗口内。Freshness 是独立的 `diff(C_report, C_now)`：Root 在复核和验收边界重新采样，报告之后的工作区漂移强制 `revalidate` 而非完成；fresh reviewer 的 `evidenceFresh: true` 永远绕不过这道 Root 侧检查。findings（漏报、越界、漂移）跨纠正轮次保留并阻止 PASS，直到复核确认修复；早于每次执行证据的旧账本记录被标记为不可验证，无法自动完成。写锁按 worktree 的真实路径生效：同一 worktree 的别名（相对路径、符号链接）共享同一把锁，独立 worktree 互不影响。
 
 ### 严格委派（可选）
 

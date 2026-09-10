@@ -19,6 +19,8 @@ import type {
 	ReviewMode,
 	ReviewOverride,
 	ReviewResult,
+	TaskExecutionRecord,
+	TaskFinding,
 	TaskRole,
 	TaskScope,
 	TaskSpec,
@@ -72,6 +74,22 @@ function isStringArray(value: unknown): value is string[] {
 
 function uniqueNonEmpty(values: readonly string[]): string[] {
 	return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function describeFinding(kind: TaskFinding["kind"], paths: readonly string[]): string {
+	const list = paths.join(", ");
+	switch (kind) {
+		case "undeclared":
+			return `in-scope changes the report did not declare: ${list}`;
+		case "scope":
+			return `attributed changes outside the TaskSpec scope: ${list}`;
+		case "over-declared":
+			return `declared paths with no attributed change: ${list}`;
+		case "missing":
+			return `declared changes no longer present: ${list}`;
+		case "drift":
+			return `workspace changed after the report: ${list}`;
+	}
 }
 
 export interface CreateTaskSpecInput {
@@ -449,6 +467,17 @@ export interface TaskRecord {
 	lastComparison?: EvidenceComparison;
 	/** Workspace snapshot bound to the latest recorded report (ticket 10). */
 	snapshot?: WorkspaceSnapshotBinding;
+	/**
+	 * E01 — Root-owned evidence records, one per actual child execution, in
+	 * launch order. Each carries its own A_run/C_report pair and the per-round
+	 * attribution that links it to the previous execution.
+	 */
+	executions: TaskExecutionRecord[];
+	/**
+	 * E01 — findings that outlive their execution. A later execution may prove
+	 * a change was restored, but only a recorded review closes the finding.
+	 */
+	findings: TaskFinding[];
 	/** Reason for an operator-forced terminal state, when applicable. */
 	stateReason?: string;
 	/**
@@ -511,7 +540,9 @@ export class TaskStore {
 			overrides: [],
 			aliases,
 			reportCorrections: 0,
-		usage: emptyTaskUsage(),
+			executions: [],
+			findings: [],
+			usage: emptyTaskUsage(),
 			createdAt: timestamp,
 			updatedAt: timestamp,
 		};
@@ -570,10 +601,14 @@ export class TaskStore {
 	/**
 	 * Install a snapshot from disk. Loading is not a mutation: do not touch()
 	 * or persist() (that would rewrite updatedAt). An in-memory record of the
-	 * same id wins over a stale snapshot.
+	 * same id wins over a stale snapshot. E01 fields default to empty so a
+	 * record written before per-execution evidence existed still loads; its
+	 * missing A_run/C_report material then fails closed at the PASS gate.
 	 */
 	restore(record: TaskRecord): void {
 		if (this.tasks.has(record.taskId)) return;
+		if (!Array.isArray(record.executions)) record.executions = [];
+		if (!Array.isArray(record.findings)) record.findings = [];
 		this.tasks.set(record.taskId, record);
 	}
 
@@ -638,6 +673,127 @@ export class TaskStore {
 		const record = this.require(taskId);
 		return record.baseEvidence !== undefined
 			&& record.reports.length > (record.baseReportCount ?? 0);
+	}
+
+	/** E01 — start a per-execution evidence record with this execution's A_run. */
+	beginExecution(taskId: string, execution: Omit<TaskExecutionRecord, "taskId">): TaskRecord {
+		const record = this.require(taskId);
+		record.executions.push({ ...execution, taskId });
+		return this.touch(record);
+	}
+
+	/** E01 — fill in the result-receive sample (C_report) and attribution. */
+	completeExecution(
+		taskId: string,
+		executionId: string,
+		patch: Partial<Omit<TaskExecutionRecord, "taskId" | "executionId">>,
+	): TaskRecord {
+		const record = this.require(taskId);
+		const execution = record.executions.find((item) => item.executionId === executionId);
+		if (!execution) return record;
+		Object.assign(execution, patch);
+		return this.touch(record);
+	}
+
+	executionById(taskId: string, executionId: string): TaskExecutionRecord | undefined {
+		return this.require(taskId).executions.find((item) => item.executionId === executionId);
+	}
+
+	/**
+	 * E01 — replace this execution's open findings for the recomputed kinds.
+	 * Findings recorded by earlier executions are never touched here, so a
+	 * later round cannot wash them away by moving its own baseline.
+	 */
+	recordExecutionFindings(
+		taskId: string,
+		executionId: string,
+		drafts: readonly { kind: TaskFinding["kind"]; paths: readonly string[] }[],
+		detectedAt: string,
+		recomputeKinds?: readonly TaskFinding["kind"][],
+	): TaskRecord {
+		const record = this.require(taskId);
+		const kinds = new Set(recomputeKinds ?? drafts.map((draft) => draft.kind));
+		record.findings = record.findings.filter(
+			(finding) =>
+				!(
+					finding.status === "open"
+					&& finding.executionId === executionId
+					&& kinds.has(finding.kind)
+				),
+		);
+		for (const draft of drafts) {
+			// A HEAD-only drift has no paths; the note carries the meaning.
+			if (draft.paths.length === 0 && draft.kind !== "drift") continue;
+			record.findings.push({
+				id: `${taskId}-F${record.findings.length + 1}`,
+				kind: draft.kind,
+				executionId,
+				paths: [...draft.paths],
+				status: "open",
+				detectedAt,
+				note: describeFinding(draft.kind, draft.paths),
+			});
+		}
+		return this.touch(record);
+	}
+
+	/**
+	 * E01 — a later execution whose window shows a finding's paths changed and
+	 * now clean has produced evidence of a restore. The finding stays open:
+	 * only a recorded review closes it (net-diff disappearance is not enough).
+	 * Scope and undeclared findings resolve through a proven revert; drift
+	 * findings resolve when a new revision's baseline incorporates the drift.
+	 */
+	markFindingEvidenceResolved(
+		taskId: string,
+		restoredPaths: readonly string[],
+		executionId: string,
+		kinds: readonly TaskFinding["kind"][] = ["scope", "undeclared", "drift"],
+	): TaskRecord {
+		const restored = new Set(restoredPaths);
+		if (restored.size === 0) return this.require(taskId);
+		const allowed = new Set(kinds);
+		const record = this.require(taskId);
+		let changed = false;
+		for (const finding of record.findings) {
+			if (finding.status !== "open" || finding.evidenceResolvedBy) continue;
+			if (!allowed.has(finding.kind)) continue;
+			if (!finding.paths.every((path) => restored.has(path))) continue;
+			finding.evidenceResolvedBy = executionId;
+			changed = true;
+		}
+		if (changed) return this.touch(record);
+		return record;
+	}
+
+	/** E01 — close findings whose restore a review has now confirmed. */
+	resolveFindings(taskId: string, resolvedBy: string): TaskRecord {
+		const record = this.require(taskId);
+		let changed = false;
+		for (const finding of record.findings) {
+			if (finding.status !== "open" || !finding.evidenceResolvedBy) continue;
+			finding.status = "resolved";
+			finding.resolvedBy = resolvedBy;
+			changed = true;
+		}
+		if (changed) return this.touch(record);
+		return record;
+	}
+
+	openFindings(taskId: string): TaskFinding[] {
+		return this.require(taskId).findings.filter((finding) => finding.status === "open");
+	}
+
+	setExecutionDrift(
+		taskId: string,
+		executionId: string,
+		drift: NonNullable<TaskExecutionRecord["drift"]>,
+	): TaskRecord {
+		const record = this.require(taskId);
+		const execution = record.executions.find((item) => item.executionId === executionId);
+		if (!execution) return record;
+		execution.drift = drift;
+		return this.touch(record);
 	}
 
 	setLastComparison(taskId: string, comparison: EvidenceComparison): TaskRecord {

@@ -134,9 +134,101 @@ export interface EvidenceRef {
 	 * state of that root is unknown, never implicitly clean.
 	 */
 	unavailableWorktreeRoots?: string[];
+	/**
+	 * Git top-level Root resolved when this sample was taken. Porcelain paths
+	 * are relative to the repository root, so a subdirectory `cwd` must be
+	 * normalized against this root, not against `cwd`. Absent on samples taken
+	 * before the probe could resolve it; callers then fall back to `cwd`.
+	 */
+	repoRoot?: string;
 	diffStat?: string;
 	gitAvailable?: boolean;
 	generatedAt: string;
+}
+
+/**
+ * E01 — one actual child execution's Root-owned evidence record.
+ *
+ * `aRun` is sampled after write-lock and identity checks pass, immediately
+ * before the execution starts. `cReport` is sampled when that execution's
+ * final result is received (even when the report cannot be parsed). Worker
+ * attribution is the pure `diff(A_run, C_report)` window; freshness is the
+ * separate `diff(C_report, C_now)` window. Validator and Explorer executions
+ * are recorded as auxiliary and never reset the attribution chain.
+ */
+export interface TaskExecutionRecord {
+	/** Host subagent tool-call id for this invocation. */
+	executionId: string;
+	taskId: string;
+	kind: DelegationKind;
+	/** Host async run id when the invocation went async. */
+	runId?: string;
+	/** True for report-only report revision corrections. */
+	reportOnly?: boolean;
+	/** Previous attribution-bearing execution in this Task's chain. */
+	previousExecutionId?: string;
+	/** Read-only or auxiliary invocations never carry Task attribution. */
+	auxiliary?: boolean;
+	cwd: string;
+	worktreeRoots: string[];
+	/** Root's pre-execution sample (A_run). */
+	aRun: EvidenceRef;
+	/** Root's result-receive sample (C_report); absent until the final result arrives. */
+	cReport?: EvidenceRef;
+	/** 0-based index into `TaskRecord.reports` for this execution's report. */
+	reportIndex?: number;
+	/** 0-based index into `TaskRecord.validatorReports` for validator output. */
+	validatorReportIndex?: number;
+	/** Attributed A_run→C_report paths (T1/T2/T3 minus runtime noise). */
+	truthPaths?: string[];
+	/** In-scope attributed paths the declaration omitted. */
+	undeclaredPaths?: string[];
+	/** Attributed paths outside the TaskSpec scope. */
+	outOfScopePaths?: string[];
+	/** Declared paths absent from the attributed delta. */
+	extraDeclaredPaths?: string[];
+	/** Untracked out-of-scope runtime noise: recorded, never attributed. */
+	externalPaths?: string[];
+	/** Last freshness comparison of C_report against a later boundary sample. */
+	freshness?: {
+		verifiable: boolean;
+		fresh: boolean;
+		reasons: string[];
+		driftPaths: string[];
+	};
+	/** Drift that invalidated this execution's freshness and needs explicit recovery. */
+	drift?: {
+		detectedAt: string;
+		paths: string[];
+		reasons: string[];
+		/** Later execution whose window proved the drifted change was restored. */
+		evidenceResolvedBy?: string;
+	};
+}
+
+export type TaskFindingKind =
+	| "undeclared"
+	| "scope"
+	| "over-declared"
+	| "missing"
+	| "drift";
+
+/**
+ * A Task-level finding that outlives the execution that produced it. Later
+ * rounds may prove with their own Evidence that a change was reverted
+ * (`evidenceResolvedBy`), but only a recorded review closes the finding — a
+ * disappeared net diff never resolves it on its own.
+ */
+export interface TaskFinding {
+	id: string;
+	kind: TaskFindingKind;
+	executionId: string;
+	paths: string[];
+	status: "open" | "resolved";
+	detectedAt: string;
+	note: string;
+	evidenceResolvedBy?: string;
+	resolvedBy?: string;
 }
 
 /** Downward contract: what the worker is allowed and required to do. */
@@ -221,6 +313,21 @@ export interface BinaryChange {
 	fingerprint?: string;
 }
 
+/** E01 — one execution round summarized for the Fresh Reviewer packet. */
+export interface ReviewRoundAttribution {
+	executionId: string;
+	role: DelegationKind;
+	runId?: string;
+	reportRevision?: number;
+	/** A_run / C_report head refs for this window. */
+	aRef?: string;
+	cRef?: string;
+	attributedFiles: string[];
+	undeclaredFiles: string[];
+	outOfScopeFiles: string[];
+	freshness?: "fresh" | "stale" | "unknown";
+}
+
 /**
  * Bounded Git evidence Root samples for a Fresh Reviewer.
  *
@@ -261,6 +368,12 @@ export interface ReviewEvidencePacket {
 	undeclaredFiles?: string[];
 	/** Worker-declared paths absent from the A-to-C delta. */
 	extraDeclaredFiles?: string[];
+	/** E01 — per-execution attribution for the whole Task chain. */
+	rounds?: ReviewRoundAttribution[];
+	/** E01 — findings that survived earlier rounds and are not yet closed. */
+	unresolvedFindings?: string[];
+	/** E01 — per-round material is incomplete; a PASS over this packet is ineligible. */
+	attributionIncomplete?: string;
 }
 
 /**

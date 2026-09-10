@@ -486,6 +486,25 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 		return blockedDecision(`worker failed repeatedly: ${input.report?.summary ?? "no summary"}`, round);
 	}
 
+	// E01 — a revision whose A_run/C_report material is missing cannot be
+	// validated into existence: the Task needs a new revision or a new Task.
+	// Checked before any revalidation guidance: re-delegating validation over
+	// missing material cannot produce new information.
+	if (input.comparison?.missingMaterials) {
+		return {
+			action: "blocked",
+			nextState: "blocked",
+			round,
+			consumesRound: false,
+			reason: `evidence material missing: ${input.comparison.missingMaterials}`,
+			guidance: [
+				"The report revision has no per-execution A_run/C_report binding, so its changes and freshness cannot be verified.",
+				"Keep this Task blocked; create a new Task with a new TaskSpec if the work must be redelivered.",
+				"Do not re-delegate validation over the same missing material.",
+			],
+		};
+	}
+
 	if (input.comparison && evidenceAction(input.comparison) === "revalidate") {
 		if (round < MAX_REVIEW_ROUNDS) {
 			const undeclaredGuidance = buildUndeclaredCorrectionGuidance(task, input.comparison);
@@ -505,6 +524,33 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 			};
 		}
 		return blockedDecision(`evidence stayed stale: ${input.comparison.reasons.join("; ")}`, round);
+	}
+
+	// E01 — under-report, scope, over-declaration, and missing-path findings
+	// survive later rounds. They need a corrected revision, not a Validator,
+	// and they keep blocking until a review proves they are resolved.
+	if ((input.comparison?.truthFindings?.length ?? 0) > 0) {
+		const findings = input.comparison?.truthFindings ?? [];
+		const label = findings
+			.map((finding) => `${finding.kind} [${finding.paths.join(", ") || "revision changed"}]`)
+			.join("; ");
+		if (round < MAX_REVIEW_ROUNDS) {
+			const undeclaredGuidance = buildUndeclaredCorrectionGuidance(task, input.comparison);
+			return {
+				action: "request_changes",
+				nextState: "changes_requested",
+				round: round + 1,
+				consumesRound: true,
+				reason: `evidence findings: ${label}`,
+				guidance: [
+					"Unresolved evidence findings must be repaired in a new revision; a PASS is not eligible.",
+					...undeclaredGuidance,
+					"Delegate a bounded correction that fixes or reverts the named paths, or returns a corrected WorkerReport for undeclared work.",
+					`This is correction ${round + 1} of ${MAX_REVIEW_ROUNDS}.`,
+				],
+			};
+		}
+		return blockedDecision(`evidence findings unresolved: ${label}`, round);
 	}
 
 	if (!input.review) {

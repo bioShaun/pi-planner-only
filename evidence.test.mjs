@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import {
 	captureEvidence,
 	captureReviewEvidencePacket,
 	compareEvidence,
+	compareExecutionTruth,
+	compareFreshness,
 	describeComparison,
 	evidenceAction,
 	hashStatus,
@@ -1149,6 +1151,74 @@ assert.equal(
 		spawnSync("git", ["-C", main, "worktree", "remove", "--force", wt], { encoding: "utf8" });
 		rmSync(wtParent, { recursive: true, force: true });
 		rmSync(main, { recursive: true, force: true });
+	}
+}
+
+// E01 — subdirectory cwd and quoted non-ASCII paths normalize against the
+// repository root, and the new truth/freshness functions consume them.
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-e01-paths-"));
+	const git = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+	try {
+		git("init", "-q");
+		git("config", "user.email", "test@example.com");
+		git("config", "user.name", "Test");
+		const subdir = join(dir, "packages", "app");
+		mkdirSync(subdir, { recursive: true });
+		writeFileSync(join(subdir, "keep.txt"), "base\n");
+		git("add", ".");
+		git("commit", "-m", "base", "-q");
+
+		const changed = await captureEvidence(realGitRunnerOf(dir), { cwd: subdir, taskId: "T-1", workerRunId: "call-1" });
+		assert.equal(changed.repoRoot, resolve(dir), "the sample records the repository root");
+		assert.deepEqual(changed.changedPaths, [], "clean subdirectory samples clean");
+
+		// Non-ASCII filename: core.quotePath would escape it; the decoded form
+		// must come out of the probe so declarations compare equal.
+		const unicodeName = "naïve 文件.md";
+		writeFileSync(join(subdir, unicodeName), "draft\n");
+		const dirty = await captureEvidence(realGitRunnerOf(dir), { cwd: subdir, taskId: "T-1", workerRunId: "call-1" });
+		assert.ok(
+			// Status paths hang off the cwd git ran in (the subdirectory here).
+			dirty.changedPaths.some((path) => resolve(subdir, path) === resolve(subdir, unicodeName)),
+			`quoted non-ASCII path decodes: ${JSON.stringify(dirty.changedPaths)}`,
+		);
+
+		// Truth: the declaration is relative to the subdirectory cwd, the
+		// porcelain path is repo-root-relative — both name the same file.
+		const report = {
+			version: 1,
+			taskId: "T-1",
+			status: "completed",
+			summary: "drafted",
+			changedFiles: [unicodeName],
+			validation: [],
+			evidence: { cwd: subdir, taskId: "T-1", workerRunId: "call-1", changedPaths: [unicodeName], gitAvailable: true, generatedAt: new Date().toISOString() },
+			risks: [],
+			unresolved: [],
+		};
+		const cReport = await captureEvidence(realGitRunnerOf(dir), {
+			cwd: subdir, taskId: "T-1", workerRunId: "call-1", baseGitRef: changed.finalGitRef,
+		});
+		const truth = compareExecutionTruth(changed, cReport, report);
+		assert.equal(truth.verifiable, true);
+		assert.deepEqual(truth.undeclaredPaths, [], "declaration and attribution agree across cwd forms");
+		assert.deepEqual(truth.outOfScopePaths, [], "no false scope finding from path-form mismatch");
+		assert.equal(truth.truthPaths.length, 1);
+		assert.ok(truth.truthPaths[0].endsWith(unicodeName), "the attributed path keeps its decoded name");
+
+		// Freshness: identical workspace stays fresh; a content change drifts.
+		// The scope names the drafted file so it is a verification input rather
+		// than untracked runtime noise (ticket 20 semantics).
+		const scope = { allowedPaths: [unicodeName] };
+		const fresh = compareFreshness(cReport, await captureEvidence(realGitRunnerOf(dir), { cwd: subdir, taskId: "T-1", workerRunId: "call-2" }), { scope });
+		assert.equal(fresh.fresh, true, fresh.reasons.join("; "));
+		writeFileSync(join(subdir, unicodeName), "changed after the report\n");
+		const drifted = compareFreshness(cReport, await captureEvidence(realGitRunnerOf(dir), { cwd: subdir, taskId: "T-1", workerRunId: "call-3" }), { scope });
+		assert.equal(drifted.fresh, false);
+		assert.equal(drifted.driftPaths.length, 1);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
 	}
 }
 
