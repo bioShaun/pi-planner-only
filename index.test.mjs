@@ -4183,6 +4183,98 @@ await abandonActiveTasks();
 	}
 }
 
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-child-tools-"));
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = dir;
+	try {
+		const { default: factory } = await import(`./index.ts?child-tools=${Date.now()}`);
+		const localHandlers = new Map();
+		let localTools = ["read", "bash", "write", "edit", "subagent", "git_audit"];
+		const pi = {
+			on(name, handler) { localHandlers.set(name, handler); },
+			registerCommand() {},
+			registerTool() {},
+			getActiveTools() { return [...localTools]; },
+			getAllTools() {
+				return [
+					{ name: "read" }, { name: "bash" }, { name: "write" }, { name: "edit" },
+					{ name: "subagent" }, { name: "git_audit" },
+				];
+			},
+			setActiveTools(names) { localTools = [...names]; },
+			appendEntry() {},
+			async exec() { return { stdout: "", stderr: "", code: 0 }; },
+		};
+		const localCtx = {
+			hasUI: false,
+			ui: { notify() {}, setStatus() {}, theme: { fg(_c, t) { return t; } } },
+			cwd: dir,
+			sessionManager: { getEntries() { return []; }, getSessionFile() { return join(dir, "s.jsonl"); } },
+		};
+		factory(pi);
+		await localHandlers.get("session_start")({}, localCtx);
+		assert.equal(localTools.includes("bash"), false, "Root starts without bash");
+		assert.equal(localTools.includes("write"), false, "Root starts without write");
+
+		const stamp = new Date();
+		const taskId = `T-${stamp.getFullYear()}${String(stamp.getMonth() + 1).padStart(2, "0")}${String(stamp.getDate()).padStart(2, "0")}-ct1`;
+		const spec = {
+			taskId,
+			objective: "implement the parser",
+			cwd: join(dir, "work"),
+			role: "worker",
+			scope: { allowedPaths: ["src/parser.ts"] },
+			constraints: ["no new deps"],
+			acceptanceCriteria: ["tests pass"],
+			validation: { required: true, commands: ["npm test"] },
+			expectedEvidence: { changedFiles: true, tests: true },
+			stopConditions: ["ask if ambiguous"],
+		};
+		const allowed = await localHandlers.get("tool_call")(
+			{ toolCallId: "call-child-tools", toolName: "subagent", input: { agent: "worker", task: JSON.stringify(spec) } },
+			localCtx,
+		);
+		assert.equal(allowed?.block, undefined, "worker delegation is admitted");
+		assert.equal(localTools.includes("bash"), true, "worker launch window restores bash for the child ceiling");
+		assert.equal(localTools.includes("write"), true, "worker launch window restores write for the child ceiling");
+		assert.equal(localTools.includes("edit"), true, "worker launch window restores edit for the child ceiling");
+
+		const rootWrite = await localHandlers.get("tool_call")(
+			{ toolCallId: "call-child-tools-write", toolName: "write", input: { path: "x", content: "y" } },
+			localCtx,
+		);
+		assert.equal(rootWrite?.block, true, "Root write stays blocked while tools are revealed for launch");
+
+		await localHandlers.get("tool_result")(
+			{
+				toolCallId: "call-child-tools",
+				toolName: "subagent",
+				input: {},
+				content: [{ type: "text", text: "worker done" }],
+				isError: false,
+			},
+			localCtx,
+		);
+		assert.equal(localTools.includes("bash"), false, "bash is stripped again after the child returns");
+		assert.equal(localTools.includes("write"), false, "write is stripped again after the child returns");
+
+		const refused = await localHandlers.get("tool_call")(
+			{
+				toolCallId: "call-child-tools-composite",
+				toolName: "subagent",
+				input: { agent: "worker", task: "x", tasks: [{ agent: "worker", task: "y" }] },
+			},
+			localCtx,
+		);
+		assert.equal(refused?.block, true, "composite workflow stays blocked");
+		assert.equal(localTools.includes("bash"), false, "blocked composite does not reveal mutation tools");
+	} finally {
+		process.env.PI_CODING_AGENT_DIR = previous;
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
 rmSync(isolatedAgentDir, { recursive: true, force: true });
 
 console.log("planner-only extension: PASS");

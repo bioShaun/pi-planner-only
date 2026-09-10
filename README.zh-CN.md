@@ -60,7 +60,7 @@ pi -e .
 
 拦截：`edit`、`write`、通用 `bash`、未知 mutator，以及 `subagent` 的宿主机命令路径（如 `workflow: "run-ci"`、`gate`）。
 
-`tool_call` 策略里仍有一小段 git/`pwd` 白名单，只防过期调用。模型 schema 里不会出现 `bash`。
+`tool_call` 策略里仍有一小段 git/`pwd` 白名单，只防过期调用。模型 schema 平时不含 `bash`/`edit`/`write`；放行子代理启动的窗口内会短暂恢复，避免 Pi 0.84 上的 pi-subagents 把父会话的只读工具集当成 worker 的 ceiling。该窗口内 Root 的 `bash`/`edit`/`write` 仍被策略拦截，子代理 `tool_result` 返回后重新剥掉。
 
 ## v0.2 编排
 

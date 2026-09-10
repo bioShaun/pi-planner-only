@@ -776,6 +776,23 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		if (!sameToolOrder(activeTools, nextTools)) pi.setActiveTools(nextTools);
 	};
 
+	/**
+	 * pi-subagents on Pi 0.84 snapshots the parent's active tools as the child
+	 * capability ceiling. Reveal mutation tools for the launch window so a
+	 * Worker/Validator keep bash/edit/write; restrictActiveTools puts Root
+	 * back to the planner surface afterwards. The suppressed list stays so
+	 * a later restrict can strip the same names.
+	 */
+	const revealSuppressedToolsForChildLaunch = (): void => {
+		if (isDisabled() || suppressedTools.length === 0) return;
+		const activeTools = pi.getActiveTools();
+		const registered = typeof pi.getAllTools === "function"
+			? pi.getAllTools().map((tool) => tool.name)
+			: undefined;
+		const nextTools = restorePlannerTools(activeTools, suppressedTools, registered);
+		if (!sameToolOrder(activeTools, nextTools)) pi.setActiveTools(nextTools);
+	};
+
 	pi.registerTool({
 		name: "git_audit",
 		label: "Git Audit",
@@ -992,6 +1009,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				for (const warning of outcome.warnings ?? []) {
 					if (ctx.hasUI) ctx.ui.notify(warning, "warning");
 				}
+				revealSuppressedToolsForChildLaunch();
 			}
 			return;
 		}
@@ -1018,6 +1036,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			return;
 		}
 		if (event.toolName !== "subagent") return;
+		restrictActiveTools();
 		const delegation = orchestrator.getDelegation(event.toolCallId);
 		const before = delegation ? orchestrator.store.get(accountingTaskId(delegation))?.state : undefined;
 		const result = await orchestrator.handleSubagentResult({

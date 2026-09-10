@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Child launches temporarily restore Root's suppressed mutation tools so pi-subagents on Pi 0.84 does not treat the planner-only parent as a read-only capability ceiling. Worker/oracle keep `bash`/`edit`/`write`; Root calls to those tools stay blocked. The planner surface is restored on subagent `tool_result`.
+
 ## 0.4.1 - 2026-09-10
 
 - Session root budget is off by default. `/planner-only budget on` / `off` toggles it (persisted as `session-root-budget.on`); `PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` or `=0` overrides the marker. Per-delegation worker floors are unchanged.

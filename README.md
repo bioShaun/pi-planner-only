@@ -81,7 +81,10 @@ Blocked: `edit`, `write`, generic `bash`, unknown mutators, and host-command
 `subagent` paths such as `workflow: "run-ci"` or `gate`.
 
 A small git/`pwd` allowlist exists only in `tool_call` policy for stale calls.
-The model schema never includes `bash`.
+The model schema omits `bash`/`edit`/`write` except for the admitted child-launch
+window: pi-subagents on Pi 0.84 uses the parent's active tools as the child ceiling,
+so those tools are revealed until the subagent `tool_result` returns. Root
+`bash`/`edit`/`write` calls stay blocked by policy during that window.
 
 ## v0.2 orchestration
 
