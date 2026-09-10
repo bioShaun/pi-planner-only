@@ -6,7 +6,7 @@
  * what the parent must do next and hands back a decision plus guidance.
  */
 
-import { MAX_REPORT_CORRECTIONS, MAX_REVIEW_ROUNDS, isTerminalTaskState } from "./types.ts";
+import { MAX_RECOVERY_ATTEMPTS, MAX_REPORT_CORRECTIONS, MAX_REVIEW_ROUNDS, isTerminalTaskState } from "./types.ts";
 import type {
 	FindingCategory,
 	FindingSeverity,
@@ -21,7 +21,7 @@ import type {
 } from "./types.ts";
 import { evidenceAction } from "./evidence.ts";
 import type { EvidenceComparison } from "./evidence.ts";
-import { jsonCandidates } from "./report.ts";
+import { jsonCandidates, stableStringify } from "./report.ts";
 import { TASK_TRANSITIONS } from "./task.ts";
 import type { TaskRecord, TaskStore } from "./task.ts";
 
@@ -35,6 +35,15 @@ export type ReviewAction =
 	| "review_pending"
 	| "blocked";
 
+/**
+ * E02 — structured class of the failure a decision responds to. It decides
+ * the next action and whether code-correction rounds are consumed:
+ * implementation → Worker correction (bounded rounds); environment → blocked,
+ * no round; contract → report-only correction (own counter); evidence →
+ * bounded automatic recovery or blocked with recovery conditions.
+ */
+export type ReviewFailureClass = "implementation" | "environment" | "contract" | "evidence";
+
 export interface ReviewDecision {
 	action: ReviewAction;
 	nextState: TaskState;
@@ -44,6 +53,33 @@ export interface ReviewDecision {
 	consumesRound: boolean;
 	reason: string;
 	guidance: string[];
+	/** E02 — structured class of the failure this decision responds to. */
+	failureClass?: ReviewFailureClass;
+	/** E02 — stable machine-readable reason code. */
+	reasonCode?: string;
+	/** E02 — evidence-state key granted this automatic recovery attempt. */
+	evidenceKey?: string;
+}
+
+/**
+ * E02 — structured key of one evidence state: task revision plus the
+ * comparison's path-level facts. Reason text is deliberately excluded — text
+ * equality is neither necessary nor sufficient for "no progress".
+ */
+export function evidenceStateKey(comparison: EvidenceComparison, reportRevision: number): string {
+	return stableStringify({
+		revision: reportRevision,
+		verifiable: comparison.verifiable,
+		truth: comparison.truthPaths,
+		undeclared: comparison.undeclaredPaths,
+		extra: comparison.extraDeclaredPaths,
+		missing: comparison.missingPaths,
+		overlapping: comparison.overlappingPaths,
+		unrelated: comparison.unrelatedPaths,
+		drift: comparison.freshness?.driftPaths ?? null,
+		headChanged: comparison.freshness?.headChanged ?? null,
+		boundary: comparison.boundaryRef ?? null,
+	});
 }
 
 const FINDING_SEVERITIES: readonly FindingSeverity[] = ["blocker", "major", "minor", "info"];
@@ -385,7 +421,11 @@ export interface DecideReviewInput {
 	review?: ReviewResult;
 }
 
-function blockedDecision(reason: string, round: number): ReviewDecision {
+function blockedDecision(
+	reason: string,
+	round: number,
+	opts: { failureClass?: ReviewFailureClass; reasonCode?: string } = {},
+): ReviewDecision {
 	return {
 		action: "blocked",
 		nextState: "blocked",
@@ -397,6 +437,8 @@ function blockedDecision(reason: string, round: number): ReviewDecision {
 			"Report to the user: what was completed, what is unresolved, how many corrections ran, the last evidence, and why the loop stopped.",
 			"Do not fix it in the parent. Ask the user how to proceed or delegate with a materially different plan.",
 		],
+		...(opts.failureClass ? { failureClass: opts.failureClass } : {}),
+		...(opts.reasonCode ? { reasonCode: opts.reasonCode } : {}),
 	};
 }
 
@@ -438,7 +480,11 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 				action: "report_correction",
 				nextState: "changes_requested",
 				round: round + 1,
-				consumesRound: true,
+				// E02 — a contract failure burns no code-correction round; the
+				// report-correction counter (MAX_REPORT_CORRECTIONS) bounds it.
+				consumesRound: false,
+				failureClass: "contract",
+				reasonCode: input.reportError ? "report-invalid" : "report-missing",
 				reason,
 				guidance: [
 					"Do not accept this result and do not treat it as failure.",
@@ -448,7 +494,10 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 				],
 			};
 		}
-		return blockedDecision(`worker report could not be obtained: ${reason}`, round);
+		return blockedDecision(`worker report could not be obtained: ${reason}`, round, {
+			failureClass: "contract",
+			reasonCode: "report-exhausted",
+		});
 	}
 
 	if (input.report && input.report.status === "blocked") {
@@ -457,9 +506,12 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 			nextState: "blocked",
 			round,
 			consumesRound: false,
+			failureClass: "environment",
+			reasonCode: "worker-reported-blocked",
 			reason: "worker reported blocked",
 			guidance: [
-				"A blocked worker is not a failed worker.",
+				"A blocked worker is not a failed worker; no correction round was consumed.",
+				"The worker's missing-dependency report is a diagnostic, not verified environment state — acceptance gates still apply to anything it produced.",
 				"Re-plan: supply the missing dependency, credential, or decision, or ask the user.",
 				"Delegate a new bounded TaskSpec only once the blocker is resolved.",
 			],
@@ -474,6 +526,8 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 				nextState: "changes_requested",
 				round: round + 1,
 				consumesRound: true,
+				failureClass: "implementation",
+				reasonCode: "worker-failed",
 				reason: `worker reported failed: ${input.report.summary}`,
 				guidance: [
 					"Do not patch the failure in the parent.",
@@ -483,10 +537,13 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 				],
 			};
 		}
-		return blockedDecision(`worker failed repeatedly: ${input.report?.summary ?? "no summary"}`, round);
+		return blockedDecision(`worker failed repeatedly: ${input.report?.summary ?? "no summary"}`, round, {
+			failureClass: "implementation",
+			reasonCode: "worker-failed-exhausted",
+		});
 	}
 
-	// E01 — a revision whose A_run/C_report material is missing cannot be
+	// E02 — a revision whose A_run/C_report material is missing cannot be
 	// validated into existence: the Task needs a new revision or a new Task.
 	// Checked before any revalidation guidance: re-delegating validation over
 	// missing material cannot produce new information.
@@ -496,6 +553,8 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 			nextState: "blocked",
 			round,
 			consumesRound: false,
+			failureClass: "evidence",
+			reasonCode: "evidence-missing-materials",
 			reason: `evidence material missing: ${input.comparison.missingMaterials}`,
 			guidance: [
 				"The report revision has no per-execution A_run/C_report binding, so its changes and freshness cannot be verified.",
@@ -505,25 +564,79 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 		};
 	}
 
-	if (input.comparison && evidenceAction(input.comparison) === "revalidate") {
-		if (round < MAX_REVIEW_ROUNDS) {
-			const undeclaredGuidance = buildUndeclaredCorrectionGuidance(task, input.comparison);
+	// E02 — evidence problems route by class. Environment failures (git
+	// unavailable, probe failed, declared roots unreadable) cannot be fixed by
+	// any re-delegation: block without consuming a round. A stale comparison in
+	// a NEW evidence state gets one bounded automatic revalidation; the same
+	// state never gets a second one, and a Task grants at most
+	// MAX_RECOVERY_ATTEMPTS automatic recoveries in total. The attempted state
+	// keys are persisted on the Task before any comparison overwrite, so
+	// rewritten reason text or a restart cannot reset the bound.
+	//
+	// The stale override only gates acceptance paths: a Root/reviewer
+	// request_changes verdict is Root's own conservative judgment (no PASS, a
+	// correction is delegated) and stands even over stale evidence — forcing
+	// it into the validation-retry budget would convert a review into a spin.
+	const staleOverride = !input.review || input.review.verdict === "pass";
+	if (staleOverride && input.comparison && evidenceAction(input.comparison) === "revalidate") {
+		const evidenceKey = evidenceStateKey(input.comparison, task.reports.length);
+		if (input.comparison.environmentFailure) {
 			return {
-				action: "revalidate",
-				nextState: "changes_requested",
-				round: round + 1,
-				consumesRound: true,
-				reason: `evidence is stale: ${input.comparison.reasons.join("; ")}`,
+				action: "blocked",
+				nextState: "blocked",
+				round,
+				consumesRound: false,
+				failureClass: "environment",
+				reasonCode: "evidence-unverifiable",
+				reason: `evidence cannot be verified in this environment: ${input.comparison.reasons.join("; ")}`,
 				guidance: [
-					"Stale evidence must not be accepted.",
-					...undeclaredGuidance,
-					"Inspect the current state with read/grep/git_audit, then re-delegate validation for the affected paths.",
-					"A bounded oracle check is enough when the worker's validation already exited 0; do not re-run the full suite unless PI_PLANNER_ONLY_ORACLE=full.",
-					`This is correction ${round + 1} of ${MAX_REVIEW_ROUNDS}.`,
+					"Re-delegating cannot fix an unreadable workspace: this is an environment failure, not a worker failure.",
+					"No correction round was consumed.",
+					"Recovery: make the Git repository and every declared worktree root readable again, then record a fresh verdict or report — the Task re-opens through the normal verdict path.",
 				],
 			};
 		}
-		return blockedDecision(`evidence stayed stale: ${input.comparison.reasons.join("; ")}`, round);
+		const stateSeen = task.recoveryStates.includes(evidenceKey);
+		const attemptsLeft = task.recoveryAttempts < MAX_RECOVERY_ATTEMPTS;
+		if (stateSeen || !attemptsLeft) {
+			return {
+				action: "blocked",
+				nextState: "blocked",
+				round,
+				consumesRound: false,
+				failureClass: "evidence",
+				reasonCode: stateSeen ? "evidence-no-progress" : "recovery-limit",
+				reason: stateSeen
+					? `no progress: this evidence state was already revalidated for report revision ${task.reports.length}`
+					: `automatic recovery limit reached (${task.recoveryAttempts}/${MAX_RECOVERY_ATTEMPTS} attempts used)`,
+				guidance: [
+					`Evidence gap: ${input.comparison.reasons.join("; ")}`,
+					"Automatic re-delegation stopped; no correction round was consumed.",
+					"Recovery (any one of): a new WorkerReport revision with bound evidence, an actually changed workspace (new HEAD or content), or an explicit operator decision on this Task.",
+					"Do not re-delegate validation over the same state.",
+				],
+			};
+		}
+		const undeclaredGuidance = buildUndeclaredCorrectionGuidance(task, input.comparison);
+		return {
+			action: "revalidate",
+			nextState: "changes_requested",
+			round,
+			// E02 — recovery revalidations are bounded by their own persisted
+			// counter (recoveryAttempts / MAX_RECOVERY_ATTEMPTS), deliberately
+			// separate from the code-correction round budget.
+			consumesRound: false,
+			failureClass: "evidence",
+			reasonCode: "evidence-stale",
+			evidenceKey,
+			reason: `evidence is stale: ${input.comparison.reasons.join("; ")}`,
+			guidance: [
+				"Stale evidence must not be accepted.",
+				...undeclaredGuidance,
+				"Next step: re-delegate validation for the affected paths — one bounded validation; a bounded oracle check is enough when the worker's validation already exited 0.",
+				`Automatic recovery attempt ${task.recoveryAttempts + 1} of ${MAX_RECOVERY_ATTEMPTS}.`,
+			],
+		};
 	}
 
 	// E01 — under-report, scope, over-declaration, and missing-path findings
@@ -541,16 +654,21 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 				nextState: "changes_requested",
 				round: round + 1,
 				consumesRound: true,
+				failureClass: "evidence",
+				reasonCode: "evidence-findings",
 				reason: `evidence findings: ${label}`,
 				guidance: [
 					"Unresolved evidence findings must be repaired in a new revision; a PASS is not eligible.",
 					...undeclaredGuidance,
-					"Delegate a bounded correction that fixes or reverts the named paths, or returns a corrected WorkerReport for undeclared work.",
+					"Routing: an undeclared-only gap is repaired with one report-only correction that declares the work; out-of-scope changes need a Worker correction that reverts or fixes them.",
 					`This is correction ${round + 1} of ${MAX_REVIEW_ROUNDS}.`,
 				],
 			};
 		}
-		return blockedDecision(`evidence findings unresolved: ${label}`, round);
+		return blockedDecision(`evidence findings unresolved: ${label}`, round, {
+			failureClass: "evidence",
+			reasonCode: "evidence-findings-exhausted",
+		});
 	}
 
 	if (!input.review) {
@@ -579,6 +697,8 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 				nextState: "completed",
 				round,
 				consumesRound: false,
+				failureClass: "implementation",
+				reasonCode: "review-pass",
 				reason: review.summary,
 				guidance: ["Task accepted. Summarize the outcome and evidence for the user."],
 			};
@@ -590,6 +710,8 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 					nextState: "changes_requested",
 					round: round + 1,
 					consumesRound: true,
+					failureClass: "implementation",
+					reasonCode: "review-request-changes",
 					reason: review.summary,
 					guidance: [
 						...summarizeFindings(review.findings),
@@ -599,13 +721,18 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 					],
 				};
 			}
-			return blockedDecision(review.summary, round);
+			return blockedDecision(review.summary, round, {
+				failureClass: "implementation",
+				reasonCode: "review-changes-exhausted",
+			});
 		case "blocked":
 			return {
 				action: "blocked",
 				nextState: "blocked",
 				round,
 				consumesRound: false,
+				failureClass: "evidence",
+				reasonCode: "review-blocked",
 				reason: review.summary,
 				guidance: [
 					"Report the blocker and the evidence to the user.",
@@ -639,6 +766,11 @@ export function applyReviewDecision(
 	}
 	if (decision.action === "report_correction") store.useReportCorrection(taskId);
 	if (decision.consumesRound) store.incrementRound(taskId);
+	// E02 — persist the granted automatic recovery attempt so the per-state
+	// and per-Task bounds survive overwrites and restarts.
+	if (decision.action === "revalidate" && decision.evidenceKey) {
+		store.recordRecoveryAttempt(taskId, decision.evidenceKey);
+	}
 	return store.require(taskId);
 }
 

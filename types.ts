@@ -25,6 +25,15 @@ export const MAX_REVIEW_ROUNDS = 3;
 export const MAX_REPORT_CORRECTIONS = 1;
 
 /**
+ * E02 — automatic recovery/revalidation retries per Task, on top of the
+ * one-per-state rule: the same evidence state is auto-revalidated at most
+ * once, and a Task grants at most this many automatic recovery attempts in
+ * total. The counter lives on the Task record, so reason-text rewrites and
+ * restarts cannot reset it.
+ */
+export const MAX_RECOVERY_ATTEMPTS = 3;
+
+/**
  * Soft cap on how many intact ledger snapshots session_start restores into the
  * live TaskStore (ticket 38 / F6). Corrupt quarantine placeholders are separate.
  */

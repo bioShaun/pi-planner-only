@@ -873,6 +873,18 @@ export interface EvidenceComparison {
 	missingMaterials?: string;
 	/** E01 — freshness of the bound C_report against the boundary sample. */
 	freshness?: FreshnessComparison;
+		/**
+	 * E02 — head ref of the boundary sample this comparison was taken at; part
+	 * of the no-progress state key so a moved workspace is a new state.
+	 */
+	boundaryRef?: string;
+	/**
+	 * E02 — the environment, not the work, made verification impossible:
+	 * Git unavailable, status probe failed, or a declared root unreadable on
+	 * Root's own samples. Re-delegation cannot fix it; the Task blocks with a
+	 * recovery condition instead of consuming a correction round.
+	 */
+	environmentFailure?: boolean;
 }
 
 export interface CompareEvidenceOptions {

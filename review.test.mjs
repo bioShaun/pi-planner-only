@@ -296,7 +296,10 @@ assert.match(summarizeFindings([finding("major", "test")]).join("\n"), /\[major\
 		reportError: extracted.error,
 	});
 	assert.equal(decision.action, "report_correction");
-	assert.equal(decision.consumesRound, true);
+	// E02 — a contract failure burns no code-correction round; the
+	// report-correction counter bounds it instead.
+	assert.equal(decision.consumesRound, false);
+	assert.equal(decision.failureClass, "contract");
 	assert.match(decision.guidance.join("\n"), /Do not modify files/);
 	apply(store, "T-20260831-001", decision);
 
@@ -350,7 +353,9 @@ assert.match(summarizeFindings([finding("major", "test")]).join("\n"), /\[major\
 	});
 	assert.equal(decision.action, "revalidate");
 	assert.equal(decision.nextState, "changes_requested");
-	assert.equal(decision.consumesRound, true);
+	// E02 — recovery revalidations are bounded by their own persisted counter,
+	// not by the code-correction round budget.
+	assert.equal(decision.consumesRound, false);
 	assert.match(decision.reason, /evidence is stale/);
 	assert.match(decision.guidance.join("\n"), /re-delegate validation/);
 }

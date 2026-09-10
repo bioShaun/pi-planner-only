@@ -478,6 +478,20 @@ export interface TaskRecord {
 	 * a change was restored, but only a recorded review closes the finding.
 	 */
 	findings: TaskFinding[];
+	/**
+	 * E02 — how many automatic recovery/revalidation attempts this Task has
+	 * been granted (bounded by MAX_RECOVERY_ATTEMPTS) and the evidence-state
+	 * keys already attempted: the same state never gets a second automatic
+	 * retry, and restarts or reason rewrites cannot reset either.
+	 */
+	recoveryAttempts: number;
+	recoveryStates: string[];
+	/** E02 — the most recent automatic recovery attempt, for no-progress checks. */
+	lastRecovery?: {
+		reportRevision: number;
+		evidenceKey: string;
+		at: string;
+	};
 	/** Reason for an operator-forced terminal state, when applicable. */
 	stateReason?: string;
 	/**
@@ -542,6 +556,8 @@ export class TaskStore {
 			reportCorrections: 0,
 			executions: [],
 			findings: [],
+			recoveryAttempts: 0,
+			recoveryStates: [],
 			usage: emptyTaskUsage(),
 			createdAt: timestamp,
 			updatedAt: timestamp,
@@ -609,6 +625,10 @@ export class TaskStore {
 		if (this.tasks.has(record.taskId)) return;
 		if (!Array.isArray(record.executions)) record.executions = [];
 		if (!Array.isArray(record.findings)) record.findings = [];
+		if (!Array.isArray(record.recoveryStates)) record.recoveryStates = [];
+		if (!Number.isFinite(record.recoveryAttempts) || record.recoveryAttempts < 0) {
+			record.recoveryAttempts = 0;
+		}
 		this.tasks.set(record.taskId, record);
 	}
 
@@ -782,6 +802,22 @@ export class TaskStore {
 
 	openFindings(taskId: string): TaskFinding[] {
 		return this.require(taskId).findings.filter((finding) => finding.status === "open");
+	}
+
+	/**
+	 * E02 — record one granted automatic recovery attempt. Counters live on
+	 * the Task record: a restart or a rewritten reason text cannot reset them.
+	 */
+	recordRecoveryAttempt(taskId: string, evidenceKey: string): TaskRecord {
+		const record = this.require(taskId);
+		record.recoveryAttempts += 1;
+		if (!record.recoveryStates.includes(evidenceKey)) record.recoveryStates.push(evidenceKey);
+		record.lastRecovery = {
+			reportRevision: record.reports.length,
+			evidenceKey,
+			at: this.now().toISOString(),
+		};
+		return this.touch(record);
 	}
 
 	setExecutionDrift(

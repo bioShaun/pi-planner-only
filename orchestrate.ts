@@ -99,6 +99,7 @@ import {
 	DEFAULT_STRUCTURED_DELEGATION_MODE,
 	EXECUTING_STALE_MS,
 	MAX_LEDGER_RESTORE_PER_SESSION,
+	MAX_RECOVERY_ATTEMPTS,
 	MAX_REVIEW_ROUNDS,
 	MAX_WORKER_REPORT_CHARS,
 	canRebindNamedTask,
@@ -245,6 +246,19 @@ function captureEvidenceOptionsFor(
 		...(extra.baseGitRef ? { baseGitRef: extra.baseGitRef } : {}),
 		...(roots ? { additionalWorktreeRoots: roots } : {}),
 	};
+}
+
+/**
+ * E02 — whether the environment itself made this sample unverifiable: Git
+ * unavailable, status probe failed, or a declared root unreadable. Structured,
+ * so the retry classification never matches on reason text.
+ */
+function environmentFailureOf(...samples: readonly EvidenceRef[]): boolean {
+	return samples.some((sample) =>
+		sample.gitAvailable === false
+		|| sample.statusProbeFailed === true
+		|| (sample.unavailableWorktreeRoots?.length ?? 0) > 0,
+	);
 }
 
 function compareWithRootSamples(
@@ -608,6 +622,8 @@ function untrustedPlaceholder(taskId: string): TaskRecord {
 		reportCorrections: 0,
 		executions: [],
 		findings: [],
+		recoveryAttempts: 0,
+		recoveryStates: [],
 		usage: emptyTaskUsage(),
 		createdAt: "1970-01-01T00:00:00.000Z",
 		updatedAt: "1970-01-01T00:00:00.000Z",
@@ -1199,6 +1215,7 @@ export class PlannerOrchestrator {
 			truthFindings: open.map((finding) => ({ kind: finding.kind, paths: finding.paths })),
 			missingMaterials: comparison.missingMaterials,
 			freshness,
+			boundaryRef: currentSample.finalGitRef,
 		};
 	}
 
@@ -1868,6 +1885,9 @@ export class PlannerOrchestrator {
 			lines.push("note: TaskSpec used 'title' as alias for 'objective'");
 		}
 		lines.push(`decision: ${decision.action}`);
+	if (decision.failureClass) {
+		lines.push(`failure: ${decision.failureClass}${decision.reasonCode ? ` (${decision.reasonCode})` : ""}`);
+	}
 		if (evidence) {
 			const sha7 = current.baseEvidence?.finalGitRef?.slice(0, 7);
 			lines.push(`evidence: ${evidence}${sha7 ? ` base ${sha7}` : ""}`);
@@ -1932,6 +1952,9 @@ export class PlannerOrchestrator {
 		if (task.executions.length > 0) {
 			const attribution = task.executions.filter((execution) => !execution.auxiliary).length;
 			lines.push(`Executions: ${task.executions.length} (${attribution} attribution windows)`);
+		}
+		if (task.recoveryAttempts > 0) {
+			lines.push(`Recoveries: ${task.recoveryAttempts}/${MAX_RECOVERY_ATTEMPTS} automatic attempts used`);
 		}
 		if (task.overrides.length > 0) {
 			lines.push(`Overrides: ${task.overrides.length}`);
@@ -2455,6 +2478,7 @@ export class PlannerOrchestrator {
 			);
 			// E01 — freshness of the bound C_report and surviving findings.
 			comparison = await this.augmentExecutionEvidence(current, currentSample, comparison);
+			comparison = { ...comparison, environmentFailure: environmentFailureOf(currentSample) };
 			comparison = this.preparePassFindings(current, comparison) ?? comparison;
 			this.store.setLastComparison(current.taskId, comparison);
 			evidence = describeComparison(comparison);
@@ -2842,6 +2866,7 @@ export class PlannerOrchestrator {
 			// E01 — the reviewer re-samples the workspace: the bound C_report
 			// must still match it, independently of the content snapshot.
 			comparison = await this.augmentExecutionEvidence(this.store.require(task.taskId), currentSample, comparison);
+			comparison = { ...comparison, environmentFailure: environmentFailureOf(currentSample) };
 			if (review.verdict === "pass") {
 				comparison = this.preparePassFindings(task, comparison) ?? comparison;
 				// Ticket 02 / story 26 — accept re-samples the workspace. A PASS
@@ -2996,6 +3021,7 @@ export class PlannerOrchestrator {
 			: undefined;
 		if (comparison) {
 			comparison = await this.augmentExecutionEvidence(this.store.require(task.taskId), current, comparison);
+			comparison = { ...comparison, environmentFailure: environmentFailureOf(current) };
 		}
 		if (comparison) this.store.setLastComparison(task.taskId, comparison);
 		const { decision } = advanceReview({

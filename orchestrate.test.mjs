@@ -2684,9 +2684,14 @@ function realGitRunnerOf(dir) {
 
 		failStatus = true;
 		const verdict = await orch.recordRootVerdict(orch.store.require("T-20260905-961"), "pass", "accepting");
-		assert.equal(verdict.decision.action, "revalidate");
+		// E02 — a failed status probe is an environment failure: block without
+		// consuming a correction round instead of asking for a re-delegation
+		// that cannot change the outcome.
+		assert.equal(verdict.decision.action, "blocked");
 		assert.match(verdict.decision.reason, /git status probe failed/);
-		assert.equal(verdict.task.state, "changes_requested");
+		assert.equal(verdict.decision.failureClass, "environment");
+		assert.equal(verdict.task.state, "blocked");
+		assert.equal(orch.store.require("T-20260905-961").reviewRound, 0, "environment failures consume no correction round");
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
@@ -7131,6 +7136,127 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	assert.equal(JSON.stringify(orch.store.require(taskId).executions.at(-1)?.cReport), JSON.stringify(bound), "the bound sample never moves");
 	assert.equal(orch.store.require(taskId).reports.length, 1, "the replay does not spend a second round");
 	setCleanTree();
+}
+
+
+// ==========================================================================
+// E02 — retry classification and bounded stop-loss
+// ==========================================================================
+
+// E02 no-progress stop-loss: the same evidence state gets exactly one
+// automatic revalidation, the Task-wide budget is three, a changed workspace
+// grants a new bounded attempt even though the reason text is similar, and an
+// explicit request_changes verdict over stale evidence stands without
+// consuming the recovery budget.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-990";
+	await delegateWorker(orch, "call-e02-1", taskId);
+	await orch.handleSubagentResult(workerResult("call-e02-1", reportFor(taskId, "call-e02-1")));
+	const task = () => orch.store.require(taskId);
+
+	// Root's request_changes over stale evidence is its own judgment: recorded,
+	// no recovery attempt spent.
+	gitOverrides.set("rev-parse HEAD", "def5678\n");
+	const rc = await orch.recordRootVerdict(task(), "request_changes", "fix the edge case", { source: "root" });
+	assert.equal(rc.decision.action, "request_changes", rc.decision.reason);
+	assert.equal(task().recoveryAttempts, 0, "a review verdict does not spend the recovery budget");
+	assert.equal(task().state, "changes_requested");
+
+	// First pass over the stale state: one automatic revalidation is granted.
+	const first = await orch.recordRootVerdict(task(), "pass", "accepting late");
+		assert.equal(first.decision.action, "revalidate", first.decision.reason);
+	assert.equal(first.decision.failureClass, "evidence");
+	assert.equal(task().recoveryAttempts, 1);
+	assert.equal(task().reviewRound, 1, "recovery revalidations consume no correction round (only the earlier request_changes did)");
+	assert.equal(task().state, "changes_requested");
+
+	// Same stale state again: no progress, automatic re-delegation stops.
+	const second = await orch.recordRootVerdict(task(), "pass", "accepting late again");
+	assert.equal(second.decision.action, "blocked", second.decision.reason);
+	assert.equal(second.decision.reasonCode, "evidence-no-progress");
+	assert.match(second.decision.reason, /no progress/);
+	assert.match(second.decision.guidance.join("\n"), /Recovery/);
+	assert.equal(second.decision.consumesRound, false, "no-progress stop consumes no correction round");
+	assert.equal(task().recoveryAttempts, 1, "the refused retry does not add an attempt");
+	assert.equal(task().state, "blocked");
+
+	// The workspace actually moves: a new evidence state grants a fresh bounded
+	// attempt even though the reason text is nearly identical. recordRootVerdict
+	// re-opens the blocked Task through the normal verdict path.
+	gitOverrides.set("rev-parse HEAD", "abcdef999\n");
+	const third = await orch.recordRootVerdict(task(), "pass", "accepting the new state");
+	assert.equal(third.decision.action, "revalidate", third.decision.reason);
+	assert.equal(task().recoveryAttempts, 2);
+
+	gitOverrides.set("rev-parse HEAD", "bbb2222\n");
+	const fourth = await orch.recordRootVerdict(task(), "pass", "accepting again");
+	assert.equal(fourth.decision.action, "revalidate", fourth.decision.reason);
+	assert.equal(task().recoveryAttempts, 3);
+
+	// Budget exhausted: the fourth distinct state still cannot auto-revalidate.
+	gitOverrides.set("rev-parse HEAD", "ccc3333\n");
+	const fifth = await orch.recordRootVerdict(task(), "pass", "accepting past the budget");
+	assert.equal(fifth.decision.action, "blocked", fifth.decision.reason);
+	assert.equal(fifth.decision.reasonCode, "recovery-limit");
+	assert.match(fifth.decision.reason, /automatic recovery limit/);
+	assert.equal(task().recoveryAttempts, 3);
+	assert.equal(task().reviewRound, 1, "rounds stay at the one request_changes correction");
+	gitOverrides.delete("rev-parse HEAD");
+}
+
+// E02 contract failures burn no code-correction round: one report-only
+// correction is bounded by its own counter and leaves reviewRound at zero.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-991";
+	await delegateWorker(orch, "call-e02-ro", taskId);
+	await orch.handleSubagentResult({
+		toolCallId: "call-e02-ro",
+		toolName: "subagent",
+		content: [{ type: "text", text: "no report in here" }],
+	});
+	const afterContract = orch.store.require(taskId);
+	assert.equal(afterContract.reportCorrections, 1);
+	assert.equal(afterContract.reviewRound, 0, "a contract failure consumes no code-correction round");
+	// A second malformed report still blocks through the contract counter.
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-e02-ro2", input: { task: JSON.stringify({ ...specFor(taskId), reportOnly: true }), reportOnly: true } },
+		`/fixture/${taskId}`,
+	);
+	setDirtyTree();
+	const second = await orch.handleSubagentResult({
+		toolCallId: "call-e02-ro2",
+		toolName: "subagent",
+		content: [{ type: "text", text: "still no report" }],
+	});
+	assert.equal(orch.store.require(taskId).state, "blocked");
+	assert.match(second.content[0].text, /Root may still judge/);
+	setCleanTree();
+}
+
+// E02 a worker-reported blocked is an environment diagnostic: blocked without
+// consuming a correction round, and its self-report never waives evidence gates.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-992";
+	await delegateWorker(orch, "call-e02-blk", taskId);
+	await orch.handleSubagentResult(workerResult("call-e02-blk", {
+		...reportFor(taskId, "call-e02-blk"),
+		status: "blocked",
+		summary: "missing credentials for the deploy target",
+	}));
+	const task = orch.store.require(taskId);
+	assert.equal(task.state, "blocked");
+	assert.equal(task.reviewRound, 0, "a blocked worker consumes no correction round");
+	// The worker's self-report is a diagnostic, never evidence: a later pass
+	// verdict still has to clear the report/evidence gates (the blocked report
+	// keeps the Task from completing on the worker's word).
+	const verdict = await orch.recordRootVerdict(task, "blocked", "noting the blocker");
+	assert.equal(verdict.decision.action, "blocked", verdict.decision.reason);
+	assert.equal(verdict.decision.failureClass, "environment");
+	assert.equal(verdict.task.state, "blocked");
 }
 
 
