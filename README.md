@@ -5,8 +5,11 @@
 A [Pi](https://pi.dev) extension that keeps the **root session** a planner and
 reviewer. All file edits, shell, and tests go to subagents.
 
-While the guard is on, the parent never sees `bash`, `edit`, or `write` in its
-tool schema. `tool_call` policy is a second gate for stale or resumed calls.
+While the guard is on, Root must not edit, write, or run a general shell.
+`tool_call` policy is the gate. The parent keeps `bash`/`edit`/`write` in its
+active tool set so pi-subagents can give those tools to children — the host
+applies `setActiveTools` only on the next turn, so stripping the schema
+starves oracle/worker/delegate launches in the same turn.
 Foreground children do not load ambient extensions. Background children may;
 this extension no-ops when `PI_SUBAGENT_CHILD=1`.
 
@@ -68,8 +71,8 @@ out of range) fails the release gate instead of exiting 0.
 Per-session override: `PI_PLANNER_ONLY=1` (also `true`, `on`) forces the guard on regardless of the marker; `PI_PLANNER_ONLY=0` (`false`, `off`) disables it. Persistent off marker:
 `~/.pi/agent/planner-only.off`.
 
-`/planner-only off` restores only tools this extension removed. The set is
-restored on `session_shutdown` so reload can recapture the full tool list.
+`/planner-only off` turns the policy off. `session_shutdown` still restores any
+tools a previous build had stripped, so reload can recapture the full list.
 
 ## What the parent may use
 
@@ -81,10 +84,8 @@ Blocked: `edit`, `write`, generic `bash`, unknown mutators, and host-command
 `subagent` paths such as `workflow: "run-ci"` or `gate`.
 
 A small git/`pwd` allowlist exists only in `tool_call` policy for stale calls.
-The model schema omits `bash`/`edit`/`write` except for the admitted child-launch
-window: pi-subagents on Pi 0.84 uses the parent's active tools as the child ceiling,
-so those tools are revealed until the subagent `tool_result` returns. Root
-`bash`/`edit`/`write` calls stay blocked by policy during that window.
+Root `bash`/`edit`/`write` calls stay blocked by policy even though those
+names remain active for the child ceiling.
 
 ## v0.2 orchestration
 

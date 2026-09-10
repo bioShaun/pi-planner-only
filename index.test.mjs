@@ -97,15 +97,14 @@ const ctx = {
 await handlers.get("session_start")({}, ctx);
 assert.deepEqual(activeTools, [
 	"read",
+	"bash",
+	"write",
 	"subagent",
+	"custom_mutator",
 	"git_audit",
 	"planner_verdict",
 ]);
-assert.equal(activeTools.includes("grep"), false);
-assert.equal(activeTools.includes("bash"), false);
-assert.equal(activeTools.includes("write"), false);
-assert.equal(activeTools.includes("custom_mutator"), false);
-assert.equal(setActiveCalls.length, 1);
+assert.equal(setActiveCalls.length, 0);
 
 // Issue 13B: status exposes session totals and keeps pre-Task Root usage unattributed.
 await handlers.get("message_end")({ message: {
@@ -186,7 +185,7 @@ assert.equal(verdictAllowed, undefined, "the policy never blocks planner_verdict
 
 activeTools.push("edit");
 await handlers.get("before_agent_start")({ systemPrompt: "BASE" });
-assert.equal(activeTools.includes("edit"), false);
+assert.equal(activeTools.includes("edit"), true, "setActiveTools is not used; policy blocks Root mutators");
 
 const prompt = await handlers.get("before_agent_start")({ systemPrompt: "BASE" });
 assert.match(prompt.systemPrompt, /^BASE/);
@@ -265,12 +264,12 @@ assert.doesNotMatch(standaloneChainBlocked.reason, /scan the whole repo/);
 await handlers.get("session_shutdown")({}, ctx);
 assert.deepEqual(activeTools, [
 	"read",
-	"subagent",
-	"git_audit",
-	"planner_verdict",
 	"bash",
 	"write",
+	"subagent",
 	"custom_mutator",
+	"git_audit",
+	"planner_verdict",
 	"edit",
 ]);
 
@@ -344,20 +343,20 @@ try {
 
 			plannerOnly(pi);
 			await handlers.get("session_start")({}, ctx);
-			assert.deepEqual(activeTools, ["read", "subagent"]);
-			assert.equal(activeTools.includes("grep"), false);
+			assert.deepEqual(activeTools, ["read", "bash", "write", "subagent"]);
 
 			activeTools.push("other_extension_tool");
 			await commands.get("planner-only").handler("off", ctx);
 			assert.equal(existsSync(join(process.env.PI_CODING_AGENT_DIR, "planner-only.off")), true);
 			assert.deepEqual(activeTools, [
-				"read", "subagent", "other_extension_tool", "bash", "write",
+				"read", "bash", "write", "subagent", "other_extension_tool",
 			]);
 
 			await commands.get("planner-only").handler("on", ctx);
 			assert.equal(existsSync(join(process.env.PI_CODING_AGENT_DIR, "planner-only.off")), false);
-			assert.deepEqual(activeTools, ["read", "subagent"]);
-			assert.equal(activeTools.includes("grep"), false);
+			assert.deepEqual(activeTools, [
+				"read", "bash", "write", "subagent", "other_extension_tool",
+			]);
 			console.log("planner-only toggle: PASS");`,
 		],
 		{
@@ -487,7 +486,7 @@ try {
 
 			const markerPath = join(process.env.PI_CODING_AGENT_DIR, "planner-only.off");
 
-			// D1: marker present + PI_PLANNER_ONLY=1 -> tools restricted, status source: env
+			// D1: marker present + PI_PLANNER_ONLY=1 -> guard on (env), schema not stripped
 			process.env.PI_PLANNER_ONLY = "1";
 			writeFileSync(markerPath, "Disabled\\n");
 			const d1 = makePi(["read", "bash", "subagent", "write"]);
@@ -495,7 +494,7 @@ try {
 			const notices1 = [];
 			const ctx1 = { hasUI: true, ui: { notify(msg) { notices1.push(msg); }, setStatus() {}, theme: { fg(_c, t) { return t; } } } };
 			await d1.handlers.get("session_start")({}, ctx1);
-			assert.deepEqual(d1.getActive(), ["read", "subagent"]);
+			assert.deepEqual(d1.getActive(), ["read", "bash", "subagent", "write"]);
 			await d1.commands.get("planner-only").handler("status", ctx1);
 			assert.match(notices1.at(-1), /Planner-only mode is on \\(source: env\\)/);
 
@@ -510,14 +509,14 @@ try {
 			await d2.commands.get("planner-only").handler("status", ctx2);
 			assert.match(notices2.at(-1), /Planner-only mode is off \\(source: marker\\)/);
 
-			// Default: no marker + env unset -> tools restricted, status source: default
+			// Default: no marker + env unset -> guard on (default), schema not stripped
 			rmSync(markerPath);
 			const d3 = makePi(["read", "bash", "subagent", "write"]);
 			plannerOnly(d3.pi);
 			const notices3 = [];
 			const ctx3 = { hasUI: true, ui: { notify(msg) { notices3.push(msg); }, setStatus() {}, theme: { fg(_c, t) { return t; } } } };
 			await d3.handlers.get("session_start")({}, ctx3);
-			assert.deepEqual(d3.getActive(), ["read", "subagent"]);
+			assert.deepEqual(d3.getActive(), ["read", "bash", "subagent", "write"]);
 			await d3.commands.get("planner-only").handler("status", ctx3);
 			assert.match(notices3.at(-1), /Planner-only mode is on \\(source: default\\)/);
 
@@ -572,7 +571,7 @@ try {
 
 			plannerOnly(pi);
 			await handlers.get("session_start")({}, ctx);
-			assert.deepEqual([...active].sort(), ["read", "subagent"], "session start suppresses non-safe tools");
+			assert.deepEqual([...active].sort(), ["bash", "custom_mutator", "read", "subagent", "write"], "session start does not strip the parent schema");
 			assert.equal(active.includes("edit"), false, "a tool the operator disabled before on stays disabled");
 
 			// while on, another extension disables a currently-active safe tool
@@ -582,14 +581,13 @@ try {
 			registered = registered.filter((name) => name !== "custom_mutator");
 
 			await commands.get("planner-only").handler("off", ctx);
-			assert.deepEqual([...active].sort(), ["bash", "subagent", "write"],
-				"off restores only what this extension suppressed and that is still registered");
+			assert.deepEqual([...active].sort(), ["bash", "custom_mutator", "subagent", "write"],
+				"off does not rewrite tools this extension never stripped");
 			assert.equal(active.includes("read"), false, "another extension's disable is not reverted");
-			assert.equal(active.includes("custom_mutator"), false, "unregistered tools are not restored");
 			assert.equal(active.includes("edit"), false);
 
 			await commands.get("planner-only").handler("on", ctx);
-			assert.deepEqual([...active].sort(), ["subagent"], "on re-applies the intersection");
+			assert.deepEqual([...active].sort(), ["bash", "custom_mutator", "subagent", "write"], "on does not strip the parent schema");
 
 			console.log("planner-only t05 restore: PASS");`,
 		],
@@ -4214,8 +4212,8 @@ await abandonActiveTasks();
 		};
 		factory(pi);
 		await localHandlers.get("session_start")({}, localCtx);
-		assert.equal(localTools.includes("bash"), false, "Root starts without bash");
-		assert.equal(localTools.includes("write"), false, "Root starts without write");
+		assert.equal(localTools.includes("bash"), true, "parent keeps bash so children inherit a mutation ceiling");
+		assert.equal(localTools.includes("write"), true, "parent keeps write so children inherit a mutation ceiling");
 
 		const stamp = new Date();
 		const taskId = `T-${stamp.getFullYear()}${String(stamp.getMonth() + 1).padStart(2, "0")}${String(stamp.getDate()).padStart(2, "0")}-ct1`;
@@ -4236,15 +4234,15 @@ await abandonActiveTasks();
 			localCtx,
 		);
 		assert.equal(allowed?.block, undefined, "worker delegation is admitted");
-		assert.equal(localTools.includes("bash"), true, "worker launch window restores bash for the child ceiling");
-		assert.equal(localTools.includes("write"), true, "worker launch window restores write for the child ceiling");
-		assert.equal(localTools.includes("edit"), true, "worker launch window restores edit for the child ceiling");
+		assert.equal(localTools.includes("bash"), true, "worker launch still sees bash on the parent");
+		assert.equal(localTools.includes("write"), true, "worker launch still sees write on the parent");
+		assert.equal(localTools.includes("edit"), true, "worker launch still sees edit on the parent");
 
 		const rootWrite = await localHandlers.get("tool_call")(
 			{ toolCallId: "call-child-tools-write", toolName: "write", input: { path: "x", content: "y" } },
 			localCtx,
 		);
-		assert.equal(rootWrite?.block, true, "Root write stays blocked while tools are revealed for launch");
+		assert.equal(rootWrite?.block, true, "Root write stays blocked by policy");
 
 		await localHandlers.get("tool_result")(
 			{
@@ -4256,8 +4254,8 @@ await abandonActiveTasks();
 			},
 			localCtx,
 		);
-		assert.equal(localTools.includes("bash"), false, "bash is stripped again after the child returns");
-		assert.equal(localTools.includes("write"), false, "write is stripped again after the child returns");
+		assert.equal(localTools.includes("bash"), true, "bash stays on the parent after the child returns");
+		assert.equal(localTools.includes("write"), true, "write stays on the parent after the child returns");
 
 		const refused = await localHandlers.get("tool_call")(
 			{
@@ -4268,7 +4266,7 @@ await abandonActiveTasks();
 			localCtx,
 		);
 		assert.equal(refused?.block, true, "composite workflow stays blocked");
-		assert.equal(localTools.includes("bash"), false, "blocked composite does not reveal mutation tools");
+		assert.equal(localTools.includes("bash"), true, "blocked composite does not strip mutation tools");
 	} finally {
 		process.env.PI_CODING_AGENT_DIR = previous;
 		rmSync(dir, { recursive: true, force: true });

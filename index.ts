@@ -66,7 +66,7 @@ const GIT_TIMEOUT_MS = 15_000;
 
 export const PLANNER_PROMPT = `[PLANNER-ONLY MODE]
 Root: plan, delegate, inspect read-only, review, and arbitrate.
-Do not edit or write files, run a general shell, or implement fixes.
+Do not edit or write files, run a general shell, or implement fixes. Keep bash/edit/write listed for children; do not call them.
 
 Executable work uses one bounded TaskSpec embedded in one direct {agent, task} subagent call.
 One ticket per TaskSpec. Do not instruct workers to /code-review; the plugin reviewer is the only review.
@@ -754,17 +754,10 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 
 	let suppressedTools: string[] = [];
 
-	const restrictActiveTools = (): void => {
-		if (isDisabled()) return;
-		const activeTools = pi.getActiveTools();
-		suppressedTools = [...new Set([
-			...suppressedTools,
-			...activeTools.filter((name) => !PLANNER_SAFE_TOOLS.has(name)),
-		])];
-		const nextTools = filterPlannerTools(activeTools);
-		if (!sameToolOrder(activeTools, nextTools)) pi.setActiveTools(nextTools);
-	};
-
+	// Do not strip bash/edit/write via setActiveTools. The host applies that
+	// change on the next turn, and pi-subagents uses the parent's active tools
+	// as the child ceiling in the same turn — so a planner-only schema leaves
+	// oracle/worker/delegate with no shell. Root mutation is policy-only.
 	const restoreSuppressedTools = (): void => {
 		if (suppressedTools.length === 0) return;
 		const activeTools = pi.getActiveTools();
@@ -773,23 +766,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			: undefined;
 		const nextTools = restorePlannerTools(activeTools, suppressedTools, registered);
 		suppressedTools = [];
-		if (!sameToolOrder(activeTools, nextTools)) pi.setActiveTools(nextTools);
-	};
-
-	/**
-	 * pi-subagents on Pi 0.84 snapshots the parent's active tools as the child
-	 * capability ceiling. Reveal mutation tools for the launch window so a
-	 * Worker/Validator keep bash/edit/write; restrictActiveTools puts Root
-	 * back to the planner surface afterwards. The suppressed list stays so
-	 * a later restrict can strip the same names.
-	 */
-	const revealSuppressedToolsForChildLaunch = (): void => {
-		if (isDisabled() || suppressedTools.length === 0) return;
-		const activeTools = pi.getActiveTools();
-		const registered = typeof pi.getAllTools === "function"
-			? pi.getAllTools().map((tool) => tool.name)
-			: undefined;
-		const nextTools = restorePlannerTools(activeTools, suppressedTools, registered);
 		if (!sameToolOrder(activeTools, nextTools)) pi.setActiveTools(nextTools);
 	};
 
@@ -953,7 +929,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
-		restrictActiveTools();
 		updateStatus(ctx);
 		loadSessionUsage(ctx);
 		orchestrator.restoreFromLedger();
@@ -977,7 +952,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 
 	pi.on("before_agent_start", async (event) => {
 		if (isDisabled()) return;
-		restrictActiveTools();
 		return { systemPrompt: `${event.systemPrompt}\n\n${PLANNER_PROMPT}` };
 	});
 
@@ -1009,7 +983,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				for (const warning of outcome.warnings ?? []) {
 					if (ctx.hasUI) ctx.ui.notify(warning, "warning");
 				}
-				revealSuppressedToolsForChildLaunch();
 			}
 			return;
 		}
@@ -1036,7 +1009,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			return;
 		}
 		if (event.toolName !== "subagent") return;
-		restrictActiveTools();
 		const delegation = orchestrator.getDelegation(event.toolCallId);
 		const before = delegation ? orchestrator.store.get(accountingTaskId(delegation))?.state : undefined;
 		const result = await orchestrator.handleSubagentResult({
@@ -1246,7 +1218,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					].join("\n"), "warning");
 					return;
 				}
-				restrictActiveTools();
 				updateStatus(ctx);
 				notify(ctx, "Planner-only mode enabled.");
 				return;

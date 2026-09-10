@@ -149,7 +149,7 @@ try {
 	};
 
 	// ------------------------------------------------------------------
-	// §A — Root tool surface
+	// §A — Policy-safe subset helper (not the live parent active set)
 	// ------------------------------------------------------------------
 
 	const rootTools = filterPlannerTools([

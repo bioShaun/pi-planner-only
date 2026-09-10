@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Child launches temporarily restore Root's suppressed mutation tools so pi-subagents on Pi 0.84 does not treat the planner-only parent as a read-only capability ceiling. Worker/oracle keep `bash`/`edit`/`write`; Root calls to those tools stay blocked. The planner surface is restored on subagent `tool_result`.
+- Stop stripping Root `bash`/`edit`/`write` via `setActiveTools`. The host applies that change on the next turn, so a launch-window restore could not give children a mutation ceiling in the same turn. Policy still blocks Root; children inherit the parent's active tools.
 
 ## 0.4.1 - 2026-09-10
 

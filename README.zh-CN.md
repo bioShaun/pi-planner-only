@@ -4,7 +4,7 @@
 
 [Pi](https://pi.dev) 扩展：把 **root 会话** 限制为规划与审核。改文件、跑 shell、跑测试一律交给 subagent。
 
-守卫开启时，父进程的工具 schema 里不会出现 `bash`、`edit`、`write`。`tool_call` 策略是第二道门，挡住过期或恢复会话里的调用。前台子进程不加载 ambient 扩展；后台子进程可能会加载。本扩展在 `PI_SUBAGENT_CHILD=1` 时直接 no-op。
+守卫开启时，Root 不得改文件、不得跑通用 shell。`tool_call` 策略是闸门。父会话仍保留 `bash`/`edit`/`write` 作为 active tools，因为 pi-subagents 用父会话工具集当子代理 ceiling；宿主的 `setActiveTools` 要到下一轮才生效，剥 schema 会让同一轮启动的 oracle/worker/delegate 没有壳工具。前台子进程不加载 ambient 扩展；后台子进程可能会加载。本扩展在 `PI_SUBAGENT_CHILD=1` 时直接 no-op。
 
 v0.2 在守卫之上加了一层薄编排：结构化 `TaskSpec` / `WorkerReport`、有界 review 循环、只读 `git_audit`、evidence 新鲜度，以及隔离的 Fresh Reviewer。v0.2.x 加固序列收紧了生命周期接缝：两份子契约都做任务身份校验、每次 PASS 在接受边界由 Root 重新采样证据、reviewer 调用不再改写 Task、可选的严格委派模式。
 
@@ -52,7 +52,7 @@ pi -e .
 
 单次会话覆盖：`PI_PLANNER_ONLY=1`（亦支持 `true`、`on`）无论是否存在标记均强制开启；`PI_PLANNER_ONLY=0`（`false`、`off`）禁用。持久关闭标记：`~/.pi/agent/planner-only.off`。
 
-`/planner-only off` 只恢复本扩展拿掉的工具。`session_shutdown` 时会还原工具集，方便 reload 重新采集完整列表。
+`/planner-only off` 关闭策略。`session_shutdown` 仍会还原旧版本剥掉的工具，方便 reload 重新采集完整列表。
 
 ## 父进程可用工具
 
@@ -60,7 +60,7 @@ pi -e .
 
 拦截：`edit`、`write`、通用 `bash`、未知 mutator，以及 `subagent` 的宿主机命令路径（如 `workflow: "run-ci"`、`gate`）。
 
-`tool_call` 策略里仍有一小段 git/`pwd` 白名单，只防过期调用。模型 schema 平时不含 `bash`/`edit`/`write`；放行子代理启动的窗口内会短暂恢复，避免 Pi 0.84 上的 pi-subagents 把父会话的只读工具集当成 worker 的 ceiling。该窗口内 Root 的 `bash`/`edit`/`write` 仍被策略拦截，子代理 `tool_result` 返回后重新剥掉。
+`tool_call` 策略里仍有一小段 git/`pwd` 白名单，只防过期调用。Root 的 `bash`/`edit`/`write` 仍被策略拦截；这些名字留在父会话 active tools 里，供子代理继承。
 
 ## v0.2 编排
 
