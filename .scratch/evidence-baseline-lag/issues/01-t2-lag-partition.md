@@ -1,25 +1,24 @@
-# 01: Partition T2 into Worker-attributed vs baseline lag
-
-**What to build:** At C-sample time, Git-read attaches a bounded first-parent per-commit name list (`MAX_BASELINE_LAG_COMMITS = 200`) onto C. compareEvidence stays a pure function and reads that list (missing/incomplete ⇒ today's unsplit T2). Lag = non-merge commits strictly before the oldest declaration-intersecting commit. From that commit through C, all covered T2 is Worker-attributed. `lagPaths` is explicit; `truthPaths` / `undeclaredPaths` / unexplained overlapping-unrelated exclude lag. Lag is not a `reasons[]` entry. Lag-only: `fresh: true`, `unexplained: false`. Merges skipped for intersection; uncovered T2 fail closed. Coverage fail closed if oldest walked parent ≠ A or any `committedPaths` entry is uncovered. Effective baseline = parent of oldest Worker-attributed commit, or C only when T2 is empty (working-tree-only). Empty declaration plus non-empty A..C is under-report, not lag. Variant C: per-root walk, absolute paths, fail closed if a root cannot be walked. Do not put a Git runner on compareEvidence. Do not use upstream or tags as A.
-
-**Blocked by:** None (can start immediately).
+# 01: 每次 Worker 执行的 Evidence 与 Reviewer 验收闭环
 
 **Status:** ready-for-agent
 
-- [ ] Walker attaches per-commit `{ sha, parentSha, parentCount, paths }` on C when `baseGitRef` is set; cap 200; Git-read only.
-- [ ] Injected lag fixture: unrelated commits then declared-only tip, clean tree → `fresh: true`, unrelated paths only in `lagPaths`, not in `truthPaths`/`undeclaredPaths`/`reasons`, `evidenceAction` is `review`, describeComparison is lag not `stale (out-of-scope only)`.
-- [ ] Tip (or later) commit also touches an undeclared in-scope file → unexplained under-report; that path is not in `lagPaths`.
-- [ ] Disjoint undeclared-only commit **before** the first intersecting commit → those paths are `lagPaths` (residual hide-before).
-- [ ] T1 dirty path, content-hash drift, or report `finalGitRef` ≠ C → still unexplained / revalidate as today; lag-only still `fresh: true` so `fresh === true` call sites need no edit.
-- [ ] A not first-parent ancestor of C, over cap, missing parent, or uncovered `committedPaths` (including merge-skip holes) → no `lagPaths`, unsplit T2.
-- [ ] Merge commit intersecting the declaration does not Worker-attribute its whole first-parent dump; leftover uncovered T2 fail closed.
-- [ ] Empty declaration (`changedFiles: []`) with non-empty A..C committed paths → no `lagPaths`, unexplained under-report, not `fresh: true`. No intersecting commit is unsplit T2, not "the whole walk is lag".
-- [ ] Effective baseline = oldest Worker-attributed commit's first parent, or C.finalGitRef only when there is no intersecting commit **and** T2 is empty. Non-empty T2 with no intersection keeps today's A (unsplit).
-- [ ] Additional worktree root: absolute paths; unwalkable root fail-closes the combined sample.
-- [ ] RF-1 T2 still attributes intersecting worker commits. CHANGELOG Unreleased / CONTEXT.md baseline lag (or with ticket 02). compareEvidence tests do not construct a Git runner.
+**Blocked by:** None
+
+**What to build:** 实现 [主 spec](../spec.md) 的 Implementation Decisions 01。保存 Root 采集的每次执行前、结果接收时 Evidence，分离 Truth / scope 与 Freshness，覆盖累积执行链、report-only、Validator、Reviewer packet 和接受边界。保留原文件名以兼容链接；原 first-parent 分区方案已被替代。
+
+- [ ] baseline-lag 事故形状通过完整 Orchestration 生命周期完成；执行前无关历史不进入 Worker 归因或 Reviewer patch，没有无效重验证。
+- [ ] 漏报独立提交、空声明与实际修改、如实声明越界均不能 PASS；归因起点只来自 Root 执行前采样。
+- [ ] 已提交与工作树修改均展示；预先脏文件不变/再改、删除/重命名、子目录及非 ASCII 路径正确处理。
+- [ ] 多轮累计工作和未关闭 finding 可追溯；后轮重设基线、还原净 diff 均不能自动洗掉前轮问题。
+- [ ] 报告无效时保留执行证据；report-only 修正继承原变更集合和采样链，期间文件变化转显式漂移处理。
+- [ ] async 回执不产生 C_report，最终接收采样绑定执行一次；接收延迟期间外部变化不能被无条件认定为 Worker 所为。
+- [ ] Validator 与 Explorer 不重设归因窗口；验证写入导致 freshness 失效；Reviewer packet 覆盖累积交付且截断/材料不全不能 PASS。
+- [ ] 新 ledger 恢复保留采样身份和关联，旧记录缺失不以当前状态补造；额外工作区不可读、来源未知变化或缺少比较材料时 fail closed。
+- [ ] 报告后及接受时漂移拒绝旧 PASS；显式新 revision 绑定来源/scope 判断、验证及复核后可恢复完成。
+- [ ] 复用主 spec 已确认的生命周期测试 seam，仅必要 Git 边界补下层测试；将用户文档、领域说明和变更记录同步为最终语义。
 
 ## Comments
 
-Parent: `.scratch/evidence-baseline-lag/spec.md` (stories 1–8, 3b, 11–13, 21–25, 29–32, 35–36; P1-1(b), P1-2, P1-3, P1-5).
+2026-09-10 修订：原“声明不相交的更早提交属于 lag”会排除 Worker 漏报工作，本 issue 不再实现 lagPaths、按报告交集寻找 commit 或 200-commit walker。完整边界和测试矩阵以主 spec 为准。
 
-Incident note (2026-09-10, T-20260910-001): A = `8bab410`, C tip committed 4 in-scope files, recorded report `changedFiles: []`. That is under-report, not lag. A naive "no intersecting commit ⇒ whole T2 is lag ⇒ fresh" would PASS that Feishu empty report. The empty-declaration fixture above is that case.
+历史事故：T-20260910-001 记录报告 `changedFiles: []`，实际 tip 提交了 4 个 in-scope 文件；这是漏报验收场景，不能因为没有相交声明而 PASS。

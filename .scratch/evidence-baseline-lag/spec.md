@@ -1,124 +1,129 @@
-# Evidence baseline lag
+# Evidence 三采样与无效重验证止损
 
 **Status:** ready-for-agent
 
-Arbitration (2026-09-10): compareEvidence stays pure; the first-parent walk is precomputed onto the C sample. Lag is a `lagPaths` field, not a `reasons[]` entry, so lag-only stays `fresh: true`. `decideReview` receives `previousComparison` from before `setLastComparison`. Coverage and merge holes fail closed to unsplit T2. No Worker-attributed commit ⇒ effective Reviewer baseline is C. Spin guard only when `verifiable`. Cap `MAX_BASELINE_LAG_COMMITS = 200`.
-
-Incident (2026-09-10): a Worker committed only `.scratch/root-idle-phase/` files at `8bab410`. The review loop used A = `4dd63ca` (release 0.4.1), treated `CHANGELOG.md` / `README.md` / `index.ts` (from already-pushed `5f0ab0d` and `09c5955`) as changed after the report, re-delegated Validators for three rounds, then blocked. Oracle blame showed those paths were not this Task. `planner_verdict` stayed blocked because it compares A↔C, not first-parent blame.
+修订：2026-09-10。替代本目录原先的 first-parent lag 分区与 identical-reasons 不计轮次方案。实施顺序：01 Evidence 语义与 Reviewer 证据闭环 → 02 重试分类与止损 → 后续独立的 Root Idle Policy。原 issue 文件名保留以维持链接。
 
 ## Problem Statement
 
-When an operator finishes a bounded Task, the review loop can still declare Evidence stale and burn every correction round, even though the Worker only committed the files it declared.
+用户希望让高成本的 Root（例如 GPT Astra）专注规划、指引和验收，把执行交给较低成本的 Worker（例如 GPT Luna），降低完成一个 Task 的总费用。当前最紧急的问题是完成后的无效协调：旧 Task 基线与报告后的状态变化混用，导致已完成的工作重复验证，Root 重读报告、重新 Delegation，最终耗尽纠正轮次而 blocked。
 
-The comparison treats every path committed between the Task's A sample and HEAD as this Task's delta. If A is an old commit — a restored Task, a rebound identity, or a long-lived A that never moved — the first-parent history that landed on the branch before this WorkerRun looks like edits after the report. The prescribed fix is to re-delegate a Validator. Validators do not resample A. The comparison cannot change. Three rounds later the Task is blocked, and only an operator override can record a Verdict.
+本目录记录的 2026-09-10 事故中，Task 旧基线为 `4dd63ca`，Worker 仅提交 `.scratch/root-idle-phase/`，结果为 `8bab410`；中间早已存在的无关提交被卷入 Evidence 判断，连续三轮 Validator 没有解决基线问题。当前 Orchestration 会保存 Task 基线、在结果到达时采样并绑定报告，但验收仍通过 Task 基线参与的统一比较判断，未建立独立、可持久化的每次执行归因与报告后新鲜度契约。
+
+旧 spec 以 WorkerReport 的声明文件寻找最早相关提交，把更早的不相交提交排除为 lag。这会让先提交漏报文件、后提交声明文件的 Worker 隐藏修改。修复需要可信采样时点，而不是从 Worker 自报内容反推执行起点。
 
 ## Solution
 
-The C sample carries a bounded first-parent name list for `A..C`. Evidence comparison stays a pure function over A, C, and the WorkerReport: it splits that list into Worker-attributed T2 and baseline lag.
+每次实际 Worker 执行保存 Root 自己采集的执行前 Evidence（`A_run`）和结果接收时 Evidence（`C_report`）；复核和验收时重新采集 `C_now`。分别回答两个问题：
 
-Baseline lag is first-parent history **strictly before** the oldest Worker-attributed commit. It is not "changed after the report", does not enter `reasons[]`, does not set `unexplained`, and leaves lag-only comparisons `fresh: true`. `lagPaths` holds those paths; `truthPaths` and `undeclaredPaths` hold only Worker-attributed paths so the Reviewer packet does not advertise lag files as this Task.
+- Truth / scope：`A_run` 到 `C_report` 发生了什么，是否如实报告且符合 TaskSpec？
+- Freshness：`C_report` 到 `C_now` 是否变化，当前状态是否仍是被验证和复核的状态？
 
-The Reviewer's patch is bounded against the parent of the oldest Worker-attributed commit, or against C when this WorkerRun made no attributed commit, so the Reviewer is not shown a release-to-HEAD dump.
+保留 Task 多轮执行的归因链，避免每轮重设基线抹掉此前漏报、越界或尚未审查的工作。Validator 验证已有结果，report-only 修正修复报告；两者都不能覆盖原执行证据。
 
-True post-report drift still forces revalidate. Incomplete walks fail closed to today's unsplit T2. Identical verifiable revalidate reasons do not consume a correction round. Identity sentinel aliases stay in the Idle-phase tickets.
+Review loop 将“可通过具体行动修复”与“相同条件下再次委派无效”分开。需要改代码时交给 Worker，需要修报告时走 report-only，需要验证新状态时才委派 Validator；无法验证或缺少条件时明确 blocked，并给出恢复条件。停止无效重试不代表放宽 PASS。
 
 ## User Stories
 
-1. As an operator, I want a Worker that only committed its declared files to be Evidence-fresh even if A sits on an older ancestor, so that already-pushed unrelated commits cannot block the Task.
-2. As Root, I want an explicit `lagPaths` field, and I want `truthPaths` / `undeclaredPaths` to contain only Worker-attributed paths, so that Reviewer `attributedFiles` / `undeclaredFiles` and `under-reported:` reasons cannot carry CHANGELOG-class lag.
-3. As Root, I want undeclared paths from the oldest Worker-attributed commit through C to stay under-reported, so that a Worker cannot hide extra files in that commit or in later commits.
-3b. As Root, when the declaration is empty (`changedFiles` / `changedPaths` empty) and `A..C` committed paths are not, I want that T2 to stay under-reported (today's unsplit T2: unexplained, not `lagPaths`, not `fresh: true`), so that a recorded empty report cannot be washed to lag-only PASS. Lag requires a Worker-attributed commit. No intersecting commit is not "the whole walk is lag"; it is "do not invent lag". A true empty Worker (no T2, working-tree-only) still uses effective baseline C.
-4. As Root, I want working-tree paths that became dirty after A and are not declared (T1) to stay post-report drift, so that a real parallel edit still cannot PASS.
-5. As Root, I want content-hash drift on paths hashed in the report and in C to stay unexplained, so that porcelain-unchanged content edits still cannot PASS.
-6. As Root, I want HEAD movement after the report's bound `finalGitRef` to stay unexplained, so that a later commit or checkout still cannot PASS as the same report.
-7. As Root, I want baseline lag omitted from `reasons[]` and not to set `unexplained`, so that lag-only stays `fresh: true` and `evidenceAction` is `review`, and so bounded-oracle / `Validation: passed` sites that key off `fresh === true` do not change.
-8. As Root, I want `describeComparison` to label lag-only as lag from `lagPaths.length` (for example `fresh (attributed X; lagged N)`), never as `stale (revalidate)` or `stale (out-of-scope only)`, so that Root is not told to re-delegate validation.
-9. As a Reviewer, I want the review packet's patch baseline to be the first-parent parent of the oldest Worker-attributed commit when one exists, or C when none exists, so that I see this Task's diff or a working-tree packet rather than a release-to-HEAD dump.
-10. As a Reviewer, I want that effective baseline to be a first-parent SHA derived from the walk that matches the existing Git-ref shape check, not a Root-sampled ref, not `origin/main`, and not a release tag.
-11. As an operator, I want a clean tree whose HEAD commit only touches declared files, with unrelated commits between a lagged A and that HEAD, to compare fresh with those unrelated paths only in `lagPaths`, so that the 8bab410 incident cannot repeat.
-12. As an operator, I want a Worker that also changes an undeclared in-scope file in the same HEAD commit, or in any commit after the oldest Worker-attributed commit, to still be under-reported, so that lag is not a laundering hatch for hides at or after Worker work. A disjoint commit strictly before any Worker-attributed commit remains lag (accepted residual).
-13. As an operator, after a valid report, I want an external dirty file to still revalidate, so that lag attribution does not disable the existing stale-working-tree guard.
-14. As Orchestration, I want the Reviewer packet to use the comparison's effective baseline, not `baseEvidence.finalGitRef` alone, so that prepare-review and compareEvidence cannot disagree on which diff the Reviewer saw.
-15. As Root, I want `planner_verdict` pass still to re-sample the workspace snapshot at accept time, so that this spec does not weaken snapshot PASS.
-16. As Root, I want write locks, fresh Reviewer context, and identity checks unchanged, so that lag attribution does not reopen hardening.
-17. As a Validator, I want a revalidate decision whose reasons are identical to `previousComparison` (the comparison recorded before this one was written) to consume no correction round when the new comparison is verifiable, so that oracle spinning cannot exhaust `MAX_REVIEW_ROUNDS` on an unfixable A.
-18. As an operator, I want that identical-revalidate path to tell Root the comparison did not change and that another Validator will not move A, so that the next step is a new Worker round (which may resample A) or an operator Verdict, not a third oracle.
-19. As Root, when a Worker report is recorded and `baseRoundEnded` is true, I still want the next Worker Delegation to resample A, so that a real new round gets a current baseline.
-20. As Root, I want Validators and Explorers never to resample A, so that inspection cannot quietly move the attribution window.
-21. As Root, I want the first-parent walk to run at C-sample time on the existing read-only Git runner (fixed argv, no shell), so that compareEvidence stays synchronous and pure.
-22. As Root, I want that walk capped at `MAX_BASELINE_LAG_COMMITS` (200), so that a huge lagged history cannot hang the comparison.
-23. As Root, when the walk is over cap, a ref is missing, the oldest walked commit's first parent is not A, or any `committedPaths` entry is not covered by a walked non-merge commit, I want today's unsplit T2, so that an incomplete partition cannot mark extra files as lag.
-24. As Root, I want merge commits (more than one parent) skipped for the intersection test, so that a merge's first-parent name-only dump of incoming main files is not treated as Worker-attributed just because it intersects the declaration. Paths that then sit in T2 but in no walked non-merge commit fail closed via story 23. This spec does not claim merge-second-parent history is absent from the tree diff.
-25. As an operator, I do not want A to be defined as `origin/main` or the latest tag, so that a disconnected clone and a release tag cannot become the hidden baseline.
-26. As an operator, I want README and the Chinese README to say that first-parent history strictly before this WorkerRun's attributed commits is baseline lag, not post-report drift, so that the incident is documented as product behaviour.
-27. As an operator, I want CONTEXT.md to define baseline lag as Evidence: paths from first-parent non-merge commits strictly before the oldest Worker-attributed commit, disjoint from the WorkerReport declaration, so that later tickets do not say "stale" for that set.
-28. As an operator, I want CHANGELOG Unreleased to record baseline-lag attribution and the identical-revalidate non-consumption, so that the behaviour change is visible.
-29. As Root, I want out-of-scope-only working-tree drift to keep today's action (`review` when not unexplained), so that lag is a new T2 class, not a rewrite of scope rules.
-30. As Root, I want report-only corrections to keep today's over-report exception, so that schema-only fix rounds do not deadlock.
-31. As an operator, I want the Idle-phase sentinel-alias tickets to remain the identity fix; this spec assumes a Task may still carry an old A (ledger restore, long session) and must still converge, so that fixing aliases is not a prerequisite for unblocking the incident class. If that A is not a first-parent ancestor of C, story 23 fail-closes rather than inventing lag.
-32. As Root, I want `describeComparison` to list lag path counts from `lagPaths` without dumping the full release diff into Root's injected text, so that v0.3.2 injection budget is not reopened.
-33. As a Reviewer, I want a truncated packet still ineligible for PASS, so that a huge remaining worker diff cannot complete by truncation.
-34. As Root, I want L-4 blocked→pass with a report and fresh Evidence (no post-report drift) unchanged, including lag-only remaining `fresh: true`, so that the verdict hatch and `fresh === true` downstream sites stay aligned.
-35. As an operator, I want existing RF-1 tests (worker commits between A and C attributed as T2) to keep passing when those commits intersect the declaration, so that lag is a split of T2, not a deletion of T2.
-36. As Root, I want declared additional worktree roots each walked with that root's A/C refs and absolute paths, and I want a root that cannot be walked to fail closed for the combined sample, so that Variant C does not mix vocabularies or silently drop a root.
-37. As Root, I want the identical-reason spin guard to apply only when the new comparison is `verifiable`, so that a stuck `git unavailable` reason list cannot disable `consumesRound` forever; unverifiable comparisons keep today's round consumption and can still block.
-38. As Orchestration, I want `decideReview` / `advanceReview` to receive `previousComparison` captured before `setLastComparison` overwrites the Task, so that "identical to last recorded" cannot compare the new comparison to itself.
+1. As an 操作者, I want 正常完成的 Task 一次进入复核, so that 旧基线不会消耗额外 Root 回合和子进程费用。
+2. As an 操作者, I want 优先修复错误重验证再收紧 Root gather Policy, so that 委派更多任务时完成闭环已经可靠。
+3. As Root, I want 每次 Worker 执行开始前有独立 Evidence, so that Task 创建或恢复时间不会冒充本次执行起点。
+4. As Root, I want 真正结果到达时由自己保存 Evidence, so that Worker 自报字段不能决定可信基线。
+5. As Root, I want async 启动回执与最终结果明确区分, so that 启动时状态不会被误存为报告时状态。
+6. As Root, I want 重复结果只绑定一次执行记录, so that 通知重放不会移动证据时点。
+7. As Root, I want Truth 与 Freshness 分开表示, so that 报告漏报不会被错误描述为报告后漂移。
+8. As Root, I want 执行前已有的无关提交不计入该次修改, so that baseline-lag 事故能正常完成。
+9. As Root, I want 执行期间漏报的独立提交仍进入归因, so that Worker 不能靠提交顺序隐藏文件。
+10. As Root, I want 空声明与实际修改不一致时拒绝 PASS, so that 空报告不会洗掉已提交工作。
+11. As Root, I want 已提交、暂存和未暂存修改均被纳入, so that clean tree 不会使真实修改消失。
+12. As Root, I want 执行前脏文件内容不变时不算本次修改、内容变化时仍被发现, so that pre-existing dirt 不会误报或掩盖工作。
+13. As Root, I want scope 由原 TaskSpec 决定, so that Worker 如实声明越界文件也不能自行扩大授权。
+14. As Root, I want 多轮修改与未解决 finding 连续可追溯, so that 下一轮基线不会擦除前轮问题。
+15. As a Reviewer, I want 看见 Task 尚待验收的累积结果及各轮归因, so that 最后一轮小修不会遮住此前大改。
+16. As a Worker, I want report-only 修正复用原工作归因并生成新报告 revision, so that 修复 schema 不必重新编辑已完成的文件。
+17. As Root, I want 无效报告到达时也保留对应执行的 Root Evidence, so that 稍后的报告修正不会失去原修改窗口。
+18. As Root, I want report-only 执行发生文件变化时被识别, so that 报告修正不会成为隐藏写入的通道。
+19. As a Validator, I want 检查绑定明确的报告和当前 Evidence, so that 验证成功只证明实际检查过的状态。
+20. As Root, I want Validator 结果不能覆盖 Worker 的执行前证据, so that 验证不会重新定义工作归因。
+21. As Root, I want 报告后 HEAD、内容、路径或工作区身份变化使旧复核失效, so that 陈旧 PASS 不会被接受。
+22. As Root, I want 对重新验证后的状态显式绑定新验证和复核证据, so that 可恢复漂移能完成且旧报告不被静默刷新。
+23. As Root, I want 缺失历史采样被标为不可验证, so that ledger restore 不会凭当前 HEAD 伪造过去。
+24. As an 操作者, I want blocked 原因说明具体缺失条件和恢复动作, so that 无需猜测该改代码、修工具还是重做工作。
+25. As Root, I want declared worktree roots 使用各自身份和采样, so that 主仓库正常不会掩盖另一个工作区不可读。
+26. As Root, I want 并发变化保留为未知归因或漂移, so that 一个写锁不会被误当成外部修改不存在的证明。
+27. As Root, I want 相同输入条件的无效 Validator 重派被拒绝, so that 不计轮次不会变成无限重试。
+28. As Root, I want 故障分类基于结构化原因和恢复条件, so that 文案相同不会永久禁止已经恢复的验证。
+29. As a Worker, I want 真正可修复的实现失败仍有有界纠正机会, so that 止损不会取消正常修复流程。
+30. As an 操作者, I want 环境和契约失败不吞掉代码纠正轮次, so that 工具缺失不会被误算成三次代码修复失败。
+31. As Root, I want 中止重试后仍必须通过 Evidence 和验收门槛, so that 节约 token 不以错误完成为代价。
+32. As an 操作者, I want 对同一任务比较 Root Usage、子进程次数及总费用, so that Astra/Luna 分工收益来自实际测量。
 
 ## Implementation Decisions
 
-- Do not add a phase service. Evidence comparison remains the attribution seam and remains a **pure synchronous function**. It does not take a Git runner. Orchestration keeps sampling A on first non-Explorer writable Delegation and passing the Reviewer packet. The Review loop remains the consumer of `evidenceAction`.
-- Do not redefine A as upstream or a tag. A stays the stored `baseEvidence` sample.
-- Git-read: when capturing C with a `baseGitRef` (A.finalGitRef), also walk at most `MAX_BASELINE_LAG_COMMITS` (200) first-parent commits in `A..C` (exclusive A, inclusive C) and attach a per-commit list of `{ sha, parentSha, parentCount, paths }` (name-only) on the C sample. No shell. No `origin/main`. No `git describe`. If the walk is skipped, omit the list.
-- compareEvidence reads that attached list. Missing list, over-cap, unreadable ref, oldest walked commit's `parentSha` not equal to A.finalGitRef, or any `committedPaths` entry not covered by a walked **non-merge** commit ⇒ behave as today (unsplit T2, no `lagPaths`). Do not invent lag.
-- Merge commits (`parentCount > 1`) are skipped for the declaration-intersection test. They do not become Worker-attributed via their first-parent dump. Uncovered T2 from that skip hits the coverage fail-closed rule above.
-- Oldest Worker-attributed commit = oldest walked non-merge commit whose paths intersect the WorkerReport declaration (`changedFiles` / report `changedPaths`). That intersection needs a **non-empty** declaration and at least one hit. If the declaration is empty, or it intersects no walked non-merge commit, **do not invent lag**: today's unsplit T2, no `lagPaths`. Empty declaration plus non-empty `committedPaths` is under-report, never lag-only `fresh: true`. Commits strictly before a real oldest Worker-attributed commit whose paths are disjoint are baseline lag. From that commit through C, every T2 path covered by the walk is Worker-attributed (declared or under-reported), including later disjoint-looking commits.
-- `lagPaths` is the lag set. `truthPaths` and `undeclaredPaths` exclude `lagPaths`. overlapping/unrelated unexplained sets exclude `lagPaths`. Do not push a lag string into `reasons[]`.
-- Lag-only (no other reasons): `fresh: true`, `unexplained: false`, `evidenceAction` `review`. Downstream `lastComparison.fresh === true` (bounded oracle wrap, status `Validation: passed`) is unchanged. `describeComparison` uses `lagPaths.length` for a compact lag clause; it must not emit `stale (out-of-scope only)` or `stale (revalidate)` for lag-only.
-- Effective Reviewer baseline: first-parent parent of the oldest Worker-attributed commit when one exists; **C.finalGitRef** only when none exist **and** T2 is empty (working-tree-only / true empty Worker delta). No intersecting commit with non-empty T2 is unsplit T2, so the Reviewer baseline stays today's A, not C. The value must satisfy the existing Git-ref shape. Orchestration passes this ref into the Reviewer packet instead of always `baseEvidence.finalGitRef`.
-- Variant C: each declared additional root is walked with that root's refs; paths stay absolute. A root that cannot be walked fail-closes the combined sample (no partial lag).
-- Review loop: Orchestration snapshots `task.lastComparison` into `DecideReviewInput.previousComparison`, then writes the new comparison, then calls `advanceReview`. Identical `reasons` spin guard runs only if the new comparison is `verifiable` and `previousComparison` exists and `reasons` are equal. Then: do not consume a correction round; do not tell Root another Validator will move A. `!verifiable` keeps today's `consumesRound` / block path. Validators never resample A.
-- Undeclared Worker-attributed T2, T1, content drift, HEAD movement after the bound report ref, cwd change, missing Git, failed status probes: today's unexplained/revalidate rules.
-- Identity sentinel aliases remain Idle-phase tickets. This spec must still pass the lagged-A incident without that fix landed.
-- README ×2, CONTEXT.md (baseline lag as defined in story 27), CHANGELOG Unreleased. Do not claim A is now `origin/main`.
-- Do not auto-PASS. Snapshot PASS at accept is unchanged.
+### 01 — 先完成 Evidence 与验收闭环
+
+- 在现有 Orchestration、Task 持久化、Evidence 比较和 Reviewer packet 边界实现，不新增独立调度服务。Root 继续只规划、Delegation、Git-read、复核与 Verdict；采样使用固定只读 argv，不赋予通用 shell。
+- 每个执行记录绑定 canonical Task 身份、WorkerRun 身份、角色、报告 revision、cwd 和所有声明工作区根。`A_run` 在写锁与身份检查通过、实际执行开始前采集；`C_report` 在接收该执行的最终结果时采集。启动失败与 async 回执没有完成结果；重复/迟到结果不得覆盖已绑定采样，身份不符的结果不纳入其他 Task。
+- 即使报告解析失败，也保存该已知执行的结果时 Evidence，供 report-only 修正引用。绑定必须由 Root 建立；报告声明仅参与一致性检查，不能创建或替换可信采样。
+- 分开保存 Truth / scope 的可验证性、实际变更、声明差异、越界 finding，以及 Freshness 的可验证性、漂移与原因。比较保持纯函数，Git 采样留在边界。下游 review、状态显示、bounded validation、Root Verdict 全部消费一致语义；仅 Freshness 为真不足以 PASS。
+- Truth 以完整执行窗口比较已提交与工作树变化，并保留各轮修改记录。执行前脏文件须比较内容，不能按路径集合直接减去；删除、重命名、暂存内容和未跟踪文件也须有明确结果。无法完整采样、内容被截断或路径覆盖不足时标不可验证。规范化以各 Git 根为依据，正确处理子目录 cwd 和带引号/非 ASCII 路径。
+- scope 只来自 TaskSpec 授权边界；报告声明越界工作不构成授权。一个执行窗口中的外部写入无法仅靠时间区间证明作者，遇已知并发或来源不明变化须保留 finding，禁止按提交作者、声明交集或相交提交之前的位置自动排除。
+- Task 保存各轮不可变采样链与 finding 状态。最终报告声明本 Task 累积交付结果；每轮记录本轮变化并链接前轮。下一轮基线之前的本 Task 修改仍需审查。后轮修复或还原必须由 Evidence 和复核证明；净 diff 消失不自动关闭曾发生的越界 finding。轮间外部变化单独记录，不归到下一轮 Worker 也不静默忽略。
+- report-only 是报告 revision 修正，关联原执行链；可重述此前文件而不误判为本轮空操作。它保留旧 `C_report`；修正时新采样只检查期间漂移。若期间发生工作树变化，不能标记为单纯报告修正通过，必须回到显式工作/漂移处理。
+- Explorer 与 Validator 不重设 Worker 归因基线。Validator 输出绑定所检查的报告 revision 和 Evidence；若验证产生文件变化，旧 freshness 失效，不能用验证结束状态自动洗掉修改。现有按实际写能力协调的锁仍保留。
+- 在 prepare-review 和 PASS 接受边界采集 `C_now`。完整工作区 fingerprint 比较包含声明根、HEAD、内容和身份，不能只哈希 Worker 声明文件。`C_report` 与 `C_now` 不一致时旧 ReviewResult 不可接受。
+- Reviewer packet 覆盖该 Task 累积交付，包括提交与工作树修改，并提供分轮归因和未解决 finding；不能简单使用最后一轮 `A_run` 或旧 Task HEAD 的单一 diff 代替。若历史基线含脏文件或轮间外部改动，须依据保存的证据材料构建限定内容；材料不足、不能分离或 packet 截断时拒绝 PASS。完整 diff 留在 Reviewer 边界，Root 只接收有界摘要。
+- 漂移恢复必须显式记录新 revision：保留原 `C_report` 与漂移 finding，对新增变化先确认来源、scope 与报告，再让 Validator 和 Reviewer 对同一当前 Evidence 验证和复核。接受时重新比较该 revision 的绑定 Evidence；不能仅重新采样并称作已验证。
+- Ledger 序列化上述关联与版本，恢复后校验完整性。旧记录缺 `A_run`、`C_report` 或分轮材料时标不可验证并阻止自动 PASS；仅从已有可信材料恢复，不能用当前状态或 Worker 自报补造历史。新 WorkerRun 可以建立自己的证据，但不能使旧缺口变得可验证；如需重新交付，创建明确的新 Task，并保留旧 Task blocked 记录。
+- 每个声明工作区根分别采样和归一化；任一根不可读、身份改变或证据不完整，整项验收不可验证。历史被改写时尝试现有只读能力能证明的端点比较；不能证明则给出结构化原因，不退回旧 lag 猜测或无条件 Validator 重派。
+
+### 02 — 再完成重试分类与有界恢复
+
+- Review loop 单点决定下一动作、是否消耗代码纠正轮次及恢复条件。增加结构化 failure class（实现、环境、契约、证据）与原因码；可重试性描述某个明确动作在当前条件下能否产生新信息，不描述错误永远能否修复。
+- 漏报/错误报告走 report-only；真实代码缺陷或越界修复走 Worker；已确认来源和 scope 的当前状态缺验证时走 Validator；不可恢复历史缺口、缺失工具或不可读工作区走 blocked。若现有宿主结果已经提供可靠启动/工具失败信息，在同一分类中处理；Worker 自报缺工具只能作为待核实诊断，不能据此豁免证据门槛。
+- 环境、契约及无进展重验证不消耗代码纠正轮次，但必须停止自动重派，返回明确 blocked 与恢复条件。可恢复的探测/验证重试另设有限次数，默认同一状态最多一次；同一 Task 自动恢复探测/验证重试累计最多三次，与代码纠正计数分离并持久化，修改原因文案或重启不能重置。正常 Worker 纠正保留现有轮次上限。
+- 无进展判断至少绑定 Task、报告 revision、目标 Evidence、结构化原因、拟执行动作和相关环境条件。应在覆盖上一比较前读取旧记录；reason 文本相等既非必要也非充分条件。
+- 恢复条件由新的可信采样、已验证工具恢复或明确的新报告/修复结果证明。达到上限后不自动循环；Root 可在记录恢复条件成立后发起明确恢复，保留此前失败与 Usage。旧 Validator PASS 不可复用给新 Evidence。
+- 输出简短、可执行的下一步及证据缺口，停止提示“再派 Validator 会移动基线”。Root Verdict 保留既有入口；本功能的自动完成和 PASS 仍要求完整可验证 Evidence、有效复核与接受时 fingerprint 匹配，不增加跳过检查的 override。
 
 ## Testing Decisions
 
-Good tests assert external behaviour: `fresh` / `unexplained` / `evidenceAction` / `lagPaths` vs `truthPaths` / effective baseline / whether a round incremented. They do not snapshot full reason strings as the only assertion, and they do not assert helper names.
+已与用户确认：以现有 Orchestration 完整 Task 生命周期为主要测试 seam，驱动 Delegation → 最终结果/报告 → 复核 → Verdict，断言 Task 状态、Reviewer 可见内容、是否新增子进程、纠正计数与 PASS 接受/拒绝。只测试外部行为，不以内部 helper 名称、完整提示语或原因字符串相等作为正确性依据。
 
-Seams (no new module):
+已有先例为 Orchestration 的 report-only、异步完成、snapshot PASS/漂移、L-4 blocked→pass 与 ledger restore 场景；Git 边界复用 Evidence 的 RF-1 committed/dirty/hash、bounded Reviewer packet 和额外 worktree fixtures。仅难以从生命周期覆盖的 Git 情况补真实临时 Git 仓库测试，不新建平行测试接口。
 
-1. Git-read walker (C sample) — attaches per-commit lists; over-cap / missing parent / non-ancestor A / uncovered `committedPaths` omit the list (fail closed).
-2. Evidence comparison (pure) — tests **inject** the per-commit list on C; they do not pass a Git runner into compareEvidence. Assert lag vs under-report vs T1; `lagPaths` excluded from truth/undeclared; lag-only `fresh: true` and no lag entry in `reasons`; describeComparison lag label; effective baseline C when there is no intersecting commit **and** T2 is empty. Empty declaration with non-empty T2: no `lagPaths`, unexplained under-report, not `fresh: true`.
-3. Review loop — `revalidate` on true post-report drift; identical **previousComparison** reasons do not increment the round when verifiable; unverifiable identical reasons still consume a round; lag-only does not `revalidate`.
-4. Orchestration Reviewer packet — `baselineRef` is the comparison effective baseline.
+| 场景 | 验收结果 |
+|---|---|
+| 旧 Task 基线 → 无关历史 → 新 Worker 仅修改声明文件 | 正常进入复核并 completed；无无效 Validator；Reviewer 不见无关 release diff |
+| Worker 先提交漏报文件再提交声明文件；或空声明但有修改 | 漏报与 scope finding 保留，不因提交顺序/空声明 PASS |
+| clean tree 已提交、暂存、未暂存、重命名/删除、预先脏文件不变/再改 | 正确交付内容可见；不变旧 dirt 不误归因，变化不能被路径集合抹掉 |
+| 两轮修复，首轮越界/漏报，第二轮仅改另一文件或还原首轮 | 首轮证据仍存在；未解决问题拒绝 PASS；真正修复经复核后可完成 |
+| 无效报告后 report-only；期间无文件变化/有变化 | 前者复用原执行归因；后者显式处理漂移，不能重设基线通过 |
+| Reviewer 前及 PASS 前 HEAD/内容/根身份变化 | 旧 PASS 拒绝；显式恢复后重新验证和复核同一 revision 才完成 |
+| Validator 未写入/产生文件变化 | 不覆盖 Worker 基线；变化不被当作无害验证自动接受 |
+| 新 ledger 完整恢复/旧记录缺采样/损坏根/重放 async 结果 | 可信记录复用；缺口阻止 PASS；重放不覆盖采样或花第二轮 |
+| 同状态反复请求验证；故障文案变化；重启后再试 | 自动重派次数有界，无无限免费循环，计数持久化 |
+| 工具恢复或 Evidence 已实际变化但原因文案相同 | 可按可信恢复条件进入有界新验证，不永久锁死 |
+| 正常 Worker 修复反复失败 | 保留既有纠正上限，环境失败不挤占代码纠正轮次 |
+| 子目录 cwd、非 ASCII 路径、额外 worktree、改写历史、截断 packet | 可证明的正常情况正确处理，证据缺口明确且 fail closed |
 
-Prior art: Evidence RF-1 T2/T3 tests, object-style compareEvidence fixtures, `rf1Runner` / real-git fixtures for capture, Review `consumesRound`, Orchestration L-4, Reviewer packet baseline.
+发布验收再通过真实 Pi 宿主执行一条 baseline-lag 形状的成功任务和一条无进展验证失败任务，记录实际 Delegation 次数、完成通知、最终状态与错误恢复。宿主或模型不可用时标为未验证，不能把模拟结果当真实成本结论。
 
-A good lag test: inject commits (unrelated files) then a tip commit = declared files; A = old; C = tip; report declares tip files; `lagPaths` = unrelated; `truthPaths` = declared; `fresh: true`; effective baseline = tip's first parent. A good under-report test adds an extra undeclared file on the tip (or a later commit) and asserts unexplained. A good empty-declaration test: `changedFiles: []`, A..C has committed in-scope paths, clean tree → no `lagPaths`, unexplained under-report, not `fresh: true` (do not treat "no intersecting commit" as lag). A good hide-before test: disjoint undeclared-only commit then declared tip → undeclared-only paths in `lagPaths`. A good coverage test: A not ancestor of C, or merge-only coverage hole → no `lagPaths`, unsplit T2. A good spin test: pass `previousComparison` with the same reasons as the new verifiable stale comparison and assert the round did not increase.
-
-Do not require a live host session. Do not require `origin/main` in the fixture. Do not require compareEvidence to call git.
+成本回归使用同一输入、验收标准和模型配置，对比 Root 输入/输出及缓存 Usage、各角色子进程次数、Validator 次数、重试、完成率和整个 Task 的总费用。记录定价口径与可用字段；无历史基线或真实 Usage 时只报告调用变化，不声称固定省额或比例。
 
 ## Out of Scope
 
-- Example-JSON `T-pending` alias (Idle-phase ticket 01).
-- Idle gather Policy (Idle-phase ticket 02).
-- Choosing A from `origin/main`, default branch, or release tags.
-- Raising or removing `MAX_REVIEW_ROUNDS`.
-- Snapshot PASS identity, write locks, structured-Delegation default, usage floors.
-- Auto-recording `planner_verdict` pass.
-- Showing the full A..C patch to Root.
-- Walking merge-second-parent history (skipped merges fail closed when they leave uncovered T2).
-- Making compareEvidence asynchronous or giving it a Git runner.
+- Root Idle gather Policy 的实现、TaskSpec sentinel 修复；由已有独立 spec 承担，安排在本 spec 两步之后。Idle 是没有 live Task 时的 gather Policy，不是 Worker 运行期间等待机制。
+- 新建宿主能力握手平台、改写 async 调度、拓展 composite 工作流。上述能力需后续真实宿主验证；已知结构化失败可接入本次止损分类。
+- 自动选择 Astra/Luna、修改用户模型配置、承诺某个节省比例。
+- 放宽 write lock、身份绑定、Reviewer 上下文隔离、scope、packet 上限或 stale PASS 门槛。
+- 按声明文件猜最早归因 commit、引入 lagPaths/first-parent 200-commit 扫描方案、提高纠正上限来掩盖失败。
+- 全量重写历史账本，或证明执行期间每次外部修改的作者身份。
 
 ## Further Notes
 
-The plugin never selected `v0.4.1` by name; it used A. If A is a release commit, the Reviewer packet looks like a release baseline. Fix attribution and the packet, not tag parsing.
+全仓库当前优先级：**先做本 spec 的 01，再做 02，再做 Root Idle Policy，最后针对子进程实际工具和异步通知做宿主兼容性验证。** 本 spec 两步可以分别交付，但 01 不应继续发布已知无解的基线重派指引，02 不能以免计轮次代替停止重派。
 
-Re-delegating a Validator cannot move A. Any design that leaves lag as `revalidate` will reproduce the three-round block.
+来源：[成熟度评审](../../docs/pi-planner-only-maturity-review.md)、[Root Idle Policy](../root-idle-phase/spec.md)。评审标明基于较旧 GitHub main，部分条目本地已有修复，本 spec 不把整张问题表视为未修复事实。
 
-An empty recorded declaration is not a missing intersecting commit. If A..C is non-empty, that is under-report (T-20260910-001: `changedFiles: []` vs four committed paths). Treating "no intersection" as lag-only `fresh: true` would PASS that report. Lag starts only after a real Worker-attributed commit exists.
-
-Lag-only must remain `fresh: true` so bounded oracle and status `Validation: passed` do not silently degrade.
-
-Baseline lag is an Evidence class, not a Task state.
+实施入口：[01 Evidence 与 Reviewer 闭环](issues/01-t2-lag-partition.md)，完成后处理 [02 重试分类与止损](issues/02-reviewer-baseline-and-revalidate-spin.md)。本文件是方案唯一权威来源；issue 保留拆分范围、依赖和完成标准。
