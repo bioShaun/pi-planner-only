@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { AUDIT_TOOLS, ROOT_TOOLS, decidePolicy, isSafeAuditCommand } from "./policy.ts";
-import { TASKSPEC_EXAMPLE_SENTINEL, buildTaskSpecExample, validateTaskSpec } from "./task.ts";
+import { TASKSPEC_EXAMPLE_SENTINEL, buildTaskSpecExample, buildTaskSpecRepair, validateTaskSpec } from "./task.ts";
 
 function blocked(toolName, input = undefined) {
 	return decidePolicy({ toolName, input, isChild: false, disabled: false }).block;
@@ -128,15 +128,38 @@ assert.equal(
 	assert.equal(example.role, "worker", "mutating intent is not downgraded to Explorer");
 }
 
-// Invalid validation shapes collapse to { required: false } with commands omitted.
-assert.deepEqual(buildTaskSpecExample({
-	toolName: "subagent",
-	submitted: { validation: ["npm test"] },
-}).validation, { required: false });
-assert.deepEqual(buildTaskSpecExample({
-	toolName: "subagent",
-	submitted: { validation: { required: "yes", commands: "npm test" } },
-}).validation, { required: false });
+// IS-02/S03/S05 — an invalid validation shape with validation intent is no
+// longer silently collapsed to { required: false }. A losslessly convertible
+// shape (a plain command list) is repaired with the intent made explicit;
+// anything else is needs-input and the refusal provides no resubmittable
+// template.
+{
+	const repaired = buildTaskSpecRepair({
+		toolName: "subagent",
+		input: { agent: "worker" },
+		submitted: { validation: ["npm test"] },
+	});
+	assert.equal(repaired.status, "repairable");
+	assert.deepEqual(repaired.example?.validation, { required: true, commands: ["npm test"] });
+	assert.equal(repaired.example?.role, "worker", "the delegated worker role is kept, not downgraded to Explorer");
+	assert.ok(
+		repaired.changes.some((change) => change.field === "validation" && /converted/.test(change.reason)),
+		"the validation change is disclosed in the summary",
+	);
+
+	const unconvertible = buildTaskSpecRepair({
+		toolName: "subagent",
+		input: { agent: "worker" },
+		submitted: { validation: { required: "yes", commands: "npm test" } },
+	});
+	assert.equal(unconvertible.status, "needs-input");
+	assert.deepEqual(unconvertible.unresolvedFields, ["validation"]);
+	assert.equal(unconvertible.example, undefined, "no template is produced when the repair is not lossless");
+	assert.ok(
+		unconvertible.changes.some((change) => change.field === "validation"),
+		"the unresolved validation field is called out",
+	);
+}
 
 // Submitted valid fields are preserved; the sentinel is never treated as an identity.
 {
@@ -160,7 +183,7 @@ assert.deepEqual(buildTaskSpecExample({
 }
 // A submitted sentinel stays the sentinel (it is not an identity).
 assert.equal(
-	buildTaskSpecExample({ toolName: "subagent", submitted: { taskId: TASKSPEC_EXAMPLE_SENTINEL } }).taskId,
+	buildTaskSpecExample({ toolName: "subagent", input: { agent: "worker" }, submitted: { taskId: TASKSPEC_EXAMPLE_SENTINEL } }).taskId,
 	TASKSPEC_EXAMPLE_SENTINEL,
 );
 

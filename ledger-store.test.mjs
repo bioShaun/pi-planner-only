@@ -204,6 +204,23 @@ function snapshotPath(dir, taskId) {
 {
 	const dir = sandbox();
 	try {
+		const first = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
+		const firstTask = first.store.create(createTaskSpec({ objective: "first generated task", cwd }));
+		const second = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
+		const restored = second.restoreFromLedger();
+		assert.equal(restored.restored, 1, "A34: the first generated Task is restored");
+		const secondTask = second.store.create(createTaskSpec({ objective: "second generated task", cwd }));
+		assert.notEqual(secondTask.taskId, firstTask.taskId, "A35: generated ids do not reuse restored Tasks");
+		assert.equal(second.store.require(firstTask.taskId).spec.objective, "first generated task", "A36: the restored Task remains unchanged");
+		assert.equal(secondTask.spec.objective, "second generated task", "A37: the new spec stays associated with its new id");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+{
+	const dir = sandbox();
+	try {
 		const injected = new TaskStore();
 		const spec = createTaskSpec({ objective: "injected store", cwd }, "T-20260908-inj");
 		const orch = new PlannerOrchestrator({ gitRunner, store: injected, ledgerDir: dir });

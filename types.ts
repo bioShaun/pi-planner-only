@@ -192,6 +192,12 @@ export interface TaskExecutionRecord {
 	validatorReportIndex?: number;
 	/** Attributed A_run→C_report paths (T1/T2/T3 minus runtime noise). */
 	truthPaths?: string[];
+	/** Root-attributed working-tree changes in this execution window (T1/T3). */
+	executionChangedPaths?: string[];
+	/** Root-attributed paths committed during this execution window (T2). */
+	committedPaths?: string[];
+	/** Changes observed during a read-only execution, never claimed as its work. */
+	observedExternalPaths?: string[];
 	/** In-scope attributed paths the declaration omitted. */
 	undeclaredPaths?: string[];
 	/** Attributed paths outside the TaskSpec scope. */
@@ -296,6 +302,19 @@ export interface ValidationResult {
 	inferred?: boolean;
 }
 
+/**
+ * Lossless downward packet. TaskSpec is the authority for permissions and
+ * acceptance; the remaining fields preserve the Root's task-specific prose
+ * without asking the child model to reconstruct it.
+ */
+export interface TaskPacket {
+	version: 1;
+	spec: TaskSpec;
+	instructions: string;
+	knownFacts: string[];
+	artifactRefs: string[];
+}
+
 /** Upward contract: the only structured thing a worker returns. */
 export interface WorkerReport {
 	version: number;
@@ -334,6 +353,9 @@ export interface ReviewRoundAttribution {
 	aRef?: string;
 	cRef?: string;
 	attributedFiles: string[];
+	executionChangedFiles?: string[];
+	committedFiles?: string[];
+	observedExternalFiles?: string[];
 	undeclaredFiles: string[];
 	outOfScopeFiles: string[];
 	freshness?: "fresh" | "stale" | "unknown";
@@ -375,6 +397,12 @@ export interface ReviewEvidencePacket {
 	binaryFiles?: BinaryChange[];
 	/** Authoritative A-to-C paths when a Root comparison is available. */
 	attributedFiles?: string[];
+	/** Root-attributed working-tree changes (T1/T3), excluding commits. */
+	executionChangedFiles?: string[];
+	/** Root-attributed paths committed during the execution window (T2). */
+	committedFiles?: string[];
+	/** Changes observed by a read-only execution, never claimed as its work. */
+	observedExternalFiles?: string[];
 	/** truthPaths the Worker did not declare. */
 	undeclaredFiles?: string[];
 	/** Worker-declared paths absent from the A-to-C delta. */

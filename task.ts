@@ -5,8 +5,19 @@
  * state machine. Live write-lock ownership lives in Orchestration.
  */
 
-import { realpathSync } from "node:fs";
-import { resolve } from "node:path";
+import {
+	closeSync,
+	existsSync,
+	mkdirSync,
+	openSync,
+	realpathSync,
+	readdirSync,
+	renameSync,
+	statSync,
+	unlinkSync,
+	writeSync,
+} from "node:fs";
+import { join, resolve } from "node:path";
 import {
 	MAX_REPORT_CORRECTIONS,
 	MAX_REVIEW_ROUNDS,
@@ -33,9 +44,11 @@ import type { EvidenceComparison } from "./evidence.ts";
 import type { WorkspaceSnapshotBinding } from "./workspace-snapshot.ts";
 import { jsonCandidates } from "./report.ts";
 import { emptyTaskUsage } from "./usage.ts";
+import { SAFE_TASK_ID } from "./ledger-store.ts";
 
 const TASK_ROLES: readonly TaskRole[] = ["worker", "explorer", "validator", "reviewer"];
 const explicitlyNoValidation = new WeakSet<TaskSpec>();
+const generatedTaskIdSpecs = new WeakSet<TaskSpec>();
 
 /**
  * FR-04 — capability profiles per role. The write lock follows actual write
@@ -110,6 +123,305 @@ export interface CreateTaskSpecInput {
 	additionalWorktreeRoots?: string[];
 }
 
+/**
+ * IS-01 — structured, actionable Task identity failures. Codes are stable
+ * contract surface: adapters and tests match on `code`, never on message
+ * text.
+ */
+export type TaskIdentityErrorCode =
+	| "TASK_ID_CONFLICT"
+	| "TASK_ID_ALLOCATION_FAILED"
+	| "TASK_WORKSPACE_MISMATCH"
+	| "TASK_NOT_FOUND";
+
+export class TaskIdentityError extends Error {
+	readonly code: TaskIdentityErrorCode;
+	/** True when re-trying the same operation later may succeed (lock contention). */
+	readonly retryable: boolean;
+	readonly taskId?: string;
+
+	constructor(
+		code: TaskIdentityErrorCode,
+		message: string,
+		options: { retryable?: boolean; taskId?: string } = {},
+	) {
+		super(message);
+		this.name = "TaskIdentityError";
+		this.code = code;
+		this.retryable = options.retryable ?? false;
+		this.taskId = options.taskId;
+	}
+}
+
+const IDENTITY_LOCK_STALE_MS = 30_000;
+const IDENTITY_LOCK_RETRY_MS = 10;
+const IDENTITY_LOCK_TIMEOUT_MS = 10_000;
+
+function sleepSync(ms: number): void {
+	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+export interface TaskIdAllocatorOptions {
+	now?: () => Date;
+	/** A lock file older than this is treated as left by a dead process. */
+	staleMs?: number;
+	/** Test seam: total wait for the allocation lock before failing retryable. */
+	acquireTimeoutMs?: number;
+	/**
+	 * Test seam (I05 fault injection): invoked while holding the lock, just
+	 * before the claim is persisted. Throwing simulates a crash between
+	 * reservation and commit; nothing may be left half-associated.
+	 */
+	hooks?: { beforeClaim?: (taskId: string) => void };
+}
+
+/**
+ * IS-01 — global Task identity allocator over a persistent ledger root.
+ *
+ * Identity reservation is atomic and cross-process safe: an exclusive lock
+ * file serializes allocation, and the chosen id is persisted as a claim file
+ * (write-temp-then-rename) before the lock is released. Occupancy is derived
+ * from the file namespace — every `*.json` under the ledger directory and
+ * every claim, whether loaded, over the restore cap, terminal, quarantined,
+ * or unparseable — so a restored or crashed-once id is never reissued.
+ * Numbering may contain holes; a claim whose Task snapshot later appears is
+ * pruned so the claims directory stays bounded.
+ */
+export class TaskIdAllocator {
+	private readonly root: string;
+	private readonly clock: () => Date;
+	private readonly staleMs: number;
+	private readonly acquireTimeoutMs: number;
+	private readonly hooks?: { beforeClaim?: (taskId: string) => void };
+
+	constructor(ledgerRoot: string, options: TaskIdAllocatorOptions = {}) {
+		this.root = ledgerRoot;
+		this.clock = options.now ?? (() => new Date());
+		this.staleMs = options.staleMs ?? IDENTITY_LOCK_STALE_MS;
+		this.acquireTimeoutMs = options.acquireTimeoutMs ?? IDENTITY_LOCK_TIMEOUT_MS;
+		this.hooks = options.hooks;
+	}
+
+	/** The ledger directory whose file namespace owns id occupancy. */
+	get ledgerDir(): string {
+		return join(this.root, "planner-only", "ledger");
+	}
+
+	private get identityDir(): string {
+		return join(this.root, "planner-only", "identity");
+	}
+
+	private get lockPath(): string {
+		return join(this.identityDir, ".allocate.lock");
+	}
+
+	private get claimsDir(): string {
+		return join(this.identityDir, "claims");
+	}
+
+	/** Every valid-named snapshot/claim file reserves its id, loaded or not. */
+	occupiedIds(): Set<string> {
+		const occupied = new Set<string>();
+		const collect = (dir: string, pruneClaimed: boolean): void => {
+			let names: string[];
+			try {
+				names = readdirSync(dir);
+			} catch {
+				return;
+			}
+			for (const name of names) {
+				if (name.startsWith(".tmp-")) continue;
+				if (!name.endsWith(".json")) continue;
+				const stem = name.slice(0, -".json".length);
+				if (!SAFE_TASK_ID.test(stem)) continue;
+				occupied.add(stem);
+				if (pruneClaimed) {
+					// The Task snapshot is the durable record; drop the redundant claim.
+					try {
+						if (existsSync(join(this.ledgerDir, name))) unlinkSync(join(dir, name));
+					} catch {
+						// Pruning is best-effort; occupancy is unaffected.
+					}
+				}
+			}
+		};
+		collect(this.ledgerDir, false);
+		collect(this.claimsDir, true);
+		return occupied;
+	}
+
+	/** Atomically reserve a globally free Task id in the persistent namespace. */
+	allocate(): string {
+		try {
+			mkdirSync(this.claimsDir, { recursive: true });
+		} catch (err) {
+			throw new TaskIdentityError(
+				"TASK_ID_ALLOCATION_FAILED",
+				`cannot create identity namespace under ${this.identityDir}: ${err instanceof Error ? err.message : String(err)}`,
+				{ retryable: true },
+			);
+		}
+		this.acquireLock();
+		try {
+			const occupied = this.occupiedIds();
+			for (let index = 1; index <= 999; index += 1) {
+				const taskId = createTaskId(this.clock(), index);
+				if (occupied.has(taskId)) continue;
+				this.hooks?.beforeClaim?.(taskId);
+				this.writeClaimAtomic(taskId);
+				return taskId;
+			}
+			throw new TaskIdentityError(
+				"TASK_ID_ALLOCATION_FAILED",
+				`no free Task id remains for ${createTaskId(this.clock(), 1).slice(0, 12)} under ${this.ledgerDir}`,
+				{ retryable: true },
+			);
+		} finally {
+			this.releaseLock();
+		}
+	}
+
+	/** Atomically reserve an explicitly requested Task id. */
+	reserve(taskId: string): void {
+		if (!SAFE_TASK_ID.test(taskId)) {
+			throw new TaskIdentityError(
+				"TASK_ID_ALLOCATION_FAILED",
+				`cannot reserve invalid Task id ${taskId}`,
+				{ taskId },
+			);
+		}
+		try {
+			mkdirSync(this.claimsDir, { recursive: true });
+		} catch (err) {
+			throw new TaskIdentityError(
+				"TASK_ID_ALLOCATION_FAILED",
+				`cannot create identity namespace under ${this.identityDir}: ${err instanceof Error ? err.message : String(err)}`,
+				{ retryable: true, taskId },
+			);
+		}
+		this.acquireLock();
+		try {
+			if (this.occupiedIds().has(taskId)) {
+				throw new TaskIdentityError(
+					"TASK_ID_CONFLICT",
+					`task id ${taskId} is already occupied; identity is never reused, continue the existing Task explicitly instead`,
+					{ taskId },
+				);
+			}
+			this.writeClaimAtomic(taskId);
+		} finally {
+			this.releaseLock();
+		}
+	}
+
+	private writeClaimAtomic(taskId: string): void {
+		const finalPath = join(this.claimsDir, `${taskId}.json`);
+		const tmpPath = join(this.claimsDir, `.tmp-${process.pid}-${Date.now()}`);
+		const body = JSON.stringify({
+			version: 1,
+			taskId,
+			claimedAt: new Date().toISOString(),
+			pid: process.pid,
+		});
+		try {
+			const fd = openSync(tmpPath, "wx");
+			try {
+				writeSync(fd, body);
+			} finally {
+				closeSync(fd);
+			}
+			renameSync(tmpPath, finalPath);
+		} catch (err) {
+			try {
+				unlinkSync(tmpPath);
+			} catch {
+				// temp may not exist yet
+			}
+			throw new TaskIdentityError(
+				"TASK_ID_ALLOCATION_FAILED",
+				`failed to persist the id claim for ${taskId}: ${err instanceof Error ? err.message : String(err)}`,
+				{ retryable: true, taskId },
+			);
+		}
+	}
+
+	private acquireLock(): void {
+		const deadline = Date.now() + this.acquireTimeoutMs;
+		for (;;) {
+			try {
+				const fd = openSync(this.lockPath, "wx");
+				try {
+					writeSync(fd, JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() }));
+				} finally {
+				closeSync(fd);
+			}
+				return;
+			} catch (err) {
+				if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
+					throw new TaskIdentityError(
+						"TASK_ID_ALLOCATION_FAILED",
+						`cannot create the allocation lock: ${err instanceof Error ? err.message : String(err)}`,
+						{ retryable: true },
+					);
+				}
+				if (this.lockStale()) {
+					// Crash recovery: the holder is gone past the TTL; steal the lock.
+					try {
+						unlinkSync(this.lockPath);
+					} catch {
+						// Lost the steal race; retry the exclusive create.
+					}
+					continue;
+				}
+				if (Date.now() >= deadline) {
+					throw new TaskIdentityError(
+						"TASK_ID_ALLOCATION_FAILED",
+						`timed out after ${this.acquireTimeoutMs} ms waiting for the Task id allocation lock at ${this.lockPath}`,
+						{ retryable: true },
+					);
+				}
+				sleepSync(IDENTITY_LOCK_RETRY_MS);
+			}
+		}
+	}
+
+	private lockStale(): boolean {
+		try {
+			return Date.now() - statSync(this.lockPath).mtimeMs > this.staleMs;
+		} catch {
+			return true;
+		}
+	}
+
+	private releaseLock(): void {
+		try {
+			unlinkSync(this.lockPath);
+		} catch {
+			// The lock is best-effort cleanup; a leftover file is handled by staleness.
+		}
+	}
+}
+
+/**
+ * Host agent names mapped to Task roles. roles.ts re-exports this table (as
+ * `inferRoleFromAgent`) so agent remapping and the IS-02 repair renderer share
+ * one source of truth; task.ts owns it because identity and the repair
+ * contract live here.
+ */
+export const AGENT_TASK_ROLES: Readonly<Record<string, TaskRole>> = Object.freeze({
+	explorer: "explorer",
+	scout: "explorer",
+	reviewer: "reviewer",
+	oracle: "validator",
+	validator: "validator",
+	worker: "worker",
+});
+
+export function inferTaskRoleFromAgent(agent: string | undefined): TaskRole | undefined {
+	if (!agent) return undefined;
+	return AGENT_TASK_ROLES[agent.trim().toLowerCase()];
+}
+
 export function createTaskId(now: Date = new Date(), sequence = 1): string {
 	const year = String(now.getFullYear());
 	const month = String(now.getMonth() + 1).padStart(2, "0");
@@ -118,9 +430,11 @@ export function createTaskId(now: Date = new Date(), sequence = 1): string {
 	return `T-${year}${month}${day}-${index}`;
 }
 
-export function createTaskSpec(input: CreateTaskSpecInput, taskId = createTaskId()): TaskSpec {
+export function createTaskSpec(input: CreateTaskSpecInput, taskId?: string): TaskSpec {
+	const suppliedTaskId = input.taskId?.trim();
+	const effectiveTaskId = taskId ?? createTaskId();
 	const spec: TaskSpec = {
-		taskId: input.taskId?.trim() || taskId,
+		taskId: suppliedTaskId || effectiveTaskId,
 		objective: input.objective.trim(),
 		cwd: resolve(input.cwd),
 		role: input.role ?? "worker",
@@ -160,8 +474,13 @@ export function createTaskSpec(input: CreateTaskSpecInput, taskId = createTaskId
 	if (spec.additionalWorktreeRoots && spec.additionalWorktreeRoots.length === 0) {
 		delete (spec as { additionalWorktreeRoots?: string[] }).additionalWorktreeRoots;
 	}
+	if (!suppliedTaskId && taskId === undefined) generatedTaskIdSpecs.add(spec);
 	if (input.validation?.required === false) explicitlyNoValidation.add(spec);
 	return spec;
+}
+
+export function hasGeneratedTaskId(spec: TaskSpec | undefined): boolean {
+	return Boolean(spec && generatedTaskIdSpecs.has(spec));
 }
 
 export function isExplicitlyNoValidation(spec: TaskSpec | undefined): boolean {
@@ -307,16 +626,107 @@ function validValidation(value: unknown): boolean {
 
 /**
  * R01 — the one example-TaskSpec renderer shared by the Policy parent-tool
- * refusal and the Orchestration invalid-TaskSpec refusal. The returned object
- * always passes `validateTaskSpec`. Fields are filled from the refused tool
- * input (inspect path → constraints + Explorer; shell command → objective +
- * Explorer; write/edit → Worker; anything else → placeholder objective +
- * Explorer unless the submitted candidate carries a valid role); submitted
- * fields that already pass per-field validation are preserved, except the
- * example sentinel `taskId`. Budget, evidence, extra worktree roots, and test
- * commands are never invented.
+ * refusal and the Orchestration invalid-TaskSpec refusal. The renderer keeps
+ * the IS-02 fidelity contract: a valid submitted role wins; a missing role
+ * falls back to the tool intent and then to the host-resolved delegated role
+ * (agent), never a blanket Explorer; permissions are never inferred from
+ * objective wording alone. Submitted fields that pass per-field validation
+ * are preserved, except the example sentinel `taskId`. Budget, evidence,
+ * extra worktree roots, and test commands are never invented.
  */
 export function buildTaskSpecExample(options: TaskSpecExampleInput): Record<string, unknown> {
+	const repair = buildTaskSpecRepair(options);
+	if (repair.example) return repair.example;
+	throw new Error(
+		`TaskSpec repair needs input before an example can be built: ${repair.unresolvedFields.join(", ")}`,
+	);
+}
+
+export interface TaskSpecRepairChange {
+	field: string;
+	reason: string;
+}
+
+/**
+ * IS-02 — the fidelity contract of a refused TaskSpec repair. `repairable`
+ * means the example can be resubmitted as-is without changing the delegated
+ * role or relaxing validation; `needs-input` means some field cannot be
+ * repaired losslessly and the original submission stays refused.
+ */
+export interface TaskSpecRepairResult {
+	status: "repairable" | "needs-input";
+	example?: Record<string, unknown>;
+	changes: TaskSpecRepairChange[];
+	unresolvedFields: string[];
+}
+
+interface SubmittedValidationRepair {
+	validation?: { required: boolean; commands?: string[] };
+	changes: TaskSpecRepairChange[];
+	/** Guidance when the submitted shape cannot be converted without losing intent. */
+	unresolved?: string;
+}
+
+/**
+ * IS-02 — validation intent is never silently dropped. A valid definition is
+ * kept verbatim; a losslessly convertible shape (a plain command list, or an
+ * object whose commands are valid strings) is repaired with the intent made
+ * explicit; anything else is unresolved, so the refusal cannot downgrade a
+ * mandatory validation to `required: false`.
+ */
+function repairSubmittedValidation(raw: unknown): SubmittedValidationRepair {
+	if (raw === undefined) {
+		return { validation: { required: false }, changes: [] };
+	}
+	if (validValidation(raw)) {
+		const validation = raw as Record<string, unknown>;
+		return {
+			validation: {
+				required: validation.required as boolean,
+				...(isStringArray(validation.commands) && validation.commands.length > 0
+					? { commands: uniqueNonEmpty(validation.commands) }
+					: {}),
+			},
+			changes: [{ field: "validation", reason: "kept the submitted validation definition" }],
+		};
+	}
+	if (Array.isArray(raw) && raw.length === 0) {
+		return {
+			validation: { required: false },
+			changes: [{ field: "validation", reason: "dropped the empty validation list; it carries no validation intent" }],
+		};
+	}
+	if (Array.isArray(raw) && raw.every((item) => typeof item === "string" && item.trim())) {
+		return {
+			validation: { required: true, commands: uniqueNonEmpty(raw as string[]) },
+			changes: [{
+				field: "validation",
+				reason: "converted the submitted command list into a validation object with required: true",
+			}],
+		};
+	}
+	if (isPlainObject(raw) && Array.isArray(raw.commands)
+		&& raw.commands.length > 0
+		&& raw.commands.every((item) => typeof item === "string" && item.trim())
+		&& (raw.required === undefined || raw.required === true)) {
+		return {
+			validation: { required: true, commands: uniqueNonEmpty(raw.commands as string[]) },
+			changes: [{
+				field: "validation",
+				reason: "repaired validation.required to the boolean true (intent: the listed commands are mandatory)",
+			}],
+		};
+	}
+	return {
+		changes: [{
+			field: "validation",
+			reason: "the submitted validation shape cannot be converted without losing the validation intent",
+		}],
+		unresolved: "validation must be an object shaped { required: boolean, commands?: string[] }; required states whether validation is mandatory and commands lists the applicable validation definitions. The submitted shape cannot be converted without losing that intent.",
+	};
+}
+
+export function buildTaskSpecRepair(options: TaskSpecExampleInput): TaskSpecRepairResult {
 	const toolName = options.toolName;
 	const submitted = isPlainObject(options.submitted) ? options.submitted : undefined;
 	const adapterCwd = typeof options.cwd === "string" && options.cwd.trim() ? options.cwd.trim() : undefined;
@@ -327,15 +737,47 @@ export function buildTaskSpecExample(options: TaskSpecExampleInput): Record<stri
 
 	const path = exampleStringField(options.input, ["path", "file", "filePath", "file_path", "pattern", "glob"]);
 	const command = exampleStringField(options.input, ["command", "cmd"]);
+	const agent = exampleStringField(options.input, ["agent"]);
 
 	const submittedRole = submitted && isNonEmptyString(submitted.role) && TASK_ROLES.includes(submitted.role as TaskRole)
 		? (submitted.role as TaskRole)
 		: undefined;
-	const role: TaskRole = isMutate
+	// IS-02 role source priority: the submitted role wins; otherwise the
+	// refused tool's intent (mutate → Worker, inspect/shell → Explorer);
+	// otherwise the host-resolved delegated role carried by the agent name.
+	// A subagent TaskSpec refusal never falls back to a blanket Explorer: with
+	// no trustworthy source the role is unresolved — never guessed from
+	// objective wording. Direct refusals of generic tools keep the historical
+	// minimal Explorer suggestion (the read-only ceiling, not a widening).
+	const toolRole: TaskRole | undefined = isMutate
 		? "worker"
 		: isInspect || isShell
 			? "explorer"
-			: submittedRole ?? "explorer";
+			: undefined;
+	const agentRole = submittedRole || toolRole ? undefined : inferTaskRoleFromAgent(agent);
+	const fallbackRole: TaskRole | undefined = submittedRole || toolRole || agentRole
+		? undefined
+		: toolName === "subagent"
+			? undefined
+			: "explorer";
+	const role = submittedRole ?? toolRole ?? agentRole ?? fallbackRole;
+
+	const changes: TaskSpecRepairChange[] = [];
+	const unresolvedFields: string[] = [];
+	if (submittedRole) {
+		changes.push({ field: "role", reason: `kept the submitted role "${submittedRole}"` });
+	} else if (toolRole) {
+		changes.push({ field: "role", reason: `derived role "${toolRole}" from the refused ${toolName} tool` });
+	} else if (agentRole) {
+		changes.push({ field: "role", reason: `kept the delegated role "${agentRole}" resolved from agent "${agent}"` });
+	} else if (fallbackRole) {
+		changes.push({ field: "role", reason: `suggested the minimal read-only role "explorer" for this generic tool refusal` });
+	} else if (agent) {
+		unresolvedFields.push("role");
+		changes.push({ field: "role", reason: `agent "${agent}" is unknown; its tool capability cannot be verified` });
+	} else {
+		unresolvedFields.push("role");
+	}
 
 	const submittedObjective = submitted && isNonEmptyString(submitted.objective)
 		? submitted.objective
@@ -350,6 +792,9 @@ export function buildTaskSpecExample(options: TaskSpecExampleInput): Record<stri
 				: isInspect && path
 					? `Inspect ${path} and report the findings.`
 					: "Describe the requested work for the worker in one or two sentences.");
+	if (submittedObjective) {
+		changes.push({ field: "objective", reason: "kept the submitted objective" });
+	}
 
 	const constraints: string[] = submitted && isStringArray(submitted.constraints)
 		? submitted.constraints.filter((item) => item.trim())
@@ -358,18 +803,15 @@ export function buildTaskSpecExample(options: TaskSpecExampleInput): Record<stri
 	if (role === "explorer") constraints.push(EXAMPLE_WORKER_REPORT_CONTRACT);
 	if (isMutate) constraints.push("Stay inside the objective and list every changed file in the WorkerReport.");
 
-	// Invalid validation shapes (array, non-boolean required, non-string-array
-	// commands) collapse to the minimal legal object; commands are omitted, not
-	// guessed.
-	const validation: { required: boolean; commands?: string[] } = submitted && validValidation(submitted.validation)
-		? (() => {
-			const raw = submitted.validation as Record<string, unknown>;
-			return {
-				required: raw.required as boolean,
-				...(isStringArray(raw.commands) && raw.commands.length > 0 ? { commands: raw.commands } : {}),
-			};
-		})()
-		: { required: false };
+	const validationRepair = repairSubmittedValidation(submitted?.validation);
+	changes.push(...validationRepair.changes);
+	if (validationRepair.unresolved) unresolvedFields.push("validation");
+
+	if (unresolvedFields.length > 0 || !role) {
+		// Not lossless: no resubmittable template is produced. The caller keeps
+		// refusing the original submission until the outstanding fields arrive.
+		return { status: "needs-input", changes, unresolvedFields };
+	}
 
 	const example: Record<string, unknown> = {
 		// The documented sentinel: replaced by a generated canonical id at
@@ -383,7 +825,7 @@ export function buildTaskSpecExample(options: TaskSpecExampleInput): Record<stri
 		...(submitted && isStringArray(submitted.acceptanceCriteria)
 			? { acceptanceCriteria: submitted.acceptanceCriteria.filter((item) => item.trim()) }
 			: {}),
-		validation,
+		...(validationRepair.validation ? { validation: validationRepair.validation } : {}),
 		...(submitted && isPlainObject(submitted.expectedEvidence) ? { expectedEvidence: submitted.expectedEvidence } : {}),
 		...(submitted && isStringArray(submitted.stopConditions)
 			? { stopConditions: submitted.stopConditions.filter((item) => item.trim()) }
@@ -415,9 +857,41 @@ export function buildTaskSpecExample(options: TaskSpecExampleInput): Record<stri
 			validation: { required: false },
 			stopConditions: [],
 		};
-		return minimal;
+		return { status: "repairable", example: minimal, changes, unresolvedFields: [] };
 	}
-	return example;
+	return { status: "repairable", example, changes, unresolvedFields: [] };
+}
+
+/**
+ * IS-02 — render a repair result next to a refusal. The field-change summary
+ * and the outstanding list are always shown; the copyable template and the
+ * "resubmit as-is" claim appear only for a lossless (repairable) result, so
+ * a template can never silently widen or narrow the delegated capability.
+ */
+export function appendTaskSpecRepair(reason: string, repair: TaskSpecRepairResult): string {
+	const lines = [reason, "", "TaskSpec repair summary:"];
+	if (repair.changes.length === 0) lines.push("- (no fields changed)");
+	for (const change of repair.changes) lines.push(`- ${change.field}: ${change.reason}`);
+	if (repair.unresolvedFields.length > 0) {
+		lines.push("", "Outstanding — supply these before resubmission:");
+		for (const field of repair.unresolvedFields) {
+			lines.push(field === "role"
+				? "- role: one of worker, explorer, validator, reviewer (or the host agent name). Permissions are never inferred from objective wording."
+				: `- ${field}: ${repair.changes.some((change) => change.field === field) ? repair.changes.find((change) => change.field === field)?.reason : "see the submitted field"}`);
+		}
+		lines.push(
+			"The original submission stays refused until the outstanding fields are supplied; validation requirements are never relaxed to make a template pass.",
+		);
+		return lines.join("\n");
+	}
+	lines.push(
+		"",
+		"The repaired TaskSpec is faithful to the submitted intent and can be resubmitted as-is:",
+		"```json",
+		JSON.stringify(repair.example, null, 2),
+		"```",
+	);
+	return lines.join("\n");
 }
 
 /**
@@ -442,6 +916,8 @@ export interface ExtractedTaskSpecResult {
 	titleAliasUsed: boolean;
 	errors: string[];
 	candidate?: Record<string, unknown>;
+	/** Exact source slice used for the embedded JSON candidate, when available. */
+	candidateText?: string;
 }
 
 function topLevelJsonCandidates(text: string): string[] {
@@ -505,32 +981,37 @@ export function extractTaskSpecDetails(
 
 		if (!isPlainObject(parsed)) continue;
 
+		// A TaskPacket wraps the same TaskSpec that older callers embedded at
+		// the top level. Read the nested spec so packetization is transparent to
+		// the lifecycle and identity checks.
+		const specValue = isPlainObject(parsed.spec) ? parsed.spec : parsed;
+
 		// Ignore ReviewRequest and WorkerReport payloads
 		if ("reviewMode" in parsed && "reportTaskId" in parsed) continue;
 		if ("status" in parsed && "changedFiles" in parsed && "evidence" in parsed) continue;
 
-		const matchingFields = TASKSPEC_CHARACTERISTIC_FIELDS.filter((field) => field in parsed);
+		const matchingFields = TASKSPEC_CHARACTERISTIC_FIELDS.filter((field) => field in specValue);
 		const hasCharacteristics = matchingFields.length >= 2 || (matchingFields.length === 1 && matchingFields[0] !== "taskId");
 		if (!hasCharacteristics) continue;
 
-		let objective: unknown = parsed.objective;
+		let objective: unknown = specValue.objective;
 		let titleAliasUsed = false;
-		if (isNonEmptyString(parsed.objective)) {
-			objective = parsed.objective;
-		} else if (isNonEmptyString(parsed.title)) {
-			objective = parsed.title;
+		if (isNonEmptyString(specValue.objective)) {
+			objective = specValue.objective;
+		} else if (isNonEmptyString(specValue.title)) {
+			objective = specValue.title;
 			titleAliasUsed = true;
 		}
 
-		const effectiveCwd = isNonEmptyString(parsed.cwd)
-			? parsed.cwd
+		const effectiveCwd = isNonEmptyString(specValue.cwd)
+			? specValue.cwd
 			: defaultCwd ?? (typeof process !== "undefined" ? process.cwd() : "");
-		const effectiveRole = isNonEmptyString(parsed.role)
-			? (parsed.role as TaskRole)
+		const effectiveRole = isNonEmptyString(specValue.role)
+			? (specValue.role as TaskRole)
 			: defaultRole;
 
 		const candidateToValidate: Record<string, unknown> = {
-			...parsed,
+			...specValue,
 			objective,
 			cwd: effectiveCwd,
 			role: effectiveRole,
@@ -540,35 +1021,35 @@ export function extractTaskSpecDetails(
 		if (errors.length === 0) {
 			const spec = createTaskSpec(
 				{
-					taskId: isNonEmptyString(parsed.taskId) ? parsed.taskId : undefined,
+					taskId: isNonEmptyString(specValue.taskId) ? specValue.taskId : undefined,
 					objective: objective as string,
 					cwd: effectiveCwd,
 					role: effectiveRole,
-					scope: isPlainObject(parsed.scope) ? (parsed.scope as TaskScope) : undefined,
-					constraints: isStringArray(parsed.constraints) ? parsed.constraints : undefined,
-					acceptanceCriteria: isStringArray(parsed.acceptanceCriteria) ? parsed.acceptanceCriteria : undefined,
-					validation: isPlainObject(parsed.validation) ? (parsed.validation as Partial<TaskValidation>) : undefined,
-					expectedEvidence: isPlainObject(parsed.expectedEvidence) ? (parsed.expectedEvidence as ExpectedEvidence) : undefined,
-					stopConditions: isStringArray(parsed.stopConditions) ? parsed.stopConditions : undefined,
-					additionalWorktreeRoots: isStringArray(parsed.additionalWorktreeRoots)
-						? parsed.additionalWorktreeRoots
+					scope: isPlainObject(specValue.scope) ? (specValue.scope as TaskScope) : undefined,
+					constraints: isStringArray(specValue.constraints) ? specValue.constraints : undefined,
+					acceptanceCriteria: isStringArray(specValue.acceptanceCriteria) ? specValue.acceptanceCriteria : undefined,
+					validation: isPlainObject(specValue.validation) ? (specValue.validation as Partial<TaskValidation>) : undefined,
+					expectedEvidence: isPlainObject(specValue.expectedEvidence) ? (specValue.expectedEvidence as ExpectedEvidence) : undefined,
+					stopConditions: isStringArray(specValue.stopConditions) ? specValue.stopConditions : undefined,
+					additionalWorktreeRoots: isStringArray(specValue.additionalWorktreeRoots)
+						? specValue.additionalWorktreeRoots
 						: undefined,
 				},
-				isNonEmptyString(parsed.taskId) ? parsed.taskId : undefined,
+				isNonEmptyString(specValue.taskId) ? specValue.taskId : undefined,
 			);
-			if (isPlainObject(parsed.budget)) {
-				(spec as { budget?: unknown }).budget = parsed.budget;
+			if (isPlainObject(specValue.budget)) {
+				(spec as { budget?: unknown }).budget = specValue.budget;
 			}
-			if (isPlainObject(parsed.cumulativeBudget)) {
-				(spec as { cumulativeBudget?: unknown }).cumulativeBudget = parsed.cumulativeBudget;
+			if (isPlainObject(specValue.cumulativeBudget)) {
+				(spec as { cumulativeBudget?: unknown }).cumulativeBudget = specValue.cumulativeBudget;
 			}
-			if (isNonEmptyString(parsed.model)) {
-				(spec as { model?: string }).model = parsed.model.trim();
+			if (isNonEmptyString(specValue.model)) {
+				(spec as { model?: string }).model = specValue.model.trim();
 			}
-			if (isNonEmptyString(parsed.thinking)) {
-				(spec as { thinking?: string }).thinking = parsed.thinking.trim();
+			if (isNonEmptyString(specValue.thinking)) {
+				(spec as { thinking?: string }).thinking = specValue.thinking.trim();
 			}
-			if (parsed.reportOnly === true) {
+			if (specValue.reportOnly === true) {
 				spec.reportOnly = true;
 			}
 			return {
@@ -577,6 +1058,7 @@ export function extractTaskSpecDetails(
 				titleAliasUsed,
 				errors: [],
 				candidate: parsed,
+				candidateText: candidate,
 			};
 		}
 
@@ -586,6 +1068,7 @@ export function extractTaskSpecDetails(
 				titleAliasUsed: false,
 				errors,
 				candidate: parsed,
+				candidateText: candidate,
 			};
 		}
 	}
@@ -706,17 +1189,27 @@ export interface TaskRecord {
 export interface TaskStoreOptions {
 	now?: () => Date;
 	onPersist?: (record: TaskRecord) => void;
+	/**
+	 * IS-01 — persistent cross-process identity allocator bound to the ledger
+	 * root. When present, `nextTaskId()` reserves globally unique ids from the
+	 * shared namespace instead of the process-local sequence.
+	 */
+	allocator?: TaskIdAllocator;
 }
+
+const RESTORED_ID_SHAPE = /^T-(\d{8})-(\d{3,})$/;
 
 export class TaskStore {
 	private readonly tasks = new Map<string, TaskRecord>();
 	private readonly clock: () => Date;
 	private readonly onPersist?: (record: TaskRecord) => void;
+	private readonly allocator?: TaskIdAllocator;
 	private sequence = 0;
 
 	constructor(options: TaskStoreOptions = {}) {
 		this.clock = options.now ?? (() => new Date());
 		this.onPersist = options.onPersist;
+		this.allocator = options.allocator;
 	}
 
 	now(): Date {
@@ -724,13 +1217,15 @@ export class TaskStore {
 	}
 
 	nextTaskId(): string {
+		if (this.allocator) return this.allocator.allocate();
 		this.sequence += 1;
 		return createTaskId(this.now(), this.sequence);
 	}
 
-	create(spec?: TaskSpec, alias?: string): TaskRecord {
-		const taskId = spec?.taskId?.trim() || this.nextTaskId();
-		if (this.tasks.has(taskId)) return this.tasks.get(taskId) as TaskRecord;
+	/**
+	 * IS-01 — build a fresh record for an id the caller has already proven free.
+	 */
+	private insertNew(taskId: string, spec: TaskSpec | undefined, alias: string | undefined): TaskRecord {
 		const timestamp = this.now().toISOString();
 		const aliases = alias && alias !== taskId ? [alias] : [];
 		const record: TaskRecord = {
@@ -757,6 +1252,89 @@ export class TaskStore {
 		};
 		this.tasks.set(taskId, record);
 		this.persist(record);
+		return record;
+	}
+
+	/**
+	 * Insert a record after `nextTaskId()` has already claimed its id. This
+	 * keeps allocation and Task snapshot creation as one explicit association.
+	 */
+	createAllocated(taskId: string, spec?: TaskSpec, alias?: string): TaskRecord {
+		if (this.tasks.has(taskId)) {
+			throw new TaskIdentityError(
+				"TASK_ID_CONFLICT",
+				`task id ${taskId} is already occupied; identity is never reused, continue the existing Task explicitly instead`,
+				{ taskId },
+			);
+		}
+		return this.insertNew(taskId, spec, alias);
+	}
+
+	/**
+	 * Legacy create remains compatible for injected in-memory stores. A
+	 * ledger-backed store reserves explicit ids before writing their snapshot.
+	 */
+	create(spec?: TaskSpec, alias?: string): TaskRecord {
+		const suppliedTaskId = spec?.taskId?.trim();
+		if (!suppliedTaskId || (this.allocator && hasGeneratedTaskId(spec))) {
+			const taskId = this.nextTaskId();
+			return this.insertNew(taskId, spec ? { ...spec, taskId } : spec, alias);
+		}
+		if (this.tasks.has(suppliedTaskId)) return this.tasks.get(suppliedTaskId) as TaskRecord;
+		if (this.allocator) this.allocator.reserve(suppliedTaskId);
+		return this.insertNew(suppliedTaskId, spec, alias);
+	}
+
+	/**
+	 * IS-01 `createTask` — create only: an occupied id is a structured
+	 * TASK_ID_CONFLICT. The old record's spec, cwd, aliases, state, reports,
+	 * evidence, reviews, and usage are never touched, and no snapshot is
+	 * overwritten.
+	 */
+	createTask(spec?: TaskSpec, alias?: string): TaskRecord {
+		const suppliedTaskId = spec?.taskId?.trim();
+		if (!suppliedTaskId || (this.allocator && hasGeneratedTaskId(spec))) {
+			const taskId = this.nextTaskId();
+			return this.insertNew(taskId, spec ? { ...spec, taskId } : spec, alias);
+		}
+		const taskId = suppliedTaskId;
+		if (this.tasks.has(taskId)) {
+			throw new TaskIdentityError(
+				"TASK_ID_CONFLICT",
+				`task id ${taskId} is already occupied; identity is never reused, continue the existing Task explicitly instead`,
+				{ taskId },
+			);
+		}
+		if (this.allocator) this.allocator.reserve(taskId);
+		return this.insertNew(taskId, spec, alias);
+	}
+
+	/**
+	 * IS-01 `continueTask` — explicit continuation: resolve the canonical id or
+	 * a registered alias, verify the workspace, and hand the record to the
+	 * caller, which applies the existing lifecycle rules. An auto-generated id
+	 * collision is never reinterpreted as a continuation.
+	 */
+	continueTask(taskId: string, cwd: string): TaskRecord {
+		const record = this.get(taskId);
+		if (!record) {
+			throw new TaskIdentityError(
+				"TASK_NOT_FOUND",
+				`unknown task: ${taskId}; continuing requires an explicit canonical id or a registered alias`,
+				{ taskId },
+			);
+		}
+		if (record.cwd) {
+			const current = normalizeWorkspaceIdentity(record.cwd);
+			const target = normalizeWorkspaceIdentity(cwd);
+			if (current !== target) {
+				throw new TaskIdentityError(
+					"TASK_WORKSPACE_MISMATCH",
+					`task ${record.taskId} belongs to workspace ${record.cwd}, not ${cwd}; cross-workspace continuation is refused`,
+					{ taskId: record.taskId },
+				);
+			}
+		}
 		return record;
 	}
 
@@ -823,6 +1401,18 @@ export class TaskStore {
 			record.recoveryAttempts = 0;
 		}
 		this.tasks.set(record.taskId, record);
+		// IS-01 — a restored record keeps its id occupied: advance the
+		// process-local sequence past any same-day restored suffix so in-memory
+		// allocation can never reissue it (ledger-backed stores reserve through
+		// the allocator's file-namespace scan instead).
+		const match = RESTORED_ID_SHAPE.exec(record.taskId);
+		if (match) {
+			const restoredStamp = match[1];
+			const localStamp = createTaskId(this.now(), 1).slice(2, 10);
+			if (restoredStamp === localStamp) {
+				this.sequence = Math.max(this.sequence, Number.parseInt(match[2], 10));
+			}
+		}
 	}
 
 	private touch(record: TaskRecord): TaskRecord {

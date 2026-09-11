@@ -134,10 +134,10 @@ assert.match(ledgerStore, /isQuarantined\(record\.taskId\)/, "C16-9: write refus
 assert.match(reservations, /rekey\(/, "C37-1: BudgetReservations exposes rekey");
 assert.equal((orchestrate.match(/this\.reservations\.rekey\(/g) ?? []).length, 1, "C37-2: orchestrate rekeys in exactly one place");
 // R01/R02 — the replace site rekeys immediately (standalone-Explorer stamping sits between); the example sentinel is not stored as an alias.
-assert.match(orchestrate, /const alias = spec\.taskId === TASKSPEC_EXAMPLE_SENTINEL \? undefined : spec\.taskId;\s*\n\s*task = this\.store\.create\(storedSpec, alias\);\s*\n(?:[^\n]*\n){0,2}\s*this\.reservations\.rekey\(spec\.taskId, task\.taskId, event\.toolCallId\);/, "C37-3: rekey runs immediately after the shouldReplaceTaskId create");
+assert.match(orchestrate, /const alias = spec\.taskId === TASKSPEC_EXAMPLE_SENTINEL \|\| hasGeneratedTaskId\(spec\) \? undefined : spec\.taskId;\s*\n\s*task = this\.store\.createAllocated\(generated, storedSpec, alias\);\s*\n(?:[^\n]*\n){0,2}\s*this\.reservations\.rekey\(spec\.taskId, task\.taskId, event\.toolCallId\);/, "C37-3: rekey runs immediately after the allocator-backed create");
 assert.match(orchestrate, /emptyTaskUsage/, "C37-4: first-delegation budget is computed from emptyTaskUsage");
 assert.doesNotMatch(orchestrate, /this\.store\.create\(spec\);\s*\n\s*this\.reservations\.rekey/, "C37-5: the matching-id create does not rekey");
-assert.equal((orchestrate.match(/this\.store\.create\(/g) ?? []).length, 3, "C37-6: store.create sites stay three; only the replace site rekeys");
+assert.equal((orchestrate.match(/this\.store\.create\(/g) ?? []).length, 2, "C37-6: ordinary store.create sites remain limited; allocator-backed replacement uses createAllocated");
 
 assert.match(reservations, /wouldRefuse\(taskId/, "C16-10: BudgetReservations exposes wouldRefuse");
 assert.match(reservations.slice(reservations.indexOf("reserve(taskId")), /this\.wouldRefuse\(/, "C16-11: reserve delegates refusal to wouldRefuse");

@@ -47,12 +47,14 @@ import {
 	sessionRootBudgetWithEnabled,
 } from "./floors.ts";
 import { configuredRoleModelSummaries, loadRoleModelPolicy } from "./role-models.ts";
+import { ConcurrencyController, loadConcurrencyDefault, saveConcurrencyDefault, parseConcurrencyLimit } from "./concurrency.ts";
 
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
 	? resolve(process.env.PI_CODING_AGENT_DIR)
 	: join(homedir(), ".pi", "agent");
 const OFF_MARKER = join(AGENT_DIR, "planner-only.off");
 const SESSION_ROOT_BUDGET_ON_MARKER = join(AGENT_DIR, "planner-only", "session-root-budget.on");
+const CONCURRENCY_CONFIG = join(AGENT_DIR, "planner-only", "concurrency.json");
 const STATUS_KEY = "planner-only";
 const IS_SUBAGENT = process.env.PI_SUBAGENT_CHILD === "1";
 const PLANNER_SAFE_TOOLS = new Set([
@@ -205,7 +207,10 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	ensurePricingFile();
 	let pricing = loadPricingTable();
 	let ledger = new UsageLedger({ pricing });
+	const concurrencyConfig = loadConcurrencyDefault(CONCURRENCY_CONFIG);
+	const concurrency = new ConcurrencyController({ savedLimit: concurrencyConfig.limit, saved: concurrencyConfig.source === "saved", enforceWorkspace: false });
 	const orchestrator = new PlannerOrchestrator({
+		concurrency,
 		gitRunner,
 		artifactDirs: () => artifactDirsFor(latestCtx ?? ({ hasUI: false, cwd: process.cwd() } as ExtensionContext)),
 		ledgerDir: AGENT_DIR,
@@ -1272,6 +1277,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					lines.push(`Marker: ${OFF_MARKER}`);
 				}
 				lines.push(`Usage log: ${logStatus}`);
+				lines.push(orchestrator.renderConcurrencyStatus());
 				lines.push(`Oracle suite: ${oracleSuiteMode()}`);
 				const rateWarning = rootRateWarning(ctx);
 				if (rateWarning) lines.push(rateWarning);
@@ -1287,6 +1293,39 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				const sessionRootEval = evaluateSessionRootBudget(ledger.sessionRootSpend(), sessionRootBudget);
 				lines.push("", formatSessionRootBudgetStatus(sessionRootEval));
 				notify(ctx, lines.join("\n"), rateWarning || sessionRootEval.level !== "ok" ? "warning" : "info");
+				return;
+			}
+			if (action === "concurrency") {
+				const requested = parts[1];
+				if (requested === undefined) {
+					notify(ctx, orchestrator.renderConcurrencyStatus());
+					return;
+				}
+				if (requested.toLowerCase() === "reset" && parts.length === 2) {
+					orchestrator.resetConcurrencyLimit();
+					notify(ctx, orchestrator.renderConcurrencyStatus());
+					return;
+				}
+				const limit = parseConcurrencyLimit(requested);
+				const extra = parts.slice(2);
+				if (limit === undefined || extra.some((item) => item !== "--save") || extra.filter((item) => item === "--save").length > 1) {
+					notify(ctx, "Invalid concurrency limit. Use a positive safe integer and optional --save.", "warning");
+					return;
+				}
+				const changed = orchestrator.setConcurrencyLimit(limit);
+				if (!changed.ok) {
+					notify(ctx, changed.error, "warning");
+					return;
+				}
+				if (extra.includes("--save")) {
+					const saved = saveConcurrencyDefault(CONCURRENCY_CONFIG, limit);
+					if (!saved.ok) {
+						notify(ctx, `Concurrency changed for this session, but save failed: ${saved.error}`, "warning");
+						return;
+					}
+					orchestrator.setConcurrencySavedLimit(limit);
+				}
+				notify(ctx, orchestrator.renderConcurrencyStatus());
 				return;
 			}
 			if (action === "on") {

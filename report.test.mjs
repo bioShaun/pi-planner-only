@@ -275,7 +275,7 @@ function assertRepaired(raw, expectedPatch, notePattern, context) {
 
 // C23: not-run validation cannot claim a successful exit code; drop the code.
 {
-	for (const exitCode of [0, "0"]) {
+	for (const exitCode of [0, "0", null]) {
 		const { report, repairs } = normalizeWorkerReport(validShape({
 			validation: [{ command: "npm test", type: "test", status: "not-run", exitCode, summary: "not run" }],
 		}));
@@ -583,10 +583,11 @@ for (const prefix of ["75d7ae1c", "e63c7583"]) {
 	assert.equal(typeof item, "object");
 	assert.equal(item.type, "test");
 	assert.equal(item.status, "not-run");
+	assert.equal("exitCode" in item, false);
 	assert.equal(typeof item.summary, "string");
 	assert.ok(item.summary.length > 0);
 	assert.equal(typeof item.command, "string");
-	assert.equal(typeof item.exitCode, "number");
+	assert.equal("exitCode" in item, false);
 }
 
 {

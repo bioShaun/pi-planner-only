@@ -110,7 +110,21 @@ The parent embeds a `TaskSpec` JSON object in the subagent task:
 sampled, and a second declared `worker` for the same cwd is blocked (one writer
 per cwd). If `taskId` is missing, malformed, or not today's date, the extension
 replaces it with a generated id, keeps the original id as an alias, and notifies
-Root in the delegation result. Restricted roles remap onto builtin agents:
+Root in the delegation result. The generated id is reserved in the shared ledger
+namespace with an atomic cross-process claim: restored, terminal, over-cap, and
+unreadable snapshot ids remain occupied. Explicit continuation resolves a
+canonical id or registered alias and checks the workspace; an id collision is
+never treated as continuation. Restricted roles remap onto builtin agents:
+
+Invalid TaskSpec refusals show a repair summary that preserves the trusted
+role and validation intent. A command-list shorthand becomes explicit mandatory
+validation; an unconvertible validation shape remains refused and asks for
+input, rather than silently becoming `required: false`. Report-only corrections
+must identify one existing non-terminal Task. Multiple or unknown ids are
+refused before child launch and never create a placeholder. Host-default model
+preflight is recorded for attribution but is not written into downstream model
+fields, allowing host settings fallbacks to apply; explicit model selections
+remain launch parameters.
 
 | Role | Builtin agent | Child tools |
 |---|---|---|

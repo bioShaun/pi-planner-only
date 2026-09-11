@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
-import { mkdtempSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, symlinkSync, rmSync, writeFileSync } from "node:fs";
 import {
 	TaskStore,
+	TaskIdAllocator,
 	createTaskId,
 	createTaskSpec,
 	isExplicitlyNoValidation,
@@ -84,7 +86,48 @@ assert.deepEqual(validateTaskSpec(createTaskSpec({ objective: "required without 
 
 const explicitlyDisabledSpec = createTaskSpec({ objective: "skip validation", cwd, validation: { required: false } }, "T-20260831-002");
 assert.equal(isExplicitlyNoValidation(explicitlyDisabledSpec), true);
+
 assert.equal(isExplicitlyNoValidation(createTaskSpec({ objective: "default validation", cwd }, "T-20260831-003")), false);
+
+// IS-01/I01-I05 — the persistent allocator owns ids outside the restored
+// in-memory subset, including claims and unreadable historical snapshots.
+{
+	const root = mkdtempSync(join(cwd, ".planner-only-task-id-"));
+	const now = () => new Date("2026-09-11T12:00:00.000Z");
+	try {
+		const firstAllocator = new TaskIdAllocator(root, { now });
+		assert.equal(firstAllocator.allocate(), "T-20260911-001");
+		const secondAllocator = new TaskIdAllocator(root, { now });
+		assert.equal(secondAllocator.allocate(), "T-20260911-002", "a fresh process skips the first durable claim");
+		mkdirSync(join(root, "planner-only", "ledger"), { recursive: true });
+		writeFileSync(
+			join(root, "planner-only", "ledger", "T-20260911-003.json"),
+			"not parseable but still occupied",
+		);
+		assert.equal(secondAllocator.allocate(), "T-20260911-004", "unparseable historical ids are never reused");
+		assert.throws(
+			() => secondAllocator.reserve("T-20260911-003"),
+			(error) => error?.code === "TASK_ID_CONFLICT",
+			"explicit reuse reports a structured conflict",
+		);
+		const moduleUrl = new URL("./task.ts", import.meta.url).href;
+		const childCode = `import { TaskIdAllocator } from ${JSON.stringify(moduleUrl)}; const allocator = new TaskIdAllocator(process.argv[1], { now: () => new Date("2026-09-11T12:00:00.000Z") }); console.log(allocator.allocate());`;
+		const runChild = () => new Promise((resolve) => {
+			const child = spawn(process.execPath, ["--experimental-strip-types", "-e", childCode, root], { stdio: ["ignore", "pipe", "pipe"] });
+			let stdout = "";
+			let stderr = "";
+			child.stdout.on("data", (chunk) => { stdout += chunk; });
+			child.stderr.on("data", (chunk) => { stderr += chunk; });
+			child.on("close", (code) => resolve({ code, stdout, stderr }));
+		});
+		const [childA, childB] = await Promise.all([runChild(), runChild()]);
+		assert.equal(childA.code, 0, `first concurrent allocator exited cleanly: ${childA.stderr}`);
+		assert.equal(childB.code, 0, `second concurrent allocator exited cleanly: ${childB.stderr}`);
+		assert.notEqual(childA.stdout.trim(), childB.stdout.trim(), "independent processes receive distinct ids");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+}
 
 assert.ok(validateTaskSpec({ ...spec, taskId: "" }).length > 0);
 assert.ok(validateTaskSpec({ ...spec, role: "admin" }).length > 0);

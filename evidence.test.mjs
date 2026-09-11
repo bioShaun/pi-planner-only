@@ -1222,4 +1222,20 @@ assert.equal(
 	}
 }
 
+// O-03: a read-only execution records concurrent changes as observations and
+// never forces the Explorer to claim another execution's files.
+{
+	const readOnly = compareExecutionTruth(
+		makeBase({ changedPaths: [] }),
+		makeCurrent({ changedPaths: ["src/a.ts", "src/other.ts"] }),
+		makeReport({ changedPaths: [] }),
+		{ scope: { allowedPaths: ["src/a.ts", "src/other.ts"] }, readOnly: true },
+	);
+	assert.deepEqual(readOnly.truthPaths, []);
+	assert.deepEqual(readOnly.executionChangedPaths, []);
+	assert.deepEqual(readOnly.undeclaredPaths, []);
+	assert.deepEqual(readOnly.findings, []);
+	assert.deepEqual(readOnly.observedExternalPaths, ["/repo/src/a.ts", "/repo/src/other.ts"]);
+}
+
 console.log("planner-only evidence: PASS");

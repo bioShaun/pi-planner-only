@@ -88,14 +88,17 @@ import { OutputResolver, outputDigest, normalizeCompletionReceipt, RunRecordStor
 import type { CompletionReceipt, OutputReference, OutputResolution, RunRecord } from "./completion.ts";
 import type { LedgerCorrupt } from "./ledger-store.ts";
 import {
+	TaskIdAllocator,
+	TaskIdentityError,
 	TaskStore,
 	TASKSPEC_EXAMPLE_SENTINEL,
-	appendTaskSpecExample,
-	buildTaskSpecExample,
+	appendTaskSpecRepair,
+	buildTaskSpecRepair,
 	createTaskSpec,
 	executingStaleMinutes,
 	extractTaskSpec,
 	extractTaskSpecDetails,
+	hasGeneratedTaskId,
 	isExplicitlyNoValidation,
 	isExecutingStale,
 	isHolderStale,
@@ -129,6 +132,7 @@ import type {
 import { emptyTaskUsage, summarizeTaskBudget } from "./usage.ts";
 import { BudgetReservations } from "./reservations.ts";
 import type { ReservationBudget } from "./reservations.ts";
+import { ConcurrencyController } from "./concurrency.ts";
 
 export interface PlannerRecoveryResult {
 	status: "recorded" | "pending" | "unbound" | "duplicate";
@@ -342,6 +346,8 @@ export interface OrchestratorDeps {
 	delegationRateKind?: (model: string | undefined) => DelegationRateKind;
 	/** Live host model registry/defaults. When absent, legacy unit callers skip host verification. */
 	getModelPreflightContext?: () => Omit<ModelPreflightContext, "input"> | undefined;
+	/** Session-wide child execution capacity and read/write admission. */
+	concurrency?: ConcurrencyController;
 }
 
 export type { DelegationKind };
@@ -564,6 +570,10 @@ function detailString(details: Record<string, unknown>, key: string): string | u
 }
 
 function hasCompletionEvidence(details: Record<string, unknown>): boolean {
+	if (details.outputState === "present" || details.outputState === "absent") return true;
+	if (details.outputRef && typeof details.outputRef === "object") return true;
+	if (details.artifactPaths && typeof details.artifactPaths === "object") return true;
+	if (details.terminal && typeof details.terminal === "object") return true;
 	const results = details.results;
 	if (Array.isArray(results) && results.length > 0) {
 		for (const item of results) {
@@ -703,6 +713,7 @@ export class PlannerOrchestrator {
 	private sessionRootBudgetConfig?: SessionRootBudgetConfig;
 	private readonly delegationRateKind: (model: string | undefined) => DelegationRateKind;
 	private readonly getModelPreflightContext?: () => Omit<ModelPreflightContext, "input"> | undefined;
+	private readonly concurrency: ConcurrencyController;
 	/** toolCallId -> delegated task + invocation kind. */
 	private readonly delegations = new Map<string, DelegationRecord>();
 	private readonly reservations = new BudgetReservations();
@@ -777,6 +788,7 @@ export class PlannerOrchestrator {
 			this.runRecords = new RunRecordStore(join(deps.ledgerDir, "planner-only", "run-state"));
 			this.runRecords.load();
 			this.store = new TaskStore({
+				allocator: new TaskIdAllocator(deps.ledgerDir),
 				onPersist: (record) => snapshots.write(record),
 			});
 		} else {
@@ -789,6 +801,7 @@ export class PlannerOrchestrator {
 			?? (deps.getSessionRootUsage ? loadSessionRootBudgetConfig() : undefined);
 		this.delegationRateKind = deps.delegationRateKind ?? (() => "unknown");
 		this.getModelPreflightContext = deps.getModelPreflightContext;
+		this.concurrency = deps.concurrency ?? new ConcurrencyController();
 		this.structuredDelegationMode =
 			deps.structuredDelegationMode ?? readStructuredDelegationMode();
 	}
@@ -837,8 +850,24 @@ export class PlannerOrchestrator {
 	private endDelegation(toolCallId: string): void {
 		const record = this.delegations.get(toolCallId);
 		this.delegations.delete(toolCallId);
+		this.concurrency.release(toolCallId);
 		if (record) this.reservations.release(record.taskId, toolCallId);
 	}
+
+	/** Current child capacity and workspace reservations for /planner-only status. */
+	renderConcurrencyStatus(): string {
+		const status = this.concurrency.status();
+		const lines = [`Concurrency: ${status.occupied}/${status.limit} occupied, ${status.available} available (source: ${status.source})`];
+		for (const item of status.reservations) {
+			lines.push(`  - ${item.taskId ?? "unbound"} execution=${item.id} role=${item.role} capability=${item.capability} workspace=${item.workspaces.join(", ") || "none"}`);
+		}
+		return lines.join("\n");
+	}
+
+	setConcurrencyLimit(limit: number): { ok: true } | { ok: false; error: string } { return this.concurrency.setSessionLimit(limit); }
+	setConcurrencySavedLimit(limit: number): { ok: true } | { ok: false; error: string } { return this.concurrency.setSavedLimit(limit); }
+	resetConcurrencyLimit(): void { this.concurrency.resetSessionLimit(); }
+	getConcurrencyStatus() { return this.concurrency.status(); }
 
 	private untrustedLedgerRefusal(taskId: string): string {
 		const reason = this.untrustedBalances.get(taskId) ?? "unreadable snapshot";
@@ -1090,6 +1119,9 @@ export class PlannerOrchestrator {
 			...(execution.aRun.finalGitRef ? { aRef: execution.aRun.finalGitRef } : {}),
 			...(execution.cReport?.finalGitRef ? { cRef: execution.cReport.finalGitRef } : {}),
 			attributedFiles: execution.truthPaths ?? [],
+			...(execution.executionChangedPaths?.length ? { executionChangedFiles: execution.executionChangedPaths } : {}),
+			...(execution.committedPaths?.length ? { committedFiles: execution.committedPaths } : {}),
+			...(execution.observedExternalPaths?.length ? { observedExternalFiles: execution.observedExternalPaths } : {}),
 			undeclaredFiles: execution.undeclaredPaths ?? [],
 			outOfScopeFiles: execution.outOfScopePaths ?? [],
 			...(execution.freshness
@@ -1379,11 +1411,15 @@ export class PlannerOrchestrator {
 			...(task.spec?.scope ? { scope: task.spec.scope } : {}),
 			...(roots ? { additionalWorktreeRoots: roots } : {}),
 			...(execution.reportOnly ? { reportOnly: true } : {}),
+			...(execution.kind === "explorer" ? { readOnly: true } : {}),
 			...(priorTruthPaths.length > 0 ? { priorTruthPaths } : {}),
 		});
 		this.store.completeExecution(task.taskId, execution.executionId, {
 			reportIndex,
 			truthPaths: truth.truthPaths,
+			executionChangedPaths: truth.executionChangedPaths,
+			committedPaths: truth.committedPaths,
+			observedExternalPaths: truth.observedExternalPaths,
 			undeclaredPaths: truth.undeclaredPaths,
 			outOfScopePaths: truth.outOfScopePaths,
 			extraDeclaredPaths: truth.extraDeclaredPaths,
@@ -1594,6 +1630,7 @@ export class PlannerOrchestrator {
 			const record = this.delegations.get(event.toolCallId);
 			if (!record) {
 				this.reservations.releaseByToolCall(event.toolCallId);
+				this.concurrency.release(event.toolCallId);
 			} else {
 				// Ticket 15: stamp the granted budget here rather than at the five
 				// delegations.set sites, for the same reason endDelegation is the one
@@ -1637,6 +1674,43 @@ export class PlannerOrchestrator {
 		}
 		if (inputRecord.reportOnly === true) {
 			target = bindReportOnlyFallback(target, this.reportOnlyFallbackTask(cwd));
+			const namedTaskIds = target?.namedTaskIds ?? [];
+			const explicitTaskId = target?.taskId ?? target?.spec?.taskId;
+			if (!target) {
+				return {
+					block: {
+						code: "REPORT_TARGET_UNBOUND",
+						reason: "Planner-only guard: report-only correction has no verifiable Task target; embed the canonical TaskSpec or taskId before resubmission.",
+					},
+				};
+			}
+			if (explicitTaskId && !target.task) {
+				return {
+					block: {
+						code: "REPORT_TARGET_UNBOUND",
+						reason: `Planner-only guard: report-only correction targets unknown Task ${explicitTaskId}; no placeholder Task is created. Bind an existing canonical task or alias explicitly.`,
+					},
+				};
+			}
+			if (namedTaskIds.length > 0 && !target.task) {
+				const code = namedTaskIds.length > 1 ? "REPORT_TARGET_AMBIGUOUS" : "REPORT_TARGET_UNBOUND";
+				return {
+					block: {
+						code,
+						reason: namedTaskIds.length > 1
+							? `Planner-only guard: report-only correction names multiple Task ids (${namedTaskIds.join(", ")}); target selection is ambiguous and no placeholder Task is created. Embed one canonical TaskSpec or taskId.`
+							: `Planner-only guard: report-only correction names unknown Task ${namedTaskIds[0]}; no placeholder Task is created. Embed a canonical TaskSpec or taskId for an existing Task.`,
+					},
+				};
+			}
+			if ((explicitTaskId || namedTaskIds.length > 0) && target.task && !canRebindNamedTask(target.task.state)) {
+				return {
+					block: {
+						code: "REPORT_TARGET_UNBOUND",
+						reason: `Planner-only guard: report-only correction targets Task ${target.task.taskId}, whose state is ${target.task.state}; no placeholder Task is created and terminal Tasks cannot receive corrections.`,
+					},
+				};
+			}
 		}
 		// R02 — the role stamped by prepareRoleDelegation survives the agent
 		// remap, so an unstructured explorer still registers as one.
@@ -1644,6 +1718,61 @@ export class PlannerOrchestrator {
 			? (inputRecord.__delegationRole as TaskRole)
 			: undefined;
 		const role = stampedRole ?? target?.role ?? "worker";
+		// Reserve capacity before any Task, budget, evidence, or writer mutation.
+		// Reader/reader overlap is safe in phase one; every other overlapping
+		// capability is conservatively serialized by the controller.
+		const embeddedTaskLooksInvalid = typeof inputRecord.task === "string" && (() => {
+			try {
+				const rawTask = inputRecord.task as string;
+				const jsonText = rawTask.match(/\{[\s\S]*\}/)?.[0];
+				if (!jsonText) return false;
+				const candidate = JSON.parse(jsonText) as Record<string, unknown>;
+				if (!candidate || typeof candidate !== "object") return false;
+				if ("taskId" in candidate && (!candidate.objective || typeof candidate.objective !== "string" || !candidate.objective.trim())) return true;
+				const validation = candidate.validation;
+				if (!validation || typeof validation !== "object") return false;
+				const validationRecord = validation as Record<string, unknown>;
+				if ("required" in validationRecord && typeof validationRecord.required !== "boolean") return true;
+				return validationRecord.required === true && (!Array.isArray(validationRecord.commands) || validationRecord.commands.length === 0);
+			} catch {
+				return false;
+			}
+		})();
+		if ((!hostAction || hostAction === "execution") && !embeddedTaskLooksInvalid && !(role === "validator" && !target?.task && !target?.spec)) {
+			const reservationTaskId = target?.task?.taskId ?? target?.taskId;
+			const declaredRoots = target?.task?.spec?.additionalWorktreeRoots
+				?? (target?.spec?.additionalWorktreeRoots ?? []);
+			const admissionCwd = target?.task?.cwd ?? target?.spec?.cwd ?? cwd;
+			const capability = role === "explorer" ? "reader" : role === "reviewer" ? "reviewer" : "writer";
+			const admissionWorkspaces = role === "explorer" && target?.task ? [] : [admissionCwd, ...declaredRoots];
+			const admission = this.concurrency.reserve({
+				id: event.toolCallId,
+				...(reservationTaskId ? { taskId: reservationTaskId } : {}),
+				...(target?.task ? { state: target.task.state } : {}),
+				structured: Boolean(target?.spec),
+				role,
+				capability,
+				workspaces: admissionWorkspaces,
+			});
+			if (admission.refusal) {
+				if (admission.refusal.code === "WORKSPACE_CONFLICT") {
+					return {
+						conflict: {
+							conflict: true,
+							taskId: admission.refusal.conflictingIds?.[0],
+							reason: `${admission.refusal.reason}; occupied=${admission.refusal.occupied}, limit=${admission.refusal.limit}, available=${admission.refusal.available}. Retry after a trusted child terminal event.`,
+						},
+					};
+				}
+				return {
+					block: {
+						code: admission.refusal.code,
+						details: admission.refusal,
+						reason: `${admission.refusal.reason}; occupied=${admission.refusal.occupied}, limit=${admission.refusal.limit}, available=${admission.refusal.available}. Retry after a trusted child terminal event.`,
+					},
+				};
+			}
+		}
 		const roleModelPolicy = loadRoleModelPolicy();
 		this.roleModelPolicyEnabled = roleModelPolicy.enabled;
 		if (roleModelPolicy.enabled && this.roleModelMismatchRecorded) {
@@ -1658,13 +1787,12 @@ export class PlannerOrchestrator {
 				return { block: { reason: error instanceof Error ? error.message : String(error) } };
 			}
 		}
-		// Ticket 42 — report-only corrections may omit an embedded TaskSpec in
-		// Root prose; use the live Task's spec so binding does not warn/placeholder.
 		const reportOnlyInput = inputRecord.reportOnly === true;
 		const spec = target?.spec
 			?? (reportOnlyInput && target?.task?.spec
 				? { ...target.task.spec, reportOnly: true }
 				: undefined);
+
 		// RR-07: verify when the host exposes a registry; otherwise record
 		// unverified-and-continue before any session budget, reservation, evidence,
 		// or writer-lock side effect can occur.
@@ -1696,18 +1824,21 @@ export class PlannerOrchestrator {
 				...(taskSpecThinking ? { taskSpecThinking } : {}),
 			});
 			if (preflight.effective) {
+				const effectiveModel = preflight.effective.provider
+					? `${preflight.effective.provider}/${preflight.effective.model}`
+					: preflight.effective.model;
 				preflightSummary = {
-					model: preflight.effective.provider
-						? `${preflight.effective.provider}/${preflight.effective.model}`
-						: preflight.effective.model,
+					model: effectiveModel,
 					thinking: preflight.effective.thinking,
 					source: preflight.effective.source,
 					verification: "verified",
 				};
-				inputRecord.model = preflight.effective.provider
-					? `${preflight.effective.provider}/${preflight.effective.model}`
-					: preflight.effective.model;
-				inputRecord.thinking = preflight.effective.thinking;
+				// A host default is already resolved by the downstream host. Keep it
+				// out of the input so the host can apply settings.json fallbacks.
+				if (preflight.effective.source !== "host-default") {
+					inputRecord.model = effectiveModel;
+					inputRecord.thinking = preflight.effective.thinking;
+				}
 			}
 			if (preflight.status !== "verified") {
 				const error = preflight.error;
@@ -1724,7 +1855,9 @@ export class PlannerOrchestrator {
 			if (preflight.effective) {
 				resolved = {
 					role,
-					model: inputRecord.model as string,
+					model: preflight.effective.provider
+						? `${preflight.effective.provider}/${preflight.effective.model}`
+						: preflight.effective.model,
 					thinking: preflight.effective.thinking,
 				};
 			}
@@ -1853,12 +1986,12 @@ export class PlannerOrchestrator {
 			// from the invalid candidate's own fields.
 			return {
 				block: {
-					reason: appendTaskSpecExample(
+					reason: appendTaskSpecRepair(
 						[
 							`Planner-only guard: embedded TaskSpec is invalid (${specDetails.errors.join("; ")}).`,
 							"Embed a valid TaskSpec JSON in the subagent task prompt.",
 						].join("\n"),
-						buildTaskSpecExample({
+						buildTaskSpecRepair({
 							toolName: "subagent",
 							input: event.input,
 							cwd,
@@ -2089,7 +2222,7 @@ export class PlannerOrchestrator {
 			// reportOnly is invocation-scoped: the persisted TaskSpec never carries
 			// it, so later normal delegations do not inherit report-only leniency.
 			const { reportOnly: _invocationOnly, ...persisted } = spec;
-			const existing = this.store.get(spec.taskId);
+			const existing = hasGeneratedTaskId(spec) ? undefined : this.store.get(spec.taskId);
 			if (existing) {
 				task = existing;
 				if (role === "explorer") {
@@ -2099,14 +2232,14 @@ export class PlannerOrchestrator {
 					existing.taskId,
 					spec.taskId === existing.taskId ? persisted : { ...persisted, taskId: existing.taskId },
 				);
-		} else if (shouldReplaceTaskId(spec.taskId, this.store.now())) {
+		} else if (hasGeneratedTaskId(spec) || shouldReplaceTaskId(spec.taskId, this.store.now())) {
 			const generated = this.store.nextTaskId();
 			const storedSpec = { ...persisted, taskId: generated };
 			// R01 — the example sentinel is never stored as an alias, so pasting
 			// the same example JSON a second time starts a new Task instead of
 			// rebinding to the first one.
-			const alias = spec.taskId === TASKSPEC_EXAMPLE_SENTINEL ? undefined : spec.taskId;
-			task = this.store.create(storedSpec, alias);
+			const alias = spec.taskId === TASKSPEC_EXAMPLE_SENTINEL || hasGeneratedTaskId(spec) ? undefined : spec.taskId;
+			task = this.store.createAllocated(generated, storedSpec, alias);
 			if (role === "explorer") task.standaloneExplorer = true;
 			if (role === "explorer") explorerOwnership = "standalone";
 			this.reservations.rekey(spec.taskId, task.taskId, event.toolCallId);
@@ -2174,6 +2307,7 @@ export class PlannerOrchestrator {
 						...(floorLimits ? { floorLimits } : {}),
 						...(floorSummary ? { floorSummary } : {}),
 					});
+					this.concurrency.setTaskId(event.toolCallId, `unbound-explorer-${event.toolCallId}`);
 					this.recordHistory(`unbound-explorer-${event.toolCallId}`, {
 						toolCallId: event.toolCallId,
 						role: "explorer",
@@ -2205,6 +2339,7 @@ export class PlannerOrchestrator {
 		const exampleTaskIds = [target?.taskId, spec?.taskId]
 			.filter((taskId): taskId is string => taskId === TASKSPEC_EXAMPLE_SENTINEL);
 		stampCanonicalTaskId(input, task.taskId, exampleTaskIds);
+		this.concurrency.setTaskId(event.toolCallId, task.taskId);
 		// R02 — an auxiliary Explorer never advances, supersedes, or re-samples
 		// the assisted Task: parallel inspection must leave the other work's
 		// lifecycle, baseline, and pending writers exactly as they are.
@@ -2823,6 +2958,11 @@ export class PlannerOrchestrator {
 
 	private resolveDelegationOutput(record: DelegationRecord): OutputResolution {
 		if (record.outputRef) {
+			const task = this.store.get(record.taskId);
+			const trustedRoots = [
+				...this.delegationArtifactDirs(record),
+				...(task?.cwd ? [task.cwd] : []),
+			].filter(Boolean);
 			const receipt: CompletionReceipt = {
 				version: 1,
 				source: "reconcile",
@@ -2832,7 +2972,7 @@ export class PlannerOrchestrator {
 				outputState: "present",
 				outputRef: record.outputRef,
 			};
-			return new OutputResolver().resolve(receipt);
+			return new OutputResolver({ trustedRoots }).resolve(receipt);
 		}
 		const text = record.runId ? readLargestRunOutput(record.asyncDir, record.runId) : undefined;
 		return text === undefined
@@ -3103,7 +3243,7 @@ export class PlannerOrchestrator {
 		const delegation = this.delegations.get(event.toolCallId);
 		if (!delegation) return;
 		const executionId = this.executionIdFor(delegation, event.toolCallId);
-		const text = resultText(event);
+		let text = resultText(event);
 		const interruptAcknowledged = /interrupt\s+requested/i.test(text)
 			&& !hasCompletionEvidence(eventDetails(event))
 			&& !eventDetails(event).terminal;
@@ -3233,6 +3373,25 @@ export class PlannerOrchestrator {
 				}],
 			};
 		}
+		const completion = normalizeCompletionReceipt(event.details, "sync");
+		if (completion?.runId) delegation.runId = completion.runId;
+		if (completion?.outputRef) delegation.outputRef = completion.outputRef;
+		if (completion?.inlineOutput !== undefined) {
+			text = completion.inlineOutput;
+		} else if (completion?.outputRef) {
+			const resolution = this.resolveDelegationOutput(delegation);
+			if (resolution.kind !== "loaded") {
+				const task = this.store.get(delegation.taskId);
+				if (task) {
+					this.markRunTerminal(task, executionId, completion.terminal?.state ?? "completion received");
+					this.markRunIngestion(task, executionId, resolution);
+				}
+				return {
+					content: [{ type: "text", text: `[PLANNER-ONLY] Output for task ${delegation.taskId} is ${resolution.code}; complete output remains recoverable through planner_recover.` }],
+				};
+			}
+			text = resolution.text;
+		}
 		this.endDelegation(event.toolCallId);
 		const receiptId = runIdFromReceipt(event);
 		if (receiptId) {
@@ -3294,7 +3453,12 @@ export class PlannerOrchestrator {
 		const parsed = parseSubagentNotify(content);
 		if (!parsed) return;
 		let outcome: { content: { type: "text"; text: string }[] } | undefined;
+		const outcomes: { content: { type: "text"; text: string }[] }[] = [];
 		for (const found of this.matchAsyncDelegations(parsed)) {
+			if (outcome) {
+				outcomes.push(outcome);
+				outcome = undefined;
+			}
 			const runId = found.record.runId;
 			const executionId = this.executionIdFor(found.record, found.toolCallId);
 			const resolution = this.resolveDelegationOutput(found.record);
@@ -3308,6 +3472,24 @@ export class PlannerOrchestrator {
 				outcome = { content: [{ type: "text", text: `[PLANNER-ONLY] Output for task ${found.record.taskId} is ${resolution.code}; retry the same completion or run reconcile.` }] };
 				continue;
 			}
+			// A truncated host preview is evidence that the final body was not
+			// delivered. Keep the registered run available for a later receipt or
+			// planner_recover; treating the preview as a report would spend a
+			// correction and make the missing output unrecoverable.
+			if (found.record.kind === "worker" && !hasExplicitReference && parsed.truncated && resolution.kind !== "loaded") {
+				const pendingTask = this.store.get(found.record.taskId);
+				if (pendingTask) {
+					this.markRunTerminal(pendingTask, executionId, `notification status ${parsed.status}`);
+					this.markRunIngestion(pendingTask, executionId, {
+						kind: "pending",
+						code: "OUTPUT_PENDING",
+						attempted: ["notify:preview-truncated"],
+					});
+				}
+				outcome = { content: [{ type: "text", text: `[PLANNER-ONLY] Output for task ${found.record.taskId} is OUTPUT_PENDING because the notification preview was truncated; report-only correction remains available after the complete output arrives (async preview truncated).` }] };
+				continue;
+			}
+
 			if (runId) this.processedRunIds.add(runId);
 			this.endDelegation(found.toolCallId);
 			const fileText = resolution.kind === "loaded" ? resolution.text : undefined;
@@ -3376,7 +3558,11 @@ export class PlannerOrchestrator {
 					delegation: found.record,
 				});
 		}
-		return outcome;
+		if (outcome) outcomes.push(outcome);
+		if (outcomes.length === 0) return undefined;
+		return {
+			content: outcomes.flatMap((item) => item.content),
+		};
 	}
 
 	/**
@@ -3398,15 +3584,19 @@ export class PlannerOrchestrator {
 		const byRunId = parsed.runIds
 			.map((runId) => pending.find(({ record }) => record.runId === runId))
 			.filter((found): found is { toolCallId: string; record: DelegationRecord } => Boolean(found));
-		if (byRunId.length > 0) return byRunId;
+		// An explicit run identity is authoritative. Unknown or already-consumed
+		// run ids are orphan receipts, never permission to fall back by agent.
+		if (parsed.runIds.length > 0) return byRunId;
 
 		if (parsed.taskIdHint) {
 			// A worker echoes the id it was delegated, which may be a model-chosen
 			// alias; resolve it through the store before comparing.
 			const hintId = this.store.get(parsed.taskIdHint)?.taskId ?? parsed.taskIdHint;
 			const byTask = pending.filter(({ record }) => record.taskId === hintId);
-			if (byTask.length === 1) return byTask;
-			if (byTask.length > 1) return [];
+			// An explicit Task identity that is unknown, consumed, or foreign is
+			// also authoritative. In particular, do not route an old notice to a
+			// newer same-agent Task.
+			return byTask.length === 1 ? byTask : [];
 		}
 
 		const agent = parsed.agent.trim().toLowerCase();

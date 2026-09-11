@@ -744,6 +744,7 @@ try {
 		assert.match(notices.at(-1).message, /resolved=policy-test\/worker \(thinking: medium\)/);
 		assert.match(notices.at(-1).message, /actual=未知 \(thinking: 未知\)/);
 
+		await commands.get("planner-only").handler("concurrency 100", ctx);
 		const secondInput = { ...firstInput, cwd: "/fixture/index-policy-unknown-2", task: firstInput.task.replace("T-20260905-932", "T-20260905-933").replace("index-policy-unknown", "index-policy-unknown-2") };
 		assert.equal(await handlers.get("tool_call")({ toolName: "subagent", input: secondInput, toolCallId: "call-policy-index-2" }, ctx), undefined, "unknown actual must not block the next worker");
 
@@ -3203,7 +3204,7 @@ assert.match(
 
 	// 5. Plain text without characteristics creates placeholder Task, tool_result first line announces it
 	const callPlain = await handlers.get("tool_call")(
-		{ toolCallId: "call-ext-cb4", toolName: "subagent", input: { agent: "worker", task: "Just run some checks" } },
+		{ toolCallId: "call-ext-cb4", toolName: "subagent", input: { agent: "worker", cwd: "/fixture/plain-cb4", task: "Just run some checks" } },
 		ctx,
 	);
 	assert.equal(callPlain?.block, undefined);

@@ -1,5 +1,5 @@
 import { isSafeAuditCommand } from "./git-audit.ts";
-import { appendTaskSpecExample, buildTaskSpecExample } from "./task.ts";
+import { appendTaskSpecRepair, buildTaskSpecRepair } from "./task.ts";
 
 export { isSafeAuditCommand };
 
@@ -151,7 +151,7 @@ export function decidePolicy(policy: PolicyInput): PolicyDecision {
 		}
 		return {
 			block: true,
-			reason: appendTaskSpecExample(blockedReason(toolName), buildTaskSpecExample({ toolName, input: policy.input, cwd: policy.cwd })),
+			reason: appendTaskSpecRepair(blockedReason(toolName), buildTaskSpecRepair({ toolName, input: policy.input, cwd: policy.cwd })),
 		};
 	}
 
@@ -166,11 +166,11 @@ export function decidePolicy(policy: PolicyInput): PolicyDecision {
 		if (!refusal) return { block: false };
 		return {
 			block: true,
-			reason: appendTaskSpecExample(`Planner-only guard: bg_wait refused (${refusal}).`, buildTaskSpecExample({ toolName, input: policy.input, cwd: policy.cwd })),
+			reason: appendTaskSpecRepair(`Planner-only guard: bg_wait refused (${refusal}).`, buildTaskSpecRepair({ toolName, input: policy.input, cwd: policy.cwd })),
 		};
 	}
 	return {
 		block: true,
-		reason: appendTaskSpecExample(idleBlockReason(toolName), buildTaskSpecExample({ toolName, input: policy.input, cwd: policy.cwd })),
+		reason: appendTaskSpecRepair(idleBlockReason(toolName), buildTaskSpecRepair({ toolName, input: policy.input, cwd: policy.cwd })),
 	};
 }

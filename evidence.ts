@@ -908,6 +908,9 @@ export interface CompareEvidenceOptions {
 	 * an over-report and their absence from this window is not a miss.
 	 */
 	priorTruthPaths?: readonly string[];
+	/** Treat the execution as read-only for attribution. Observed changes are
+	 * evidence about concurrent workspace activity, not Worker edits. */
+	readOnly?: boolean;
 }
 
 function sameCwd(left: string, right: string): boolean {
@@ -1225,6 +1228,12 @@ export interface ExecutionTruthComparison {
 	reasons: string[];
 	/** Attributed paths (T1 ∪ T2 ∪ T3) minus untracked runtime noise. */
 	truthPaths: string[];
+	/** Root-attributed working-tree changes in this execution window (T1/T3). */
+	executionChangedPaths: string[];
+	/** Root-attributed paths committed during this execution window (T2). */
+	committedPaths: string[];
+	/** Untracked or concurrent changes observed by a read-only execution. */
+	observedExternalPaths: string[];
 	/** Untracked out-of-scope runtime noise: recorded, never attributed. */
 	externalPaths: string[];
 	/** Attributed in-scope paths the declaration omitted. */
@@ -1310,6 +1319,8 @@ export function compareExecutionTruth(
 		}
 	}
 	const truthSet = new Set([...t1, ...t2, ...t3]);
+	const executionChangedSet = new Set([...t1, ...t3]);
+	const committedSet = new Set(t2);
 
 	const declaredPaths = new Set(
 		[
@@ -1343,27 +1354,40 @@ export function compareExecutionTruth(
 	// untracked paths stay attributed.
 	const truthPaths: string[] = [];
 	const externalPaths: string[] = [];
+	const observedExternalPaths: string[] = [];
 	for (const path of truthSet) {
 		const untracked = untrackedResult.has(path);
 		const declared = declaredPaths.has(path);
 		const inAllowList = hasAllowList && allowedPaths.has(path);
+		// A read-only execution may overlap a writer in the same worktree. Its
+		// window is still useful evidence, but observed paths are never charged
+		// to the read-only report or turned into declaration findings.
+		if (options.readOnly) {
+			observedExternalPaths.push(path);
+			externalPaths.push(path);
+			continue;
+		}
 		// Runtime noise is untracked AND outside a declared allow-list. With
 		// no allow-list the whole workspace is in-scope, so an undeclared
 		// untracked file is attributed work (empty declaration cannot PASS).
 		if (untracked && !declared && hasAllowList && !inAllowList) {
 			externalPaths.push(path);
+			observedExternalPaths.push(path);
 			continue;
 		}
 		truthPaths.push(path);
 	}
 	truthPaths.sort();
 	externalPaths.sort();
+	observedExternalPaths.sort();
 	const attributed = new Set(truthPaths);
 
-	const outOfScopePaths = hasAllowList
-		? truthPaths.filter((path) => !allowedPaths.has(path))
-		: [];
-	const undeclaredPaths = truthPaths.filter((path) => !declaredPaths.has(path));
+	const outOfScopePaths = options.readOnly
+		? []
+		: hasAllowList
+			? truthPaths.filter((path) => !allowedPaths.has(path))
+			: [];
+	const undeclaredPaths = options.readOnly ? [] : truthPaths.filter((path) => !declaredPaths.has(path));
 	const outOfRepoDeclared = [...declaredPaths].filter((path) =>
 		isOutsideWorkspacePath(path, pathCwd, additionalRoots),
 	);
@@ -1375,15 +1399,17 @@ export function compareExecutionTruth(
 			normalizeEvidencePaths([path], pathCwd)[0],
 		),
 	);
-	const extraDeclaredPaths = inRepoDeclared.filter(
-		(path) => !attributed.has(path) && !truthSet.has(path) && !priorTruth.has(path),
-	);
+	const extraDeclaredPaths = options.readOnly
+		? []
+		: inRepoDeclared.filter(
+			(path) => !attributed.has(path) && !truthSet.has(path) && !priorTruth.has(path),
+		);
 
 	const headChanged = Boolean(
 		aRun.finalGitRef && cReport.finalGitRef && aRun.finalGitRef !== cReport.finalGitRef,
 	);
 	const missingPaths: string[] = [];
-	if (verifiable && !headChanged) {
+	if (verifiable && !headChanged && !options.readOnly) {
 		for (const path of inRepoDeclared) {
 			if (currentPaths.has(path)) continue;
 			if (committedPaths.has(path) || t3.includes(path)) continue;
@@ -1408,11 +1434,14 @@ export function compareExecutionTruth(
 		reasons.push(`out-of-repo declaration exempt from attribution: ${sorted(outOfRepoDeclared).join(", ")}`);
 	}
 	if (externalPaths.length > 0) {
-		reasons.push(`external untracked changes (not attributed): ${externalPaths.join(", ")}`);
+		reasons.push(`${options.readOnly ? "read-only observed changes (not attributed)" : "external untracked changes (not attributed)"}: ${externalPaths.join(", ")}`);
+	}
+	if (options.readOnly && observedExternalPaths.length > 0) {
+		reasons.push(`read-only execution observed concurrent workspace changes: ${observedExternalPaths.join(", ")}`);
 	}
 
 	const findings: TruthFindingDraft[] = [];
-	if (verifiable) {
+	if (verifiable && !options.readOnly) {
 		if (undeclaredPaths.length > 0) findings.push({ kind: "undeclared", paths: sorted(undeclaredPaths) });
 		if (outOfScopePaths.length > 0) findings.push({ kind: "scope", paths: sorted(outOfScopePaths) });
 		// A report-only restatement is not required to re-prove presence: the
@@ -1430,6 +1459,9 @@ export function compareExecutionTruth(
 		verifiable,
 		reasons,
 		truthPaths,
+		executionChangedPaths: sorted([...executionChangedSet].filter((path) => truthPaths.includes(path))),
+		committedPaths: sorted([...committedSet].filter((path) => truthPaths.includes(path) || options.readOnly)),
+		observedExternalPaths,
 		externalPaths,
 		undeclaredPaths: sorted(undeclaredPaths),
 		outOfScopePaths: sorted(outOfScopePaths),

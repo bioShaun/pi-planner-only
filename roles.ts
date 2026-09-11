@@ -1,6 +1,6 @@
-import type { ReviewEvidencePacket, TaskRole, TaskSpec, WorkerReport } from "./types.ts";
+import type { ReviewEvidencePacket, TaskPacket, TaskRole, TaskSpec, WorkerReport } from "./types.ts";
 import { canRebindNamedTask } from "./types.ts";
-import { extractTaskSpec, extractTaskSpecDetails } from "./task.ts";
+import { extractTaskSpec, extractTaskSpecDetails, inferTaskRoleFromAgent } from "./task.ts";
 import type { TaskRecord } from "./task.ts";
 import { buildFreshReviewerTask, extractReviewRequest } from "./review.ts";
 import type { ReviewRequest } from "./types.ts";
@@ -35,19 +35,12 @@ export const ROLE_AGENTS: Record<TaskRole, string | undefined> = {
 	worker: undefined,
 };
 
-const AGENT_ROLES: Record<string, TaskRole> = {
-	explorer: "explorer",
-	scout: "explorer",
-	reviewer: "reviewer",
-	oracle: "validator",
-	validator: "validator",
-	worker: "worker",
-};
+// IS-02 — the agent→role table is owned by task.ts (identity and the repair
+// contract live there) and re-exported under the historical name so agent
+// remapping and the TaskSpec repair renderer cannot drift apart.
+export { inferTaskRoleFromAgent as inferRoleFromAgent } from "./task.ts";
 
-export function inferRoleFromAgent(agent: string | undefined): TaskRole | undefined {
-	if (!agent) return undefined;
-	return AGENT_ROLES[agent.trim().toLowerCase()];
-}
+const inferRoleFromAgent = inferTaskRoleFromAgent;
 
 export const WORKER_CONTRACT_MARKER = "[PLANNER-ONLY WORKER CONTRACT]";
 export const ORACLE_CONTRACT_MARKER = "[PLANNER-ONLY ORACLE]";
@@ -110,13 +103,13 @@ export function wrapOracleContract(
 	let suite: string;
 	if (mode === "missing") {
 		const cmds = (missingCommands ?? []).join(", ");
-		suite = `ORACLE_SUITE=missing. Run only the missing TaskSpec validation commands: ${cmds}. Do not re-run commands that already passed.`;
+		suite = `ORACLE_SUITE=missing. Run only the missing TaskSpec validation commands: ${cmds}. Do not re-run commands that already passed. This command restriction applies only to validation commands; still complete every required source inspection and acceptance criterion, and report manual checks separately.`;
 	} else if (mode === "full" || !workerValidationPassed) {
 		suite = "ORACLE_SUITE=full. Re-run the listed validation commands.";
 	} else {
 		suite = "ORACLE_SUITE=bounded. You MAY run only the test files named in the WorkerReport. Do not run npm test, npm run test:e2e, or the full suite. Check git rev-parse HEAD and git status --porcelain.";
 	}
-	return `${ORACLE_CONTRACT_MARKER}\n${suite}\nThe top-level status must be exactly completed, partial, blocked, or failed.\nThe validation status must be exactly passed, failed, or not-run.\n\n${task}`;
+	return `${ORACLE_CONTRACT_MARKER}\n${suite}\nValidation-command reuse does not waive source inspection or acceptance criteria. Check each required inspection/criterion independently; mark it checked, reused, not-run, or failed, and report any mandatory item that remains incomplete. The embedded TaskSpec is authoritative, and its acceptanceCriteria/constraints must remain in scope.\nThe top-level status must be exactly completed, partial, blocked, or failed.\nThe validation status must be exactly passed, failed, or not-run.\n\n${task}`;
 }
 
 export function lastWorkerValidationPassed(report: WorkerReport | undefined): boolean {
@@ -339,7 +332,87 @@ export function applyRoleDelegation(
 	};
 }
 
-/** Concatenate task/tasks/chain prompts from a subagent payload. */
+/**
+ * Build the worker/explorer packet without asking a model to summarize the
+ * Root's prose. When a valid embedded spec is found, only that exact JSON
+ * slice is removed; if it cannot be isolated, the original prompt is kept.
+ */
+export function buildTaskPacket(
+	spec: TaskSpec,
+	prompt: string,	details: { candidateText?: string; candidate?: Record<string, unknown> } = {},
+): string {
+	let instructions = prompt.trim();
+	const existingValue = (() => {
+		try {
+			return JSON.parse(instructions) as Partial<TaskPacket>;
+		} catch {
+			return undefined;
+		}
+	})();
+	const existing = existingValue && existingValue.version === 1 && existingValue.spec && Array.isArray(existingValue.knownFacts) && Array.isArray(existingValue.artifactRefs)
+		? existingValue
+		: details.candidate && details.candidate.version === 1 && details.candidate.spec
+			&& Array.isArray(details.candidate.knownFacts) && Array.isArray(details.candidate.artifactRefs)
+			? details.candidate as Partial<TaskPacket>
+			: undefined;
+	if (existing) {
+		const knownFacts = Array.isArray(existing.knownFacts)
+			? existing.knownFacts.filter((item): item is string => typeof item === "string")
+			: [];
+		const artifactRefs = Array.isArray(existing.artifactRefs)
+			? existing.artifactRefs.filter((item): item is string => typeof item === "string")
+			: [];
+		return JSON.stringify({
+			version: 1,
+			spec,
+			instructions: typeof existing.instructions === "string" ? existing.instructions : "",
+			knownFacts,
+			artifactRefs,
+		} satisfies TaskPacket, null, 2);
+	}
+	if (details.candidateText) {
+		const start = prompt.indexOf(details.candidateText);
+		if (start >= 0) {
+			instructions = `${prompt.slice(0, start)}${prompt.slice(start + details.candidateText.length)}`
+				.replace(/```(?:json|jsonc)?\s*\n?\s*```/g, "")
+				.replace(/UNRELATED_ROOT_CONVERSATION_HISTORY_MARKER_[A-Za-z0-9_-]+/g, "")
+				.trim();
+		}
+	}
+	const submitted = details.candidate;
+	const submittedFacts = submitted && Array.isArray(submitted.knownFacts)
+		? submitted.knownFacts.filter((item): item is string => typeof item === "string")
+		: [];
+	const submittedRefs = submitted && Array.isArray(submitted.artifactRefs)
+		? submitted.artifactRefs.filter((item): item is string => typeof item === "string")
+		: [];
+	const knownFacts = submittedFacts.length > 0
+		? submittedFacts
+		: [...(spec.constraints ?? []), ...(spec.acceptanceCriteria ?? [])];
+	const artifactRefs = submittedRefs.length > 0
+		? submittedRefs
+		: [...(spec.scope?.allowedPaths ?? [])];
+	return JSON.stringify({
+		version: 1,
+		spec,
+		instructions,
+		knownFacts,
+		artifactRefs,
+	} satisfies TaskPacket, null, 2);
+}
+
+export function extractTaskPacket(text: string): TaskPacket | undefined {
+	if (typeof text !== "string") return undefined;
+	try {
+		const value = JSON.parse(text.trim()) as Partial<TaskPacket>;
+		if (value?.version !== 1 || !value.spec || typeof value.instructions !== "string"
+			|| !Array.isArray(value.knownFacts) || !Array.isArray(value.artifactRefs)) return undefined;
+		return value as TaskPacket;
+	} catch {
+		return undefined;
+	}
+}
+
 export function delegationPrompt(input: unknown): string {
 	if (!input || typeof input !== "object") return "";
 	const params = input as { task?: unknown; tasks?: unknown; chain?: unknown };
@@ -690,7 +763,10 @@ export function prepareRoleDelegation(
 		if (packetSpec) {
 			let packetBody = reuseOutcome?.reused && target.task
 				? `${buildPreviousExecutionContext(target.task, packetSpec)}\n\n${JSON.stringify(packetSpec, null, 2)}`
-				: JSON.stringify(packetSpec, null, 2);
+				: buildTaskPacket(packetSpec, prompt, {
+					candidateText: specDetails.candidateText,
+					candidate: specDetails.candidate,
+				});
 			// Ticket 42 — machine-generated corrections keep the report-only instruction
 			// ahead of the embedded TaskSpec so the child still knows not to edit files.
 			if (reportOnly && target.role === "worker") {
@@ -703,6 +779,13 @@ export function prepareRoleDelegation(
 				packetBody = `${correctionLead}\n\n${packetBody}`;
 			}
 
+			if (target.role === "explorer") {
+				packetBody = [
+					"This is a read-only execution. Do not edit, create, delete, stage, or commit files.",
+					"Do not list concurrent workspace changes as changedFiles; report them as observed external changes in risks or unresolved instead.",
+					packetBody,
+				].join("\n\n");
+			}
 			if (target.role === "worker" || target.role === "explorer") {
 				packet = wrapWorkerContract(packetBody, target.task?.taskId ?? target.taskId ?? packetSpec.taskId);
 			} else {

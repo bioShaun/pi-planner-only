@@ -81,7 +81,9 @@ pi -e .
 }
 ```
 
-拦截 `subagent`：登记任务、采样工作区；同一 cwd 上第二个声明为 `worker` 的委托会被拦住（one writer per cwd）。taskId 若缺失、格式不对或日期不是当天，扩展会替换为生成的 id，原 id 作为 alias 保留，委派结果里会告知。受限角色会 remap 到工具面匹配的 builtin agent：
+拦截 `subagent`：登记任务、采样工作区；同一 cwd 上第二个声明为 `worker` 的委托会被拦住（one writer per cwd）。taskId 若缺失、格式不对或日期不是当天，扩展会替换为生成的 id，原 id 作为 alias 保留，委派结果里会告知。生成 id 会在共享 ledger 命名空间中以跨进程原子 claim 保留；恢复过、终态、超恢复上限或快照损坏的 id 都不会再次分配。显式继续只能解析 canonical id 或已登记 alias，并校验 workspace；id 冲突不会被当作继续。受限角色会 remap 到工具面匹配的 builtin agent：
+
+非法 TaskSpec 拒绝会展示修复摘要，保留可信角色和验证意图。命令列表简写会转换成明确的必需验证；无法无损转换的 validation 会继续拒绝并要求补充，不会静默变成 `required: false`。report-only 修正必须指向一个已存在且可继续的 Task；多个或未知 id 会在启动 child 前拒绝，也不会创建 placeholder。模型预检的 host-default 结果只用于归因，不会反写下游 model 字段，让宿主继续应用自身 settings fallback；显式模型选择仍作为启动参数保留。
 
 | 角色 | Builtin agent | 子进程工具 |
 |---|---|---|

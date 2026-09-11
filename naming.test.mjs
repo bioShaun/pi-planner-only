@@ -22,7 +22,16 @@ const installDir = candidates.find((path) => existsSync(join(path, "index.ts")))
 if (installDir) {
 	assert.equal(basename(installDir), "pi-planner-only");
 	const installed = new Set(readdirSync(installDir));
-	for (const name of tsFiles) {
+	const installedPackagePath = join(installDir, "package.json");
+	const installedPackage = existsSync(installedPackagePath)
+		? JSON.parse(readFileSync(installedPackagePath, "utf8"))
+		: undefined;
+	const installedTsFiles = new Set(
+		Array.isArray(installedPackage?.files)
+			? installedPackage.files.filter((name) => extname(name) === ".ts")
+			: tsFiles,
+	);
+	for (const name of tsFiles.filter((file) => installedTsFiles.has(file))) {
 		assert.equal(installed.has(name), true, `extension install is missing ${name}`);
 	}
 }

@@ -6430,10 +6430,8 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	assert.doesNotMatch(String(input.task), /"taskId": "T-20260908-421"/, "42r-b: unknown named Task is not redirected to the active Task's spec");
 	const outcome = await orch.beginDelegation({ toolCallId: "call-42r-unknown", input }, active.cwd);
 	assert.notEqual(outcome.task?.taskId, activeId, "42r-c: unknown named Task does not bind to the active Task");
-	assert.ok(
-		(outcome.warnings ?? []).some((w) => /names task T-20260908-999 but no single live Task matched/.test(w)),
-		`42r-d: unmatched name is disclosed: ${outcome.warnings?.join(" | ")}`,
-	);
+	assert.equal(outcome.block?.code, "REPORT_TARGET_UNBOUND", "42r-d: unknown report-only target is refused");
+	assert.match(outcome.block?.reason ?? "", /unknown Task/);
 	assert.equal(orch.getDelegation("call-42r-unknown")?.taskId === activeId, false, "42r-e: delegation not recorded against the active Task");
 }
 
@@ -7370,11 +7368,8 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	);
 	assert.ok(outcome.block, "characteristic-but-invalid TaskSpec refuses before launch");
 	assert.match(outcome.block.reason, /embedded TaskSpec is invalid/);
-	const match = outcome.block.reason.match(/```json\n([\s\S]*?)\n```/);
-	assert.ok(match, "the refusal carries a fenced JSON example");
-	const example = JSON.parse(match[1]);
-	assert.deepEqual(validateTaskSpec(example), [], "the refusal example passes TaskSpec validation");
-	assert.deepEqual(example.validation, { required: false }, "an invalid validation object collapses to the minimal shape");
+	assert.doesNotMatch(outcome.block.reason, /```json/);
+	assert.match(outcome.block.reason, /Outstanding.*validation/s);
 	assert.equal(orch.pendingDelegationCount(), 0, "no child was started");
 }
 
@@ -7879,6 +7874,53 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	assert.equal(outcome.block, undefined);
 	assert.ok(outcome.task);
 	assert.equal((outcome.warnings ?? []).some((warning) => /model preflight is unverified/i.test(warning)), false);
+}
+
+// RR-07 C24: host-default preflight is attribution-only; the downstream host
+// must still receive an input without model fields so settings.json can fall back.
+{
+	const knownModel = { provider: "openai", id: "known-model" };
+	const orch = new PlannerOrchestrator({
+		gitRunner,
+		store: pinnedStore(),
+		getModelPreflightContext: () => ({
+			hostModel: knownModel,
+			hostThinking: "medium",
+			registry: { getAvailable: () => [knownModel] },
+			pricing: { rates: { "openai/known-model": { input: 1, output: 1, cacheRead: 1, cacheWrite: 1 } } },
+		}),
+	});
+	const input = { agent: "worker", task: JSON.stringify(specFor("T-20260911-rr07-host-default")) };
+	const outcome = await orch.beginDelegation({ toolCallId: "call-rr07-host-default", input }, BASE);
+	assert.equal(outcome.block, undefined);
+	assert.equal("model" in input, false, "host-default preflight must not populate input.model");
+	assert.equal("thinking" in input, false, "host-default preflight must not populate input.thinking");
+}
+
+
+// IS-01/O-02 I08 — a report-only correction with multiple or unknown ids is
+// refused before Task creation; it must never become an unrelated placeholder.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const ambiguous = {
+		agent: "worker",
+		reportOnly: true,
+		task: "Do not modify files. Return only a valid WorkerReport for task T-20260911-011; the change owner is T-20260911-010.",
+	};
+	const blocked = await orch.beginDelegation({ toolCallId: "call-o02-ambiguous", input: ambiguous }, BASE);
+	assert.equal(blocked.block?.code, "REPORT_TARGET_AMBIGUOUS");
+	assert.match(blocked.block?.reason ?? "", /multiple Task ids/);
+	assert.equal(orch.store.list().length, 0, "ambiguous report-only correction creates no placeholder Task");
+	assert.equal(orch.getDelegation("call-o02-ambiguous"), undefined, "ambiguous correction launches no child");
+
+	const unknown = {
+		agent: "worker",
+		reportOnly: true,
+		task: "Do not modify files. Return only a valid WorkerReport for task T-20260911-099.",
+	};
+	const unknownOutcome = await orch.beginDelegation({ toolCallId: "call-o02-unknown", input: unknown }, BASE);
+	assert.equal(unknownOutcome.block?.code, "REPORT_TARGET_UNBOUND");
+	assert.equal(orch.store.list().length, 0, "unknown report-only correction also creates no placeholder Task");
 }
 
 console.log("planner-only orchestration: PASS");

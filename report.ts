@@ -247,9 +247,10 @@ function repairValidationEntries(entries: unknown[], repairs: string[]): void {
 			repairs.push(`${label}.exitCode "${item.exitCode}" → ${parsed}`);
 			item.exitCode = parsed;
 		}
-		if (item.status === "not-run" && item.exitCode === 0) {
+		if (item.status === "not-run" && (item.exitCode === 0 || item.exitCode === null)) {
+			const rawExitCode = item.exitCode;
 			delete item.exitCode;
-			repairs.push(`${label}.exitCode 0 dropped (status not-run)`);
+			repairs.push(`${label}.exitCode ${rawExitCode === null ? "null" : "0"} dropped (status not-run)`);
 		}
 	});
 }
@@ -462,7 +463,6 @@ export function workerReportShapeReminder(taskId: string): string {
 			command: "npm test",
 			type: "test",
 			status: "not-run",
-			exitCode: 0,
 			summary: "npm test was not run in this worker round",
 		}],
 		evidence: { taskId },

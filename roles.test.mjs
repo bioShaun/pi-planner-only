@@ -6,6 +6,8 @@ import {
 	ROLE_AGENTS,
 	ROLE_TOOL_PROFILES,
 	applyRoleDelegation,
+	buildTaskPacket,
+	extractTaskPacket,
 	hasMissingRequiredValidationCommands,
 	inferRoleFromAgent,
 	lastWorkerValidationPassed,
@@ -506,6 +508,9 @@ assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root
 	assert.doesNotMatch(missing, /ORACLE_SUITE=full/);
 	assert.doesNotMatch(missing, /ORACLE_SUITE=bounded/);
 	assert.doesNotMatch(missing, /Re-run the listed validation commands/);
+	assert.match(missing, /command restriction applies only to validation commands/);
+	assert.match(missing, /source inspection and acceptance criterion/);
+	assert.match(missing, /checked, reused, not-run, or failed/);
 	assert.equal(wrapOracleContract(missing, "missing", false, ["npm run typecheck"]), missing);
 }
 
@@ -976,6 +981,35 @@ assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root
 	assert.deepEqual(mixedPayload.__floorLimits?.toolBudget, { value: 10, source: "caller" });
 	assert.deepEqual(mixedPayload.__floorLimits?.tokens, { value: 20_000, source: "caller" });
 	assert.deepEqual(mixedPayload.__floorLimits?.costUsd, { value: 0.10, source: "floor" });
+}
+
+// RR-04: worker packets preserve the direct instructions and expose a stable
+// structured envelope; applying the role wrapper a second time is idempotent.
+{
+	const spec = createTaskSpec({
+		taskId: "T-20260911-901",
+		objective: "prepare the handoff",
+		cwd: process.cwd(),
+		role: "worker",
+		constraints: ["keep the symlink"],
+		scope: { allowedPaths: ["docs/handoff.md"] },
+	});
+	const payload = {
+		agent: "worker",
+		task: `Retain the verified count and run the smoke check.\n${JSON.stringify(spec)}`,
+	};
+	prepareRoleDelegation(payload, () => undefined);
+	const firstPacketText = payload.task.slice(0, payload.task.indexOf("\n\n[PLANNER-ONLY WORKER CONTRACT]"));
+	const firstPacket = JSON.parse(firstPacketText);
+	assert.equal(firstPacket.version, 1);
+	assert.equal(firstPacket.spec.taskId, spec.taskId);
+	assert.match(firstPacket.instructions, /verified count/);
+	assert.deepEqual(firstPacket.knownFacts, ["keep the symlink"]);
+	assert.deepEqual(firstPacket.artifactRefs, ["docs/handoff.md"]);
+	assert.ok(extractTaskPacket(firstPacketText));
+	prepareRoleDelegation(payload, () => undefined);
+	const secondPacketText = payload.task.slice(0, payload.task.indexOf("\n\n[PLANNER-ONLY WORKER CONTRACT]"));
+	assert.deepEqual(JSON.parse(secondPacketText), firstPacket);
 }
 
 console.log("planner-only roles: PASS");
