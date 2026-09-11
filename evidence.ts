@@ -1122,12 +1122,16 @@ export function compareEvidence(
 	);
 
 	const undeclaredPaths: string[] = [];
-	for (const path of truthSet) {
-		if (!declaredPaths.has(path)) undeclaredPaths.push(path);
+	if (!options.readOnly) {
+		for (const path of truthSet) {
+			if (!declaredPaths.has(path)) undeclaredPaths.push(path);
+		}
 	}
 	const extraDeclaredPaths: string[] = [];
-	for (const path of inRepoDeclared) {
-		if (!truthSet.has(path)) extraDeclaredPaths.push(path);
+	if (!options.readOnly) {
+		for (const path of inRepoDeclared) {
+			if (!truthSet.has(path)) extraDeclaredPaths.push(path);
+		}
 	}
 
 	const overlappingPaths: string[] = [];
@@ -1137,7 +1141,7 @@ export function compareEvidence(
 	}
 
 	const missingPaths: string[] = [];
-	if (verifiable && !headChanged) {
+	if (verifiable && !headChanged && !options.readOnly) {
 		for (const path of inRepoDeclared) {
 			if (currentPaths.has(path)) continue;
 			// RF-1 — paths committed (T2) or content-changed on a baseline-dirty

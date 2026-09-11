@@ -310,11 +310,25 @@ function environmentFailureOf(...samples: readonly EvidenceRef[]): boolean {
 	);
 }
 
+function attributionExecutionForLatestReport(task: TaskRecord): TaskExecutionRecord | undefined {
+	const revision = task.reports.length - 1;
+	if (revision < 0) return undefined;
+	return [...task.executions].reverse().find((execution) => execution.reportIndex === revision);
+}
+
+function attributionReadOnlyForLatestReport(task: TaskRecord): boolean {
+	const latest = attributionExecutionForLatestReport(task);
+	if (!latest) return false;
+	if (!latest.reportOnly) return latest.readOnly === true;
+	const origin = task.executions.find((execution) => execution.executionId === latest.previousExecutionId);
+	return origin?.readOnly === true;
+}
+
 function compareWithRootSamples(
 	task: TaskRecord,
 	current: EvidenceRef,
 	report: WorkerReport,
-	options: { reportOnly?: boolean } = {},
+	options: { reportOnly?: boolean; readOnly?: boolean } = {},
 ) {
 	const roots = additionalWorktreeRootsOf(task);
 	return compareEvidence(
@@ -323,7 +337,14 @@ function compareWithRootSamples(
 		report,
 		{
 			...(task.spec?.scope ? { scope: task.spec.scope } : {}),
-			...(options.reportOnly ? { reportOnly: true } : {}),
+			...(options.reportOnly !== undefined
+				? { reportOnly: options.reportOnly }
+				: task.reports.length > 0 && attributionExecutionForLatestReport(task)?.reportOnly
+					? { reportOnly: true }
+				: {}),
+			...(options.readOnly !== undefined
+				? { readOnly: options.readOnly }
+				: { readOnly: attributionReadOnlyForLatestReport(task) }),
 			...(roots ? { additionalWorktreeRoots: roots } : {}),
 		},
 	);
@@ -1605,6 +1626,8 @@ export class PlannerOrchestrator {
 		aRun: EvidenceRef,
 		options: {
 			reportOnly?: boolean;
+			/** Capability recorded from the trusted launch binding, not the report. */
+			readOnly?: boolean;
 			auxiliary?: boolean;
 			runId?: string;
 			previousRunId?: string;
@@ -1633,6 +1656,7 @@ export class PlannerOrchestrator {
 			...(options.runId ? { runId: options.runId } : {}),
 			...(options.previousRunId ? { previousRunId: options.previousRunId } : {}),
 			...(options.reportOnly ? { reportOnly: true } : {}),
+			...(options.readOnly ? { readOnly: true } : {}),
 			...(options.auxiliary ? { auxiliary: true } : {}),
 			...(options.previousExecutionId
 				? { previousExecutionId: options.previousExecutionId }
@@ -1673,19 +1697,23 @@ export class PlannerOrchestrator {
 		const origin = execution.reportOnly
 			? this.store.executionById(task.taskId, execution.previousExecutionId ?? "")
 			: execution;
-		const truthRun = origin?.aRun ?? execution.aRun;
-		const truthBase = origin?.cReport ?? cReport;
+		const originMissing = execution.reportOnly && !origin;
+		// A report-only correction is valid only when its prior attribution
+		// execution is present. Never let the correction's own A/C window become
+		// the attribution window: that would make an omitted change look clean.
+		const truthRun = originMissing ? { ...execution.aRun, gitAvailable: false } : origin?.aRun ?? execution.aRun;
+		const truthBase = originMissing ? { ...cReport, gitAvailable: false } : origin?.cReport ?? cReport;
 		const roots = additionalWorktreeRootsOf(task);
 		// The final report declares cumulative delivery: paths attributed to
 		// earlier rounds may be restated without becoming findings.
 		const priorTruthPaths = task.executions
 			.filter((item) => item !== execution && !item.auxiliary && item.truthPaths?.length)
 			.flatMap((item) => item.truthPaths ?? []);
-		const truth = compareExecutionTruth(truthRun, truthBase, report, {
+		const truth = compareExecutionTruth(truthRun, truthBase, originMissing ? undefined : report, {
 			...(task.spec?.scope ? { scope: task.spec.scope } : {}),
 			...(roots ? { additionalWorktreeRoots: roots } : {}),
 			...(execution.reportOnly ? { reportOnly: true } : {}),
-			...(execution.kind === "explorer" ? { readOnly: true } : {}),
+			...(origin?.readOnly === true ? { readOnly: true } : {}),
 			...(priorTruthPaths.length > 0 ? { priorTruthPaths } : {}),
 		});
 		this.store.completeExecution(task.taskId, execution.executionId, {
@@ -1700,15 +1728,17 @@ export class PlannerOrchestrator {
 			externalPaths: truth.externalPaths,
 		});
 		const findingOwner = execution.reportOnly && origin ? origin.executionId : execution.executionId;
-		this.store.recordExecutionFindings(
-			task.taskId,
-			findingOwner,
-			truth.findings,
-			this.store.now().toISOString(),
-			// Declaration findings are recomputed as a set: a repaired report
-			// clears the finding kinds it no longer trips.
-			["undeclared", "scope", "over-declared", "missing"],
-		);
+		if (!originMissing) {
+			this.store.recordExecutionFindings(
+				task.taskId,
+				findingOwner,
+				truth.findings,
+				this.store.now().toISOString(),
+				// Declaration findings are recomputed as a set: a repaired report
+				// clears the finding kinds it no longer trips.
+				["undeclared", "scope", "over-declared", "missing"],
+			);
+		}
 		// A path dirty at A_run and clean at C_report (without being committed)
 		// was restored in this window; an earlier scope finding on it now has
 		// evidence of the restore, and a review still has to confirm it.
@@ -1760,6 +1790,19 @@ export class PlannerOrchestrator {
 		const origin = latest.reportOnly
 			? this.store.executionById(task.taskId, latest.previousExecutionId ?? "")
 			: latest;
+		if (latest.reportOnly && !origin) {
+			const reason = `report-only execution ${latest.executionId} has no linked prior execution ${latest.previousExecutionId ?? "(missing)"}; attribution cannot be verified`;
+			this.store.completeExecution(task.taskId, latest.executionId, {
+				freshness: { verifiable: false, fresh: false, reasons: [reason], driftPaths: [] },
+			});
+			return {
+				...comparison,
+				verifiable: false,
+				fresh: false,
+				missingMaterials: reason,
+				reasons: [...comparison.reasons, `missing execution evidence — ${reason}`],
+			};
+		}
 		const truthRun = origin?.aRun ?? latest.aRun;
 		const truthBase = origin?.cReport ?? latest.cReport;
 		const roots = additionalWorktreeRootsOf(task);
@@ -1770,10 +1813,18 @@ export class PlannerOrchestrator {
 			...(task.spec?.scope ? { scope: task.spec.scope } : {}),
 			...(roots ? { additionalWorktreeRoots: roots } : {}),
 			...(latest.reportOnly ? { reportOnly: true } : {}),
+			...(origin?.readOnly === true ? { readOnly: true } : {}),
 			...(priorTruthPaths.length > 0 ? { priorTruthPaths } : {}),
 		});
-		const freshness: FreshnessComparison = truthBase
-			? compareFreshness(truthBase, currentSample, {
+		const correctionWindowFresh = latest.reportOnly && latest.cReport
+			? compareFreshness(latest.aRun, latest.cReport, {
+				...(roots ? { additionalWorktreeRoots: roots } : {}),
+				...(task.spec?.scope ? { scope: task.spec.scope } : {}),
+			}).fresh
+			: false;
+		const freshnessBase = latest.reportOnly && correctionWindowFresh ? latest.cReport : truthBase;
+		const freshness: FreshnessComparison = freshnessBase
+			? compareFreshness(freshnessBase, currentSample, {
 				...(roots ? { additionalWorktreeRoots: roots } : {}),
 				...(task.spec?.scope ? { scope: task.spec.scope } : {}),
 			})
@@ -1792,6 +1843,18 @@ export class PlannerOrchestrator {
 				driftPaths: freshness.driftPaths,
 			},
 		});
+		if (latest.reportOnly && correctionWindowFresh && freshness.verifiable && freshness.fresh) {
+			// A report-only C_report is a new, Root-sampled baseline for freshness.
+			// Resolve only stale drift proved by that baseline; attribution findings
+			// from the original Worker window remain open and blocking.
+			const driftPaths = this.store
+				.openFindings(task.taskId)
+				.filter((finding) => finding.kind === "drift" && !finding.evidenceResolvedBy)
+				.flatMap((finding) => finding.paths);
+			if (driftPaths.length > 0) {
+				this.store.markFindingEvidenceResolved(task.taskId, driftPaths, latest.executionId, ["drift"]);
+			}
+		}
 		if (freshness.verifiable && !freshness.fresh) {
 			this.store.setExecutionDrift(task.taskId, latest.executionId, {
 				detectedAt: this.store.now().toISOString(),
@@ -2679,6 +2742,9 @@ export class PlannerOrchestrator {
 			);
 			this.beginExecutionRecord(task, executionId, role, executionSample, {
 				...(executionReportOnly ? { reportOnly: true } : {}),
+				// Explorer and report-only repair launches are read-only by the
+				// trusted orchestration binding; reports cannot assert this later.
+				...((role === "explorer" || executionReportOnly) ? { readOnly: true } : {}),
 				...(role === "validator" || (role === "explorer" && !isStandaloneExplorer)
 					? { auxiliary: true }
 					: {}),

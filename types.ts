@@ -209,6 +209,8 @@ export interface TaskExecutionRecord {
 	runId?: string;
 	/** True for report-only report revision corrections. */
 	reportOnly?: boolean;
+	/** True when the trusted launch binding granted this execution read-only capability. */
+	readOnly?: boolean;
 	/** Host run id resumed by this execution, when applicable. */
 	previousRunId?: string;
 	/** Previous attribution-bearing execution in this Task's chain. */
