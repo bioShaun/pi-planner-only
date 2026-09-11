@@ -36,6 +36,7 @@ import {
 	prepareRoleDelegation,
 	promptTaskIds,
 	resolveDelegationTarget,
+	stampCanonicalTaskId,
 	stampReportOnlyCorrectionInput,
 	stripDelegationKeys,
 } from "./roles.ts";
@@ -2044,6 +2045,9 @@ export class PlannerOrchestrator {
 		}
 		this.store.ensureCwd(task.taskId, cwd);
 		task = this.store.require(task.taskId);
+		const exampleTaskIds = [target?.taskId, spec?.taskId]
+			.filter((taskId): taskId is string => taskId === TASKSPEC_EXAMPLE_SENTINEL);
+		stampCanonicalTaskId(input, task.taskId, exampleTaskIds);
 		// R02 — an auxiliary Explorer never advances, supersedes, or re-samples
 		// the assisted Task: parallel inspection must leave the other work's
 		// lifecycle, baseline, and pending writers exactly as they are.

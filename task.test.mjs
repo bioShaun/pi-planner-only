@@ -13,6 +13,7 @@ import {
 	validateTaskSpec,
 	canTransition,
 	TASKSPEC_CHARACTERISTIC_FIELDS,
+	buildTaskSpecExample,
 } from "./task.ts";
 import {
 	compactWorkerReport,
@@ -135,10 +136,18 @@ assert.ok(validateTaskSpec({ ...spec, budget: { costUsd: -0.05 } }).some((e) => 
 assert.ok(validateTaskSpec({ ...spec, budget: { costUsd: Number.NaN } }).some((e) => /budget\.costUsd must be a positive finite number/.test(e)));
 
 
+
+const explorerExample = buildTaskSpecExample({ toolName: "read", input: { path: "docs/api.md" }, cwd: "/repo" });
+const explorerConstraints = explorerExample.constraints.join("\n");
+assert.match(explorerConstraints, /canonical Task id from your launch packet/);
+assert.match(explorerConstraints, /must not ask Root or supervisor for the taskId/);
+assert.match(explorerConstraints, /validation status must be exactly passed, failed, or not-run/);
+assert.match(explorerConstraints, /final message must contain only the WorkerReport JSON/);
+
+
 // --------------------------------------------------------------------------
 // WorkerReport validation
 // --------------------------------------------------------------------------
-
 const report = makeReport();
 assert.deepEqual(validateWorkerReport(report), []);
 assert.equal(isWorkerReport(report), true);

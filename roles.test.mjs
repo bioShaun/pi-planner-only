@@ -584,7 +584,30 @@ assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root
 	assert.match(workerWrap, /\[PLANNER-ONLY WORKER CONTRACT\]/);
 	assert.match(workerWrap, /Do not run \/code-review/);
 	assert.match(workerWrap, /"taskId":"T-20260831-001"/);
+	assert.match(workerWrap, /canonical Task id from your launch packet/);
+	assert.match(workerWrap, /must not ask Root or supervisor for the taskId/);
+	assert.match(workerWrap, /validation status must be exactly passed, failed, or not-run/);
+	assert.match(workerWrap, /final message must contain only the WorkerReport JSON/);
 	assert.equal(wrapWorkerContract(workerWrap, "T-20260831-001"), workerWrap);
+}
+
+{
+	const explorerPayload = { agent: "explorer", task: JSON.stringify({
+		taskId: "T-20260911-001",
+		objective: "inspect packet contract",
+		cwd: "/repo",
+		role: "explorer",
+		scope: { allowedPaths: [] },
+		constraints: [],
+		acceptanceCriteria: [],
+		validation: { required: false },
+		expectedEvidence: {},
+		stopConditions: [],
+	}) };
+	prepareRoleDelegation(explorerPayload, () => undefined);
+	assert.match(explorerPayload.task, /\[PLANNER-ONLY WORKER CONTRACT\]/);
+	assert.match(explorerPayload.task, /canonical Task id from your launch packet/);
+	assert.match(explorerPayload.task, /must not ask Root or supervisor for the taskId/);
 }
 
 {

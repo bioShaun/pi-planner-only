@@ -136,6 +136,30 @@ async function delegateWorker(orch, toolCallId, taskId) {
 }
 
 
+// Canonical Task ids and the WorkerReport contract are visible before launch.
+{
+	const input = { agent: "worker", task: JSON.stringify({
+		taskId: "T-pending",
+		objective: "canonical packet identity",
+		cwd: "/repo",
+		role: "worker",
+		scope: { allowedPaths: [] },
+		constraints: [],
+		acceptanceCriteria: [],
+		validation: { required: false },
+		expectedEvidence: {},
+		stopConditions: [],
+	}) };
+	const orch = new PlannerOrchestrator({ store: pinnedStore(), gitRunner });
+	await orch.prepareRoleDelegation(input);
+	const outcome = await orch.beginDelegation({ toolCallId: "call-canonical-packet", input }, BASE);
+	assert.equal(outcome.task?.taskId, "T-20260905-001");
+	assert.match(input.task, /"taskId": "T-20260905-001"/);
+	assert.doesNotMatch(input.task, /T-pending/);
+	assert.match(input.task, /canonical Task id from your launch packet/);
+	assert.match(input.task, /must not ask Root or supervisor for the taskId/);
+}
+
 // Ticket 11: required validation without commands blocks Validator delegation before
 // the oracle contract can substitute ORACLE_SUITE=full/bounded.
 {

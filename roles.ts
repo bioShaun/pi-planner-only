@@ -63,6 +63,9 @@ export function wrapWorkerContract(task: string, taskId: string): string {
 		"",
 		WORKER_CONTRACT_MARKER,
 		"Do not run /code-review or spawn a reviewer. Return only a WorkerReport JSON object:",
+		"Use the canonical Task id from your launch packet; you must not ask Root or supervisor for the taskId.",
+		"The validation status must be exactly passed, failed, or not-run.",
+		"Your final message must contain only the WorkerReport JSON.",
 		workerReportShapeReminder(taskId),
 		"Do not run npm install, pnpm install, or any other command that modifies a lockfile, unless the TaskSpec explicitly requires it.",
 		"If dependencies must be installed, use a lockfile-readonly install (npm ci, pnpm install --frozen-lockfile).",
@@ -347,6 +350,18 @@ export function delegationPrompt(input: unknown): string {
 		parts.push(...params.chain.map((item) => (item && typeof item === "object" ? String((item as { task?: unknown }).task ?? "") : "")));
 	}
 	return parts.filter(Boolean).join("\n");
+}
+
+/** Replace pre-launch Task ids in the child packet after Orchestration mints the canonical id. */
+export function stampCanonicalTaskId(input: unknown, canonicalTaskId: string, previousTaskIds: readonly (string | undefined)[]): void {
+	if (!input || typeof input !== "object" || Array.isArray(input)) return;
+	const record = input as Record<string, unknown>;
+	if (typeof record.task !== "string") return;
+	let packet = record.task;
+	for (const previousTaskId of previousTaskIds) {
+		if (previousTaskId && previousTaskId !== canonicalTaskId) packet = packet.split(previousTaskId).join(canonicalTaskId);
+	}
+	record.task = packet;
 }
 
 export interface DelegationTarget {
