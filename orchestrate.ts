@@ -118,6 +118,7 @@ import type {
 	StructuredDelegationMode,
 	TaskExecutionRecord,
 	TaskFinding,
+	TaskRole,
 	WorkerReport,
 } from "./types.ts";
 import { emptyTaskUsage, summarizeTaskBudget } from "./usage.ts";
@@ -338,6 +339,18 @@ export interface DelegationRecord {
 	asyncDir?: string;
 	/** Child agent named in the delegation input; used to match single-run notices that carry no runId. */
 	agent?: string;
+	/**
+	 * R02 — the adapter workspace this delegation launched from, normalized
+	 * for comparison. An exact-id Idle recovery is authorized only from the
+	 * same workspace, including for unbound Explorer calls.
+	 */
+	launchCwd?: string;
+	/**
+	 * R02 — how this Explorer invocation owns its Task: a Task it created or
+	 * continues (`standalone`), an assisted Worker/Validator Task
+	 * (`auxiliary`), or no Task at all (`unbound`).
+	 */
+	explorerOwnership?: "standalone" | "auxiliary" | "unbound";
 	/**
 	 * Normalized worktree identities this invocation holds the write lock for.
 	 * Set only for writable kinds (worker, validator): the lock is owned by the
@@ -1293,7 +1306,12 @@ export class PlannerOrchestrator {
 		if (inputRecord.reportOnly === true) {
 			target = bindReportOnlyFallback(target, this.reportOnlyFallbackTask(cwd));
 		}
-		const role = target?.role ?? "worker";
+		// R02 — the role stamped by prepareRoleDelegation survives the agent
+		// remap, so an unstructured explorer still registers as one.
+		const stampedRole = typeof inputRecord.__delegationRole === "string" && inputRecord.__delegationRole
+			? (inputRecord.__delegationRole as TaskRole)
+			: undefined;
+		const role = stampedRole ?? target?.role ?? "worker";
 		const roleModelPolicy = loadRoleModelPolicy();
 		this.roleModelPolicyEnabled = roleModelPolicy.enabled;
 		if (roleModelPolicy.enabled && this.roleModelMismatchRecorded) {
@@ -1460,8 +1478,9 @@ export class PlannerOrchestrator {
 	}
 
 	// A Reviewer is an invocation over an existing Task: it must not create,
-		// rebind, or transition one.
-		if (target?.role === "reviewer") {
+		// rebind, or transition one. R02 — key on the effective role (the stamp
+		// survives the agent remap), not on the remapped target alone.
+		if (role === "reviewer" && target?.role === "reviewer") {
 			const taskId = target.taskId;
 			if (!taskId) {
 				return {
@@ -1501,6 +1520,7 @@ export class PlannerOrchestrator {
 			this.delegations.set(event.toolCallId, {
 				taskId,
 				kind: "reviewer",
+				launchCwd: cwd,
 				asyncRequested: isAsyncInput(input),
 				...(isExplicitAsyncFalse(input) ? { asyncExplicitFalse: true } : {}),
 				...(inputAgent(input) ? { agent: inputAgent(input) } : {}),
@@ -1553,6 +1573,7 @@ export class PlannerOrchestrator {
 				this.delegations.set(event.toolCallId, {
 					taskId: placeholder,
 					kind: "validator",
+					launchCwd: cwd,
 					...(accountingTask ? { accountingTaskId: accountingTask.taskId } : {}),
 					asyncRequested: isAsyncInput(input),
 					...(isExplicitAsyncFalse(input) ? { asyncExplicitFalse: true } : {}),
@@ -1609,6 +1630,7 @@ export class PlannerOrchestrator {
 			this.delegations.set(event.toolCallId, {
 				taskId: reviewed.taskId,
 				kind: "validator",
+				launchCwd: cwd,
 				asyncRequested: isAsyncInput(input),
 				...(isExplicitAsyncFalse(input) ? { asyncExplicitFalse: true } : {}),
 				...(inputAgent(input) ? { agent: inputAgent(input) } : {}),
@@ -1662,6 +1684,11 @@ export class PlannerOrchestrator {
 		}
 
 		let task: TaskRecord;
+		// R02 — Explorer ownership is fixed at accepted launch, before any
+		// state change: a Task this invocation creates or continues is
+		// standalone, an assisted Worker/Validator Task is auxiliary, and an
+		// unstructured Explorer binds nothing (unbound).
+		let explorerOwnership: "standalone" | "auxiliary" | "unbound" | undefined;
 		if (spec) {
 			// reportOnly is invocation-scoped: the persisted TaskSpec never carries
 			// it, so later normal delegations do not inherit report-only leniency.
@@ -1669,6 +1696,9 @@ export class PlannerOrchestrator {
 			const existing = this.store.get(spec.taskId);
 			if (existing) {
 				task = existing;
+				if (role === "explorer") {
+					explorerOwnership = existing.standaloneExplorer ? "standalone" : "auxiliary";
+				}
 				this.store.bindSpec(
 					existing.taskId,
 					spec.taskId === existing.taskId ? persisted : { ...persisted, taskId: existing.taskId },
@@ -1681,6 +1711,8 @@ export class PlannerOrchestrator {
 			// rebinding to the first one.
 			const alias = spec.taskId === TASKSPEC_EXAMPLE_SENTINEL ? undefined : spec.taskId;
 			task = this.store.create(storedSpec, alias);
+			if (role === "explorer") task.standaloneExplorer = true;
+			if (role === "explorer") explorerOwnership = "standalone";
 			this.reservations.rekey(spec.taskId, task.taskId, event.toolCallId);
 			warnings.push(
 				alias
@@ -1689,6 +1721,8 @@ export class PlannerOrchestrator {
 			);
 		} else {
 				task = this.store.create(persisted);
+				if (role === "explorer") task.standaloneExplorer = true;
+				if (role === "explorer") explorerOwnership = "standalone";
 				this.store.bindSpec(task.taskId, persisted);
 			}
 			if (specDetails.titleAliasUsed) {
@@ -1702,6 +1736,9 @@ export class PlannerOrchestrator {
 				: undefined;
 			if (liveNamed) {
 				task = liveNamed;
+				if (role === "explorer") {
+					explorerOwnership = liveNamed.standaloneExplorer ? "standalone" : "auxiliary";
+				}
 				// Roles with no base warning (e.g. explorer) would silently lose
 				// the attachment notice, so emit it standalone in that case.
 				if (warnings.length > 0) {
@@ -1718,6 +1755,7 @@ export class PlannerOrchestrator {
 					&& (active.state === "changes_requested" || active.state === "reviewing")
 				) {
 					task = active;
+					if (role === "explorer") explorerOwnership = "auxiliary";
 					if (warnings.length > 0) {
 						warnings[warnings.length - 1] += `; attached to active task ${active.taskId}`;
 					} else {
@@ -1731,6 +1769,8 @@ export class PlannerOrchestrator {
 					this.delegations.set(event.toolCallId, {
 						taskId: `unbound-explorer-${event.toolCallId}`,
 						kind: "explorer",
+						explorerOwnership: "unbound",
+						launchCwd: cwd,
 						...(accountingTask ? { accountingTaskId: accountingTask.taskId } : {}),
 						asyncRequested: isAsyncInput(input),
 						...(isExplicitAsyncFalse(input) ? { asyncExplicitFalse: true } : {}),
@@ -1766,11 +1806,17 @@ export class PlannerOrchestrator {
 		}
 		this.store.ensureCwd(task.taskId, cwd);
 		task = this.store.require(task.taskId);
+		// R02 — an auxiliary Explorer never advances, supersedes, or re-samples
+		// the assisted Task: parallel inspection must leave the other work's
+		// lifecycle, baseline, and pending writers exactly as they are.
+		const auxiliaryExplorer = role === "explorer" && explorerOwnership === "auxiliary";
 
 		// Reconcile same-Task pending children from child-run artifacts before
 		// contending for the lock: a finished run whose notice was lost is
 		// consumed and recorded, never mistaken for a live writer.
-		await this.reconcileBeforeLock(task.taskId, warnings);
+		if (!auxiliaryExplorer) {
+			await this.reconcileBeforeLock(task.taskId, warnings);
+		}
 
 		// FR-04 — write coordination follows actual write ability, not the
 		// presence of a TaskSpec: a warn-mode unstructured worker and a
@@ -1781,20 +1827,21 @@ export class PlannerOrchestrator {
 			return { task, conflict, ...(warnings.length ? { warnings } : {}) };
 		}
 
-		if (["planning", "changes_requested", "blocked", "failed"].includes(task.state)) {
+		if (!auxiliaryExplorer && ["planning", "changes_requested", "blocked", "failed"].includes(task.state)) {
 			this.store.transition(task.taskId, "executing");
 		}
 
 		task = this.store.require(task.taskId);
 		const executionReportOnly = inputRecord.reportOnly === true || spec?.reportOnly === true;
-		if (role !== "explorer" && this.store.baseRoundEnded(task.taskId)) {
+		const isStandaloneExplorer = role === "explorer" && explorerOwnership === "standalone";
+		if (role !== "explorer" && !isStandaloneExplorer && this.store.baseRoundEnded(task.taskId)) {
 			// A report was recorded against the current base: that review round
 			// is over and the next one gets its own A.
 			this.store.clearBaseEvidence(task.taskId);
 			task = this.store.require(task.taskId);
 		}
 		let roundSample: EvidenceRef | undefined;
-		if (role !== "explorer" && !task.baseEvidence) {
+		if ((role !== "explorer" || isStandaloneExplorer) && !task.baseEvidence) {
 			roundSample = await captureEvidence(
 				this.gitRunner,
 				captureEvidenceOptionsFor(task, event.toolCallId),
@@ -1812,13 +1859,17 @@ export class PlannerOrchestrator {
 			);
 			this.beginExecutionRecord(task, event.toolCallId, role, executionSample, {
 				...(executionReportOnly ? { reportOnly: true } : {}),
-				...(role === "explorer" || role === "validator" ? { auxiliary: true } : {}),
+				...(role === "validator" || (role === "explorer" && !isStandaloneExplorer)
+					? { auxiliary: true }
+					: {}),
 			});
 			task = this.store.require(task.taskId);
 		}
 		// A writable begin was gated by writerConflict above; a read-only role
 		// was not, so protect live writable waiters from supersede (ticket 01).
-		await this.supersedePendingDelegations(task.taskId, event.toolCallId, warnings, isWriterRole(role) ? {} : { protectWriters: true });
+		if (!auxiliaryExplorer) {
+			await this.supersedePendingDelegations(task.taskId, event.toolCallId, warnings, isWriterRole(role) ? {} : { protectWriters: true });
+		}
 		const inputRec = (event.input && typeof event.input === "object" && !Array.isArray(event.input))
 			? event.input as Record<string, unknown>
 			: undefined;
@@ -1826,6 +1877,8 @@ export class PlannerOrchestrator {
 		this.delegations.set(event.toolCallId, {
 			taskId: task.taskId,
 			kind: role,
+			launchCwd: cwd,
+			...(explorerOwnership ? { explorerOwnership } : {}),
 			asyncRequested: isAsyncInput(event.input),
 			...(isExplicitAsyncFalse(event.input) ? { asyncExplicitFalse: true } : {}),
 			...(inputAgent(event.input) ? { agent: inputAgent(event.input) } : {}),
@@ -2349,10 +2402,11 @@ export class PlannerOrchestrator {
 	 * arrived. The saved output is fed through the normal result path, so a
 	 * finished run records its WorkerReport / validator result instead of
 	 * deadlocking the Task. Idempotent: the runId is marked processed first.
-	 * Returns true when the delegation was consumed.
+	 * Returns the produced response content when the delegation was consumed
+	 * (also delivered for exact-id Idle recovery), undefined otherwise.
 	 */
-	private async reconcileDelegation(toolCallId: string, record: DelegationRecord): Promise<boolean> {
-		if (!record.runId || this.processedRunIds.has(record.runId)) return false;
+	private async reconcileDelegation(toolCallId: string, record: DelegationRecord): Promise<{ content: { type: "text"; text: string }[] } | undefined> {
+		if (!record.runId || this.processedRunIds.has(record.runId)) return undefined;
 		const dirs = this.delegationArtifactDirs(record);
 		const agents = [...new Set([record.agent, KIND_DEFAULT_AGENTS[record.kind]]
 			.filter((name): name is string => Boolean(name)))];
@@ -2361,21 +2415,21 @@ export class PlannerOrchestrator {
 			meta = readChildMeta(dirs, record.runId, agent);
 			if (meta?.exitCode !== undefined) break;
 		}
-		if (!meta || meta.exitCode === undefined) return false;
+		if (!meta || meta.exitCode === undefined) return undefined;
 		this.processedRunIds.add(record.runId);
 		this.endDelegation(toolCallId);
 		const task = this.store.get(record.taskId);
-		if (!task) return true;
+		if (!task) return { content: [{ type: "text", text: `[PLANNER-ONLY] Run ${record.runId} finished, but its task ${record.taskId} is no longer in the store; the output was not recorded.` }] };
 		const text = readLargestRunOutput(record.asyncDir, record.runId) ?? "";
 		if (this.isBlockedReceiptSealed(task)) {
-			this.parkBlockedReceipt(task, toolCallId, record.kind, text);
-			return true;
+			return this.parkBlockedReceipt(task, toolCallId, record.kind, text);
 		}
-		if (record.kind === "validator") await this.handleValidatorResult(task, text, record, toolCallId);
-		else if (record.kind === "reviewer") await this.handleReviewerResult(task, text, record);
-		else if (record.kind === "explorer") { /* explorer output returned as-is */ }
-		else await this.handleWorkerResult(task, text, toolCallId, { delegation: record });
-		return true;
+		if (record.kind === "validator") return await this.handleValidatorResult(task, text, record, toolCallId);
+		if (record.kind === "reviewer") return await this.handleReviewerResult(task, text, record);
+		if (record.kind === "explorer") {
+			return this.handleExplorerResult(task, text, toolCallId, record, { content: [{ type: "text", text }] });
+		}
+		return await this.handleWorkerResult(task, text, toolCallId, { delegation: record });
 	}
 
 	/**
@@ -2390,6 +2444,64 @@ export class PlannerOrchestrator {
 			if (await this.reconcileDelegation(toolCallId, record)) reconciled += 1;
 		}
 		return reconciled;
+	}
+
+	/**
+	 * R02 — exact-id Idle recovery authorization, derived only from a
+	 * registered pending Delegation: the exact full host run id, launched from
+	 * this adapter workspace, not yet consumed. A Task id, accounting id,
+	 * provider id, prefix, or caller-supplied path never authorizes; a restored
+	 * Task alone never authorizes either.
+	 */
+	authorizedWaitId(input: unknown, cwd: string): string | undefined {
+		const raw = input && typeof input === "object" ? (input as Record<string, unknown>).id : undefined;
+		const id = typeof raw === "string" ? raw.trim() : "";
+		if (!id) return undefined;
+		const target = normalizeWorkspaceIdentity(cwd);
+		for (const record of this.delegations.values()) {
+			if (record.runId !== id) continue;
+			if (this.processedRunIds.has(id)) return undefined;
+			if (!record.launchCwd || normalizeWorkspaceIdentity(record.launchCwd) !== target) continue;
+			return id;
+		}
+		return undefined;
+	}
+
+	/**
+	 * R02 — consume one authorized pending run through the same completion
+	 * path as sync results and native notices. Before and after the wait only
+	 * this registered run is reconciled against its trusted saved-result
+	 * location; a management-only wait response is not completion proof.
+	 * Missing metadata or output reports pending/unavailable without broad
+	 * scans or new Delegations.
+	 */
+	async recoverPendingRun(
+		input: unknown,
+		cwd: string,
+	): Promise<{ status: "recovered" | "pending"; content?: { type: "text"; text: string }[]; reason?: string } | undefined> {
+		const authorized = this.authorizedWaitId(input, cwd);
+		if (!authorized) return undefined;
+		for (const [toolCallId, record] of [...this.delegations]) {
+			if (record.runId !== authorized) continue;
+			const content = await this.reconcileDelegation(toolCallId, record);
+			if (content) return { status: "recovered", content: content.content };
+			const meta = readChildMeta(
+				this.delegationArtifactDirs(record),
+				authorized,
+				record.agent ?? KIND_DEFAULT_AGENTS[record.kind],
+			);
+			if (meta?.exitCode !== undefined) {
+				return {
+					status: "pending",
+					reason: "the run is terminal but its saved output could not be delivered; inspect the run artifacts or re-delegate",
+				};
+			}
+			return {
+				status: "pending",
+				reason: "the registered run has not reached a terminal state yet; retry the exact-id bg_wait",
+			};
+		}
+		return undefined;
 	}
 
 	/**
@@ -2536,6 +2648,20 @@ export class PlannerOrchestrator {
 		const text = resultText(event);
 		const isBudgetStop = isBudgetStopEvent(event, text);
 		if (isBudgetStop || (event.isError && !extractWorkerReport(text, { expectedTaskId: delegation.taskId, expectedWorkerRunId: event.toolCallId }).report)) {
+			// R02 — auxiliary and unbound Explorer errors only record the
+			// invocation outcome; the assisted Task's lifecycle is untouched.
+			if (delegation.kind === "explorer" && delegation.explorerOwnership !== "standalone") {
+				this.endDelegation(event.toolCallId);
+				return {
+					content: [{
+						type: "text",
+						text: [
+							`[PLANNER-ONLY] Explorer delegation for ${delegation.taskId} failed (auxiliary/unbound; no Task affected).`,
+							truncate(text, RAW_OUTPUT_FALLBACK_CHARS),
+						].join("\n"),
+					}],
+				};
+			}
 			// D07 — an async child with a known runId is not confirmed stopped by
 			// an error event alone. Consume a run the artifacts already show
 			// terminal; otherwise keep the delegation (and its write lock) until
@@ -2635,7 +2761,7 @@ export class PlannerOrchestrator {
 		}
 
 		if (delegation.kind === "explorer") {
-			return { content: [{ type: "text", text }] };
+			return await this.handleExplorerResult(task, text, event.toolCallId, delegation, { content: [{ type: "text", text }] });
 		}
 
 		if (!task) {
@@ -2676,7 +2802,11 @@ export class PlannerOrchestrator {
 				continue;
 			}
 
-			if (found.record.kind === "explorer") {
+			const isExplorerInvocation = found.record.kind === "explorer";
+			const isStandaloneExplorer = isExplorerInvocation && found.record.explorerOwnership === "standalone";
+			// R02 — auxiliary/unbound Explorer notices never touch a Task; a
+			// stop only records that invocation's outcome.
+			if (isExplorerInvocation && !isStandaloneExplorer) {
 				outcome = { content: [{ type: "text", text: chosen }] };
 				continue;
 			}
@@ -2709,6 +2839,10 @@ export class PlannerOrchestrator {
 			}
 			if (found.record.kind === "validator") {
 				outcome = await this.handleValidatorResult(task, chosen, found.record, found.toolCallId);
+				continue;
+			}
+			if (isStandaloneExplorer) {
+				outcome = await this.handleStandaloneExplorerResult(task, chosen, found.toolCallId, found.record);
 				continue;
 			}
 
@@ -3137,6 +3271,86 @@ export class PlannerOrchestrator {
 				text: outputText,
 			}],
 		};
+	}
+
+	/**
+	 * R02 — resolve one Explorer result by ownership: standalone runs go
+	 * through the full WorkerReport/review closure; auxiliary and unbound runs
+	 * only return their output and never touch a Task.
+	 */
+	private async handleExplorerResult(
+		task: TaskRecord | undefined,
+		text: string,
+		toolCallId: string,
+		record: DelegationRecord | undefined,
+		passthrough: { content: { type: "text"; text: string }[] },
+	): Promise<{ content: { type: "text"; text: string }[] }> {
+		if (!task || record?.explorerOwnership !== "standalone") return passthrough;
+		return await this.handleStandaloneExplorerResult(task, text, toolCallId, record);
+	}
+
+	/**
+	 * R02 — a standalone Explorer's terminal result closes like a Worker's:
+	 * validated WorkerReport + bound Evidence → reviewing → Root
+	 * `planner_verdict`. An unchanged workspace is a valid read-only outcome.
+	 * A malformed or missing terminal report blocks the Task with a
+	 * contract-repair instruction (no report-only round is auto-spent).
+	 */
+	private async handleStandaloneExplorerResult(
+		task: TaskRecord,
+		text: string,
+		toolCallId: string,
+		record: DelegationRecord,
+	): Promise<{ content: { type: "text"; text: string }[] }> {
+		const extracted = extractWorkerReport(text, {
+			expectedTaskId: task.taskId,
+			...(toolCallId ? { expectedWorkerRunId: toolCallId } : {}),
+		});
+		let identityErrors: string[] = [];
+		if (extracted.report) {
+			identityErrors = validateWorkerReportIdentity(extracted.report, {
+				taskId: task.taskId,
+				...(task.aliases.length > 0 ? { aliases: task.aliases } : {}),
+				...(toolCallId ? { workerRunId: toolCallId } : {}),
+			});
+		}
+		if (!extracted.report || identityErrors.length > 0) {
+			// Keep the execution's C_report even for the rejected result.
+			const execution = this.store.executionById(task.taskId, toolCallId);
+			if (execution) {
+				const current = await captureEvidence(
+					this.gitRunner,
+					captureEvidenceOptionsFor(task, toolCallId, {
+						...(task.baseEvidence?.finalGitRef ? { baseGitRef: task.baseEvidence.finalGitRef } : {}),
+					}),
+				);
+				this.completeExecutionSample(task, toolCallId, current);
+			}
+			const reportError = identityErrors.length > 0
+				? `task identity rejected: ${identityErrors.join("; ")}`
+				: extracted.error ?? "no WorkerReport found";
+			if (this.store.require(task.taskId).state !== "completed") {
+				this.store.transition(task.taskId, "blocked");
+				this.store.setStateReason(
+					task.taskId,
+					`standalone explorer returned no valid WorkerReport (${reportError}); re-delegate the same lookup with the same TaskSpec to retry`,
+				);
+			}
+			return {
+				content: [{
+					type: "text",
+					text: [
+						`[PLANNER-ONLY] Standalone explorer for task ${task.taskId} did not return a valid WorkerReport.`,
+						reportError,
+						"The Task is blocked with a contract-repair instruction; the raw output is kept below for reference.",
+						"Recovery: re-delegate the same lookup with the same TaskSpec (a fresh standalone run), or record planner_verdict to close the Task.",
+						"",
+						truncate(text, RAW_OUTPUT_FALLBACK_CHARS),
+					].join("\n"),
+				}],
+			};
+		}
+		return await this.handleWorkerResult(task, text, toolCallId, { delegation: record });
 	}
 
 	private async handleValidatorResult(

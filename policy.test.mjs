@@ -175,4 +175,50 @@ assert.equal(
 	assert.equal(composite.reason.includes("```json"), false, "composite refusal gains no example JSON");
 }
 
+// ==========================================================================
+// R02 — Idle gather Policy (PolicyInput.liveTask / authorizedWaitId)
+// ==========================================================================
+
+{
+	const idle = (toolName, input, extra = {}) =>
+		decidePolicy({ toolName, input, isChild: false, disabled: false, liveTask: false, cwd: "/repo", ...extra });
+
+	// Idle allowlist: child-delegating subagent, questions, Verdict.
+	assert.equal(idle("subagent", { agent: "worker", task: "x" }).block, false);
+	assert.equal(idle("question", {}).block, false);
+	assert.equal(idle("questionnaire", {}).block, false);
+	assert.equal(idle("planner_verdict", { verdict: "blocked", summary: "x" }).block, false);
+
+	// Everything else is refused with the pasteable TaskSpec example.
+	for (const toolName of ["read", "grep", "find", "ls", "git_audit", "bash", "write", "edit", "subagent_wait", "subagent_supervisor", "custom_tool"]) {
+		const input = toolName === "bash" ? { command: "git status" } : { path: "docs/x.md" };
+		const decision = idle(toolName, input);
+		assert.equal(decision.block, true, `${toolName} is refused while Idle for gather`);
+		assert.match(decision.reason, /idle for gather/, `${toolName}: idle reason`);
+		const example = exampleFromReason(decision.reason);
+		assert.deepEqual(validateTaskSpec(example), [], `${toolName}: the example validates`);
+	}
+	// Safe-shell Git-read is not an Idle gather loophole.
+	assert.match(idle("bash", { command: "git status --short" }).reason, /idle for gather/);
+
+	// bg_wait: only the exact registered run id, bounded timeout, no extra fields.
+	assert.equal(idle("bg_wait", { id: "run-1" }, { authorizedWaitId: "run-1" }).block, false);
+	assert.equal(idle("bg_wait", { id: "run-1", timeout: 60000 }, { authorizedWaitId: "run-1" }).block, false);
+	assert.equal(idle("bg_wait", { id: "run-1" }).block, true, "an unregistered id is refused");
+	assert.equal(idle("bg_wait", {}, { authorizedWaitId: "run-1" }).block, true, "an omitted id is refused");
+	assert.equal(idle("bg_wait", { id: "run-1", timeout: 61000 }, { authorizedWaitId: "run-1" }).block, true, "a >60s blocking timeout is refused");
+	assert.equal(idle("bg_wait", { id: "run-1", subscribe: true }, { authorizedWaitId: "run-1" }).block, true, "unknown extra fields are refused");
+
+	// liveTask: true keeps today's allowlist; liveTask undefined stays legacy.
+	const live = (toolName, input) =>
+		decidePolicy({ toolName, input, isChild: false, disabled: false, liveTask: true, cwd: "/repo" });
+	assert.equal(live("read", { path: "x" }).block, false);
+	assert.equal(live("grep", { pattern: "x" }).block, false);
+	assert.equal(live("git_audit", { operation: "status" }).block, false);
+	assert.equal(live("contact_supervisor", {}).block, false);
+	assert.equal(live("bg_wait", {}).block, false, "generic bg_wait stays allowed while live");
+	assert.equal(live("bash", { command: "git status --short" }).block, false);
+	assert.equal(live("bash", { command: "npm test" }).block, true);
+}
+
 console.log("planner-only policy: PASS");

@@ -658,6 +658,14 @@ export interface TaskRecord {
 	 */
 	findings: TaskFinding[];
 	/**
+	 * R02 — this Task was created by (or continues) a standalone Explorer
+	 * Delegation: its terminal result is processed like a WorkerReport and it
+	 * closes through the normal review loop. Ownership survives restore so a
+	 * continuation is still standalone and an assisted Worker/Validator Task
+	 * is never mistaken for one.
+	 */
+	standaloneExplorer?: boolean;
+	/**
 	 * E02 — how many automatic recovery/revalidation attempts this Task has
 	 * been granted (bounded by MAX_RECOVERY_ATTEMPTS) and the evidence-state
 	 * keys already attempted: the same state never gets a second automatic

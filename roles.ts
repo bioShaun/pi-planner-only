@@ -209,6 +209,10 @@ export function applyRoleDelegation(
 	options: ApplyRoleDelegationOptions,
 ): ApplyRoleDelegationResult {
 	let mutated = false;
+	// R02 — stamp the resolved role before the agent remap: an unstructured
+	// explorer remaps to the builtin reviewer agent, and begin must still know
+	// the invocation's own role to register unbound Explorer ownership.
+	input.__delegationRole = options.role;
 	let contextOverridden = false;
 	let contextReason: string | undefined;
 
@@ -434,6 +438,7 @@ export function detectReuseRequest(rawInput: unknown): ReuseRequestInfo {
 }
 
 export const STRIPPED_DELEGATION_KEYS = [
+	"__delegationRole",
 	"__reuseOutcome",
 	"__contextOverridden",
 	"__floorLimits",

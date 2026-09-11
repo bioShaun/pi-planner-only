@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { LedgerSnapshotStore } from "./ledger-store.ts";
-import { TaskStore } from "./task.ts";
+import { TaskStore, validateTaskSpec } from "./task.ts";
 import { emptyTaskUsage } from "./usage.ts";
 
 const isolatedAgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
@@ -106,6 +106,7 @@ assert.deepEqual(activeTools, [
 ]);
 assert.equal(setActiveCalls.length, 0);
 
+
 // Issue 13B: status exposes session totals and keeps pre-Task Root usage unattributed.
 await handlers.get("message_end")({ message: {
 	role: "assistant", id: "msg-budget-session", model: "test-model",
@@ -155,6 +156,30 @@ await commands.get("planner-only").handler(`usage summary ${join(isolatedAgentDi
 assert.equal(notices.at(-1).type, "warning");
 assert.match(notices.at(-1).message, /no run records/);
 
+// R02 — the harness keeps one live Task anchored at ctx.cwd so the live
+// gather allowlist (safe bash, git_audit, contact_supervisor, read) stays
+// exercisable; Idle-gather fixtures run in their own context further below.
+// The Task belongs to a (standalone) explorer: read-only roles hold no write
+// lock, so later worker/validator fixtures at other cwds stay uncontended.
+const harnessTaskId = `T-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, "0")}${String(new Date().getDate()).padStart(2, "0")}-900`;
+{
+	const prev = gitResponses.get("status --porcelain=v2 --branch");
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: "", stderr: "", code: 0 });
+	await handlers.get("tool_call")(
+		{
+			toolCallId: "call-harness-live",
+			toolName: "subagent",
+			input: { task: JSON.stringify({ ...delegationSpec(harnessTaskId, "explorer", ctx.cwd), validation: { required: false } }) },
+		},
+		ctx,
+	);
+	if (prev === undefined) gitResponses.delete("status --porcelain=v2 --branch");
+	else gitResponses.set("status --porcelain=v2 --branch", prev);
+	notices.length = 0;
+	await commands.get("planner-only").handler(`task ${harnessTaskId}`, ctx);
+	assert.match(notices.at(-1).message, /State: executing/, "the harness Task anchors ctx.cwd as gather-live");
+}
+
 const blocked = await handlers.get("tool_call")(
 	{ toolName: "write", input: { path: "/tmp/x" } },
 	ctx,
@@ -193,10 +218,11 @@ assert.match(prompt.systemPrompt, /plan, delegate, inspect read-only, review, an
 assert.match(prompt.systemPrompt, /WorkerReport/);
 assert.match(prompt.systemPrompt, /git_audit/);
 assert.match(prompt.systemPrompt, /Never fix rejected work/);
-assert.match(prompt.systemPrompt, /Do not pre-compose worker.+reviewer as a workflowScript, tasks array, or chain/s);
+// R02 — the workflowScript ban merged into the role line (authorized cut).
+assert.match(prompt.systemPrompt, /never pre-compose worker→reviewer as a workflowScript, tasks array, or chain/);
 assert.match(prompt.systemPrompt, /canonical id returned by the extension/);
 assert.match(prompt.systemPrompt, /direct \{agent, task\}/);
-assert.match(prompt.systemPrompt, /Call the reviewer only after the worker returns/);
+assert.match(prompt.systemPrompt, /call the reviewer only after the worker returns, in a separate direct call/);
 assert.doesNotMatch(prompt.systemPrompt, /diffStat/);
 assert.doesNotMatch(prompt.systemPrompt, /\/planner-only/);
 
@@ -1633,7 +1659,7 @@ assert.ok(
 );
 assert.match(PLANNER_PROMPT, /plan, delegate, inspect read-only, review, and arbitrate/);
 assert.match(PLANNER_PROMPT, /Do not edit or write files, run a general shell, or implement fixes/);
-assert.match(PLANNER_PROMPT, /one bounded TaskSpec embedded in one direct \{agent, task\}/);
+assert.match(PLANNER_PROMPT, /One bounded TaskSpec embedded in one direct \{agent, task\}/);
 assert.match(PLANNER_PROMPT, /canonical id returned by the extension/);
 assert.match(PLANNER_PROMPT, /WorkerReport version 1/);
 assert.match(PLANNER_PROMPT, /changedFiles, validation plus exit codes, evidence, risks, and unresolved items/);
@@ -1644,7 +1670,7 @@ assert.match(PLANNER_PROMPT, /workflowScript/);
 assert.match(PLANNER_PROMPT, /Never trust a worker PASS/);
 assert.match(PLANNER_PROMPT, /Never accept stale evidence/);
 assert.match(PLANNER_PROMPT, /Stop after 3 review rounds/);
-assert.match(PLANNER_PROMPT, /One ticket per TaskSpec/);
+assert.match(PLANNER_PROMPT, /one ticket per TaskSpec/);
 assert.match(PLANNER_PROMPT, /Do not instruct workers to \/code-review/);
 assert.match(PLANNER_PROMPT, /PI_PLANNER_ONLY_ORACLE=full/);
 assert.match(PLANNER_PROMPT, /Lifecycle state arrives in delegation results; the operator may override a verdict, you record yours with planner_verdict\./);
@@ -2779,10 +2805,12 @@ assert.match(
 	assert.match(resWorker.content[0].text, /decision: review_pending/);
 	assert.doesNotMatch(resWorker.content[0].text, /Async delegation/);
 
-	// 1b. Explorer with completion evidence takes explorer path: returns as-is without entering WorkerReport parsing
-	const taskIdExplorer = "T-20260905-802";
-	await handlers.get("tool_call")(
-		{ toolCallId: "call-ora-e", toolName: "subagent", input: { agent: "worker", task: JSON.stringify(delegationSpec(taskIdExplorer, "explorer")) } },
+	// 1b. Unbound explorer (no TaskSpec, no Task) with completion evidence: the
+	// output returns as-is without WorkerReport parsing or Task side effects.
+	// R02 — an explorer WITH an embedded TaskSpec is standalone and closes its
+	// Task like a worker; that lifecycle has its own orchestration coverage.
+	const eCall = await handlers.get("tool_call")(
+		{ toolCallId: "call-ora-e", toolName: "subagent", input: { agent: "explorer", task: "Survey the repo and report findings." } },
 		ctx,
 	);
 	const resExplorer = await handlers.get("tool_result")(
@@ -4275,6 +4303,131 @@ await abandonActiveTasks();
 		process.env.PI_CODING_AGENT_DIR = previous;
 		rmSync(dir, { recursive: true, force: true });
 	}
+}
+
+// ==========================================================================
+// R02 — primary acceptance: Idle read refused → pasteable example launches a
+// standalone Explorer → exact-id bg_wait recovery → review → Verdict → Idle.
+// ==========================================================================
+{
+	// A separate workspace with no live Task: Idle for gather.
+	const idleCwd = "/fixture/r02-idle";
+	const idleCtx = { ...ctx, cwd: idleCwd };
+
+	// 1. Idle read refused, with a pasteable, validating TaskSpec example.
+	const refused = await handlers.get("tool_call")(
+		{ toolName: "read", input: { path: "docs/api.md" } },
+		idleCtx,
+	);
+	assert.equal(refused?.block, true, "an Idle read is refused");
+	assert.match(refused.reason, /idle for gather/);
+	const exampleMatch = refused.reason.match(/```json\n([\s\S]*?)\n```/);
+	assert.ok(exampleMatch, "the refusal carries the fenced example");
+	const example = JSON.parse(exampleMatch[1]);
+	assert.deepEqual(validateTaskSpec(example), [], "the example passes TaskSpec validation");
+	assert.equal(example.cwd, idleCwd, "the example names the adapter workspace");
+
+	// 1b. While Idle, a prefix bg_wait id is refused (no live Task allows the
+	// generic wait tool either).
+	const waitRefusedIdle = await handlers.get("tool_call")(
+		{ toolName: "bg_wait", input: { id: "run-r02-idle-prefix" } },
+		idleCtx,
+	);
+	assert.equal(waitRefusedIdle?.block, true, "a prefix id is refused while Idle");
+
+	// 2. Paste: the example (filled with the lookup intent) launches an async
+	// standalone Explorer.
+	example.objective = "Look up the API base URL in docs/api.md and report it.";
+	example.role = "explorer";
+	const paste = await handlers.get("tool_call")(
+		{
+			toolCallId: "call-r02-idle-paste",
+			toolName: "subagent",
+			input: { agent: "explorer", task: JSON.stringify(example), async: true },
+		},
+		idleCtx,
+	);
+	assert.equal(paste, undefined, "the validating example starts the Delegation");
+	const receipt = await handlers.get("tool_result")(
+		{
+			toolCallId: "call-r02-idle-paste",
+			toolName: "subagent",
+			input: {},
+			details: { asyncId: "run-r02-idle", runId: "run-r02-idle", asyncDir: join(isolatedAgentDir, "async-subagent-runs", "run-r02-idle") },
+			content: [{ type: "text", text: "Async: explorer [run-r02-idle]\nThe async run is detached and running in the background." }],
+			isError: false,
+		},
+		idleCtx,
+	);
+	assert.match(receipt.content[0].text, /Async delegation/);
+	const canonId = /task (T-\d{8}-\d{3}) has started/.exec(receipt.content[0].text)?.[1];
+	assert.ok(canonId, `the receipt names the canonical Task id: ${receipt.content[0].text}`);
+	assert.notEqual(canonId, "T-pending", "the sentinel never survives to the launch packet");
+
+	// 3. The exact-id wait is authorized while Idle (the run is registered and
+	// pending); an unregistered id is refused.
+	const waitAllowed = await handlers.get("tool_call")(
+		{ toolName: "bg_wait", input: { id: "run-r02-idle" } },
+		idleCtx,
+	);
+	assert.equal(waitAllowed, undefined, "the authorized exact-id wait passes Policy");
+	// 4. First wait: no terminal artifacts yet → pending guidance, no busy-wait.
+	const firstWait = await handlers.get("tool_result")(
+		{ toolCallId: "w-r02-1", toolName: "bg_wait", input: { id: "run-r02-idle" }, content: [] },
+		idleCtx,
+	);
+	assert.match(firstWait.content[0].text, /not reached a terminal state/);
+
+	// 5. The run finishes: host-shaped meta + saved output appear.
+	mkdirSync(join(isolatedAgentDir, "artifacts", "outputs", "run-r02-idle"), { recursive: true });
+	writeFileSync(
+		join(isolatedAgentDir, "artifacts", "run-r02-idle_explorer_meta.json"),
+		JSON.stringify({ runId: "run-r02-idle", agent: "explorer", exitCode: 0 }),
+	);
+	writeFileSync(
+		join(isolatedAgentDir, "artifacts", "outputs", "run-r02-idle", "out.txt"),
+		JSON.stringify({
+			version: 1,
+			taskId: canonId,
+			status: "completed",
+			summary: "found the API base URL in docs/api.md",
+			changedFiles: [],
+			validation: [],
+			evidence: { cwd: idleCwd, taskId: canonId, workerRunId: "call-r02-idle-paste", changedPaths: [], gitAvailable: true, generatedAt: new Date().toISOString() },
+			risks: [],
+			unresolved: [],
+		}),
+	);
+	const recovered = await handlers.get("tool_result")(
+		{ toolCallId: "w-r02-2", toolName: "bg_wait", input: { id: "run-r02-idle" }, content: [] },
+		idleCtx,
+	);
+	assert.match(recovered.content[0].text, /decision: review_pending/, recovered.content[0].text);
+	assert.match(recovered.content[0].text, /\[PLANNER-ONLY WORKER REPORT\]/, "the recovered output is the processed report, delivered once");
+
+	// 6. Root Verdict closes the standalone Task; the workspace returns to Idle.
+	const verdict = await tools.get("planner_verdict").execute(
+		"v-r02-idle",
+		{ verdict: "pass", summary: "lookup confirmed", taskId: canonId },
+		undefined,
+		undefined,
+		idleCtx,
+	);
+	assert.equal(verdict.details.state, "completed", verdict.content?.[0]?.text);
+
+	// 7. The next read is refused: the completed Task no longer keeps gather live.
+	const refusedAgain = await handlers.get("tool_call")(
+		{ toolName: "read", input: { path: "docs/api.md" } },
+		idleCtx,
+	);
+	assert.equal(refusedAgain?.block, true, "the workspace is Idle again after completion");
+
+	// A replayed wait cannot re-consume the run or reopen gather permission.
+	const replay = await handlers.get("tool_result")(
+		{ toolCallId: "w-r02-3", toolName: "bg_wait", input: { id: "run-r02-idle" }, content: [] },
+		idleCtx,
+	);
+	assert.equal(replay, undefined, "a consumed id yields no further recovery");
 }
 
 rmSync(isolatedAgentDir, { recursive: true, force: true });

@@ -66,20 +66,20 @@ const GIT_TIMEOUT_MS = 15_000;
 
 export const PLANNER_PROMPT = `[PLANNER-ONLY MODE]
 Root: plan, delegate, inspect read-only, review, and arbitrate.
-Do not edit or write files, run a general shell, or implement fixes. Keep bash/edit/write listed for children; do not call them.
+Do not edit or write files, run a general shell, or implement fixes.
 
-Executable work uses one bounded TaskSpec embedded in one direct {agent, task} subagent call.
-One ticket per TaskSpec. Do not instruct workers to /code-review; the plugin reviewer is the only review.
-Embed the TaskSpec JSON so the worker can echo taskId. The extension may replace the id; use the canonical id returned by the extension afterwards.
+Gather: no live Task for this cwd means new gather starts with one Delegation; skills are named in the TaskSpec constraints for the Worker to follow. Known-run recovery (exact-id bg_wait) and planner_verdict stay allowed. While a Task is live for gather, inspect and Git-read are on.
 
-Every worker returns WorkerReport version ${WORKER_REPORT_VERSION} with taskId, status (completed|partial|blocked|failed), summary, changedFiles, validation plus exit codes, evidence, risks, and unresolved items.
+One bounded TaskSpec embedded in one direct {agent, task} subagent call; one ticket per TaskSpec. Do not instruct workers to /code-review; the plugin reviewer is the only review.
+Embed the TaskSpec JSON so the worker can echo taskId; the extension may replace the id; use the canonical id returned by the extension afterwards.
 
-Before acceptance: verify identity, evidence freshness, inspect relevant files and git with read/grep/git_audit, evaluate acceptance criteria, then record PASS, REQUEST_CHANGES, or BLOCKED with planner_verdict.
+Every worker returns WorkerReport version ${WORKER_REPORT_VERSION} with taskId, status, summary, changedFiles, validation plus exit codes, evidence, risks, and unresolved items.
 
-Role remapping: explorer/reviewer → builtin reviewer (read/grep/find/ls; context=fresh; bounded packet; never a fork of this session); validator → oracle (bash, no edits); worker keeps its agent.
-Do not pre-compose worker→reviewer as a workflowScript, tasks array, or chain. Call the reviewer only after the worker returns, in a separate direct call.
+Verify identity, evidence freshness, inspect relevant files and git with read/grep/git_audit, then record PASS, REQUEST_CHANGES, or BLOCKED with planner_verdict.
 
-Use git_audit. Never trust a worker PASS. Never accept stale evidence; re-delegate validation (bounded oracle: HEAD/status + named tests; full suite only if PI_PLANNER_ONLY_ORACLE=full). Never fix rejected work; delegate a bounded correction. Stop after ${MAX_REVIEW_ROUNDS} review rounds (blocked).
+Roles: explorer/reviewer → builtin reviewer (read/grep/find/ls; context=fresh; bounded packet), validator → oracle (bash, no edits), worker keeps its agent; never pre-compose worker→reviewer as a workflowScript, tasks array, or chain; call the reviewer only after the worker returns, in a separate direct call.
+
+Never trust a worker PASS. Never accept stale evidence; re-delegate validation (bounded oracle: HEAD/status + named tests; full suite only if PI_PLANNER_ONLY_ORACLE=full). Never fix rejected work; delegate a bounded correction. Stop after ${MAX_REVIEW_ROUNDS} review rounds (blocked).
 Lifecycle state arrives in delegation results; the operator may override a verdict, you record yours with planner_verdict.`;
 
 function envForcesGuard(): boolean {
@@ -956,12 +956,21 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
+		// R02 — the adapter derives the gather phase and the exact-id recovery
+		// authorization from the store for this workspace; PolicyInput always
+		// carries them (a store read cannot fail in memory, and a failure would
+		// read as Idle: fail closed).
+		const policyCwd = ctx?.cwd || process.cwd();
 		const decision = decidePolicy({
 			toolName: event.toolName,
 			input: event.input,
 			isChild: IS_SUBAGENT,
 			disabled: isDisabled(),
-			cwd: ctx?.cwd || process.cwd(),
+			cwd: policyCwd,
+			liveTask: Boolean(orchestrator.store.activeForCwd(policyCwd)),
+			...(event.toolName === "bg_wait"
+				? { authorizedWaitId: orchestrator.authorizedWaitId(event.input, policyCwd) }
+				: {}),
 		});
 		if (!decision.block) {
 			if (event.toolName === "subagent" && !isDisabled() && isDelegationCall(event.input)) {
@@ -996,8 +1005,21 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		latestCtx = ctx;
 		const host = ctx ?? ({ hasUI: false, cwd: process.cwd() } as ExtensionContext);
 		if (event.toolName === "bg_wait") {
+			// R02 — the existing Usage recording is retained and is not mistaken
+			// for lifecycle processing; an authorized exact-id wait reconciles
+			// only its registered run through the shared completion path.
 			recordBgWaitChildren(event);
 			persistSessionEntries();
+			if (!IS_SUBAGENT && !isDisabled()) {
+				const waitCwd = ctx?.cwd || process.cwd();
+				const recovered = await orchestrator.recoverPendingRun(event.input, waitCwd);
+				if (recovered?.status === "recovered" && recovered.content) {
+					return { content: recovered.content };
+				}
+				if (recovered?.status === "pending" && recovered.reason) {
+					return { content: [{ type: "text", text: `[PLANNER-ONLY] Exact-id wait: ${recovered.reason}` }] };
+				}
+			}
 			return;
 		}
 		if (REVIEW_LEAK_TOOLS.has(event.toolName)) {

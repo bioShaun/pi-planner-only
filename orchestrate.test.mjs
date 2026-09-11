@@ -1315,6 +1315,8 @@ function truncatedPreview() {
 	assert.deepEqual(orch.getDelegation("call-914-explore-unbound"), {
 		taskId: "unbound-explorer-call-914-explore-unbound",
 		kind: "explorer",
+		explorerOwnership: "unbound",
+		launchCwd: "/repo",
 		asyncRequested: false,
 		agent: "explorer",
 		floorLimits: {
@@ -7321,6 +7323,187 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	assert.notEqual(second.task.taskId, firstId, "the second paste does not rebind to the first Task");
 	assert.equal(orch.store.get(SENTRY_TASK_ID), undefined);
 	setCleanTree();
+}
+
+
+// ==========================================================================
+// R02 — Explorer lifecycle, bounded recovery, Idle gather readiness
+// ==========================================================================
+
+// R02 standalone closure: a zero-change read-only outcome is a valid report —
+// reviewing → Root verdict → completed, with its own attribution window.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-982";
+	const spec = { ...specFor(taskId, "explorer", "/fixture/r02"), validation: { required: false } };
+	setCleanTree();
+	const outcome = await orch.beginDelegation(
+		{ toolCallId: "call-r02-ex", input: { agent: "explorer", task: JSON.stringify(spec) } },
+		BASE,
+	);
+	assert.equal(outcome.task?.state, "executing");
+	assert.equal(orch.getDelegation("call-r02-ex")?.explorerOwnership, "standalone");
+	assert.equal(orch.store.require(taskId).executions.at(-1)?.auxiliary, undefined, "a standalone explorer owns its attribution window");
+	const res = await orch.handleSubagentResult(workerResult("call-r02-ex", {
+		version: 1,
+		taskId,
+		status: "completed",
+		summary: "looked, no changes needed",
+		changedFiles: [],
+		validation: [{ command: "npm test", type: "test", status: "not-run", exitCode: 0, summary: "not run" }],
+		evidence: { cwd: "/fixture/r02", taskId, workerRunId: "call-r02-ex", changedPaths: [], gitAvailable: true, generatedAt: new Date().toISOString() },
+		risks: [],
+		unresolved: [],
+	}));
+	assert.match(res.content[0].text, /decision: review_pending/, res.content[0].text);
+	assert.equal(orch.store.require(taskId).state, "reviewing");
+	assert.equal(orch.store.require(taskId).reports.length, 1, "the read-only report is recorded");
+	const verdict = await orch.recordRootVerdict(orch.store.require(taskId), "pass", "read-only lookup confirmed");
+	assert.equal(verdict.decision.action, "accept", verdict.decision.reason);
+	assert.equal(verdict.task.state, "completed");
+	setCleanTree();
+}
+
+// R02 standalone failure contract: a malformed terminal report blocks the
+// Task with a repair instruction, and the C_report is kept for the record.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-983";
+	const spec = { ...specFor(taskId, "explorer", "/fixture/r02b"), validation: { required: false } };
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-r02-bad", input: { agent: "explorer", task: JSON.stringify(spec) } },
+		BASE,
+	);
+	const res = await orch.handleSubagentResult({
+		toolCallId: "call-r02-bad",
+		toolName: "subagent",
+		content: [{ type: "text", text: "prose findings, no JSON report" }],
+		isError: false,
+	});
+	assert.match(res.content[0].text, /did not return a valid WorkerReport/);
+	assert.match(res.content[0].text, /Recovery: re-delegate/);
+	assert.equal(orch.store.require(taskId).state, "blocked", "the malformed terminal report blocks the standalone Task");
+	assert.match(orch.store.require(taskId).stateReason ?? "", /valid WorkerReport/);
+	assert.ok(orch.store.require(taskId).executions.at(-1)?.cReport, "the C_report is kept even for the rejected result");
+	assert.equal(orch.store.require(taskId).reports.length, 0);
+	setCleanTree();
+}
+
+// R02 auxiliary isolation: an explorer assisting a live worker Task never
+// advances its lifecycle, baseline, or reports, and errors hit only the invocation.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-984";
+	await delegateWorker(orch, "call-r02-aux-w", taskId);
+	const before = orch.store.require(taskId);
+	const baseBefore = before.baseEvidence?.finalGitRef;
+	const aux = await orch.beginDelegation(
+		{ toolCallId: "call-r02-aux", input: { agent: "explorer", task: JSON.stringify({ ...specFor(taskId, "explorer", BASE) }) } },
+		BASE,
+	);
+	assert.equal(aux.task?.taskId, taskId, "the explorer assists the live Task");
+	assert.equal(orch.getDelegation("call-r02-aux")?.explorerOwnership, "auxiliary");
+	assert.equal(orch.store.require(taskId).state, before.state, "the assisted Task state is unchanged");
+	assert.equal(orch.store.require(taskId).baseEvidence?.finalGitRef, baseBefore, "the assisted baseline is untouched");
+	const res = await orch.handleSubagentResult({
+		toolCallId: "call-r02-aux",
+		toolName: "subagent",
+		content: [{ type: "text", text: "aux findings as prose" }],
+		isError: false,
+	});
+	assert.equal(res.content[0].text, "aux findings as prose", "auxiliary output returns as-is");
+	assert.equal(orch.store.require(taskId).reports.length, 0, "no report lands on the assisted Task");
+	// An auxiliary error affects only the invocation.
+	await orch.beginDelegation(
+		{ toolCallId: "call-r02-aux2", input: { agent: "explorer", task: JSON.stringify({ ...specFor(taskId, "explorer", BASE) }) } },
+		BASE,
+	);
+	const err = await orch.handleSubagentResult({
+		toolCallId: "call-r02-aux2",
+		toolName: "subagent",
+		isError: true,
+		content: [{ type: "text", text: "explorer crashed" }],
+	});
+	assert.match(err.content[0].text, /no Task affected/);
+	assert.equal(orch.store.require(taskId).state, before.state, "the assisted Task survives the auxiliary error");
+}
+
+// R02 exact-id recovery: a registered pending run is consumed once through the
+// shared completion path; prefixes, other cwds, and consumed ids never authorize.
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-r02-rec-"));
+	const artifactDirs = () => [dir];
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), artifactDirs });
+	const taskId = "T-20260905-985";
+	const runId = "run-r02-recover";
+	const asyncDir = join(dir, "async-subagent-runs", runId);
+	mkdirSync(join(dir, "artifacts", "outputs", runId), { recursive: true });
+	writeFileSync(join(dir, "artifacts", `${runId}_worker_meta.json`), JSON.stringify({ runId, agent: "worker", exitCode: 0 }));
+	// Zero-change lookup output: the clean worktree matches the declaration.
+	writeFileSync(join(dir, "artifacts", "outputs", runId, "out.txt"), JSON.stringify({
+		version: 1,
+		taskId,
+		status: "completed",
+		summary: "lookup finished, nothing changed",
+		changedFiles: [],
+		validation: [{ command: "npm test", type: "test", status: "not-run", exitCode: 0, summary: "not run" }],
+		evidence: { cwd: `/fixture/${taskId}`, taskId, workerRunId: "call-r02-rec", changedPaths: [], gitAvailable: true, generatedAt: new Date().toISOString() },
+		risks: [],
+		unresolved: [],
+	}));
+	try {
+		setCleanTree();
+		await orch.beginDelegation(
+			{ toolCallId: "call-r02-rec", input: { task: JSON.stringify(specFor(taskId)), async: true } },
+			BASE,
+		);
+		const receipt = await orch.handleSubagentResult({
+			toolCallId: "call-r02-rec",
+			toolName: "subagent",
+			input: {},
+			details: { asyncId: runId, runId, asyncDir },
+			content: [{ type: "text", text: `Async: worker [${runId}]\nThe async run is detached and running in the background.` }],
+			isError: false,
+		});
+		assert.match(receipt.content[0].text, /Async delegation/);
+
+		// Authorization: exact id + launch cwd only.
+		assert.equal(orch.authorizedWaitId({ id: runId }, BASE), runId);
+		assert.equal(orch.authorizedWaitId({ id: `${runId}-prefix` }, BASE), undefined, "prefixes never authorize");
+		assert.equal(orch.authorizedWaitId({ id: runId }, "/other-cwd"), undefined, "another cwd never authorizes");
+		assert.equal(orch.authorizedWaitId({}, BASE), undefined, "an omitted id never authorizes");
+
+		const recovered = await orch.recoverPendingRun({ id: runId }, BASE);
+		assert.equal(recovered?.status, "recovered", recovered?.reason);
+		assert.match(recovered.content[0].text, /decision: review_pending/);
+		assert.equal(orch.store.require(taskId).reports.length, 1, "the saved output closed the Task like a normal result");
+
+		// A consumed id is no longer authorized and cannot be delivered twice.
+		assert.equal(orch.authorizedWaitId({ id: runId }, BASE), undefined, "a consumed id is not re-authorized");
+		assert.equal(await orch.recoverPendingRun({ id: runId }, BASE), undefined);
+
+		// A registered run without terminal artifacts reports pending, not failure.
+		const runId2 = "run-r02-pending";
+		await orch.beginDelegation(
+			{ toolCallId: "call-r02-pend", input: { task: JSON.stringify({ ...specFor(taskId), reportOnly: true }), reportOnly: true, async: true } },
+			BASE,
+		);
+		await orch.handleSubagentResult({
+			toolCallId: "call-r02-pend",
+			toolName: "subagent",
+			input: {},
+			details: { asyncId: runId2, runId: runId2, asyncDir: join(dir, "async-subagent-runs", runId2) },
+			content: [{ type: "text", text: `Async: worker [${runId2}]\ndetached and running in the background.` }],
+			isError: false,
+		});
+		const pending = await orch.recoverPendingRun({ id: runId2 }, BASE);
+		assert.equal(pending?.status, "pending", pending?.reason);
+		assert.match(pending.reason ?? "", /not reached a terminal state/);
+		setCleanTree();
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 }
 
 

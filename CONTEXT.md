@@ -51,7 +51,7 @@ Root's only Git access: fixed, read-only argv. Never a shell.
 _Avoid_: git shell, audit API
 
 **Policy**:
-The parent tool guard: which tools Root may call.
+The parent tool guard: which tools Root may call. While a Task is live for the workspace, the live allowlist applies; when none is (Idle for gather), Root may only start a Delegation, ask a question, record a Verdict, or recover one registered pending run through an exact-id `bg_wait`. Idle is derived from the Task store per workspace, never from prompt wording.
 _Avoid_: permissions, ACL
 
 **Delegation**:

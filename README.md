@@ -178,6 +178,23 @@ By default a worker delegation without an embedded `TaskSpec` is allowed with a
 warning. Set `PI_PLANNER_ONLY_STRUCTURED_DELEGATION=strict` to block it
 instead. Explorers stay permissive; validators are warned in both modes.
 
+### Idle gather policy
+
+Root's gather phase is derived from the Task store for the adapter workspace.
+While a non-final Task is live for this cwd, the ordinary allowlist applies
+(inspect tools, `git_audit`, Verdict, one Delegation at a time). When no Task
+is live (Idle for gather), Root may only start a Delegation, ask a question,
+record a Verdict (`planner_verdict` works on blocked/failed Tasks too), or
+recover one registered pending run through an exact-id `bg_wait` (≤ 60 s
+blocking timeout; prefixes, all-runs requests, unknown fields, and other
+workspaces are refused). Every Idle refusal carries a fenced TaskSpec JSON
+that passes validation, filled from the refused call, so the repair is one
+paste. A standalone Explorer Task — one with its own TaskSpec — closes like a
+Worker Task: validated WorkerReport → reviewing → Root `planner_verdict`; a
+read-only zero-change outcome is valid, and a malformed terminal report blocks
+the Task with a repair instruction. Blocked and failed Tasks do not keep
+gather live; re-delegation is the path to inspect the tree again.
+
 Reviewers have no `git_audit` (foreground children do not load ambient
 extensions, and that tool belongs to the parent extension). Root samples Git itself and ships a
 bounded evidence packet — HEAD, status, current changed files, A-to-C

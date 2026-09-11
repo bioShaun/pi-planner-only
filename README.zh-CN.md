@@ -108,6 +108,10 @@ Validator（`oracle`）在 Worker 校验已 exit 0 时默认做有界复核：`g
 
 默认允许没有内嵌 `TaskSpec` 的 worker 委派，但会告警。设 `PI_PLANNER_ONLY_STRUCTURED_DELEGATION=strict` 则直接阻断。explorer 始终宽松；validator 两种模式都只告警。
 
+### Idle gather 策略
+
+Root 的 gather 阶段由适配器工作区的 Task store 推导。当该 cwd 存在未终结的 Task 时，适用常规允许清单（inspect 工具、`git_audit`、Verdict、一次委派）。当没有任何存活 Task（Idle for gather）时，Root 只能发起一次 Delegation、提问、记录 Verdict（`planner_verdict` 对 blocked/failed 同样可用），或通过精确 id 的 `bg_wait`（阻塞超时 ≤ 60 秒；前缀、全量请求、未知字段、其他工作区一律拒绝）恢复一个已登记的 pending run。每条 Idle 拒绝都附带可校验的 TaskSpec JSON（按被拒调用填充），修复只需一次粘贴。带独立 TaskSpec 的 standalone Explorer Task 与 Worker Task 一样闭环：校验过的 WorkerReport → reviewing → Root `planner_verdict`；零变更的只读结果是合法交付，畸形的终局报告会以修复指引 block 该 Task。blocked/failed 不会让 gather 保持存活；要再查看代码树，请重新委派。
+
 Reviewer 没有 `git_audit`（前台子进程不加载 ambient 扩展，该工具属于父扩展）。Root 自己采样 Git，把有界证据包——HEAD、status、当前变更文件、A-to-C 归因/漏报/多报路径、diff stat、diff check——放进 `ReviewRequest`；reviewer 只用 `read`/`grep`/`find`/`ls`。针对 Task 起始基线的有界补丁会随 `ReviewRequest` 传给 reviewer（已提交的 Task 变更仍可评审）；若补丁被截断（`patchTruncated` 或省略路径），reviewer 的 PASS 会被拒收，只能记录 `request_changes` 或 `blocked`。
 
 reviewer 的 PASS 与快照摘要绑定：必须写明它看到的报告版本和 WorkspaceSnapshot 摘要，且 Root 在接受时会重新采样工作区快照——不匹配、过期或未知（超预算/不可读）的采样一律 `revalidate` 而非完成。HEAD/status 哈希只作为 Git 归因证据，永远不能替代 PASS 身份。写锁由存活的可写委派（worker 或 validator）在整个调用期间持有，因此同一工作树上的第二个可写子进程会在启动前被拒绝——即使 Task 正处于 reviewing 或 blocked。
