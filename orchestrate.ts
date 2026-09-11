@@ -738,6 +738,7 @@ export class PlannerOrchestrator {
 
 	private roleModelMismatchRecorded = false;
 	private roleModelPolicyEnabled = false;
+	private modelPreflightUnverifiedWarningEmitted = false;
 
 	noteDelegationModel(taskId: string, runIdOrToolCallId: string, model?: string, thinking?: string): void {
 		const targetId = this.store.get(taskId)?.taskId ?? taskId;
@@ -1664,11 +1665,18 @@ export class PlannerOrchestrator {
 			?? (reportOnlyInput && target?.task?.spec
 				? { ...target.task.spec, reportOnly: true }
 				: undefined);
-		// RR-07: resolve and verify the final model before any session budget,
-		// reservation, evidence, or writer-lock side effect can occur.
+		// RR-07: verify when the host exposes a registry; otherwise record
+		// unverified-and-continue before any session budget, reservation, evidence,
+		// or writer-lock side effect can occur.
 		let preflightSummary: { model: string; thinking: string; source: string; verification: string } | undefined;
+		const warnings: string[] = [];
 		const preflightContext = this.getModelPreflightContext?.();
-		if (preflightContext) {
+		if (!preflightContext) {
+			if (this.getModelPreflightContext && !this.modelPreflightUnverifiedWarningEmitted) {
+				this.modelPreflightUnverifiedWarningEmitted = true;
+				warnings.push("Planner-only: model preflight is unverified on this host because no modelRegistry is exposed; continuing launch.");
+			}
+		} else {
 			const specRecord = spec && typeof spec === "object" ? spec as unknown as Record<string, unknown> : undefined;
 			const nestedSpec = inputRecord.taskSpec && typeof inputRecord.taskSpec === "object"
 				? inputRecord.taskSpec as Record<string, unknown>
@@ -1744,7 +1752,6 @@ export class PlannerOrchestrator {
 			&& !properSubsetMissing
 			&& !alreadyWrapped
 			&& hasFullSuiteRequest(promptNow);
-		const warnings: string[] = [];
 
 		const contextOverridden = Boolean((input as Record<string, unknown>).__contextOverridden);
 		const reuseOutcome = (input as Record<string, unknown>).__reuseOutcome as ContextReuseOutcome | undefined;

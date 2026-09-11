@@ -7833,4 +7833,52 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	assert.match(orch.renderTaskStatus(store.require(taskId)), /launch failure: delegation launch failed/);
 }
 
+// RR-07 C22: when the host exposes the preflight seam but no registry context,
+// launch continues with a session-scoped warning instead of silently skipping.
+{
+	const orch = new PlannerOrchestrator({
+		gitRunner,
+		store: pinnedStore(),
+		getModelPreflightContext: () => undefined,
+	});
+	const preflightWarning = /model preflight is unverified.*no modelRegistry is exposed/i;
+	const first = await orch.beginDelegation({
+		toolCallId: "call-rr07-unverified-1",
+		input: { agent: "worker", task: JSON.stringify(specFor("T-20260911-rr07-unverified-1")) },
+	}, BASE);
+	assert.equal(first.block, undefined);
+	assert.ok(first.task);
+	assert.equal((first.warnings ?? []).filter((warning) => preflightWarning.test(warning)).length, 1);
+
+	const second = await orch.beginDelegation({
+		toolCallId: "call-rr07-unverified-2",
+		input: { agent: "worker", task: JSON.stringify(specFor("T-20260911-rr07-unverified-2")) },
+	}, BASE);
+	assert.equal(second.block, undefined);
+	assert.ok(second.task);
+	assert.equal((second.warnings ?? []).filter((warning) => preflightWarning.test(warning)).length, 0);
+}
+
+// RR-07 C23: a host registry keeps the existing verified path and emits no
+// unverified degradation warning.
+{
+	const knownModel = { provider: "openai", id: "known-model" };
+	const spec = { ...specFor("T-20260911-rr07-verified"), model: "openai/known-model", thinking: "low" };
+	const orch = new PlannerOrchestrator({
+		gitRunner,
+		store: pinnedStore(),
+		getModelPreflightContext: () => ({
+			registry: { getAvailable: () => [knownModel] },
+			pricing: { rates: { "openai/known-model": { input: 1, output: 1, cacheRead: 1, cacheWrite: 1 } } },
+		}),
+	});
+	const outcome = await orch.beginDelegation({
+		toolCallId: "call-rr07-verified",
+		input: { agent: "worker", model: "openai/known-model", thinking: "low", task: JSON.stringify(spec) },
+	}, BASE);
+	assert.equal(outcome.block, undefined);
+	assert.ok(outcome.task);
+	assert.equal((outcome.warnings ?? []).some((warning) => /model preflight is unverified/i.test(warning)), false);
+}
+
 console.log("planner-only orchestration: PASS");
