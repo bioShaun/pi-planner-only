@@ -1,55 +1,43 @@
 # Runtime Reliability Progress Handoff
 
 Date: 2026-09-11
-Task: T-pending
+Pass: second-pass re-acceptance and live host replay
+Task: T-20260911-018
 Source: `/public/pi/pi-planner-only`
 Installed clone: `/home/tcuni/.pi/agent/git/github.com/bioShaun/pi-planner-only`
 
-## Implementation Status
+## COMMITS LANDED on main
 
-The current source tree contains the runtime-reliability implementation currently under development and its focused fixtures. The installed plugin clone has been synchronized from the source tree, excluding `.git` and `node_modules`. No commit or push was performed, and `settings.json` was not changed.
+- `02a886c feat(runtime): persist reliable child execution state (RR-05)`.
+- `87f0f7c fix(contract): stamp canonical WorkerReport task identity (launch-packet canonical id injection + worker contract)`.
+- `4bdf2a0 fix(contract): enforce canonical report status tokens (RR-08 C22/C23: both enums in all report-returning prompts incl. wrapOracleContract, completed_with_limits→partial normalization, not-run exitCode drop)`.
+- `d17e4d9 feat(restore): add bound planner recovery (RR-06 C18: planner_recover Root tool, RUN_UNBOUND/FOREIGN_RECEIPT/RUN_ALREADY_RECORDED, no subprocess, no paths, corrections-stable duplicates)`.
+- `3ede155 feat(launch): add model preflight (RR-07 C20/C21: five-tier source attribution, MODEL_UNAVAILABLE with bounded candidates, explicit-configured-only fallback, preflight before budget reservation)`.
 
-The synchronized implementation includes the completion receipt and output resolver path, notification/orchestration reliability changes, TaskPacket/report-contract updates, and runtime reliability tests. This handoff covers the local clone refresh and validation gate; it does not claim that the entire runtime-reliability specification has passed live host replay or the M2 data-task requirements.
+## Acceptance Matrix Update
 
-## Blocked-Task Explanation
+| Criterion | Result | Evidence and limits |
+|---|---|---|
+| C17 | pass | Source guards are present in `orchestrate.ts:2427-2435`. Three identical live duplicate-verdict refusals on 2026-09-11 returned the stable `already completed; verdicts are final` error. |
+| C18 | pass | Bound planner recovery is implemented and independently oracle-verified. |
+| C19 | PARTIAL | Live replay on the pi host on 2026-09-11 exercised the exact-id `bg_wait` recovery path all day with structured reasons. Native-notification mode was confirmed working; asynchronous completions were delivered without polling. Bogus-model delegation was blocked pre-launch. A failed launch left no live task/write-lock; launch-failure cleanup was verified. Detached/unknown capability modes and cross-reload artifact recovery remain unproven. |
+| C20 | PARTIAL-PASS | Unknown model was blocked pre-launch by the HOST's own `Unknown subagent model in the active Pi model registry` guard. The planner-only preflight did not visibly engage, live-confirming that `ctx.modelRegistry` is not exposed to the extension on this host. The major finding stands: preflight silently skips when the registry seam is absent. The host-level guard mitigates the risk, but the extension-level check is absent here. |
+| C21 | pass | Implemented and covered by tests. End-to-end `stateReason` behavior after a real retry is still to be observed. |
+| C22 | pass | All five prompt surfaces state both enums. Subsequent oracle reports demonstrably used the legal top-level status `completed`. |
+| C23 | pass | `completed_with_limits` normalization to `partial` is implemented with repair notes, is idempotent, and is tested. |
 
-The original reload was blocked by a stale installed clone and stale jiti-transpiled module cache. The installed clone was missing dependencies as well, so validation could not run there until its lockfile-defined dependencies were restored. Those blockers are cleared for this handoff: the clone now matches source, dependencies were installed with `npm ci`, and all required local checks pass.
+The matrix distinguishes implemented and independently verified behavior from live-replay evidence. A partial result is not treated as a full host-capability pass.
 
-The broader rollout remains gated on real host-protocol replay and acceptance of the remaining specification work. In particular, local fixtures do not prove host-native notification behavior, delayed artifact publication across a session reload, resume lifecycle registration, model-registry preflight, or the M2 non-Git/shared-path/large-file evidence contract. A passing local suite must not be interpreted as formal task acceptance.
+## Live Host Replay Notes
 
-## Diagnosis and Root Cause
+The 2026-09-11 second pass confirmed the exact-id recovery and native-notification paths on the pi host, including structured recovery reasons and launch-failure cleanup. It also confirmed that host-side model validation can block an unknown model even when the extension cannot access the model registry. This host behavior mitigates the immediate unknown-model risk but does not verify the planner-only preflight seam.
 
-The audit identified a reliability failure across asynchronous completion ingestion rather than a worker-only report failure:
+## Open Items
 
-- Host completions carried `outputPath` and/or `archivePath`, while the old resolver searched a different legacy directory and could report no output even when the report existed.
-- Completion processing marked runs consumed and released delegation state before output was successfully read and persisted. Delayed artifacts therefore became difficult to recover, and infrastructure read failures were misclassified as report-contract failures.
-- Notifications with an explicit task identity could fall back to agent-name matching, allowing a late receipt from one task to affect another task using the same agent.
-- Worker launch packets reconstructed only the embedded TaskSpec and dropped the surrounding delegation instructions, known facts, and artifact references.
-- Resume can create a new host run without entering the normal execution, usage, ingestion, and report association path.
+- Replay detached/unknown host capability modes.
+- Replay artifact and recovery behavior across a session reload.
+- Decide whether an absent model registry should be documented as unverified-and-continue or should block.
+- Observe `stateReason` during a live C21 retry.
+- Tooling improvements: `commit-task` changedFiles convention should declare committed files; report-only corrections must embed a `TaskSpec` to bind correctly; `ORACLE_SUITE=missing` may skip non-command checks.
 
-These failures explain the observed empty report ledgers and repeated verdict/recovery attempts. They are not evidence that the underlying worker output was necessarily absent; the audit found several parseable reports on disk.
-
-## Validation
-
-Commands were run inside the installed clone after `npm ci`:
-
-| Command | Exit code | Result |
-|---|---:|---|
-| `npm ci` | 0 | Dependencies restored from `package-lock.json`. |
-| `npm run typecheck` | 0 | TypeScript check passed. |
-| `npm test` | 0 | Full configured suite passed, including runtime reliability fixtures. |
-
-Stale cache cleanup:
-
-- Deleted `/tmp/jiti/pi-planner-only-*.mjs` entries.
-- A post-cleanup count found zero matching entries.
-- The pi session was not restarted.
-
-## Next Steps
-
-1. Reload the plugin/session so the next module load compiles the synchronized source afresh; this handoff deliberately did not restart the active pi session.
-2. Replay the captured host completion envelopes through the installed clone and verify that the registered output paths load the existing reports without increasing `reportCorrections`.
-3. Exercise delayed artifact publication, duplicate sync/bg-wait/notify delivery, explicit foreign task/run identities, and resume with a newly assigned run ID across reload.
-4. Verify host model-registry preflight and native-notification capability detection against the installed pi versions.
-5. Track M2 separately: non-Git workspaces, shared symlinks/external environments, large-file evidence, and session-level export.
-6. Keep formal task verdicts tied to evidence, scope, review, and acceptance criteria; process completion alone is not acceptance.
+The spec and audit documents were not modified in this pass; this update records only the progress and replay results.
