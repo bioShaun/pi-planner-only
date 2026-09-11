@@ -1,0 +1,111 @@
+{
+  "fixtureVersion": 1,
+  "source": "bg_wait",
+  "cases": [
+    {
+      "id": "L19",
+      "description": "Completion with present output and explicit artifact paths; the legacy async run directory is absent.",
+      "details": {
+        "completions": [
+          {
+            "runId": "l19-run-00000000-0000-0000-0000-000000000019",
+            "agent": "worker",
+            "outputState": "present",
+            "artifactPaths": {
+              "outputPath": "${TEMP_ROOT}/subagent-artifacts/l19-run_worker_output.md",
+              "archivePath": "${TEMP_ROOT}/archives/l19-run-worker.json"
+            },
+            "results": [
+              {
+                "runId": "l19-run-00000000-0000-0000-0000-000000000019",
+                "agent": "worker",
+                "usage": {
+                  "input": 18,
+                  "output": 7,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "cost": 0,
+                  "turns": 1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "legacyOutputDirectory": "${TEMP_ROOT}/legacy/async-subagent-runs/l19-run-00000000-0000-0000-0000-000000000019",
+      "report": {
+        "version": 1,
+        "taskId": "T-20260911-L19",
+        "status": "completed",
+        "summary": "Synthetic L19 completion report.",
+        "changedFiles": [],
+        "validation": [],
+        "evidence": {
+          "cwd": "${WORKSPACE}",
+          "taskId": "T-20260911-L19",
+          "workerRunId": "l19-run-00000000-0000-0000-0000-000000000019",
+          "gitAvailable": false,
+          "generatedAt": "2026-09-11T00:19:00.000Z"
+        },
+        "risks": [],
+        "unresolved": []
+      },
+      "notification": "Background task completed: **worker**\n\n{\"version\":1,\"taskId\":\"T-20260911-L19\",\"status\":\"completed\"}"
+    },
+    {
+      "id": "L76",
+      "description": "Completion with present output and explicit artifact paths from a second run.",
+      "details": {
+        "completions": [
+          {
+            "runId": "l76-run-00000000-0000-0000-0000-000000000076",
+            "agent": "worker",
+            "outputState": "present",
+            "artifactPaths": {
+              "outputPath": "${TEMP_ROOT}/subagent-artifacts/l76-run_worker_output.md",
+              "archivePath": "${TEMP_ROOT}/archives/l76-run-worker.json"
+            },
+            "results": [
+              {
+                "runId": "l76-run-00000000-0000-0000-0000-000000000076",
+                "agent": "worker",
+                "usage": {
+                  "input": 31,
+                  "output": 12,
+                  "cacheRead": 4,
+                  "cacheWrite": 0,
+                  "cost": 0,
+                  "turns": 2
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "report": {
+        "version": 1,
+        "taskId": "T-20260911-L76",
+        "status": "partial",
+        "summary": "Synthetic L76 completion report retained for replay.",
+        "changedFiles": [],
+        "validation": [
+          {
+            "type": "manual",
+            "status": "not-run",
+            "summary": "Validation is intentionally omitted from this transport fixture."
+          }
+        ],
+        "evidence": {
+          "cwd": "${WORKSPACE}",
+          "taskId": "T-20260911-L76",
+          "workerRunId": "l76-run-00000000-0000-0000-0000-000000000076",
+          "gitAvailable": false,
+          "generatedAt": "2026-09-11T01:16:00.000Z"
+        },
+        "risks": ["Synthetic fixture; not a business result."],
+        "unresolved": []
+      },
+      "notification": "Background task completed: **worker**\n\n{\"version\":1,\"taskId\":\"T-20260911-L76\",\"status\":\"partial\"}"
+    }
+  ]
+}

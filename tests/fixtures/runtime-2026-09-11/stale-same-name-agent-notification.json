@@ -1,0 +1,33 @@
+{
+  "fixtureVersion": 1,
+  "source": "subagent-notify",
+  "description": "A stale completion from a consumed Task arrives while another pending Task uses the same agent name.",
+  "staleTask": {
+    "taskId": "T-20260911-old",
+    "agent": "reviewer",
+    "state": "completed",
+    "runId": "old-run-00000000-0000-0000-0000-000000000001",
+    "reportCount": 1,
+    "reservedTokens": 0
+  },
+  "currentTask": {
+    "taskId": "T-20260911-new",
+    "agent": "reviewer",
+    "state": "executing",
+    "runId": "new-run-00000000-0000-0000-0000-000000000002",
+    "reportCount": 0,
+    "reservedTokens": 1200
+  },
+  "notification": {
+    "agent": "reviewer",
+    "taskIdHint": "T-20260911-old",
+    "runIds": [],
+    "content": "Background task completed: **reviewer**\n\n{\"version\":1,\"taskId\":\"T-20260911-old\",\"status\":\"completed\"}"
+  },
+  "expected": {
+    "code": "FOREIGN_RECEIPT",
+    "matchedTaskId": "T-20260911-old",
+    "mutatedTaskId": null,
+    "currentTaskUnchanged": true
+  }
+}

@@ -81,6 +81,8 @@ import {
 } from "./review.ts";
 import type { ReviewDecision } from "./review.ts";
 import { LedgerSnapshotStore, SAFE_TASK_ID } from "./ledger-store.ts";
+import { OutputResolver, outputDigest, normalizeCompletionReceipt, RunRecordStore } from "./completion.ts";
+import type { CompletionReceipt, OutputReference, OutputResolution, RunRecord } from "./completion.ts";
 import type { LedgerCorrupt } from "./ledger-store.ts";
 import {
 	TaskStore,
@@ -337,6 +339,7 @@ export interface DelegationRecord {
 	asyncExplicitFalse?: boolean;
 	runId?: string;
 	asyncDir?: string;
+	outputRef?: OutputReference;
 	/** Child agent named in the delegation input; used to match single-run notices that carry no runId. */
 	agent?: string;
 	/**
@@ -381,12 +384,18 @@ export interface DelegationRecord {
 	floorSummary?: string;
 	/** Root prompt requested a full suite while the actual validator suite is bounded. */
 	oracleSuiteConflict?: boolean;
-	/**
-	 * Explicit report-only correction flag (ticket 42). Set from `input.reportOnly`
-	 * / embedded TaskSpec.reportOnly after machine-generation — not from prompt
-	 * sniffing. Evidence comparison then skips per-run over-report unexplained marking.
-	 */
+	/** Explicit report-only correction marker. */
 	reportOnly?: boolean;
+	/** Host action that created this delegation, when applicable. */
+	action?: HostActionKind;
+	/** Distinct execution identity; normal delegations use their toolCallId. */
+	executionId?: string;
+	previousRunId?: string;
+	previousExecutionId?: string;
+	/** Report-only repairs are explicitly read-only at the delegation boundary. */
+	readOnlyRepair?: boolean;
+	/** Host control acknowledgement is not terminal. */
+	interruptRequested?: boolean;
 }
 
 export interface DelegationHistoryEntry {
@@ -429,6 +438,24 @@ const KIND_DEFAULT_AGENTS: Record<DelegationKind, string> = {
 	explorer: "explorer",
 	validator: "oracle",
 };
+
+/** Classify host actions before applying the delegation admission gate. */
+export type HostActionKind = "management" | "control" | "execution";
+
+export function classifyHostAction(input: unknown): HostActionKind | undefined {
+	if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+	const action = (input as Record<string, unknown>).action;
+	if (typeof action !== "string" || !action.trim()) return undefined;
+	const normalized = action.trim().toLowerCase();
+	if (normalized === "resume") return "execution";
+	if (["interrupt", "stop", "steer"].includes(normalized)) return "control";
+	return "management";
+}
+
+/** True only for actions that create a child execution and need admission. */
+export function isExecutionCreatingAction(input: unknown): boolean {
+	return classifyHostAction(input) === "execution";
+}
 
 export function isDelegationCall(input: unknown): boolean {
 	if (!input || typeof input !== "object") return false;
@@ -674,6 +701,10 @@ export class PlannerOrchestrator {
 	/** taskId -> history of all delegations for that task. */
 	private readonly delegationHistory = new Map<string, DelegationHistoryEntry[]>();
 	private readonly snapshots?: LedgerSnapshotStore;
+	/** RR-02 durable execution/ingestion state, separate from Task review state. */
+	private readonly runRecords?: RunRecordStore;
+	private readonly runSessionId: string;
+	private readonly runWorkspaceId: string;
 	/**
 	 * E01 — Tasks whose record came from the ledger. A restored record missing
 	 * per-execution A_run/C_report material cannot be verified and must not
@@ -714,11 +745,15 @@ export class PlannerOrchestrator {
 	}
 
 	constructor(deps: OrchestratorDeps) {
+		this.runSessionId = process.env.PI_SESSION_ID?.trim() || "unknown-session";
+		this.runWorkspaceId = normalizeWorkspaceIdentity(deps.ledgerDir ?? process.cwd());
 		if (deps.store) {
 			this.store = deps.store;
 		} else if (deps.ledgerDir) {
 			const snapshots = new LedgerSnapshotStore(deps.ledgerDir);
 			this.snapshots = snapshots;
+			this.runRecords = new RunRecordStore(join(deps.ledgerDir, "planner-only", "run-state"));
+			this.runRecords.load();
 			this.store = new TaskStore({
 				onPersist: (record) => snapshots.write(record),
 			});
@@ -815,6 +850,122 @@ export class PlannerOrchestrator {
 		return this.delegations.get(toolCallId);
 	}
 
+	/** Resolve the execution record id used by a delegation. */
+	private executionIdFor(record: DelegationRecord, toolCallId: string): string {
+		return record.executionId ?? toolCallId;
+	}
+
+	/** Locate a Task only through an exact persisted/execution run association. */
+	private resolveRunBinding(runId: string, cwd: string): { task: TaskRecord; executionId: string } | undefined {
+		const id = runId.trim();
+		if (!id) return undefined;
+		const workspace = normalizeWorkspaceIdentity(cwd);
+		const candidates: Array<{ task: TaskRecord; executionId: string }> = [];
+		const seen = new Set<string>();
+		const add = (task: TaskRecord, executionId: string): void => {
+			const key = `${task.taskId}\u0000${executionId}`;
+			if (seen.has(key)) return;
+			seen.add(key);
+			candidates.push({ task, executionId });
+		};
+		for (const task of this.store.list()) {
+			if (!task.cwd || normalizeWorkspaceIdentity(task.cwd) !== workspace) continue;
+			for (const execution of task.executions) {
+				if (execution.runId === id) add(task, execution.executionId);
+			}
+		}
+		if (this.runRecords) {
+			for (const record of this.runRecords.list()) {
+				if (record.runId !== id || record.workspaceId !== workspace) continue;
+				const task = this.store.get(record.taskId);
+				if (task && normalizeWorkspaceIdentity(task.cwd) === workspace) {
+					add(task, record.executionId);
+				}
+			}
+		}
+		if (candidates.length !== 1) return undefined;
+		return candidates[0];
+	}
+
+	private resumeRunId(input: unknown): string | undefined {
+		if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+		const record = input as Record<string, unknown>;
+		for (const key of ["id", "runId", "previousRunId"]) {
+			if (typeof record[key] === "string" && record[key].trim()) return record[key].trim();
+		}
+		return undefined;
+	}
+
+	/** Register host completion metadata before notification delivery. */
+	registerCompletionReceipt(value: unknown): CompletionReceipt | undefined {
+		const receipt = normalizeCompletionReceipt(value, "bg-wait");
+		if (!receipt?.runId) return receipt;
+		const found = [...this.delegations.entries()].find(([, record]) =>
+			record.runId === receipt.runId || record.executionId === receipt.executionId ||
+			(record.action === "execution" && record.previousRunId !== undefined &&
+				receipt.previousRunId === record.previousRunId));
+		if (!found) return receipt;
+		const [toolCallId, record] = found;
+		if (receipt.taskIdHint && (this.store.get(receipt.taskIdHint)?.taskId ?? receipt.taskIdHint) !== record.taskId) return receipt;
+		if (record.previousRunId && receipt.previousRunId && record.previousRunId !== receipt.previousRunId) return receipt;
+		if (record.previousRunId && !receipt.previousRunId) receipt.previousRunId = record.previousRunId;
+		if (receipt.previousRunId && record.previousRunId === undefined) record.previousRunId = receipt.previousRunId;
+		if (receipt.outputRef) record.outputRef = receipt.outputRef;
+		record.runId = receipt.runId;
+		const executionId = this.executionIdFor(record, toolCallId);
+		const task = this.store.get(record.taskId);
+		if (task) {
+			this.updateRunRecord(task, executionId, {
+				runId: receipt.runId,
+				...(receipt.previousRunId ? { previousRunId: receipt.previousRunId } : {}),
+				executionState: receipt.terminal || receipt.outputState === "present" ? "terminal" : "running",
+				...(receipt.outputRef ? { outputRef: receipt.outputRef } : {}),
+			});
+			this.store.completeExecution(task.taskId, executionId, {
+				runId: receipt.runId,
+				...(receipt.previousRunId ? {} : {}),
+			});
+		}
+		return receipt;
+	}
+
+	/**
+	 * Re-ingest an already persisted run artifact without starting a model.
+	 * The run id and workspace must resolve to one existing execution; active
+	 * Task fallback is intentionally not used.
+	 */
+	async reingestOriginalReport(
+		runId: string,
+		cwd: string,
+	): Promise<{ status: "recorded" | "pending" | "unbound"; taskId?: string; code?: string }> {
+		const binding = this.resolveRunBinding(runId, cwd);
+		if (!binding) return { status: "unbound", code: "RUN_UNBOUND" };
+		const execution = this.store.executionById(binding.task.taskId, binding.executionId);
+		const persisted = this.runRecords?.findByRunId(runId, normalizeWorkspaceIdentity(cwd));
+		const outputRef = persisted?.outputRef;
+		if (!outputRef) return { status: "pending", taskId: binding.task.taskId, code: "OUTPUT_PENDING" };
+		const resolution = new OutputResolver().resolve({
+			version: 1,
+			source: "reconcile",
+			runId,
+			observedAt: new Date().toISOString(),
+			outputState: "present",
+			outputRef,
+		});
+		if (resolution.kind !== "loaded") return { status: "pending", taskId: binding.task.taskId, code: resolution.code };
+		if (!execution) return { status: "unbound", code: "RUN_UNBOUND" };
+		const delegation: DelegationRecord = {
+			taskId: binding.task.taskId,
+			kind: "worker",
+			action: "execution",
+			executionId: binding.executionId,
+			runId,
+			previousRunId: execution.previousRunId,
+		};
+		this.markRunIngestion(binding.task, binding.executionId, resolution);
+		await this.handleWorkerResult(binding.task, resolution.text, binding.executionId, { delegation });
+		return { status: "recorded", taskId: binding.task.taskId };
+	}
 	/** True when handleSubagentResult classified this call as a confirmed start failure. */
 	wasConfirmedNotLaunched(toolCallId: string): boolean {
 		return this.confirmedNotLaunchedIds.has(toolCallId);
@@ -981,6 +1132,67 @@ export class PlannerOrchestrator {
 		return undefined;
 	}
 
+	private runWorkspaceIdFor(task: TaskRecord): string {
+		return normalizeWorkspaceIdentity(task.cwd || this.runWorkspaceId);
+	}
+
+	private updateRunRecord(
+		task: TaskRecord,
+		executionId: string,
+		patch: Partial<RunRecord>,
+	): void {
+		if (!this.runRecords) return;
+		const current = this.runRecords.get(this.runSessionId, this.runWorkspaceIdFor(task), executionId);
+		if (!current) return;
+		this.runRecords.put({ ...current, ...patch, taskId: task.taskId });
+	}
+
+	private registerRunRecord(
+		task: TaskRecord,
+		executionId: string,
+		kind: DelegationKind,
+		options: { runId?: string; previousRunId?: string; reportOnly?: boolean; auxiliary?: boolean } = {},
+	): void {
+		if (!this.runRecords) return;
+		this.runRecords.put({
+			version: 1,
+			sessionId: this.runSessionId,
+			workspaceId: this.runWorkspaceIdFor(task),
+			taskId: task.taskId,
+			executionId,
+			...(options.runId ? { runId: options.runId } : {}),
+			...(options.previousRunId ? { previousRunId: options.previousRunId } : {}),
+			agent: KIND_DEFAULT_AGENTS[kind],
+			role: kind,
+			executionState: "launching",
+			ingestionState: "waiting",
+			...(options.reportOnly || options.auxiliary ? {} : {}),
+		});
+	}
+
+	/** Mark output as terminal without implying that a report was recorded. */
+	private markRunTerminal(task: TaskRecord, executionId: string, reason?: string): void {
+		this.updateRunRecord(task, executionId, {
+			executionState: "terminal",
+			ingestionState: "waiting",
+			...(reason ? { terminalReason: reason } : {}),
+		});
+	}
+
+	private markRunIngestion(task: TaskRecord, executionId: string, resolution: OutputResolution): void {
+		if (resolution.kind === "loaded") {
+			this.updateRunRecord(task, executionId, {
+				executionState: "terminal",
+				ingestionState: "loaded",
+				outputDigest: resolution.digest,
+			});
+			return;
+		}
+		this.updateRunRecord(task, executionId, {
+			ingestionState: resolution.kind === "pending" ? "output-pending" : "unavailable",
+			lastError: { code: resolution.code, message: `output resolution ${resolution.code}` },
+		});
+	}
 	/**
 	 * E01 — start this execution's evidence record from Root's own A_run. A
 	 * report-only correction keeps the original attribution window; a normal
@@ -991,7 +1203,13 @@ export class PlannerOrchestrator {
 		executionId: string,
 		kind: DelegationKind,
 		aRun: EvidenceRef,
-		options: { reportOnly?: boolean; auxiliary?: boolean; runId?: string } = {},
+		options: {
+			reportOnly?: boolean;
+			auxiliary?: boolean;
+			runId?: string;
+			previousRunId?: string;
+			previousExecutionId?: string;
+		} = {},
 	): void {
 		const prior = this.latestAttributionExecution(task);
 		if (!options.reportOnly) {
@@ -1013,9 +1231,20 @@ export class PlannerOrchestrator {
 			worktreeRoots: lockWorktreesOf(task),
 			aRun,
 			...(options.runId ? { runId: options.runId } : {}),
+			...(options.previousRunId ? { previousRunId: options.previousRunId } : {}),
 			...(options.reportOnly ? { reportOnly: true } : {}),
 			...(options.auxiliary ? { auxiliary: true } : {}),
-			...(prior ? { previousExecutionId: prior.executionId } : {}),
+			...(options.previousExecutionId
+				? { previousExecutionId: options.previousExecutionId }
+				: prior ? { previousExecutionId: prior.executionId } : {}),
+		});
+		this.registerRunRecord(task, executionId, kind, {
+			...(options.runId ? { runId: options.runId } : {}),
+			...(options.reportOnly ? { reportOnly: true } : {}),
+			...(options.auxiliary ? { auxiliary: true } : {}),
+			...(options.previousRunId
+				? { previousRunId: options.previousRunId }
+				: prior?.runId ? { previousRunId: prior.runId } : {}),
 		});
 	}
 
@@ -1294,12 +1523,24 @@ export class PlannerOrchestrator {
 		if (composite) {
 			return { block: { reason: composite } };
 		}
+		const inputRecord = input as Record<string, unknown>;
+		const hostAction = classifyHostAction(input);
+		const resume = hostAction === "execution";
 		const rawCwd = (input as { cwd?: unknown }).cwd;
 		const cwd = typeof rawCwd === "string" && rawCwd.trim()
 			? resolve(baseCwd, rawCwd.trim())
 			: baseCwd;
-		const inputRecord = input as Record<string, unknown>;
+		let resumeBinding: { task: TaskRecord; executionId: string; runId: string } | undefined;
 		let target = resolveDelegationTarget(input, (taskId) => this.store.get(taskId));
+		if (resume) {
+			const previousRunId = this.resumeRunId(input);
+			const binding = previousRunId ? this.resolveRunBinding(previousRunId, cwd) : undefined;
+			if (!previousRunId || !binding) {
+				return { block: { reason: `RUN_UNBOUND: resume requires an exact persisted run association for ${previousRunId ?? "the supplied id"}; no active Task was guessed.` } };
+			}
+			resumeBinding = { ...binding, runId: previousRunId };
+			target = { role: "worker", taskId: binding.task.taskId, task: binding.task };
+		}
 		if (inputRecord.reportOnly === true) {
 			target = bindReportOnlyFallback(target, this.reportOnlyFallbackTask(cwd));
 		}
@@ -1831,6 +2072,7 @@ export class PlannerOrchestrator {
 		task = this.store.require(task.taskId);
 		const executionReportOnly = inputRecord.reportOnly === true || spec?.reportOnly === true;
 		const isStandaloneExplorer = role === "explorer" && explorerOwnership === "standalone";
+		const executionId = resumeBinding ? `execution-${event.toolCallId}` : event.toolCallId;
 		if (role !== "explorer" && !isStandaloneExplorer && this.store.baseRoundEnded(task.taskId)) {
 			// A report was recorded against the current base: that review round
 			// is over and the next one gets its own A.
@@ -1854,11 +2096,15 @@ export class PlannerOrchestrator {
 				this.gitRunner,
 				captureEvidenceOptionsFor(task, event.toolCallId),
 			);
-			this.beginExecutionRecord(task, event.toolCallId, role, executionSample, {
+			this.beginExecutionRecord(task, executionId, role, executionSample, {
 				...(executionReportOnly ? { reportOnly: true } : {}),
 				...(role === "validator" || (role === "explorer" && !isStandaloneExplorer)
 					? { auxiliary: true }
 					: {}),
+				...(resumeBinding ? {
+					previousRunId: resumeBinding.runId,
+					previousExecutionId: resumeBinding.executionId,
+				} : {}),
 			});
 			task = this.store.require(task.taskId);
 		}
@@ -1871,9 +2117,22 @@ export class PlannerOrchestrator {
 			? event.input as Record<string, unknown>
 			: undefined;
 		const reportOnly = inputRec?.reportOnly === true || spec?.reportOnly === true;
+		if (reportOnly && role === "worker") {
+			// Native resume cannot reduce a retained worker's tool ceiling. A
+			// report-only packet therefore uses the builtin read-only agent while
+			// retaining worker report semantics in Orchestration.
+			inputRecord.agent = "reviewer";
+		}
 		this.delegations.set(event.toolCallId, {
 			taskId: task.taskId,
 			kind: role,
+			action: hostAction,
+			executionId,
+			...(resumeBinding ? {
+				previousRunId: resumeBinding.runId,
+				previousExecutionId: resumeBinding.executionId,
+			} : {}),
+			...(executionReportOnly ? { readOnlyRepair: true } : {}),
 			launchCwd: cwd,
 			...(explorerOwnership ? { explorerOwnership } : {}),
 			asyncRequested: isAsyncInput(event.input),
@@ -2393,6 +2652,26 @@ export class PlannerOrchestrator {
 		return dirs;
 	}
 
+	private resolveDelegationOutput(record: DelegationRecord): OutputResolution {
+		if (record.outputRef) {
+			const receipt: CompletionReceipt = {
+				version: 1,
+				source: "reconcile",
+				...(record.runId ? { runId: record.runId } : {}),
+				...(record.agent ? { agent: record.agent } : {}),
+				observedAt: new Date().toISOString(),
+				outputState: "present",
+				outputRef: record.outputRef,
+			};
+			return new OutputResolver().resolve(receipt);
+		}
+		const text = record.runId ? readLargestRunOutput(record.asyncDir, record.runId) : undefined;
+		return text === undefined
+			? { kind: "pending", code: "OUTPUT_PENDING", attempted: [] }
+			: { kind: "loaded", text, digest: outputDigest(text), source: "legacy-deterministic" };
+	}
+
+
 	/**
 	 * Consume one pending Delegation whose child run is already terminal
 	 * (numeric exitCode in its meta file) but whose completion notice never
@@ -2413,10 +2692,16 @@ export class PlannerOrchestrator {
 			if (meta?.exitCode !== undefined) break;
 		}
 		if (!meta || meta.exitCode === undefined) return undefined;
+		const task = this.store.get(record.taskId);
+		const resolution = this.resolveDelegationOutput(record);
+		if (task) {
+			this.markRunTerminal(task, toolCallId, `exit code ${meta.exitCode}`);
+			this.markRunIngestion(task, toolCallId, resolution);
+		}
+		if (resolution.kind !== "loaded") return undefined;
 		this.processedRunIds.add(record.runId);
 		this.endDelegation(toolCallId);
-		const text = readLargestRunOutput(record.asyncDir, record.runId) ?? "";
-		const task = this.store.get(record.taskId);
+		const text = resolution.text;
 		if (!task) {
 			// Unbound Explorers never create a Task; keep the saved output.
 			if (record.explorerOwnership === "unbound") {
@@ -2648,9 +2933,18 @@ export class PlannerOrchestrator {
 	): Promise<{ content: { type: "text"; text: string }[] } | undefined> {
 		const delegation = this.delegations.get(event.toolCallId);
 		if (!delegation) return;
+		const executionId = this.executionIdFor(delegation, event.toolCallId);
 		const text = resultText(event);
+		const interruptAcknowledged = /interrupt\s+requested/i.test(text)
+			&& !hasCompletionEvidence(eventDetails(event))
+			&& !eventDetails(event).terminal;
+		if (interruptAcknowledged) {
+			delegation.interruptRequested = true;
+			return { content: [{ type: "text", text: `[PLANNER-ONLY] Interrupt requested for task ${delegation.taskId}; terminal evidence is still required before releasing the writer.` }] };
+		}
 		const isBudgetStop = isBudgetStopEvent(event, text);
-		if (isBudgetStop || (event.isError && !extractWorkerReport(text, { expectedTaskId: delegation.taskId, expectedWorkerRunId: event.toolCallId }).report)) {
+		const stopReport = extractWorkerReport(text, { expectedTaskId: delegation.taskId }).report;
+		if ((isBudgetStop && !stopReport) || (event.isError && !stopReport)) {
 			// R02 — auxiliary and unbound Explorer errors only record the
 			// invocation outcome; the assisted Task's lifecycle is untouched.
 			if (delegation.kind === "explorer" && delegation.explorerOwnership !== "standalone") {
@@ -2702,6 +2996,13 @@ export class PlannerOrchestrator {
 				this.store.transition(task.taskId, "failed");
 				this.store.setStateReason(task.taskId, isBudgetStop ? `subagent stopped: ${firstLine || "budget limit reached"}` : `delegation launch failed: ${firstLine}`);
 			}
+			if (task) {
+				this.updateRunRecord(task, executionId, {
+					executionState: "launch-failed",
+					ingestionState: "unavailable",
+					lastError: { code: isBudgetStop ? "LAUNCH_STOPPED" : "LAUNCH_FAILED", message: firstLine || "delegation launch failed" },
+				});
+			}
 			const limitsLine = delegation.floorSummary ? `Limits: ${delegation.floorSummary}\n` : "";
 			let outputText = [
 				isBudgetStop
@@ -2733,6 +3034,18 @@ export class PlannerOrchestrator {
 			}
 			if (asyncDir) delegation.asyncDir = asyncDir;
 			const task = this.store.get(delegation.taskId);
+			if (task) {
+				this.updateRunRecord(task, executionId, {
+					executionState: "running",
+					...(runId ? { runId } : {}),
+					...(normalizeCompletionReceipt(event.details, "sync")?.outputRef
+						? { outputRef: normalizeCompletionReceipt(event.details, "sync")?.outputRef }
+						: {}),
+				});
+				this.store.completeExecution(task.taskId, executionId, {
+					...(runId ? { runId } : {}),
+				});
+			}
 			const targetId = task?.taskId ?? delegation.taskId;
 			const runIdGuide = runId
 				? ` (runId: ${runId}). Await the run result with bg_wait id=${runId}; bg_wait without an id may report empty briefly after launch.`
@@ -2751,6 +3064,9 @@ export class PlannerOrchestrator {
 		this.endDelegation(event.toolCallId);
 		const receiptId = runIdFromReceipt(event);
 		if (receiptId) {
+			delegation.runId = receiptId;
+		}
+		if (receiptId) {
 			this.processedRunIds.add(receiptId);
 			const historyList = this.delegationHistory.get(delegation.taskId);
 			const entry = historyList?.find((d) => d.toolCallId === event.toolCallId);
@@ -2759,6 +3075,20 @@ export class PlannerOrchestrator {
 		if (delegation.runId) this.processedRunIds.add(delegation.runId);
 
 		const task = this.store.get(delegation.taskId);
+		if (task) {
+			this.markRunTerminal(task, executionId);
+			this.store.completeExecution(task.taskId, executionId, {
+				...(receiptId ? { runId: receiptId } : {}),
+			});
+		}
+		if (task && text) {
+			this.markRunIngestion(task, executionId, {
+				kind: "loaded",
+				text,
+				digest: outputDigest(text),
+				source: "sync",
+			});
+		}
 		if (this.isBlockedReceiptSealed(task)) {
 			return this.parkBlockedReceipt(task, event.toolCallId, delegation.kind, text);
 		}
@@ -2783,7 +3113,7 @@ export class PlannerOrchestrator {
 			? this.handleReviewerResult(task, text, delegation)
 			: delegation.kind === "validator"
 				? this.handleValidatorResult(task, text, delegation, event.toolCallId)
-				: this.handleWorkerResult(task, text, event.toolCallId, { delegation });
+			: this.handleWorkerResult(task, text, executionId, { delegation });
 	}
 
 	async handleAsyncNotify(
@@ -2794,9 +3124,21 @@ export class PlannerOrchestrator {
 		let outcome: { content: { type: "text"; text: string }[] } | undefined;
 		for (const found of this.matchAsyncDelegations(parsed)) {
 			const runId = found.record.runId;
+			const executionId = this.executionIdFor(found.record, found.toolCallId);
+			const resolution = this.resolveDelegationOutput(found.record);
+			const hasExplicitReference = Boolean(found.record.outputRef);
+			if (hasExplicitReference && resolution.kind !== "loaded") {
+				const pendingTask = this.store.get(found.record.taskId);
+				if (pendingTask) {
+					this.markRunTerminal(pendingTask, executionId, `notification status ${parsed.status}`);
+					this.markRunIngestion(pendingTask, executionId, resolution);
+				}
+				outcome = { content: [{ type: "text", text: `[PLANNER-ONLY] Output for task ${found.record.taskId} is ${resolution.code}; retry the same completion or run reconcile.` }] };
+				continue;
+			}
 			if (runId) this.processedRunIds.add(runId);
 			this.endDelegation(found.toolCallId);
-			const fileText = runId ? readLargestRunOutput(found.record.asyncDir, runId) : undefined;
+			const fileText = resolution.kind === "loaded" ? resolution.text : undefined;
 			const chosen = fileText ?? parsed.preview;
 
 			const sealedTask = this.store.get(found.record.taskId);
@@ -2858,7 +3200,9 @@ export class PlannerOrchestrator {
 				});
 				continue;
 			}
-			outcome = await this.handleWorkerResult(task, chosen, found.toolCallId, { delegation: found.record });
+				outcome = await this.handleWorkerResult(task, chosen, executionId, {
+					delegation: found.record,
+				});
 		}
 		return outcome;
 	}
@@ -3090,11 +3434,14 @@ export class PlannerOrchestrator {
 		toolCallId: string,
 		options: { forceReportError?: string; delegation?: DelegationRecord } = {},
 	): Promise<{ content: { type: "text"; text: string }[] }> {
+		const expectedWorkerRunId = options.delegation?.action === "execution"
+			? options.delegation.runId ?? toolCallId
+			: toolCallId;
 		const extracted = options.forceReportError
 			? { error: options.forceReportError, repairs: [] as string[] }
 			: extractWorkerReport(text, {
 				expectedTaskId: task.taskId,
-				...(toolCallId ? { expectedWorkerRunId: toolCallId } : {}),
+				...(expectedWorkerRunId ? { expectedWorkerRunId } : {}),
 			});
 		let report: WorkerReport | undefined;
 		let compacted = false;
@@ -3102,10 +3449,13 @@ export class PlannerOrchestrator {
 
 		if (extracted.report) {
 			// §P0-1 — a valid report for the wrong task is not a report.
+			const identityRunId = options.delegation?.action === "execution"
+				? options.delegation.runId ?? toolCallId
+				: toolCallId;
 			identityErrors = validateWorkerReportIdentity(extracted.report, {
 				taskId: task.taskId,
 				...(task.aliases.length > 0 ? { aliases: task.aliases } : {}),
-				...(toolCallId ? { workerRunId: toolCallId } : {}),
+				...(identityRunId ? { workerRunId: identityRunId } : {}),
 			});
 			if (identityErrors.length === 0) {
 				const canonical = rewriteReportToCanonical(extracted.report, task, extracted.repairs);
@@ -3135,6 +3485,22 @@ export class PlannerOrchestrator {
 		// over-report of work this Task already delivered.
 		const execution = this.store.executionById(task.taskId, toolCallId);
 		if (execution) this.completeExecutionSample(task, toolCallId, current);
+		if (execution) {
+			if (report) {
+				this.markRunIngestion(task, toolCallId, {
+					kind: "loaded",
+					text,
+					digest: outputDigest(text),
+					source: "result",
+				});
+			} else {
+				this.updateRunRecord(task, toolCallId, {
+					executionState: "terminal",
+					ingestionState: "report-invalid",
+					lastError: { code: "REPORT_SCHEMA_INVALID", message: reportError ?? "invalid WorkerReport" },
+				});
+			}
+		}
 		if (!report && execution) {
 			const rootsForWindow = additionalWorktreeRootsOf(task);
 			const windowTruth = compareExecutionTruth(execution.aRun, current, undefined, {
@@ -3165,6 +3531,13 @@ export class PlannerOrchestrator {
 					digest: snapshot.digest,
 					reportRevision: revision,
 					capturedAt: snapshot.capturedAt,
+				});
+			}
+			if (execution) {
+				this.updateRunRecord(task, toolCallId, {
+					executionState: "terminal",
+					ingestionState: "recorded",
+					reportRevision: revision,
 				});
 			}
 			if (execution) {

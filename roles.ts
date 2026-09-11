@@ -158,6 +158,8 @@ export interface ApplyRoleDelegationOptions {
 	workerValidationPassed?: boolean;
 	reportsCount?: number;
 	floorConfig?: FloorConfig;
+	/** Use the read-only builtin agent for report-only worker repairs. */
+	readOnlyRepair?: boolean;
 }
 
 export interface ApplyRoleDelegationResult {
@@ -216,7 +218,9 @@ export function applyRoleDelegation(
 	let contextOverridden = false;
 	let contextReason: string | undefined;
 
-	const target = ROLE_AGENTS[options.role];
+	const target = options.readOnlyRepair && options.role === "worker"
+		? ROLE_AGENTS.explorer
+		: ROLE_AGENTS[options.role];
 	const callerKeepsScout = options.role === "explorer"
 		&& typeof input.agent === "string"
 		&& input.agent.trim().toLowerCase() === "scout";
@@ -243,13 +247,13 @@ export function applyRoleDelegation(
 			mutated = true;
 		}
 	}
-	if (options.role === "worker") {
+	if (options.role === "worker" || options.role === "explorer") {
 		if (options.packet !== undefined) {
 			if (input.task !== options.packet) {
 				input.task = options.packet;
 				mutated = true;
 			}
-		} else if (typeof input.task === "string") {
+		} else if (options.role === "worker" && typeof input.task === "string") {
 			const wrapped = wrapWorkerContract(input.task, options.taskId ?? "<id>");
 			if (wrapped !== input.task) {
 				input.task = wrapped;
@@ -602,7 +606,7 @@ export function prepareRoleDelegation(
 				...(options.git ? { git: options.git } : {}),
 			})
 			: undefined;
-	} else if (target.role === "worker" || target.role === "validator") {
+	} else if (target.role === "worker" || target.role === "validator" || target.role === "explorer") {
 		const reuseReq = detectReuseRequest(rawInput);
 		let reuseOutcome: ContextReuseOutcome | undefined;
 		if (reuseReq.rootHistoryRequested) {
@@ -676,12 +680,12 @@ export function prepareRoleDelegation(
 			if (reportOnly && target.role === "worker") {
 				const correctionLead = [
 					`Do not modify files. Return only a valid WorkerReport for task ${target.task?.taskId ?? target.taskId ?? packetSpec.taskId}.`,
-					"This is a report-only correction round.",
+					"This repair uses a fresh read-only agent because native resume cannot tighten the prior worker's tools.",
 				].join("\n");
 				packetBody = `${correctionLead}\n\n${packetBody}`;
 			}
 
-			if (target.role === "worker") {
+			if (target.role === "worker" || target.role === "explorer") {
 				packet = wrapWorkerContract(packetBody, target.task?.taskId ?? target.taskId ?? packetSpec.taskId);
 			} else {
 				packet = wrapOracleContract(
@@ -713,5 +717,6 @@ export function prepareRoleDelegation(
 				workerValidationPassed: effectiveWorkerValidationPassed,
 			}
 			: {}),
+		readOnlyRepair: reportOnly && target.role === "worker",
 	});
 }

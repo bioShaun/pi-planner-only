@@ -1,0 +1,42 @@
+{
+  "fixtureVersion": 1,
+  "source": "resume",
+  "previousRunId": "c8e08f46",
+  "newRunId": "873bcc27",
+  "taskId": "T-20260911-resume",
+  "receipt": {
+    "action": "resume",
+    "previousRunId": "c8e08f46",
+    "runId": "873bcc27",
+    "executionId": "execution-resume-873bcc27",
+    "taskId": "T-20260911-resume",
+    "agent": "worker",
+    "status": "completed",
+    "details": {
+      "runId": "873bcc27",
+      "previousRunId": "c8e08f46",
+      "outputState": "present",
+      "artifactPaths": {
+        "outputPath": "${TEMP_ROOT}/subagent-artifacts/873bcc27_worker_output.md",
+        "archivePath": "${TEMP_ROOT}/archives/873bcc27-worker.json"
+      },
+      "results": [
+        {
+          "runId": "873bcc27",
+          "agent": "worker",
+          "taskId": "T-20260911-resume"
+        }
+      ]
+    }
+  },
+  "previousRun": {
+    "runId": "c8e08f46",
+    "taskId": "T-20260911-resume",
+    "state": "terminal"
+  },
+  "newRun": {
+    "runId": "873bcc27",
+    "taskId": "T-20260911-resume",
+    "state": "terminal"
+  }
+}

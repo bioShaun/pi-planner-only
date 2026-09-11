@@ -174,6 +174,8 @@ export interface TaskExecutionRecord {
 	runId?: string;
 	/** True for report-only report revision corrections. */
 	reportOnly?: boolean;
+	/** Host run id resumed by this execution, when applicable. */
+	previousRunId?: string;
 	/** Previous attribution-bearing execution in this Task's chain. */
 	previousExecutionId?: string;
 	/** Read-only or auxiliary invocations never carry Task attribution. */

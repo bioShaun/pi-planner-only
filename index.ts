@@ -12,7 +12,7 @@ import {
 } from "./policy.ts";
 import { GIT_AUDIT_OPERATIONS, runGitAudit } from "./git-audit.ts";
 import type { GitAuditRequest, GitRunner } from "./git-audit.ts";
-import { PlannerOrchestrator, compositeWorkflowBlockReason, isDelegationCall } from "./orchestrate.ts";
+import { PlannerOrchestrator, compositeWorkflowBlockReason, isDelegationCall, isExecutionCreatingAction } from "./orchestrate.ts";
 import type { DelegationRecord } from "./orchestrate.ts";
 import { parseSubagentNotify, readChildMeta, tempRootFromAsyncDir } from "./notify.ts";
 import { MAX_REVIEW_ROUNDS, WORKER_REPORT_VERSION, isFinalTaskState, isTerminalTaskState } from "./types.ts";
@@ -662,6 +662,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		for (const raw of completions) {
 			const completion = asRecord(raw);
 			if (!completion) continue;
+			orchestrator.registerCompletionReceipt(completion);
 			const runId = typeof completion.runId === "string" ? completion.runId : undefined;
 			if (!runId) continue;
 			const found = pending.find((item) => item.record.runId === runId);
@@ -973,7 +974,8 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				: {}),
 		});
 		if (!decision.block) {
-			if (event.toolName === "subagent" && !isDisabled() && isDelegationCall(event.input)) {
+			if (event.toolName === "subagent" && !isDisabled() &&
+				(isDelegationCall(event.input) || isExecutionCreatingAction(event.input))) {
 				const composite = compositeWorkflowBlockReason(event.input);
 				if (composite) {
 					if (ctx.hasUI) ctx.ui.notify("Blocked composite subagent workflow", "warning");

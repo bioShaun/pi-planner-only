@@ -1,0 +1,77 @@
+{
+  "fixtureVersion": 1,
+  "cases": [
+    {
+      "id": "step-2",
+      "taskId": "T-20260911-step-2",
+      "role": "worker",
+      "rawBody": "Step 2: install toolset version 4.2.1 in ${WORKSPACE}/envs/annotation-4.2.1. Keep the reference database at ${WORKSPACE}/refs/current-db and create the required symlink ${WORKSPACE}/db -> ${WORKSPACE}/refs/current-db; do not copy the large database. Build the annotation database with make-db --input ${WORKSPACE}/inputs/variants.vcf --output ${WORKSPACE}/db/annotation.db. Run the smoke test make-db --check ${WORKSPACE}/db/annotation.db and report the installed version and resolved symlink target.",
+      "taskSpec": {
+        "taskId": "T-20260911-step-2",
+        "objective": "Prepare the annotation database.",
+        "cwd": "${WORKSPACE}",
+        "role": "worker",
+        "scope": { "allowedPaths": ["${WORKSPACE}/db"] },
+        "constraints": ["Use the declared environment and symlink; do not copy the reference database."],
+        "acceptanceCriteria": ["The smoke test passes."],
+        "validation": { "required": true, "commands": ["make-db --check ${WORKSPACE}/db/annotation.db"] },
+        "expectedEvidence": { "changedFiles": true, "tests": true },
+        "stopConditions": ["Stop if the declared environment is unavailable."]
+      },
+      "expectedChildPacket": {
+        "version": 1,
+        "spec": {
+          "taskId": "T-20260911-step-2",
+          "objective": "Prepare the annotation database.",
+          "cwd": "${WORKSPACE}",
+          "role": "worker",
+          "scope": { "allowedPaths": ["${WORKSPACE}/db"] },
+          "constraints": ["Use the declared environment and symlink; do not copy the reference database."],
+          "acceptanceCriteria": ["The smoke test passes."],
+          "validation": { "required": true, "commands": ["make-db --check ${WORKSPACE}/db/annotation.db"] },
+          "expectedEvidence": { "changedFiles": true, "tests": true },
+          "stopConditions": ["Stop if the declared environment is unavailable."]
+        },
+        "instructions": "Step 2: install toolset version 4.2.1 in ${WORKSPACE}/envs/annotation-4.2.1. Keep the reference database at ${WORKSPACE}/refs/current-db and create the required symlink ${WORKSPACE}/db -> ${WORKSPACE}/refs/current-db; do not copy the large database. Build the annotation database with make-db --input ${WORKSPACE}/inputs/variants.vcf --output ${WORKSPACE}/db/annotation.db. Run the smoke test make-db --check ${WORKSPACE}/db/annotation.db and report the installed version and resolved symlink target.",
+        "knownFacts": ["The reference database is shared and must remain a symlink.", "The requested toolset version is 4.2.1."],
+        "artifactRefs": ["${WORKSPACE}/db/annotation.db", "${WORKSPACE}/refs/current-db"]
+      }
+    },
+    {
+      "id": "handoff",
+      "taskId": "T-20260911-handoff",
+      "role": "worker",
+      "rawBody": "Handoff: update ${WORKSPACE}/docs/annotation-report.md using the verified count of 1,204,876 variants and the user-confirmed cohort parameter --cohort durum-100k. Cover the full SNP+INDEL annotation range, document the input manifest at ${WORKSPACE}/inputs/manifest.tsv, and preserve the paused next step: resume annotation and run the final report check before asking for verdict.",
+      "taskSpec": {
+        "taskId": "T-20260911-handoff",
+        "objective": "Prepare the annotation handoff report.",
+        "cwd": "${WORKSPACE}",
+        "role": "worker",
+        "scope": { "allowedPaths": ["${WORKSPACE}/docs/annotation-report.md"] },
+        "constraints": ["Do not claim a final verdict while the next step is paused."],
+        "acceptanceCriteria": ["The handoff records the verified count and the full variant range."],
+        "validation": { "required": false },
+        "expectedEvidence": { "changedFiles": true },
+        "stopConditions": ["Stop after recording the paused next step."]
+      },
+      "expectedChildPacket": {
+        "version": 1,
+        "spec": {
+          "taskId": "T-20260911-handoff",
+          "objective": "Prepare the annotation handoff report.",
+          "cwd": "${WORKSPACE}",
+          "role": "worker",
+          "scope": { "allowedPaths": ["${WORKSPACE}/docs/annotation-report.md"] },
+          "constraints": ["Do not claim a final verdict while the next step is paused."],
+          "acceptanceCriteria": ["The handoff records the verified count and the full variant range."],
+          "validation": { "required": false },
+          "expectedEvidence": { "changedFiles": true },
+          "stopConditions": ["Stop after recording the paused next step."]
+        },
+        "instructions": "Handoff: update ${WORKSPACE}/docs/annotation-report.md using the verified count of 1,204,876 variants and the user-confirmed cohort parameter --cohort durum-100k. Cover the full SNP+INDEL annotation range, document the input manifest at ${WORKSPACE}/inputs/manifest.tsv, and preserve the paused next step: resume annotation and run the final report check before asking for verdict.",
+        "knownFacts": ["Verified variant count: 1,204,876.", "The user confirmed --cohort durum-100k.", "The next step remains paused until annotation is resumed."],
+        "artifactRefs": ["${WORKSPACE}/docs/annotation-report.md", "${WORKSPACE}/inputs/manifest.tsv"]
+      }
+    }
+  ]
+}

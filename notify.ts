@@ -8,7 +8,7 @@
  * back to the agent name. `runIds` is populated when the text has them.
  */
 
-import { lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 const PREVIEW_TRUNCATED_MARKER = "...[preview truncated]";
@@ -161,8 +161,10 @@ export function tempRootFromAsyncDir(asyncDir: string): string | undefined {
 }
 
 /**
- * Read-only: the largest regular file ≤ 1 MiB under
- * `<tempRoot>/artifacts/outputs/<runId>/`. Missing or unreadable → undefined.
+ * Read a legacy run output only when its filename is deterministic. The old
+ * largest-file heuristic was unsafe because previews, logs, and reports can
+ * coexist in the same directory. An ambiguous directory is deliberately left
+ * unresolved so callers can retry with an explicit host output reference.
  */
 export function readLargestRunOutput(asyncDir: string | undefined, runId: string): string | undefined {
 	if (!asyncDir || isUnsafeRunId(runId)) return undefined;
@@ -175,28 +177,49 @@ export function readLargestRunOutput(asyncDir: string | undefined, runId: string
 	} catch {
 		return undefined;
 	}
-
-	let best: { path: string; size: number } | undefined;
+	const deterministic = new Set([
+		"result.json",
+		"output.json",
+		"output.md",
+		`${runId}.json`,
+		`${runId}.md`,
+	]);
+	const candidates: string[] = [];
 	for (const name of entries) {
+		if (!deterministic.has(name)) continue;
 		const path = join(dir, name);
 		let st;
 		try {
-			st = statSync(path);
+			st = lstatSync(path);
 		} catch {
 			continue;
 		}
-		if (!st.isFile() || st.size > MAX_OUTPUT_BYTES) continue;
-		if (!best || st.size > best.size || (st.size === best.size && path < best.path)) {
-			best = { path, size: st.size };
+		if (st.isFile() && st.size <= MAX_OUTPUT_BYTES) candidates.push(path);
+	}
+	// A legacy run directory with exactly one bounded regular file is
+	// deterministic by cardinality. Two or more files are ambiguous; never
+	// select one by size or mtime.
+	if (candidates.length === 0) {
+		for (const name of entries) {
+			const path = join(dir, name);
+			let st;
+			try {
+				st = lstatSync(path);
+			} catch {
+				continue;
+			}
+			if (st.isFile() && st.size <= MAX_OUTPUT_BYTES) candidates.push(path);
 		}
 	}
-	if (!best) return undefined;
+	if (candidates.length !== 1) return undefined;
 	try {
-		return readFileSync(best.path, "utf8");
+		return readFileSync(candidates[0] as string, "utf8");
 	} catch {
 		return undefined;
 	}
 }
+
+export const readDeterministicRunOutput = readLargestRunOutput;
 
 export const ASYNC_PREVIEW_TRUNCATED_REASON = "async preview truncated";
 export { PREVIEW_TRUNCATED_MARKER };
