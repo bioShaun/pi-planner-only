@@ -562,6 +562,12 @@ export function extractTaskSpecDetails(
 			if (isPlainObject(parsed.cumulativeBudget)) {
 				(spec as { cumulativeBudget?: unknown }).cumulativeBudget = parsed.cumulativeBudget;
 			}
+			if (isNonEmptyString(parsed.model)) {
+				(spec as { model?: string }).model = parsed.model.trim();
+			}
+			if (isNonEmptyString(parsed.thinking)) {
+				(spec as { thinking?: string }).thinking = parsed.thinking.trim();
+			}
 			if (parsed.reportOnly === true) {
 				spec.reportOnly = true;
 			}

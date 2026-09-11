@@ -54,7 +54,8 @@ import {
 } from "./floors.ts";
 import type { SessionRootBudgetConfig, SessionRootSpend } from "./floors.ts";
 import type { DelegationRateKind } from "./usage.ts";
-import { loadRoleModelPolicy, requestedRoleModel, resolveRoleModel, compareResolvedRoleModel } from "./role-models.ts";
+import { loadRoleModelPolicy, requestedRoleModel, resolveRoleModel, compareResolvedRoleModel, preflightEffectiveModel } from "./role-models.ts";
+import type { ModelPreflightContext, RoleModelResolution } from "./role-models.ts";
 import type { EffectiveLimits } from "./floors.ts";
 import {
 	ASYNC_PREVIEW_TRUNCATED_REASON,
@@ -339,6 +340,8 @@ export interface OrchestratorDeps {
 	 * zero-rate) ones through. Absent: every non-reviewer launch is treated as paid.
 	 */
 	delegationRateKind?: (model: string | undefined) => DelegationRateKind;
+	/** Live host model registry/defaults. When absent, legacy unit callers skip host verification. */
+	getModelPreflightContext?: () => Omit<ModelPreflightContext, "input"> | undefined;
 }
 
 export type { DelegationKind };
@@ -424,13 +427,17 @@ export interface DelegationHistoryEntry {
 	contextOverridden?: boolean;
 	reuseReason?: string;
 	floorSummary?: string;
+	/** RR-07 final model preflight attribution, including fallback selection. */
+	preflight?: { model: string; thinking: string; source: string; verification: string };
+	failureReason?: string;
+	retryReason?: string;
 }
 
 export interface DelegationOutcome {
 	task?: TaskRecord;
 	conflict?: WriterConflict;
 	/** Set when the delegation must not launch at all. */
-	block?: { reason: string };
+	block?: { reason: string; code?: string; details?: unknown };
 	warnings?: string[];
 }
 
@@ -695,6 +702,7 @@ export class PlannerOrchestrator {
 	private readonly getSessionRootUsage?: () => SessionRootSpend;
 	private sessionRootBudgetConfig?: SessionRootBudgetConfig;
 	private readonly delegationRateKind: (model: string | undefined) => DelegationRateKind;
+	private readonly getModelPreflightContext?: () => Omit<ModelPreflightContext, "input"> | undefined;
 	/** toolCallId -> delegated task + invocation kind. */
 	private readonly delegations = new Map<string, DelegationRecord>();
 	private readonly reservations = new BudgetReservations();
@@ -779,6 +787,7 @@ export class PlannerOrchestrator {
 		this.sessionRootBudgetConfig = deps.sessionRootBudgetConfig
 			?? (deps.getSessionRootUsage ? loadSessionRootBudgetConfig() : undefined);
 		this.delegationRateKind = deps.delegationRateKind ?? (() => "unknown");
+		this.getModelPreflightContext = deps.getModelPreflightContext;
 		this.structuredDelegationMode =
 			deps.structuredDelegationMode ?? readStructuredDelegationMode();
 	}
@@ -1640,7 +1649,7 @@ export class PlannerOrchestrator {
 			return { block: { reason: "Planner-only guard: role model policy mismatch recorded; further controlled launches are stopped." } };
 		}
 		const requested = requestedRoleModel(inputRecord);
-		let resolved: { model: string; thinking: string } | undefined;
+		let resolved: RoleModelResolution | undefined;
 		if (roleModelPolicy.enabled) {
 			try {
 				resolved = resolveRoleModel(roleModelPolicy, role, inputRecord);
@@ -1655,6 +1664,64 @@ export class PlannerOrchestrator {
 			?? (reportOnlyInput && target?.task?.spec
 				? { ...target.task.spec, reportOnly: true }
 				: undefined);
+		// RR-07: resolve and verify the final model before any session budget,
+		// reservation, evidence, or writer-lock side effect can occur.
+		let preflightSummary: { model: string; thinking: string; source: string; verification: string } | undefined;
+		const preflightContext = this.getModelPreflightContext?.();
+		if (preflightContext) {
+			const specRecord = spec && typeof spec === "object" ? spec as unknown as Record<string, unknown> : undefined;
+			const nestedSpec = inputRecord.taskSpec && typeof inputRecord.taskSpec === "object"
+				? inputRecord.taskSpec as Record<string, unknown>
+				: undefined;
+			const taskSpecModel = typeof specRecord?.model === "string"
+				? specRecord.model
+				: typeof nestedSpec?.model === "string" ? nestedSpec.model : undefined;
+			const taskSpecThinking = typeof specRecord?.thinking === "string"
+				? specRecord.thinking
+				: typeof nestedSpec?.thinking === "string" ? nestedSpec.thinking : undefined;
+			const preflight = preflightEffectiveModel({
+				...preflightContext,
+				input: inputRecord,
+				...(resolved ? { roleResolution: resolved } : {}),
+				...(roleModelPolicy.enabled ? { rolePolicy: roleModelPolicy } : {}),
+				...(taskSpecModel ? { taskSpecModel } : {}),
+				...(taskSpecThinking ? { taskSpecThinking } : {}),
+			});
+			if (preflight.effective) {
+				preflightSummary = {
+					model: preflight.effective.provider
+						? `${preflight.effective.provider}/${preflight.effective.model}`
+						: preflight.effective.model,
+					thinking: preflight.effective.thinking,
+					source: preflight.effective.source,
+					verification: "verified",
+				};
+				inputRecord.model = preflight.effective.provider
+					? `${preflight.effective.provider}/${preflight.effective.model}`
+					: preflight.effective.model;
+				inputRecord.thinking = preflight.effective.thinking;
+			}
+			if (preflight.status !== "verified") {
+				const error = preflight.error;
+				const detail = error
+					? `${error.code}: model=${error.requested}; source=${error.source}; verification=${error.verification}; candidates=${error.candidates.join(", ") || "none"}; ${error.message}`
+					: "MODEL_UNAVAILABLE: effective model preflight was unavailable";
+				return {
+					block: {
+						reason: `Planner-only guard: ${detail}`,
+						...(error ? { code: error.code, details: error } : { code: "MODEL_UNAVAILABLE" }),
+					},
+				};
+			}
+			if (preflight.effective) {
+				resolved = {
+					role,
+					model: inputRecord.model as string,
+					thinking: preflight.effective.thinking,
+				};
+			}
+		}
+
 		const promptNow = delegationPrompt(input);
 		const requestedOracleMode = inputRecord.oracleMode === "full" || inputRecord.oracleMode === "bounded"
 			? inputRecord.oracleMode
@@ -2152,8 +2219,13 @@ export class PlannerOrchestrator {
 			return { task, conflict, ...(warnings.length ? { warnings } : {}) };
 		}
 
+		let priorLaunchFailure: string | undefined;
 		if (!auxiliaryExplorer && ["planning", "changes_requested", "blocked", "failed"].includes(task.state)) {
+			priorLaunchFailure = task.stateReason?.startsWith("delegation launch failed:") ? task.stateReason : undefined;
 			this.store.transition(task.taskId, "executing");
+			if (priorLaunchFailure) {
+				this.store.setStateReason(task.taskId, `retry launch succeeded; previous failure preserved: ${priorLaunchFailure}`);
+			}
 		}
 
 		task = this.store.require(task.taskId);
@@ -2241,6 +2313,8 @@ export class PlannerOrchestrator {
 			toolCallId: event.toolCallId,
 			role,
 			...(roleModelPolicy.enabled ? { requested, resolved } : {}),
+			...(preflightSummary ? { preflight: preflightSummary } : {}),
+			...(priorLaunchFailure ? { retryReason: priorLaunchFailure } : {}),
 			...(reuseOutcome?.reason ? { reuseReason: reuseOutcome.reason } : {}),
 			...(floorSummary ? { floorSummary } : {}),
 		});
@@ -2378,7 +2452,7 @@ export class PlannerOrchestrator {
 		const history = this.delegationHistory.get(task.taskId) ?? [];
 		const children = task.usage?.children ?? [];
 		const policyEnabled = loadRoleModelPolicy().enabled;
-		const delegationsToShow: Array<{ role: string; model: string; thinking: string; requested?: string; resolved?: string; actual?: string; mismatch?: boolean }> = [];
+		const delegationsToShow: Array<{ role: string; model: string; thinking: string; requested?: string; resolved?: string; actual?: string; mismatch?: boolean; failureReason?: string }> = [];
 		if (history.length > 0) {
 			for (const h of history) {
 				const child = children.find((c) => (h.runId && c.runId === h.runId) || (h.toolCallId && c.toolCallId === h.toolCallId));
@@ -2386,9 +2460,9 @@ export class PlannerOrchestrator {
 				const rawThinking = child?.thinking ?? h.thinking ?? (rawModel?.includes(":") ? rawModel.slice(rawModel.lastIndexOf(":") + 1) : undefined);
 				if (policyEnabled && h.resolved) {
 					const actual = h.actual ?? { model: "未知", thinking: "未知" };
-					delegationsToShow.push({ role: h.role, model: actual.model, thinking: actual.thinking, requested: `${h.requested?.model ?? "未指定"} (thinking: ${h.requested?.thinking ?? "未指定"})`, resolved: `${h.resolved.model} (thinking: ${h.resolved.thinking})`, actual: `${actual.model} (thinking: ${actual.thinking})`, mismatch: h.mismatch });
+					delegationsToShow.push({ role: h.role, model: actual.model, thinking: actual.thinking, requested: `${h.requested?.model ?? "未指定"} (thinking: ${h.requested?.thinking ?? "未指定"})`, resolved: `${h.resolved.model} (thinking: ${h.resolved.thinking})`, actual: `${actual.model} (thinking: ${actual.thinking})`, mismatch: h.mismatch, ...(h.failureReason ? { failureReason: h.failureReason } : {}) });
 				} else {
-					delegationsToShow.push({ role: h.role, model: rawModel ?? "unknown", thinking: rawThinking ?? "unknown" });
+					delegationsToShow.push({ role: h.role, model: rawModel ?? "unknown", thinking: rawThinking ?? "unknown", ...(h.failureReason ? { failureReason: h.failureReason } : {}) });
 				}
 			}
 		} else if (children.length > 0) {
@@ -2406,6 +2480,7 @@ export class PlannerOrchestrator {
 				} else {
 					lines.push(`  - ${d.role}: ${d.model} (thinking: ${d.thinking})`);
 				}
+				if (d.failureReason) lines.push(`    launch failure: ${d.failureReason}`);
 			}
 		}
 		const untrustedReason = this.untrustedBalances.get(task.taskId);
@@ -3084,6 +3159,9 @@ export class PlannerOrchestrator {
 				this.store.setStateReason(task.taskId, isBudgetStop ? `subagent stopped: ${firstLine || "budget limit reached"}` : `delegation launch failed: ${firstLine}`);
 			}
 			if (task) {
+				const failureReason = isBudgetStop ? `subagent stopped: ${firstLine || "budget limit reached"}` : `delegation launch failed: ${firstLine}`;
+				const historyEntry = this.delegationHistory.get(task.taskId)?.find((entry) => entry.toolCallId === event.toolCallId);
+				if (historyEntry) historyEntry.failureReason = failureReason;
 				this.updateRunRecord(task, executionId, {
 					executionState: "launch-failed",
 					ingestionState: "unavailable",

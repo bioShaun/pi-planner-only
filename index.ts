@@ -212,6 +212,16 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		getSessionRootUsage: () => ledger.sessionRootSpend(),
 		sessionRootBudgetConfig: sessionRootBudget,
 		delegationRateKind: (model) => delegationRateKind(pricing, undefined, model),
+		getModelPreflightContext: () => {
+			const ctx = latestCtx;
+			if (!ctx?.modelRegistry) return undefined;
+			return {
+				registry: ctx.modelRegistry,
+				hostModel: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined,
+				hostThinking: ctx.thinkingLevel,
+				pricing,
+			};
+		},
 	});
 	const allSessionEntries: UsageEntry[] = [];
 	/** Ticket 40: emit soft/hard disclosures once per crossing until spend drops below the level. */
@@ -1009,6 +1019,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		// carries them (a store read cannot fail in memory, and a failure would
 		// read as Idle: fail closed).
 		const policyCwd = ctx?.cwd || process.cwd();
+		latestCtx = ctx;
 		const decision = decidePolicy({
 			toolName: event.toolName,
 			input: event.input,

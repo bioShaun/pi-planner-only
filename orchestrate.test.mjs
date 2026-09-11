@@ -7788,4 +7788,49 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	}
 }
 
+// RR-07 C20/C21: unknown final models block before reservation or writer lock,
+// and a successful retry records the new state while retaining launch history.
+{
+	const knownModel = { provider: "openai", id: "known-model" };
+	const { store, task } = budgetTaskFixture("T-20260911-rr07-preflight", { tokens: 1000, costUsd: 1 }, boundedBudgetUsage(0, 0));
+	const orch = new PlannerOrchestrator({
+		gitRunner,
+		store,
+		getModelPreflightContext: () => ({
+			registry: { getAvailable: () => [knownModel] },
+			pricing: { rates: { "openai/known-model": { input: 1, output: 1, cacheRead: 1, cacheWrite: 1 } } },
+		}),
+	});
+	const blocked = await orch.beginDelegation({
+		toolCallId: "call-rr07-unknown",
+		input: { agent: "worker", model: "openai/missing-model", thinking: "low", task: JSON.stringify(task.spec) },
+	}, BASE);
+	assert.equal(blocked.block?.code, "MODEL_UNAVAILABLE");
+	assert.match(blocked.block?.reason ?? "", /source=explicit/);
+	assert.match(blocked.block?.reason ?? "", /candidates=openai\/known-model/);
+	assert.equal(orch.pendingDelegationCount(), 0);
+	assert.equal(orch.reservations.heldCount(task.taskId), 0);
+	assert.equal(task.state, "planning");
+}
+{
+	const taskId = "T-20260911-rr07-retry";
+	const store = pinnedStore();
+	const task = store.create(specFor(taskId));
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const input = { agent: "worker", task: JSON.stringify(task.spec) };
+	await orch.beginDelegation({ toolCallId: "call-rr07-fail", input }, BASE);
+	await orch.handleSubagentResult({
+		toolCallId: "call-rr07-fail",
+		toolName: "subagent",
+		input,
+		content: [{ type: "text", text: "Unknown subagent model" }],
+		isError: true,
+	});
+	assert.equal(store.require(taskId).state, "failed");
+	await orch.beginDelegation({ toolCallId: "call-rr07-retry", input: { agent: "worker", task: JSON.stringify(task.spec) } }, BASE);
+	assert.match(store.require(taskId).stateReason ?? "", /retry launch succeeded/);
+	assert.match(store.require(taskId).stateReason ?? "", /Unknown subagent model/);
+	assert.match(orch.renderTaskStatus(store.require(taskId)), /launch failure: delegation launch failed/);
+}
+
 console.log("planner-only orchestration: PASS");
