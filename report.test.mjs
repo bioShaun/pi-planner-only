@@ -259,6 +259,32 @@ function assertRepaired(raw, expectedPatch, notePattern, context) {
 	}
 }
 
+// C23: completed_with_limits is an exact status token mapped to partial.
+{
+	const raw = validShape({ status: "completed_with_limits" });
+	const { report, repairs } = normalizeWorkerReport(raw);
+	assert.equal(raw.status, "completed_with_limits", "normalization does not mutate the original value");
+	assert.equal(report.status, "partial");
+	assert.ok(repairs.some((note) => /status "completed_with_limits" → partial/.test(note)));
+	assert.equal(normalizeWorkerReport(report).report.status, "partial");
+	assert.deepEqual(normalizeWorkerReport(report).repairs, [], "normalization is idempotent");
+
+	const unsupported = normalizeWorkerReport(validShape({ status: "completed-with-limits" }));
+	assert.equal(unsupported.report.status, "completed-with-limits", "near-match status is not normalized");
+}
+
+// C23: not-run validation cannot claim a successful exit code; drop the code.
+{
+	for (const exitCode of [0, "0"]) {
+		const { report, repairs } = normalizeWorkerReport(validShape({
+			validation: [{ command: "npm test", type: "test", status: "not-run", exitCode, summary: "not run" }],
+		}));
+		assert.equal(report.validation[0].status, "not-run");
+		assert.equal("exitCode" in report.validation[0], false);
+		assert.ok(repairs.some((note) => /validation\[0\]\.exitCode.*not-run/.test(note)));
+	}
+}
+
 // L-1: normalizeWorkerReport status in_progress/in-progress/incomplete/partially_completed → partial
 {
 	for (const status of ["in_progress", "in-progress", "incomplete", "partially_completed"]) {

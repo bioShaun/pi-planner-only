@@ -216,6 +216,8 @@ const prompt = await handlers.get("before_agent_start")({ systemPrompt: "BASE" }
 assert.match(prompt.systemPrompt, /^BASE/);
 assert.match(prompt.systemPrompt, /plan, delegate, inspect read-only, review, and arbitrate/);
 assert.match(prompt.systemPrompt, /WorkerReport/);
+assert.match(prompt.systemPrompt, /Top-level status must be exactly completed\/partial\/blocked\/failed/);
+assert.match(prompt.systemPrompt, /validation status must be exactly passed\/failed\/not-run/);
 assert.match(prompt.systemPrompt, /git_audit/);
 assert.match(prompt.systemPrompt, /Never fix rejected work/);
 // R02 — the workflowScript ban merged into the role line (authorized cut).

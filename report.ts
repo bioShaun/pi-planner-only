@@ -119,7 +119,7 @@ export interface NormalisedReport {
 
 const VERSION_ONE_STRINGS = new Set(["1", "1.0"]);
 const STATUS_TO_COMPLETED = new Set(["done", "success", "succeeded", "complete", "ok"]);
-const STATUS_TO_PARTIAL = new Set(["in_progress", "in-progress", "incomplete", "partially_completed"]);
+const STATUS_TO_PARTIAL = new Set(["in_progress", "in-progress", "incomplete", "partially_completed", "completed_with_limits"]);
 const STATUS_TO_FAILED = new Set(["error", "errored"]);
 const LIST_OBJECT_KEYS = ["path", "file", "filePath", "name", "text", "summary", "description", "message"] as const;
 const ALIAS_TO_CANONICAL: ReadonlyArray<readonly [string, "changedFiles" | "unresolved"]> = [
@@ -246,6 +246,10 @@ function repairValidationEntries(entries: unknown[], repairs: string[]): void {
 			const parsed = Number.parseInt(item.exitCode, 10);
 			repairs.push(`${label}.exitCode "${item.exitCode}" → ${parsed}`);
 			item.exitCode = parsed;
+		}
+		if (item.status === "not-run" && item.exitCode === 0) {
+			delete item.exitCode;
+			repairs.push(`${label}.exitCode 0 dropped (status not-run)`);
 		}
 	});
 }

@@ -141,6 +141,7 @@ const explorerExample = buildTaskSpecExample({ toolName: "read", input: { path: 
 const explorerConstraints = explorerExample.constraints.join("\n");
 assert.match(explorerConstraints, /canonical Task id from your launch packet/);
 assert.match(explorerConstraints, /must not ask Root or supervisor for the taskId/);
+assert.match(explorerConstraints, /status must be exactly completed, partial, blocked, or failed/);
 assert.match(explorerConstraints, /validation status must be exactly passed, failed, or not-run/);
 assert.match(explorerConstraints, /final message must contain only the WorkerReport JSON/);
 

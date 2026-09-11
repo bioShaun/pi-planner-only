@@ -496,6 +496,8 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 					"Do not accept this result and do not treat it as failure.",
 					`Delegate exactly one report-only correction for task ${task.taskId}:`,
 					'"Do not modify files. Return only a valid WorkerReport for task <id>."',
+					"The top-level status must be exactly completed, partial, blocked, or failed.",
+					"The validation status must be exactly passed, failed, or not-run.",
 					"A second malformed report blocks the task.",
 				],
 			};
@@ -670,6 +672,8 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 						"Routing: an undeclared-only gap is repaired with one report-only correction that declares the work; out-of-scope changes need a Worker correction that reverts or fixes them.",
 						`Delegate exactly one report-only correction for task ${task.taskId}:`,
 						'"Do not modify files. Return only a valid WorkerReport for task <id>."',
+						"The top-level status must be exactly completed, partial, blocked, or failed.",
+						"The validation status must be exactly passed, failed, or not-run.",
 					],
 				};
 			}

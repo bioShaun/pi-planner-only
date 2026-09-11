@@ -301,6 +301,8 @@ assert.match(summarizeFindings([finding("major", "test")]).join("\n"), /\[major\
 	assert.equal(decision.consumesRound, false);
 	assert.equal(decision.failureClass, "contract");
 	assert.match(decision.guidance.join("\n"), /Do not modify files/);
+	assert.match(decision.guidance.join("\n"), /status must be exactly completed, partial, blocked, or failed/);
+	assert.match(decision.guidance.join("\n"), /validation status must be exactly passed, failed, or not-run/);
 	apply(store, "T-20260831-001", decision);
 
 	store.transition("T-20260831-001", "executing");

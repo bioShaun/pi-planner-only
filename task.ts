@@ -267,7 +267,7 @@ export const TASKSPEC_EXAMPLE_SENTINEL = "T-pending";
 const EXAMPLE_INSPECT_TOOLS = new Set(["read", "grep", "find", "ls"]);
 
 const EXAMPLE_WORKER_REPORT_CONTRACT =
-	"Return only a valid WorkerReport JSON object (version, taskId, status, summary, changedFiles, validation, evidence, risks, unresolved) using the canonical Task id from your launch packet; you must not ask Root or supervisor for the taskId. The validation status must be exactly passed, failed, or not-run. Your final message must contain only the WorkerReport JSON.";
+	"Return only a valid WorkerReport JSON object (version, taskId, status, summary, changedFiles, validation, evidence, risks, unresolved) using the canonical Task id from your launch packet; you must not ask Root or supervisor for the taskId. The top-level status must be exactly completed, partial, blocked, or failed. The validation status must be exactly passed, failed, or not-run. Your final message must contain only the WorkerReport JSON.";
 
 export interface TaskSpecExampleInput {
 	toolName: string;

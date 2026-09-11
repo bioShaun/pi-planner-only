@@ -64,6 +64,7 @@ export function wrapWorkerContract(task: string, taskId: string): string {
 		WORKER_CONTRACT_MARKER,
 		"Do not run /code-review or spawn a reviewer. Return only a WorkerReport JSON object:",
 		"Use the canonical Task id from your launch packet; you must not ask Root or supervisor for the taskId.",
+		"The top-level status must be exactly completed, partial, blocked, or failed.",
 		"The validation status must be exactly passed, failed, or not-run.",
 		"Your final message must contain only the WorkerReport JSON.",
 		workerReportShapeReminder(taskId),
@@ -115,7 +116,7 @@ export function wrapOracleContract(
 	} else {
 		suite = "ORACLE_SUITE=bounded. You MAY run only the test files named in the WorkerReport. Do not run npm test, npm run test:e2e, or the full suite. Check git rev-parse HEAD and git status --porcelain.";
 	}
-	return `${ORACLE_CONTRACT_MARKER}\n${suite}\n\n${task}`;
+	return `${ORACLE_CONTRACT_MARKER}\n${suite}\nThe top-level status must be exactly completed, partial, blocked, or failed.\nThe validation status must be exactly passed, failed, or not-run.\n\n${task}`;
 }
 
 export function lastWorkerValidationPassed(report: WorkerReport | undefined): boolean {
@@ -695,6 +696,8 @@ export function prepareRoleDelegation(
 			if (reportOnly && target.role === "worker") {
 				const correctionLead = [
 					`Do not modify files. Return only a valid WorkerReport for task ${target.task?.taskId ?? target.taskId ?? packetSpec.taskId}.`,
+					"The top-level status must be exactly completed, partial, blocked, or failed.",
+					"The validation status must be exactly passed, failed, or not-run.",
 					"This repair uses a fresh read-only agent because native resume cannot tighten the prior worker's tools.",
 				].join("\n");
 				packetBody = `${correctionLead}\n\n${packetBody}`;

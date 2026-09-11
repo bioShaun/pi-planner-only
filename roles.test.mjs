@@ -484,6 +484,8 @@ assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root
 	assert.match(bounded, /\[PLANNER-ONLY ORACLE\]/);
 	assert.match(bounded, /ORACLE_SUITE=bounded/);
 	assert.match(bounded, /You MAY run only the test files named in the WorkerReport/);
+	assert.match(bounded, /status must be exactly completed, partial, blocked, or failed/);
+	assert.match(bounded, /validation status must be exactly passed, failed, or not-run/);
 	assert.match(bounded, /Do not run npm test, npm run test:e2e, or the full suite/);
 	assert.match(bounded, /Check git rev-parse HEAD and git status --porcelain/);
 	assert.doesNotMatch(bounded, /ORACLE_SUITE=full/);
@@ -586,6 +588,7 @@ assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root
 	assert.match(workerWrap, /"taskId":"T-20260831-001"/);
 	assert.match(workerWrap, /canonical Task id from your launch packet/);
 	assert.match(workerWrap, /must not ask Root or supervisor for the taskId/);
+	assert.match(workerWrap, /status must be exactly completed, partial, blocked, or failed/);
 	assert.match(workerWrap, /validation status must be exactly passed, failed, or not-run/);
 	assert.match(workerWrap, /final message must contain only the WorkerReport JSON/);
 	assert.equal(wrapWorkerContract(workerWrap, "T-20260831-001"), workerWrap);
@@ -608,12 +611,16 @@ assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root
 	assert.match(explorerPayload.task, /\[PLANNER-ONLY WORKER CONTRACT\]/);
 	assert.match(explorerPayload.task, /canonical Task id from your launch packet/);
 	assert.match(explorerPayload.task, /must not ask Root or supervisor for the taskId/);
+	assert.match(explorerPayload.task, /status must be exactly completed, partial, blocked, or failed/);
+	assert.match(explorerPayload.task, /validation status must be exactly passed, failed, or not-run/);
 }
 
 {
 	const fullOracle = { agent: "oracle", task: "run tests" };
 	applyRoleDelegation(fullOracle, { role: "validator", oracleMode: "full" });
 	assert.match(fullOracle.task, /ORACLE_SUITE=full/);
+	assert.match(fullOracle.task, /status must be exactly completed, partial, blocked, or failed/);
+	assert.match(fullOracle.task, /validation status must be exactly passed, failed, or not-run/);
 }
 
 {
