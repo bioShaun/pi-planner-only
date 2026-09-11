@@ -4,7 +4,7 @@
 
 **Blocked by:** [Evidence 01](../../evidence-baseline-lag/issues/01-t2-lag-partition.md), then [retry stop-loss 02](../../evidence-baseline-lag/issues/02-reviewer-baseline-and-revalidate-spin.md). This feature follows those priorities; within this feature, implement this issue before 02.
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Renderer (next to TaskSpec validation) emits an object that `validateTaskSpec` accepts. Tests parse the fenced JSON out of the reason; they do not snapshot the reason or the helper name.
 - [x] Per-tool fill: inspect path → constraints + Explorer; bash command → objective + Explorer; write/edit → Worker; other → placeholder objective + Explorer. Invalid `validation` (array, non-boolean `required`, non-string-array `commands`) becomes `{ required: false }` with commands omitted. Submitted valid fields are preserved except the sentinel `taskId`. No invented budget, Evidence, extra worktree roots, or test commands.

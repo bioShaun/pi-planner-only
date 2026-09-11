@@ -1,6 +1,6 @@
 # 01: 每次 Worker 执行的 Evidence 与 Reviewer 验收闭环
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Blocked by:** None
 
@@ -31,3 +31,8 @@
 - Reviewer packet：`rounds`（分轮归因）+ 累计归因 + `unresolvedFindings`；补丁基线取最早可信 `A_run`；材料缺失 → `attributionIncomplete`/`patchTruncated`。
 - Git 边界：`rev-parse --show-toplevel` 入 probe；porcelain 路径按 cwd 归一、committed delta 按 repo root 归一、C 风格引号路径解码（子目录 cwd、非 ASCII 均有真实 git 仓库测试）。
 - 测试：新增 6 个 Orchestration 生命周期场景（事故形状、漏报→report-only 修复、两轮 finding 存续+还原关闭、report-only 漂移、validator 写入、ledger 新旧恢复、async 采样绑定一次）与 1 个真实仓库路径归一化测试；全量 17 个测试模块通过，`tsc --noEmit` 干净。
+
+2026-09-11 收尾（审核后）：
+
+- 无 allow-list 时，执行窗口内未跟踪且未声明的文件不再当 runtime noise 丢弃，进入 undeclared finding，空声明不能 PASS；有 allow-list 时，名单外未跟踪仍为 external（ticket 20）。
+- 缺 `A_run`/`C_report` 一律 fail closed（不再只对 restored ledger 生效）；同进程注入、无执行记录的报告也不能走 legacy 混合比较完成 PASS。

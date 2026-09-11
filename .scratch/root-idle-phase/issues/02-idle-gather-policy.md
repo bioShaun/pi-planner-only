@@ -4,7 +4,7 @@
 
 **Blocked by:** [01](01-taskspec-example-json.md), after [Evidence 01](../../evidence-baseline-lag/issues/01-t2-lag-partition.md) → [retry stop-loss 02](../../evidence-baseline-lag/issues/02-reviewer-baseline-and-revalidate-spin.md).
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Fix Explorer ownership at launch: newly created standalone Task (including its later continuations), auxiliary call on an existing execution Task, or unbound call. Persist standalone Task ownership for restore. Auxiliary begin, success, failure, and cancellation never change the assisted Task lifecycle, report, baseline, review mode, or pending writer ownership.
 - [x] A standalone confirmed successful result records a validated WorkerReport and bound Evidence, moves to reviewing, then requires Root `planner_verdict` for completed. An unchanged workspace is valid read-only work. Keep existing review-mode choice and required validation; do not force an extra Reviewer/Validator call for every lookup or auto-complete raw prose.
@@ -36,3 +36,9 @@ Scope excludes Root waiting-cost optimization during Worker execution, a generic
 - Prompt/文档：PLANNER_PROMPT 重写为 1792 UTF-8 字节（≤1800），包含 Idle 契约与既有 Root 合同的语义片段断言；CONTEXT.md 将 Idle 定义为 gather Policy 阶段；README/中文 README 增补 Idle gather 策略与 standalone 闭环；CHANGELOG 记录 Idle、lifecycle/recovery 与 sentinel 修复。
 - 测试：policy.test 新增 Idle 允许/拒绝矩阵（含 bg_wait 60s/未知字段/前缀）；orchestrate.test 新增 standalone 零变更闭环、畸形报告 blocked、auxiliary 隔离、exact-id 恢复（授权矩阵 + 消费幂等 + pending 指引）；index.test 新增 adapter 全生命周期验收（Idle read 拒 → 粘贴 → async standalone → bg_wait pending/recovered → Verdict → 再次 Idle → 重放不重消费）。全量 17 个测试模块通过，`tsc --noEmit` 干净。
 - 未验证项：live Pi host 的真实交付与费用对比未跑（按主 spec 标记未验证）；fixture 通过不证明宿主端到端行为。
+
+2026-09-11 收尾（审核后）：
+
+- 补齐主验收缺口测试：unbound lost-notice + 管理性 wait 从 artifacts 回收原文（无 Task）；restore 后无可信 pending binding 拒 Idle recovery；同一 cwd 另一 live Task 使 gather 保持 live（Orchestration + adapter Policy）。
+- Story 38：Idle `read` 拒绝用户附件路径，拒绝 JSON 按 story 22 把该路径写入 constraints。不增加宿主附件枚举或 Idle `read` 豁免。
+- 未验证项不变：live Pi host 交付与费用对比。

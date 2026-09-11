@@ -1,6 +1,6 @@
 # 02: Review loop 重试分类与无进展止损
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Blocked by:** 01
 
@@ -13,7 +13,8 @@
 - [x] 工具确已恢复、可信 Evidence 变化或新报告修复满足恢复条件后，可进行显式有界验证；即使文案相同也不永久阻断。
 - [x] 正常 Worker 可修复失败仍使用原纠正轮次上限；达到上限不自动继续，保留此前失败与 Usage。
 - [x] 所有停止重试路径给出具体原因和恢复动作；未验证 Evidence、旧 ReviewResult、陈旧 snapshot 不可 PASS。
-- [x] 生命周期测试证明“无无限免费重试”和“恢复条件成立后可完成”；真实宿主跑成功与无进展失败各一例。
+- [x] 生命周期测试证明“无无限免费重试”和“恢复条件成立后可完成”。
+- [ ] 真实宿主跑成功与无进展失败各一例。（未验证：本机无可用宿主会话；`npm run test:e2e` 保留为宿主可用时的验收入口。）
 - [x] 记录总 Task Usage、Root token、角色调用/重验证次数和完成状态；无真实 Usage 不宣称 Astra/Luna 固定省额。
 
 ## Comments
@@ -28,3 +29,8 @@
 - 判据顺序：missingMaterials → 环境 blocked → 无进展/上限 blocked →（新状态）有界 revalidate → findings request_changes → 复核裁决。Root/reviewer 的 request_changes 裁决即使证据过期也照常记录（保守动作，不进重试预算）；PASS 仍然被过期证据覆盖为 revalidate/blocked。
 - 测试：新增 E02 生命周期块（无进展止损全序列：request_changes 不耗预算 → 首次过期 revalidate → 同状态 blocked → 新 HEAD 新尝试 ×2 → 上限 blocked；契约失败零轮次；worker blocked 零轮次），并更新 probe-failure（environment → blocked）与 revalidate consumesRound 两条既有断言。全量 17 个测试模块通过，`tsc --noEmit` 干净。
 - 未验证项：真实宿主（live Pi host）各跑一条成功与无进展失败用例仍未执行——本机无可用宿主会话，按主 spec 标记为未验证；`npm run test:e2e` 合同测试保留为宿主可用时的验收入口。Usage 统计沿用既有 usage.jsonl / Budget by role 渲染，未宣称任何固定节省比例。
+
+2026-09-11 收尾（审核后）：
+
+- 纯声明类 finding（undeclared / over-declared / missing）走 `report_correction`，`failureClass: contract`，不消耗代码纠正轮次；越界等仍走 Worker `request_changes`。
+- 上条宿主用例从已勾选的复合项中拆出，保持未验证。

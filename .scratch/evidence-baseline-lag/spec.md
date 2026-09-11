@@ -1,6 +1,6 @@
 # Evidence 三采样与无效重验证止损
 
-**Status:** ready-for-agent
+**Status:** done
 
 修订：2026-09-10。替代本目录原先的 first-parent lag 分区与 identical-reasons 不计轮次方案。实施顺序：01 Evidence 语义与 Reviewer 证据闭环 → 02 重试分类与止损 → 后续独立的 Root Idle Policy。原 issue 文件名保留以维持链接。
 

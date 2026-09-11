@@ -1337,15 +1337,20 @@ export function compareExecutionTruth(
 	);
 
 	// Runtime noise rewritten by every delegation (session dirs, isolated agent
-	// dirs) is untracked, out of the declared scope, and undeclared: it is
+	// dirs) is untracked, outside a declared allow-list, and undeclared: it is
 	// recorded as external, never attributed to this execution (ticket 20).
+	// Without an allow-list there is no "outside scope", so undeclared
+	// untracked paths stay attributed.
 	const truthPaths: string[] = [];
 	const externalPaths: string[] = [];
 	for (const path of truthSet) {
 		const untracked = untrackedResult.has(path);
 		const declared = declaredPaths.has(path);
 		const inAllowList = hasAllowList && allowedPaths.has(path);
-		if (untracked && !declared && !inAllowList) {
+		// Runtime noise is untracked AND outside a declared allow-list. With
+		// no allow-list the whole workspace is in-scope, so an undeclared
+		// untracked file is attributed work (empty declaration cannot PASS).
+		if (untracked && !declared && hasAllowList && !inAllowList) {
 			externalPaths.push(path);
 			continue;
 		}

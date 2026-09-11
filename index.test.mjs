@@ -4430,6 +4430,54 @@ await abandonActiveTasks();
 	assert.equal(replay, undefined, "a consumed id yields no further recovery");
 }
 
+// R02 another live local Task: completing one Explorer does not Idle-refuse
+// inspect while a sibling Task in the same cwd is still executing.
+{
+	const twinCwd = "/fixture/r02-twin";
+	const twinCtx = { ...ctx, cwd: twinCwd };
+	gitResponses.set("status --porcelain=v2 --branch", { stdout: "", stderr: "", code: 0 });
+	gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
+	const specA = { ...delegationSpec("T-pending", "explorer", twinCwd), validation: { required: false }, objective: "look up A" };
+	const specB = { ...delegationSpec("T-pending", "explorer", twinCwd), validation: { required: false }, objective: "look up B" };
+	assert.equal(await handlers.get("tool_call")(
+		{ toolCallId: "call-twin-a", toolName: "subagent", input: { agent: "explorer", task: JSON.stringify(specA) } },
+		twinCtx,
+	), undefined);
+	assert.equal(await handlers.get("tool_call")(
+		{ toolCallId: "call-twin-b", toolName: "subagent", input: { agent: "explorer", task: JSON.stringify(specB) } },
+		twinCtx,
+	), undefined);
+	const launchedA = await handlers.get("tool_result")(
+		{
+			toolCallId: "call-twin-a",
+			toolName: "subagent",
+			content: [{ type: "text", text: JSON.stringify({
+				version: 1, taskId: "T-pending", status: "completed", summary: "looked up A",
+				changedFiles: [], validation: [],
+				evidence: { cwd: twinCwd, taskId: "T-pending", workerRunId: "call-twin-a", changedPaths: [], gitAvailable: true, generatedAt: new Date().toISOString() },
+				risks: [], unresolved: [],
+			}) }],
+			isError: false,
+		},
+		twinCtx,
+	);
+	const twinId = /task (T-\d{8}-\d{3})/.exec(launchedA.content[0].text)?.[1]
+		?? /taskId: (T-\d{8}-\d{3})/.exec(launchedA.content[0].text)?.[1];
+	assert.ok(twinId, `completed Explorer names a canonical Task: ${launchedA.content[0].text}`);
+	await tools.get("planner_verdict").execute(
+		"v-r02-twin",
+		{ verdict: "pass", summary: "A done", taskId: twinId },
+		undefined,
+		undefined,
+		twinCtx,
+	);
+	const stillLive = await handlers.get("tool_call")(
+		{ toolName: "read", input: { path: "docs/a.md" } },
+		twinCtx,
+	);
+	assert.equal(stillLive?.block, undefined, "a sibling live Task keeps inspect on in this cwd");
+}
+
 rmSync(isolatedAgentDir, { recursive: true, force: true });
 
 console.log("planner-only extension: PASS");

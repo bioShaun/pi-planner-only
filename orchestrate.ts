@@ -1117,9 +1117,6 @@ export class PlannerOrchestrator {
 		const latest = this.executionForLatestReport(task);
 		if (!latest) {
 			const reason = `report revision ${task.reports.length} has no per-execution A_run/C_report evidence record`;
-			if (task.executions.length === 0 && !this.restoredTaskIds.has(task.taskId)) {
-				return comparison;
-			}
 			return {
 				...comparison,
 				verifiable: false,
@@ -2418,9 +2415,15 @@ export class PlannerOrchestrator {
 		if (!meta || meta.exitCode === undefined) return undefined;
 		this.processedRunIds.add(record.runId);
 		this.endDelegation(toolCallId);
-		const task = this.store.get(record.taskId);
-		if (!task) return { content: [{ type: "text", text: `[PLANNER-ONLY] Run ${record.runId} finished, but its task ${record.taskId} is no longer in the store; the output was not recorded.` }] };
 		const text = readLargestRunOutput(record.asyncDir, record.runId) ?? "";
+		const task = this.store.get(record.taskId);
+		if (!task) {
+			// Unbound Explorers never create a Task; keep the saved output.
+			if (record.explorerOwnership === "unbound") {
+				return { content: [{ type: "text", text }] };
+			}
+			return { content: [{ type: "text", text: `[PLANNER-ONLY] Run ${record.runId} finished, but its task ${record.taskId} is no longer in the store; the output was not recorded.` }] };
+		}
 		if (this.isBlockedReceiptSealed(task)) {
 			return this.parkBlockedReceipt(task, toolCallId, record.kind, text);
 		}

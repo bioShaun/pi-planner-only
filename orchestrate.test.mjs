@@ -3422,9 +3422,8 @@ function realGitRunnerOf(dir) {
 	store.transition(task.taskId, "executing");
 	store.recordReport(task.taskId, reportFor(taskId, "call-t10-0"));
 	const outcome = await orch.recordRootVerdict(store.require(task.taskId), "pass", "accepting legacy");
-	assert.equal(outcome.decision.action, "revalidate");
-	assert.match(outcome.decision.reason, /pre-snapshot report/);
-	assert.match(outcome.decision.reason, /a new report is required/);
+	assert.equal(outcome.decision.action, "blocked");
+	assert.match(outcome.decision.reason, /evidence material missing/);
 	assert.notEqual(outcome.task.state, "completed");
 }
 
@@ -6887,8 +6886,10 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 			risks: [],
 			unresolved: [],
 		}));
-		assert.match(outcome.content[0].text, /decision: request_changes/, outcome.content[0].text);
+		assert.match(outcome.content[0].text, /decision: report_correction/, outcome.content[0].text);
 		assert.match(outcome.content[0].text, /under-reported/);
+		assert.equal(orch.store.require("T-20260905-971").reviewRound, 0, "under-report is a contract repair, not a code-correction round");
+		assert.equal(orch.store.require("T-20260905-971").reportCorrections, 1, "under-report spends the report-only counter");
 		const refused = await orch.recordRootVerdict(orch.store.require("T-20260905-971"), "pass", "empty declaration");
 		assert.notEqual(refused.decision.action, "accept", "an empty-ish declaration cannot PASS over committed work");
 
@@ -6912,6 +6913,50 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 		const verdict = await orch.recordRootVerdict(orch.store.require("T-20260905-971"), "pass", "declared now");
 		assert.equal(verdict.decision.action, "accept", verdict.decision.reason);
 		assert.equal(verdict.task.state, "completed");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// E01 untracked work without an allow-list is attributed, not dropped as
+// runtime noise: an empty declaration cannot PASS over a new untracked file.
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-e01-untracked-"));
+	const git = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+	try {
+		git("init", "-q");
+		git("config", "user.email", "test@example.com");
+		git("config", "user.name", "Test");
+		writeFileSync(join(dir, "README.md"), "base\n");
+		git("add", ".");
+		git("commit", "-m", "base", "-q");
+		const runner = realGitRunnerOf(dir);
+		const orch = new PlannerOrchestrator({ gitRunner: runner, store: pinnedStore() });
+		const spec = {
+			...specFor("T-20260905-972"),
+			cwd: dir,
+			scope: { allowedPaths: [] },
+			validation: { required: false },
+		};
+		await orch.beginDelegation(
+			{ toolCallId: "call-e01-ut", input: { task: JSON.stringify(spec) } },
+			BASE,
+		);
+		writeFileSync(join(dir, "notes.txt"), "untracked work\n");
+		const outcome = await orch.handleSubagentResult(workerResult("call-e01-ut", {
+			version: 1,
+			taskId: "T-20260905-972",
+			status: "completed",
+			summary: "wrote notes",
+			changedFiles: [],
+			validation: [{ command: "npm test", type: "test", status: "not-run", exitCode: 0, summary: "not run" }],
+			evidence: { cwd: dir, taskId: "T-20260905-972", workerRunId: "call-e01-ut", changedPaths: [], gitAvailable: true, generatedAt: new Date().toISOString() },
+			risks: [],
+			unresolved: [],
+		}));
+		assert.match(outcome.content[0].text, /under-reported/, outcome.content[0].text);
+		const refused = await orch.recordRootVerdict(orch.store.require("T-20260905-972"), "pass", "empty declaration");
+		assert.notEqual(refused.decision.action, "accept", "undeclared untracked work cannot PASS when there is no allow-list");
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
@@ -7107,6 +7152,25 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
+}
+
+// E01 missing materials fail closed in-session too: a report with no
+// A_run/C_report record cannot fall back to the legacy mixed comparison.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-980b";
+	const spec = specFor(taskId);
+	orch.store.create(spec);
+	orch.store.transition(taskId, "executing");
+	orch.store.transition(taskId, "reviewing");
+	orch.store.recordReport(taskId, reportFor(taskId, "call-no-exec"));
+	assert.equal(orch.store.require(taskId).executions.length, 0);
+	setCleanTree();
+	const verdict = await orch.recordRootVerdict(orch.store.require(taskId), "pass", "trust the tree");
+	assert.equal(verdict.decision.action, "blocked", verdict.decision.reason);
+	assert.match(verdict.decision.reason, /evidence material missing/);
+	assert.notEqual(verdict.task.state, "completed", "an in-session record without A_run/C_report never auto-completes");
+	setCleanTree();
 }
 
 // E01 async: the launch receipt produces no C_report; the final receive binds
@@ -7504,6 +7568,131 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
+}
+
+// R02 unbound lost-notice recovery: exact-id wait stays allowed, a
+// management-only wait is not completion proof, and trusted artifacts return
+// the raw findings once without creating a Task.
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-r02-unbound-"));
+	const artifactDirs = () => [dir];
+	const orch = new PlannerOrchestrator({
+		gitRunner,
+		store: pinnedStore(),
+		artifactDirs,
+		structuredDelegationMode: "warn",
+	});
+	const runId = "run-r02-unbound";
+	const asyncDir = join(dir, "async-subagent-runs", runId);
+	const findings = "Scout findings: the parser lives in src/parser.ts.";
+	mkdirSync(join(dir, "artifacts", "outputs", runId), { recursive: true });
+	writeFileSync(join(dir, "artifacts", `${runId}_explorer_meta.json`), JSON.stringify({ runId, agent: "explorer", exitCode: 0 }));
+	writeFileSync(join(dir, "artifacts", "outputs", runId, "out.txt"), findings);
+	try {
+		const before = orch.store.list().length;
+		await orch.beginDelegation(
+			{ toolCallId: "call-r02-ub", input: { agent: "explorer", task: "Survey the repo and report findings.", async: true } },
+			BASE,
+		);
+		assert.equal(orch.getDelegation("call-r02-ub")?.explorerOwnership, "unbound");
+		await orch.handleSubagentResult({
+			toolCallId: "call-r02-ub",
+			toolName: "subagent",
+			input: {},
+			details: { asyncId: runId, runId, asyncDir },
+			content: [{ type: "text", text: `Async: explorer [${runId}]\nThe async run is detached and running in the background.` }],
+			isError: false,
+		});
+		assert.equal(orch.store.list().length, before, "unbound recovery never manufactures a Task");
+		assert.equal(orch.authorizedWaitId({ id: runId }, BASE), runId, "the exact registered id stays authorized while Idle");
+		const recovered = await orch.recoverPendingRun({ id: runId }, BASE);
+		assert.equal(recovered?.status, "recovered", recovered?.reason);
+		assert.match(recovered.content[0].text, /the parser lives in src\/parser\.ts/);
+		assert.doesNotMatch(recovered.content[0].text, /output was not recorded/);
+		assert.equal(orch.store.list().length, before);
+		assert.equal(orch.authorizedWaitId({ id: runId }, BASE), undefined, "the recovered run is consumed once");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// R02 restore fail-closed: a restored non-final Task makes gather live, but a
+// missing trusted pending binding never authorizes Idle recovery.
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-r02-restore-"));
+	try {
+		const ledgerDir = join(dir, "state");
+		mkdirSync(join(ledgerDir, "planner-only", "ledger"), { recursive: true });
+		const live = {
+			taskId: "T-20260905-986",
+			role: "worker",
+			cwd: "/fixture/r02-restore",
+			state: "executing",
+			reviewRound: 0,
+			reviewMode: "root",
+			reports: [],
+			validatorReports: [],
+			reviews: [],
+			overrides: [],
+			aliases: [],
+			reportCorrections: 0,
+			executions: [],
+			findings: [],
+			recoveryAttempts: 0,
+			recoveryStates: [],
+			usage: emptyTaskUsage(),
+			createdAt: "2026-09-01T10:00:00.000Z",
+			updatedAt: "2026-09-01T10:00:00.000Z",
+		};
+		writeFileSync(
+			join(ledgerDir, "planner-only", "ledger", "T-20260905-986.json"),
+			JSON.stringify({ version: 1, writtenAt: "2026-09-01T10:00:00.000Z", task: live }),
+		);
+		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir });
+		assert.equal(orch.restoreFromLedger().restored, 1);
+		assert.equal(orch.store.activeForCwd("/fixture/r02-restore")?.taskId, "T-20260905-986");
+		assert.equal(orch.authorizedWaitId({ id: "run-stale" }, "/fixture/r02-restore"), undefined, "a restored Task alone never authorizes recovery");
+		assert.equal(await orch.recoverPendingRun({ id: "run-stale" }, "/fixture/r02-restore"), undefined);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// R02 another live local Task: completing one Task does not force Idle while
+// another Task in the same cwd is still live.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const cwd = "/fixture/r02-twin";
+	setCleanTree();
+	const first = await orch.beginDelegation(
+		{ toolCallId: "call-r02-twin-a", input: { agent: "explorer", task: JSON.stringify({ ...specFor("T-20260905-987a", "explorer", cwd), validation: { required: false } }) } },
+		BASE,
+	);
+	const second = await orch.beginDelegation(
+		{ toolCallId: "call-r02-twin-b", input: { agent: "explorer", task: JSON.stringify({ ...specFor("T-20260905-987b", "explorer", cwd), validation: { required: false } }) } },
+		BASE,
+	);
+	const firstId = first.task?.taskId;
+	const secondId = second.task?.taskId;
+	assert.ok(firstId && secondId && firstId !== secondId);
+	assert.equal(first.task?.state, "executing");
+	assert.equal(second.task?.state, "executing");
+	const zeroChange = (taskId, toolCallId) => ({
+		version: 1,
+		taskId,
+		status: "completed",
+		summary: "looked, no changes needed",
+		changedFiles: [],
+		validation: [{ command: "npm test", type: "test", status: "not-run", exitCode: 0, summary: "not run" }],
+		evidence: { cwd, taskId, workerRunId: toolCallId, changedPaths: [], gitAvailable: true, generatedAt: new Date().toISOString() },
+		risks: [],
+		unresolved: [],
+	});
+	await orch.handleSubagentResult(workerResult("call-r02-twin-a", zeroChange(firstId, "call-r02-twin-a")));
+	await orch.recordRootVerdict(orch.store.require(firstId), "pass", "first lookup done");
+	assert.equal(orch.store.require(firstId).state, "completed");
+	assert.equal(orch.store.activeForCwd(cwd)?.taskId, secondId, "the sibling Task keeps this cwd gather-live");
+	setCleanTree();
 }
 
 

@@ -754,6 +754,7 @@ assert.equal(modelIdForPricing("volcengine/glm-5-3"), "volcengine/glm-5-3");
 		assert.equal(merged.rates["gpt-5.6-luna"].input, 99, "existing keys are not overwritten");
 		assert.equal(merged.rates["custom-only"].input, 1);
 		assert.equal(merged.rates["claude-opus-5"].input, 5, "missing default keys are filled in");
+		assert.equal(merged.rates["gpt-6-astra"].input, 10, "gpt-6-astra is filled from bundled defaults");
 
 		const overrideDir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
 		try {

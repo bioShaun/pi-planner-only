@@ -1,6 +1,6 @@
 # Root Idle Policy
 
-**Status:** ready-for-agent
+**Status:** done
 
 Arbitration (2026-09-10): P0 chooses **(a)** — gather goes Idle when `activeForCwd` is empty; `planner_verdict` stays a Root tool and the blocked/failed escape hatch is not removed. P1: example `taskId` sentinel is replaced and never stored as an alias. P2: PolicyInput carries `cwd`; gather uses `activeForCwd`; ledger restore of a non-final Task makes that cwd live. Do not implement (b).
 

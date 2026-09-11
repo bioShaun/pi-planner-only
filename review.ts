@@ -460,6 +460,12 @@ export function buildUndeclaredCorrectionGuidance(
 	return [targetState, revertAdvice];
 }
 
+const DECLARATION_FINDING_KINDS = new Set(["undeclared", "over-declared", "missing"]);
+
+function isDeclarationOnlyFindings(findings: { kind: string }[]): boolean {
+	return findings.length > 0 && findings.every((finding) => DECLARATION_FINDING_KINDS.has(finding.kind));
+}
+
 /**
  * Decide the next lifecycle step for a task under review.
  *
@@ -639,14 +645,39 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 		};
 	}
 
-	// E01 — under-report, scope, over-declaration, and missing-path findings
-	// survive later rounds. They need a corrected revision, not a Validator,
-	// and they keep blocking until a review proves they are resolved.
+	// E01/E02 — under-report and other declaration gaps are a contract repair
+	// (report-only, own counter). Scope and remaining findings still need a
+	// Worker correction and consume a code-correction round.
 	if ((input.comparison?.truthFindings?.length ?? 0) > 0) {
 		const findings = input.comparison?.truthFindings ?? [];
 		const label = findings
 			.map((finding) => `${finding.kind} [${finding.paths.join(", ") || "revision changed"}]`)
 			.join("; ");
+		if (isDeclarationOnlyFindings(findings)) {
+			if (task.reportCorrections < MAX_REPORT_CORRECTIONS) {
+				const undeclaredGuidance = buildUndeclaredCorrectionGuidance(task, input.comparison);
+				return {
+					action: "report_correction",
+					nextState: "changes_requested",
+					round,
+					consumesRound: false,
+					failureClass: "contract",
+					reasonCode: "report-undeclared",
+					reason: `evidence findings: ${label}`,
+					guidance: [
+						"Unresolved evidence findings must be repaired in a new revision; a PASS is not eligible.",
+						...undeclaredGuidance,
+						"Routing: an undeclared-only gap is repaired with one report-only correction that declares the work; out-of-scope changes need a Worker correction that reverts or fixes them.",
+						`Delegate exactly one report-only correction for task ${task.taskId}:`,
+						'"Do not modify files. Return only a valid WorkerReport for task <id>."',
+					],
+				};
+			}
+			return blockedDecision(`evidence findings unresolved: ${label}`, round, {
+				failureClass: "contract",
+				reasonCode: "report-exhausted",
+			});
+		}
 		if (round < MAX_REVIEW_ROUNDS) {
 			const undeclaredGuidance = buildUndeclaredCorrectionGuidance(task, input.comparison);
 			return {
@@ -654,7 +685,7 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 				nextState: "changes_requested",
 				round: round + 1,
 				consumesRound: true,
-				failureClass: "evidence",
+				failureClass: "implementation",
 				reasonCode: "evidence-findings",
 				reason: `evidence findings: ${label}`,
 				guidance: [
@@ -666,7 +697,7 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 			};
 		}
 		return blockedDecision(`evidence findings unresolved: ${label}`, round, {
-			failureClass: "evidence",
+			failureClass: "implementation",
 			reasonCode: "evidence-findings-exhausted",
 		});
 	}
