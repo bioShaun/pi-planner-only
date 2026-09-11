@@ -7720,4 +7720,72 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 }
 
 
+// RR-06 C18: explicit recovery accepts one exact bound run, is idempotent,
+// and refuses guessed task/run ownership without touching report corrections.
+{
+	const ledgerDir = mkdtempSync(join(process.cwd(), ".planner-only-recover-") );
+	const outputDir = mkdtempSync(join(process.cwd(), ".planner-only-recover-output-") );
+	try {
+		const taskId = "T-20260905-998";
+		const runId = "run-c18-bound";
+		const outputPath = join(outputDir, "report.json");
+		const orch = new PlannerOrchestrator({ ledgerDir, gitRunner, artifactDirs: () => [outputDir] });
+		const spec = { ...specFor(taskId, "worker", BASE), validation: { required: false } };
+		await orch.beginDelegation({ toolCallId: "call-c18-bound", input: { task: JSON.stringify(spec) } }, BASE);
+		const boundTaskId = orch.store.list()[0].taskId;
+		await orch.handleSubagentResult({
+			toolCallId: "call-c18-bound",
+			toolName: "subagent",
+			details: { asyncId: runId, runId, asyncDir: "/no-such-async-dir", artifactPaths: { outputPath } },
+			content: [{ type: "text", text: `Async: worker [${runId}]` }],
+		});
+		writeFileSync(outputPath, JSON.stringify(reportFor(boundTaskId, "call-c18-bound")));
+		const first = await orch.reingestOriginalReport(runId, BASE, boundTaskId);
+		assert.equal(first.status, "recorded");
+		const afterFirst = orch.store.require(boundTaskId);
+		const corrections = afterFirst.reportCorrections;
+		const second = await orch.reingestOriginalReport(runId, BASE, boundTaskId);
+		assert.equal(second.status, "duplicate");
+		assert.equal(second.code, "RUN_ALREADY_RECORDED");
+		assert.equal(orch.store.require(boundTaskId).reportCorrections, corrections);
+		const guessed = await orch.reingestOriginalReport("run-c18-guessed", BASE, boundTaskId);
+		assert.equal(guessed.status, "unbound");
+		assert.equal(guessed.code, "RUN_UNBOUND");
+		const foreign = await orch.reingestOriginalReport(runId, BASE, "T-20260905-999");
+		assert.equal(foreign.status, "unbound");
+		assert.equal(foreign.code, "FOREIGN_RECEIPT");
+	} finally {
+		rmSync(ledgerDir, { recursive: true, force: true });
+		rmSync(outputDir, { recursive: true, force: true });
+	}
+}
+
+// RR-06 C18: a restored legacy Task ledger can use its bound run id and the
+// deterministic legacy artifact name without a current RunRecord entry.
+{
+	const outputDir = mkdtempSync(join(process.cwd(), ".planner-only-legacy-output-"));
+	try {
+		const taskId = "T-20260905-997";
+		const runId = "run-c18-legacy";
+		const store = pinnedStore();
+		const task = store.create({ ...specFor(taskId, "worker", BASE), validation: { required: false } });
+		store.transition(task.taskId, "executing");
+		store.beginExecution(task.taskId, {
+			executionId: "legacy-call",
+			kind: "worker",
+			cwd: BASE,
+			worktreeRoots: [],
+			aRun: { cwd: BASE, taskId, workerRunId: "legacy-call", gitAvailable: false, generatedAt: new Date().toISOString() },
+			runId,
+		});
+		writeFileSync(join(outputDir, `${runId}_worker_output.md`), JSON.stringify(reportFor(taskId, "legacy-call")));
+		const orch = new PlannerOrchestrator({ store, gitRunner, artifactDirs: () => [outputDir] });
+		const recovered = await orch.reingestOriginalReport(runId, BASE, taskId);
+		assert.equal(recovered.status, "recorded");
+		assert.equal(store.require(taskId).reports.length, 1);
+	} finally {
+		rmSync(outputDir, { recursive: true, force: true });
+	}
+}
+
 console.log("planner-only orchestration: PASS");

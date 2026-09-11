@@ -807,6 +807,53 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	});
 
 	pi.registerTool({
+		name: "planner_recover",
+		label: "Planner Recover",
+		description: [
+			"Re-ingest a completion receipt and final artifact for one exact, persisted task/run binding.",
+			"This is read-only: it never starts a subprocess and accepts no file paths.",
+			"The taskId, runId, and current workspace must match the durable execution record, including restored legacy ledgers.",
+		].join(" "),
+		promptSnippet: "planner_recover: re-ingest one exact bound task/run receipt without starting a child",
+		promptGuidelines: [
+			"Use the canonical taskId and complete host runId exactly as recorded; never guess a runId or provide an artifact path.",
+			"Native notification mode returns control and wakes on completion; detached mode permits one exact-id bounded bg_wait; unknown capability permits one status/recovery attempt only. Do not poll.",
+		],
+		parameters: Type.Object({
+			taskId: Type.String({ minLength: 1, description: "Canonical persisted Task id." }),
+			runId: Type.String({ minLength: 1, description: "Complete host run id bound to that Task." }),
+		}),
+		async execute(_toolCallId, params: { taskId: string; runId: string }, _signal, _onUpdate, ctx: ExtensionContext) {
+			latestCtx = ctx;
+			const result = await orchestrator.reingestOriginalReport(
+				params.runId,
+				ctx.cwd || process.cwd(),
+				params.taskId,
+			);
+			const nextAction = result.retryable
+				? { tool: "planner_recover", taskId: params.taskId, runId: params.runId }
+				: undefined;
+			const details = {
+				...result,
+				...(nextAction ? { nextAction } : {}),
+				guidance: [
+					"Native host capability: return control and wait for the host notification; do not poll with bg_wait.",
+					"Detached host capability: one exact-id bounded bg_wait (at most 60 seconds) may wake the run, followed by planner_recover.",
+					"Unknown host capability: make one exact-id bounded status/recovery attempt, then use planner_recover; do not start a polling loop.",
+				],
+			};
+			const text = result.message ?? (result.status === "recorded"
+				? `planner_recover: re-ingested task ${params.taskId}, run ${params.runId}.`
+				: `planner_recover: ${result.code ?? result.status} for task ${params.taskId}, run ${params.runId}.`);
+			return {
+				content: [{ type: "text", text }],
+				details,
+				isError: result.status === "unbound" || result.status === "duplicate",
+			};
+		},
+	});
+
+	pi.registerTool({
 		name: "planner_verdict",
 		label: "Planner Verdict",
 		description: [

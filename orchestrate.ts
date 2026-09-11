@@ -3,6 +3,7 @@
  * Delegation launch, the Review loop, and Task memory writes.
  */
 
+import { existsSync } from "node:fs";
 import { isAbsolute, resolve, join } from "node:path";
 import {
 	captureEvidence,
@@ -127,6 +128,17 @@ import type {
 import { emptyTaskUsage, summarizeTaskBudget } from "./usage.ts";
 import { BudgetReservations } from "./reservations.ts";
 import type { ReservationBudget } from "./reservations.ts";
+
+export interface PlannerRecoveryResult {
+	status: "recorded" | "pending" | "unbound" | "duplicate";
+	taskId?: string;
+	runId?: string;
+	code?: string;
+	executionState?: string;
+	ingestionState?: string;
+	retryable?: boolean;
+	message?: string;
+}
 
 /** Worker output kept as a fallback when a report cannot be parsed at all. */
 const RAW_OUTPUT_FALLBACK_CHARS = 4000;
@@ -938,34 +950,105 @@ export class PlannerOrchestrator {
 	async reingestOriginalReport(
 		runId: string,
 		cwd: string,
-	): Promise<{ status: "recorded" | "pending" | "unbound"; taskId?: string; code?: string }> {
-		const binding = this.resolveRunBinding(runId, cwd);
-		if (!binding) return { status: "unbound", code: "RUN_UNBOUND" };
+		expectedTaskId?: string,
+	): Promise<PlannerRecoveryResult> {
+		const id = typeof runId === "string" ? runId.trim() : "";
+		const workspace = normalizeWorkspaceIdentity(cwd);
+		if (!id) return { status: "unbound", code: "RUN_UNBOUND", retryable: false, message: "runId is required" };
+		const binding = this.resolveRunBinding(id, cwd);
+		if (!binding) return { status: "unbound", runId: id, code: "RUN_UNBOUND", retryable: false, message: "no persisted execution is bound to this runId and workspace" };
+		if (expectedTaskId !== undefined && expectedTaskId !== binding.task.taskId) {
+			return {
+				status: "unbound",
+				taskId: expectedTaskId,
+				runId: id,
+				code: "FOREIGN_RECEIPT",
+				retryable: false,
+				message: `runId is bound to task ${binding.task.taskId}, not ${expectedTaskId}`,
+			};
+		}
+		if (expectedTaskId !== undefined && this.store.list().every((task) => task.taskId !== expectedTaskId)) {
+			return { status: "unbound", taskId: expectedTaskId, runId: id, code: "RUN_UNBOUND", retryable: false, message: "taskId is not a canonical persisted Task id" };
+		}
 		const execution = this.store.executionById(binding.task.taskId, binding.executionId);
-		const persisted = this.runRecords?.findByRunId(runId, normalizeWorkspaceIdentity(cwd));
-		const outputRef = persisted?.outputRef;
-		if (!outputRef) return { status: "pending", taskId: binding.task.taskId, code: "OUTPUT_PENDING" };
-		const resolution = new OutputResolver().resolve({
+		if (!execution) return { status: "unbound", taskId: binding.task.taskId, runId: id, code: "RUN_UNBOUND", retryable: false, message: "bound execution record is missing" };
+		const persisted = this.runRecords?.findByRunId(id, workspace);
+		const existingIngestion = persisted?.ingestionState;
+		if (execution.reportIndex !== undefined || existingIngestion === "recorded") {
+			return {
+				status: "duplicate",
+				taskId: binding.task.taskId,
+				runId: id,
+				code: "RUN_ALREADY_RECORDED",
+				executionState: persisted?.executionState ?? "terminal",
+				ingestionState: existingIngestion ?? "recorded",
+				retryable: false,
+				message: "this run has already been recorded; no report or correction was added",
+			};
+		}
+		if (existingIngestion === "report-invalid") {
+			return {
+				status: "duplicate",
+				taskId: binding.task.taskId,
+				runId: id,
+				code: "REPORT_SCHEMA_INVALID",
+				executionState: persisted?.executionState ?? "terminal",
+				ingestionState: existingIngestion,
+				retryable: false,
+				message: "this terminal run already failed report validation; no correction was added",
+			};
+		}
+		let outputRef = persisted?.outputRef;
+		if (!outputRef) {
+			const delegation = [...this.delegations.values()].find((record) => record.runId === id && record.taskId === binding.task.taskId);
+			outputRef = delegation?.outputRef;
+		}
+		if (!outputRef && /^[A-Za-z0-9_.-]+$/.test(id)) {
+			const agent = KIND_DEFAULT_AGENTS[execution.kind];
+			const candidates = this.artifactDirs().flatMap((dir) => [
+				join(dir, `${id}_${agent}_output.md`),
+				join(dir, `${id}_${agent}_output.json`),
+				join(dir, "outputs", id, "result.json"),
+				join(dir, "outputs", id, "output.json"),
+				join(dir, "outputs", id, "output.md"),
+			]);
+			const found = candidates.filter((path) => existsSync(path));
+			if (found.length > 1) {
+				return { status: "pending", taskId: binding.task.taskId, runId: id, code: "OUTPUT_AMBIGUOUS", executionState: persisted?.executionState ?? "terminal", ingestionState: "unavailable", retryable: true, message: "more than one deterministic legacy artifact is bound to this run" };
+			}
+			if (found.length === 1) outputRef = { outputPath: found[0] };
+		}
+		if (!outputRef) {
+			return { status: "pending", taskId: binding.task.taskId, runId: id, code: "OUTPUT_PENDING", executionState: persisted?.executionState ?? "terminal", ingestionState: persisted?.ingestionState ?? "output-pending", retryable: true, message: "no bound completion output is available yet" };
+		}
+		const trustedRoots = [...this.artifactDirs(), binding.task.cwd].filter(Boolean);
+		const resolution = new OutputResolver({ trustedRoots }).resolve({
 			version: 1,
 			source: "reconcile",
-			runId,
+			runId: id,
 			observedAt: new Date().toISOString(),
 			outputState: "present",
+			...(persisted?.agent || execution.kind ? { agent: persisted?.agent ?? KIND_DEFAULT_AGENTS[execution.kind] } : {}),
 			outputRef,
 		});
-		if (resolution.kind !== "loaded") return { status: "pending", taskId: binding.task.taskId, code: resolution.code };
-		if (!execution) return { status: "unbound", code: "RUN_UNBOUND" };
+		if (resolution.kind !== "loaded") {
+			this.markRunIngestion(binding.task, binding.executionId, resolution);
+			return { status: "pending", taskId: binding.task.taskId, runId: id, code: resolution.code, executionState: persisted?.executionState ?? "terminal", ingestionState: resolution.kind === "pending" ? "output-pending" : "unavailable", retryable: resolution.kind === "pending", message: `bound output resolution returned ${resolution.code}` };
+		}
+		this.markRunIngestion(binding.task, binding.executionId, resolution);
 		const delegation: DelegationRecord = {
 			taskId: binding.task.taskId,
-			kind: "worker",
+			kind: execution.kind,
 			action: "execution",
 			executionId: binding.executionId,
-			runId,
+			runId: id,
 			previousRunId: execution.previousRunId,
 		};
-		this.markRunIngestion(binding.task, binding.executionId, resolution);
 		await this.handleWorkerResult(binding.task, resolution.text, binding.executionId, { delegation });
-		return { status: "recorded", taskId: binding.task.taskId };
+		const recorded = this.store.executionById(binding.task.taskId, binding.executionId)?.reportIndex !== undefined;
+		return recorded
+			? { status: "recorded", taskId: binding.task.taskId, runId: id, executionState: "terminal", ingestionState: "recorded", retryable: false, message: "bound run output was re-ingested" }
+			: { status: "pending", taskId: binding.task.taskId, runId: id, code: "REPORT_SCHEMA_INVALID", executionState: "terminal", ingestionState: "report-invalid", retryable: false, message: "bound output did not produce a recordable WorkerReport" };
 	}
 	/** True when handleSubagentResult classified this call as a confirmed start failure. */
 	wasConfirmedNotLaunched(toolCallId: string): boolean {

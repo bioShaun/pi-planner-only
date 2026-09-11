@@ -21,6 +21,7 @@ assert.equal(blocked("git_audit", { operation: "diff-stat", staged: true }), fal
 // v0.3 V-1: planner_verdict is a first-class Root tool; the policy never blocks it
 assert.ok(ROOT_TOOLS.has("git_audit"));
 assert.ok(ROOT_TOOLS.has("planner_verdict"));
+assert.ok(ROOT_TOOLS.has("planner_recover"));
 assert.equal(AUDIT_TOOLS, ROOT_TOOLS, "AUDIT_TOOLS stays as an alias export for one release");
 assert.equal(blocked("planner_verdict", { verdict: "pass", summary: "looks good" }), false);
 assert.equal(
@@ -188,6 +189,7 @@ assert.equal(
 	assert.equal(idle("question", {}).block, false);
 	assert.equal(idle("questionnaire", {}).block, false);
 	assert.equal(idle("planner_verdict", { verdict: "blocked", summary: "x" }).block, false);
+	assert.equal(idle("planner_recover", { taskId: "T-20260911-001", runId: "run-001" }).block, false);
 
 	// Everything else is refused with the pasteable TaskSpec example.
 	for (const toolName of ["read", "grep", "find", "ls", "git_audit", "bash", "write", "edit", "subagent_wait", "subagent_supervisor", "custom_tool"]) {

@@ -76,6 +76,7 @@ assert.equal(handlers.has("tool_call"), true);
 assert.equal(commands.has("planner-only"), true);
 assert.equal(tools.has("git_audit"), true);
 assert.equal(tools.has("planner_verdict"), true);
+assert.equal(tools.has("planner_recover"), true);
 
 const ui = {
 	notify(message, type) {

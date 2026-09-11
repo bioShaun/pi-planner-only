@@ -24,7 +24,7 @@ export const ORCHESTRATION_TOOLS = new Set([
  * Unlike the leftover `bash` allowlist, these are present in the parent's
  * schema, not just tolerated on a stale call.
  */
-export const ROOT_TOOLS = new Set(["git_audit", "planner_verdict"]);
+export const ROOT_TOOLS = new Set(["git_audit", "planner_verdict", "planner_recover"]);
 
 /** @deprecated Alias for ROOT_TOOLS, kept for one release. */
 export const AUDIT_TOOLS = ROOT_TOOLS;
@@ -109,8 +109,8 @@ function idleWaitRefusal(input: unknown, authorizedWaitId: string | undefined): 
 /**
  * R02 — Idle-for-gather refusal: no inspect tools, no Git-read, no general
  * shell, no mutation, no generic wait/supervisor calls. Root may start a
- * Delegation, ask a question, record a Verdict, or recover one registered
- * pending run through an exact-id bg_wait.
+ * Delegation, ask a question, record a Verdict, recover one exact bound run,
+ * or recover one registered pending run through an exact-id bg_wait.
  */
 function idleBlockReason(toolName: string): string {
 	return [
@@ -156,9 +156,9 @@ export function decidePolicy(policy: PolicyInput): PolicyDecision {
 	}
 
 	// Idle allowlist: child-delegating subagent, questions, planner_verdict,
-	// and the bounded exact-id bg_wait recovery. Everything else is refused
+	// planner_recover, and the bounded exact-id bg_wait recovery. Everything else is refused
 	// with the pasteable TaskSpec example (R01).
-	if (toolName === "planner_verdict" || toolName === "question" || toolName === "questionnaire") {
+	if (toolName === "planner_verdict" || toolName === "planner_recover" || toolName === "question" || toolName === "questionnaire") {
 		return { block: false };
 	}
 	if (toolName === "bg_wait") {
