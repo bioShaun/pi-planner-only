@@ -9,7 +9,11 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
+import type { LoadedPluginFingerprint } from "./types.ts";
+
 export type CompletionSource = "sync" | "bg-wait" | "notify" | "reconcile";
+export type TerminalSource = "host-meta" | "host-exit" | "host-notify" | "reconcile" | "report-only";
+export type TerminalErrorClass = "provider-error" | "process-error" | "missing-report";
 export type OutputState = "present" | "absent" | "unknown";
 
 export interface OutputReference {
@@ -27,6 +31,10 @@ export interface CompletionReceipt {
 	taskIdHint?: string;
 	agent?: string;
 	observedAt: string;
+	/** Optional host-reported child usage, forwarded to the accounting hook. */
+	usage?: unknown;
+	/** Explicit host/reconcile provenance; report text is never a terminal source. */
+	terminalSource?: TerminalSource;
 	terminal?: { state: string; exitCode?: number };
 	outputState: OutputState;
 	outputRef?: OutputReference;
@@ -53,9 +61,28 @@ export interface RunRecord {
 	executionState: "launching" | "running" | "terminal" | "launch-failed";
 	ingestionState: "waiting" | "output-pending" | "loaded" | "report-invalid" | "recorded" | "unavailable";
 	terminalReason?: string;
+	terminalSource?: TerminalSource;
+	terminalErrorClass?: TerminalErrorClass;
+	nextAction?: string;
+	/** Durable release-once marker; survives a new orchestrator instance. */
+	slotReleased?: boolean;
+	slotReleasedAt?: string;
 	outputRef?: OutputReference;
 	outputDigest?: string;
 	reportRevision?: number;
+	/** Loaded build/session provenance captured before this execution started. */
+	loadedProvenance?: LoadedPluginFingerprint;
+	/**
+	 * RS-05 Batch-1 identity linkage. This is an index only; detailed evidence
+	 * remains on the Task and execution records.
+	 */
+	identityIndex?: Array<{
+		taskId: string;
+		executionId: string;
+		hostRunId?: string;
+		reportRevision?: number;
+		childSessionFile?: string;
+	}>;
 	lastError?: { code: string; message: string };
 	/** The report commit completed, but the host acknowledgement did not. */
 	acknowledged?: boolean;
@@ -97,7 +124,7 @@ function outputReference(value: unknown): OutputReference | undefined {
 
 function terminalOf(value: unknown): CompletionReceipt["terminal"] {
 	if (!isRecord(value)) return undefined;
-	const state = nonEmptyString(value.state) ?? nonEmptyString(value.status);
+	const state = nonEmptyString(value.state);
 	if (!state) return undefined;
 	return {
 		state,
@@ -115,6 +142,13 @@ export function normalizeCompletionReceipt(value: unknown, source: CompletionSou
 		? details.outputState
 		: inline !== undefined || paths ? "present" : "unknown";
 	const observedAt = nonEmptyString(details.observedAt) ?? nonEmptyString(value.observedAt) ?? new Date().toISOString();
+	const terminal = terminalOf(details.terminal) ?? (typeof details.exitCode === "number" ? terminalOf(details) : undefined);
+	const rawTerminalSource = nonEmptyString(details.terminalSource);
+	const terminalSource = terminal
+		? (rawTerminalSource === "host-meta" || rawTerminalSource === "host-exit" || rawTerminalSource === "host-notify" || rawTerminalSource === "reconcile" || rawTerminalSource === "report-only"
+			? rawTerminalSource
+			: source === "reconcile" ? "reconcile" : source === "notify" ? "host-notify" : "host-meta")
+		: undefined;
 	return {
 		version: 1,
 		source,
@@ -125,7 +159,9 @@ export function normalizeCompletionReceipt(value: unknown, source: CompletionSou
 		...(nonEmptyString(details.taskIdHint) ?? nonEmptyString(details.taskId) ?? nonEmptyString(value.taskIdHint) ?? nonEmptyString(value.taskId) ? { taskIdHint: nonEmptyString(details.taskIdHint) ?? nonEmptyString(details.taskId) ?? nonEmptyString(value.taskIdHint) ?? nonEmptyString(value.taskId) } : {}),
 		...(nonEmptyString(details.agent) ? { agent: nonEmptyString(details.agent) } : {}),
 		observedAt,
-		...(terminalOf(details.terminal) ?? terminalOf(details) ? { terminal: terminalOf(details.terminal) ?? terminalOf(details) } : {}),
+		...(details.usage !== undefined ? { usage: details.usage } : value.usage !== undefined ? { usage: value.usage } : {}),
+		...(terminal ? { terminal } : {}),
+		...(terminalSource ? { terminalSource } : {}),
 		outputState,
 		...(paths ? { outputRef: paths } : {}),
 		...(inline !== undefined ? { inlineOutput: inline } : {}),
@@ -329,6 +365,14 @@ export class RunRecordStore {
 		const loaded = this.put({ ...record, ingestionState: "loaded", outputDigest: resolution.digest, outputRef: record.outputRef, commitKey: this.key(record), acknowledged: false });
 		this.fault?.("before-report");
 		const reportRevision = commitReport();
+		this.fault?.("after-report");
+		return this.put({ ...loaded, ingestionState: "recorded", reportRevision, acknowledged: false });
+	}
+
+	async commitLoadedAsync(record: RunRecord, resolution: Extract<OutputResolution, { kind: "loaded" }>, commitReport: () => Promise<number>): Promise<RunRecord> {
+		const loaded = this.put({ ...record, ingestionState: "loaded", outputDigest: resolution.digest, outputRef: record.outputRef, commitKey: this.key(record), acknowledged: false });
+		this.fault?.("before-report");
+		const reportRevision = await commitReport();
 		this.fault?.("after-report");
 		return this.put({ ...loaded, ingestionState: "recorded", reportRevision, acknowledged: false });
 	}

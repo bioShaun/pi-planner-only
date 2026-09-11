@@ -569,12 +569,29 @@ assert.equal(modelIdForPricing("volcengine/glm-5-3"), "volcengine/glm-5-3");
 	const record = buildRunRecord({
 		runId: "run-1", arm: "isolated-baseline",
 		task: { taskId: "T-1", objective: "objective", acceptanceCriteria: ["pass"], state: "completed", reviewRounds: 1, createdAt: "2026-09-09T00:00:00Z", updatedAt: "2026-09-09T00:01:00Z", cwd: "/repo", baseGitRef: "abc" },
-		usage, pricing: { path: "/pricing.json", version: 1, currency: "USD", loadedAt: "2026-09-09T00:02:00Z" }, now: () => new Date("2026-09-09T00:02:00Z"),
+		usage, pricing: { path: "/pricing.json", version: 1, currency: "USD", loadedAt: "2026-09-09T00:02:00Z" },
+		provenance: {
+			version: 1,
+			loadedFingerprint: "loaded-build",
+			sourcePath: "/repo/index.ts",
+			packageVersion: "0.4.1",
+			hostVersion: "unknown",
+			subagentVersion: "unknown",
+			sessionId: "session-1",
+			workspaceId: "/repo",
+			capabilities: ["planner-only"],
+			diskHead: "head-1",
+			loadedAt: "2026-09-09T00:00:00Z",
+		},
+		identityIndex: [{ taskId: "T-1", executionId: "execution-1", hostRunId: "run-host-1", reportRevision: 1 }],
+		now: () => new Date("2026-09-09T00:02:00Z"),
 	});
 	assert.equal(record.comparable, true);
 	assert.equal(record.task.baseGitRef, "abc");
 	assert.equal(record.cache.cacheRead, 0);
 	assert.equal(record.outcome.completed, true);
+	assert.equal(record.provenance?.loadedFingerprint, "loaded-build");
+	assert.deepEqual(record.identityIndex, [{ taskId: "T-1", executionId: "execution-1", hostRunId: "run-host-1", reportRevision: 1 }]);
 	const missingBase = buildRunRecord({
 		runId: "run-2", arm: "role-split",
 		task: { ...record.task, baseGitRef: undefined },

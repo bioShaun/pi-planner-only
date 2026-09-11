@@ -238,6 +238,23 @@ export interface ChildRunMeta {
 	model?: string;
 	thinking?: string;
 	usage?: unknown;
+	stopReason?: string;
+	error?: string;
+}
+
+export function is403RateLimit(value: unknown): boolean {
+	if (!value) return false;
+	if (typeof value === "string") {
+		return /403|permission_error|usage\s*limit|five-hour/i.test(value);
+	}
+	if (typeof value === "object") {
+		const rec = value as Record<string, unknown>;
+		return is403RateLimit(rec.error) ||
+			is403RateLimit(rec.stopReason) ||
+			is403RateLimit(rec.message) ||
+			is403RateLimit(rec.status);
+	}
+	return false;
 }
 
 function tryReadChildMetaFile(
@@ -267,6 +284,11 @@ function tryReadChildMetaFile(
 	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
 	const rec = parsed as Record<string, unknown>;
 	if (rec.runId !== runId || rec.agent !== agent) return undefined;
+	const errorStr = typeof rec.error === "string"
+		? rec.error
+		: rec.error && typeof rec.error === "object" && typeof (rec.error as Record<string, unknown>).message === "string"
+			? (rec.error as Record<string, unknown>).message as string
+			: undefined;
 	return {
 		runId,
 		agent,
@@ -276,6 +298,8 @@ function tryReadChildMetaFile(
 		...(typeof rec.model === "string" ? { model: rec.model } : {}),
 		...(typeof rec.thinking === "string" ? { thinking: rec.thinking } : {}),
 		...("usage" in rec ? { usage: rec.usage } : {}),
+		...(typeof rec.stopReason === "string" ? { stopReason: rec.stopReason } : {}),
+		...(errorStr ? { error: errorStr } : {}),
 	};
 }
 

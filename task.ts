@@ -1180,6 +1180,8 @@ export interface TaskRecord {
 	usage: TaskUsage;
 	createdAt: string;
 	updatedAt: string;
+	/** Most recent auditable restore/recovery identity check for this Task. */
+	recoveryBinding?: import("./types.ts").RecoveryBindingCheck;
 	/** Whether this Task was created as a placeholder without parent TaskSpec. */
 	isPlaceholder?: boolean;
 	/** Whether the embedded TaskSpec used 'title' as an alias for 'objective'. */
@@ -1641,12 +1643,20 @@ export class TaskStore {
 
 	recordReport(taskId: string, report: WorkerReport): TaskRecord {
 		const record = this.require(taskId);
+		const runId = report.evidence?.workerRunId;
+		if (runId && record.reports.some((existing) => existing.evidence?.workerRunId === runId)) {
+			return record;
+		}
 		record.reports.push(report);
 		return this.touch(record);
 	}
 
 	recordValidatorReport(taskId: string, report: WorkerReport): TaskRecord {
 		const record = this.require(taskId);
+		const runId = report.evidence?.workerRunId;
+		if (runId && record.validatorReports.some((existing) => existing.evidence?.workerRunId === runId)) {
+			return record;
+		}
 		record.validatorReports.push(report);
 		return this.touch(record);
 	}

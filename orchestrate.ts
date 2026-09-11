@@ -60,6 +60,7 @@ import type { EffectiveLimits } from "./floors.ts";
 import {
 	ASYNC_PREVIEW_TRUNCATED_REASON,
 	PREVIEW_TRUNCATED_MARKER,
+	is403RateLimit,
 	parseSubagentNotify,
 	readChildMeta,
 	readLargestRunOutput,
@@ -85,7 +86,7 @@ import {
 import type { ReviewDecision } from "./review.ts";
 import { LedgerSnapshotStore, SAFE_TASK_ID } from "./ledger-store.ts";
 import { OutputResolver, outputDigest, normalizeCompletionReceipt, RunRecordStore } from "./completion.ts";
-import type { CompletionReceipt, OutputReference, OutputResolution, RunRecord } from "./completion.ts";
+import type { CompletionReceipt, OutputReference, OutputResolution, RunRecord, TerminalErrorClass, TerminalSource } from "./completion.ts";
 import type { LedgerCorrupt } from "./ledger-store.ts";
 import {
 	TaskIdAllocator,
@@ -119,6 +120,7 @@ import {
 import type {
 	DelegationKind,
 	EvidenceRef,
+	LoadedPluginFingerprint,
 	ReviewFinding,
 	ReviewResult,
 	ReviewRoundAttribution,
@@ -128,6 +130,7 @@ import type {
 	TaskFinding,
 	TaskRole,
 	WorkerReport,
+	RecoveryBindingCheck,
 } from "./types.ts";
 import { emptyTaskUsage, summarizeTaskBudget } from "./usage.ts";
 import { BudgetReservations } from "./reservations.ts";
@@ -135,14 +138,23 @@ import type { ReservationBudget } from "./reservations.ts";
 import { ConcurrencyController } from "./concurrency.ts";
 
 export interface PlannerRecoveryResult {
-	status: "recorded" | "pending" | "unbound" | "duplicate";
+	status: "recorded" | "pending" | "unbound" | "identity-conflict" | "duplicate";
 	taskId?: string;
 	runId?: string;
 	code?: string;
 	executionState?: string;
 	ingestionState?: string;
+	nextAction?: string;
 	retryable?: boolean;
 	message?: string;
+	bindingCheck?: RecoveryBindingCheck;
+}
+
+interface RunBindingResolution {
+	status: "bound" | "identity-conflict" | "unbound";
+	task?: TaskRecord;
+	executionId?: string;
+	check: RecoveryBindingCheck;
 }
 
 /** Worker output kept as a fallback when a report cannot be parsed at all. */
@@ -150,6 +162,19 @@ const RAW_OUTPUT_FALLBACK_CHARS = 4000;
 const PROSE_ONLY_REPORT_ERROR = "worker output did not contain a WorkerReport object";
 const TASK_ID_SHAPE = /^T-(\d{8})-\d{3}$/;
 
+function terminalErrorClassFor(exitCode?: number, providerError = false, outputMissing = false): TerminalErrorClass | undefined {
+	if (providerError) return "provider-error";
+	if (exitCode !== undefined && exitCode !== 0) return "process-error";
+	if (outputMissing) return "missing-report";
+	return undefined;
+}
+
+function nextActionForTerminalError(errorClass: TerminalErrorClass | undefined): string | undefined {
+	if (errorClass === "provider-error") return "do-not-retry-provider";
+	if (errorClass === "process-error") return "inspect-process-error";
+	if (errorClass === "missing-report") return "retry-output-reconcile";
+	return undefined;
+}
 function localDateStamp(now: Date): string {
 	const year = String(now.getFullYear());
 	const month = String(now.getMonth() + 1).padStart(2, "0");
@@ -338,16 +363,20 @@ export interface OrchestratorDeps {
 	 * construction (only if getSessionRootUsage is supplied).
 	 */
 	sessionRootBudgetConfig?: SessionRootBudgetConfig;
-	/**
-	 * Ticket 40 — price class of the model a delegation would launch with. The
-	 * hard gate refuses "paid" and "unknown" launches but lets "free" (verified
-	 * zero-rate) ones through. Absent: every non-reviewer launch is treated as paid.
-	 */
+	/** Loaded build/session provenance attached to durable execution records. */
+	loadedProvenance?: LoadedPluginFingerprint;
+	/** Ticket 40 — price class of the model a delegation would launch with. The
+	 * hard gate refuses "paid" and "unknown" launches but lets "free" (verified zero-rate) ones through.
+	 * Absent: every non-reviewer launch is treated as paid. */
 	delegationRateKind?: (model: string | undefined) => DelegationRateKind;
 	/** Live host model registry/defaults. When absent, legacy unit callers skip host verification. */
 	getModelPreflightContext?: () => Omit<ModelPreflightContext, "input"> | undefined;
 	/** Session-wide child execution capacity and read/write admission. */
 	concurrency?: ConcurrencyController;
+	/** Optional receipt-side accounting hook; called once per distinct run receipt. */
+	recordCompletionUsage?: (taskId: string, receipt: CompletionReceipt, toolCallId: string) => void;
+	/** Completion persistence crash-point hook used by integration tests and hosts. */
+	runRecordFault?: (point: "before-report" | "after-report") => void;
 }
 
 export type { DelegationKind };
@@ -646,6 +675,7 @@ function isAsyncLaunchReceipt(event: SubagentEvent, delegation: DelegationRecord
 	const markers = [
 		/^Async:\s+\S+\s+\[[0-9a-f-]{8,}\]/im,
 		/detached and running in the background/i,
+		/async delegation.*has started/i,
 	];
 	return markers.some((marker) => marker.test(text));
 }
@@ -714,6 +744,7 @@ export class PlannerOrchestrator {
 	private readonly delegationRateKind: (model: string | undefined) => DelegationRateKind;
 	private readonly getModelPreflightContext?: () => Omit<ModelPreflightContext, "input"> | undefined;
 	private readonly concurrency: ConcurrencyController;
+	private readonly recordCompletionUsage?: (taskId: string, receipt: CompletionReceipt, toolCallId: string) => void;
 	/** toolCallId -> delegated task + invocation kind. */
 	private readonly delegations = new Map<string, DelegationRecord>();
 	private readonly reservations = new BudgetReservations();
@@ -737,6 +768,7 @@ export class PlannerOrchestrator {
 	private readonly runRecords?: RunRecordStore;
 	private readonly runSessionId: string;
 	private readonly runWorkspaceId: string;
+	private loadedProvenance?: LoadedPluginFingerprint;
 	/**
 	 * E01 — Tasks whose record came from the ledger. A restored record missing
 	 * per-execution A_run/C_report material cannot be verified and must not
@@ -780,12 +812,15 @@ export class PlannerOrchestrator {
 	constructor(deps: OrchestratorDeps) {
 		this.runSessionId = process.env.PI_SESSION_ID?.trim() || "unknown-session";
 		this.runWorkspaceId = normalizeWorkspaceIdentity(deps.ledgerDir ?? process.cwd());
+		this.loadedProvenance = deps.loadedProvenance;
 		if (deps.store) {
 			this.store = deps.store;
 		} else if (deps.ledgerDir) {
 			const snapshots = new LedgerSnapshotStore(deps.ledgerDir);
 			this.snapshots = snapshots;
-			this.runRecords = new RunRecordStore(join(deps.ledgerDir, "planner-only", "run-state"));
+			this.runRecords = new RunRecordStore(join(deps.ledgerDir, "planner-only", "run-state"), {
+				...(deps.runRecordFault ? { fault: deps.runRecordFault } : {}),
+			});
 			this.runRecords.load();
 			this.store = new TaskStore({
 				allocator: new TaskIdAllocator(deps.ledgerDir),
@@ -802,13 +837,32 @@ export class PlannerOrchestrator {
 		this.delegationRateKind = deps.delegationRateKind ?? (() => "unknown");
 		this.getModelPreflightContext = deps.getModelPreflightContext;
 		this.concurrency = deps.concurrency ?? new ConcurrencyController();
+		this.recordCompletionUsage = deps.recordCompletionUsage;
 		this.structuredDelegationMode =
 			deps.structuredDelegationMode ?? readStructuredDelegationMode();
+	}
+
+	setLoadedProvenance(provenance: LoadedPluginFingerprint): void {
+		this.loadedProvenance = { ...provenance, capabilities: [...provenance.capabilities] };
+	}
+
+	getLoadedProvenance(): LoadedPluginFingerprint | undefined {
+		return this.loadedProvenance ? { ...this.loadedProvenance, capabilities: [...this.loadedProvenance.capabilities] } : undefined;
+	}
+
+	setLoadedFingerprint(info: LoadedPluginFingerprint): void {
+		this.setLoadedProvenance(info);
+	}
+
+	getLoadedFingerprint(): LoadedPluginFingerprint | undefined {
+		return this.getLoadedProvenance();
 	}
 
 	setSessionRootBudgetConfig(config: SessionRootBudgetConfig): void {
 		this.sessionRootBudgetConfig = config;
 	}
+
+
 
 	restoreFromLedger(): { restored: number; corrupt: LedgerCorrupt[] } {
 		if (!this.snapshots) return { restored: 0, corrupt: [] };
@@ -844,14 +898,54 @@ export class PlannerOrchestrator {
 				this.restoredTaskIds.add(item.taskId);
 			}
 		}
+		for (const record of this.runRecords?.list() ?? []) {
+			const task = this.store.get(record.taskId);
+			const recoveryCheck = this.resolveRunBinding(record.runId ?? "", record.workspaceId).check;
+			if (task) task.recoveryBinding = recoveryCheck;
+			if (!task || !record.runId || this.delegations.has(record.executionId)) continue;
+			const kind = record.role === "validator" || record.role === "reviewer" || record.role === "explorer"
+				? record.role
+				: "worker";
+			this.delegations.set(record.executionId, {
+				taskId: task.taskId,
+				kind,
+				action: "execution",
+				executionId: record.executionId,
+				runId: record.runId,
+				previousRunId: record.previousRunId,
+				agent: record.agent,
+				launchCwd: task.cwd,
+				...(record.outputRef ? { outputRef: record.outputRef } : {}),
+			});
+			if (record.ingestionState === "recorded" || record.ingestionState === "unavailable") {
+				this.processedRunIds.add(record.runId);
+			}
+		}
 		return { restored, corrupt };
+	}
+
+	private releaseRunSlot(task: TaskRecord | undefined, executionId: string, toolCallId: string): boolean {
+		let alreadyReleased = false;
+		if (task && this.runRecords) {
+			const current = this.runRecords.get(this.runSessionId, this.runWorkspaceIdFor(task), executionId);
+			alreadyReleased = current?.slotReleased === true;
+			if (alreadyReleased) return false;
+			if (current) {
+				this.runRecords.put({ ...current, slotReleased: true, slotReleasedAt: new Date().toISOString() });
+			}
+		}
+		// Map deletion is idempotent; the durable marker above is the authority
+		// that prevents a reloaded receipt from counting a second release.
+		this.concurrency.release(toolCallId);
+		this.reservations.release(task?.taskId ?? "", toolCallId);
+		return !alreadyReleased;
 	}
 
 	private endDelegation(toolCallId: string): void {
 		const record = this.delegations.get(toolCallId);
+		const task = record ? this.store.get(record.taskId) : undefined;
+		this.releaseRunSlot(task, record ? this.executionIdFor(record, toolCallId) : toolCallId, toolCallId);
 		this.delegations.delete(toolCallId);
-		this.concurrency.release(toolCallId);
-		if (record) this.reservations.release(record.taskId, toolCallId);
 	}
 
 	/** Current child capacity and workspace reservations for /planner-only status. */
@@ -907,36 +1001,101 @@ export class PlannerOrchestrator {
 		return record.executionId ?? toolCallId;
 	}
 
-	/** Locate a Task only through an exact persisted/execution run association. */
-	private resolveRunBinding(runId: string, cwd: string): { task: TaskRecord; executionId: string } | undefined {
+	/**
+	 * Resolve a run without guessing. Every candidate is retained for the
+	 * recovery view; a run seen in another workspace or more than once is an
+	 * identity conflict, never an unbound continuation.
+	 */
+	private resolveRunBinding(runId: string, cwd: string): RunBindingResolution {
 		const id = runId.trim();
-		if (!id) return undefined;
 		const workspace = normalizeWorkspaceIdentity(cwd);
-		const candidates: Array<{ task: TaskRecord; executionId: string }> = [];
+		if (!id) {
+			return {
+				status: "unbound",
+				check: { status: "unbound", reason: "runId is required", runId: id, workspaceId: workspace },
+			};
+		}
+		const candidates: Array<{ task: TaskRecord; executionId: string; workspaceId: string }> = [];
 		const seen = new Set<string>();
-		const add = (task: TaskRecord, executionId: string): void => {
-			const key = `${task.taskId}\u0000${executionId}`;
+		const add = (task: TaskRecord, executionId: string, workspaceId = task.cwd): void => {
+			const normalized = normalizeWorkspaceIdentity(workspaceId);
+			const key = `${task.taskId}\u0000${executionId}\u0000${normalized}`;
 			if (seen.has(key)) return;
 			seen.add(key);
-			candidates.push({ task, executionId });
+			candidates.push({ task, executionId, workspaceId: normalized });
 		};
 		for (const task of this.store.list()) {
-			if (!task.cwd || normalizeWorkspaceIdentity(task.cwd) !== workspace) continue;
 			for (const execution of task.executions) {
-				if (execution.runId === id) add(task, execution.executionId);
+				if (execution.runId === id) add(task, execution.executionId, task.cwd);
 			}
 		}
-		if (this.runRecords) {
-			for (const record of this.runRecords.list()) {
-				if (record.runId !== id || record.workspaceId !== workspace) continue;
-				const task = this.store.get(record.taskId);
-				if (task && normalizeWorkspaceIdentity(task.cwd) === workspace) {
-					add(task, record.executionId);
-				}
-			}
+		for (const record of this.runRecords?.list() ?? []) {
+			if (record.runId !== id) continue;
+			const task = this.store.get(record.taskId);
+			if (!task) continue;
+			const execution = task.executions.find((item) =>
+				item.executionId === record.executionId || item.runId === id,
+			);
+			if (execution) add(task, execution.executionId, record.workspaceId || task.cwd);
 		}
-		if (candidates.length !== 1) return undefined;
-		return candidates[0];
+		if (candidates.length === 0) {
+			return {
+				status: "unbound",
+				check: { status: "unbound", reason: "no persisted execution is bound to this runId", runId: id, workspaceId: workspace },
+			};
+		}
+		const mismatched = candidates.filter((candidate) => candidate.workspaceId !== workspace);
+		if (candidates.length !== 1 || mismatched.length > 0) {
+			const details = candidates.map((candidate) => `${candidate.task.taskId}/${candidate.executionId}@${candidate.workspaceId}`).join(", ");
+			return {
+				status: "identity-conflict",
+				check: {
+					status: "identity-conflict",
+					reason: mismatched.length > 0
+						? `runId has conflicting workspace history; requested ${workspace}, candidates: ${details}`
+						: `runId has multiple candidate identities: ${details}`,
+					runId: id,
+					workspaceId: workspace,
+				},
+			};
+		}
+		const candidate = candidates[0];
+		return {
+			status: "bound",
+			task: candidate.task,
+			executionId: candidate.executionId,
+			check: {
+				status: "bound",
+				reason: "exact persisted run, Task, execution, and workspace binding",
+				runId: id,
+				taskId: candidate.task.taskId,
+				executionId: candidate.executionId,
+				workspaceId: workspace,
+				canonical: { taskId: candidate.task.taskId, executionId: candidate.executionId, workspaceId: workspace },
+			},
+		};
+	}
+
+	/** Return one auditable binding check for every persisted run-state record. */
+	getRecoveryView(cwd?: string): RecoveryBindingCheck[] {
+		const checks: RecoveryBindingCheck[] = [];
+		const seen = new Set<string>();
+		for (const record of this.runRecords?.list() ?? []) {
+			const check = this.resolveRunBinding(record.runId ?? "", cwd ?? record.workspaceId).check;
+			const key = `${record.sessionId}\u0000${record.workspaceId}\u0000${record.executionId}`;
+			if (seen.has(key)) continue;
+			seen.add(key);
+			checks.push({ ...check, taskId: check.taskId ?? record.taskId, executionId: check.executionId ?? record.executionId, workspaceId: check.workspaceId ?? record.workspaceId });
+		}
+		return checks;
+	}
+
+	renderRecoveryView(cwd?: string): string {
+		const checks = this.getRecoveryView(cwd);
+		if (checks.length === 0) return "Recovery bindings: none";
+		return ["Recovery bindings:", ...checks.map((check) =>
+			`- ${check.status}: run=${check.runId ?? "unknown"}; task=${check.taskId ?? "unknown"}; execution=${check.executionId ?? "unknown"}; workspace=${check.workspaceId ?? "unknown"}; reason=${check.reason}`,
+		)].join("\\n");
 	}
 
 	private resumeRunId(input: unknown): string | undefined {
@@ -948,37 +1107,84 @@ export class PlannerOrchestrator {
 		return undefined;
 	}
 
-	/** Register host completion metadata before notification delivery. */
-	registerCompletionReceipt(value: unknown): CompletionReceipt | undefined {
-		const receipt = normalizeCompletionReceipt(value, "bg-wait");
+	/** Shared receipt-ingestion entry for wait, notify, recovery, and reload. */
+	ingestCompletionReceipt(
+		value: unknown,
+		source: "sync" | "bg-wait" | "notify" | "reconcile" = "bg-wait",
+		options: {
+			resolution?: OutputResolution;
+			failure?: { code: string; message: string; reason: string; provider?: boolean };
+		} = {},
+	): CompletionReceipt | undefined {
+		const receipt = normalizeCompletionReceipt(value, source);
 		if (!receipt?.runId) return receipt;
 		const found = [...this.delegations.entries()].find(([, record]) =>
 			record.runId === receipt.runId || record.executionId === receipt.executionId ||
-			(record.action === "execution" && record.previousRunId !== undefined &&
-				receipt.previousRunId === record.previousRunId));
-		if (!found) return receipt;
-		const [toolCallId, record] = found;
-		if (receipt.taskIdHint && (this.store.get(receipt.taskIdHint)?.taskId ?? receipt.taskIdHint) !== record.taskId) return receipt;
-		if (record.previousRunId && receipt.previousRunId && record.previousRunId !== receipt.previousRunId) return receipt;
-		if (record.previousRunId && !receipt.previousRunId) receipt.previousRunId = record.previousRunId;
-		if (receipt.previousRunId && record.previousRunId === undefined) record.previousRunId = receipt.previousRunId;
-		if (receipt.outputRef) record.outputRef = receipt.outputRef;
-		record.runId = receipt.runId;
-		const executionId = this.executionIdFor(record, toolCallId);
-		const task = this.store.get(record.taskId);
+			(record.action === "execution" && record.previousRunId !== undefined && receipt.previousRunId === record.previousRunId));
+		const durable = found ? undefined : this.runRecords?.findByRunId(receipt.runId);
+		if (!found && !durable) return receipt;
+		const toolCallId = found?.[0] ?? durable?.executionId ?? receipt.executionId ?? receipt.runId;
+		const record = found?.[1];
+		const taskId = record?.taskId ?? durable?.taskId;
+		if (!taskId) return receipt;
+		if (receipt.taskIdHint && (this.store.get(receipt.taskIdHint)?.taskId ?? receipt.taskIdHint) !== taskId) return receipt;
+		if (record?.previousRunId && receipt.previousRunId && record.previousRunId !== receipt.previousRunId) return receipt;
+		if (record?.previousRunId && !receipt.previousRunId) receipt.previousRunId = record.previousRunId;
+		if (record && receipt.previousRunId && record.previousRunId === undefined) record.previousRunId = receipt.previousRunId;
+		if (record?.outputRef) receipt.outputRef = receipt.outputRef ?? record.outputRef;
+		if (record) {
+			if (receipt.outputRef) record.outputRef = receipt.outputRef;
+			record.runId = receipt.runId;
+		}
+		const executionId = record ? this.executionIdFor(record, toolCallId) : durable?.executionId ?? toolCallId;
+		const task = this.store.get(taskId);
 		if (task) {
+			const isTerminal = Boolean(receipt.terminal?.state && receipt.terminalSource);
+			const failure = options.failure;
+			const errorClass = failure
+				? terminalErrorClassFor(receipt.terminal?.exitCode, failure.provider === true, true)
+				: terminalErrorClassFor(receipt.terminal?.exitCode, false, isTerminal && receipt.outputState !== "present");
+			const resolution = options.resolution;
+			const ingestionPatch = resolution
+				? resolution.kind === "loaded"
+					? { ingestionState: "loaded" as const, outputDigest: resolution.digest }
+					: {
+						ingestionState: resolution.kind === "pending" ? "output-pending" as const : "unavailable" as const,
+						...(resolution.kind === "pending" ? { terminalErrorClass: "missing-report" as const, nextAction: "retry-output-reconcile" } : {}),
+						lastError: { code: resolution.code, message: `output resolution ${resolution.code}` },
+					}
+				: {};
 			this.updateRunRecord(task, executionId, {
 				runId: receipt.runId,
 				...(receipt.previousRunId ? { previousRunId: receipt.previousRunId } : {}),
-				executionState: receipt.terminal || receipt.outputState === "present" ? "terminal" : "running",
 				...(receipt.outputRef ? { outputRef: receipt.outputRef } : {}),
+				...(isTerminal ? { executionState: "terminal", terminalSource: receipt.terminalSource } : { executionState: "running" }),
+				...(errorClass ? { terminalErrorClass: errorClass, nextAction: nextActionForTerminalError(errorClass) } : {}),
+				...ingestionPatch,
+				...(failure ? {
+					executionState: "terminal" as const,
+					ingestionState: "unavailable" as const,
+					terminalReason: failure.reason,
+					terminalErrorClass: terminalErrorClassFor(receipt.terminal?.exitCode, failure.provider === true, true),
+					nextAction: nextActionForTerminalError(terminalErrorClassFor(receipt.terminal?.exitCode, failure.provider === true, true)),
+					lastError: { code: failure.code, message: failure.message },
+				} : {}),
 			});
-			this.store.completeExecution(task.taskId, executionId, {
-				runId: receipt.runId,
-				...(receipt.previousRunId ? {} : {}),
-			});
+			this.store.completeExecution(task.taskId, executionId, { runId: receipt.runId });
+			if (failure && !isFinalTaskState(task.state)) {
+				this.store.transition(task.taskId, "failed");
+				this.store.setStateReason(task.taskId, failure.reason);
+			}
+			if (isTerminal) this.releaseRunSlot(task, executionId, toolCallId);
+			if (this.recordCompletionUsage && receipt.usage !== undefined) {
+				this.recordCompletionUsage(task.taskId, receipt, toolCallId);
+			}
 		}
 		return receipt;
+	}
+
+	registerCompletionReceipt(value: unknown): CompletionReceipt | undefined {
+		return this.ingestCompletionReceipt(value, "bg-wait");
 	}
 
 	/**
@@ -995,8 +1201,24 @@ export class PlannerOrchestrator {
 		const workspace = normalizeWorkspaceIdentity(cwd);
 		if (!id) return { status: "unbound", code: "RUN_UNBOUND", retryable: false, message: "runId is required" };
 		const binding = this.resolveRunBinding(id, cwd);
-		if (!binding) return { status: "unbound", runId: id, code: "RUN_UNBOUND", retryable: false, message: "no persisted execution is bound to this runId and workspace" };
-		if (expectedTaskId !== undefined && expectedTaskId !== binding.task.taskId) {
+		if (binding.status === "identity-conflict") {
+			return {
+				status: "identity-conflict",
+				runId: id,
+				code: "RUN_IDENTITY_CONFLICT",
+				retryable: false,
+				message: binding.check.reason,
+				bindingCheck: binding.check,
+			};
+		}
+		if (binding.status === "unbound" || !binding.task || !binding.executionId) {
+			return { status: "unbound", runId: id, code: "RUN_UNBOUND", retryable: false, message: binding.check.reason, bindingCheck: binding.check };
+		}
+		const resolvedBinding = { task: binding.task, executionId: binding.executionId };
+		const resolvedExpectedTaskId = expectedTaskId !== undefined
+			? this.store.get(expectedTaskId)?.taskId ?? expectedTaskId
+			: undefined;
+		if (resolvedExpectedTaskId !== undefined && resolvedExpectedTaskId !== binding.task.taskId) {
 			return {
 				status: "unbound",
 				taskId: expectedTaskId,
@@ -1006,13 +1228,25 @@ export class PlannerOrchestrator {
 				message: `runId is bound to task ${binding.task.taskId}, not ${expectedTaskId}`,
 			};
 		}
-		if (expectedTaskId !== undefined && this.store.list().every((task) => task.taskId !== expectedTaskId)) {
+		if (resolvedExpectedTaskId !== undefined && this.store.list().every((task) => task.taskId !== resolvedExpectedTaskId)) {
 			return { status: "unbound", taskId: expectedTaskId, runId: id, code: "RUN_UNBOUND", retryable: false, message: "taskId is not a canonical persisted Task id" };
 		}
 		const execution = this.store.executionById(binding.task.taskId, binding.executionId);
 		if (!execution) return { status: "unbound", taskId: binding.task.taskId, runId: id, code: "RUN_UNBOUND", retryable: false, message: "bound execution record is missing" };
 		const persisted = this.runRecords?.findByRunId(id, workspace);
 		const existingIngestion = persisted?.ingestionState;
+		if (existingIngestion === "loaded" && execution.reportIndex !== undefined && persisted && this.runRecords) {
+			this.runRecords.commitReport(persisted, execution.reportIndex + 1);
+			return {
+				status: "recorded",
+				taskId: binding.task.taskId,
+				runId: id,
+				executionState: "terminal",
+				ingestionState: "recorded",
+				retryable: false,
+				message: "recovered a report commit that completed before its final run-state write",
+			};
+		}
 		if (execution.reportIndex !== undefined || existingIngestion === "recorded") {
 			return {
 				status: "duplicate",
@@ -1023,6 +1257,19 @@ export class PlannerOrchestrator {
 				ingestionState: existingIngestion ?? "recorded",
 				retryable: false,
 				message: "this run has already been recorded; no report or correction was added",
+			};
+		}
+		if (persisted?.terminalErrorClass === "provider-error") {
+			return {
+				status: "duplicate",
+				taskId: binding.task.taskId,
+				runId: id,
+				code: "PROVIDER_403_RATE_LIMIT",
+				executionState: persisted.executionState,
+				ingestionState: persisted.ingestionState,
+				retryable: false,
+				nextAction: "do-not-retry-provider",
+				message: "provider terminal error has no report to correct; do not retry the provider automatically",
 			};
 		}
 		if (existingIngestion === "report-invalid") {
@@ -1039,9 +1286,16 @@ export class PlannerOrchestrator {
 		}
 		let outputRef = persisted?.outputRef;
 		if (!outputRef) {
-			const delegation = [...this.delegations.values()].find((record) => record.runId === id && record.taskId === binding.task.taskId);
+			const delegation = [...this.delegations.values()].find((record) => record.runId === id && record.taskId === resolvedBinding.task.taskId);
 			outputRef = delegation?.outputRef;
 		}
+		this.ingestCompletionReceipt({
+			runId: id,
+			terminal: { state: "completed", exitCode: 0 },
+			terminalSource: "reconcile",
+			outputState: outputRef ? "present" : "unknown",
+			...(outputRef ? { outputRef } : {}),
+		}, "reconcile");
 		if (!outputRef && /^[A-Za-z0-9_.-]+$/.test(id)) {
 			const agent = KIND_DEFAULT_AGENTS[execution.kind];
 			const candidates = this.artifactDirs().flatMap((dir) => [
@@ -1053,12 +1307,12 @@ export class PlannerOrchestrator {
 			]);
 			const found = candidates.filter((path) => existsSync(path));
 			if (found.length > 1) {
-				return { status: "pending", taskId: binding.task.taskId, runId: id, code: "OUTPUT_AMBIGUOUS", executionState: persisted?.executionState ?? "terminal", ingestionState: "unavailable", retryable: true, message: "more than one deterministic legacy artifact is bound to this run" };
+				return { status: "pending", taskId: binding.task.taskId, runId: id, code: "OUTPUT_AMBIGUOUS", executionState: persisted?.executionState ?? "terminal", ingestionState: "unavailable", nextAction: "retry-output-reconcile", retryable: true, message: "more than one deterministic legacy artifact is bound to this run" };
 			}
 			if (found.length === 1) outputRef = { outputPath: found[0] };
 		}
 		if (!outputRef) {
-			return { status: "pending", taskId: binding.task.taskId, runId: id, code: "OUTPUT_PENDING", executionState: persisted?.executionState ?? "terminal", ingestionState: persisted?.ingestionState ?? "output-pending", retryable: true, message: "no bound completion output is available yet" };
+			return { status: "pending", taskId: binding.task.taskId, runId: id, code: "OUTPUT_PENDING", executionState: persisted?.executionState ?? "terminal", ingestionState: persisted?.ingestionState ?? "output-pending", nextAction: "retry-output-reconcile", retryable: true, message: "no bound completion output is available yet" };
 		}
 		const trustedRoots = [...this.artifactDirs(), binding.task.cwd].filter(Boolean);
 		const resolution = new OutputResolver({ trustedRoots }).resolve({
@@ -1072,9 +1326,8 @@ export class PlannerOrchestrator {
 		});
 		if (resolution.kind !== "loaded") {
 			this.markRunIngestion(binding.task, binding.executionId, resolution);
-			return { status: "pending", taskId: binding.task.taskId, runId: id, code: resolution.code, executionState: persisted?.executionState ?? "terminal", ingestionState: resolution.kind === "pending" ? "output-pending" : "unavailable", retryable: resolution.kind === "pending", message: `bound output resolution returned ${resolution.code}` };
+			return { status: "pending", taskId: binding.task.taskId, runId: id, code: resolution.code, executionState: persisted?.executionState ?? "terminal", ingestionState: resolution.kind === "pending" ? "output-pending" : "unavailable", nextAction: resolution.kind === "pending" ? "retry-output-reconcile" : "inspect-process-error", retryable: resolution.kind === "pending", message: `bound output resolution returned ${resolution.code}` };
 		}
-		this.markRunIngestion(binding.task, binding.executionId, resolution);
 		const delegation: DelegationRecord = {
 			taskId: binding.task.taskId,
 			kind: execution.kind,
@@ -1083,7 +1336,10 @@ export class PlannerOrchestrator {
 			runId: id,
 			previousRunId: execution.previousRunId,
 		};
-		await this.handleWorkerResult(binding.task, resolution.text, binding.executionId, { delegation });
+		await this.ingestCompletionResult(binding.task, resolution.text, binding.executionId, { delegation }, resolution);
+		this.processedRunIds.add(id);
+		const active = [...this.delegations.entries()].find(([, item]) => item.runId === id);
+		if (active) this.endDelegation(active[0]);
 		const recorded = this.store.executionById(binding.task.taskId, binding.executionId)?.reportIndex !== undefined;
 		return recorded
 			? { status: "recorded", taskId: binding.task.taskId, runId: id, executionState: "terminal", ingestionState: "recorded", retryable: false, message: "bound run output was re-ingested" }
@@ -1270,7 +1526,15 @@ export class PlannerOrchestrator {
 		if (!this.runRecords) return;
 		const current = this.runRecords.get(this.runSessionId, this.runWorkspaceIdFor(task), executionId);
 		if (!current) return;
-		this.runRecords.put({ ...current, ...patch, taskId: task.taskId });
+		const next = { ...current, ...patch, taskId: task.taskId };
+		const link = {
+			taskId: task.taskId,
+			executionId,
+			...(next.runId ? { hostRunId: next.runId } : {}),
+			...(next.reportRevision !== undefined ? { reportRevision: next.reportRevision } : {}),
+		};
+		const identityIndex = [...(next.identityIndex ?? []).filter((item) => item.executionId !== executionId), link];
+		this.runRecords.put({ ...next, identityIndex });
 	}
 
 	private registerRunRecord(
@@ -1290,6 +1554,12 @@ export class PlannerOrchestrator {
 			...(options.previousRunId ? { previousRunId: options.previousRunId } : {}),
 			agent: KIND_DEFAULT_AGENTS[kind],
 			role: kind,
+			loadedProvenance: this.getLoadedProvenance(),
+			identityIndex: [{
+				taskId: task.taskId,
+				executionId,
+				...(options.runId ? { hostRunId: options.runId } : {}),
+			}],
 			executionState: "launching",
 			ingestionState: "waiting",
 			...(options.reportOnly || options.auxiliary ? {} : {}),
@@ -1297,12 +1567,15 @@ export class PlannerOrchestrator {
 	}
 
 	/** Mark output as terminal without implying that a report was recorded. */
-	private markRunTerminal(task: TaskRecord, executionId: string, reason?: string): void {
+	private markRunTerminal(task: TaskRecord, executionId: string, reason?: string, source: TerminalSource = "report-only"): void {
+		const current = this.runRecords?.get(this.runSessionId, this.runWorkspaceIdFor(task), executionId);
 		this.updateRunRecord(task, executionId, {
 			executionState: "terminal",
-			ingestionState: "waiting",
+			ingestionState: current?.ingestionState ?? "waiting",
+			terminalSource: source,
 			...(reason ? { terminalReason: reason } : {}),
 		});
+		this.releaseRunSlot(task, executionId, executionId);
 	}
 
 	private markRunIngestion(task: TaskRecord, executionId: string, resolution: OutputResolution): void {
@@ -1316,6 +1589,7 @@ export class PlannerOrchestrator {
 		}
 		this.updateRunRecord(task, executionId, {
 			ingestionState: resolution.kind === "pending" ? "output-pending" : "unavailable",
+			...(resolution.kind === "pending" ? { terminalErrorClass: "missing-report", nextAction: "retry-output-reconcile" } : {}),
 			lastError: { code: resolution.code, message: `output resolution ${resolution.code}` },
 		});
 	}
@@ -1666,10 +1940,16 @@ export class PlannerOrchestrator {
 		if (resume) {
 			const previousRunId = this.resumeRunId(input);
 			const binding = previousRunId ? this.resolveRunBinding(previousRunId, cwd) : undefined;
-			if (!previousRunId || !binding) {
-				return { block: { reason: `RUN_UNBOUND: resume requires an exact persisted run association for ${previousRunId ?? "the supplied id"}; no active Task was guessed.` } };
+			if (!previousRunId || !binding || binding.status === "unbound" || !binding.task || !binding.executionId) {
+				const conflict = binding?.status === "identity-conflict";
+				return {
+					block: {
+						code: conflict ? "RUN_IDENTITY_CONFLICT" : "RUN_UNBOUND",
+						reason: `${conflict ? "RUN_IDENTITY_CONFLICT" : "RUN_UNBOUND"}: resume requires an exact persisted run association for ${previousRunId ?? "the supplied id"}; ${binding?.check.reason ?? "no active Task was guessed."}`,
+					},
+				};
 			}
-			resumeBinding = { ...binding, runId: previousRunId };
+			resumeBinding = { task: binding.task, executionId: binding.executionId, runId: previousRunId };
 			target = { role: "worker", taskId: binding.task.taskId, task: binding.task };
 		}
 		if (inputRecord.reportOnly === true) {
@@ -2542,13 +2822,28 @@ export class PlannerOrchestrator {
 
 	renderTaskStatus(task: TaskRecord): string {
 		const report = task.reports.at(-1);
+		const latestExecution = task.executions.at(-1);
+		const persistedRun = latestExecution && this.runRecords
+			? this.runRecords.list().find((record) => record.taskId === task.taskId && record.executionId === latestExecution.executionId)
+			: undefined;
+		const persistedProvenance = persistedRun?.loadedProvenance;
+		const provenanceState = persistedProvenance === undefined
+			? "unknown (persisted run has no loaded provenance)"
+			: this.loadedProvenance && persistedProvenance.loadedFingerprint === this.loadedProvenance.loadedFingerprint ? "same loaded build" : "different loaded build";
 		const taskSpecValidationComplete = missingTaskSpecValidationCommands(task.spec, report).length === 0
 			&& (task.spec?.validation?.commands?.length ?? 0) > 0;
+		const prov = this.loadedProvenance;
+		const provenanceLine = prov
+			? `Loaded provenance: fingerprint=${prov.loadedFingerprint}; source=${prov.sourcePath}; package=${prov.packageVersion}; host=${prov.hostVersion}; subagents=${prov.subagentVersion}; session=${prov.sessionId}; workspace=${prov.workspaceId}; capabilities=${prov.capabilities.join(",")}; disk HEAD=${prov.diskHead}`
+			: "Loaded provenance: unknown";
 		const lines = [
 			`Task: ${task.taskId}`,
 			`State: ${task.state}`,
 			`Worker round: ${task.reviewRound}/${MAX_REVIEW_ROUNDS}`,
 			`Review mode: ${task.reviewMode}`,
+			provenanceLine,
+			`Persisted run provenance: ${provenanceState}`,
+			...(task.recoveryBinding ? [`Recovery binding: ${task.recoveryBinding.status}; ${task.recoveryBinding.reason}`] : []),
 			...(isExecutingStale(task) ? [`Lock: stale (executing for over ${executingStaleMinutes()} minutes; the child has not been confirmed exited — reconcile or abandon before writing)`] : []),
 			`Evidence: ${report ? (task.lastComparison ? describeComparison(task.lastComparison) : "not compared") : "no report yet"}`,
 			...(isExplicitlyNoValidation(task.spec) ? ["Validation: not required (TaskSpec 明确不要求验证)"] : []),
@@ -2771,9 +3066,10 @@ export class PlannerOrchestrator {
 
 	/** Stale follows the live writer's lock age, not Task.updatedAt / executing. */
 	private isLiveWriterStale(taskId: string): boolean {
+		const canonicalTaskId = this.store.get(taskId)?.taskId ?? taskId;
 		const now = this.store.now().getTime();
 		for (const record of this.delegations.values()) {
-			if (record.taskId !== taskId || !isWriterRole(record.kind)) continue;
+			if (record.taskId !== canonicalTaskId || !isWriterRole(record.kind)) continue;
 			if (record.lockedAt) {
 				const held = Date.parse(record.lockedAt);
 				return Number.isFinite(held) && now - held >= EXECUTING_STALE_MS;
@@ -2857,8 +3153,9 @@ export class PlannerOrchestrator {
 	 * write lock is taken, so a finished leftover is not refused as a live writer.
 	 */
 	private async reconcileBeforeLock(taskId: string, warnings: string[]): Promise<void> {
+		const canonicalTaskId = this.store.get(taskId)?.taskId ?? taskId;
 		for (const [toolCallId, record] of [...this.delegations]) {
-			if (record.taskId !== taskId) continue;
+			if (record.taskId !== canonicalTaskId) continue;
 			if (await this.reconcileDelegation(toolCallId, record)) {
 				warnings.push(
 					`Planner-only: the previous pending child for task ${taskId} had already finished; its saved result was consumed before this delegation started.`,
@@ -2900,8 +3197,9 @@ export class PlannerOrchestrator {
 	}
 
 	private hasPendingDelegation(taskId: string): boolean {
+		const canonicalTaskId = this.store.get(taskId)?.taskId ?? taskId;
 		for (const record of this.delegations.values()) {
-			if (record.taskId === taskId) return true;
+			if (record.taskId === canonicalTaskId) return true;
 		}
 		return false;
 	}
@@ -3003,11 +3301,39 @@ export class PlannerOrchestrator {
 		if (!meta || meta.exitCode === undefined) return undefined;
 		const task = this.store.get(record.taskId);
 		const resolution = this.resolveDelegationOutput(record);
-		if (task) {
-			this.markRunTerminal(task, toolCallId, `exit code ${meta.exitCode}`);
-			this.markRunIngestion(task, toolCallId, resolution);
+		const is403 = is403RateLimit(meta);
+		const termReason = is403
+			? (meta.error ?? meta.stopReason ?? "403 permission_error: five-hour usage limit")
+			: `exit code ${meta.exitCode}`;
+		const failure = resolution.kind !== "loaded" && (meta.exitCode !== 0 || is403)
+			? {
+				code: is403 ? "PROVIDER_403_RATE_LIMIT" : "EXECUTION_FAILED",
+				message: meta.error ?? meta.stopReason ?? termReason,
+				reason: is403 ? `provider 403 error (${termReason})` : `child execution failed with exit code ${meta.exitCode}`,
+				...(is403 ? { provider: true } : {}),
+			}
+			: undefined;
+		this.ingestCompletionReceipt({
+			runId: record.runId,
+			terminal: { state: meta.exitCode === 0 ? "completed" : "failed", exitCode: meta.exitCode },
+			terminalSource: "host-meta",
+			outputState: resolution.kind === "loaded" ? "present" : "unknown",
+			...(record.outputRef ? { outputRef: record.outputRef } : {}),
+			...(meta.usage !== undefined ? { usage: meta.usage } : {}),
+		}, "reconcile", { resolution, ...(failure ? { failure } : {}) });
+		if (resolution.kind !== "loaded") {
+			if (meta.exitCode !== 0 || is403) {
+				this.processedRunIds.add(record.runId);
+				this.endDelegation(toolCallId);
+				return {
+					content: [{
+						type: "text",
+						text: `[PLANNER-ONLY] Run ${record.runId} for task ${record.taskId} terminated with ${is403 ? "403 rate limit" : `exit code ${meta.exitCode}`}: ${meta.error ?? meta.stopReason ?? "execution failed"}. Slot released. Task marked failed; no automatic model switch.`,
+					}],
+				};
+			}
+			return undefined;
 		}
-		if (resolution.kind !== "loaded") return undefined;
 		this.processedRunIds.add(record.runId);
 		this.endDelegation(toolCallId);
 		const text = resolution.text;
@@ -3026,7 +3352,12 @@ export class PlannerOrchestrator {
 		if (record.kind === "explorer") {
 			return this.handleExplorerResult(task, text, toolCallId, record, { content: [{ type: "text", text }] });
 		}
-		return await this.handleWorkerResult(task, text, toolCallId, { delegation: record });
+		return await this.ingestCompletionResult(task, text, toolCallId, { delegation: record }, {
+			kind: "loaded",
+			text,
+			digest: outputDigest(text),
+			source: "reconcile",
+		});
 	}
 
 	/**
@@ -3036,8 +3367,12 @@ export class PlannerOrchestrator {
 	 */
 	async reconcilePendingDelegations(taskId?: string): Promise<number> {
 		let reconciled = 0;
+		// Task ids supplied by callers may be model-chosen aliases. Delegation
+		// records are always keyed by the canonical Task id, so resolve once
+		// before applying the filter while leaving unknown ids unmatched.
+		const canonicalTaskId = taskId ? this.store.get(taskId)?.taskId ?? taskId : undefined;
 		for (const [toolCallId, record] of [...this.delegations]) {
-			if (taskId && record.taskId !== taskId) continue;
+			if (canonicalTaskId && record.taskId !== canonicalTaskId) continue;
 			if (await this.reconcileDelegation(toolCallId, record)) reconciled += 1;
 		}
 		return reconciled;
@@ -3383,7 +3718,7 @@ export class PlannerOrchestrator {
 			if (resolution.kind !== "loaded") {
 				const task = this.store.get(delegation.taskId);
 				if (task) {
-					this.markRunTerminal(task, executionId, completion.terminal?.state ?? "completion received");
+					this.markRunTerminal(task, executionId, completion.terminal?.state ?? "completion received", completion?.terminalSource ?? "report-only");
 					this.markRunIngestion(task, executionId, resolution);
 				}
 				return {
@@ -3407,17 +3742,9 @@ export class PlannerOrchestrator {
 
 		const task = this.store.get(delegation.taskId);
 		if (task) {
-			this.markRunTerminal(task, executionId);
+			this.markRunTerminal(task, executionId, undefined, completion?.terminalSource ?? "report-only");
 			this.store.completeExecution(task.taskId, executionId, {
 				...(receiptId ? { runId: receiptId } : {}),
-			});
-		}
-		if (task && text) {
-			this.markRunIngestion(task, executionId, {
-				kind: "loaded",
-				text,
-				digest: outputDigest(text),
-				source: "sync",
 			});
 		}
 		if (this.isBlockedReceiptSealed(task)) {
@@ -3444,7 +3771,12 @@ export class PlannerOrchestrator {
 			? this.handleReviewerResult(task, text, delegation)
 			: delegation.kind === "validator"
 				? this.handleValidatorResult(task, text, delegation, event.toolCallId)
-			: this.handleWorkerResult(task, text, executionId, { delegation });
+			: this.ingestCompletionResult(task, text, executionId, { delegation }, {
+				kind: "loaded",
+				text,
+				digest: outputDigest(text),
+				source: "sync",
+			});
 	}
 
 	async handleAsyncNotify(
@@ -3460,15 +3792,46 @@ export class PlannerOrchestrator {
 				outcome = undefined;
 			}
 			const runId = found.record.runId;
+			// The notification envelope is the trusted terminal signal; the
+			// report-shaped preview below is payload only.
+			this.ingestCompletionReceipt({
+				runId,
+				terminal: { state: parsed.status },
+				terminalSource: "host-notify",
+				outputState: found.record.outputRef ? "present" : "unknown",
+				...(found.record.outputRef ? { outputRef: found.record.outputRef } : {}),
+			}, "notify");
 			const executionId = this.executionIdFor(found.record, found.toolCallId);
 			const resolution = this.resolveDelegationOutput(found.record);
 			const hasExplicitReference = Boolean(found.record.outputRef);
 			if (hasExplicitReference && resolution.kind !== "loaded") {
-				const pendingTask = this.store.get(found.record.taskId);
-				if (pendingTask) {
-					this.markRunTerminal(pendingTask, executionId, `notification status ${parsed.status}`);
-					this.markRunIngestion(pendingTask, executionId, resolution);
+				const is403 = is403RateLimit(parsed.status) || is403RateLimit(parsed.preview);
+				if (is403) {
+					if (runId) this.processedRunIds.add(runId);
+					this.ingestCompletionReceipt({
+						runId,
+						terminal: { state: parsed.status },
+						terminalSource: "host-notify",
+						outputState: "unknown",
+					}, "notify", {
+						resolution,
+						failure: {
+							code: "PROVIDER_403_RATE_LIMIT",
+							message: parsed.preview || "provider 403 error",
+							reason: "provider 403 error",
+							provider: true,
+						},
+					});
+					this.endDelegation(found.toolCallId);
+					outcome = { content: [{ type: "text", text: `[PLANNER-ONLY] Subagent for task ${found.record.taskId} terminated with 403 error. Slot released. Task marked failed; no automatic model switch.` }] };
+					continue;
 				}
+				this.ingestCompletionReceipt({
+					runId,
+					terminal: { state: parsed.status },
+					terminalSource: "host-notify",
+					outputState: "unknown",
+				}, "notify", { resolution });
 				outcome = { content: [{ type: "text", text: `[PLANNER-ONLY] Output for task ${found.record.taskId} is ${resolution.code}; retry the same completion or run reconcile.` }] };
 				continue;
 			}
@@ -3477,15 +3840,14 @@ export class PlannerOrchestrator {
 			// planner_recover; treating the preview as a report would spend a
 			// correction and make the missing output unrecoverable.
 			if (found.record.kind === "worker" && !hasExplicitReference && parsed.truncated && resolution.kind !== "loaded") {
-				const pendingTask = this.store.get(found.record.taskId);
-				if (pendingTask) {
-					this.markRunTerminal(pendingTask, executionId, `notification status ${parsed.status}`);
-					this.markRunIngestion(pendingTask, executionId, {
-						kind: "pending",
-						code: "OUTPUT_PENDING",
-						attempted: ["notify:preview-truncated"],
-					});
-				}
+				this.ingestCompletionReceipt({
+					runId,
+					terminal: { state: parsed.status },
+					terminalSource: "host-notify",
+					outputState: "unknown",
+				}, "notify", {
+					resolution: { kind: "pending", code: "OUTPUT_PENDING", attempted: ["notify:preview-truncated"] },
+				});
 				outcome = { content: [{ type: "text", text: `[PLANNER-ONLY] Output for task ${found.record.taskId} is OUTPUT_PENDING because the notification preview was truncated; report-only correction remains available after the complete output arrives (async preview truncated).` }] };
 				continue;
 			}
@@ -3513,6 +3875,33 @@ export class PlannerOrchestrator {
 			const isBudgetOrStopped = parsed.status === "stopped"
 				|| chosen.toLowerCase().includes("toolbudget")
 				|| chosen.toLowerCase().includes("usagebudget");
+			const is403 = is403RateLimit(chosen) || is403RateLimit(parsed.status);
+			if (is403 && !extractWorkerReport(chosen, { expectedTaskId: found.record.taskId }).report) {
+				const task = this.store.get(found.record.taskId);
+				const firstLine = (chosen.split(/\r?\n/, 1)[0] ?? "").trim();
+				const reason = `provider 403 error (${firstLine || "five-hour usage limit"})`;
+				this.ingestCompletionReceipt({
+					runId,
+					terminal: { state: parsed.status },
+					terminalSource: "host-notify",
+					outputState: "unknown",
+				}, "notify", {
+					resolution: { kind: "unavailable", code: "OUTPUT_UNAVAILABLE", attempted: ["notify"] },
+					failure: {
+						code: "PROVIDER_403_RATE_LIMIT",
+						message: firstLine || "provider 403 error",
+						reason,
+						provider: true,
+					},
+				});
+				outcome = {
+					content: [{
+						type: "text",
+						text: `[PLANNER-ONLY] Subagent for task ${found.record.taskId} stopped with 403 error: ${chosen}. Slot released. Task marked failed; no automatic model switch.`,
+					}],
+				};
+				continue;
+			}
 			if (isBudgetOrStopped && !extractWorkerReport(chosen, { expectedTaskId: found.record.taskId }).report) {
 				const task = this.store.get(found.record.taskId);
 				if (task && !isFinalTaskState(task.state)) {
@@ -3548,14 +3937,24 @@ export class PlannerOrchestrator {
 			const truncatedWithoutFile = !fileText &&
 				(parsed.truncated || chosen.includes(PREVIEW_TRUNCATED_MARKER));
 			if (truncatedWithoutFile) {
-				outcome = await this.handleWorkerResult(task, chosen, found.toolCallId, {
+				outcome = await this.ingestCompletionResult(task, chosen, found.toolCallId, {
 					forceReportError: ASYNC_PREVIEW_TRUNCATED_REASON,
 					delegation: found.record,
+				}, {
+					kind: "loaded",
+					text: chosen,
+					digest: outputDigest(chosen),
+					source: "notify",
 				});
 				continue;
 			}
-				outcome = await this.handleWorkerResult(task, chosen, executionId, {
+				outcome = await this.ingestCompletionResult(task, chosen, executionId, {
 					delegation: found.record,
+				}, {
+					kind: "loaded",
+					text: chosen,
+					digest: outputDigest(chosen),
+					source: "notify",
 				});
 		}
 		if (outcome) outcomes.push(outcome);
@@ -3790,6 +4189,40 @@ export class PlannerOrchestrator {
 		};
 	}
 
+	private async ingestCompletionResult(
+		task: TaskRecord,
+		text: string,
+		executionId: string,
+		options: { forceReportError?: string; delegation?: DelegationRecord } = {},
+		resolution: Extract<OutputResolution, { kind: "loaded" }> = {
+			kind: "loaded",
+			text,
+			digest: outputDigest(text),
+			source: "result",
+		},
+	): Promise<{ content: { type: "text"; text: string }[] }> {
+		const current = this.runRecords?.get(this.runSessionId, this.runWorkspaceIdFor(task), executionId);
+		const expectedWorkerRunId = options.delegation?.action === "execution"
+			? options.delegation.runId ?? executionId
+			: executionId;
+		const canJournalReport = !options.forceReportError && Boolean(extractWorkerReport(text, {
+			expectedTaskId: task.taskId,
+			...(expectedWorkerRunId ? { expectedWorkerRunId } : {}),
+		}).report);
+		if (current && resolution.kind === "loaded" && canJournalReport && this.runRecords) {
+			let response: { content: { type: "text"; text: string }[] } | undefined;
+			await this.runRecords.commitLoadedAsync(current, resolution, async () => {
+				response = await this.handleWorkerResult(task, text, executionId, options);
+				return this.store.executionById(task.taskId, executionId)?.reportIndex !== undefined
+					? (this.store.executionById(task.taskId, executionId)?.reportIndex ?? 0) + 1
+					: this.store.get(task.taskId)?.reports.length ?? 0;
+			});
+			return response ?? { content: [{ type: "text", text: "" }] };
+		}
+		this.markRunIngestion(task, executionId, resolution);
+		return this.handleWorkerResult(task, text, executionId, options);
+	}
+
 	private async handleWorkerResult(
 		task: TaskRecord,
 		text: string,
@@ -3848,14 +4281,7 @@ export class PlannerOrchestrator {
 		const execution = this.store.executionById(task.taskId, toolCallId);
 		if (execution) this.completeExecutionSample(task, toolCallId, current);
 		if (execution) {
-			if (report) {
-				this.markRunIngestion(task, toolCallId, {
-					kind: "loaded",
-					text,
-					digest: outputDigest(text),
-					source: "result",
-				});
-			} else {
+			if (!report) {
 				this.updateRunRecord(task, toolCallId, {
 					executionState: "terminal",
 					ingestionState: "report-invalid",
@@ -4088,7 +4514,12 @@ export class PlannerOrchestrator {
 				}],
 			};
 		}
-		return await this.handleWorkerResult(task, text, toolCallId, { delegation: record });
+		return await this.ingestCompletionResult(task, text, toolCallId, { delegation: record }, {
+			kind: "loaded",
+			text,
+			digest: outputDigest(text),
+			source: "result",
+		});
 	}
 
 	private async handleValidatorResult(

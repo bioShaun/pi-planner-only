@@ -25,7 +25,25 @@ export const MAX_REVIEW_ROUNDS = 3;
 export const MAX_REPORT_CORRECTIONS = 1;
 
 /**
- * E02 — automatic recovery/revalidation retries per Task, on top of the
+ * RS-01 — Loaded plugin version and identity fingerprint.
+ * Captured once from loaded build in memory, distinct from disk HEAD.
+ */
+export interface LoadedPluginFingerprint {
+	version: 1;
+	loadedFingerprint: string;
+	sourcePath: string;
+	packageVersion: string;
+	hostVersion: string;
+	subagentVersion: string;
+	sessionId: string;
+	workspaceId: string;
+	capabilities: string[];
+	diskHead: string;
+	loadedAt: string;
+	recordedAt?: string;
+}
+
+/** E02 — automatic recovery/revalidation retries per Task, on top of the
  * one-per-state rule: the same evidence state is auto-revalidated at most
  * once, and a Task grants at most this many automatic recovery attempts in
  * total. The counter lives on the Task record, so reason-text rewrites and
@@ -52,6 +70,23 @@ export const MAX_GIT_AUDIT_OUTPUT_CHARS = 20000;
 
 /** RF-1 — cap on dirty paths hashed per Evidence sample for the T3 baseline comparison. */
 export const MAX_BASELINE_HASH_PATHS = 200;
+
+export type RecoveryBindingStatus = "bound" | "identity-conflict" | "unbound";
+
+/** Auditable result of reconciling one persisted run-state record. */
+export interface RecoveryBindingCheck {
+	status: RecoveryBindingStatus;
+	reason: string;
+	runId?: string;
+	taskId?: string;
+	executionId?: string;
+	workspaceId?: string;
+	canonical?: {
+		taskId: string;
+		executionId: string;
+		workspaceId: string;
+	};
+}
 
 export type TaskRole = "worker" | "explorer" | "validator" | "reviewer";
 

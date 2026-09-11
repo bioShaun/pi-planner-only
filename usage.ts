@@ -15,6 +15,7 @@ import type {
 	TaskUsage,
 	TokenCounts,
 	UsagePhase,
+	LoadedPluginFingerprint,
 } from "./types.ts";
 
 export interface PiUsageLike {
@@ -410,15 +411,21 @@ function childKey(child: ChildUsage): string | undefined {
 export class UsageLedger {
 	private readonly pricing: PricingTable;
 	private readonly now: () => Date;
+	private readonly resolveTaskId?: (taskId: string) => string;
 	private readonly tasks = new Map<string, TaskUsage>();
 	private readonly untasked: RootUsage = emptyRootUsage();
 	private readonly seenIds = new Set<string>();
 	private pending: UsageEntry[] = [];
 	private seq = 0;
 
-	constructor(opts: { pricing: PricingTable; now?: () => Date }) {
+	constructor(opts: { pricing: PricingTable; now?: () => Date; resolveTaskId?: (taskId: string) => string }) {
 		this.pricing = opts.pricing;
 		this.now = opts.now ?? (() => new Date());
+		this.resolveTaskId = opts.resolveTaskId;
+	}
+
+	private canonicalTaskId(taskId: string): string {
+		return this.resolveTaskId?.(taskId) ?? taskId;
 	}
 
 	private nextSeq(): number {
@@ -431,10 +438,11 @@ export class UsageLedger {
 	}
 
 	private ensureTask(taskId: string): TaskUsage {
-		let task = this.tasks.get(taskId);
+		const canonicalTaskId = this.canonicalTaskId(taskId);
+		let task = this.tasks.get(canonicalTaskId);
 		if (!task) {
 			task = emptyTaskUsage();
-			this.tasks.set(taskId, task);
+			this.tasks.set(canonicalTaskId, task);
 		}
 		return task;
 	}
@@ -462,6 +470,7 @@ export class UsageLedger {
 		const tokensUnknown = isAllZero(tokens);
 		const phase = phaseFor(input.state);
 		const tasked = Boolean(input.taskId) && phase !== undefined;
+		const canonicalTaskId = input.taskId ? this.canonicalTaskId(input.taskId) : undefined;
 		const costUsd = resolveCost(
 			this.pricing,
 			input.usage,
@@ -469,7 +478,7 @@ export class UsageLedger {
 			input.provider ?? providerFromModel(input.model),
 			input.model,
 		);
-		const bucket = tasked ? this.ensureTask(input.taskId as string).root : this.untasked;
+		const bucket = tasked ? this.ensureTask(canonicalTaskId as string).root : this.untasked;
 		const previousTurns = bucket.turns;
 		const previousCost = bucket.costUsd;
 		bucket.turns += 1;
@@ -485,14 +494,14 @@ export class UsageLedger {
 			phaseBucket.turns += 1;
 			addTokens(phaseBucket, tokens);
 		}
-		if (tasked && input.model) this.ensureTask(input.taskId as string).rootModel = input.model;
-		if (tasked) this.refreshCostUnknown(this.ensureTask(input.taskId as string));
+		if (tasked && input.model) this.ensureTask(canonicalTaskId as string).rootModel = input.model;
+		if (tasked) this.refreshCostUnknown(this.ensureTask(canonicalTaskId as string));
 		return {
 			id: "",
 			at: this.at(),
 			tokens,
 			tokensUnknown,
-			...(input.taskId && tasked ? { taskId: input.taskId } : {}),
+			...(canonicalTaskId && tasked ? { taskId: canonicalTaskId } : {}),
 			...(input.model ? { model: input.model } : {}),
 			...(input.provider ? { provider: input.provider } : {}),
 			...(input.state ? { state: input.state } : {}),
@@ -528,26 +537,28 @@ export class UsageLedger {
 	}
 
 	recordInjected(taskId: string, bytes: number): void {
-		const task = this.ensureTask(taskId);
+		const canonicalTaskId = this.canonicalTaskId(taskId);
+		const task = this.ensureTask(canonicalTaskId);
 		task.root.injectedBytes += bytes;
 		const seq = this.nextSeq();
 		this.push({
-			id: `injected:${taskId}:${seq}`,
+			id: `injected:${canonicalTaskId}:${seq}`,
 			kind: "injected",
-			taskId,
+			taskId: canonicalTaskId,
 			at: this.at(),
 			bytes,
 		});
 	}
 
 	recordReviewLeak(taskId: string, bytes: number): void {
-		const task = this.ensureTask(taskId);
+		const canonicalTaskId = this.canonicalTaskId(taskId);
+		const task = this.ensureTask(canonicalTaskId);
 		task.root.reviewLeakBytes += bytes;
 		const seq = this.nextSeq();
 		this.push({
-			id: `leak:${taskId}:${seq}`,
+			id: `leak:${canonicalTaskId}:${seq}`,
 			kind: "leak",
-			taskId,
+			taskId: canonicalTaskId,
 			at: this.at(),
 			bytes,
 		});
@@ -572,6 +583,15 @@ export class UsageLedger {
 		if (key) {
 			const index = task.children.findIndex((existing) => childKey(existing) === key);
 			if (index >= 0) {
+				const existing = task.children[index];
+				// Do not overwrite an already resolved child with a pending one
+				if (!existing.pending && stored.pending) {
+					return;
+				}
+				// If existing has positive turns/usage and incoming has 0, keep existing
+				if (!existing.pending && !stored.pending && (existing.turns ?? 0) > (stored.turns ?? 0)) {
+					return;
+				}
 				task.children[index] = stored;
 				this.refreshCostUnknown(task);
 				return;
@@ -582,23 +602,25 @@ export class UsageLedger {
 	}
 
 	recordChild(taskId: string, child: ChildUsage): void {
-		const task = this.ensureTask(taskId);
+		const canonicalTaskId = this.canonicalTaskId(taskId);
+		const task = this.ensureTask(canonicalTaskId);
 		this.upsertChild(task, child);
 		const seq = this.nextSeq();
 		const ident = child.runId ?? child.toolCallId ?? String(seq);
 		this.push({
 			id: `child:${ident}:${seq}`,
 			kind: "child",
-			taskId,
+			taskId: canonicalTaskId,
 			at: this.at(),
-			child: cloneChild(this.ensureTask(taskId).children.find((c) => childKey(c) === childKey(child)) ?? child),
+			child: cloneChild(this.ensureTask(canonicalTaskId).children.find((c) => childKey(c) === childKey(child)) ?? child),
 			...(child.toolCallId ? { toolCallId: child.toolCallId } : {}),
 			...(child.runId ? { runId: child.runId } : {}),
 		});
 	}
 
 	resolvePending(taskId: string, read: (child: ChildUsage) => ChildUsage | undefined): number {
-		const task = this.tasks.get(taskId);
+		const canonicalTaskId = this.canonicalTaskId(taskId);
+		const task = this.tasks.get(canonicalTaskId);
 		if (!task) return 0;
 		let resolved = 0;
 		for (let i = 0; i < task.children.length; i++) {
@@ -613,7 +635,7 @@ export class UsageLedger {
 			this.push({
 				id: `child:${ident}:${seq}`,
 				kind: "child",
-				taskId,
+				taskId: canonicalTaskId,
 				at: this.at(),
 				child: cloneChild(next),
 				...(next.toolCallId ? { toolCallId: next.toolCallId } : {}),
@@ -624,13 +646,23 @@ export class UsageLedger {
 	}
 
 	taskUsage(taskId: string): TaskUsage | undefined {
-		const task = this.tasks.get(taskId);
+		const canonicalTaskId = this.canonicalTaskId(taskId);
+		const task = this.tasks.get(canonicalTaskId);
 		if (!task) return undefined;
 		return task;
 	}
 
 	sessionUsage(): { untasked: RootUsage; tasks: string[] } {
 		return { untasked: this.untasked, tasks: [...this.tasks.keys()] };
+	}
+
+	canonicalizeTaskIds(): void {
+		for (const [taskId, usage] of [...this.tasks]) {
+			const canonicalTaskId = this.canonicalTaskId(taskId);
+			if (canonicalTaskId === taskId) continue;
+			if (!this.tasks.has(canonicalTaskId)) this.tasks.set(canonicalTaskId, usage);
+			this.tasks.delete(taskId);
+		}
 	}
 
 	/**
@@ -1024,8 +1056,17 @@ export interface RunRecordTaskFacts {
 	createdAt?: string; updatedAt?: string; cwd: string; baseGitRef?: string; finalGitRef?: string; gitStatusHash?: string;
 }
 export interface RunRecordPricingSource { path: string; version?: number; currency: "USD" | "CNY"; loadedAt: string; }
+export interface RunRecordIdentityLink {
+	taskId: string;
+	executionId: string;
+	hostRunId?: string;
+	reportRevision?: number;
+	childSessionFile?: string;
+}
 export interface RunRecord {
 	version: 1; runId: string; recordedAt: string; arm: string; task: RunRecordTaskFacts;
+	provenance?: LoadedPluginFingerprint;
+	identityIndex?: RunRecordIdentityLink[];
 	models: { root?: string; children: Array<{ kind: DelegationKind; agent?: string; model?: string; thinking?: string }> };
 	pricing: RunRecordPricingSource; cache: { cacheRead: number; cacheWrite: number };
 	tokens: TokenCounts & { total: number; turns: number };
@@ -1033,7 +1074,16 @@ export interface RunRecord {
 	outcome: { state: string; completed: boolean }; durationMs?: number; comparable: boolean; incomparableReasons: string[];
 }
 
-export function buildRunRecord(input: { runId: string; arm: string; task: RunRecordTaskFacts; usage: TaskUsage; pricing: RunRecordPricingSource; now?: () => Date }): RunRecord {
+export function buildRunRecord(input: {
+	runId: string;
+	arm: string;
+	task: RunRecordTaskFacts;
+	usage: TaskUsage;
+	pricing: RunRecordPricingSource;
+	provenance?: LoadedPluginFingerprint;
+	identityIndex?: readonly RunRecordIdentityLink[];
+	now?: () => Date;
+}): RunRecord {
 	const { usage } = input;
 	const unresolved = (child: ChildUsage) => child.pending || child.source === "unavailable";
 	const rootUnknown = usage.root.turns > 0 && usage.root.costUsd === undefined;
@@ -1051,7 +1101,15 @@ export function buildRunRecord(input: { runId: string; arm: string; task: RunRec
 	const durationMs = Number.isFinite(started) && Number.isFinite(ended) && ended >= started ? ended - started : undefined;
 	if (durationMs === undefined) reasons.push("run duration is not derivable from the Task timestamps");
 	if (!input.task.baseGitRef) reasons.push("no baseline git ref: the starting repo state is unidentified");
-	return { version: 1, runId: input.runId, recordedAt: (input.now?.() ?? new Date()).toISOString(), arm: input.arm, task: input.task, models: { root: usage.rootModel, children: usage.children.map(({ kind, agent, model, thinking }) => ({ kind, agent, model, thinking })) }, pricing: input.pricing, cache: { cacheRead: tokens.cacheRead, cacheWrite: tokens.cacheWrite }, tokens, cost: { rootUsd: usage.root.costUsd, childrenUsd, totalUsd: reasons.length === 0 ? (usage.root.costUsd ?? 0) + childrenUsd : undefined, debtUsd, unknownParts: (rootUnknown ? 1 : 0) + childUnknown.length }, outcome: { state: input.task.state, completed: input.task.state === "completed" }, durationMs, comparable: reasons.length === 0, incomparableReasons: reasons };
+	return {
+		version: 1,
+		runId: input.runId,
+		recordedAt: (input.now?.() ?? new Date()).toISOString(),
+		arm: input.arm,
+		task: input.task,
+		...(input.provenance ? { provenance: input.provenance } : {}),
+		...(input.identityIndex ? { identityIndex: input.identityIndex.map((link) => ({ ...link })) } : {}),
+		models: { root: usage.rootModel, children: usage.children.map(({ kind, agent, model, thinking }) => ({ kind, agent, model, thinking })) }, pricing: input.pricing, cache: { cacheRead: tokens.cacheRead, cacheWrite: tokens.cacheWrite }, tokens, cost: { rootUsd: usage.root.costUsd, childrenUsd, totalUsd: reasons.length === 0 ? (usage.root.costUsd ?? 0) + childrenUsd : undefined, debtUsd, unknownParts: (rootUnknown ? 1 : 0) + childUnknown.length }, outcome: { state: input.task.state, completed: input.task.state === "completed" }, durationMs, comparable: reasons.length === 0, incomparableReasons: reasons };
 }
 
 export interface RunSummary { runs: number; comparable: number; incomparable: number; completed: number; passRate: number; totalSpendUsd: number; costPerSuccessUsd?: number; avgReviewRounds: number; avgDurationMs?: number; incomparableReasons: Record<string, number>; }

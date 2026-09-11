@@ -1,5 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
@@ -16,7 +19,7 @@ import { PlannerOrchestrator, compositeWorkflowBlockReason, isDelegationCall, is
 import type { DelegationRecord } from "./orchestrate.ts";
 import { parseSubagentNotify, readChildMeta, tempRootFromAsyncDir } from "./notify.ts";
 import { MAX_REVIEW_ROUNDS, WORKER_REPORT_VERSION, isFinalTaskState, isTerminalTaskState } from "./types.ts";
-import type { ChildUsage, DelegationKind, ReviewFinding, ReviewMode, ReviewVerdict, TaskState } from "./types.ts";
+import type { ChildUsage, DelegationKind, LoadedPluginFingerprint, ReviewFinding, ReviewMode, ReviewVerdict, TaskState } from "./types.ts";
 import {
 	UsageLedger,
 	buildRunRecord,
@@ -65,6 +68,104 @@ const PLANNER_SAFE_TOOLS = new Set([
 ]);
 
 const GIT_TIMEOUT_MS = 15_000;
+
+const SOURCE_PATH = fileURLToPath(import.meta.url);
+const PLUGIN_DIR = dirname(SOURCE_PATH);
+
+export function computeLoadedFingerprint(dir = PLUGIN_DIR): string {
+	const hasher = createHash("sha256");
+	const files = [
+		"completion.ts",
+		"concurrency.ts",
+		"evidence.ts",
+		"floors.ts",
+		"git-audit.ts",
+		"index.ts",
+		"ledger-store.ts",
+		"notify.ts",
+		"orchestrate.ts",
+		"package.json",
+		"policy.ts",
+		"pricing.defaults.json",
+		"report.ts",
+		"reservations.ts",
+		"review.ts",
+		"role-models.ts",
+		"roles.ts",
+		"task.ts",
+		"test-fixtures.ts",
+		"types.ts",
+		"usage.ts",
+		"workspace-snapshot.ts",
+	];
+	for (const file of files) {
+		const full = join(dir, file);
+		try {
+			if (existsSync(full)) {
+				hasher.update(`${file}\0`);
+				hasher.update(readFileSync(full));
+			}
+		} catch {
+			// ignore unreadable
+		}
+	}
+	return hasher.digest("hex");
+}
+
+let CURRENT_LOADED_FINGERPRINT = computeLoadedFingerprint();
+
+export function getLoadedPluginFingerprint(): string {
+	return CURRENT_LOADED_FINGERPRINT;
+}
+
+export function reloadLoadedFingerprint(dir = PLUGIN_DIR): string {
+	CURRENT_LOADED_FINGERPRINT = computeLoadedFingerprint(dir);
+	return CURRENT_LOADED_FINGERPRINT;
+}
+
+export function getDiskHead(cwd = process.cwd()): string {
+	try {
+		const out = execFileSync("git", ["rev-parse", "HEAD"], { cwd, timeout: 5000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+		return out.trim() || "unknown";
+	} catch {
+		return "unknown";
+	}
+}
+
+export function getPackageVersion(dir = PLUGIN_DIR): string {
+	try {
+		const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { version?: string };
+		return pkg.version ?? "unknown";
+	} catch {
+		return "unknown";
+	}
+}
+
+export function createLoadedPluginFingerprint(
+	ctx?: ExtensionContext,
+	options: { reload?: boolean; diskHead?: string } = {},
+): LoadedPluginFingerprint {
+	if (options.reload) {
+		reloadLoadedFingerprint();
+	}
+	const cwd = ctx?.cwd || process.cwd();
+	const diskHead = options.diskHead ?? getDiskHead(cwd);
+	const sessionId = (ctx as any)?.sessionId ?? process.env.PI_SESSION_ID?.trim() ?? "unknown";
+	return {
+		version: 1,
+		loadedFingerprint: getLoadedPluginFingerprint(),
+		sourcePath: SOURCE_PATH,
+		packageVersion: getPackageVersion(),
+		hostVersion: (ctx as any)?.hostVersion ?? "unknown",
+		subagentVersion: "unknown",
+		sessionId,
+		workspaceId: cwd,
+		capabilities: ["planner-only", "concurrency", "shared-identity", "run-convergence", "output-resolver"],
+		diskHead,
+		loadedAt: new Date().toISOString(),
+		recordedAt: new Date().toISOString(),
+	};
+}
 
 export const PLANNER_PROMPT = `[PLANNER-ONLY MODE]
 Root: plan, delegate, inspect read-only, review, and arbitrate.
@@ -206,10 +307,11 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	let latestCtx: ExtensionContext | undefined;
 	ensurePricingFile();
 	let pricing = loadPricingTable();
-	let ledger = new UsageLedger({ pricing });
+	let orchestrator!: PlannerOrchestrator;
+	let ledger = new UsageLedger({ pricing, resolveTaskId: (taskId) => orchestrator.store.get(taskId)?.taskId ?? taskId });
 	const concurrencyConfig = loadConcurrencyDefault(CONCURRENCY_CONFIG);
 	const concurrency = new ConcurrencyController({ savedLimit: concurrencyConfig.limit, saved: concurrencyConfig.source === "saved", enforceWorkspace: false });
-	const orchestrator = new PlannerOrchestrator({
+	orchestrator = new PlannerOrchestrator({
 		concurrency,
 		gitRunner,
 		artifactDirs: () => artifactDirsFor(latestCtx ?? ({ hasUI: false, cwd: process.cwd() } as ExtensionContext)),
@@ -227,7 +329,23 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				pricing,
 			};
 		},
+		recordCompletionUsage: (taskId, receipt, toolCallId) => {
+			const usage = receipt.usage;
+			if (!usage || typeof usage !== "object") return;
+			const child = childUsageFromValue(usage, "worker", {
+				runId: receipt.runId,
+				toolCallId,
+				source: "sync-details",
+				pending: false,
+			});
+			if (!child) return;
+			const targetId = canonicalTaskId(taskId);
+			ledger.recordChild(targetId, child);
+			syncUsage(targetId);
+		},
 	});
+	let loadedFingerprintInfo = createLoadedPluginFingerprint(latestCtx);
+	orchestrator.setLoadedFingerprint(loadedFingerprintInfo);
 	const allSessionEntries: UsageEntry[] = [];
 	/** Ticket 40: emit soft/hard disclosures once per crossing until spend drops below the level. */
 	let sessionRootSoftWarned = false;
@@ -308,7 +426,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 
 	function enrichDecisionText(text: string, taskId?: string): string {
 		if (!text.includes("[PLANNER-ONLY REVIEW STATE]")) return text;
-		const targetId = taskId || text.match(/\btaskId:\s*(T-\d{8}-\d{3})\b/)?.[1];
+		const targetId = taskId ? canonicalTaskId(taskId) : text.match(/\btaskId:\s*(T-\d{8}-\d{3})\b/)?.[1];
 		if (!targetId) return text;
 		const usage = ledger.taskUsage(targetId);
 		let enriched = text;
@@ -462,10 +580,15 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		return false;
 	}
 
+	function canonicalTaskId(taskId: string): string {
+		return orchestrator.store.get(taskId)?.taskId ?? taskId;
+	}
+
 	function syncUsage(taskId?: string): void {
 		if (!taskId) return;
-		const usage = ledger.taskUsage(taskId);
-		const task = orchestrator.store.get(taskId);
+		const targetId = canonicalTaskId(taskId);
+		const usage = ledger.taskUsage(targetId);
+		const task = orchestrator.store.get(targetId);
 		if (usage && task) {
 			task.usage = usage;
 			orchestrator.store.persist(task);
@@ -473,7 +596,8 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	}
 
 	function resolveTaskPending(taskId: string, ctx: ExtensionContext, asyncDir?: string): void {
-		ledger.resolvePending(taskId, (child) => {
+		const targetId = canonicalTaskId(taskId);
+		ledger.resolvePending(targetId, (child) => {
 			if (!child.runId) return undefined;
 			const agents = [...new Set([child.agent, ...CHILD_META_AGENTS].filter((name): name is string => Boolean(name)))];
 			for (const agent of agents) {
@@ -481,13 +605,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				if (!meta) continue;
 				const resolved = childFromMeta(meta, child.kind);
 				if (resolved) {
-					orchestrator.noteDelegationModel(taskId, child.runId, resolved.model, resolved.thinking);
+					orchestrator.noteDelegationModel(targetId, child.runId, resolved.model, resolved.thinking);
 				}
 				return resolved;
 			}
 			return undefined;
 		});
-		syncUsage(taskId);
+		syncUsage(targetId);
 	}
 
 	async function writeUsageLog(
@@ -498,9 +622,10 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		const path = usageLogPath();
 		if (!path) return;
 		const shutdownSnapshot = Boolean(options?.incomplete || options?.unattributed);
-		if (shutdownSnapshot && (terminalUsageLogged.has(taskId) || openUsageLogged.has(taskId))) return;
-		const task = orchestrator.store.get(taskId);
-		const usage = ledger.taskUsage(taskId);
+		const targetId = canonicalTaskId(taskId);
+		if (shutdownSnapshot && (terminalUsageLogged.has(targetId) || openUsageLogged.has(targetId))) return;
+		const task = orchestrator.store.get(targetId);
+		const usage = ledger.taskUsage(targetId);
 		if (!usage) return;
 		if (!task && !options?.unattributed) return;
 		const line = {
@@ -518,9 +643,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			await mkdir(dirname(path), { recursive: true });
 			await appendFile(path, `${JSON.stringify(line)}\n`, "utf8");
 			if (task && isFinalTaskState(task.state) && !options?.incomplete) {
-				terminalUsageLogged.add(taskId);
+				terminalUsageLogged.add(targetId);
 			} else if (options?.incomplete || options?.unattributed) {
-				openUsageLogged.add(taskId);
+				openUsageLogged.add(targetId);
 			}
 		} catch {
 			if (!usageLogWriteFailed) {
@@ -614,7 +739,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 
 	/** Child usage belongs to the real active Task when explorer behavior remains unbound. */
 	function accountingTaskId(record: DelegationRecord): string {
-		return record.accountingTaskId ?? record.taskId;
+		return canonicalTaskId(record.accountingTaskId ?? record.taskId);
 	}
 
 	function recordSyncChildren(event: { toolCallId: string; details?: unknown }, delegation: DelegationRecord): void {
@@ -684,6 +809,10 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			if (!found) continue;
 			const results = Array.isArray(completion.results) ? completion.results : [];
 			const taskId = accountingTaskId(found.record);
+			if (ledger.taskUsage(taskId)?.children.some((item) => item.runId === runId && !item.pending)) {
+				syncUsage(taskId);
+				continue;
+			}
 			for (const item of results) {
 				const rec = asRecord(item);
 				const usageValue = rec?.usage ?? rec;
@@ -745,8 +874,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 
 	function recordInjectedText(taskId: string | undefined, text: string): void {
 		if (!taskId || !text) return;
-		ledger.recordInjected(taskId, Buffer.byteLength(text));
-		syncUsage(taskId);
+		const targetId = canonicalTaskId(taskId);
+		ledger.recordInjected(targetId, Buffer.byteLength(text));
+		syncUsage(targetId);
 	}
 
 	function loadSessionUsage(ctx: ExtensionContext): void {
@@ -761,8 +891,11 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			if (!rec || rec.type !== "custom" || rec.customType !== "planner-only-usage") continue;
 			if (rec.data && typeof rec.data === "object") {
 				const uEntry = rec.data as UsageEntry;
-				records.push(uEntry);
-				allSessionEntries.push(uEntry);
+				const normalized = uEntry.taskId
+					? { ...uEntry, taskId: canonicalTaskId(uEntry.taskId) }
+					: uEntry;
+				records.push(normalized);
+				allSessionEntries.push(normalized);
 			}
 		}
 		ledger.load(records);
@@ -863,7 +996,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			return {
 				content: [{ type: "text", text }],
 				details,
-				isError: result.status === "unbound" || result.status === "duplicate",
+				isError: result.status === "unbound" || result.status === "identity-conflict" || result.status === "duplicate",
 			};
 		},
 	});
@@ -992,9 +1125,20 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		latestCtx = ctx;
+		loadedFingerprintInfo = createLoadedPluginFingerprint(ctx);
+		orchestrator.setLoadedFingerprint(loadedFingerprintInfo);
+		if (typeof pi.appendEntry === "function") {
+			try {
+				pi.appendEntry("planner-only-version", loadedFingerprintInfo);
+			} catch {
+				// ignore
+			}
+		}
 		updateStatus(ctx);
 		loadSessionUsage(ctx);
 		orchestrator.restoreFromLedger();
+		ledger.canonicalizeTaskIds();
 		const rateWarning = rootRateWarning(ctx);
 		if (rateWarning) notify(ctx, rateWarning, "warning");
 	});
@@ -1270,6 +1414,11 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				if (roleModelPolicy.enabled && configuredRoot && rootIdentity && configuredRoot !== actualRootDisplay) {
 					lines.push("root 策略配置与实际运行的模型不一致");
 				}
+				const versionInfo = orchestrator.getLoadedFingerprint() ?? loadedFingerprintInfo;
+				lines.push(
+					`Plugin build: loaded=${versionInfo.loadedFingerprint.slice(0, 12)} (package: ${versionInfo.packageVersion}, disk HEAD: ${versionInfo.diskHead.slice(0, 12)})`,
+					`Plugin provenance: source=${versionInfo.sourcePath}; host=${versionInfo.hostVersion}; subagents=${versionInfo.subagentVersion}; session=${versionInfo.sessionId}; workspace=${versionInfo.workspaceId}; capabilities=${versionInfo.capabilities.join(",")}`,
+				);
 				const forcing = envForcingValue();
 				if (forcing !== undefined) {
 					lines.push(`Environment: PI_PLANNER_ONLY=${forcing} forces planner-only ${envForcesGuard() ? "on" : "off"}.`);
@@ -1278,6 +1427,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				}
 				lines.push(`Usage log: ${logStatus}`);
 				lines.push(orchestrator.renderConcurrencyStatus());
+				lines.push(orchestrator.renderRecoveryView(ctx.cwd || process.cwd()));
 				lines.push(`Oracle suite: ${oracleSuiteMode()}`);
 				const rateWarning = rootRateWarning(ctx);
 				if (rateWarning) lines.push(rateWarning);
@@ -1415,10 +1565,10 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					}
 					try {
 						const before = target.state;
-						store.abandon(taskId, `abandoned by operator via /planner-only task ${subaction}`);
-						notify(ctx, `Task ${taskId} abandoned and marked failed.`);
+						store.abandon(target.taskId, `abandoned by operator via /planner-only task ${subaction}`);
+						notify(ctx, `Task ${target.taskId} abandoned and marked failed.`);
 						persistSessionEntries();
-						await flushIfTerminal(taskId, before, ctx);
+						await flushIfTerminal(target.taskId, before, ctx);
 					} catch (error) {
 						notify(ctx, error instanceof Error ? error.message : String(error), "warning");
 					}
@@ -1492,7 +1642,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					persistSessionEntries();
 					ensurePricingFile();
 					pricing = loadPricingTable();
-					ledger = new UsageLedger({ pricing });
+					ledger = new UsageLedger({ pricing, resolveTaskId: (taskId) => orchestrator.store.get(taskId)?.taskId ?? taskId });
 					ledger.load(allSessionEntries);
 					for (const task of store.list()) {
 						syncUsage(task.taskId);
@@ -1502,13 +1652,14 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				}
 
 				const renderTaskBlock = (tId: string): string | undefined => {
-					resolveTaskPending(tId, ctx);
-					const u = ledger.taskUsage(tId);
+					const targetId = canonicalTaskId(tId);
+					resolveTaskPending(targetId, ctx);
+					const u = ledger.taskUsage(targetId);
 					if (!u) return undefined;
-					const t = store.get(tId);
+					const t = store.get(targetId);
 					const rootRates = lookupRates(pricing, undefined, u.rootModel);
 					return renderUsage(u, {
-						taskId: tId,
+						taskId: targetId,
 						state: t?.state ?? "unknown (store not persisted)",
 						rounds: t?.reviewRound ?? 0,
 						currency: pricing.currency,
@@ -1520,12 +1671,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					const session = ledger.sessionUsage();
 					const lines: string[] = [`Usage for session (${session.tasks.length} task${session.tasks.length === 1 ? "" : "s"}):`];
 					for (const tId of session.tasks) {
-						resolveTaskPending(tId, ctx);
-						const u = ledger.taskUsage(tId);
+						const targetId = canonicalTaskId(tId);
+						resolveTaskPending(targetId, ctx);
+						const u = ledger.taskUsage(targetId);
 						if (!u) continue;
-						const t = store.get(tId);
+						const t = store.get(targetId);
 						const state = t ? t.state : "unknown";
-						lines.push(`${tId} (${state}): ${renderUsageLine(u, pricing.currency)}`);
+						lines.push(`${targetId} (${state}): ${renderUsageLine(u, pricing.currency)}`);
 					}
 					lines.push(`untasked: ${renderUsageLine({ root: session.untasked, children: [], costUnknown: session.untasked.costUsd === undefined && session.untasked.turns > 0 }, pricing.currency)}`);
 					return lines.join("\n");
@@ -1561,6 +1713,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 							gitStatusHash: task.baseEvidence?.gitStatusHash,
 						},
 						usage,
+						provenance: orchestrator.getLoadedFingerprint() ?? loadedFingerprintInfo,
+						identityIndex: task.executions.map((execution) => ({
+							taskId: task.taskId,
+							executionId: execution.executionId,
+							...(execution.runId ? { hostRunId: execution.runId } : {}),
+							...(execution.reportIndex !== undefined ? { reportRevision: execution.reportIndex + 1 } : {}),
+						})),
 						pricing: { path: pricingPath(), version: pricing.version, currency: pricing.currency, loadedAt: new Date().toISOString() },
 					});
 					const dir = join(AGENT_DIR, "planner-only", "runs");
