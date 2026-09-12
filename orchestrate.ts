@@ -50,6 +50,9 @@ import {
 	formatSessionRootBudgetStatus,
 	loadHostEnforcement,
 	loadSessionRootBudgetConfig,
+	recordExplorationToolCall,
+	emptyExplorationBudget,
+	isExplorationToolCall,
 	resolveEffectiveLimits,
 } from "./floors.ts";
 import type { SessionRootBudgetConfig, SessionRootSpend } from "./floors.ts";
@@ -116,6 +119,7 @@ import {
 	MAX_WORKER_REPORT_CHARS,
 	canRebindNamedTask,
 	isFinalTaskState,
+	isTerminalTaskState,
 } from "./types.ts";
 import type {
 	DelegationKind,
@@ -127,6 +131,7 @@ import type {
 	ReviewVerdict,
 	StructuredDelegationMode,
 	TaskExecutionRecord,
+	TaskCompletionKind,
 	TaskFinding,
 	TaskRole,
 	WorkerReport,
@@ -397,6 +402,9 @@ export interface OrchestratorDeps {
 	concurrency?: ConcurrencyController;
 	/** Optional receipt-side accounting hook; called once per distinct run receipt. */
 	recordCompletionUsage?: (taskId: string, receipt: CompletionReceipt, toolCallId: string) => void;
+	/** RT-06 — host adapter hook for a policy-approved automatic oracle handoff. */
+	automaticOracleDispatch?: (task: TaskRecord) => void;
+
 	/** Completion persistence crash-point hook used by integration tests and hosts. */
 	runRecordFault?: (point: "before-report" | "after-report") => void;
 }
@@ -744,6 +752,7 @@ function untrustedPlaceholder(taskId: string): TaskRecord {
 		reviews: [],
 		overrides: [],
 		aliases: [],
+		successors: [],
 		reportCorrections: 0,
 		executions: [],
 		findings: [],
@@ -767,8 +776,11 @@ export class PlannerOrchestrator {
 	private readonly getModelPreflightContext?: () => Omit<ModelPreflightContext, "input"> | undefined;
 	private readonly concurrency: ConcurrencyController;
 	private readonly recordCompletionUsage?: (taskId: string, receipt: CompletionReceipt, toolCallId: string) => void;
-	/** toolCallId -> delegated task + invocation kind. */
+	private readonly automaticOracleDispatch?: (task: TaskRecord) => void;
+	private readonly automaticOracleTasks = new Set<string>();
+
 	private readonly delegations = new Map<string, DelegationRecord>();
+	private readonly explorationBudgets = new Map<string, ReturnType<typeof emptyExplorationBudget>>();
 	private readonly reservations = new BudgetReservations();
 	/**
 	 * runIds whose subagent-notify (or sync result) has already been consumed.
@@ -788,7 +800,7 @@ export class PlannerOrchestrator {
 	private readonly snapshots?: LedgerSnapshotStore;
 	/** RR-02 durable execution/ingestion state, separate from Task review state. */
 	private readonly runRecords?: RunRecordStore;
-	private readonly runSessionId: string;
+	private runSessionId: string;
 	private readonly runWorkspaceId: string;
 	private loadedProvenance?: LoadedPluginFingerprint;
 	/**
@@ -832,7 +844,9 @@ export class PlannerOrchestrator {
 	}
 
 	constructor(deps: OrchestratorDeps) {
-		this.runSessionId = process.env.PI_SESSION_ID?.trim() || "unknown-session";
+		this.runSessionId = process.env.PI_SESSION_ID?.trim()
+			|| deps.loadedProvenance?.sessionId?.trim()
+			|| "unknown-session";
 		this.runWorkspaceId = normalizeWorkspaceIdentity(deps.ledgerDir ?? process.cwd());
 		this.loadedProvenance = deps.loadedProvenance;
 		if (deps.store) {
@@ -860,12 +874,26 @@ export class PlannerOrchestrator {
 		this.getModelPreflightContext = deps.getModelPreflightContext;
 		this.concurrency = deps.concurrency ?? new ConcurrencyController();
 		this.recordCompletionUsage = deps.recordCompletionUsage;
+		this.automaticOracleDispatch = deps.automaticOracleDispatch;
 		this.structuredDelegationMode =
 			deps.structuredDelegationMode ?? readStructuredDelegationMode();
 	}
 
 	setLoadedProvenance(provenance: LoadedPluginFingerprint): void {
 		this.loadedProvenance = { ...provenance, capabilities: [...provenance.capabilities] };
+		if (this.runSessionId === "unknown-session" && provenance.sessionId.trim()) {
+			this.runSessionId = provenance.sessionId.trim();
+		}
+	}
+
+	/** Resolve a run only when its durable record belongs to this Root session. */
+	taskIdForSessionRun(runId: string): string | undefined {
+		const id = runId.trim();
+		if (!id) return undefined;
+		const delegation = [...this.delegations.values()].find((record) => record.runId === id);
+		if (delegation) return this.store.get(delegation.taskId)?.taskId;
+		const record = this.runRecords?.list().find((item) => item.runId === id && item.sessionId === this.runSessionId);
+		return record ? this.store.get(record.taskId)?.taskId : undefined;
 	}
 
 	getLoadedProvenance(): LoadedPluginFingerprint | undefined {
@@ -983,6 +1011,24 @@ export class PlannerOrchestrator {
 		const task = record ? this.store.get(record.taskId) : undefined;
 		this.releaseRunSlot(task, record ? this.executionIdFor(record, toolCallId) : toolCallId, toolCallId);
 		this.delegations.delete(toolCallId);
+	}
+
+	/** Record an inspection call against the Task's unified exploration budget. */
+	recordExplorationToolCall(taskId: string, toolName: string, input?: unknown): { used: number; limit: number; notice?: string } {
+		const current = this.explorationBudgets.get(taskId) ?? emptyExplorationBudget();
+		const result = recordExplorationToolCall(current, toolName, input);
+		this.explorationBudgets.set(taskId, result.budget);
+		return { used: result.budget.used, limit: result.budget.limit, ...(result.notice ? { notice: result.notice } : {}) };
+	}
+
+	/** True when a call belongs to the plugin-side exploration budget. */
+	isExplorationToolCall(toolName: string, input?: unknown): boolean {
+		return isExplorationToolCall(toolName, input);
+	}
+
+	explorationBudgetStatus(taskId: string): { used: number; limit: number; softNotified: boolean; hardNotified: boolean } {
+		const budget = this.explorationBudgets.get(taskId) ?? emptyExplorationBudget();
+		return { ...budget };
 	}
 
 	/** Current child capacity and workspace reservations for /planner-only status. */
@@ -1184,7 +1230,7 @@ export class PlannerOrchestrator {
 			const resolution = options.resolution;
 			const ingestionPatch = resolution
 				? resolution.kind === "loaded"
-					? { ingestionState: "loaded" as const, outputDigest: resolution.digest }
+					? { ingestionState: "loaded" as const, outputDigest: resolution.digest, lastError: undefined }
 					: {
 						ingestionState: resolution.kind === "pending" ? "output-pending" as const : "unavailable" as const,
 						...(resolution.kind === "pending" ? { terminalErrorClass: "missing-report" as const, nextAction: "retry-output-reconcile" } : {}),
@@ -1523,7 +1569,7 @@ export class PlannerOrchestrator {
 		if (!cwd) return undefined;
 		const candidate = this.store.activeForCwd(cwd);
 		if (!candidate) return undefined;
-		return candidate.state === "changes_requested" || candidate.state === "reviewing" || candidate.state === "executing"
+		return candidate.state === "changes_requested" || candidate.state === "report-invalid" || candidate.state === "reviewing" || candidate.state === "executing"
 			? candidate
 			: undefined;
 	}
@@ -1622,6 +1668,7 @@ export class PlannerOrchestrator {
 				executionState: "terminal",
 				ingestionState: "loaded",
 				outputDigest: resolution.digest,
+				lastError: undefined,
 			});
 			return;
 		}
@@ -1778,6 +1825,49 @@ export class PlannerOrchestrator {
 		}
 	}
 
+	private successorAttribution(
+		task: TaskRecord,
+		currentSample: EvidenceRef,
+		freshness: FreshnessComparison,
+	): { kind: TaskCompletionKind; successorTaskId?: string; paths: string[] } | undefined {
+		if (!freshness.verifiable || freshness.fresh) return undefined;
+		const successors = [...new Set([
+			...(task.successors ?? []),
+			...this.store.list()
+				.filter((candidate) => (candidate.spec?.parentTaskId ?? candidate.spec?.commitOf ?? candidate.parentTaskId) === task.taskId)
+				.map((candidate) => candidate.taskId),
+		])];
+		const candidates = this.store.list().filter((candidate) =>
+			successors.includes(candidate.taskId)
+			&& isTerminalTaskState(candidate.state),
+		);
+		if (candidates.length === 0) return undefined;
+		const successorPaths = new Set(
+			candidates.flatMap((candidate) => candidate.executions.flatMap((execution) => execution.truthPaths ?? [])),
+		);
+		if (successorPaths.size === 0) return undefined;
+		const driftPaths = freshness.driftPaths.map((path) => normalizeEvidencePaths([path], currentSample.repoRoot ?? currentSample.cwd)[0]);
+		if (driftPaths.length > 0 && driftPaths.every((path) => successorPaths.has(path))) {
+			const owner = candidates.find((candidate) =>
+				driftPaths.every((path) => candidate.executions.some((execution) => (execution.truthPaths ?? []).includes(path))),
+			);
+			return { kind: "superseded", paths: driftPaths, ...(owner ? { successorTaskId: owner.taskId } : {}) };
+		}
+		const committedPaths = (currentSample.committedPaths ?? [])
+			.map((path) => normalizeEvidencePaths([path], currentSample.repoRoot ?? currentSample.cwd)[0]);
+		if (
+			freshness.headChanged
+			&& currentSample.changedPaths?.length === 0
+			&& committedPaths.length > 0
+			&& committedPaths.every((path) => successorPaths.has(path))
+		) {
+			const owner = candidates.find((candidate) =>
+				committedPaths.every((path) => candidate.executions.some((execution) => (execution.truthPaths ?? []).includes(path))),
+			);
+			return { kind: "committed", paths: committedPaths, ...(owner ? { successorTaskId: owner.taskId } : {}) };
+		}
+		return undefined;
+	}
 	/**
 	 * E01 — replace the legacy mixed A↔C comparison with the per-execution
 	 * contract when execution material exists:
@@ -1840,7 +1930,7 @@ export class PlannerOrchestrator {
 			}).fresh
 			: false;
 		const freshnessBase = latest.reportOnly && correctionWindowFresh ? latest.cReport : truthBase;
-		const freshness: FreshnessComparison = freshnessBase
+		let freshness: FreshnessComparison = freshnessBase
 			? compareFreshness(freshnessBase, currentSample, {
 				...(roots ? { additionalWorktreeRoots: roots } : {}),
 				...(task.spec?.scope ? { scope: task.spec.scope } : {}),
@@ -1852,6 +1942,33 @@ export class PlannerOrchestrator {
 				driftPaths: [],
 				headChanged: false,
 			};
+		const successorAttribution = truth.findings.length === 0
+			? this.successorAttribution(task, currentSample, freshness)
+			: undefined;
+		if (successorAttribution) {
+			freshness = {
+				...freshness,
+				fresh: true,
+				driftPaths: [],
+				reasons: [
+					...freshness.reasons,
+					`${successorAttribution.kind} by successor${successorAttribution.successorTaskId ? ` ${successorAttribution.successorTaskId}` : ""}`,
+				],
+			};
+			this.store.recordExecutionFindings(
+				task.taskId,
+				latest.executionId,
+				[{ kind: successorAttribution.kind, paths: successorAttribution.paths }],
+				this.store.now().toISOString(),
+				["drift", "superseded", "committed"],
+			);
+			this.store.markFindingEvidenceResolved(
+				task.taskId,
+				successorAttribution.paths,
+				latest.executionId,
+				["superseded", "committed"],
+			);
+		}
 		this.store.completeExecution(task.taskId, latest.executionId, {
 			freshness: {
 				verifiable: freshness.verifiable,
@@ -1942,7 +2059,8 @@ export class PlannerOrchestrator {
 			missingMaterials: comparison.missingMaterials,
 			freshness,
 			boundaryRef: currentSample.finalGitRef,
-		};
+			...(successorAttribution ? { supersession: successorAttribution } : {}),
+		} as EvidenceComparison;
 	}
 
 	/**
@@ -2805,7 +2923,7 @@ export class PlannerOrchestrator {
 		}
 
 		let priorLaunchFailure: string | undefined;
-		if (!auxiliaryExplorer && ["planning", "changes_requested", "blocked", "failed"].includes(task.state)) {
+		if (!auxiliaryExplorer && ["planning", "changes_requested", "report-invalid", "blocked", "failed"].includes(task.state)) {
 			priorLaunchFailure = task.stateReason?.startsWith("delegation launch failed:") ? task.stateReason : undefined;
 			this.store.transition(task.taskId, "executing");
 			if (priorLaunchFailure) {
@@ -2926,6 +3044,10 @@ export class PlannerOrchestrator {
 		const request = extractReviewRequest(prompt);
 		const spec = target?.spec ?? extractTaskSpec(prompt);
 		if (request?.taskId) return this.store.get(request.taskId);
+		if (target?.taskId) {
+			const namedTarget = this.store.get(target.taskId);
+			if (namedTarget) return namedTarget;
+		}
 		if (spec?.taskId) {
 			const existing = this.store.get(spec.taskId);
 			if (existing) return existing;
@@ -3011,7 +3133,8 @@ export class PlannerOrchestrator {
 			`Persisted run provenance: ${provenanceState}`,
 			...(task.recoveryBinding ? [`Recovery binding: ${task.recoveryBinding.status}; ${task.recoveryBinding.reason}`] : []),
 			...(isExecutingStale(task) ? [`Lock: stale (executing for over ${executingStaleMinutes()} minutes; the child has not been confirmed exited — reconcile or abandon before writing)`] : []),
-			`Evidence: ${report ? (task.lastComparison ? describeComparison(task.lastComparison) : "not compared") : "no report yet"}`,
+			`Evidence: ${report ? (task.lastComparison ? describeComparison(task.lastComparison) : "not compared") : task.rawReport ? "raw report retained; Root verdict is available" : "no report yet"}`,
+			...(task.rawReport ? [`Raw report: retained from execution ${task.rawReport.executionId}; ${task.rawReport.error}`] : []),
 			...(isExplicitlyNoValidation(task.spec) ? ["Validation: not required (TaskSpec 明确不要求验证)"] : []),
 			...(report && !isExplicitlyNoValidation(task.spec) && lastWorkerValidationPassed(report) && task.lastComparison?.fresh === true && taskSpecValidationComplete ? ["Validation: passed"] : []),
 			`Changed files: ${report?.changedFiles.length ?? 0}`,
@@ -3186,10 +3309,10 @@ export class PlannerOrchestrator {
 	 * the escape hatch must stay open even when a completion notice was lost.
 	 */
 	rootVerdictRefusal(task: TaskRecord, verdict: ReviewVerdict): string | undefined {
-		if (task.state === "completed") {
-			return `Task ${task.taskId} is already completed; verdicts are final. Start a new Task with a new TaskSpec for further work.`;
+		if (isTerminalTaskState(task.state)) {
+			return `Task ${task.taskId} is already ${task.state}; verdicts are final. Start a new Task with a new TaskSpec for further work.`;
 		}
-		if (verdict !== "blocked" && task.reports.length === 0) {
+		if (task.state === "completed" || (task.state !== "report-invalid" && verdict !== "blocked" && task.reports.length === 0)) {
 			return `Task ${task.taskId} has no recorded WorkerReport; a pass or change request needs a report to judge.`;
 		}
 		if (verdict !== "blocked" && this.hasPendingDelegation(task.taskId)) {
@@ -3589,9 +3712,18 @@ export class PlannerOrchestrator {
 				record.agent ?? KIND_DEFAULT_AGENTS[record.kind],
 			);
 			if (meta?.exitCode !== undefined) {
+				// Host meta can become terminal before the saved output is visible.
+				// Keep the exact-id wait bounded while the writer flushes its artifact.
+				const deadline = Date.now() + 15_000;
+				while (Date.now() < deadline) {
+					if (this.processedRunIds.has(authorized)) return { status: "recovered", content: [] };
+					await new Promise((resolve) => setTimeout(resolve, 250));
+					const recovered = await this.reconcileDelegation(toolCallId, record);
+					if (recovered) return { status: "recovered", content: recovered.content };
+				}
 				return {
 					status: "pending",
-					reason: "the run is terminal but its saved output could not be delivered; inspect the run artifacts or re-delegate",
+					reason: "the run is terminal but its saved output could not be delivered within the bounded grace period; retry the exact-id bg_wait or inspect the run artifacts",
 				};
 			}
 			return {
@@ -3662,7 +3794,7 @@ export class PlannerOrchestrator {
 		task: TaskRecord,
 		verdict: ReviewVerdict,
 		summary: string,
-		options: { findings?: ReviewFinding[]; source?: ReviewResult["source"] } = {},
+		options: { findings?: ReviewFinding[]; source?: ReviewResult["source"]; acknowledgeDrift?: ReviewResult["acknowledgeDrift"] } = {},
 	): Promise<RootVerdictOutcome> {
 		// A finished child run whose notice was lost must be consumed before any
 		// verdict, so the newest WorkerReport is what Root actually judges.
@@ -3720,6 +3852,8 @@ export class PlannerOrchestrator {
 			summary,
 			findings: options.findings ?? [],
 			evidenceFresh: comparison ? comparison.fresh : true,
+			...(report ? { reportRevision: current.reports.length, reportSource: "worker" as const } : current.rawReport ? { reportRevision: current.reports.length + 1, reportSource: "raw-judged" as const } : {}),
+			...(options.acknowledgeDrift ? { acknowledgeDrift: options.acknowledgeDrift } : {}),
 			...(options.source ? { source: options.source } : {}),
 		};
 		this.store.recordReview(task.taskId, review);
@@ -4308,7 +4442,8 @@ export class PlannerOrchestrator {
 					paths: snapshotPathsFor(task, currentSample),
 				});
 				const binding = compareSnapshotBinding(task.snapshot, snapshot, task.reports.length);
-				if (binding.state !== "fresh") {
+				const successorAttribution = Boolean((comparison as EvidenceComparison & { supersession?: unknown } | undefined)?.supersession);
+				if (binding.state !== "fresh" && !successorAttribution) {
 					const reason = binding.reason ?? "the workspace snapshot at accept time is not fresh";
 					return {
 						content: [{
@@ -4426,6 +4561,9 @@ export class PlannerOrchestrator {
 			}
 		}
 
+		const rawInvalid = !report
+			&& extracted.level === "irreparable"
+			&& !/(?:taskId|workerRunId).*(?:mismatch|must match)/i.test(extracted.error ?? "");
 		const reportError = report
 			? undefined
 			: identityErrors.length > 0
@@ -4498,6 +4636,10 @@ export class PlannerOrchestrator {
 				this.recordReportExecutionTruth(task, execution, current, report, revision - 1);
 			}
 		}
+		if (report && options.delegation?.kind === "worker" && task.spec?.validation.required === true && !this.automaticOracleTasks.has(task.taskId)) {
+			this.automaticOracleTasks.add(task.taskId);
+			this.automaticOracleDispatch?.(this.store.require(task.taskId));
+		}
 		let comparison = report
 			? compareWithRootSamples(task, current, report, {
 				...(options.delegation?.reportOnly ? { reportOnly: true } : {}),
@@ -4508,14 +4650,46 @@ export class PlannerOrchestrator {
 			comparison = { ...comparison, environmentFailure: environmentFailureOf(current) };
 		}
 		if (comparison) this.store.setLastComparison(task.taskId, comparison);
-		const { decision } = advanceReview({
-			store: this.store,
-			taskId: task.taskId,
-			...(report ? { report } : {}),
-			...(reportError ? { reportError } : {}),
-			...(comparison ? { comparison } : {}),
-		});
+		if (!report && rawInvalid) {
+			const invalidTask = this.store.require(task.taskId);
+			invalidTask.rawReport = {
+				executionId: toolCallId,
+				text: truncate(text, RAW_OUTPUT_FALLBACK_CHARS),
+				error: reportError ?? "invalid WorkerReport",
+				receivedAt: this.store.now().toISOString(),
+			};
+			if (!isFinalTaskState(invalidTask.state) && invalidTask.state !== "report-invalid") {
+				this.store.transition(invalidTask.taskId, "report-invalid");
+			}
+			this.store.setStateReason(invalidTask.taskId, `WorkerReport envelope is irreparable; raw output retained: ${reportError ?? "invalid WorkerReport"}`);
+		}
+		let decision: ReviewDecision;
+		if (rawInvalid) {
+			decision = {
+				action: "review_pending",
+				nextState: "report-invalid",
+				round: this.store.require(task.taskId).reviewRound,
+				consumesRound: false,
+				reason: reportError ?? "invalid WorkerReport",
+				guidance: ["Raw WorkerReport output was retained. Root may inspect it and record planner_verdict directly."],
+			};
+		} else {
+			decision = advanceReview({
+				store: this.store,
+				taskId: task.taskId,
+				...(report ? { report } : {}),
+				...(reportError ? { reportError } : {}),
+				...(comparison ? { comparison } : {}),
+			}).decision;
+		}
 
+		if (decision.action === "report_correction") {
+			const correctionTask = this.store.require(task.taskId);
+			if (correctionTask.reportCorrections < 1) {
+				correctionTask.reportCorrections += 1;
+			}
+			this.store.persist(correctionTask);
+		}
 		if (!report) {
 			let outputText = [
 				identityErrors.length > 0
@@ -4534,11 +4708,12 @@ export class PlannerOrchestrator {
 				...(identityErrors.length > 0
 					? ["The report was not recorded, and no evidence was accepted from it."]
 					: []),
-				"Do not accept it. Delegate exactly one report-only correction:",
-				`"Do not modify files. Return only a valid WorkerReport for task ${task.taskId}."`,
-				...(reportError === PROSE_ONLY_REPORT_ERROR && decision.action === "report_correction"
-					? [`JSON only: ${workerReportShapeReminder(task.taskId)}`]
-					: []),
+				...(rawInvalid
+					? ["The envelope is irreparable but the Task is not blocked. Root may inspect the retained raw output and record planner_verdict directly (pass, request_changes, or blocked).", "Raw judgment is available because this output was a structured but irreparable WorkerReport envelope."]
+					: ["Do not accept it. Delegate exactly one report-only correction:", `"Do not modify files. Return only a valid WorkerReport for task ${task.taskId}."`,
+						...(reportError === PROSE_ONLY_REPORT_ERROR && decision.action === "report_correction"
+							? [`JSON only: ${workerReportShapeReminder(task.taskId)}`]
+							: [])]),
 				"",
 				"--- worker output ---",
 				truncate(text, RAW_OUTPUT_FALLBACK_CHARS),
@@ -4644,6 +4819,9 @@ export class PlannerOrchestrator {
 				...(toolCallId ? { workerRunId: toolCallId } : {}),
 			});
 		}
+		const rawInvalid = !extracted.report
+			&& extracted.level === "irreparable"
+			&& !/(?:taskId|workerRunId).*(?:mismatch|must match)/i.test(extracted.error ?? "");
 		if (!extracted.report || identityErrors.length > 0) {
 			// Keep the execution's C_report even for the rejected result.
 			const execution = this.store.executionById(task.taskId, toolCallId);
@@ -4659,6 +4837,26 @@ export class PlannerOrchestrator {
 			const reportError = identityErrors.length > 0
 				? `task identity rejected: ${identityErrors.join("; ")}`
 				: extracted.error ?? "no WorkerReport found";
+			if (rawInvalid) {
+				const invalidTask = this.store.require(task.taskId);
+				invalidTask.rawReport = {
+					executionId: toolCallId,
+					text: truncate(text, RAW_OUTPUT_FALLBACK_CHARS),
+					error: reportError,
+					receivedAt: this.store.now().toISOString(),
+				};
+				if (!isFinalTaskState(invalidTask.state) && invalidTask.state !== "report-invalid") this.store.transition(invalidTask.taskId, "report-invalid");
+				this.store.setStateReason(invalidTask.taskId, `standalone explorer envelope is irreparable; raw output retained: ${reportError}`);
+				return {
+					content: [{ type: "text", text: [
+						`[PLANNER-ONLY] Standalone explorer for task ${task.taskId} returned an irreparable envelope; the Task is not blocked.`,
+						reportError,
+						"Root may inspect the retained raw output and record planner_verdict directly.",
+						"",
+						truncate(text, RAW_OUTPUT_FALLBACK_CHARS),
+					].join("\n") }],
+				};
+			}
 			if (this.store.require(task.taskId).state !== "completed") {
 				this.store.transition(task.taskId, "blocked");
 				this.store.setStateReason(
@@ -4719,6 +4917,18 @@ export class PlannerOrchestrator {
 			if (identityErrors.length === 0) {
 				report = rewriteReportToCanonical(extracted.report, task, extracted.repairs);
 				this.store.recordValidatorReport(task.taskId, report);
+			}
+		}
+		if (toolCallId) {
+			const execution = this.store.executionById(task.taskId, toolCallId);
+			if (execution) {
+				this.updateRunRecord(task, toolCallId, {
+					executionState: "terminal",
+					ingestionState: "recorded",
+					terminalReason: report ? "validator-recorded" : "judged-directly",
+					terminalSource: "report-only",
+					lastError: undefined,
+				});
 			}
 		}
 

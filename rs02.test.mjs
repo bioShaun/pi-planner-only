@@ -7,6 +7,9 @@ import {
 	compareFreshness,
 } from "./evidence.ts";
 import { PlannerOrchestrator } from "./orchestrate.ts";
+import { TaskStore, createTaskSpec } from "./task.ts";
+import { decideReview } from "./review.ts";
+import { resolveDelegationTarget, stampReportOnlyCorrectionInput } from "./roles.ts";
 
 const CWD = "/repo";
 
@@ -254,6 +257,119 @@ try {
 	assert.equal(clean.task.state, "completed");
 } finally {
 	rmSync(integrationLedger, { recursive: true, force: true });
+}
+
+
+// RT-02 B05-B09: successor links and non-destructive supersession closure.
+{
+	const store = new TaskStore();
+	const parent = store.create(createTaskSpec({
+		taskId: "T-20260912-705",
+		objective: "original work",
+		cwd: CWD,
+	}));
+	const successor = store.create(createTaskSpec({
+		taskId: "T-20260912-706",
+		objective: "repair original work",
+		cwd: CWD,
+		parentTaskId: parent.taskId,
+	}));
+	const commit = store.create(createTaskSpec({
+		taskId: "T-20260912-707",
+		objective: "commit original work",
+		cwd: CWD,
+		commitOf: parent.taskId,
+	}));
+	assert.deepEqual(parent.successors, [successor.taskId, commit.taskId], "B05: parent records successor and commit Tasks");
+	assert.equal(successor.parentTaskId, parent.taskId, "B07: correction retains parentTaskId");
+	assert.equal(commit.spec?.commitOf, parent.taskId, "B05: commitOf declaration is retained");
+
+	store.transition(parent.taskId, "executing");
+	store.transition(parent.taskId, "reviewing");
+	const workerReport = report({ workerRunId: "b05-report" });
+	const supersededComparison = {
+		verifiable: true,
+		fresh: true,
+		reasons: ["superseded by successor"],
+		truthPaths: [],
+		undeclaredPaths: [],
+		extraDeclaredPaths: [],
+		overlappingPaths: [],
+		unrelatedPaths: [],
+		missingPaths: [],
+		unexplained: false,
+		freshness: { verifiable: true, fresh: true, reasons: [], driftPaths: [], headChanged: false },
+		supersession: { kind: "superseded", successorTaskId: successor.taskId },
+	};
+	const closed = decideReview({ task: parent, report: workerReport, comparison: supersededComparison, review: {
+		taskId: parent.taskId,
+		verdict: "pass",
+		summary: "successor delivered the work",
+		findings: [],
+		evidenceFresh: true,
+	} });
+	assert.equal(closed.nextState, "closed-superseded", "B05: unacknowledged successor pass does not block");
+	assert.equal(closed.completionKind, "superseded");
+
+	const acknowledged = decideReview({ task: parent, report: workerReport, comparison: supersededComparison, review: {
+		taskId: parent.taskId,
+		verdict: "pass",
+		summary: "successor explicitly acknowledged",
+		findings: [],
+		evidenceFresh: true,
+		acknowledgeDrift: { successorTaskId: successor.taskId },
+	} });
+	assert.equal(acknowledged.nextState, "completed", "B05: acknowledged successor reaches completed");
+	assert.equal(acknowledged.completionKind, "superseded");
+
+	const committed = decideReview({ task: parent, report: workerReport, comparison: {
+		...supersededComparison,
+		supersession: { kind: "committed", successorTaskId: commit.taskId },
+	}, review: {
+		taskId: parent.taskId,
+		verdict: "pass",
+		summary: "commit acknowledged",
+		findings: [],
+		evidenceFresh: true,
+		acknowledgeDrift: { commit: true },
+	} });
+	assert.equal(committed.nextState, "completed", "B05: committed successor reaches completed");
+	assert.equal(committed.completionKind, "committed");
+
+	const recoveryBefore = parent.recoveryAttempts;
+	const staleComparison = {
+		...supersededComparison,
+		fresh: false,
+		unexplained: true,
+		freshness: { verifiable: true, fresh: false, reasons: ["external edit"], driftPaths: ["/repo/external.txt"], headChanged: false },
+		supersession: undefined,
+	};
+	const rewrite = decideReview({ task: parent, report: workerReport, comparison: staleComparison, review: {
+		taskId: parent.taskId,
+		verdict: "pass",
+		summary: "protocol rewrite",
+		findings: [],
+		evidenceFresh: false,
+	} });
+	assert.equal(rewrite.action, "revalidate", "B08: stale pass is rewritten to revalidate");
+	assert.equal(parent.recoveryAttempts, recoveryBefore, "B08: deciding a rewrite does not mutate recoveryAttempts");
+
+	const b09Store = new TaskStore();
+	const b09Existing = b09Store.create(createTaskSpec({
+		taskId: "T-20260912-709",
+		objective: "report rebinding",
+		cwd: CWD,
+	}));
+	const reboundInput = { agent: "worker", taskId: b09Existing.taskId, reportOnly: true };
+	stampReportOnlyCorrectionInput(reboundInput);
+	const rebound = resolveDelegationTarget(reboundInput, (taskId) => b09Store.get(taskId));
+	assert.equal(rebound?.task?.taskId, b09Existing.taskId, "B09: report-only taskId-only input rebinds the existing Task");
+	const taskCount = b09Store.list().length;
+	const pendingInput = { agent: "worker", taskId: "T-pending", reportOnly: true };
+	stampReportOnlyCorrectionInput(pendingInput);
+	const pending = resolveDelegationTarget(pendingInput, (taskId) => b09Store.get(taskId));
+	assert.equal(pending?.task, undefined, "B09: T-pending report-only input has no existing target");
+	assert.equal(b09Store.list().length, taskCount, "B09: rejected sentinel does not create a placeholder Task");
 }
 
 console.log("rs02 tests passed");

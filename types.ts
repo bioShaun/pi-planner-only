@@ -110,13 +110,22 @@ export type TaskState =
 	| "executing"
 	| "reviewing"
 	| "changes_requested"
+	| "report-invalid"
 	| "blocked"
 	| "completed"
+	| "closed-superseded"
 	| "failed";
 
 export type ReviewMode = "root" | "fresh";
 
 export type ReviewVerdict = "pass" | "request_changes" | "blocked";
+
+export type TaskCompletionKind = "superseded" | "committed";
+
+export interface DriftAcknowledgement {
+	successorTaskId?: string;
+	commit?: boolean;
+}
 
 export type FindingSeverity = "blocker" | "major" | "minor" | "info";
 
@@ -265,7 +274,9 @@ export type TaskFindingKind =
 	| "scope"
 	| "over-declared"
 	| "missing"
-	| "drift";
+	| "drift"
+	| "superseded"
+	| "committed";
 
 /**
  * A Task-level finding that outlives the execution that produced it. Later
@@ -283,6 +294,14 @@ export interface TaskFinding {
 	note: string;
 	evidenceResolvedBy?: string;
 	resolvedBy?: string;
+}
+
+/** A pre-located evidence fragment supplied to a Worker in its TaskSpec. */
+export interface ContextPackEntry {
+	path: string;
+	startLine?: number;
+	endLine?: number;
+	summary: string;
 }
 
 /** Downward contract: what the worker is allowed and required to do. */
@@ -309,6 +328,15 @@ export interface TaskSpec {
 	 * absent from the sample but the root-relative form is present.
 	 */
 	additionalWorktreeRoots?: string[];
+	/** Pre-located evidence fragments supplied by Root or an earlier Explorer. */
+	contextPack?: ContextPackEntry[];
+	/**
+	 * Explicit parent relationship for a derived correction or commit Task.
+	 * The parent record keeps the reciprocal id in `successors`.
+	 */
+	parentTaskId?: string;
+	/** A commit Task declares the Task whose work it commits. */
+	commitOf?: string;
 	budget?: {
 		tokens?: number;
 		costUsd?: number;
@@ -505,6 +533,12 @@ export interface ReviewResult {
 	workspaceDigest?: string;
 	reviewedEvidenceRef?: EvidenceRef;
 	/** Who recorded this verdict; records from before 0.3 read as "reviewer". */
+	/** Source used for the accepted review revision. */
+	reportSource?: "worker" | "raw-judged";
+	/** Who the Root explicitly acknowledges as the author of accepted drift. */
+	acknowledgeDrift?: DriftAcknowledgement;
+	/** Completion attribution for superseded/committed acceptance. */
+	completionKind?: TaskCompletionKind;
 	source?: "reviewer" | "root" | "operator";
 }
 
@@ -518,10 +552,9 @@ export interface ReviewOverride {
 }
 
 /** States that remain finished for store.active(), abandon, and usage flush. */
-export const FINAL_TASK_STATES: readonly TaskState[] = ["completed", "blocked", "failed"];
+export const FINAL_TASK_STATES: readonly TaskState[] = ["completed", "closed-superseded", "blocked", "failed"];
 
-/** Verdict-path terminal: only completed is closed to planner_verdict. */
-export const TERMINAL_TASK_STATES: readonly TaskState[] = ["completed"];
+export const TERMINAL_TASK_STATES: readonly TaskState[] = ["completed", "closed-superseded"];
 
 export function isTerminalTaskState(state: TaskState): boolean {
 	return TERMINAL_TASK_STATES.includes(state);
@@ -535,10 +568,10 @@ export function isFinalTaskState(state: TaskState): boolean {
  * Whether a TaskSpec-less delegation prompt naming exactly one Task id may
  * bind to that Task. Blocked and failed Tasks stay re-bindable because
  * TASK_TRANSITIONS lets them transition back to executing (task.ts); only
- * completed is a true end of work.
+ * completed and closed-superseded are true ends of work.
  */
 export function canRebindNamedTask(state: TaskState): boolean {
-	return state !== "completed";
+	return !isTerminalTaskState(state);
 }
 
 export interface TokenCounts {
@@ -570,6 +603,8 @@ export interface ChildUsage extends TokenCounts {
 	agent?: string;
 	model?: string;
 	thinking?: string;
+	/** Session provenance for unattributed child usage recovered from an orphan meta file. */
+	sessionHint?: string;
 	outcome?: "succeeded" | "failed" | "unknown";
 	turns?: number;
 	costUsd?: number;

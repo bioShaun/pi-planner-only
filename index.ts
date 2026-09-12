@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
@@ -13,7 +13,7 @@ import {
 	READ_ONLY_TOOLS,
 	decidePolicy,
 } from "./policy.ts";
-import { GIT_AUDIT_OPERATIONS, runGitAudit } from "./git-audit.ts";
+import { GIT_AUDIT_OPERATIONS, dirtyPathsOutsideTruth, parseGitStatusPaths, resolveGitCommit, runGitAudit } from "./git-audit.ts";
 import type { GitAuditRequest, GitRunner } from "./git-audit.ts";
 import { PlannerOrchestrator, compositeWorkflowBlockReason, isDelegationCall, isExecutionCreatingAction } from "./orchestrate.ts";
 import type { DelegationRecord } from "./orchestrate.ts";
@@ -65,7 +65,12 @@ const PLANNER_SAFE_TOOLS = new Set([
 	...ORCHESTRATION_TOOLS,
 	...ROOT_TOOLS,
 	"subagent",
+	"git_commit",
 ]);
+
+// Keep the policy set and the registered tool surface in sync. git_commit is
+// deliberately separate from the read-only git_audit operation table.
+ROOT_TOOLS.add("git_commit");
 
 const GIT_TIMEOUT_MS = 15_000;
 
@@ -150,7 +155,15 @@ export function createLoadedPluginFingerprint(
 	}
 	const cwd = ctx?.cwd || process.cwd();
 	const diskHead = options.diskHead ?? getDiskHead(cwd);
-	const sessionId = (ctx as any)?.sessionId ?? process.env.PI_SESSION_ID?.trim() ?? "unknown";
+	const sessionFile = (ctx as ExtensionContext & { sessionManager?: { getSessionFile?: () => string } } | undefined)
+		?.sessionManager?.getSessionFile?.();
+	const sessionFileHint = typeof sessionFile === "string" && sessionFile.trim()
+		? sessionFile.split(/[\\/]/).filter(Boolean).at(-1)?.replace(/\.[^.]+$/, "")
+		: undefined;
+	const contextSessionId = typeof (ctx as any)?.sessionId === "string" && (ctx as any).sessionId.trim()
+		? (ctx as any).sessionId.trim()
+		: undefined;
+	const sessionId = contextSessionId ?? process.env.PI_SESSION_ID?.trim() ?? sessionFileHint ?? "unknown";
 	return {
 		version: 1,
 		loadedFingerprint: getLoadedPluginFingerprint(),
@@ -230,6 +243,16 @@ function customMessageText(message: unknown): string {
 			Boolean(part && typeof part === "object" && (part as { type?: string }).type === "text"))
 		.map((part) => (typeof part.text === "string" ? part.text : ""))
 		.join("\n");
+}
+
+export function rootReadLimitNotice(input: unknown, maxLines = 200): string | undefined {
+	if (!input || typeof input !== "object") return undefined;
+	const record = input as Record<string, unknown>;
+	const start = [record.startLine, record.lineStart, record.start_line, record.offset].find((value) => typeof value === "number") as number | undefined;
+	const end = [record.endLine, record.lineEnd, record.end_line].find((value) => typeof value === "number") as number | undefined;
+	const limit = typeof record.limit === "number" ? record.limit : end !== undefined && start !== undefined ? end - start + 1 : undefined;
+	if (limit === undefined || !Number.isFinite(limit) || limit <= maxLines) return undefined;
+	return `Planner-only Root read ceiling: requested ${Math.trunc(limit)} lines, maximum is ${maxLines}. Read a bounded slice or delegate an explorer for broader context.`;
 }
 
 function updateStatus(ctx: ExtensionContext): void {
@@ -343,10 +366,21 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			ledger.recordChild(targetId, child);
 			syncUsage(targetId);
 		},
+		automaticOracleDispatch: (task) => {
+			if (typeof pi.sendMessage !== "function" || !task.spec) return;
+			const oracleSpec = { ...task.spec, role: "validator", taskId: task.taskId };
+			pi.sendMessage({
+				customType: "planner-only-oracle-dispatch",
+				content: `Automatic oracle dispatch for ${task.taskId}: ${JSON.stringify({ agent: "oracle", task: JSON.stringify(oracleSpec) })}`,
+				display: false,
+			}, { triggerTurn: true, deliverAs: "steer" });
+		},
 	});
 	let loadedFingerprintInfo = createLoadedPluginFingerprint(latestCtx);
 	orchestrator.setLoadedFingerprint(loadedFingerprintInfo);
 	const allSessionEntries: UsageEntry[] = [];
+	/** Task targets seen in the current Root assistant turn's tool calls. */
+	const rootTurnTaskIds = new Set<string>();
 	/** Ticket 40: emit soft/hard disclosures once per crossing until spend drops below the level. */
 	let sessionRootSoftWarned = false;
 	let sessionRootHardWarned = false;
@@ -535,7 +569,11 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		return childOutcomeFromExitCode(exitCode);
 	}
 
-	function childFromMeta(meta: NonNullable<ReturnType<typeof readChildMeta>>, kind: DelegationKind): ChildUsage | undefined {
+	function childFromMeta(
+		meta: NonNullable<ReturnType<typeof readChildMeta>>,
+		kind: DelegationKind,
+		sessionHint?: string,
+	): ChildUsage | undefined {
 		const child = childUsageFromValue(meta.usage, kind, {
 			runId: meta.runId,
 			agent: meta.agent,
@@ -545,7 +583,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			pending: false,
 		});
 		if (!child) return undefined;
-		return { ...child, outcome: childOutcome(meta.exitCode) };
+		return { ...child, outcome: childOutcome(meta.exitCode), ...(sessionHint ? { sessionHint } : {}) };
 	}
 
 	function runIdFromDetails(details: Record<string, unknown> | undefined): string | undefined {
@@ -704,13 +742,16 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				if (ledgerHasRunId(runId)) continue;
 				const meta = readChildMeta([dir], runId, agent);
 				if (!meta?.usage) continue;
+				const sessionHint = sessionFileOf(ctx)?.split(/[\\/]/).filter(Boolean).at(-1)?.replace(/\.[^.]+$/, "")
+					?? orchestrator.getLoadedProvenance()?.sessionId;
 				const kind = AGENT_KIND[agent] ?? "worker";
-				const child = childFromMeta(meta, kind);
+				const child = childFromMeta(meta, kind, sessionHint);
 				if (!child) continue;
-				const live = orchestrator.store.active();
-				const target = live?.taskId ?? "unattributed";
+				const target = orchestrator.taskIdForSessionRun(runId) ?? "unattributed";
 				ledger.recordChild(target, child);
-				orchestrator.noteDelegationModel(target, runId, child.model, child.thinking);
+				if (target !== "unattributed") {
+					orchestrator.noteDelegationModel(target, runId, child.model, child.thinking);
+				}
 				syncUsage(target);
 			}
 		}
@@ -955,6 +996,80 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	});
 
 	pi.registerTool({
+		name: "git_commit",
+		label: "Git Commit",
+		description: "Policy-governed commit for the truth paths of one completed, validated Task. External dirty paths and failed validation gates are rejected.",
+		promptSnippet: "git_commit: commit only the completed Task's attributed truth paths",
+		promptGuidelines: [
+			"Use only after planner_verdict has completed the Task. The primitive stages and commits attributed truth paths only.",
+			"The commit message must cite the Task id; unrelated dirty paths, failed gates, and missing validation evidence are refused.",
+		],
+		parameters: Type.Object({
+			taskId: Type.String({ minLength: 1, description: "Completed Task to commit." }),
+			message: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: "Optional commit summary." })),
+		}),
+		async execute(_toolCallId, params: { taskId: string; message?: string }, _signal, _onUpdate, ctx) {
+			const task = orchestrator.store.get(params.taskId);
+			if (!task) {
+				return { content: [{ type: "text", text: `git_commit refused: unknown Task ${params.taskId}.` }], details: {}, isError: true };
+			}
+			if (task.state !== "completed") {
+				return { content: [{ type: "text", text: `git_commit refused: Task ${task.taskId} is ${task.state}; only completed Tasks may be committed.` }], details: {}, isError: true };
+			}
+			const repoProbe = await gitRunner(["rev-parse", "--show-toplevel"], task.cwd || ctx.cwd || process.cwd());
+			if (repoProbe.code !== 0) {
+				return { content: [{ type: "text", text: `git_commit refused: cannot resolve repository root (${repoProbe.stderr || repoProbe.stdout || "git unavailable"}).` }], details: {}, isError: true };
+			}
+			const repoRoot = repoProbe.stdout.trim();
+			if (!repoRoot) return { content: [{ type: "text", text: "git_commit refused: repository root is empty." }], details: {}, isError: true };
+			const rawTruth = new Set<string>();
+			for (const execution of task.executions) {
+				for (const path of [...(execution.truthPaths ?? []), ...(execution.committedPaths ?? [])]) rawTruth.add(path);
+			}
+			for (const path of task.reports.at(-1)?.changedFiles ?? []) rawTruth.add(path);
+			const truthPaths = [...rawTruth].map((path) => {
+				const absolute = isAbsolute(path) ? resolve(path) : resolve(task.cwd || repoRoot, path);
+				const rel = relative(repoRoot, absolute).replaceAll("\\\\", "/");
+				return rel;
+			}).filter((path) => path && path !== "." && !path.startsWith("../") && !path.startsWith("/"));
+			const plan = resolveGitCommit({ taskId: task.taskId, cwd: repoRoot, truthPaths, message: params.message });
+			if (!plan.ok) return { content: [{ type: "text", text: `git_commit refused: ${plan.error}` }], details: {}, isError: true };
+			const status = await gitRunner(["status", "--porcelain=v2", "--branch"], repoRoot);
+			if (status.code !== 0) return { content: [{ type: "text", text: `git_commit refused: cannot inspect dirty paths (${status.stderr || status.stdout}).` }], details: {}, isError: true };
+			const external = dirtyPathsOutsideTruth(parseGitStatusPaths(status.stdout), plan.paths);
+			if (external.length > 0) {
+				return { content: [{ type: "text", text: `git_commit refused: dirty paths outside Task ${task.taskId} truth paths: ${external.join(", ")}` }], details: {}, isError: true };
+			}
+			const latest = task.reports.at(-1);
+			const gateEvidence = new Set((latest?.validation ?? []).filter((item) => item.status === "passed").flatMap((item) => [
+				item.type,
+				item.command,
+			]));
+			const missingGates = ([
+				["typecheck", ["run", "typecheck"]] as const,
+				["test", ["test"]] as const,
+			] satisfies readonly (readonly [string, readonly string[]])[]).filter(([name, argv]) =>
+				!gateEvidence.has(name) && ![...(latest?.validation ?? [])].some((item) => item.status === "passed" && (item.command?.includes(argv.join(" ")) ?? false)),
+			);
+			if (missingGates.length > 0) {
+				for (const [name, command] of missingGates) {
+					const gate = await pi.exec("npm", [...command], { cwd: repoRoot, timeout: GIT_TIMEOUT_MS });
+					if (gate.code !== 0) {
+						return { content: [{ type: "text", text: `git_commit refused: validation gate ${name} failed (exit ${gate.code}).` }], details: {}, isError: true };
+					}
+				}
+			}
+			const add = await gitRunner(plan.addArgv, repoRoot);
+			if (add.code !== 0) return { content: [{ type: "text", text: `git_commit refused: staging failed (${add.stderr || add.stdout}).` }], details: {}, isError: true };
+			const commit = await gitRunner(plan.commitArgv, repoRoot);
+			if (commit.code !== 0) return { content: [{ type: "text", text: `git_commit refused: commit failed (${commit.stderr || commit.stdout}).` }], details: {}, isError: true };
+			return {
+				content: [{ type: "text", text: `git_commit: committed Task ${task.taskId} truth paths (${plan.paths.join(", ")}).\n${commit.stdout.trim()}` }],
+				details: { taskId: task.taskId, paths: plan.paths, message: plan.message, gateRan: missingGates.length > 0 },
+			};
+		},
+	});
+	pi.registerTool({
 		name: "planner_recover",
 		label: "Planner Recover",
 		description: [
@@ -1169,6 +1284,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		// read as Idle: fail closed).
 		const policyCwd = ctx?.cwd || process.cwd();
 		latestCtx = ctx;
+		if (!IS_SUBAGENT && event.toolName === "read") {
+			const readNotice = rootReadLimitNotice(event.input);
+			if (readNotice) {
+				if (ctx.hasUI) ctx.ui.notify(readNotice, "warning");
+				return { block: true, reason: readNotice };
+			}
+		}
 		const decision = decidePolicy({
 			toolName: event.toolName,
 			input: event.input,
@@ -1201,6 +1323,12 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				}
 				for (const warning of outcome.warnings ?? []) {
 					if (ctx.hasUI) ctx.ui.notify(warning, "warning");
+				}
+				if (outcome.task?.taskId) rootTurnTaskIds.add(outcome.task.taskId);
+				const boundDelegation = orchestrator.getDelegation(event.toolCallId);
+				if (boundDelegation) {
+					const boundTask = orchestrator.store.get(boundDelegation.taskId);
+					if (boundTask) rootTurnTaskIds.add(boundTask.taskId);
 				}
 			}
 			return;
@@ -1280,15 +1408,17 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			id?: string;
 		};
 		if (message.role === "assistant") {
-			const active = orchestrator.store.active();
+			const targetedTaskId = [...rootTurnTaskIds].at(-1);
+			const targetedTask = targetedTaskId ? orchestrator.store.get(targetedTaskId) : undefined;
 			ledger.recordRootTurn({
 				usage: message.usage ?? {},
-				...(active ? { taskId: active.taskId, state: active.state } : {}),
+				...(targetedTask ? { taskId: targetedTask.taskId, state: targetedTask.state } : {}),
 				...(message.model ? { model: message.model } : {}),
 				...(message.provider ? { provider: message.provider } : {}),
 				...(message.id ? { messageId: message.id } : {}),
 			});
-			if (active) syncUsage(active.taskId);
+			if (targetedTask) syncUsage(targetedTask.taskId);
+			rootTurnTaskIds.clear();
 			persistSessionEntries();
 			// Ticket 40: soft-cap warning after root accounting (never blocks the turn).
 			const rootEval = evaluateSessionRootBudget(ledger.sessionRootSpend(), sessionRootBudget);
@@ -1431,9 +1561,11 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				lines.push(`Oracle suite: ${oracleSuiteMode()}`);
 				const rateWarning = rootRateWarning(ctx);
 				if (rateWarning) lines.push(rateWarning);
-				const active = store.active();
+				const active = orchestrator.listDelegations().length > 0 ? store.active() : undefined;
 				if (active) {
 					lines.push("", orchestrator.renderTaskStatus(active));
+				} else {
+					lines.push("", "无活跃 Task");
 				}
 				const sessionUsage = summarizeSessionUsage(ledger);
 				lines.push(`Session usage: tokens=${sessionUsage.totalTokens}，已知费用 $${sessionUsage.totalCostUsd.toFixed(4)}，未知项 ${sessionUsage.costUnknownParts} 项`);

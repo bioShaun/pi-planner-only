@@ -110,6 +110,8 @@ export interface ExtractedReport {
 	report?: WorkerReport;
 	error?: string;
 	repairs: string[];
+	/** Parsing outcome: valid, salvaged, or retained as raw invalid output. */
+	level?: "schema-valid" | "repairable" | "irreparable";
 }
 
 export interface NormalisedReport {
@@ -119,8 +121,8 @@ export interface NormalisedReport {
 
 const VERSION_ONE_STRINGS = new Set(["1", "1.0"]);
 const STATUS_TO_COMPLETED = new Set(["done", "success", "succeeded", "complete", "ok"]);
-const STATUS_TO_PARTIAL = new Set(["in_progress", "in-progress", "incomplete", "partially_completed", "completed_with_limits"]);
-const STATUS_TO_FAILED = new Set(["error", "errored"]);
+const STATUS_TO_PARTIAL = new Set(["in_progress", "in-progress", "in progress", "incomplete", "partially_completed", "partially completed", "completed_with_limits"]);
+const STATUS_TO_FAILED = new Set(["error", "errored", "failure", "fail"]);
 const LIST_OBJECT_KEYS = ["path", "file", "filePath", "name", "text", "summary", "description", "message"] as const;
 const ALIAS_TO_CANONICAL: ReadonlyArray<readonly [string, "changedFiles" | "unresolved"]> = [
 	["unresolvedItems", "unresolved"],
@@ -232,6 +234,31 @@ function repairValidationEntries(entries: unknown[], repairs: string[]): void {
 			item.status = inferred;
 			item.inferred = true;
 			repairs.push(`${label}.status missing → ${inferred}`);
+		}
+		if (item.command !== undefined && !isNonEmptyString(item.command)) {
+			const rawCommand = item.command;
+			const fallbackCommand = isNonEmptyString(item.cmd)
+				? item.cmd
+				: isNonEmptyString(item.summary)
+					? item.summary
+					: typeof rawType === "string" && rawType.trim()
+						? rawType
+						: undefined;
+			if (fallbackCommand) {
+				item.command = fallbackCommand;
+				repairs.push(`${label}.command "${formatRaw(rawCommand)}" → "${fallbackCommand}"`);
+			} else {
+				delete item.command;
+				repairs.push(`${label}.command "${formatRaw(rawCommand)}" dropped`);
+			}
+		} else if (item.command === undefined && isNonEmptyString(item.cmd)) {
+			item.command = item.cmd;
+			delete item.cmd;
+			repairs.push(`${label}.cmd renamed to command`);
+		}
+		if (isNonEmptyString(item.command) && item.command !== item.command.trim()) {
+			item.command = item.command.trim();
+			repairs.push(`${label}.command trimmed`);
 		}
 		if (!isNonEmptyString(item.summary)) {
 			const fallback = isNonEmptyString(item.command)
@@ -567,7 +594,11 @@ export function extractWorkerReport(
 		const normalised = normalizeWorkerReport(parsed, context);
 		const errors = validateWorkerReport(normalised.report);
 		if (errors.length === 0) {
-			return { report: normalised.report as WorkerReport, repairs: normalised.repairs };
+			return {
+				report: normalised.report as WorkerReport,
+				repairs: normalised.repairs,
+				level: normalised.repairs.length > 0 ? "repairable" : "schema-valid",
+			};
 		}
 		const next = {
 			errors,
@@ -588,9 +619,10 @@ export function extractWorkerReport(
 		return {
 			error: `invalid WorkerReport: picked candidate with keys [${best.keys}]; ${best.errors.join("; ")}`,
 			repairs: best.repairs,
+			level: "irreparable",
 		};
 	}
-	if (sawReportShape) return { error: "invalid WorkerReport", repairs: [] };
+	if (sawReportShape) return { error: "invalid WorkerReport", repairs: [], level: "irreparable" };
 	return { error: "worker output did not contain a WorkerReport object", repairs: [] };
 }
 

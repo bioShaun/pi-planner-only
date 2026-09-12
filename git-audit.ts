@@ -62,6 +62,84 @@ export const GIT_AUDIT_OPERATIONS = [
 	"log",
 ] as const;
 
+/** RT-06 — the commit primitive has a separate, fixed write surface. */
+export const GIT_COMMIT_OPERATIONS = ["root", "add", "commit"] as const;
+
+export interface GitCommitRequest {
+	taskId: string;
+	cwd: string;
+	truthPaths: readonly string[];
+	message?: string;
+}
+
+export type GitCommitPlan = {
+	ok: true;
+	taskId: string;
+	paths: string[];
+	message: string;
+	addArgv: string[];
+	commitArgv: string[];
+} | { ok: false; error: string };
+
+const TASK_ID_PATTERN = /^T-[0-9]{8}-[0-9]{3,}$/;
+
+function safeCommitPath(path: string): boolean {
+	return typeof path === "string" && path.trim().length > 0
+		&& !SHELL_METACHARACTERS.test(path)
+		&& !path.includes("\0")
+		&& !isAbsolute(path)
+		&& path !== "."
+		&& path !== ".."
+		&& !path.startsWith(`..${sep}`);
+}
+
+/** Build the only argv shapes exposed by the policy-governed commit primitive. */
+export function resolveGitCommit(request: GitCommitRequest): GitCommitPlan {
+	if (!TASK_ID_PATTERN.test(request.taskId.trim())) return { ok: false, error: "git_commit requires a canonical taskId" };
+	if (!request.cwd || SHELL_METACHARACTERS.test(request.cwd)) return { ok: false, error: "git_commit cwd is invalid" };
+	const paths = [...new Set(request.truthPaths.map((path) => path.trim()))].sort();
+	if (paths.length === 0) return { ok: false, error: "git_commit requires at least one attributed truth path" };
+	if (paths.some((path) => !safeCommitPath(path))) return { ok: false, error: "git_commit truth paths must be safe repository-relative paths" };
+	const suffix = request.message?.trim() || `Task ${request.taskId}: accepted changes`;
+	const message = suffix.includes(request.taskId) ? suffix : `${suffix} (${request.taskId})`;
+	return {
+		ok: true,
+		taskId: request.taskId,
+		paths,
+		message,
+		addArgv: ["add", "--", ...paths],
+		commitArgv: ["commit", "-m", message, "--", ...paths],
+	};
+}
+
+/** Parse porcelain v2 paths into repository-relative names for dirty-tree checks. */
+export function parseGitStatusPaths(stdout: string): string[] {
+	const paths: string[] = [];
+	for (const line of stdout.split(/\r?\n/)) {
+		if (!line) continue;
+		if (line.startsWith("? ")) {
+			paths.push(line.slice(2));
+			continue;
+		}
+		if (line.startsWith("1 ") || line.startsWith("u ")) {
+			const path = line.slice(line.indexOf("\t") + 1);
+			if (path && !path.includes("\t")) paths.push(path);
+			continue;
+		}
+		if (line.startsWith("2 ")) {
+			const fields = line.split("\t");
+			if (fields[1]) paths.push(fields[1]);
+			if (fields[2]) paths.push(fields[2]);
+		}
+	}
+	return [...new Set(paths)];
+}
+
+export function dirtyPathsOutsideTruth(dirtyPaths: readonly string[], truthPaths: readonly string[]): string[] {
+	const truth = new Set(truthPaths.map((path) => path.replaceAll("\\", "/").replace(/^\.\//, "")));
+	return [...new Set(dirtyPaths.map((path) => path.replaceAll("\\", "/")).filter((path) => !truth.has(path)))];
+}
+
 export type GitAuditOperation = (typeof GIT_AUDIT_OPERATIONS)[number];
 
 /** §9.4 — subcommands that must never be reachable through this tool. */

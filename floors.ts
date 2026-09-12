@@ -4,6 +4,58 @@
  * All floor default numbers must be defined here in DEFAULT_FLOORS and nowhere else.
  */
 
+export interface ExplorationBudget {
+	/** Maximum number of read/inspection calls before the hard stop. */
+	readonly limit: number;
+	readonly used: number;
+	readonly softNotified: boolean;
+	readonly hardNotified: boolean;
+}
+
+export const DEFAULT_EXPLORATION_BUDGET = 20;
+export const EXPLORATION_SOFT_FRACTION = 0.8;
+
+const EXPLORATION_TOOLS = new Set(["read", "grep", "find", "ls"]);
+const INSPECTION_BASH = /(?:^|[;&|]\s*)(?:cat|head|tail|rg|grep|sed\s+-n)(?:\s|$)/i;
+
+/** Whether a host tool call consumes the plugin-side exploration budget. */
+export function isExplorationToolCall(toolName: string, input?: unknown): boolean {
+	const name = toolName.trim().toLowerCase();
+	if (EXPLORATION_TOOLS.has(name)) return true;
+	if (name !== "bash" || !input || typeof input !== "object") return false;
+	const command = (input as Record<string, unknown>).command;
+	return typeof command === "string" && INSPECTION_BASH.test(command.trim());
+}
+
+/** Count one eligible exploration call and return a one-shot soft/hard notice. */
+export function recordExplorationToolCall(
+	budget: ExplorationBudget,
+	toolName: string,
+	input?: unknown,
+): { budget: ExplorationBudget; notice?: string } {
+	if (!isExplorationToolCall(toolName, input)) return { budget };
+	const used = budget.used + 1;
+	const next = { ...budget, used };
+	if (!budget.softNotified && used >= Math.ceil(budget.limit * EXPLORATION_SOFT_FRACTION)) {
+		return {
+			budget: { ...next, softNotified: true },
+			notice: `Exploration budget is at ${used}/${budget.limit}; wrap up and deliver a partial WorkerReport with evidence references before continuing inspection.`,
+		};
+	}
+	if (!budget.hardNotified && used >= budget.limit) {
+		return {
+			budget: { ...next, hardNotified: true },
+			notice: `Exploration budget reached ${used}/${budget.limit}; stop read-only exploration and return the final or partial WorkerReport now.`,
+		};
+	}
+	return { budget: next };
+}
+
+export function emptyExplorationBudget(limit = DEFAULT_EXPLORATION_BUDGET): ExplorationBudget {
+	if (!Number.isInteger(limit) || limit <= 0) throw new Error("exploration budget limit must be a positive integer");
+	return { limit, used: 0, softNotified: false, hardNotified: false };
+}
+
 export interface BoundedFloorConfig {
 	readonly toolBudgetHard: number;
 	readonly tokensHard: number;

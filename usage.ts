@@ -124,6 +124,142 @@ export function emptyTaskUsage(): TaskUsage {
 	return { root: emptyRootUsage(), children: [], costUnknown: false };
 }
 
+/**
+ * RT-05 one-off repair: the two child runs that genuinely belong to T-004.
+ * Keep this allow-list deliberately narrow so a repair cannot accidentally
+ * turn an unrelated run into T-004 usage again.
+ */
+export const T004_REPAIR_TASK_ID = "T-20260912-004";
+export const T004_REPAIR_ALLOWED_RUN_IDS = Object.freeze(["7110bd1b", "143426ad"] as const);
+
+export interface T004RepairOptions {
+	taskId?: string;
+	allowedRunIds?: readonly string[];
+	sessionHint?: string;
+}
+
+export interface T004RepairMovedChild {
+	runId?: string;
+	sessionHint: string;
+	child: Record<string, unknown>;
+}
+
+export interface T004UsageRepairResult {
+	records: unknown[];
+	moved: T004RepairMovedChild[];
+	removedFromTask: number;
+}
+
+function repairRecord(value: unknown): Record<string, unknown> | undefined {
+	return value !== null && typeof value === "object" && !Array.isArray(value)
+		? value as Record<string, unknown>
+		: undefined;
+}
+
+function repairText(value: unknown): string | undefined {
+	return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function sessionHintFromPath(value: string): string | undefined {
+	const parts = value.replaceAll("\\", "/").split("/").filter(Boolean);
+	if (parts.length === 0) return undefined;
+	const leaf = parts.at(-1) as string;
+	if (/\\.(?:jsonl?|log)$/i.test(leaf) && parts.length > 1) return parts.at(-2);
+	return leaf.replace(/\\.(?:jsonl?|log)$/i, "");
+}
+
+function repairSessionHint(
+	child: Record<string, unknown>,
+	record: Record<string, unknown>,
+	options: T004RepairOptions,
+): string {
+	for (const value of [child.sessionHint, child.sessionId, child.sourceSessionId, record.sessionHint, record.sessionId, options.sessionHint]) {
+		const text = repairText(value);
+		if (text) return text;
+	}
+	for (const value of [child.transcriptPath, child.sessionFile, child.sourceDir, record.sessionFile, record.sourceDir]) {
+		const path = repairText(value);
+		const hint = path ? sessionHintFromPath(path) : undefined;
+		if (hint) return hint;
+	}
+	return `foreign:${options.taskId ?? T004_REPAIR_TASK_ID}`;
+}
+
+/**
+ * Move foreign T-004 children to standalone unattributed audit snapshots.
+ * The function is idempotent by runId: repeated historical snapshots do not
+ * manufacture additional unattributed records for the same execution.
+ */
+export function repairT004UsageRecords(
+	input: readonly unknown[],
+	options: T004RepairOptions = {},
+): T004UsageRepairResult {
+	const taskId = options.taskId ?? T004_REPAIR_TASK_ID;
+	const allowed = new Set(options.allowedRunIds ?? T004_REPAIR_ALLOWED_RUN_IDS);
+	const output: unknown[] = [];
+	const moved: T004RepairMovedChild[] = [];
+	const movedRunIds = new Set<string>();
+	let removedFromTask = 0;
+
+	for (const value of input) {
+		const record = repairRecord(value);
+		if (!record || record.taskId !== taskId) {
+			output.push(value);
+			continue;
+		}
+		const children = Array.isArray(record.children) ? record.children : [];
+		const kept: unknown[] = [];
+		for (const rawChild of children) {
+			const child = repairRecord(rawChild);
+			const runId = child ? repairText(child.runId) : undefined;
+			if (!child || !runId || allowed.has(runId)) {
+				kept.push(rawChild);
+				continue;
+			}
+			removedFromTask += 1;
+			if (movedRunIds.has(runId)) continue;
+			movedRunIds.add(runId);
+			const sessionHint = repairSessionHint(child, record, options);
+			const auditedChild = { ...child, sessionHint };
+			moved.push({ runId, sessionHint, child: auditedChild });
+		}
+		output.push({ ...record, children: kept });
+	}
+
+	for (const item of moved) {
+		output.push({
+			root: emptyRootUsage(),
+			children: [item.child],
+			costUnknown: item.child.costUsd === undefined,
+			taskId: "unattributed",
+			unattributed: true,
+			sourceTaskId: taskId,
+			sessionHint: item.sessionHint,
+		});
+	}
+	return { records: output, moved, removedFromTask };
+}
+
+/** Apply the same allow-list to a persisted LedgerSnapshotStore envelope. */
+export function repairT004LedgerSnapshot(
+	value: unknown,
+	options: T004RepairOptions = {},
+): { snapshot: unknown; moved: T004RepairMovedChild[]; removedFromTask: number } {
+	const envelope = repairRecord(value);
+	const task = envelope ? repairRecord(envelope.task) : undefined;
+	const usage = task ? repairRecord(task.usage) : undefined;
+	if (!task || task.taskId !== (options.taskId ?? T004_REPAIR_TASK_ID) || !usage) {
+		return { snapshot: value, moved: [], removedFromTask: 0 };
+	}
+	const transformed = repairT004UsageRecords([{ ...usage, taskId: task.taskId }], options);
+	const repairedUsage = repairRecord(transformed.records[0]);
+	return {
+		snapshot: repairedUsage ? { ...envelope, task: { ...task, usage: repairedUsage } } : value,
+		moved: transformed.moved,
+		removedFromTask: transformed.removedFromTask,
+	};
+}
+
 export function modelIdForPricing(model: string): string {
 	return model.replace(/:[^:/]+$/, "");
 }
@@ -1135,6 +1271,14 @@ export interface SessionEvidenceExportOptions {
 	sourceFingerprint?: string;
 }
 
+export interface SessionEvidenceBreakdown {
+	superseded: number;
+	committed: number;
+	envelopeRepairs: number;
+	budgetIntercepts: number;
+	foreignChildSpend: { count: number; tokens: number; costUsd: number; unknownCost: boolean };
+}
+
 export interface SessionEvidenceExport {
 	version: 1;
 	rootSessionId: string;
@@ -1162,12 +1306,44 @@ export interface SessionEvidenceExport {
 			unattributedUsd: number;
 		};
 		modelRates: Record<string, PricingRates>;
+		breakdown: SessionEvidenceBreakdown;
 	};
+	breakdown: SessionEvidenceBreakdown;
 	requirements: Array<{ id: string; status: "implemented" | "unit-verified" | "host-verified" | "unproven"; evidence: string[] }>;
 	analysis: string[];
 	unattributed: Array<Record<string, unknown>>;
 }
 
+function emptyExportBreakdown(): SessionEvidenceBreakdown {
+	return { superseded: 0, committed: 0, envelopeRepairs: 0, budgetIntercepts: 0, foreignChildSpend: { count: 0, tokens: 0, costUsd: 0, unknownCost: false } };
+}
+
+function exportUsageTokens(value: unknown): number {
+	const record = exportRecord(value);
+	if (!record) return 0;
+	return ["input", "output", "cacheRead", "cacheWrite"].reduce((sum, key) => sum + (exportNumber(record[key]) ?? 0), 0);
+}
+
+function isBudgetIntercept(value: Record<string, unknown>): boolean {
+	return value.budgetIntercepted === true
+		|| /budget|intercept/i.test(exportString(value.terminalErrorClass) ?? "")
+		|| /budget|intercept/i.test(exportString(exportRecord(value.lastError)?.code) ?? "");
+}
+
+function addForeignChildSpend(target: SessionEvidenceBreakdown["foreignChildSpend"], value: unknown): void {
+	const record = exportRecord(value);
+	if (!record) return;
+	const children = Array.isArray(record.children) ? record.children : [record];
+	for (const child of children) {
+		const item = exportRecord(child);
+		if (!item) continue;
+		target.count += 1;
+		target.tokens += exportUsageTokens(item);
+		const cost = exportNumber(item.costUsd) ?? exportNumber(item.calculatedCostUsd);
+		if (cost === undefined) target.unknownCost = true;
+		else target.costUsd += cost;
+	}
+}
 function exportRecord(value: unknown): Record<string, unknown> | undefined {
 	return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
@@ -1359,9 +1535,11 @@ export function exportSessionEvidence(options: SessionEvidenceExportOptions): Se
 		providerErrors = e03Runs.filter((run) => /403|permission_error|usage limit/i.test(exportString(run.error) ?? "")).length;
 		if (e03Runs.length > 0) statuses.processExit["1"] = (statuses.processExit["1"] ?? 0) + processFailures;
 	}
+	const usageBreakdown = emptyExportBreakdown();
 	const usageResult: SessionEvidenceExport["usage"] = {
 		tokens: emptyExportTokens(), bySource: { root: emptyExportTokens(), children: emptyExportTokens(), unattributed: emptyExportTokens() },
 		cost: { calculatedUsd: 0, reportedUsd: 0, unknownUsd: false, unknownParts: 0, unattributedUsd: 0 }, modelRates: {},
+		breakdown: usageBreakdown,
 	};
 	for (const run of runs) {
 		const rates = exportRecord(exportRecord(run.pricing)?.rates);
@@ -1383,6 +1561,38 @@ export function exportSessionEvidence(options: SessionEvidenceExportOptions): Se
 			unattributed.push({ type: "usage", taskId: taskId ?? "unknown", runId: value.runId, reason: "no canonical Task linkage" });
 		}
 	}
+	for (const task of selectedTasks) {
+		if (task.completionKind === "superseded" || task.state === "closed-superseded") usageBreakdown.superseded += 1;
+		if (task.completionKind === "committed") usageBreakdown.committed += 1;
+		usageBreakdown.envelopeRepairs += exportNumber(task.reportCorrections) ?? 0;
+		for (const report of Array.isArray(task.reports) ? task.reports : []) {
+			const item = exportRecord(report);
+			usageBreakdown.envelopeRepairs += Array.isArray(item?.repairs) ? item.repairs.length : item?.normalized === true ? 1 : 0;
+		}
+	}
+	for (const run of runs) {
+		if (isBudgetIntercept(run)) usageBreakdown.budgetIntercepts += 1;
+		const taskId = exportString(run.taskId);
+		if (taskId && !selectedTaskIds.has(taskId)) {
+			if (run.usage !== undefined) addForeignChildSpend(usageBreakdown.foreignChildSpend, run.usage);
+			else {
+				const tokens = exportRecord(run.tokens);
+				const tokenCount = exportNumber(tokens?.total) ?? ["input", "output", "cacheRead", "cacheWrite"].reduce((sum, key) => sum + (exportNumber(tokens?.[key]) ?? 0), 0);
+				usageBreakdown.foreignChildSpend.count += 1;
+				usageBreakdown.foreignChildSpend.tokens += tokenCount;
+				const cost = exportNumber(exportRecord(run.cost)?.childrenUsd);
+				if (cost === undefined) usageBreakdown.foreignChildSpend.unknownCost = true;
+				else usageBreakdown.foreignChildSpend.costUsd += cost;
+			}
+		}
+	}
+	for (const entry of options.usageEntries ?? []) {
+		const value = exportRecord(entry);
+		if (!value) continue;
+		const taskId = exportString(value.taskId);
+		if (!taskId || !selectedTaskIds.has(taskId)) addForeignChildSpend(usageBreakdown.foreignChildSpend, value.child ?? value.usage);
+	}
+	usageResult.breakdown = usageBreakdown;
 	usageResult.cost.unknownUsd = usageResult.cost.unknownParts > 0;
 	const e01 = fixture && (exportRecord(fixture.e01) ?? exportRecord(fixture.E01_FIXTURE));
 	const e01New = Array.isArray(e01?.newFindings) ? e01.newFindings.length : 0;
@@ -1414,6 +1624,7 @@ export function exportSessionEvidence(options: SessionEvidenceExportOptions): Se
 		findings: { items: [...findings.values()], total: findings.size, duplicateNotifications, new: e01New, historical: e01Historical },
 		interceptions: { total: interceptionTotal, runs: interceptionRuns, processFailures, providerErrors },
 		usage: usageResult,
+		breakdown: usageBreakdown,
 		requirements: [
 			{ id: "RS-05", status: linkage.length > 0 ? "implemented" : "unproven", evidence: linkage.length > 0 ? ["root-scoped Task/RunRecord linkage"] : ["no persisted execution linkage supplied"] },
 			{ id: "A19", status: fixture ? "unit-verified" : "unproven", evidence: fixture ? [`${e01New} new findings`, `${interceptionTotal} interceptions/${interceptionRuns} runs`, `${processFailures} process failures`] : [] },

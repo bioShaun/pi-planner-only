@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EVENT_FIXTURES } from "./test-fixtures.ts";
-import { exportSessionEvidence } from "./usage.ts";
+import { exportSessionEvidence, repairT004LedgerSnapshot, repairT004UsageRecords } from "./usage.ts";
 
 const ROOT = "root-session-rs05";
 
@@ -100,4 +100,46 @@ test("A21: persisted run state reaches the final multi-dimensional payload", () 
   assert.equal(evidence.requirements.find((item) => item.id === "A21")?.status, "unproven");
 });
 
-console.log("planner-only RS-05 export regressions: PASS");
+
+test("B19: RT-05 repair keeps T-004 children closed and accounts for all foreign runs", () => {
+  const foreign = Array.from({ length: 79 }, (_, index) => ({
+    kind: "worker",
+    runId: `foreign-${index + 1}`,
+    input: index + 1,
+    output: 1,
+    cacheRead: 0,
+    cacheWrite: 0,
+    pending: false,
+    source: "meta-file",
+    transcriptPath: `/foreign/session-${index + 1}/session.jsonl`,
+  }));
+  const result = repairT004UsageRecords([{
+    taskId: "T-20260912-004",
+    sessionFile: "/root/session.jsonl",
+    root: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    children: [
+      { kind: "worker", runId: "7110bd1b", pending: false, source: "sync-details" },
+      { kind: "validator", runId: "143426ad", pending: false, source: "sync-details" },
+      ...foreign,
+    ],
+  }]);
+  const repaired = result.records.find((record) => record?.taskId === "T-20260912-004");
+  const unattributed = result.records.filter((record) => record?.taskId === "unattributed");
+  assert.deepEqual(repaired.children.map((child) => child.runId), ["7110bd1b", "143426ad"]);
+  assert.equal(unattributed.length, 79);
+  assert.equal(unattributed.every((record) => record.unattributed === true), true);
+  assert.equal(unattributed.every((record) => typeof record.sessionHint === "string" && record.sessionHint.length > 0), true);
+  assert.equal(new Set(unattributed.flatMap((record) => record.children.map((child) => child.runId))).size, 79);
+  assert.equal(result.removedFromTask, 79);
+
+  const secondPass = repairT004UsageRecords(result.records);
+  assert.equal(secondPass.moved.length, 0, "repair is idempotent");
+  assert.equal(secondPass.records.filter((record) => record?.taskId === "unattributed").length, 79);
+
+  const ledger = repairT004LedgerSnapshot({
+    version: 1,
+    task: { taskId: "T-20260912-004", usage: { ...repaired, taskId: "T-20260912-004" } },
+  });
+  assert.equal(ledger.moved.length, 0, "ledger already contains the repaired child set");
+  assert.deepEqual(ledger.snapshot.task.usage.children.map((child) => child.runId), ["7110bd1b", "143426ad"]);
+});

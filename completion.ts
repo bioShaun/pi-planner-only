@@ -362,23 +362,23 @@ export class RunRecordStore {
 
 	/** Persist loaded output before invoking the report commit callback. */
 	commitLoaded(record: RunRecord, resolution: Extract<OutputResolution, { kind: "loaded" }>, commitReport: () => number): RunRecord {
-		const loaded = this.put({ ...record, ingestionState: "loaded", outputDigest: resolution.digest, outputRef: record.outputRef, commitKey: this.key(record), acknowledged: false });
+		const loaded = this.put({ ...record, ingestionState: "loaded", outputDigest: resolution.digest, outputRef: record.outputRef, commitKey: this.key(record), acknowledged: false, lastError: undefined });
 		this.fault?.("before-report");
 		const reportRevision = commitReport();
 		this.fault?.("after-report");
-		return this.put({ ...loaded, ingestionState: "recorded", reportRevision, acknowledged: false });
+		return this.put({ ...loaded, ingestionState: "recorded", reportRevision, acknowledged: false, lastError: undefined });
 	}
 
 	async commitLoadedAsync(record: RunRecord, resolution: Extract<OutputResolution, { kind: "loaded" }>, commitReport: () => Promise<number>): Promise<RunRecord> {
-		const loaded = this.put({ ...record, ingestionState: "loaded", outputDigest: resolution.digest, outputRef: record.outputRef, commitKey: this.key(record), acknowledged: false });
+		const loaded = this.put({ ...record, ingestionState: "loaded", outputDigest: resolution.digest, outputRef: record.outputRef, commitKey: this.key(record), acknowledged: false, lastError: undefined });
 		this.fault?.("before-report");
 		const reportRevision = await commitReport();
 		this.fault?.("after-report");
-		return this.put({ ...loaded, ingestionState: "recorded", reportRevision, acknowledged: false });
+		return this.put({ ...loaded, ingestionState: "recorded", reportRevision, acknowledged: false, lastError: undefined });
 	}
 
 	commitReport(record: RunRecord, reportRevision: number): RunRecord {
-		return this.put({ ...record, ingestionState: "recorded", reportRevision, acknowledged: false });
+		return this.put({ ...record, ingestionState: "recorded", reportRevision, acknowledged: false, lastError: undefined });
 	}
 
 	pendingCommits(): RunRecord[] {

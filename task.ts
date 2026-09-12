@@ -102,6 +102,10 @@ function describeFinding(kind: TaskFinding["kind"], paths: readonly string[]): s
 			return `declared changes no longer present: ${list}`;
 		case "drift":
 			return `workspace changed after the report: ${list}`;
+		case "superseded":
+			return `workspace change attributed to a successor Task: ${list}`;
+		case "committed":
+			return `workspace change attributed to a committed successor Task: ${list}`;
 	}
 }
 
@@ -121,6 +125,12 @@ export interface CreateTaskSpecInput {
 	reportOnly?: boolean;
 	/** Explicit additional linked-worktree roots; resolved absolute, cwd omitted. */
 	additionalWorktreeRoots?: string[];
+	/** Pre-located evidence fragments for the worker. */
+	contextPack?: TaskSpec["contextPack"];
+	/** Parent Task for a derived correction or commit Task. */
+	parentTaskId?: string;
+	/** Existing Task whose work this Task commits. */
+	commitOf?: string;
 }
 
 /**
@@ -458,6 +468,9 @@ export function createTaskSpec(input: CreateTaskSpecInput, taskId?: string): Tas
 		expectedEvidence: input.expectedEvidence ?? {},
 		stopConditions: uniqueNonEmpty(input.stopConditions ?? []),
 		...(input.parentEvidenceRef ? { parentEvidenceRef: input.parentEvidenceRef } : {}),
+		...(input.contextPack?.length ? { contextPack: input.contextPack.map((entry) => ({ ...entry })) } : {}),
+		...(input.parentTaskId?.trim() ? { parentTaskId: input.parentTaskId.trim() } : {}),
+		...(input.commitOf?.trim() ? { commitOf: input.commitOf.trim() } : {}),
 		...(input.reportOnly ? { reportOnly: true } : {}),
 		...(input.additionalWorktreeRoots?.length
 			? {
@@ -514,6 +527,27 @@ export function validateTaskSpec(value: unknown): string[] {
 		} else if (value.additionalWorktreeRoots.some((root) => !root.trim())) {
 			errors.push("additionalWorktreeRoots entries must be non-empty strings");
 		}
+	}
+	if (value.contextPack !== undefined) {
+		if (!Array.isArray(value.contextPack)) {
+			errors.push("contextPack must be an array when present");
+		} else {
+			value.contextPack.forEach((entry, index) => {
+				if (!isPlainObject(entry) || !isNonEmptyString(entry.path)) errors.push(`contextPack[${index}].path must be a non-empty string`);
+				if (!isPlainObject(entry) || !isNonEmptyString(entry.summary)) errors.push(`contextPack[${index}].summary must be a non-empty string`);
+				if (isPlainObject(entry) && entry.startLine !== undefined && (!Number.isInteger(entry.startLine) || (entry.startLine as number) < 1)) errors.push(`contextPack[${index}].startLine must be a positive integer when present`);
+				if (isPlainObject(entry) && entry.endLine !== undefined && (!Number.isInteger(entry.endLine) || (entry.endLine as number) < 1)) errors.push(`contextPack[${index}].endLine must be a positive integer when present`);
+			});
+		}
+	}
+	if (value.parentTaskId !== undefined && !isNonEmptyString(value.parentTaskId)) {
+		errors.push("parentTaskId must be a non-empty string when present");
+	}
+	if (value.commitOf !== undefined && !isNonEmptyString(value.commitOf)) {
+		errors.push("commitOf must be a non-empty string when present");
+	}
+	if (value.reportOnly !== undefined && typeof value.reportOnly !== "boolean") {
+		errors.push("reportOnly must be a boolean when present");
 	}
 	if (value.validation !== undefined) {
 		if (!isPlainObject(value.validation)) errors.push("validation must be an object when present");
@@ -574,6 +608,9 @@ export const TASKSPEC_CHARACTERISTIC_FIELDS = [
 	"stopConditions",
 	"constraints",
 	"budget",
+	"contextPack",
+	"parentTaskId",
+	"commitOf",
 ] as const;
 
 /**
@@ -833,6 +870,7 @@ export function buildTaskSpecRepair(options: TaskSpecExampleInput): TaskSpecRepa
 		...(submitted && isStringArray(submitted.additionalWorktreeRoots)
 			? { additionalWorktreeRoots: submitted.additionalWorktreeRoots.filter((item) => item.trim()) }
 			: {}),
+		...(submitted && Array.isArray(submitted.contextPack) ? { contextPack: submitted.contextPack } : {}),
 		...(submitted && validBudget(submitted.budget) ? { budget: submitted.budget } : {}),
 		...(submitted && validBudget(submitted.cumulativeBudget) ? { cumulativeBudget: submitted.cumulativeBudget } : {}),
 	};
@@ -1031,6 +1069,9 @@ export function extractTaskSpecDetails(
 					validation: isPlainObject(specValue.validation) ? (specValue.validation as Partial<TaskValidation>) : undefined,
 					expectedEvidence: isPlainObject(specValue.expectedEvidence) ? (specValue.expectedEvidence as ExpectedEvidence) : undefined,
 					stopConditions: isStringArray(specValue.stopConditions) ? specValue.stopConditions : undefined,
+					contextPack: Array.isArray(specValue.contextPack) ? specValue.contextPack as TaskSpec["contextPack"] : undefined,
+					parentTaskId: isNonEmptyString(specValue.parentTaskId) ? specValue.parentTaskId : undefined,
+					commitOf: isNonEmptyString(specValue.commitOf) ? specValue.commitOf : undefined,
 					additionalWorktreeRoots: isStringArray(specValue.additionalWorktreeRoots)
 						? specValue.additionalWorktreeRoots
 						: undefined,
@@ -1098,13 +1139,15 @@ export function isWriterRole(role: TaskRole): boolean {
 }
 
 export const TASK_TRANSITIONS: Record<TaskState, readonly TaskState[]> = {
-	planning: ["executing", "blocked", "failed"],
-	executing: ["reviewing", "blocked", "failed"],
-	reviewing: ["completed", "changes_requested", "blocked", "failed"],
-	changes_requested: ["executing", "blocked", "failed"],
-	blocked: ["executing", "reviewing", "failed"],
-	failed: ["executing", "reviewing"],
+	planning: ["executing", "blocked", "failed", "report-invalid"],
+	executing: ["reviewing", "report-invalid", "blocked", "failed"],
+	reviewing: ["completed", "closed-superseded", "changes_requested", "report-invalid", "blocked", "failed"],
+	changes_requested: ["executing", "report-invalid", "blocked", "failed"],
+	"report-invalid": ["executing", "reviewing", "completed", "changes_requested", "blocked", "failed"],
+	blocked: ["executing", "reviewing", "report-invalid", "failed"],
+	failed: ["executing", "reviewing", "report-invalid"],
 	completed: [],
+	"closed-superseded": [],
 };
 
 export function canTransition(from: TaskState, to: TaskState): boolean {
@@ -1114,6 +1157,19 @@ export function canTransition(from: TaskState, to: TaskState): boolean {
 export interface TaskRecord {
 	taskId: string;
 	spec?: TaskSpec;
+	/** Report text retained when the envelope was irreparable; Root may judge it directly. */
+	rawReport?: {
+		executionId: string;
+		text: string;
+		error: string;
+		receivedAt: string;
+	};
+	/** Parent Task when this record is a derived correction or commit. */
+	parentTaskId?: string;
+	/** Successor Task ids that may account for later workspace changes. */
+	successors: string[];
+	/** Why this Task reached completed/closed-superseded. */
+	completionKind?: import("./types.ts").TaskCompletionKind;
 	role: TaskRole;
 	cwd: string;
 	state: TaskState;
@@ -1233,7 +1289,9 @@ export class TaskStore {
 		const record: TaskRecord = {
 			taskId,
 			...(spec ? { spec } : {}),
+			parentTaskId: spec?.parentTaskId ?? spec?.commitOf,
 			role: spec?.role ?? "worker",
+			successors: [],
 			cwd: spec?.cwd ?? "",
 			state: "planning",
 			reviewRound: 0,
@@ -1253,6 +1311,8 @@ export class TaskStore {
 			updatedAt: timestamp,
 		};
 		this.tasks.set(taskId, record);
+		this.linkSuccessor(spec?.parentTaskId, taskId);
+		this.linkSuccessor(spec?.commitOf, taskId);
 		this.persist(record);
 		return record;
 	}
@@ -1349,6 +1409,15 @@ export class TaskStore {
 		return undefined;
 	}
 
+	/** Record a reciprocal parent/successor link when both Tasks are known. */
+	linkSuccessor(parentTaskId: string | undefined, successorTaskId: string): TaskRecord | undefined {
+		if (!parentTaskId || parentTaskId === successorTaskId) return undefined;
+		const parent = this.get(parentTaskId);
+		if (!parent || parent.successors.includes(successorTaskId)) return parent;
+		parent.successors.push(successorTaskId);
+		return this.touch(parent);
+	}
+
 	require(taskId: string): TaskRecord {
 		const record = this.get(taskId);
 		if (!record) throw new Error(`unknown task: ${taskId}`);
@@ -1398,11 +1467,19 @@ export class TaskStore {
 		if (this.tasks.has(record.taskId)) return;
 		if (!Array.isArray(record.executions)) record.executions = [];
 		if (!Array.isArray(record.findings)) record.findings = [];
+		if (!Array.isArray(record.successors)) record.successors = [];
 		if (!Array.isArray(record.recoveryStates)) record.recoveryStates = [];
 		if (!Number.isFinite(record.recoveryAttempts) || record.recoveryAttempts < 0) {
 			record.recoveryAttempts = 0;
 		}
 		this.tasks.set(record.taskId, record);
+		for (const candidate of this.tasks.values()) {
+			const parentId = candidate.spec?.parentTaskId ?? candidate.spec?.commitOf ?? candidate.parentTaskId;
+			const parent = parentId ? this.get(parentId) : undefined;
+			if (parent && candidate.taskId !== parent.taskId && !parent.successors.includes(candidate.taskId)) {
+				parent.successors.push(candidate.taskId);
+			}
+		}
 		// IS-01 — a restored record keeps its id occupied: advance the
 		// process-local sequence past any same-day restored suffix so in-memory
 		// allocation can never reissue it (ledger-backed stores reserve through
@@ -1443,7 +1520,10 @@ export class TaskStore {
 		record.spec = spec;
 		record.role = spec.role;
 		record.cwd = spec.cwd;
+		record.parentTaskId = spec.parentTaskId ?? spec.commitOf ?? record.parentTaskId;
 		record.isPlaceholder = false;
+		this.linkSuccessor(spec.parentTaskId, record.taskId);
+		this.linkSuccessor(spec.commitOf, record.taskId);
 		return this.touch(record);
 	}
 
@@ -1677,6 +1757,12 @@ export class TaskStore {
 	setReviewMode(taskId: string, mode: ReviewMode): TaskRecord {
 		const record = this.require(taskId);
 		record.reviewMode = mode;
+		return this.touch(record);
+	}
+
+	setCompletionKind(taskId: string, completionKind: import("./types.ts").TaskCompletionKind): TaskRecord {
+		const record = this.require(taskId);
+		record.completionKind = completionKind;
 		return this.touch(record);
 	}
 

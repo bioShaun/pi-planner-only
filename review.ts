@@ -15,6 +15,7 @@ import type {
 	ReviewRequest,
 	ReviewResult,
 	ReviewVerdict,
+	TaskCompletionKind,
 	TaskSpec,
 	TaskState,
 	WorkerReport,
@@ -59,6 +60,8 @@ export interface ReviewDecision {
 	reasonCode?: string;
 	/** E02 — evidence-state key granted this automatic recovery attempt. */
 	evidenceKey?: string;
+	/** RT-02 — completion attribution for successor-owned drift. */
+	completionKind?: TaskCompletionKind;
 }
 
 /**
@@ -121,6 +124,22 @@ export function validateReviewResult(value: unknown): string[] {
 	}
 	if (typeof value.summary !== "string") errors.push("summary must be a string");
 	if (typeof value.evidenceFresh !== "boolean") errors.push("evidenceFresh must be a boolean");
+	if (value.acknowledgeDrift !== undefined) {
+		if (!isPlainObject(value.acknowledgeDrift)) {
+			errors.push("acknowledgeDrift must be an object when present");
+		} else {
+			const acknowledgement = value.acknowledgeDrift as Record<string, unknown>;
+			if (acknowledgement.successorTaskId !== undefined && !isNonEmptyString(acknowledgement.successorTaskId)) {
+				errors.push("acknowledgeDrift.successorTaskId must be a non-empty string when present");
+			}
+			if (acknowledgement.commit !== undefined && typeof acknowledgement.commit !== "boolean") {
+				errors.push("acknowledgeDrift.commit must be a boolean when present");
+			}
+			if (acknowledgement.successorTaskId === undefined && acknowledgement.commit !== true) {
+				errors.push("acknowledgeDrift must name successorTaskId or set commit=true");
+			}
+		}
+	}
 	if (!Array.isArray(value.findings)) errors.push("findings must be an array");
 	else {
 		value.findings.forEach((finding, index) => {
@@ -466,6 +485,45 @@ function isDeclarationOnlyFindings(findings: { kind: string }[]): boolean {
 	return findings.length > 0 && findings.every((finding) => DECLARATION_FINDING_KINDS.has(finding.kind));
 }
 
+type SupersessionComparison = EvidenceComparison & {
+	supersession?: {
+		kind: TaskCompletionKind;
+		successorTaskId?: string;
+	};
+};
+
+function supersessionCompletion(
+	task: TaskRecord,
+	comparison: EvidenceComparison | undefined,
+	review: ReviewResult,
+): TaskCompletionKind | undefined {
+	const metadata = (comparison as SupersessionComparison | undefined)?.supersession;
+	if (!metadata) return undefined;
+	const acknowledgement = review.acknowledgeDrift;
+	if (acknowledgement?.commit === true && metadata.kind === "committed") return "committed";
+	if (
+		acknowledgement?.successorTaskId
+		&& metadata.kind === "superseded"
+		&& metadata.successorTaskId === acknowledgement.successorTaskId
+		&& (task.successors ?? []).includes(acknowledgement.successorTaskId)
+	) return "superseded";
+	return metadata.kind;
+}
+
+function supersessionAcknowledged(
+	task: TaskRecord,
+	comparison: EvidenceComparison | undefined,
+	review: ReviewResult,
+): boolean {
+	const metadata = (comparison as SupersessionComparison | undefined)?.supersession;
+	const acknowledgement = review.acknowledgeDrift;
+	if (!metadata || !acknowledgement) return false;
+	if (acknowledgement.commit === true) return metadata.kind === "committed";
+	return metadata.kind === "superseded"
+		&& metadata.successorTaskId === acknowledgement.successorTaskId
+		&& (task.successors ?? []).includes(acknowledgement.successorTaskId ?? "");
+}
+
 /**
  * Decide the next lifecycle step for a task under review.
  *
@@ -726,17 +784,26 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 
 	const review = input.review;
 	switch (review.verdict) {
-		case "pass":
+		case "pass": {
+			const completionKind = supersessionCompletion(task, input.comparison, review);
+			const explicitlyAcknowledged = review.acknowledgeDrift !== undefined;
+			const acknowledged = supersessionAcknowledged(task, input.comparison, review);
 			return {
 				action: "accept",
-				nextState: "completed",
+				nextState: completionKind ? (explicitlyAcknowledged && acknowledged ? "completed" : "closed-superseded") : "completed",
 				round,
 				consumesRound: false,
 				failureClass: "implementation",
-				reasonCode: "review-pass",
+				reasonCode: completionKind ? `review-pass-${completionKind}` : "review-pass",
 				reason: review.summary,
-				guidance: ["Task accepted. Summarize the outcome and evidence for the user."],
+				...(completionKind ? { completionKind } : {}),
+				guidance: [
+					completionKind
+						? `Task accepted with ${completionKind} attribution; no evidence recovery is required.`
+						: "Task accepted. Summarize the outcome and evidence for the user.",
+				],
 			};
+		}
 		case "request_changes":
 			if (round < MAX_REVIEW_ROUNDS) {
 				const undeclaredGuidance = buildUndeclaredCorrectionGuidance(task, input.comparison);
@@ -806,6 +873,7 @@ export function applyReviewDecision(
 	if (decision.action === "revalidate" && decision.evidenceKey) {
 		store.recordRecoveryAttempt(taskId, decision.evidenceKey);
 	}
+	if (decision.completionKind) store.setCompletionKind(taskId, decision.completionKind);
 	return store.require(taskId);
 }
 
