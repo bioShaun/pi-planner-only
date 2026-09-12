@@ -19,8 +19,10 @@
 
 **Blocked by:** 无。
 
-**Status:** ready
+**Status:** done（2026-09-12 p23 / PR #6 `4a01320`。）
 
 ## Comments
 
 2026-09-12: Intake for cloud-backlog taskspec-exec split on branch `cloud-backlog-2-taskspec-exec-2026-09-12`.
+
+2026-09-12 executor：cloud PR #6 在 `cloud-backlog-2-taskspec-exec-2026-09-12`。validateTaskSpec 拒执行控制字段；preflight 去掉 task-spec 有效来源；ignored 仅审计；e2e 标「待本机终验」。
