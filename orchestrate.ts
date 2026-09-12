@@ -132,7 +132,8 @@ import type {
 	WorkerReport,
 	RecoveryBindingCheck,
 } from "./types.ts";
-import { emptyTaskUsage, summarizeTaskBudget } from "./usage.ts";
+import { emptyTaskUsage, exportSessionEvidence, summarizeTaskBudget } from "./usage.ts";
+import type { SessionEvidenceExport } from "./usage.ts";
 import { BudgetReservations } from "./reservations.ts";
 import type { ReservationBudget } from "./reservations.ts";
 import { ConcurrencyController } from "./concurrency.ts";
@@ -871,6 +872,21 @@ export class PlannerOrchestrator {
 		return this.loadedProvenance ? { ...this.loadedProvenance, capabilities: [...this.loadedProvenance.capabilities] } : undefined;
 	}
 
+	getRunRecords(): RunRecord[] {
+		return this.runRecords?.list() ?? [];
+	}
+
+	/** Export only executions belonging to this Root session. */
+	exportEvidence(rootSessionId = this.runSessionId, sourceFingerprint?: string): SessionEvidenceExport {
+		return exportSessionEvidence({
+			rootSessionId,
+			tasks: this.store.list(),
+			runRecords: this.getRunRecords(),
+			...(sourceFingerprint ? { sourceFingerprint } : {}),
+		});
+	}
+
+
 	setLoadedFingerprint(info: LoadedPluginFingerprint): void {
 		this.setLoadedProvenance(info);
 	}
@@ -1179,6 +1195,7 @@ export class PlannerOrchestrator {
 				runId: receipt.runId,
 				...(receipt.previousRunId ? { previousRunId: receipt.previousRunId } : {}),
 				...(receipt.outputRef ? { outputRef: receipt.outputRef } : {}),
+				...(receipt.terminal?.exitCode !== undefined ? { exitCode: receipt.terminal.exitCode } : {}),
 				...(isTerminal ? { executionState: "terminal", terminalSource: receipt.terminalSource } : { executionState: "running" }),
 				...(errorClass ? { terminalErrorClass: errorClass, nextAction: nextActionForTerminalError(errorClass) } : {}),
 				...ingestionPatch,

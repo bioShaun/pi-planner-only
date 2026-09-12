@@ -1683,6 +1683,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					return lines.join("\n");
 				};
 
+				if (sub.toLowerCase() === "export") {
+					const requestedRootSession = parts[2]?.trim() || orchestrator.getLoadedProvenance()?.sessionId || process.env.PI_SESSION_ID?.trim() || "unknown-session";
+					const evidence = orchestrator.exportEvidence(requestedRootSession, computeLoadedFingerprint());
+					notify(ctx, JSON.stringify(evidence, null, 2));
+					return;
+				}
+
 				if (sub.toLowerCase() === "record") {
 					let taskId: string | undefined;
 					for (let index = 2; index < parts.length; index += 1) {
