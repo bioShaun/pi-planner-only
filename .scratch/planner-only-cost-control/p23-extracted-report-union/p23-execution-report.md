@@ -4,7 +4,7 @@
 - taskId: `p23-extracted-report-union`
 - branch: `cloud-backlog-2-2026-09-12`
 - start HEAD: `5b76f0df8d93775e3b09794f341bd9ab36f52369`
-- end HEAD: *(filled after commit)*
+- end HEAD: 
 - base for PR: `main` (cost-control branch gone; PR target is main)
 
 ## Change summary
