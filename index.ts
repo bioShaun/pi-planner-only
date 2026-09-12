@@ -310,7 +310,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	let orchestrator!: PlannerOrchestrator;
 	let ledger = new UsageLedger({ pricing, resolveTaskId: (taskId) => orchestrator.store.get(taskId)?.taskId ?? taskId });
 	const concurrencyConfig = loadConcurrencyDefault(CONCURRENCY_CONFIG);
-	const concurrency = new ConcurrencyController({ savedLimit: concurrencyConfig.limit, saved: concurrencyConfig.source === "saved", enforceWorkspace: false });
+	const concurrency = new ConcurrencyController({ savedLimit: concurrencyConfig.limit, saved: concurrencyConfig.source === "saved", enforceWorkspace: true });
 	orchestrator = new PlannerOrchestrator({
 		concurrency,
 		gitRunner,

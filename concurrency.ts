@@ -145,12 +145,13 @@ export class ConcurrencyController {
 		}
 		const workspaces = [...new Set((request.workspaces ?? []).filter(Boolean).map(normalizedWorkspace))];
 		const conflicts = this.enforceWorkspace ? [...this.reservations.values()].filter((active) => {
-			// Existing Task lifecycle/write-lock checks remain authoritative for
-			// same-Task retries; capacity is still reserved by the new execution.
-			if (request.taskId && active.taskId === request.taskId && (request.structured === true || request.state !== "executing")) return false;
-			if (request.capability === "writer" && active.capability === "writer") return false;
-			if (request.capability === "reader" && active.capability === "reader") return false;
-			return workspaces.some((workspace) => active.workspaces.includes(workspace));
+			// A blocked/failed Task may be retried against its own stale claim, but
+			// that exception never suppresses checks against another execution.
+			if (request.taskId && active.taskId === request.taskId && request.state !== "executing") return false;
+			// Reader/reader overlap is safe. Any overlapping writer or reviewer must
+			// wait, including structured retries and same-task aliases while active.
+			const bothReaders = request.capability === "reader" && active.capability === "reader";
+			return !bothReaders && workspaces.some((workspace) => active.workspaces.includes(workspace));
 		}) : [];
 		if (conflicts.length > 0) {
 			return {

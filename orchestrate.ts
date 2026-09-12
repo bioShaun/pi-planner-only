@@ -1960,7 +1960,14 @@ export class PlannerOrchestrator {
 		baseCwd: string,
 	): Promise<DelegationOutcome> {
 		try {
-			return await this.beginDelegationInner(event, baseCwd);
+			const outcome = await this.beginDelegationInner(event, baseCwd);
+			if (outcome.block) {
+				// A reservation is provisional until a delegation record is created.
+				// Release it before returning every blocked launch outcome.
+				this.concurrency.release(event.toolCallId);
+				this.reservations.releaseByToolCall(event.toolCallId);
+			}
+			return outcome;
 		} finally {
 			// Reservations happen before the launch decision. Any path that returns
 			// without recording a delegation must return its reservation as well.
@@ -2081,14 +2088,21 @@ export class PlannerOrchestrator {
 				return false;
 			}
 		})();
+		const warnings: string[] = [];
 		if ((!hostAction || hostAction === "execution") && !embeddedTaskLooksInvalid && !(role === "validator" && !target?.task && !target?.spec)) {
 			const reservationTaskId = target?.task?.taskId ?? target?.taskId;
 			const declaredRoots = target?.task?.spec?.additionalWorktreeRoots
 				?? (target?.spec?.additionalWorktreeRoots ?? []);
 			const admissionCwd = target?.task?.cwd ?? target?.spec?.cwd ?? cwd;
-			const capability = role === "explorer" ? "reader" : role === "reviewer" ? "reviewer" : "writer";
+			const capability: "reader" | "reviewer" | "writer" = role === "explorer" ? "reader" : role === "reviewer" ? "reviewer" : "writer";
 			const admissionWorkspaces = role === "explorer" && target?.task ? [] : [admissionCwd, ...declaredRoots];
-			const admission = this.concurrency.reserve({
+			for (const reservation of this.concurrency.status().reservations) {
+				const reservationTask = reservation.taskId ? this.store.get(reservation.taskId) : undefined;
+				if (reservation.taskId && (!reservationTask || isFinalTaskState(reservationTask.state))) {
+					this.concurrency.release(reservation.id);
+				}
+			}
+			const admissionRequest = {
 				id: event.toolCallId,
 				...(reservationTaskId ? { taskId: reservationTaskId } : {}),
 				...(target?.task ? { state: target.task.state } : {}),
@@ -2096,24 +2110,70 @@ export class PlannerOrchestrator {
 				role,
 				capability,
 				workspaces: admissionWorkspaces,
-			});
+			};
+			let admission = this.concurrency.reserve(admissionRequest);
 			if (admission.refusal) {
 				if (admission.refusal.code === "WORKSPACE_CONFLICT") {
+					if (role !== "reviewer" && this.getSessionRootUsage) {
+						const sessionEvaluation = evaluateSessionRootBudget(this.getSessionRootUsage(), this.sessionRootBudgetConfig);
+						if (sessionEvaluation.level === "hard" && this.delegationRateKind(requestedRoleModel(inputRecord).model) !== "free") {
+							return { block: { reason: formatSessionRootBudgetRefusal(sessionEvaluation) } };
+						}
+					}
+					const conflictingReservationId = admission.refusal.conflictingIds?.[0];
+					const conflictingTaskId = conflictingReservationId
+						? this.concurrency.get(conflictingReservationId)?.taskId ?? conflictingReservationId
+						: undefined;
+					if (conflictingTaskId) {
+						await this.reconcileBeforeLock(conflictingTaskId, warnings);
+						admission = this.concurrency.reserve(admissionRequest);
+					}
+				}
+				if (admission.refusal?.code === "WORKSPACE_CONFLICT") {
+					const conflictingReservationId = admission.refusal.conflictingIds?.[0];
+					const conflictingTaskId = conflictingReservationId
+						? this.concurrency.get(conflictingReservationId)?.taskId ?? conflictingReservationId
+						: undefined;
+					if (conflictingTaskId) {
+						this.noteStaleHolder(
+							{ conflict: true, taskId: conflictingTaskId, reason: admission.refusal.reason },
+							target?.task?.taskId ?? target?.spec?.taskId,
+						);
+					}
+					// Keep a rejected structured launch inspectable for a later retry,
+					// without creating or mutating a Task when it already exists.
+					if (target?.spec && !target.task) {
+						const createTask = this.store.create.bind(this.store);
+						createTask(target.spec);
+					}
+					// Preserve the more actionable cumulative-budget refusal when a
+					// retry is both workspace-conflicting and already exhausted.
+					const conflictTask = target?.task;
+					const conflictBudget = (conflictTask?.spec as unknown as { cumulativeBudget?: unknown } | undefined)?.cumulativeBudget;
+					if (role !== "reviewer" && conflictTask?.usage && conflictBudget && typeof conflictBudget === "object") {
+						const budget = summarizeTaskBudget(conflictTask.usage, conflictBudget as Parameters<typeof summarizeTaskBudget>[1]);
+						const budgetReservation = this.reservations.reserve(conflictTask.taskId, budget, { toolCallId: event.toolCallId });
+						if (budgetReservation.refused) {
+							return { block: { reason: this.cumulativeBudgetRefusal(conflictTask.taskId, budget, budgetReservation.refused) } };
+						}
+					}
 					return {
 						conflict: {
 							conflict: true,
 							taskId: admission.refusal.conflictingIds?.[0],
+							reason: `${admission.refusal.reason}; occupied=${admission.refusal.occupied}, limit=${admission.refusal.limit}, available=${admission.refusal.available}. The conflicting run's write lock has not been confirmed exited; retry after a trusted child terminal event.`,
+						},
+					};
+				}
+				if (admission.refusal) {
+					return {
+						block: {
+							code: admission.refusal.code,
+							details: admission.refusal,
 							reason: `${admission.refusal.reason}; occupied=${admission.refusal.occupied}, limit=${admission.refusal.limit}, available=${admission.refusal.available}. Retry after a trusted child terminal event.`,
 						},
 					};
 				}
-				return {
-					block: {
-						code: admission.refusal.code,
-						details: admission.refusal,
-						reason: `${admission.refusal.reason}; occupied=${admission.refusal.occupied}, limit=${admission.refusal.limit}, available=${admission.refusal.available}. Retry after a trusted child terminal event.`,
-					},
-				};
 			}
 		}
 		const roleModelPolicy = loadRoleModelPolicy();
@@ -2140,7 +2200,6 @@ export class PlannerOrchestrator {
 		// unverified-and-continue before any session budget, reservation, evidence,
 		// or writer-lock side effect can occur.
 		let preflightSummary: { model: string; thinking: string; source: string; verification: string } | undefined;
-		const warnings: string[] = [];
 		const preflightContext = this.getModelPreflightContext?.();
 		if (!preflightContext) {
 			if (this.getModelPreflightContext && !this.modelPreflightUnverifiedWarningEmitted) {

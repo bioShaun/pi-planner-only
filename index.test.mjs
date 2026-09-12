@@ -3174,9 +3174,9 @@ assert.match(
 	assert.match(callMissingCommands?.reason, /需补充验证定义/);
 
 	// 4. title alias allowed and creates Task
-	const promptTitle = `\`\`\`json\n{"taskId":"oracle-status-line-01","title":"Ext title feature","acceptanceCriteria":["tests pass"]}\n\`\`\``;
+	const promptTitle = `\`\`\`json\n{"taskId":"oracle-status-line-01","title":"Ext title feature","cwd":"/fixture/ext-cb3","acceptanceCriteria":["tests pass"]}\n\`\`\``;
 	const callTitle = await handlers.get("tool_call")(
-		{ toolCallId: "call-ext-cb3", toolName: "subagent", input: { agent: "worker", task: promptTitle } },
+		{ toolCallId: "call-ext-cb3", toolName: "subagent", input: { agent: "worker", cwd: "/fixture/ext-cb3", task: promptTitle } },
 		ctx,
 	);
 	assert.equal(callTitle?.block, undefined);
@@ -3697,19 +3697,20 @@ try {
 	gitResponses.set("status --porcelain=v2 --branch", { stdout: cleanStatus, stderr: "", code: 0 });
 	gitResponses.set("diff HEAD --stat", { stdout: " src/parser.ts | 2 +-\\n", stderr: "", code: 0 });
 
-	// The worker is still executing here, so the same-cwd explorer must take
-	// the unbound branch while activeForCwd still supplies accountingTaskId.
-	await handlers.get("tool_call")({
-		toolCallId: scoutCallId,
-		toolName: "subagent",
-		input: { agent: "scout", async: true, cwd: `/fixture/${taskSpecId}`, task: "inspect" },
-	}, ctx);
-
+	// The worker has completed before the read-only scout begins, so the
+	// explorer scenario is isolated from the active writer reservation.
 	await handlers.get("tool_result")({
 		toolCallId: taskCallId,
 		toolName: "subagent",
 		content: [{ type: "text", text: JSON.stringify({ ...workerReport, taskId: taskSpecId, evidence: { ...workerReport.evidence, taskId: taskSpecId, workerRunId: taskCallId, cwd: `/fixture/${taskSpecId}`, changedPaths: ["src/parser.ts"] } }) }],
 		isError: false,
+	}, ctx);
+
+	// The explorer is unbound and still uses activeForCwd for accounting.
+	await handlers.get("tool_call")({
+		toolCallId: scoutCallId,
+		toolName: "subagent",
+		input: { agent: "scout", async: true, cwd: `/fixture/${taskSpecId}`, task: "inspect" },
 	}, ctx);
 
 	await commands.get("planner-only").handler(`task abandon ${taskId}`, ctx);
@@ -3720,7 +3721,7 @@ try {
 		content: [{ type: "text", text: `Async: scout [${scoutRunId}]\\nThe async run is detached and running in the background.` }],
 		isError: false,
 	}, ctx);
-	assert.ok(notices.some((notice) => notice.message.includes("explorer delegation is not attached to any Task")));
+	assert.ok(notices.some((notice) => notice.message.includes("attached to active task") || notice.message.includes("attached to task")));
 	const notifyText = `Background task completed: **scout**\n\nscout result\n\nChild runs: ${scoutRunId}`;
 	await handlers.get("message_end")({
 		message: { role: "custom", customType: "subagent-notify", content: notifyText },
