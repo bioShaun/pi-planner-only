@@ -127,3 +127,15 @@ spec L143 把证据分为三级：代码完成 / handler 验证 / 宿主验证�
 - C04～C15 中人为制造的失败场景（输出永不出现、exit 非零、门失败等）自然落在分母外，但仍以 blocked 或 `notDoneReason` 留在矩阵中，不得从记录中消失。
 - 人工若要从名单中剔除某个运行，必须给出写入验收记录的理由。
 - 关闭标准的六个"=0"由 agent 在签字后的名单上机械统计，人工动作只有确认规则和签字两步。
+
+## 8. 第 4 步执行记录：宿主会话基线（2026-09-12）
+
+第 4 节第 1～4 步已由 agent 完成，本节记录宿主会话的基线。第 5～7 步待人工。
+
+- **基线 commit**：`61bc74f677cfa9c11b7ddadc4d086bf61ba80a41`（短 hash `61bc74f`，紧随 `5b76f0d`）。
+- **构建 fingerprint**：`ed1b521c8e8937f63c385fe3f1dac20106084dff4b400bde4eac11ba62644e56`（`computeLoadedFingerprint()` 对工作区文件计算；宿主会话第 1 步核对 loaded fingerprint 时以此为准）。该指纹包含 `acceptance-claims.ts`——它已加入指纹文件清单。
+- 门禁状态：`npm run typecheck`、`npm test`（30 个套件）、`git diff --check` 全绿。`PI_PLANNER_ONLY_REQUIRE_CONTRACT=1 npm run test:e2e` 维持 spec §6 记录的环境限制（本机解析路径无 pi-subagents），非本次改动引入。
+- 完成内容对应 issue：04（拒绝原因枚举化）、05（ChildProvenance 提取等）、01 第 1、2 条（冻结 fixture + 真实样本重放 + 跨进程重扫）及第 3 条（矩阵回填，`acceptance-claims.ts`）。三个 issue 文件已附完成记录。
+- 宿主级条目（C04～C06、C10～C16、C18 宿主列）统一 `notDoneReason: host-run-pending`，与第 2 节表格一致；push 授权入口维持不开放（第 7.1 节）。
+
+宿主会话按第 5 节 checklist 执行时，第 1 步核对 loaded fingerprint 应等于上列 fingerprint、diskHead 应等于基线 commit；不一致说明安装目录未升级到本基线。
