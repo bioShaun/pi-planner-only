@@ -64,6 +64,7 @@ assert.equal(taskSpecRequestsFullSuite(createTaskSpec({ objective: "types", cwd:
 // Ticket 34: inferred passes from the real run5 reports do not satisfy either gate.
 for (const prefix of ["75d7ae1c", "e63c7583"]) {
 	const extracted = extractWorkerReport(readRun5Output(prefix));
+	assert.equal(extracted.ok, true, prefix);
 	const report = extracted.report;
 	const command = report.validation[0].command;
 	const spec = createTaskSpec({ objective: "inferred validation", cwd: process.cwd(), validation: { commands: [command] } });

@@ -289,6 +289,7 @@ assert.match(summarizeFindings([finding("major", "test")]).join("\n"), /\[major\
 {
 	const store = newTask();
 	const extracted = extractWorkerReport("I could not finish, sorry.");
+	assert.equal(extracted.ok, false);
 	assert.ok(extracted.error);
 
 	let decision = decideReview({

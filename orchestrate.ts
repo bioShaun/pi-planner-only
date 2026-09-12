@@ -4301,8 +4301,8 @@ export class PlannerOrchestrator {
 			return { content: [{ type: "text", text: `[PLANNER-ONLY] Interrupt requested for task ${delegation.taskId}; terminal evidence is still required before releasing the writer.` }] };
 		}
 		const isBudgetStop = isBudgetStopEvent(event, text);
-		const stopReport = extractWorkerReport(text, { expectedTaskId: delegation.taskId }).report;
-		if ((isBudgetStop && !stopReport) || (event.isError && !stopReport)) {
+		const stopExtracted = extractWorkerReport(text, { expectedTaskId: delegation.taskId });
+		if ((isBudgetStop && !stopExtracted.ok) || (event.isError && !stopExtracted.ok)) {
 			// R02 — auxiliary and unbound Explorer errors only record the
 			// invocation outcome; the assisted Task's lifecycle is untouched.
 			if (delegation.kind === "explorer" && delegation.explorerOwnership !== "standalone") {
@@ -4590,7 +4590,7 @@ export class PlannerOrchestrator {
 				|| chosen.toLowerCase().includes("toolbudget")
 				|| chosen.toLowerCase().includes("usagebudget");
 			const is403 = is403RateLimit(chosen) || is403RateLimit(parsed.status);
-			if (is403 && !extractWorkerReport(chosen, { expectedTaskId: found.record.taskId }).report) {
+			if (is403 && !extractWorkerReport(chosen, { expectedTaskId: found.record.taskId }).ok) {
 				const task = this.store.get(found.record.taskId);
 				const firstLine = (chosen.split(/\r?\n/, 1)[0] ?? "").trim();
 				const reason = `provider 403 error (${firstLine || "five-hour usage limit"})`;
@@ -4616,7 +4616,7 @@ export class PlannerOrchestrator {
 				};
 				continue;
 			}
-			if (isBudgetOrStopped && !extractWorkerReport(chosen, { expectedTaskId: found.record.taskId }).report) {
+			if (isBudgetOrStopped && !extractWorkerReport(chosen, { expectedTaskId: found.record.taskId }).ok) {
 				const task = this.store.get(found.record.taskId);
 				if (task && !isFinalTaskState(task.state)) {
 					this.store.transition(task.taskId, "failed");
@@ -4944,10 +4944,10 @@ export class PlannerOrchestrator {
 	): Promise<{ content: { type: "text"; text: string }[] }> {
 		const current = this.runRecords?.get(this.runSessionId, this.runWorkspaceIdFor(task), executionId);
 		const expectedWorkerRunId = this.trustedHostRunIdFor(task, executionId, options.delegation);
-		const canJournalReport = !options.forceReportError && Boolean(extractWorkerReport(text, {
+		const canJournalReport = !options.forceReportError && extractWorkerReport(text, {
 			expectedTaskId: task.taskId,
 			...(expectedWorkerRunId ? { expectedWorkerRunId } : {}),
-		}).report);
+		}).ok;
 		if (current && resolution.kind === "loaded" && canJournalReport && this.runRecords) {
 			let response: { content: { type: "text"; text: string }[] } | undefined;
 			await this.runRecords.commitLoadedAsync(current, resolution, async () => {
@@ -4970,7 +4970,7 @@ export class PlannerOrchestrator {
 	): Promise<{ content: { type: "text"; text: string }[] }> {
 		const expectedWorkerRunId = this.trustedHostRunIdFor(task, toolCallId, options.delegation);
 		const extracted = options.forceReportError
-			? { error: options.forceReportError, repairs: [] as string[] }
+			? { ok: false as const, error: options.forceReportError, repairs: [] as string[] }
 			: extractWorkerReport(text, {
 				expectedTaskId: task.taskId,
 				...(expectedWorkerRunId ? { expectedWorkerRunId } : {}),
@@ -4979,7 +4979,7 @@ export class PlannerOrchestrator {
 		let compacted = false;
 		let identityErrors: string[] = [];
 
-		if (extracted.report) {
+		if (extracted.ok) {
 			// §P0-1 — a valid report for the wrong task is not a report.
 			identityErrors = validateWorkerReportIdentity(extracted.report, {
 				taskId: task.taskId,
@@ -4995,13 +4995,16 @@ export class PlannerOrchestrator {
 		}
 
 		const rawInvalid = !report
+			&& extracted.ok === false
 			&& extracted.level === "irreparable"
-			&& !/(?:taskId|workerRunId).*(?:mismatch|must match)/i.test(extracted.error ?? "");
+			&& !/(?:taskId|workerRunId).*(?:mismatch|must match)/i.test(extracted.error);
 		const reportError = report
 			? undefined
 			: identityErrors.length > 0
 				? `task identity rejected: ${identityErrors.join("; ")}`
-				: extracted.error;
+				: extracted.ok === false
+					? extracted.error
+					: undefined;
 
 		const current = await captureEvidence(
 			this.gitRunner,
@@ -5252,17 +5255,17 @@ export class PlannerOrchestrator {
 			...(trustedWorkerRunId ? { expectedWorkerRunId: trustedWorkerRunId } : {}),
 		});
 		let identityErrors: string[] = [];
-		if (extracted.report) {
+		if (extracted.ok) {
 			identityErrors = validateWorkerReportIdentity(extracted.report, {
 				taskId: task.taskId,
 				...(task.aliases.length > 0 ? { aliases: task.aliases } : {}),
 				...(trustedWorkerRunId ? { workerRunId: trustedWorkerRunId } : {}),
 			});
 		}
-		const rawInvalid = !extracted.report
+		const rawInvalid = extracted.ok === false
 			&& extracted.level === "irreparable"
-			&& !/(?:taskId|workerRunId).*(?:mismatch|must match)/i.test(extracted.error ?? "");
-		if (!extracted.report || identityErrors.length > 0) {
+			&& !/(?:taskId|workerRunId).*(?:mismatch|must match)/i.test(extracted.error);
+		if (!extracted.ok || identityErrors.length > 0) {
 			// Keep the execution's C_report even for the rejected result.
 			const execution = this.store.executionById(task.taskId, toolCallId);
 			if (execution) {
@@ -5276,7 +5279,9 @@ export class PlannerOrchestrator {
 			}
 			const reportError = identityErrors.length > 0
 				? `task identity rejected: ${identityErrors.join("; ")}`
-				: extracted.error ?? "no WorkerReport found";
+				: extracted.ok === false
+					? extracted.error
+					: "no WorkerReport found";
 			if (rawInvalid) {
 				const invalidTask = this.store.require(task.taskId);
 				invalidTask.rawReport = {
@@ -5353,7 +5358,7 @@ export class PlannerOrchestrator {
 			...(trustedValidatorRunId ? { expectedWorkerRunId: trustedValidatorRunId } : {}),
 		});
 		let report: WorkerReport | undefined;
-		if (extracted.report) {
+		if (extracted.ok) {
 			const identityErrors = validateWorkerReportIdentity(extracted.report, {
 				taskId: task.taskId,
 				...(task.aliases.length > 0 ? { aliases: task.aliases } : {}),
