@@ -160,6 +160,10 @@ export type LimitSource = "floor" | "caller" | "taskSpec" | "balance";
 export interface EffectiveLimit {
 	readonly value: number;
 	readonly source: LimitSource;
+	/** Advisory threshold for staged enforcement, when applicable. */
+	readonly soft?: number;
+	/** True when the host cannot natively enforce the staged threshold. */
+	readonly advisoryOnly?: boolean;
 }
 
 export interface EffectiveLimits {
@@ -247,6 +251,35 @@ function extractBudgetTool(budget: unknown): number | undefined {
 	return undefined;
 }
 
+function extractToolSoft(input: unknown): number | undefined {
+	if (!input || typeof input !== "object") return undefined;
+	return extractPositiveFinite((input as { soft?: unknown }).soft);
+}
+
+function extractBudgetToolSoft(budget: unknown): number | undefined {
+	if (!budget || typeof budget !== "object") return undefined;
+	const b = budget as Record<string, unknown>;
+	if (b.usageBudget && typeof b.usageBudget === "object") {
+		const nested = extractBudgetToolSoft(b.usageBudget);
+		if (nested !== undefined) return nested;
+	}
+	if (b.toolBudget && typeof b.toolBudget === "object") {
+		const nested = extractToolSoft(b.toolBudget);
+		if (nested !== undefined) return nested;
+	}
+	if (b.tools && typeof b.tools === "object") return extractToolSoft(b.tools);
+	return undefined;
+}
+
+function withToolMetadata(limit: EffectiveLimit, explicitSoft: number | undefined): EffectiveLimit {
+	const soft = explicitSoft ?? Math.ceil(0.8 * limit.value);
+	Object.defineProperties(limit, {
+		soft: { value: soft, enumerable: false },
+		advisoryOnly: { value: true, enumerable: false },
+	});
+	return limit;
+}
+
 /**
  * Resolve effective limits across toolBudget, usageBudget.tokens, and usageBudget.costUsd.
  * For each dimension, takes the minimum of valid positive finite values among floor, caller, and taskSpec.
@@ -278,10 +311,12 @@ export function resolveEffectiveLimits(options: ResolveLimitsOptions): Effective
 	}
 
 	const callerTool = extractCallerToolHard(options.callerToolBudget);
+	const callerToolSoft = extractToolSoft(options.callerToolBudget);
 	const callerTokens = extractCallerTokensHard(options.callerUsageBudget);
 	const callerCostUsd = extractCallerCostUsdHard(options.callerUsageBudget);
 
 	const specTool = extractBudgetTool(options.taskSpecBudget);
+	const specToolSoft = extractBudgetToolSoft(options.taskSpecBudget);
 	const specTokens = extractBudgetTokens(options.taskSpecBudget);
 	const specCostUsd = extractBudgetCostUsd(options.taskSpecBudget);
 
@@ -301,12 +336,12 @@ export function resolveEffectiveLimits(options: ResolveLimitsOptions): Effective
 				best = c;
 			}
 		}
-		effectiveTool = best;
+		effectiveTool = withToolMetadata(best, best.source === "caller" ? callerToolSoft : best.source === "taskSpec" ? specToolSoft : undefined);
 	} else {
 		if (callerTool !== undefined && (specTool === undefined || callerTool <= specTool)) {
-			effectiveTool = { value: callerTool, source: "caller" };
+			effectiveTool = withToolMetadata({ value: callerTool, source: "caller" }, callerToolSoft);
 		} else if (specTool !== undefined) {
-			effectiveTool = { value: specTool, source: "taskSpec" };
+			effectiveTool = withToolMetadata({ value: specTool, source: "taskSpec" }, specToolSoft);
 		}
 	}
 

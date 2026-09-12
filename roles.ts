@@ -168,10 +168,12 @@ export interface ApplyRoleDelegationResult {
 	oracleSuiteConflict?: boolean;
 }
 
-function sameToolBudget(existing: unknown, target: { hard: number } | undefined): boolean {
+function sameToolBudget(existing: unknown, target: { hard?: number; soft?: number } | undefined): boolean {
 	if (!target) return existing === undefined;
 	if (!existing || typeof existing !== "object") return false;
-	return (existing as { hard?: unknown }).hard === target.hard;
+	const record = existing as { hard?: unknown; soft?: unknown };
+	return record.hard === target.hard
+		&& (target.soft === undefined || record.soft === target.soft);
 }
 
 function sameUsageBudget(
@@ -326,7 +328,15 @@ export function applyRoleDelegation(
 		const existingTool = input.toolBudget && typeof input.toolBudget === "object"
 			? input.toolBudget as Record<string, unknown>
 			: {};
-		const newTool = { ...existingTool, hard: effectiveLimits.toolBudget.value };
+		const newTool = { ...existingTool, hard: effectiveLimits.toolBudget.value } as Record<string, unknown>;
+		if (effectiveLimits.toolBudget.soft !== undefined) {
+			Object.defineProperty(newTool, "soft", {
+				value: effectiveLimits.toolBudget.soft,
+				enumerable: Object.prototype.propertyIsEnumerable.call(existingTool, "soft"),
+				writable: true,
+				configurable: true,
+			});
+		}
 		if (!sameToolBudget(input.toolBudget, newTool)) {
 			input.toolBudget = newTool;
 			mutated = true;
