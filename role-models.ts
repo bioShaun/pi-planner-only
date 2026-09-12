@@ -15,14 +15,17 @@ export interface RoleModelPolicy {
 	roles: Partial<Record<RoleModelRole, RoleModelConfig>>;
 }
 
+export type ModelSelectionSource = "explicit" | "task-spec" | "role-policy" | "role-policy-fallback" | "host-default";
+
 export interface RoleModelResolution {
 	role: RoleModelRole;
 	model: string;
-	thinking: string;
+	thinking?: string;
+	/** Sources are optional for compatibility with callers that construct resolutions. */
+	modelSource?: ModelSelectionSource;
+	thinkingSource?: ModelSelectionSource;
 	fallbacks?: RoleModelConfig[];
 }
-
-export type ModelSelectionSource = "explicit" | "task-spec" | "role-policy" | "role-policy-fallback" | "host-default";
 
 export interface ModelRegistryLike {
 	getAvailable?: () => readonly unknown[];
@@ -32,11 +35,16 @@ export interface ModelRegistryLike {
 
 export interface ModelPreflightContext {
 	input: Record<string, unknown>;
-	roleResolution?: Pick<RoleModelResolution, "role" | "model" | "thinking" | "fallbacks">;
+	roleResolution?: Pick<RoleModelResolution, "role" | "model" | "thinking" | "fallbacks" | "modelSource" | "thinkingSource">;
 	rolePolicy?: RoleModelPolicy;
 	taskSpecModel?: string;
 	taskSpecThinking?: string;
 	hostModel?: { provider?: string; id?: string };
+	/** Builtin agent/role whose host default is being inspected. */
+	hostAgent?: string;
+	agentOverrides?: Record<string, unknown>;
+	/** Host global default used when no role/agent override exists. */
+	defaultModel?: { provider?: string; id?: string } | string;
 	hostThinking?: string;
 	registry?: ModelRegistryLike;
 	pricing?: { rates: Record<string, unknown> };
@@ -44,7 +52,7 @@ export interface ModelPreflightContext {
 
 export interface ModelPreflightResult {
 	status: "verified" | "blocked" | "unverified";
-	effective?: { provider?: string; model: string; thinking: string; source: ModelSelectionSource };
+	effective?: { provider?: string; model: string; thinking?: string; source: ModelSelectionSource; modelSource: ModelSelectionSource; thinkingSource?: ModelSelectionSource };
 	error?: { code: "MODEL_UNAVAILABLE"; source: ModelSelectionSource; requested: string; candidates: string[]; verification: "verified" | "unverified"; message: string };
 }
 
@@ -65,13 +73,14 @@ export function compareResolvedRoleModel(
 	const actualThinking = typeof actual.thinking === "string" && actual.thinking.trim() ? actual.thinking.trim() : "未知";
 	const unknownModel = actualModel === "未知";
 	const unknownThinking = actualThinking === "未知";
+	const expectedThinking = resolved.thinking?.trim();
 	return {
 		actualModel,
 		actualThinking,
 		unknownModel,
 		unknownThinking,
 		mismatch: (!unknownModel && actualModel !== resolved.model.trim())
-			|| (!unknownThinking && actualThinking !== resolved.thinking.trim()),
+			|| (Boolean(expectedThinking) && !unknownThinking && actualThinking !== expectedThinking),
 	};
 }
 
@@ -183,52 +192,87 @@ export function preflightEffectiveModel(context: ModelPreflightContext): ModelPr
 	const role = context.roleResolution;
 	const roleModel = role?.model?.trim() || undefined;
 	const taskModel = context.taskSpecModel?.trim() || undefined;
-	const defaultModel = context.hostModel?.id?.trim() || undefined;
-	const source: ModelSelectionSource = roleModel
+	const roleKey = role?.role
+		?? (typeof context.hostAgent === "string" ? context.hostAgent.trim().toLowerCase() : undefined)
+		?? (typeof context.input.__delegationRole === "string" ? context.input.__delegationRole.trim().toLowerCase() : undefined)
+		?? (typeof context.input.agent === "string" ? context.input.agent.trim().toLowerCase() : undefined);
+	const hostOverride = roleKey ? modelConfigValue(context.agentOverrides?.[roleKey]) : undefined;
+	const hostDefault = hostOverride ?? modelConfigValue(context.defaultModel) ?? context.hostModel;
+	const defaultModel = hostDefault?.id?.trim() || undefined;
+	const modelSource: ModelSelectionSource = roleModel
 		? "role-policy"
 		: inputModel
 			? "explicit"
 			: taskModel
 				? "task-spec"
 				: "host-default";
-		const modelValue = roleModel || inputModel || taskModel || defaultModel;
-		const thinking = role?.thinking?.trim() || inputThinking || context.taskSpecThinking?.trim() || context.hostThinking?.trim() || "unknown";
-		const provider = roleModel
-			? providerFromModel(roleModel)
-			: inputModel
-				? providerFromModel(inputModel)
-				: taskModel
-					? providerFromModel(taskModel)
-					: context.hostModel?.provider?.trim() || providerFromModel(defaultModel);
-		if (!modelValue) return unavailableModel(source, "(no effective model)", [], "unverified", "host default model is unavailable");
+	const modelValue = roleModel || inputModel || taskModel || defaultModel;
+	const thinking = role?.thinking?.trim() || inputThinking || context.taskSpecThinking?.trim()
+		|| (modelSource === "host-default" ? context.hostThinking?.trim() : undefined);
+	const thinkingSource: ModelSelectionSource | undefined = role?.thinking?.trim()
+		? "role-policy"
+		: inputThinking
+			? "explicit"
+			: context.taskSpecThinking?.trim()
+				? "task-spec"
+				: modelSource === "host-default" && context.hostThinking?.trim()
+					? "host-default"
+					: undefined;
+	const provider = roleModel
+		? providerFromModel(roleModel)
+		: inputModel
+			? providerFromModel(inputModel)
+			: taskModel
+				? providerFromModel(taskModel)
+				: hostDefault?.provider?.trim() || providerFromModel(defaultModel);
+	if (!modelValue) return unavailableModel(modelSource, "(no effective model)", [], "unverified", "host default model is unavailable");
 
-		const registryState = registryModels(context.registry);
-		const candidates = registryState.models.length > 0
-			? registryState.models
-			: pricingModels(context.pricing);
-		if (registryState.unverified) {
-			return unavailableModel(source, modelValue, candidates, "unverified", registryState.reason ?? "model registry is unavailable");
-		}
-		if (registryState.models.some((candidate) => modelMatches(modelValue, provider, candidate))) {
-			return { status: "verified", effective: { ...(provider ? { provider } : {}), model: modelIdFromModel(modelValue), thinking, source } };
-		}
+	const registryState = registryModels(context.registry);
+	const candidates = registryState.models.length > 0 ? registryState.models : pricingModels(context.pricing);
+	const effective = (value: string, valueSource: ModelSelectionSource = modelSource, valueThinking = thinking, valueThinkingSource: ModelSelectionSource | undefined = thinkingSource) => {
+		const result: { provider?: string; model: string; thinking?: string; source: ModelSelectionSource; modelSource?: ModelSelectionSource; thinkingSource?: ModelSelectionSource } = {
+			...(providerFromModel(value) || provider ? { provider: providerFromModel(value) || provider } : {}),
+			model: modelIdFromModel(value),
+			...(valueThinking ? { thinking: valueThinking } : {}),
+			source: valueSource,
+		};
+		// Keep the legacy enumerable shape (`source`) while exposing independent
+		// provenance to callers that need field-level attribution.
+		Object.defineProperty(result, "modelSource", { value: valueSource, enumerable: false });
+		if (valueThinkingSource) Object.defineProperty(result, "thinkingSource", { value: valueThinkingSource, enumerable: false });
+		return result as { provider?: string; model: string; thinking?: string; source: ModelSelectionSource; modelSource: ModelSelectionSource; thinkingSource?: ModelSelectionSource };
+	};
+	if (registryState.unverified) {
+		return {
+			status: "unverified",
+			effective: effective(modelValue),
+			error: unavailableModel(modelSource, modelValue, candidates, "unverified", registryState.reason ?? "model registry is unavailable").error,
+		};
+	}
+	if (registryState.models.some((candidate) => modelMatches(modelValue, provider, candidate))) {
+		return { status: "verified", effective: effective(modelValue) };
+	}
 
-		const roleFallbacks = role?.fallbacks ?? (role?.role && context.rolePolicy?.roles[role.role]?.fallbacks)
-			?? (role?.role && context.rolePolicy?.roles[role.role]?.fallback) ?? [];
-		for (const fallback of roleFallbacks) {
-			const fallbackModel = fallback.model?.trim();
-			if (!fallbackModel || !registryState.models.some((candidate) => modelMatches(fallbackModel, providerFromModel(fallbackModel), candidate))) continue;
-			return {
-				status: "verified",
-				effective: {
-					...(providerFromModel(fallbackModel) ? { provider: providerFromModel(fallbackModel) } : {}),
-					model: modelIdFromModel(fallbackModel),
-					thinking: fallback.thinking?.trim() || thinking,
-					source: "role-policy-fallback",
-				},
-			};
-		}
-		return unavailableModel(source, modelValue, candidates, "verified", "effective model is absent from the host model registry");
+	const roleFallbacks = role?.fallbacks ?? (role?.role && context.rolePolicy?.roles[role.role]?.fallbacks)
+		?? (role?.role && context.rolePolicy?.roles[role.role]?.fallback) ?? [];
+	for (const fallback of roleFallbacks) {
+		const fallbackModel = fallback.model?.trim();
+		if (!fallbackModel || !registryState.models.some((candidate) => modelMatches(fallbackModel, providerFromModel(fallbackModel), candidate))) continue;
+		return {
+			status: "verified",
+			effective: effective(fallbackModel, "role-policy-fallback", fallback.thinking?.trim() || thinking, fallback.thinking?.trim() ? "role-policy-fallback" : thinkingSource),
+		};
+	}
+	return unavailableModel(modelSource, modelValue, candidates, "verified", "effective model is absent from the host model registry");
+}
+
+function modelConfigValue(value: unknown): { provider?: string; id?: string } | undefined {
+	if (typeof value === "string" && value.trim()) return { id: value.trim(), provider: providerFromModel(value) };
+	if (!value || typeof value !== "object") return undefined;
+	const rec = value as Record<string, unknown>;
+	const id = typeof rec.id === "string" ? rec.id.trim() : typeof rec.model === "string" ? rec.model.trim() : "";
+	if (!id) return undefined;
+	return { id: modelIdFromModel(id), provider: typeof rec.provider === "string" ? rec.provider.trim() : providerFromModel(id) };
 }
 
 function modelIdFromModel(value: string): string {

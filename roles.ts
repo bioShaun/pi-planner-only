@@ -300,12 +300,21 @@ export function applyRoleDelegation(
 	});
 
 	if (effectiveLimits.tokens || effectiveLimits.costUsd) {
-		const newUsage: Record<string, unknown> = {};
+		const existingUsage = input.usageBudget && typeof input.usageBudget === "object"
+			? { ...(input.usageBudget as Record<string, unknown>) }
+			: {};
+		const newUsage: Record<string, unknown> = existingUsage;
 		if (effectiveLimits.tokens) {
-			newUsage.tokens = { hard: effectiveLimits.tokens.value };
+			const existingTokens = existingUsage.tokens && typeof existingUsage.tokens === "object"
+				? existingUsage.tokens as Record<string, unknown>
+				: {};
+			newUsage.tokens = { ...existingTokens, hard: effectiveLimits.tokens.value };
 		}
 		if (effectiveLimits.costUsd) {
-			newUsage.costUsd = { hard: effectiveLimits.costUsd.value };
+			const existingCost = existingUsage.costUsd && typeof existingUsage.costUsd === "object"
+				? existingUsage.costUsd as Record<string, unknown>
+				: {};
+			newUsage.costUsd = { ...existingCost, hard: effectiveLimits.costUsd.value };
 		}
 		if (!sameUsageBudget(input.usageBudget, newUsage)) {
 			input.usageBudget = newUsage;
@@ -314,7 +323,10 @@ export function applyRoleDelegation(
 	}
 
 	if (effectiveLimits.toolBudget) {
-		const newTool = { hard: effectiveLimits.toolBudget.value };
+		const existingTool = input.toolBudget && typeof input.toolBudget === "object"
+			? input.toolBudget as Record<string, unknown>
+			: {};
+		const newTool = { ...existingTool, hard: effectiveLimits.toolBudget.value };
 		if (!sameToolBudget(input.toolBudget, newTool)) {
 			input.toolBudget = newTool;
 			mutated = true;

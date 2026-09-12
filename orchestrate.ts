@@ -475,7 +475,7 @@ export interface DelegationHistoryEntry {
 	runId?: string;
 	role: DelegationKind;
 	requested?: { model?: string; thinking?: string };
-	resolved?: { model: string; thinking: string };
+	resolved?: { model: string; thinking?: string };
 	actual?: { model: string; thinking: string };
 	model?: string;
 	thinking?: string;
@@ -2179,6 +2179,8 @@ export class PlannerOrchestrator {
 		const roleModelPolicy = loadRoleModelPolicy();
 		this.roleModelPolicyEnabled = roleModelPolicy.enabled;
 		if (roleModelPolicy.enabled && this.roleModelMismatchRecorded) {
+			this.concurrency.release(event.toolCallId);
+			stripDelegationKeys(input);
 			return { block: { reason: "Planner-only guard: role model policy mismatch recorded; further controlled launches are stopped." } };
 		}
 		const requested = requestedRoleModel(inputRecord);
@@ -2187,6 +2189,8 @@ export class PlannerOrchestrator {
 			try {
 				resolved = resolveRoleModel(roleModelPolicy, role, inputRecord);
 			} catch (error) {
+				this.concurrency.release(event.toolCallId);
+				stripDelegationKeys(input);
 				return { block: { reason: error instanceof Error ? error.message : String(error) } };
 			}
 		}
@@ -2219,6 +2223,7 @@ export class PlannerOrchestrator {
 				: typeof nestedSpec?.thinking === "string" ? nestedSpec.thinking : undefined;
 			const preflight = preflightEffectiveModel({
 				...preflightContext,
+				hostAgent: role,
 				input: inputRecord,
 				...(resolved ? { roleResolution: resolved } : {}),
 				...(roleModelPolicy.enabled ? { rolePolicy: roleModelPolicy } : {}),
@@ -2231,14 +2236,15 @@ export class PlannerOrchestrator {
 					: preflight.effective.model;
 				preflightSummary = {
 					model: effectiveModel,
-					thinking: preflight.effective.thinking,
+					thinking: preflight.effective.thinking ?? "unknown",
 					source: preflight.effective.source,
-					verification: "verified",
+					verification: preflight.status,
 				};
 				// A host default is already resolved by the downstream host. Keep it
-				// out of the input so the host can apply settings.json fallbacks.
-				if (preflight.effective.source !== "host-default") {
-					inputRecord.model = effectiveModel;
+				// out of the input so the host can apply settings.json fallbacks. Each
+				// explicit field is independent: model-only must not acquire host thinking.
+				if (preflight.effective.modelSource !== "host-default") inputRecord.model = effectiveModel;
+				if (preflight.effective.thinkingSource !== "host-default" && preflight.effective.thinking !== undefined) {
 					inputRecord.thinking = preflight.effective.thinking;
 				}
 			}
@@ -2247,12 +2253,18 @@ export class PlannerOrchestrator {
 				const detail = error
 					? `${error.code}: model=${error.requested}; source=${error.source}; verification=${error.verification}; candidates=${error.candidates.join(", ") || "none"}; ${error.message}`
 					: "MODEL_UNAVAILABLE: effective model preflight was unavailable";
-				return {
-					block: {
-						reason: `Planner-only guard: ${detail}`,
-						...(error ? { code: error.code, details: error } : { code: "MODEL_UNAVAILABLE" }),
-					},
-				};
+				if (preflight.status === "unverified") {
+					warnings.push(`Planner-only: model preflight is unverified; continuing launch. ${detail}`);
+				} else {
+					this.concurrency.release(event.toolCallId);
+					stripDelegationKeys(input);
+					return {
+						block: {
+							reason: `Planner-only guard: ${detail}`,
+							...(error ? { code: error.code, details: error } : { code: "MODEL_UNAVAILABLE" }),
+						},
+					};
+				}
 			}
 			if (preflight.effective) {
 				resolved = {
@@ -2358,10 +2370,22 @@ export class PlannerOrchestrator {
 				balanceTokens: reservation.grant?.tokens,
 				balanceCostUsd: reservation.grant?.costUsd,
 			});
-			const usageBudget: Record<string, { hard: number }> = {};
-			if (floorLimits.tokens) usageBudget.tokens = { hard: floorLimits.tokens.value };
-			if (floorLimits.costUsd) usageBudget.costUsd = { hard: floorLimits.costUsd.value };
-			if (Object.keys(usageBudget).length > 0) inputRecord.usageBudget = usageBudget;
+			const usageBudget = inputRecord.usageBudget && typeof inputRecord.usageBudget === "object" && !Array.isArray(inputRecord.usageBudget)
+				? structuredClone(inputRecord.usageBudget) as Record<string, unknown>
+				: {};
+			if (floorLimits.tokens) {
+				const existingTokens = usageBudget.tokens && typeof usageBudget.tokens === "object" && !Array.isArray(usageBudget.tokens)
+					? usageBudget.tokens as Record<string, unknown>
+					: {};
+				usageBudget.tokens = { ...existingTokens, hard: floorLimits.tokens.value };
+			}
+			if (floorLimits.costUsd) {
+				const existingCostUsd = usageBudget.costUsd && typeof usageBudget.costUsd === "object" && !Array.isArray(usageBudget.costUsd)
+					? usageBudget.costUsd as Record<string, unknown>
+					: {};
+				usageBudget.costUsd = { ...existingCostUsd, hard: floorLimits.costUsd.value };
+			}
+			if (floorLimits.tokens || floorLimits.costUsd) inputRecord.usageBudget = usageBudget;
 		}
 		const floorSummary = floorLimits ? formatFloorLimitsSummary(floorLimits) : undefined;
 		const oracleConflict = oracleSuiteConflict || inputRecord.__oracleSuiteConflict === true;
