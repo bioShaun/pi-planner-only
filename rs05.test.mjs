@@ -142,4 +142,21 @@ test("B19: RT-05 repair keeps T-004 children closed and accounts for all foreign
   });
   assert.equal(ledger.moved.length, 0, "ledger already contains the repaired child set");
   assert.deepEqual(ledger.snapshot.task.usage.children.map((child) => child.runId), ["7110bd1b", "143426ad"]);
+
+  // Legacy field compatibility: historical ledgers on disk may store
+  // `sourceTranscriptPath` rather than `transcriptPath`.
+  const legacyResult = repairT004UsageRecords([{
+    taskId: "T-20260912-004",
+    children: [
+      {
+        kind: "worker",
+        runId: "legacy-run-1",
+        pending: false,
+        source: "meta-file",
+        sourceTranscriptPath: "/foreign/session-legacy/session.jsonl",
+      },
+    ],
+  }]);
+  const legacyUnattributed = legacyResult.records.find((record) => record?.taskId === "unattributed");
+  assert.equal(legacyUnattributed?.sessionHint, "session.jsonl", "extracts sessionHint from legacy sourceTranscriptPath");
 });

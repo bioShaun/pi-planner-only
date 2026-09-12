@@ -204,7 +204,18 @@ function repairSessionHint(
 		const text = repairText(value);
 		if (text) return text;
 	}
-	for (const value of [child.transcriptPath, child.sessionFile, child.sourceDir, record.sessionFile, record.sourceDir]) {
+	// Historical ledgers persisted on disk may carry `sourceTranscriptPath`
+	// from older builds; `transcriptPath` is preferred, but both are checked.
+	for (const value of [
+		child.transcriptPath,
+		child.sourceTranscriptPath,
+		child.sessionFile,
+		child.sourceDir,
+		record.sessionFile,
+		record.sourceDir,
+		record.transcriptPath,
+		record.sourceTranscriptPath,
+	]) {
 		const path = repairText(value);
 		const hint = path ? sessionHintFromPath(path) : undefined;
 		if (hint) return hint;

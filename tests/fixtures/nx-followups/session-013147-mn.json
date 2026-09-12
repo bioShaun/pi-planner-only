@@ -12,7 +12,7 @@
 				"sha256": "c4dc4043e4127d8a80a347f1131d560a46e0283d908904aedf5a7b33c54db9fc"
 			}
 		},
-		"desensitization": "run/task/execution/model ids and usage numbers kept (published in evidence docs); prompts, acceptance payloads, extension manifests, skills dropped; home prefix replaced with <home>; no transcript or report text",
+		"desensitization": "run/task/execution/model ids and usage numbers kept (model ids published in docs/runtime-audit-2026-09-11.md; run/task/execution ids in evidence docs); prompts, acceptance payloads, extension manifests, skills dropped; home prefix replaced with <home>; no transcript or report text",
 		"frozenAt": "2026-09-12T14:59:37.276Z"
 	},
 	"sessions": {

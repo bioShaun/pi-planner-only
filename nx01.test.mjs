@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { childFromMeta, readChildMeta } from "./notify.ts";
+import { PlannerOrchestrator } from "./orchestrate.ts";
+import { TaskStore } from "./task.ts";
 import {
   UsageLedger,
   emptyRootUsage,
@@ -273,7 +275,23 @@ writeFileSync(handoff.resultPath, JSON.stringify({
     { id: "unknown-child", kind: "child", taskId: "unattributed", runId: unknownChild.runId, child: unknownChild },
   ];
 
-  const exported = exportSessionEvidence({ rootSessionId: M.rootSessionId, tasks, usageEntries: entries });
+  const gitRunner = {
+    async run() { return { stdout: "", stderr: "", exitCode: 0 }; },
+    runSync() { return { stdout: "", stderr: "", exitCode: 0 }; },
+  };
+  const store = new TaskStore();
+  for (const task of tasks) {
+    store.restore(task);
+  }
+  const orchestrator = new PlannerOrchestrator({
+    gitRunner,
+    store,
+    getUsageEntries: () => entries,
+  });
+
+  const exported = orchestrator.exportEvidence(M.rootSessionId);
+  const c03Claim = exported.evidenceMatrix?.find((entry) => entry.id === "C03");
+  assert.equal(c03Claim?.status, "handler-verified", "claims matrix is wired into exportEvidence via ACCEPTANCE_CLAIMS");
   assert.equal(exported.usage.buckets.untaskedShared.count, 5, "the 5 real untasked turns land in one bucket");
   assert.equal(exported.usage.buckets.foreign.count, 3);
   assert.equal(exported.usage.buckets.unknown.count, 1);

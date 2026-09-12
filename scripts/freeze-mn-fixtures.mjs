@@ -217,7 +217,7 @@ const fixture = {
 			M: { path: desensitizePath(M_FILE), sha256: sha256(M_FILE) },
 			N: { path: desensitizePath(N_FILE), sha256: sha256(N_FILE) },
 		},
-		desensitization: "run/task/execution/model ids and usage numbers kept (published in evidence docs); prompts, acceptance payloads, extension manifests, skills dropped; home prefix replaced with <home>; no transcript or report text",
+		desensitization: "run/task/execution/model ids and usage numbers kept (model ids published in docs/runtime-audit-2026-09-11.md; run/task/execution ids in evidence docs); prompts, acceptance payloads, extension manifests, skills dropped; home prefix replaced with <home>; no transcript or report text",
 		frozenAt: new Date().toISOString(),
 	},
 	sessions: {
