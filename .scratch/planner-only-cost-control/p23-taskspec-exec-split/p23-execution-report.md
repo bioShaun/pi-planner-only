@@ -30,7 +30,8 @@ Out of scope left alone: per-child `timeoutMs`, skill/artifacts as execution con
 
 ## HEAD / PR
 
-- HEAD: `4a01320925625bb53eee211cbc55051f92490f1b`
+- feature HEAD: `4a01320925625bb53eee211cbc55051f92490f1b`
+- tip HEAD: `34d2c5510680ac5bb3b966cde705b697243164c7`
 - PR: https://github.com/bioShaun/pi-planner-only/pull/6
 
 ## Not done / assumptions
