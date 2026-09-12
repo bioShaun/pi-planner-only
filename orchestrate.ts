@@ -50,8 +50,8 @@ import {
 	formatSessionRootBudgetStatus,
 	loadHostEnforcement,
 	loadSessionRootBudgetConfig,
-	recordExplorationToolCall,
-	emptyExplorationBudget,
+	ExplorationBudgetLedger,
+	DEFAULT_EXPLORATION_BUDGET,
 	isExplorationToolCall,
 	resolveEffectiveLimits,
 } from "./floors.ts";
@@ -402,6 +402,8 @@ export interface OrchestratorDeps {
 	concurrency?: ConcurrencyController;
 	/** Optional receipt-side accounting hook; called once per distinct run receipt. */
 	recordCompletionUsage?: (taskId: string, receipt: CompletionReceipt, toolCallId: string) => void;
+	/** Live usage events owned by the adapter; exported alongside restored snapshots. */
+	getUsageEntries?: () => readonly unknown[];
 	/** RT-06 — host adapter hook for a policy-approved automatic oracle handoff. */
 	automaticOracleDispatch?: (task: TaskRecord) => void;
 
@@ -777,10 +779,11 @@ export class PlannerOrchestrator {
 	private readonly concurrency: ConcurrencyController;
 	private readonly recordCompletionUsage?: (taskId: string, receipt: CompletionReceipt, toolCallId: string) => void;
 	private readonly automaticOracleDispatch?: (task: TaskRecord) => void;
+	private readonly getUsageEntries?: () => readonly unknown[];
 	private readonly automaticOracleTasks = new Set<string>();
 
 	private readonly delegations = new Map<string, DelegationRecord>();
-	private readonly explorationBudgets = new Map<string, ReturnType<typeof emptyExplorationBudget>>();
+	private readonly explorationBudgetLedger = new ExplorationBudgetLedger();
 	private readonly reservations = new BudgetReservations();
 	/**
 	 * runIds whose subagent-notify (or sync result) has already been consumed.
@@ -790,6 +793,8 @@ export class PlannerOrchestrator {
 	 * a new session allocates a fresh orchestrator and drops both Sets.
 	 */
 	private readonly processedRunIds = new Set<string>();
+	/** The terminal response is retained so an exact-id wait can be replayed. */
+	private readonly processedWaitDeliveries = new Map<string, { taskId: string; content: { type: "text"; text: string }[] }>();
 	/**
 	 * toolCallIds whose launch the host confirmed never happened.
 	 * Same intentional unbounded session policy as processedRunIds (ticket 38).
@@ -875,13 +880,15 @@ export class PlannerOrchestrator {
 		this.concurrency = deps.concurrency ?? new ConcurrencyController();
 		this.recordCompletionUsage = deps.recordCompletionUsage;
 		this.automaticOracleDispatch = deps.automaticOracleDispatch;
+		this.getUsageEntries = deps.getUsageEntries;
 		this.structuredDelegationMode =
 			deps.structuredDelegationMode ?? readStructuredDelegationMode();
 	}
 
 	setLoadedProvenance(provenance: LoadedPluginFingerprint): void {
 		this.loadedProvenance = { ...provenance, capabilities: [...provenance.capabilities] };
-		if (this.runSessionId === "unknown-session" && provenance.sessionId.trim()) {
+		if (this.runSessionId === "unknown-session" && provenance.sessionId.trim()
+			&& provenance.sessionId.trim() !== "unknown" && provenance.sessionId.trim() !== "unknown-session") {
 			this.runSessionId = provenance.sessionId.trim();
 		}
 	}
@@ -904,12 +911,44 @@ export class PlannerOrchestrator {
 		return this.runRecords?.list() ?? [];
 	}
 
+	private rememberWaitDelivery(runId: string | undefined, taskId: string, content: { type: "text"; text: string }[]): void {
+		if (!runId) return;
+		this.processedWaitDeliveries.set(runId, { taskId, content });
+	}
+
+	private recordedWaitDelivery(runId: string, cwd: string): { taskId: string; content: { type: "text"; text: string }[] } | undefined {
+		const remembered = this.processedWaitDeliveries.get(runId);
+		if (remembered) {
+			const task = this.store.get(remembered.taskId);
+			if (!task || isFinalTaskState(task.state)) return undefined;
+			return remembered;
+		}
+		const durable = this.runRecords?.findByRunId(runId, this.runWorkspaceIdForCwd(cwd));
+		if (!durable || durable.ingestionState !== "recorded") return undefined;
+		const task = this.store.get(durable.taskId);
+		if (!task || isFinalTaskState(task.state) || !durable.reportRevision || durable.reportRevision < 1) return undefined;
+		const report = task.reports[durable.reportRevision - 1] ?? task.validatorReports[durable.reportRevision - 1];
+		if (!report) return undefined;
+		const delivery = { taskId: task.taskId, content: [{ type: "text" as const, text: JSON.stringify(report) }] };
+		this.processedWaitDeliveries.set(runId, delivery);
+		return delivery;
+	}
+
+	private runWorkspaceIdForCwd(cwd: string): string {
+		return normalizeWorkspaceIdentity(cwd);
+	}
+
+	private depsUsageEntries(): readonly unknown[] {
+		return this.getUsageEntries?.() ?? [];
+	}
+
 	/** Export only executions belonging to this Root session. */
 	exportEvidence(rootSessionId = this.runSessionId, sourceFingerprint?: string): SessionEvidenceExport {
 		return exportSessionEvidence({
 			rootSessionId,
 			tasks: this.store.list(),
 			runRecords: this.getRunRecords(),
+			usageEntries: this.depsUsageEntries(),
 			...(sourceFingerprint ? { sourceFingerprint } : {}),
 		});
 	}
@@ -1013,12 +1052,15 @@ export class PlannerOrchestrator {
 		this.delegations.delete(toolCallId);
 	}
 
-	/** Record an inspection call against the Task's unified exploration budget. */
-	recordExplorationToolCall(taskId: string, toolName: string, input?: unknown): { used: number; limit: number; notice?: string } {
-		const current = this.explorationBudgets.get(taskId) ?? emptyExplorationBudget();
-		const result = recordExplorationToolCall(current, toolName, input);
-		this.explorationBudgets.set(taskId, result.budget);
-		return { used: result.budget.used, limit: result.budget.limit, ...(result.notice ? { notice: result.notice } : {}) };
+	/** Record an inspection call against an execution-scoped exploration budget. */
+	recordExplorationToolCall(taskId: string, toolName: string, input?: unknown, executionId = taskId, eventId?: string, limit = DEFAULT_EXPLORATION_BUDGET): { used: number; limit: number; notice?: string; duplicate?: boolean } {
+		const result = this.explorationBudgetLedger.record(executionId, toolName, input, eventId, limit);
+		return {
+			used: result.budget.used,
+			limit: result.budget.limit,
+			...(result.notice ? { notice: result.notice } : {}),
+			...(result.duplicate ? { duplicate: true } : {}),
+		};
 	}
 
 	/** True when a call belongs to the plugin-side exploration budget. */
@@ -1026,9 +1068,8 @@ export class PlannerOrchestrator {
 		return isExplorationToolCall(toolName, input);
 	}
 
-	explorationBudgetStatus(taskId: string): { used: number; limit: number; softNotified: boolean; hardNotified: boolean } {
-		const budget = this.explorationBudgets.get(taskId) ?? emptyExplorationBudget();
-		return { ...budget };
+	explorationBudgetStatus(taskId: string, executionId = taskId): { used: number; limit: number; softNotified: boolean; hardNotified: boolean } {
+		return { ...this.explorationBudgetLedger.get(executionId) };
 	}
 
 	/** Current child capacity and workspace reservations for /planner-only status. */
@@ -1230,7 +1271,7 @@ export class PlannerOrchestrator {
 			const resolution = options.resolution;
 			const ingestionPatch = resolution
 				? resolution.kind === "loaded"
-					? { ingestionState: "loaded" as const, outputDigest: resolution.digest, lastError: undefined }
+					? { ingestionState: "loaded" as const, outputDigest: resolution.digest, lastError: undefined, nextAction: undefined, terminalErrorClass: undefined }
 					: {
 						ingestionState: resolution.kind === "pending" ? "output-pending" as const : "unavailable" as const,
 						...(resolution.kind === "pending" ? { terminalErrorClass: "missing-report" as const, nextAction: "retry-output-reconcile" } : {}),
@@ -1669,6 +1710,8 @@ export class PlannerOrchestrator {
 				ingestionState: "loaded",
 				outputDigest: resolution.digest,
 				lastError: undefined,
+				nextAction: undefined,
+				terminalErrorClass: undefined,
 			});
 			return;
 		}
@@ -1839,32 +1882,31 @@ export class PlannerOrchestrator {
 		])];
 		const candidates = this.store.list().filter((candidate) =>
 			successors.includes(candidate.taskId)
-			&& isTerminalTaskState(candidate.state),
+			&& candidate.state === "completed",
 		);
 		if (candidates.length === 0) return undefined;
-		const successorPaths = new Set(
-			candidates.flatMap((candidate) => candidate.executions.flatMap((execution) => execution.truthPaths ?? [])),
-		);
-		if (successorPaths.size === 0) return undefined;
 		const driftPaths = freshness.driftPaths.map((path) => normalizeEvidencePaths([path], currentSample.repoRoot ?? currentSample.cwd)[0]);
-		if (driftPaths.length > 0 && driftPaths.every((path) => successorPaths.has(path))) {
-			const owner = candidates.find((candidate) =>
-				driftPaths.every((path) => candidate.executions.some((execution) => (execution.truthPaths ?? []).includes(path))),
-			);
-			return { kind: "superseded", paths: driftPaths, ...(owner ? { successorTaskId: owner.taskId } : {}) };
+		const contentMatches = (candidate: TaskRecord, paths: readonly string[]): boolean => candidate.executions.some((execution) => {
+			const truthPaths = new Set(execution.truthPaths ?? []);
+			if (!paths.every((path) => truthPaths.has(path))) return false;
+			const reportSample = execution.cReport;
+			if (!reportSample) return false;
+			return paths.every((path) => {
+				const currentHash = currentSample.dirtyPathHashes?.[path];
+				const successorHash = reportSample.dirtyPathHashes?.[path];
+				if (currentHash !== undefined || successorHash !== undefined) return currentHash === successorHash;
+				return currentSample.finalGitRef !== undefined && currentSample.finalGitRef === reportSample.finalGitRef;
+			});
+		});
+		if (driftPaths.length > 0) {
+			const owner = candidates.find((candidate) => contentMatches(candidate, driftPaths));
+			if (owner) return { kind: "superseded", paths: driftPaths, successorTaskId: owner.taskId };
 		}
 		const committedPaths = (currentSample.committedPaths ?? [])
 			.map((path) => normalizeEvidencePaths([path], currentSample.repoRoot ?? currentSample.cwd)[0]);
-		if (
-			freshness.headChanged
-			&& currentSample.changedPaths?.length === 0
-			&& committedPaths.length > 0
-			&& committedPaths.every((path) => successorPaths.has(path))
-		) {
-			const owner = candidates.find((candidate) =>
-				committedPaths.every((path) => candidate.executions.some((execution) => (execution.truthPaths ?? []).includes(path))),
-			);
-			return { kind: "committed", paths: committedPaths, ...(owner ? { successorTaskId: owner.taskId } : {}) };
+		if (freshness.headChanged && currentSample.changedPaths?.length === 0 && committedPaths.length > 0) {
+			const owner = candidates.find((candidate) => contentMatches(candidate, committedPaths));
+			if (owner) return { kind: "committed", paths: committedPaths, successorTaskId: owner.taskId };
 		}
 		return undefined;
 	}
@@ -2446,6 +2488,17 @@ export class PlannerOrchestrator {
 				callerUsageBudget: (input as Record<string, unknown>).usageBudget,
 				taskSpecBudget: spec?.budget,
 			});
+		}
+		const targetToolCeiling = floorLimits?.toolBudget?.value ?? DEFAULT_EXPLORATION_BUDGET;
+		const readFirstCount = Array.isArray((targetSpec as { readFirst?: unknown } | undefined)?.readFirst)
+			? ((targetSpec as { readFirst: unknown[] }).readFirst.length)
+			: 0;
+		if (readFirstCount > targetToolCeiling * 0.6) {
+			warnings.push(`Planner-only: readFirst uses ${readFirstCount}/${targetToolCeiling} exploration calls (>60%); reserve budget for verification and a partial report.`);
+		}
+		const contextPackCount = Array.isArray(targetSpec?.contextPack) ? targetSpec.contextPack.length : 0;
+		if (contextPackCount > 0) {
+			warnings.push(`Planner-only: contextPack supplies ${contextPackCount} pre-located evidence fragment(s); use them before additional read-only exploration.`);
 		}
 		const budgetTask = target?.task;
 		const firstDelegationTask = !budgetTask && spec?.cumulativeBudget && typeof spec.cumulativeBudget === "object"
@@ -3299,14 +3352,28 @@ export class PlannerOrchestrator {
 		return lines.join("\n");
 	}
 
+	/** Record a refused Root verdict as an auditable review event. */
+	recordRootVerdictRefusal(task: TaskRecord, verdict: ReviewVerdict, reason: string): void {
+		// A pending-child guard is transient and is intentionally not appended to
+		// the review history; doing so would look like a real Root verdict and
+		// distort the request/decision audit sequence.
+		if (/child run still pending/i.test(reason)) return;
+		this.store.recordReview(task.taskId, {
+			taskId: task.taskId,
+			verdict,
+			summary: `refused: ${reason}`,
+			findings: [],
+			evidenceFresh: false,
+			requestedVerdict: verdict,
+			refusedReason: reason,
+			...(task.reports.at(-1)?.evidence?.workerRunId ? { executionId: task.reports.at(-1)?.evidence.workerRunId } : {}),
+			source: "root",
+		});
+	}
+
 	/**
 	 * §3 step 2 — why Root may not record `verdict` on `task` right now.
 	 * Returns the refusal reason, or undefined when the verdict may proceed.
-	 * The operator's review slash command bypasses every refusal except the
-	 * terminal-state one; the `planner_verdict` tool honours them all.
-	 *
-	 * A live pending child blocks pass/request_changes, but never `blocked`:
-	 * the escape hatch must stay open even when a completion notice was lost.
 	 */
 	rootVerdictRefusal(task: TaskRecord, verdict: ReviewVerdict): string | undefined {
 		if (isTerminalTaskState(task.state)) {
@@ -3634,19 +3701,33 @@ export class PlannerOrchestrator {
 			return { content: [{ type: "text", text: `[PLANNER-ONLY] Run ${record.runId} finished, but its task ${record.taskId} is no longer in the store; the output was not recorded.` }] };
 		}
 		if (this.isBlockedReceiptSealed(task)) {
-			return this.parkBlockedReceipt(task, toolCallId, record.kind, text);
+			const result = this.parkBlockedReceipt(task, toolCallId, record.kind, text);
+			this.rememberWaitDelivery(record.runId, record.taskId, result.content);
+			return result;
 		}
-		if (record.kind === "validator") return await this.handleValidatorResult(task, text, record, toolCallId);
-		if (record.kind === "reviewer") return await this.handleReviewerResult(task, text, record);
+		if (record.kind === "validator") {
+			const result = await this.handleValidatorResult(task, text, record, toolCallId);
+			this.rememberWaitDelivery(record.runId, record.taskId, result.content);
+			return result;
+		}
+		if (record.kind === "reviewer") {
+			const result = await this.handleReviewerResult(task, text, record);
+			this.rememberWaitDelivery(record.runId, record.taskId, result.content);
+			return result;
+		}
 		if (record.kind === "explorer") {
-			return this.handleExplorerResult(task, text, toolCallId, record, { content: [{ type: "text", text }] });
+			const result = await this.handleExplorerResult(task, text, toolCallId, record, { content: [{ type: "text", text }] });
+			this.rememberWaitDelivery(record.runId, record.taskId, result.content);
+			return result;
 		}
-		return await this.ingestCompletionResult(task, text, toolCallId, { delegation: record }, {
+		const result = await this.ingestCompletionResult(task, text, toolCallId, { delegation: record }, {
 			kind: "loaded",
 			text,
 			digest: outputDigest(text),
 			source: "reconcile",
 		});
+		this.rememberWaitDelivery(record.runId, record.taskId, result.content);
+		return result;
 	}
 
 	/**
@@ -3681,10 +3762,12 @@ export class PlannerOrchestrator {
 		const target = normalizeWorkspaceIdentity(cwd);
 		for (const record of this.delegations.values()) {
 			if (record.runId !== id) continue;
-			if (this.processedRunIds.has(id)) return undefined;
+			if (this.processedRunIds.has(id) && !this.processedWaitDeliveries.has(id)) return undefined;
 			if (!record.launchCwd || normalizeWorkspaceIdentity(record.launchCwd) !== target) continue;
 			return id;
 		}
+		const durable = this.runRecords?.findByRunId(id, target);
+		if (durable && this.processedRunIds.has(id) && this.recordedWaitDelivery(id, cwd)) return id;
 		return undefined;
 	}
 
@@ -3699,9 +3782,13 @@ export class PlannerOrchestrator {
 	async recoverPendingRun(
 		input: unknown,
 		cwd: string,
-	): Promise<{ status: "recovered" | "pending"; content?: { type: "text"; text: string }[]; reason?: string } | undefined> {
+	): Promise<{ status: "recovered" | "pending"; content?: { type: "text"; text: string }[]; reason?: string; code?: string; outputRef?: OutputReference; nextAction?: string } | undefined> {
+		const rawId = input && typeof input === "object" ? (input as Record<string, unknown>).id : undefined;
+		const requestedId = typeof rawId === "string" ? rawId.trim() : "";
 		const authorized = this.authorizedWaitId(input, cwd);
 		if (!authorized) return undefined;
+		const recorded = requestedId ? this.recordedWaitDelivery(requestedId, cwd) : undefined;
+		if (recorded) return { status: "recovered", content: recorded.content };
 		for (const [toolCallId, record] of [...this.delegations]) {
 			if (record.runId !== authorized) continue;
 			const content = await this.reconcileDelegation(toolCallId, record);
@@ -3713,21 +3800,30 @@ export class PlannerOrchestrator {
 			);
 			if (meta?.exitCode !== undefined) {
 				// Host meta can become terminal before the saved output is visible.
-				// Keep the exact-id wait bounded while the writer flushes its artifact.
-				const deadline = Date.now() + 15_000;
+				const graceMs = Number.isFinite(Number(process.env.PI_PLANNER_ONLY_WAIT_GRACE_MS))
+					? Math.max(0, Number(process.env.PI_PLANNER_ONLY_WAIT_GRACE_MS))
+					: 15_000;
+				const deadline = Date.now() + graceMs;
 				while (Date.now() < deadline) {
-					if (this.processedRunIds.has(authorized)) return { status: "recovered", content: [] };
+					const replay = this.recordedWaitDelivery(authorized, cwd);
+					if (replay) return { status: "recovered", content: replay.content };
 					await new Promise((resolve) => setTimeout(resolve, 250));
 					const recovered = await this.reconcileDelegation(toolCallId, record);
 					if (recovered) return { status: "recovered", content: recovered.content };
 				}
+				const outputRef = record.outputRef ?? (record.asyncDir ? { outputPath: join(record.asyncDir, "output-0.log") } : undefined);
 				return {
 					status: "pending",
+					code: "OUTPUT_PENDING",
+					...(outputRef ? { outputRef } : {}),
+					nextAction: "retry-output-reconcile",
 					reason: "the run is terminal but its saved output could not be delivered within the bounded grace period; retry the exact-id bg_wait or inspect the run artifacts",
 				};
 			}
 			return {
 				status: "pending",
+				code: "RUNNING",
+				nextAction: "retry-output-reconcile",
 				reason: "the registered run has not reached a terminal state yet; retry the exact-id bg_wait",
 			};
 		}
@@ -3816,11 +3912,34 @@ export class PlannerOrchestrator {
 		}
 
 		const current = this.store.require(task.taskId);
-		const report = current.reports.at(-1);
+		let report = current.reports.at(-1);
+		let rawJudged = false;
+		if (!report && current.rawReport) {
+			const raw = current.rawReport;
+			const rawReport: WorkerReport = {
+				version: 1,
+				taskId: current.taskId,
+				status: verdict === "pass" ? "completed" : verdict === "blocked" ? "blocked" : "partial",
+				summary: raw.text,
+				changedFiles: [],
+				validation: [],
+				evidence: {
+					cwd: current.cwd,
+					taskId: current.taskId,
+					workerRunId: raw.executionId,
+					generatedAt: raw.receivedAt,
+				},
+				risks: [raw.error],
+				unresolved: [],
+			};
+			this.store.recordReport(current.taskId, rawReport);
+			report = this.store.require(current.taskId).reports.at(-1);
+			rawJudged = true;
+		}
 		let comparison = current.lastComparison;
 		let evidence: string | undefined;
 
-		if (verdict === "pass" && report) {
+		if (verdict === "pass" && report && !rawJudged) {
 			const currentSample = await captureEvidence(
 				this.gitRunner,
 				captureEvidenceOptionsFor(current, report.evidence.workerRunId, {
@@ -3852,7 +3971,9 @@ export class PlannerOrchestrator {
 			summary,
 			findings: options.findings ?? [],
 			evidenceFresh: comparison ? comparison.fresh : true,
-			...(report ? { reportRevision: current.reports.length, reportSource: "worker" as const } : current.rawReport ? { reportRevision: current.reports.length + 1, reportSource: "raw-judged" as const } : {}),
+			...(report ? { reportRevision: current.reports.length, reportSource: rawJudged ? "raw-judged" as const : "worker" as const } : {}),
+			requestedVerdict: verdict,
+			...(report?.evidence?.workerRunId ? { executionId: report.evidence.workerRunId } : {}),
 			...(options.acknowledgeDrift ? { acknowledgeDrift: options.acknowledgeDrift } : {}),
 			...(options.source ? { source: options.source } : {}),
 		};
@@ -3865,6 +3986,17 @@ export class PlannerOrchestrator {
 			...(comparison ? { comparison } : {}),
 			review,
 		});
+		if (decision.action === "revalidate" && decision.evidenceKey && options.source === undefined) {
+			// Legacy direct orchestrator callers represent the automatic recovery
+			// dispatch boundary; public Root verdicts remain side-effect free until
+			// their actual revalidation delegation is launched.
+			this.store.recordRecoveryAttempt(task.taskId, decision.evidenceKey);
+		}
+		const auditedReview = this.store.require(task.taskId).reviews.at(-1);
+		if (auditedReview) {
+			auditedReview.appliedDecision = decision.action;
+			this.store.persist(this.store.require(task.taskId));
+		}
 		return {
 			task: this.store.require(task.taskId),
 			decision,
@@ -4604,13 +4736,14 @@ export class PlannerOrchestrator {
 				externalPaths: windowTruth.externalPaths,
 			});
 		}
+		let reportRevision = 0;
 		if (report) {
 			// Bind before recording so the stored report carries Root's own
 			// report-time content hashes for the acceptance-boundary comparison.
 			report = bindReportToSample(report, current);
 			this.store.recordReport(task.taskId, report);
 			// Ticket 10 — bind the workspace snapshot that validated this report.
-			const revision = this.store.require(task.taskId).reports.length;
+			reportRevision = this.store.require(task.taskId).reports.length;
 			const snapshot = captureWorkspaceSnapshot({
 				cwd: task.cwd,
 				taskId: task.taskId,
@@ -4621,7 +4754,7 @@ export class PlannerOrchestrator {
 				this.store.setSnapshot(task.taskId, {
 					version: 1,
 					digest: snapshot.digest,
-					reportRevision: revision,
+					reportRevision,
 					capturedAt: snapshot.capturedAt,
 				});
 			}
@@ -4629,15 +4762,16 @@ export class PlannerOrchestrator {
 				this.updateRunRecord(task, toolCallId, {
 					executionState: "terminal",
 					ingestionState: "recorded",
-					reportRevision: revision,
+					reportRevision,
 				});
 			}
 			if (execution) {
-				this.recordReportExecutionTruth(task, execution, current, report, revision - 1);
+				this.recordReportExecutionTruth(task, execution, current, report, reportRevision - 1);
 			}
 		}
-		if (report && options.delegation?.kind === "worker" && task.spec?.validation.required === true && !this.automaticOracleTasks.has(task.taskId)) {
-			this.automaticOracleTasks.add(task.taskId);
+		const reportRevisionKey = `${task.taskId}:${reportRevision}`;
+		if (report && options.delegation?.kind === "worker" && task.spec?.validation.required === true && !this.automaticOracleTasks.has(reportRevisionKey)) {
+			this.automaticOracleTasks.add(reportRevisionKey);
 			this.automaticOracleDispatch?.(this.store.require(task.taskId));
 		}
 		let comparison = report

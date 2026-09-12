@@ -127,6 +127,8 @@ export interface CreateTaskSpecInput {
 	additionalWorktreeRoots?: string[];
 	/** Pre-located evidence fragments for the worker. */
 	contextPack?: TaskSpec["contextPack"];
+	/** Files to read first; used to calculate the exploration warning. */
+	readFirst?: string[];
 	/** Parent Task for a derived correction or commit Task. */
 	parentTaskId?: string;
 	/** Existing Task whose work this Task commits. */
@@ -469,6 +471,7 @@ export function createTaskSpec(input: CreateTaskSpecInput, taskId?: string): Tas
 		stopConditions: uniqueNonEmpty(input.stopConditions ?? []),
 		...(input.parentEvidenceRef ? { parentEvidenceRef: input.parentEvidenceRef } : {}),
 		...(input.contextPack?.length ? { contextPack: input.contextPack.map((entry) => ({ ...entry })) } : {}),
+		...(input.readFirst?.length ? { readFirst: uniqueNonEmpty(input.readFirst) } : {}),
 		...(input.parentTaskId?.trim() ? { parentTaskId: input.parentTaskId.trim() } : {}),
 		...(input.commitOf?.trim() ? { commitOf: input.commitOf.trim() } : {}),
 		...(input.reportOnly ? { reportOnly: true } : {}),
@@ -527,6 +530,9 @@ export function validateTaskSpec(value: unknown): string[] {
 		} else if (value.additionalWorktreeRoots.some((root) => !root.trim())) {
 			errors.push("additionalWorktreeRoots entries must be non-empty strings");
 		}
+	}
+	if (value.readFirst !== undefined && (!isStringArray(value.readFirst) || value.readFirst.some((path) => !path.trim()))) {
+		errors.push("readFirst must be an array of non-empty strings when present");
 	}
 	if (value.contextPack !== undefined) {
 		if (!Array.isArray(value.contextPack)) {
@@ -609,6 +615,7 @@ export const TASKSPEC_CHARACTERISTIC_FIELDS = [
 	"constraints",
 	"budget",
 	"contextPack",
+	"readFirst",
 	"parentTaskId",
 	"commitOf",
 ] as const;
@@ -871,6 +878,7 @@ export function buildTaskSpecRepair(options: TaskSpecExampleInput): TaskSpecRepa
 			? { additionalWorktreeRoots: submitted.additionalWorktreeRoots.filter((item) => item.trim()) }
 			: {}),
 		...(submitted && Array.isArray(submitted.contextPack) ? { contextPack: submitted.contextPack } : {}),
+		...(submitted && isStringArray(submitted.readFirst) ? { readFirst: submitted.readFirst } : {}),
 		...(submitted && validBudget(submitted.budget) ? { budget: submitted.budget } : {}),
 		...(submitted && validBudget(submitted.cumulativeBudget) ? { cumulativeBudget: submitted.cumulativeBudget } : {}),
 	};
@@ -1070,6 +1078,7 @@ export function extractTaskSpecDetails(
 					expectedEvidence: isPlainObject(specValue.expectedEvidence) ? (specValue.expectedEvidence as ExpectedEvidence) : undefined,
 					stopConditions: isStringArray(specValue.stopConditions) ? specValue.stopConditions : undefined,
 					contextPack: Array.isArray(specValue.contextPack) ? specValue.contextPack as TaskSpec["contextPack"] : undefined,
+					readFirst: isStringArray(specValue.readFirst) ? specValue.readFirst : undefined,
 					parentTaskId: isNonEmptyString(specValue.parentTaskId) ? specValue.parentTaskId : undefined,
 					commitOf: isNonEmptyString(specValue.commitOf) ? specValue.commitOf : undefined,
 					additionalWorktreeRoots: isStringArray(specValue.additionalWorktreeRoots)
@@ -1675,6 +1684,7 @@ export class TaskStore {
 	 */
 	recordRecoveryAttempt(taskId: string, evidenceKey: string): TaskRecord {
 		const record = this.require(taskId);
+		if (record.recoveryStates.includes(evidenceKey)) return record;
 		record.recoveryAttempts += 1;
 		if (!record.recoveryStates.includes(evidenceKey)) record.recoveryStates.push(evidenceKey);
 		record.lastRecovery = {

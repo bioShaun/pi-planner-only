@@ -868,11 +868,9 @@ export function applyReviewDecision(
 	}
 	if (decision.action === "report_correction") store.useReportCorrection(taskId);
 	if (decision.consumesRound) store.incrementRound(taskId);
-	// E02 — persist the granted automatic recovery attempt so the per-state
-	// and per-Task bounds survive overwrites and restarts.
-	if (decision.action === "revalidate" && decision.evidenceKey) {
-		store.recordRecoveryAttempt(taskId, decision.evidenceKey);
-	}
+	// Recovery accounting is performed by the dispatch boundary after a real
+	// automatic revalidation launch succeeds; deciding a stale pass alone is
+	// deliberately side-effect free.
 	if (decision.completionKind) store.setCompletionKind(taskId, decision.completionKind);
 	return store.require(taskId);
 }

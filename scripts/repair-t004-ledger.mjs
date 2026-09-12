@@ -17,6 +17,7 @@ function option(name, fallback) {
 const agentDir = resolve(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"));
 const usagePath = resolve(option("--usage", join(agentDir, "planner-only", "usage.jsonl")));
 const ledgerPath = resolve(option("--ledger", join(agentDir, "planner-only", "ledger", `${T004_REPAIR_TASK_ID}.json`)));
+const journalPath = resolve(option("--journal", `${usagePath}.repair-journal.json`));
 const dryRun = process.argv.includes("--dry-run");
 
 function atomicWrite(path, body) {
@@ -34,11 +35,8 @@ function atomicWrite(path, body) {
 function readUsageRecords(path) {
   if (!existsSync(path)) return [];
   return readFileSync(path, "utf8").split(/\r?\n/).filter(Boolean).map((line, index) => {
-    try {
-      return JSON.parse(line);
-    } catch (error) {
-      throw new Error(`invalid JSON in ${path} at line ${index + 1}: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    try { return JSON.parse(line); }
+    catch (error) { throw new Error(`invalid JSON in ${path} at line ${index + 1}: ${error instanceof Error ? error.message : String(error)}`); }
   });
 }
 
@@ -58,13 +56,24 @@ function auditRecordsForMoved(moved) {
   }));
 }
 
-const originalUsage = readUsageRecords(usagePath);
-const usageRepair = repairT004UsageRecords(originalUsage);
+function readJson(path) {
+  if (!existsSync(path)) return undefined;
+  return JSON.parse(readFileSync(path, "utf8"));
+}
+
+const existingJournal = readJson(journalPath);
+const originalUsage = existingJournal?.phase === "prepared"
+  ? existingJournal.originalUsage
+  : readUsageRecords(usagePath);
+const originalLedger = existingJournal?.phase === "prepared"
+  ? existingJournal.originalLedger
+  : readJson(ledgerPath);
+
+const usageRepair = repairT004UsageRecords(originalUsage || []);
 let repairedUsage = usageRepair.records;
 let ledgerRepair = { snapshot: undefined, moved: [], removedFromTask: 0 };
-if (existsSync(ledgerPath)) {
-  const raw = JSON.parse(readFileSync(ledgerPath, "utf8"));
-  ledgerRepair = repairT004LedgerSnapshot(raw);
+if (originalLedger !== undefined) {
+  ledgerRepair = repairT004LedgerSnapshot(originalLedger);
   const seen = new Set(usageRepair.moved.map((item) => item.runId).filter(Boolean));
   const ledgerOnly = ledgerRepair.moved.filter((item) => !seen.has(item.runId));
   repairedUsage = [...repairedUsage, ...auditRecordsForMoved(ledgerOnly)];
@@ -78,23 +87,43 @@ for (const record of repairedUsage) {
     }
   }
 }
-const summary = {
+const result = {
   taskId: T004_REPAIR_TASK_ID,
   moved: movedRunIds.size,
   removedFromUsage: usageRepair.removedFromTask,
   removedFromLedger: ledgerRepair.removedFromTask,
   usagePath,
   ledgerPath,
+  journalPath,
   dryRun,
 };
 
-if (!dryRun) {
+if (!dryRun && existingJournal?.phase !== "committed") {
+  // Freeze both inputs before touching either file. A prepared journal is the
+  // recovery source if the process exits between the two atomic replacements.
+  if (!existingJournal) {
+    atomicWrite(journalPath, `${JSON.stringify({
+      version: 1,
+      taskId: T004_REPAIR_TASK_ID,
+      phase: "prepared",
+      preparedAt: new Date().toISOString(),
+      originalUsage,
+      originalLedger,
+      result,
+    }, null, 2)}\n`);
+  }
   if (existsSync(usagePath) || repairedUsage.length > originalUsage.length) {
     atomicWrite(usagePath, repairedUsage.map((record) => JSON.stringify(record)).join("\n") + (repairedUsage.length ? "\n" : ""));
   }
   if (ledgerRepair.snapshot !== undefined && ledgerRepair.removedFromTask > 0) {
     atomicWrite(ledgerPath, `${JSON.stringify(ledgerRepair.snapshot)}\n`);
   }
+  atomicWrite(journalPath, `${JSON.stringify({
+    ...(existingJournal || { version: 1, taskId: T004_REPAIR_TASK_ID, preparedAt: new Date().toISOString(), originalUsage, originalLedger }),
+    phase: "committed",
+    committedAt: new Date().toISOString(),
+    result,
+  }, null, 2)}\n`);
 }
 
-process.stdout.write(`${JSON.stringify(summary)}\n`);
+process.stdout.write(`${JSON.stringify(result)}\n`);

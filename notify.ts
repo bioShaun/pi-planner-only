@@ -169,6 +169,36 @@ export function tempRootFromAsyncDir(asyncDir: string): string | undefined {
 export function readLargestRunOutput(asyncDir: string | undefined, runId: string): string | undefined {
 	if (!asyncDir || isUnsafeRunId(runId)) return undefined;
 	const root = tempRootFromAsyncDir(asyncDir);
+	const deterministicNames = [
+		"output-0.log",
+		"output.log",
+		"result.json",
+		"output.json",
+		"output.md",
+		`${runId}.log`,
+		`${runId}.json`,
+		`${runId}.md`,
+	];
+	// Detached hosts write the final stream beside the run receipt. Prefer that
+	// location because it remains available even when the aggregate artifact
+	// directory was not created yet.
+	const directCandidates = deterministicNames
+		.map((name) => join(asyncDir, name))
+		.filter((path, index, paths) => paths.indexOf(path) === index);
+	for (const path of directCandidates) {
+		let st;
+		try {
+			st = lstatSync(path);
+		} catch {
+			continue;
+		}
+		if (!st.isFile() || st.size > MAX_OUTPUT_BYTES) continue;
+		try {
+			return readFileSync(path, "utf8");
+		} catch {
+			return undefined;
+		}
+	}
 	if (!root) return undefined;
 	const dir = join(root, "artifacts", "outputs", runId);
 	let entries: string[];
@@ -177,13 +207,7 @@ export function readLargestRunOutput(asyncDir: string | undefined, runId: string
 	} catch {
 		return undefined;
 	}
-	const deterministic = new Set([
-		"result.json",
-		"output.json",
-		"output.md",
-		`${runId}.json`,
-		`${runId}.md`,
-	]);
+	const deterministic = new Set(deterministicNames);
 	const candidates: string[] = [];
 	for (const name of entries) {
 		if (!deterministic.has(name)) continue;
@@ -239,6 +263,15 @@ export interface ChildRunMeta {
 	thinking?: string;
 	usage?: unknown;
 	stopReason?: string;
+	sourceSessionId?: string;
+	sessionId?: string;
+	ownerRootSessionId?: string;
+	taskId?: string;
+	executionId?: string;
+	transcriptPath?: string;
+	childSessionFile?: string;
+	sourceDir?: string;
+	metaPath?: string;
 	error?: string;
 }
 
@@ -298,6 +331,15 @@ function tryReadChildMetaFile(
 		...(typeof rec.model === "string" ? { model: rec.model } : {}),
 		...(typeof rec.thinking === "string" ? { thinking: rec.thinking } : {}),
 		...("usage" in rec ? { usage: rec.usage } : {}),
+		...(typeof rec.sourceSessionId === "string" ? { sourceSessionId: rec.sourceSessionId } : {}),
+		...(typeof rec.sessionId === "string" ? { sessionId: rec.sessionId } : {}),
+		...(typeof rec.ownerRootSessionId === "string" ? { ownerRootSessionId: rec.ownerRootSessionId } : {}),
+		...(typeof rec.taskId === "string" ? { taskId: rec.taskId } : {}),
+		...(typeof rec.executionId === "string" ? { executionId: rec.executionId } : {}),
+		...(typeof rec.transcriptPath === "string" ? { transcriptPath: rec.transcriptPath } : {}),
+		...(typeof rec.childSessionFile === "string" ? { childSessionFile: rec.childSessionFile } : {}),
+		...(typeof rec.sourceDir === "string" ? { sourceDir: rec.sourceDir } : {}),
+		metaPath: path,
 		...(typeof rec.stopReason === "string" ? { stopReason: rec.stopReason } : {}),
 		...(errorStr ? { error: errorStr } : {}),
 	};

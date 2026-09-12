@@ -7,6 +7,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { AcceptanceEvidenceMatrixOptions, EvidenceMatrixEntry } from "./acceptance.ts";
+import { buildAcceptanceEvidenceMatrix } from "./acceptance.ts";
 import type {
 	ChildUsage,
 	DelegationKind,
@@ -55,6 +57,9 @@ export interface UsageEntry {
 	id: string;
 	kind: UsageEntryKind;
 	taskId?: string;
+	taskIds?: string[];
+	attribution?: "tasked" | "shared" | "untasked";
+	toolCallIds?: string[];
 	at: string;
 	state?: TaskState;
 	model?: string;
@@ -70,6 +75,12 @@ export interface UsageEntry {
 export interface RootTurnRecord {
 	id: string;
 	taskId?: string;
+	/** All candidate Tasks observed in this turn; more than one is explicitly shared. */
+	taskIds?: string[];
+	/** Attribution is explicit so a shared turn is never silently assigned to one Task. */
+	attribution?: "tasked" | "shared" | "untasked";
+	/** Tool calls that caused the Root turn to be attributable. */
+	toolCallIds?: string[];
 	at: string;
 	model?: string;
 	provider?: string;
@@ -88,6 +99,14 @@ export interface ChildUsageIds {
 	thinking?: string;
 	source: ChildUsage["source"];
 	pending?: boolean;
+	unknownReason?: string;
+	observedInSessionId?: string;
+	ownerRootSessionId?: string;
+	taskId?: string;
+	executionId?: string;
+	sessionHint?: string;
+	sourceSessionId?: string;
+	sourceTranscriptPath?: string;
 }
 
 const USAGE_PHASES: readonly UsagePhase[] = ["planning", "executing", "reviewing"];
@@ -532,6 +551,14 @@ export function childUsageFromValue(
 		...(ids.agent ? { agent: ids.agent } : {}),
 		...(model ? { model } : {}),
 		...(thinking ? { thinking } : {}),
+		...(ids.sessionHint ? { sessionHint: ids.sessionHint } : {}),
+		...(ids.sourceSessionId ? { sourceSessionId: ids.sourceSessionId } : {}),
+		...(ids.sourceTranscriptPath ? { sourceTranscriptPath: ids.sourceTranscriptPath } : {}),
+		...(ids.observedInSessionId ? { observedInSessionId: ids.observedInSessionId } : {}),
+		...(ids.ownerRootSessionId ? { ownerRootSessionId: ids.ownerRootSessionId } : {}),
+		...(ids.taskId ? { taskId: ids.taskId } : {}),
+		...(ids.executionId ? { executionId: ids.executionId } : {}),
+		...(ids.unknownReason ? { unknownReason: ids.unknownReason } : {}),
 	};
 	if (typeof rec.turns === "number" && Number.isFinite(rec.turns)) child.turns = rec.turns;
 	if (reported !== undefined) child.costUsd = reported;
@@ -550,6 +577,7 @@ export class UsageLedger {
 	private readonly resolveTaskId?: (taskId: string) => string;
 	private readonly tasks = new Map<string, TaskUsage>();
 	private readonly untasked: RootUsage = emptyRootUsage();
+	private readonly shared: RootUsage = emptyRootUsage();
 	private readonly seenIds = new Set<string>();
 	private pending: UsageEntry[] = [];
 	private seq = 0;
@@ -597,6 +625,9 @@ export class UsageLedger {
 
 	private applyRootTurn(input: {
 		taskId?: string;
+		taskIds?: readonly string[];
+		attribution?: "tasked" | "shared" | "untasked";
+		toolCallIds?: readonly string[];
 		state?: TaskState;
 		model?: string;
 		provider?: string;
@@ -605,8 +636,10 @@ export class UsageLedger {
 		const tokens = tokensFromUsage(input.usage);
 		const tokensUnknown = isAllZero(tokens);
 		const phase = phaseFor(input.state);
-		const tasked = Boolean(input.taskId) && phase !== undefined;
-		const canonicalTaskId = input.taskId ? this.canonicalTaskId(input.taskId) : undefined;
+		const candidates = [...new Set((input.taskIds ?? (input.taskId ? [input.taskId] : [])).map((id) => this.canonicalTaskId(id)).filter(Boolean))];
+		const attribution = input.attribution ?? (candidates.length === 1 && phase !== undefined ? "tasked" : candidates.length > 1 ? "shared" : "untasked");
+		const tasked = attribution === "tasked" && candidates.length === 1;
+		const canonicalTaskId = tasked ? candidates[0] : undefined;
 		const costUsd = resolveCost(
 			this.pricing,
 			input.usage,
@@ -614,7 +647,7 @@ export class UsageLedger {
 			input.provider ?? providerFromModel(input.model),
 			input.model,
 		);
-		const bucket = tasked ? this.ensureTask(canonicalTaskId as string).root : this.untasked;
+		const bucket = attribution === "shared" ? this.shared : tasked ? this.ensureTask(canonicalTaskId as string).root : this.untasked;
 		const previousTurns = bucket.turns;
 		const previousCost = bucket.costUsd;
 		bucket.turns += 1;
@@ -637,7 +670,10 @@ export class UsageLedger {
 			at: this.at(),
 			tokens,
 			tokensUnknown,
-			...(canonicalTaskId && tasked ? { taskId: canonicalTaskId } : {}),
+			...(canonicalTaskId ? { taskId: canonicalTaskId } : {}),
+			...(candidates.length > 0 ? { taskIds: candidates } : {}),
+			attribution,
+			...(input.toolCallIds?.length ? { toolCallIds: [...input.toolCallIds] } : {}),
 			...(input.model ? { model: input.model } : {}),
 			...(input.provider ? { provider: input.provider } : {}),
 			...(input.state ? { state: input.state } : {}),
@@ -653,6 +689,9 @@ export class UsageLedger {
 		provider?: string;
 		usage: PiUsageLike;
 		messageId?: string;
+		taskIds?: readonly string[];
+		attribution?: "tasked" | "shared" | "untasked";
+		toolCallIds?: readonly string[];
 	}): RootTurnRecord {
 		const record = this.applyRootTurn(input);
 		const seq = this.nextSeq();
@@ -663,6 +702,9 @@ export class UsageLedger {
 			kind: "root-turn",
 			at: record.at,
 			...(record.taskId ? { taskId: record.taskId } : {}),
+			...(record.taskIds ? { taskIds: record.taskIds } : {}),
+			attribution: record.attribution,
+			...(record.toolCallIds ? { toolCallIds: record.toolCallIds } : {}),
 			...(input.state ? { state: input.state } : {}),
 			...(input.model ? { model: input.model } : {}),
 			...(input.provider ? { provider: input.provider } : {}),
@@ -728,7 +770,14 @@ export class UsageLedger {
 				if (!existing.pending && !stored.pending && (existing.turns ?? 0) > (stored.turns ?? 0)) {
 					return;
 				}
-				task.children[index] = stored;
+				task.children[index] = {
+					...existing,
+					...stored,
+					...(existing.ownerRootSessionId && !stored.ownerRootSessionId ? { ownerRootSessionId: existing.ownerRootSessionId } : {}),
+					...(existing.sessionHint && !stored.sessionHint ? { sessionHint: existing.sessionHint } : {}),
+					...(existing.observedInSessionId && !stored.observedInSessionId ? { observedInSessionId: existing.observedInSessionId } : {}),
+					...(existing.unknownReason && !stored.unknownReason ? { unknownReason: existing.unknownReason } : {}),
+				};
 				this.refreshCostUnknown(task);
 				return;
 			}
@@ -788,8 +837,8 @@ export class UsageLedger {
 		return task;
 	}
 
-	sessionUsage(): { untasked: RootUsage; tasks: string[] } {
-		return { untasked: this.untasked, tasks: [...this.tasks.keys()] };
+	sessionUsage(): { untasked: RootUsage; shared: RootUsage; tasks: string[] } {
+		return { untasked: this.untasked, shared: this.shared, tasks: [...this.tasks.keys()] };
 	}
 
 	canonicalizeTaskIds(): void {
@@ -814,12 +863,17 @@ export class UsageLedger {
 		untaskedTurns: number;
 		untaskedTokens: number;
 		untaskedCostUsd: number | undefined;
+		sharedTurns: number;
+		sharedTokens: number;
+		sharedCostUsd: number | undefined;
 	} {
 		const untaskedTokens = usageTokens(this.untasked);
-		let turns = this.untasked.turns;
-		let tokens = untaskedTokens;
-		let costUnknown = this.untasked.turns > 0 && this.untasked.costUsd === undefined;
-		let costUsd: number | undefined = costUnknown ? undefined : (this.untasked.costUsd ?? 0);
+		const sharedTokens = usageTokens(this.shared);
+		let turns = this.untasked.turns + this.shared.turns;
+		let tokens = untaskedTokens + sharedTokens;
+		let costUnknown = (this.untasked.turns > 0 && this.untasked.costUsd === undefined)
+			|| (this.shared.turns > 0 && this.shared.costUsd === undefined);
+		let costUsd: number | undefined = costUnknown ? undefined : (this.untasked.costUsd ?? 0) + (this.shared.costUsd ?? 0);
 		for (const task of this.tasks.values()) {
 			const root = task.root;
 			turns += root.turns;
@@ -841,6 +895,9 @@ export class UsageLedger {
 			untaskedTurns: this.untasked.turns,
 			untaskedTokens,
 			untaskedCostUsd: this.untasked.costUsd,
+			sharedTurns: this.shared.turns,
+			sharedTokens,
+			sharedCostUsd: this.shared.costUsd,
 		};
 	}
 
@@ -852,6 +909,9 @@ export class UsageLedger {
 			if (entry.kind === "root-turn") {
 				this.applyRootTurn({
 					...(entry.taskId ? { taskId: entry.taskId } : {}),
+					...(entry.taskIds ? { taskIds: entry.taskIds } : {}),
+					...(entry.attribution ? { attribution: entry.attribution } : {}),
+					...(entry.toolCallIds ? { toolCallIds: entry.toolCallIds } : {}),
 					...(entry.state ? { state: entry.state } : {}),
 					...(entry.model ? { model: entry.model } : {}),
 					...(entry.provider ? { provider: entry.provider } : {}),
@@ -988,6 +1048,7 @@ export function summarizeTaskBudget(usage: TaskUsage, limits?: CumulativeBudgetL
 export interface SessionUsageSummary {
 	/** Session-level usage that belongs to no Task (pre-Task Root turns, unattributable children). */
 	unattributed: { turns: number; tokens: number; costUsd: number; costUnknown: boolean };
+	shared: { turns: number; tokens: number; costUsd: number; costUnknown: boolean };
 	tasks: string[];
 	/** Whole-session tokens: unattributed + every task's root and children. */
 	totalTokens: number;
@@ -1000,12 +1061,14 @@ export function summarizeSessionUsage(ledger: UsageLedger): SessionUsageSummary 
 	const session = ledger.sessionUsage();
 	const unattributed = session.untasked;
 	const unattributedTokens = usageTokens(unattributed);
-	let totalTokens = unattributedTokens;
-	let totalCostUsd = unattributed.costUsd ?? 0;
-	// Same rule as summarizeTaskBudget: a bucket with no turns spent nothing,
-	// so an empty unattributed bucket is known-zero, not unknown.
+	const shared = session.shared;
+	const sharedTokens = usageTokens(shared);
+	let totalTokens = unattributedTokens + sharedTokens;
+	let totalCostUsd = (unattributed.costUsd ?? 0) + (shared.costUsd ?? 0);
+	// Same rule as summarizeTaskBudget: a bucket with no turns spent nothing.
 	const unattributedCostUnknown = unattributed.turns > 0 && unattributed.costUsd === undefined;
-	let costUnknownParts = unattributedCostUnknown ? 1 : 0;
+	const sharedCostUnknown = shared.turns > 0 && shared.costUsd === undefined;
+	let costUnknownParts = (unattributedCostUnknown ? 1 : 0) + (sharedCostUnknown ? 1 : 0);
 	for (const taskId of session.tasks) {
 		const usage = ledger.taskUsage(taskId);
 		if (!usage) continue;
@@ -1020,6 +1083,12 @@ export function summarizeSessionUsage(ledger: UsageLedger): SessionUsageSummary 
 			tokens: unattributedTokens,
 			costUsd: unattributed.costUsd ?? 0,
 			costUnknown: unattributedCostUnknown,
+		},
+		shared: {
+			turns: shared.turns,
+			tokens: sharedTokens,
+			costUsd: shared.costUsd ?? 0,
+			costUnknown: sharedCostUnknown,
 		},
 		tasks: session.tasks,
 		totalTokens,
@@ -1268,6 +1337,8 @@ export interface SessionEvidenceExportOptions {
 	usageEntries?: readonly unknown[];
 	/** Optional frozen event fixtures, accepted by the offline regression harness. */
 	fixtures?: unknown;
+	/** Optional explicit C/B evidence statuses; omitted entries remain unproven. */
+	acceptance?: AcceptanceEvidenceMatrixOptions;
 	sourceFingerprint?: string;
 }
 
@@ -1307,9 +1378,17 @@ export interface SessionEvidenceExport {
 		};
 		modelRates: Record<string, PricingRates>;
 		breakdown: SessionEvidenceBreakdown;
+		/** Mutually exclusive accounting buckets for root/child event export. */
+		buckets: {
+			tasked: { tokens: number; costUsd: number; unknownCost: boolean; count: number };
+			untaskedShared: { tokens: number; costUsd: number; unknownCost: boolean; count: number };
+			foreign: { tokens: number; costUsd: number; unknownCost: boolean; count: number };
+			unknown: { tokens: number; costUsd: number; unknownCost: boolean; count: number };
+		};
 	};
 	breakdown: SessionEvidenceBreakdown;
 	requirements: Array<{ id: string; status: "implemented" | "unit-verified" | "host-verified" | "unproven"; evidence: string[] }>;
+	evidenceMatrix: EvidenceMatrixEntry[];
 	analysis: string[];
 	unattributed: Array<Record<string, unknown>>;
 }
@@ -1398,6 +1477,42 @@ function exportTaskUsage(usage: unknown, result: SessionEvidenceExport["usage"],
 		if (unattributed && cost !== undefined) result.cost.unattributedUsd += cost;
 		else if ((exportNumber(item.turns) ?? 0) > 0 || item.pending === true) result.cost.unknownParts += 1;
 	}
+}
+
+function usageIdentity(value: unknown): string | undefined {
+	const record = exportRecord(value);
+	if (!record) return undefined;
+	const child = exportRecord(record.child) ?? record;
+	const runId = exportString(child.runId) ?? exportString(record.runId);
+	if (runId) return `run:${runId}`;
+	const toolCallId = exportString(child.toolCallId) ?? exportString(record.toolCallId);
+	if (toolCallId) return `call:${toolCallId}`;
+	return exportString(record.id);
+}
+
+function childUsageBucket(value: unknown, rootSessionId: string, selectedTaskIds: Set<string>): "tasked" | "untaskedShared" | "foreign" | "unknown" {
+	const record = exportRecord(value);
+	const child = exportRecord(record?.child) ?? record;
+	const taskId = exportString(record?.taskId) ?? exportString(child?.taskId);
+	const owner = exportString(child?.ownerRootSessionId) ?? exportString(record?.ownerRootSessionId);
+	const observed = exportString(child?.observedInSessionId) ?? exportString(record?.observedInSessionId);
+	if (record?.kind === "root-turn" && (record.attribution === "untasked" || record.attribution === "shared")) return "untaskedShared";
+	if (owner && owner !== rootSessionId) return "foreign";
+	if (observed && observed !== rootSessionId && !owner) return "foreign";
+	if (taskId && selectedTaskIds.has(taskId)) return "tasked";
+	if (taskId === "unattributed" || record?.attribution === "shared" || child?.unknownReason) return record?.attribution === "shared" ? "untaskedShared" : child?.unknownReason ? "unknown" : "untaskedShared";
+	return taskId ? "foreign" : "unknown";
+}
+
+function addBucketUsage(target: SessionEvidenceExport["usage"]["buckets"][keyof SessionEvidenceExport["usage"]["buckets"]], value: unknown): void {
+	const record = exportRecord(value);
+	if (!record) return;
+	const child = exportRecord(record.child) ?? record;
+	target.count += 1;
+	target.tokens += exportUsageTokens(child);
+	const cost = exportNumber(child.costUsd) ?? exportNumber(child.calculatedCostUsd) ?? exportNumber(record.costUsd);
+	if (cost === undefined) target.unknownCost = true;
+	else target.costUsd += cost;
 }
 
 function emptyExportTokens(): TokenCounts {
@@ -1540,6 +1655,12 @@ export function exportSessionEvidence(options: SessionEvidenceExportOptions): Se
 		tokens: emptyExportTokens(), bySource: { root: emptyExportTokens(), children: emptyExportTokens(), unattributed: emptyExportTokens() },
 		cost: { calculatedUsd: 0, reportedUsd: 0, unknownUsd: false, unknownParts: 0, unattributedUsd: 0 }, modelRates: {},
 		breakdown: usageBreakdown,
+		buckets: {
+			tasked: { tokens: 0, costUsd: 0, unknownCost: false, count: 0 },
+			untaskedShared: { tokens: 0, costUsd: 0, unknownCost: false, count: 0 },
+			foreign: { tokens: 0, costUsd: 0, unknownCost: false, count: 0 },
+			unknown: { tokens: 0, costUsd: 0, unknownCost: false, count: 0 },
+		},
 	};
 	for (const run of runs) {
 		const rates = exportRecord(exportRecord(run.pricing)?.rates);
@@ -1551,14 +1672,59 @@ export function exportSessionEvidence(options: SessionEvidenceExportOptions): Se
 			}
 		}
 	}
-	for (const task of selectedTasks) exportTaskUsage(task.usage, usageResult, false);
+	const seenUsage = new Set<string>();
+	for (const task of selectedTasks) {
+		exportTaskUsage(task.usage, usageResult, false);
+		const usage = exportRecord(task.usage);
+		if (usage?.root) addBucketUsage(usageResult.buckets.tasked, usage.root);
+		for (const child of Array.isArray(usage?.children) ? usage.children : []) {
+			addBucketUsage(usageResult.buckets.tasked, child);
+			const identity = usageIdentity(child);
+			if (identity) seenUsage.add(identity);
+		}
+	}
 	for (const entry of options.usageEntries ?? []) {
 		const value = exportRecord(entry);
 		if (!value) continue;
+		const identity = usageIdentity(value);
+		if (identity && seenUsage.has(identity)) continue;
+		if (identity) seenUsage.add(identity);
 		const taskId = exportString(value.taskId);
-		if (!taskId || !selectedTaskIds.has(taskId)) {
-			exportTaskUsage(value.child ?? value.usage, usageResult, true);
-			unattributed.push({ type: "usage", taskId: taskId ?? "unknown", runId: value.runId, reason: "no canonical Task linkage" });
+		if (taskId && selectedTaskIds.has(taskId) && !value.child) continue;
+		const entryUsage = value.child
+			? { children: [value.child] }
+			: value.kind === "root-turn"
+				? { root: value.usage }
+				: value.usage;
+		const bucket = childUsageBucket(value, rootSessionId, selectedTaskIds);
+		const target = usageResult.buckets[bucket];
+		addBucketUsage(target, value.child ?? value.usage ?? value);
+		if (taskId && selectedTaskIds.has(taskId)) {
+			exportTaskUsage(entryUsage, usageResult, false);
+		} else {
+			exportTaskUsage(entryUsage, usageResult, true);
+			if (bucket === "foreign") addForeignChildSpend(usageBreakdown.foreignChildSpend, value.child ?? value.usage);
+			unattributed.push({ type: "usage", taskId: taskId ?? "unknown", runId: value.runId, reason: bucket === "unknown" ? "no trusted provenance" : "outside selected Task" });
+		}
+	}
+	for (const run of runs) {
+		if (isBudgetIntercept(run)) usageBreakdown.budgetIntercepts += 1;
+		const taskId = exportString(run.taskId);
+		if (!taskId || selectedTaskIds.has(taskId)) continue;
+		const identity = usageIdentity(run);
+		if (identity && seenUsage.has(identity)) continue;
+		if (identity) seenUsage.add(identity);
+		const bucket = childUsageBucket(run, rootSessionId, selectedTaskIds);
+		addBucketUsage(usageResult.buckets[bucket], run.usage ?? run);
+		if (run.usage !== undefined) addForeignChildSpend(usageBreakdown.foreignChildSpend, run.usage);
+		else {
+			const tokens = exportRecord(run.tokens);
+			const tokenCount = exportNumber(tokens?.total) ?? ["input", "output", "cacheRead", "cacheWrite"].reduce((sum, key) => sum + (exportNumber(tokens?.[key]) ?? 0), 0);
+			usageBreakdown.foreignChildSpend.count += 1;
+			usageBreakdown.foreignChildSpend.tokens += tokenCount;
+			const cost = exportNumber(exportRecord(run.cost)?.childrenUsd);
+			if (cost === undefined) usageBreakdown.foreignChildSpend.unknownCost = true;
+			else usageBreakdown.foreignChildSpend.costUsd += cost;
 		}
 	}
 	for (const task of selectedTasks) {
@@ -1570,29 +1736,14 @@ export function exportSessionEvidence(options: SessionEvidenceExportOptions): Se
 			usageBreakdown.envelopeRepairs += Array.isArray(item?.repairs) ? item.repairs.length : item?.normalized === true ? 1 : 0;
 		}
 	}
-	for (const run of runs) {
-		if (isBudgetIntercept(run)) usageBreakdown.budgetIntercepts += 1;
-		const taskId = exportString(run.taskId);
-		if (taskId && !selectedTaskIds.has(taskId)) {
-			if (run.usage !== undefined) addForeignChildSpend(usageBreakdown.foreignChildSpend, run.usage);
-			else {
-				const tokens = exportRecord(run.tokens);
-				const tokenCount = exportNumber(tokens?.total) ?? ["input", "output", "cacheRead", "cacheWrite"].reduce((sum, key) => sum + (exportNumber(tokens?.[key]) ?? 0), 0);
-				usageBreakdown.foreignChildSpend.count += 1;
-				usageBreakdown.foreignChildSpend.tokens += tokenCount;
-				const cost = exportNumber(exportRecord(run.cost)?.childrenUsd);
-				if (cost === undefined) usageBreakdown.foreignChildSpend.unknownCost = true;
-				else usageBreakdown.foreignChildSpend.costUsd += cost;
-			}
-		}
-	}
-	for (const entry of options.usageEntries ?? []) {
-		const value = exportRecord(entry);
-		if (!value) continue;
-		const taskId = exportString(value.taskId);
-		if (!taskId || !selectedTaskIds.has(taskId)) addForeignChildSpend(usageBreakdown.foreignChildSpend, value.child ?? value.usage);
-	}
 	usageResult.breakdown = usageBreakdown;
+	const evidenceMatrix = buildAcceptanceEvidenceMatrix({
+		...options.acceptance,
+		rootSessionId,
+		...(options.acceptance?.runIds ? {} : {
+			runIds: runs.map((run) => exportString(run.runId)).filter((id): id is string => Boolean(id)),
+		}),
+	});
 	usageResult.cost.unknownUsd = usageResult.cost.unknownParts > 0;
 	const e01 = fixture && (exportRecord(fixture.e01) ?? exportRecord(fixture.E01_FIXTURE));
 	const e01New = Array.isArray(e01?.newFindings) ? e01.newFindings.length : 0;
@@ -1630,8 +1781,10 @@ export function exportSessionEvidence(options: SessionEvidenceExportOptions): Se
 			{ id: "A19", status: fixture ? "unit-verified" : "unproven", evidence: fixture ? [`${e01New} new findings`, `${interceptionTotal} interceptions/${interceptionRuns} runs`, `${processFailures} process failures`] : [] },
 			{ id: "A20", status: e04 ? "unit-verified" : "unproven", evidence: e04 ? ["cross-workspace and premature launch records retained as analysis/unattributed"] : [] },
 			{ id: "A21", status: "unproven", evidence: ["requires production host event and payload receipt"] },
+			...evidenceMatrix,
 		],
 		analysis,
 		unattributed,
+		evidenceMatrix,
 	};
 }

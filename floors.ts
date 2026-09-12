@@ -15,6 +15,88 @@ export interface ExplorationBudget {
 export const DEFAULT_EXPLORATION_BUDGET = 20;
 export const EXPLORATION_SOFT_FRACTION = 0.8;
 
+export interface ExplorationProbeCall {
+	/** Host tool name and input captured from the raw tool-call event. */
+	toolName: string;
+	input?: unknown;
+	/** Host result classification, retained for replay/evidence. */
+	result?: unknown;
+	/** Number of host calls represented by one batch event. */
+	batchSize?: number;
+}
+
+export interface ExplorationProbeFixture {
+	version: 1;
+	loadedFingerprint: string;
+	configured: { soft: number; hard: number };
+	calls: ExplorationProbeCall[];
+	observed: { eligibleCalls: number; interceptedCalls: number; batchCalls: number };
+}
+
+/** Build a replayable C10 probe fixture without losing raw call inputs/results. */
+export function createExplorationProbeFixture(
+	loadedFingerprint: string,
+	calls: readonly ExplorationProbeCall[],
+	configured: { soft?: number; hard?: number } = {},
+): ExplorationProbeFixture {
+	const hard = configured.hard ?? DEFAULT_EXPLORATION_BUDGET;
+	const soft = configured.soft ?? Math.ceil(hard * EXPLORATION_SOFT_FRACTION);
+	const eligibleCalls = calls.reduce((sum, call) => sum + (isExplorationToolCall(call.toolName, call.input) ? (call.batchSize ?? 1) : 0), 0);
+	const interceptedCalls = Math.max(0, eligibleCalls - hard);
+	const batchCalls = calls.filter((call) => (call.batchSize ?? 1) > 1).length;
+	return {
+		version: 1,
+		loadedFingerprint,
+		configured: { soft, hard },
+		calls: calls.map((call) => ({ ...call })),
+		observed: { eligibleCalls, interceptedCalls, batchCalls },
+	};
+}
+
+/** Compare configured ceilings with what a host actually intercepted. */
+export function explorationProbeDelta(fixture: ExplorationProbeFixture): {
+	configuredHard: number;
+	observedEligible: number;
+	observedIntercepted: number;
+	interceptionDelta: number;
+} {
+	return {
+		configuredHard: fixture.configured.hard,
+		observedEligible: fixture.observed.eligibleCalls,
+		observedIntercepted: fixture.observed.interceptedCalls,
+		interceptionDelta: fixture.observed.interceptedCalls - Math.max(0, fixture.observed.eligibleCalls - fixture.configured.hard),
+	};
+}
+
+/**
+ * Execution-scoped exploration accounting. Host events may be replayed by both
+ * tool_result and notification handlers; event ids make that replay harmless.
+ */
+export class ExplorationBudgetLedger {
+	private readonly budgets = new Map<string, ExplorationBudget>();
+	private readonly seenEvents = new Set<string>();
+
+	record(executionId: string, toolName: string, input?: unknown, eventId?: string, limit = DEFAULT_EXPLORATION_BUDGET): { budget: ExplorationBudget; notice?: string; duplicate?: boolean } {
+		const key = executionId.trim();
+		if (!key) throw new Error("executionId is required for exploration accounting");
+		if (eventId && this.seenEvents.has(`${key}:${eventId}`)) {
+			return { budget: this.budgets.get(key) ?? emptyExplorationBudget(limit), duplicate: true };
+		}
+		if (eventId) this.seenEvents.add(`${key}:${eventId}`);
+		const current = this.budgets.get(key) ?? emptyExplorationBudget(limit);
+		const result = recordExplorationToolCall(current, toolName, input);
+		this.budgets.set(key, result.budget);
+		return result;
+	}
+
+	get(executionId: string, limit = DEFAULT_EXPLORATION_BUDGET): ExplorationBudget {
+		return { ...(this.budgets.get(executionId.trim()) ?? emptyExplorationBudget(limit)) };
+	}
+
+	clear(executionId: string): void { this.budgets.delete(executionId.trim()); }
+}
+
+
 const EXPLORATION_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const INSPECTION_BASH = /(?:^|[;&|]\s*)(?:cat|head|tail|rg|grep|sed\s+-n)(?:\s|$)/i;
 

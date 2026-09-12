@@ -330,6 +330,8 @@ export interface TaskSpec {
 	additionalWorktreeRoots?: string[];
 	/** Pre-located evidence fragments supplied by Root or an earlier Explorer. */
 	contextPack?: ContextPackEntry[];
+	/** Paths that should be read before exploratory discovery begins. */
+	readFirst?: string[];
 	/**
 	 * Explicit parent relationship for a derived correction or commit Task.
 	 * The parent record keeps the reciprocal id in `successors`.
@@ -532,8 +534,11 @@ export interface ReviewResult {
 	/** Workspace summary the reviewed report was validated against. */
 	workspaceDigest?: string;
 	reviewedEvidenceRef?: EvidenceRef;
-	/** Who recorded this verdict; records from before 0.3 read as "reviewer". */
-	/** Source used for the accepted review revision. */
+	/** Root audit fields: requested input, applied lifecycle decision, and refusal context. */
+	requestedVerdict?: ReviewVerdict;
+	appliedDecision?: string;
+	refusedReason?: string;
+	executionId?: string;
 	reportSource?: "worker" | "raw-judged";
 	/** Who the Root explicitly acknowledges as the author of accepted drift. */
 	acknowledgeDrift?: DriftAcknowledgement;
@@ -605,6 +610,14 @@ export interface ChildUsage extends TokenCounts {
 	thinking?: string;
 	/** Session provenance for unattributed child usage recovered from an orphan meta file. */
 	sessionHint?: string;
+	/** Root session in which this child was observed; never an ownership binding. */
+	observedInSessionId?: string;
+	/** True ownership binding captured at launch, when trusted. */
+	ownerRootSessionId?: string;
+	taskId?: string;
+	executionId?: string;
+	/** Why the child remains unknown instead of being guessed into a Task/session. */
+	unknownReason?: string;
 	outcome?: "succeeded" | "failed" | "unknown";
 	turns?: number;
 	costUsd?: number;
