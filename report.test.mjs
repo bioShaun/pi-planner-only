@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import {
 	compactWorkerReport,
 	extractWorkerReport,
+	isExtractedOk,
 	normalizeWorkerReport,
 	renderWorkerReport,
 	validateWorkerReport,
@@ -58,11 +59,16 @@ function makeReport(overrides = {}) {
 assert.deepEqual(validateWorkerReport(makeReport()), []);
 assert.ok(validateWorkerReport({ ...makeReport(), version: 2 }).length > 0);
 assert.ok(validateWorkerReport("not a report").length > 0);
-assert.deepEqual(
-	extractWorkerReport(`done:\n\`\`\`json\n${JSON.stringify(makeReport())}\n\`\`\``).report,
-	makeReport(),
-);
-assert.ok(extractWorkerReport("I gave up.").error);
+{
+	const extracted = extractWorkerReport(`done:\n\`\`\`json\n${JSON.stringify(makeReport())}\n\`\`\``);
+	assert.equal(extracted.ok, true);
+	assert.deepEqual(extracted.report, makeReport());
+}
+{
+	const extracted = extractWorkerReport("I gave up.");
+	assert.equal(extracted.ok, false);
+	assert.ok(extracted.error);
+}
 
 // --------------------------------------------------------------------------
 // WorkerReport task identity (§P0-1)
@@ -478,7 +484,8 @@ function assertRepaired(raw, expectedPatch, notePattern, context) {
 // Ticket 34: real run5 reports with omitted status remain inferred, not worker-declared.
 for (const prefix of ["75d7ae1c", "e63c7583"]) {
 	const extracted = extractWorkerReport(readRun5Output(prefix));
-	assert.equal(extracted.error, undefined, prefix);
+	assert.equal(extracted.ok, true, prefix);
+	assert.ok(isExtractedOk(extracted));
 	assert.ok(extracted.report.validation.length > 0, prefix);
 	assert.ok(extracted.report.validation.every((item) => item.status === "passed" && item.inferred === true), prefix);
 }
@@ -603,8 +610,10 @@ for (const prefix of ["75d7ae1c", "e63c7583"]) {
 // L-1: extractWorkerReport calls normalize before validate; repairs is [] for an already-valid report
 {
 	const extracted = extractWorkerReport(`done:\n\`\`\`json\n${JSON.stringify(makeReport())}\n\`\`\``);
+	assert.equal(extracted.ok, true);
 	assert.deepEqual(extracted.report, makeReport());
 	assert.deepEqual(extracted.repairs, []);
+	assert.equal(extracted.level, "schema-valid");
 }
 
 // R15/T4 finding: worker-supplied Root-owned evidence fields are dropped or stamped
@@ -681,23 +690,25 @@ for (const prefix of ["75d7ae1c", "e63c7583"]) {
 		}),
 	].join("\n");
 	const extracted = extractWorkerReport(mixed);
-	assert.ok(extracted.error, "string validation entries are still invalid");
+	assert.equal(extracted.ok, false, "string validation entries are still invalid");
 	assert.match(extracted.error, /picked candidate with keys \[/);
 	assert.match(extracted.error, /version/);
 	assert.match(extracted.error, /validation/);
 	assert.match(extracted.error, /validation\[\d+] must be an object/);
+	assert.equal(extracted.level, "irreparable");
+	assert.equal("report" in extracted, false);
 }
 
 {
 	const good = extractWorkerReport(readRun5Output("74f164e8"));
-	assert.equal(good.error, undefined);
+	assert.equal(good.ok, true);
 	assert.equal(good.report.status, "completed");
 }
 
 {
 	for (const prefix of ["68b5f76e", "a5b8f153", "e567653d"]) {
 		const extracted = extractWorkerReport(readRun5Output(prefix));
-		assert.ok(extracted.error, `${prefix} must still fail extraction`);
+		assert.equal(extracted.ok, false, `${prefix} must still fail extraction`);
 		assert.match(
 			extracted.error,
 			/validation\[\d+] must be an object/,
@@ -705,7 +716,73 @@ for (const prefix of ["75d7ae1c", "e63c7583"]) {
 		);
 		assert.match(extracted.error, /picked candidate with keys \[/);
 		assert.match(extracted.error, /validation/);
+		assert.equal(extracted.level, "irreparable");
+		assert.equal("report" in extracted, false);
 	}
+}
+
+
+// --------------------------------------------------------------------------
+// ExtractedReport discriminant (behavior-preserving type tightening)
+// --------------------------------------------------------------------------
+
+{
+	const ok = extractWorkerReport(`done:\n\`\`\`json\n${JSON.stringify(makeReport())}\n\`\`\``);
+	assert.equal(ok.ok, true);
+	assert.ok(isExtractedOk(ok));
+	assert.ok(ok.report);
+	assert.equal("error" in ok, false);
+	assert.equal(ok.level, "schema-valid");
+	assert.deepEqual(ok.repairs, []);
+}
+
+{
+	const repaired = extractWorkerReport(`done:\n\`\`\`json\n${JSON.stringify({
+		...makeReport(),
+		version: "1",
+	})}\n\`\`\``);
+	assert.equal(repaired.ok, true);
+	assert.equal(repaired.level, "repairable");
+	assert.ok(repaired.repairs.length > 0);
+	assert.equal(repaired.report.version, 1);
+	assert.equal("error" in repaired, false);
+}
+
+{
+	const empty = extractWorkerReport("");
+	assert.equal(empty.ok, false);
+	assert.equal(empty.error, "worker returned no output");
+	assert.equal("report" in empty, false);
+	assert.equal("level" in empty, false);
+}
+
+{
+	const prose = extractWorkerReport("I gave up without JSON.");
+	assert.equal(prose.ok, false);
+	assert.equal(prose.error, "worker output did not contain a WorkerReport object");
+	assert.equal("report" in prose, false);
+	assert.equal("level" in prose, false);
+}
+
+{
+	const bad = extractWorkerReport("```json\n" + JSON.stringify({
+		version: 1,
+		taskId: "T-1",
+		status: "completed",
+		summary: "x",
+		changedFiles: [],
+		validation: "not-an-array",
+		evidence: { taskId: "T-1" },
+		risks: [],
+		unresolved: [],
+	}) + "\n```");
+	assert.equal(bad.ok, false);
+	assert.equal(bad.level, "irreparable");
+	assert.ok(bad.error);
+	assert.match(bad.error, /picked candidate with keys \[/);
+	assert.equal(typeof bad.seenKeys, "string");
+	assert.ok(bad.seenKeys.includes("validation"));
+	assert.equal("report" in bad, false);
 }
 
 console.log("planner-only report: PASS");

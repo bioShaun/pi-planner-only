@@ -16,16 +16,18 @@ const repaired = extractWorkerReport(JSON.stringify({
 	risks: [],
 	unresolved: [],
 }));
+assert.equal(repaired.ok, true);
 assert.equal(repaired.level, "repairable");
-assert.equal(repaired.report?.status, "completed");
-assert.deepEqual(repaired.report?.changedFiles, ["src/index.ts"]);
-assert.equal(repaired.report?.validation[0].type, "typecheck");
-assert.equal(repaired.report?.validation[0].status, "passed");
+assert.equal(repaired.report.status, "completed");
+assert.deepEqual(repaired.report.changedFiles, ["src/index.ts"]);
+assert.equal(repaired.report.validation[0].type, "typecheck");
+assert.equal(repaired.report.validation[0].status, "passed");
 assert.ok(repaired.repairs.length > 0);
 
 const invalid = extractWorkerReport(JSON.stringify({ version: 1, taskId, status: "???" }));
+assert.equal(invalid.ok, false);
 assert.equal(invalid.level, "irreparable");
-assert.equal(invalid.report, undefined);
+assert.equal("report" in invalid, false);
 
 assert.equal(canTransition("executing", "report-invalid"), true);
 assert.equal(canTransition("report-invalid", "reviewing"), true);

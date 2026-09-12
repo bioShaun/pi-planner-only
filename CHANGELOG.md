@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- ExtractedReport is now a discriminated union (`ok: true` | `ok: false`) so WorkerReport parse failures cannot pretend success fields exist (same honesty bar as host invalid_request / SubagentDelegationInvalidResponse). Call sites narrow on `extracted.ok`; product outcomes unchanged.
+
 - Batch A identity and repair closure: ledger-backed Task ids use cross-process atomic claims and never reuse restored, terminal, over-cap, or unreadable ids; report-only corrections with ambiguous, unknown, or terminal targets are refused before launch instead of creating placeholders; TaskSpec repair preserves the trusted Worker role and never drops validation intent. See [batch A acceptance](docs/runtime-batch-a-2026-09-11-acceptance.md).
 - Model preflight writeback fix: host-default `provider/model/thinking` is retained for attribution but is not written into the downstream subagent input, so host settings fallbacks remain effective; explicit model selections remain launch parameters.
 - Review wrap-up: undeclared untracked files with no allow-list are attributed (empty declaration cannot PASS); declaration-only findings use the report-only counter; missing `A_run`/`C_report` fail closed even in-session; unbound Explorer recovery returns saved output without creating a Task.
