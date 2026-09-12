@@ -10,6 +10,8 @@
 
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { childOutcomeFromExitCode, childUsageFromValue } from "./usage.ts";
+import type { ChildProvenance, ChildUsage, DelegationKind } from "./types.ts";
 
 const PREVIEW_TRUNCATED_MARKER = "...[preview truncated]";
 const MAX_OUTPUT_BYTES = 1024 * 1024;
@@ -180,8 +182,10 @@ export function readLargestRunOutput(asyncDir: string | undefined, runId: string
 		`${runId}.md`,
 	];
 	// Detached hosts write the final stream beside the run receipt. Prefer that
-	// location because it remains available even when the aggregate artifact
-	// directory was not created yet.
+	// location because it remains available even when the host's aggregate
+	// directory was not created yet. ("Artifact" below names the host's own
+	// `subagent-artifacts` directory — a path name, not an Evidence sample in
+	// the CONTEXT.md sense.)
 	const directCandidates = deterministicNames
 		.map((name) => join(asyncDir, name))
 		.filter((path, index, paths) => paths.indexOf(path) === index);
@@ -249,13 +253,67 @@ export const readDeterministicRunOutput = readLargestRunOutput;
 export const ASYNC_PREVIEW_TRUNCATED_REASON = "async preview truncated";
 export { PREVIEW_TRUNCATED_MARKER };
 
+/**
+ * Derive the trusted source session from a child meta (NX-01): an explicit
+ * session field first, else the transcript/meta path leaf. "unknown" values
+ * are never trusted as a final identity.
+ */
+export function sourceSessionFromMeta(meta: ChildRunMeta): string | undefined {
+	const explicit = [meta.sourceSessionId, meta.sessionId, meta.childSessionFile, meta.transcriptPath].find((value) => typeof value === "string" && value.trim() && value.trim() !== "unknown" && value.trim() !== "unknown-session");
+	if (explicit) {
+		const parts = explicit.split(/[\\/]/).filter(Boolean);
+		const leaf = parts.at(-1);
+		if (leaf) return leaf.replace(/\.(?:jsonl?|log)$/i, "");
+	}
+	if (meta.metaPath) {
+		const parts = meta.metaPath.split(/[\\/]/).filter(Boolean);
+		const marker = parts.lastIndexOf("subagent-artifacts");
+		if (marker > 0) return parts[marker - 1];
+	}
+	return undefined;
+}
+
+/**
+ * Map a child-run meta to ledger usage. The provenance clump is built once
+ * here (issue 05): owner/task/execution bindings come from the meta, the
+ * session hint is the trusted source session, and an untrusted source stays
+ * unknown with its reason instead of being guessed into a Task/session.
+ */
+export function childFromMeta(
+	meta: ChildRunMeta,
+	kind: DelegationKind,
+	observedInSessionId?: string,
+): ChildUsage | undefined {
+	const sourceSessionId = sourceSessionFromMeta(meta);
+	const provenance: ChildProvenance = {
+		...(meta.ownerRootSessionId ? { ownerRootSessionId: meta.ownerRootSessionId } : {}),
+		...(meta.taskId ? { taskId: meta.taskId } : {}),
+		...(meta.executionId ? { executionId: meta.executionId } : {}),
+		...(sourceSessionId ? { sourceSessionId, sessionHint: sourceSessionId } : {}),
+		...(meta.transcriptPath ? { transcriptPath: meta.transcriptPath } : {}),
+		...(!sourceSessionId ? { unknownReason: "no trusted source session in child metadata or meta location" } : {}),
+	};
+	const child = childUsageFromValue(meta.usage, kind, {
+		runId: meta.runId,
+		...provenance,
+		...(observedInSessionId ? { observedInSessionId } : {}),
+		agent: meta.agent,
+		...(meta.model ? { model: meta.model } : {}),
+		...(meta.thinking ? { thinking: meta.thinking } : {}),
+		source: "meta-file",
+		pending: false,
+	});
+	if (!child) return undefined;
+	return { ...child, outcome: childOutcomeFromExitCode(meta.exitCode) };
+}
+
 function childMetaNames(runId: string, agent: string): string[] {
 	const safe = `${runId}_${agent.replace(/[^\w.-]/g, "_")}`;
 	return [`${safe}_meta.json`, `${safe}_0_meta.json`];
 }
 
 /** What a child-run `_meta.json` yields: identity, terminal state, cost. */
-export interface ChildRunMeta {
+export interface ChildRunMeta extends ChildProvenance {
 	runId: string;
 	agent: string;
 	/** Numeric exit code marks the run terminal; absent means state unknown. */
@@ -264,12 +322,6 @@ export interface ChildRunMeta {
 	thinking?: string;
 	usage?: unknown;
 	stopReason?: string;
-	sourceSessionId?: string;
-	sessionId?: string;
-	ownerRootSessionId?: string;
-	taskId?: string;
-	executionId?: string;
-	transcriptPath?: string;
 	childSessionFile?: string;
 	sourceDir?: string;
 	metaPath?: string;

@@ -19,6 +19,7 @@
   ],
   "files": [
     "acceptance.ts",
+    "acceptance-claims.ts",
     "CONTEXT.md",
     "README.md",
     "README.zh-CN.md",

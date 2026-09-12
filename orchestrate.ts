@@ -129,6 +129,7 @@ import type {
 	ReviewResult,
 	ReviewRoundAttribution,
 	ReviewVerdict,
+	RootVerdictRefusal,
 	StructuredDelegationMode,
 	TaskExecutionRecord,
 	TaskCompletionKind,
@@ -139,6 +140,7 @@ import type {
 } from "./types.ts";
 import { emptyTaskUsage, exportSessionEvidence, summarizeTaskBudget } from "./usage.ts";
 import type { SessionEvidenceExport } from "./usage.ts";
+import { ACCEPTANCE_CLAIMS } from "./acceptance-claims.ts";
 import { BudgetReservations } from "./reservations.ts";
 import type { ReservationBudget } from "./reservations.ts";
 import { ConcurrencyController } from "./concurrency.ts";
@@ -948,6 +950,9 @@ export class PlannerOrchestrator {
 			tasks: this.store.list(),
 			runRecords: this.getRunRecords(),
 			usageEntries: this.depsUsageEntries(),
+			// C17: every export carries the current C/B claim matrix so the
+			// recorded evidence and the claimed statuses travel together.
+			acceptance: ACCEPTANCE_CLAIMS,
 			...(sourceFingerprint ? { sourceFingerprint } : {}),
 		});
 	}
@@ -1053,7 +1058,7 @@ export class PlannerOrchestrator {
 
 	/** Record an inspection call against an execution-scoped exploration budget. */
 	recordExplorationToolCall(taskId: string, toolName: string, input?: unknown, executionId = taskId, eventId?: string, limit = DEFAULT_EXPLORATION_BUDGET): { used: number; limit: number; notice?: string; duplicate?: boolean } {
-		const result = this.explorationBudgetLedger.record(executionId, toolName, input, eventId, limit);
+		const result = this.explorationBudgetLedger.record({ executionId, toolName, input, eventId, limit });
 		return {
 			used: result.budget.used,
 			limit: result.budget.limit,
@@ -3369,19 +3374,20 @@ export class PlannerOrchestrator {
 	}
 
 	/** Record a refused Root verdict as an auditable review event. */
-	recordRootVerdictRefusal(task: TaskRecord, verdict: ReviewVerdict, reason: string): void {
+	recordRootVerdictRefusal(task: TaskRecord, verdict: ReviewVerdict, refusal: RootVerdictRefusal): void {
 		// A pending-child guard is transient and is intentionally not appended to
 		// the review history; doing so would look like a real Root verdict and
 		// distort the request/decision audit sequence.
-		if (/child run still pending/i.test(reason)) return;
+		if (refusal.kind === "child-pending") return;
 		this.store.recordReview(task.taskId, {
 			taskId: task.taskId,
 			verdict,
-			summary: `refused: ${reason}`,
+			summary: `refused: ${refusal.reason}`,
 			findings: [],
 			evidenceFresh: false,
 			requestedVerdict: verdict,
-			refusedReason: reason,
+			refusedReason: refusal.reason,
+			refusalKind: refusal.kind,
 			...(task.reports.at(-1)?.evidence?.workerRunId ? { executionId: task.reports.at(-1)?.evidence.workerRunId } : {}),
 			source: "root",
 		});
@@ -3389,24 +3395,38 @@ export class PlannerOrchestrator {
 
 	/**
 	 * §3 step 2 — why Root may not record `verdict` on `task` right now.
-	 * Returns the refusal reason, or undefined when the verdict may proceed.
+	 * Returns the structured refusal (typed kind + display prose), or undefined
+	 * when the verdict may proceed. Callers must branch on `kind`, never on the
+	 * reason text.
 	 */
-	rootVerdictRefusal(task: TaskRecord, verdict: ReviewVerdict): string | undefined {
+	rootVerdictRefusal(task: TaskRecord, verdict: ReviewVerdict): RootVerdictRefusal | undefined {
 		if (isTerminalTaskState(task.state)) {
-			return `Task ${task.taskId} is already ${task.state}; verdicts are final. Start a new Task with a new TaskSpec for further work.`;
+			return {
+				kind: "terminal-state",
+				reason: `Task ${task.taskId} is already ${task.state}; verdicts are final. Start a new Task with a new TaskSpec for further work.`,
+			};
 		}
 		if (task.state === "completed" || (task.state !== "report-invalid" && verdict !== "blocked" && task.reports.length === 0)) {
-			return `Task ${task.taskId} has no recorded WorkerReport; a pass or change request needs a report to judge.`;
+			return {
+				kind: "no-report",
+				reason: `Task ${task.taskId} has no recorded WorkerReport; a pass or change request needs a report to judge.`,
+			};
 		}
 		if (verdict !== "blocked" && this.hasPendingDelegation(task.taskId)) {
-			return `Task ${task.taskId} has a child run still pending; wait for its result before recording a verdict.`;
+			return {
+				kind: "child-pending",
+				reason: `Task ${task.taskId} has a child run still pending; wait for its result before recording a verdict.`,
+			};
 		}
 		if (
 			verdict === "pass" &&
 			task.reviewMode === "fresh" &&
 			!task.reviews.some((review) => (review.source ?? "reviewer") === "reviewer")
 		) {
-			return `Task ${task.taskId} is in fresh review mode and no reviewer ReviewResult exists yet; delegate the review first — in fresh mode Root arbitrates, it does not pre-empt.`;
+			return {
+				kind: "fresh-review-pending",
+				reason: `Task ${task.taskId} is in fresh review mode and no reviewer ReviewResult exists yet; delegate the review first — in fresh mode Root arbitrates, it does not pre-empt.`,
+			};
 		}
 		if (
 			verdict === "pass" &&
@@ -3414,7 +3434,10 @@ export class PlannerOrchestrator {
 			task.reviewMode === "fresh" &&
 			(!task.lastComparison || task.lastComparison.truthPaths.length === 0)
 		) {
-			return `Task ${task.taskId} is in strict fresh review mode and evidence attribution paths are 0; a pass needs non-zero evidence attribution paths.`;
+			return {
+				kind: "strict-zero-paths",
+				reason: `Task ${task.taskId} is in strict fresh review mode and evidence attribution paths are 0; a pass needs non-zero evidence attribution paths.`,
+			};
 		}
 		return undefined;
 	}

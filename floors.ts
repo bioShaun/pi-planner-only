@@ -68,6 +68,15 @@ export function explorationProbeDelta(fixture: ExplorationProbeFixture): {
 	};
 }
 
+export interface ExplorationRecordOptions {
+	executionId: string;
+	toolName: string;
+	input?: unknown;
+	/** Host event id: replays of the same tool_result/notification are idempotent. */
+	eventId?: string;
+	limit?: number;
+}
+
 /**
  * Execution-scoped exploration accounting. Host events may be replayed by both
  * tool_result and notification handlers; event ids make that replay harmless.
@@ -76,15 +85,16 @@ export class ExplorationBudgetLedger {
 	private readonly budgets = new Map<string, ExplorationBudget>();
 	private readonly seenEvents = new Set<string>();
 
-	record(executionId: string, toolName: string, input?: unknown, eventId?: string, limit = DEFAULT_EXPLORATION_BUDGET): { budget: ExplorationBudget; notice?: string; duplicate?: boolean } {
-		const key = executionId.trim();
+	record(options: ExplorationRecordOptions): { budget: ExplorationBudget; notice?: string; duplicate?: boolean } {
+		const key = options.executionId.trim();
 		if (!key) throw new Error("executionId is required for exploration accounting");
-		if (eventId && this.seenEvents.has(`${key}:${eventId}`)) {
+		const limit = options.limit ?? DEFAULT_EXPLORATION_BUDGET;
+		if (options.eventId && this.seenEvents.has(`${key}:${options.eventId}`)) {
 			return { budget: this.budgets.get(key) ?? emptyExplorationBudget(limit), duplicate: true };
 		}
-		if (eventId) this.seenEvents.add(`${key}:${eventId}`);
+		if (options.eventId) this.seenEvents.add(`${key}:${options.eventId}`);
 		const current = this.budgets.get(key) ?? emptyExplorationBudget(limit);
-		const result = recordExplorationToolCall(current, toolName, input);
+		const result = recordExplorationToolCall(current, options.toolName, options.input);
 		this.budgets.set(key, result.budget);
 		return result;
 	}

@@ -515,6 +515,24 @@ export type StructuredDelegationMode = "warn" | "strict";
 
 export const DEFAULT_STRUCTURED_DELEGATION_MODE: StructuredDelegationMode = "warn";
 
+/**
+ * Why a Root verdict request was refused. Classified at the decision point
+ * (issue 04) so audits never re-derive the kind by matching prose text.
+ */
+export type RootVerdictRefusalKind =
+	| "terminal-state"       // Task is already completed/closed-superseded
+	| "no-report"            // no WorkerReport exists to judge
+	| "child-pending"        // a delegated run is still pending (transient, never recorded)
+	| "fresh-review-pending" // fresh mode has no reviewer ReviewResult yet
+	| "strict-zero-paths";   // strict fresh mode has 0 evidence attribution paths
+
+/** Structured refusal of a Root verdict request: typed kind plus prose for display. */
+export interface RootVerdictRefusal {
+	kind: RootVerdictRefusalKind;
+	/** Human-readable reason. Display only — never re-classified by text matching. */
+	reason: string;
+}
+
 export interface ReviewFinding {
 	severity: FindingSeverity;
 	category: FindingCategory;
@@ -538,6 +556,7 @@ export interface ReviewResult {
 	requestedVerdict?: ReviewVerdict;
 	appliedDecision?: string;
 	refusedReason?: string;
+	refusalKind?: RootVerdictRefusalKind;
 	executionId?: string;
 	reportSource?: "worker" | "raw-judged";
 	/** Who the Root explicitly acknowledges as the author of accepted drift. */
@@ -601,23 +620,41 @@ export interface RootUsage extends TokenCounts {
 	injectedBytes: number;
 }
 
-export interface ChildUsage extends TokenCounts {
+/**
+ * Provenance fields that travel together for every child run (issue 05): where
+ * the run's transcript came from, which Root owns it, which Task/execution it
+ * served, and why it stays unknown when binding evidence is missing. One type
+ * so the meta reader (notify), the usage ledger (usage), and the adapter
+ * (index) cannot drift apart. `observedInSessionId` is deliberately NOT part
+ * of this clump: it records where a scan saw the run and is never ownership.
+ */
+export interface ChildProvenance {
+	/** Session the child's transcript came from, when trusted. */
+	sourceSessionId?: string;
+	/** Host session id carried by the child metadata, when present. */
+	sessionId?: string;
+	/** True ownership binding captured at launch, when trusted. */
+	ownerRootSessionId?: string;
+	/** Task the child was delegated for, when trusted. */
+	taskId?: string;
+	executionId?: string;
+	/** Child transcript path as the host names it (not an Evidence sample). */
+	transcriptPath?: string;
+	/** Lookup hint derived from the source session when no trusted id exists. */
+	sessionHint?: string;
+	/** Why the child remains unknown instead of being guessed into a Task/session. */
+	unknownReason?: string;
+}
+
+export interface ChildUsage extends TokenCounts, ChildProvenance {
 	runId?: string;            // async runs; sync runs use toolCallId
 	toolCallId?: string;
 	kind: DelegationKind;      // worker | reviewer | explorer | validator
 	agent?: string;
 	model?: string;
 	thinking?: string;
-	/** Session provenance for unattributed child usage recovered from an orphan meta file. */
-	sessionHint?: string;
 	/** Root session in which this child was observed; never an ownership binding. */
 	observedInSessionId?: string;
-	/** True ownership binding captured at launch, when trusted. */
-	ownerRootSessionId?: string;
-	taskId?: string;
-	executionId?: string;
-	/** Why the child remains unknown instead of being guessed into a Task/session. */
-	unknownReason?: string;
 	outcome?: "succeeded" | "failed" | "unknown";
 	turns?: number;
 	costUsd?: number;

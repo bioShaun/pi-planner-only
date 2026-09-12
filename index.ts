@@ -17,8 +17,8 @@ import { GIT_AUDIT_OPERATIONS, dirtyPathsOutsideTruth, parseGitStatusPaths, reso
 import type { GitAuditRequest, GitRunner } from "./git-audit.ts";
 import { PlannerOrchestrator, compositeWorkflowBlockReason, isDelegationCall, isExecutionCreatingAction } from "./orchestrate.ts";
 import type { DelegationRecord } from "./orchestrate.ts";
-import { parseSubagentNotify, readChildMeta, tempRootFromAsyncDir } from "./notify.ts";
-import { MAX_REVIEW_ROUNDS, WORKER_REPORT_VERSION, isFinalTaskState, isTerminalTaskState } from "./types.ts";
+import { childFromMeta, parseSubagentNotify, readChildMeta, tempRootFromAsyncDir } from "./notify.ts";
+import { MAX_REVIEW_ROUNDS, WORKER_REPORT_VERSION, isFinalTaskState } from "./types.ts";
 import type { ChildUsage, DelegationKind, DriftAcknowledgement, LoadedPluginFingerprint, ReviewFinding, ReviewMode, ReviewVerdict, TaskState } from "./types.ts";
 import {
 	UsageLedger,
@@ -27,6 +27,7 @@ import {
 	renderRunSummary,
 	childUsageFromValue,
 	childOutcomeFromExitCode,
+	deriveRootTurnAttribution,
 	delegationRateKind,
 	hasUsableRate,
 	loadPricingTable,
@@ -82,6 +83,7 @@ export function computeLoadedFingerprint(dir = PLUGIN_DIR): string {
 	const hasher = createHash("sha256");
 	const files = [
 		"acceptance.ts",
+		"acceptance-claims.ts",
 		"completion.ts",
 		"concurrency.ts",
 		"evidence.ts",
@@ -247,14 +249,21 @@ function customMessageText(message: unknown): string {
 		.join("\n");
 }
 
-export function applyRootReadCeiling(input: unknown, maxLines = 200, enabled = true): unknown {
-	if (!enabled || !input || typeof input !== "object" || Array.isArray(input)) return input;
+/**
+ * Root read ceiling in lines (NX-05/C15): applied to Root `read` calls that
+ * name no explicit line range. The single named constant is the ceiling
+ * everywhere — apply, notice, and handler wiring.
+ */
+export const ROOT_READ_CEILING_LINES = 200;
+
+export function applyRootReadCeiling(input: unknown, maxLines: number = ROOT_READ_CEILING_LINES): unknown {
+	if (!input || typeof input !== "object" || Array.isArray(input)) return input;
 	const record = input as Record<string, unknown>;
 	if (Object.keys(record).some((key) => ["limit", "startLine", "lineStart", "start_line", "offset", "endLine", "lineEnd", "end_line"].includes(key))) return input;
 	return { ...record, limit: maxLines };
 }
 
-export function rootReadLimitNotice(input: unknown, maxLines = 200): string | undefined {
+export function rootReadLimitNotice(input: unknown, maxLines: number = ROOT_READ_CEILING_LINES): string | undefined {
 	if (!input || typeof input !== "object") return undefined;
 	const record = input as Record<string, unknown>;
 	const start = [record.startLine, record.lineStart, record.start_line, record.offset].find((value) => typeof value === "number") as number | undefined;
@@ -576,50 +585,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	}
 
 	const CHILD_META_AGENTS = ["worker", "oracle", "reviewer", "explorer", "scout"] as const;
-
-	function childOutcome(exitCode: number | undefined): ChildUsage["outcome"] {
-		return childOutcomeFromExitCode(exitCode);
-	}
-
-	function sourceSessionFromMeta(meta: NonNullable<ReturnType<typeof readChildMeta>>): string | undefined {
-		const explicit = [meta.sourceSessionId, meta.sessionId, meta.childSessionFile, meta.transcriptPath].find((value) => typeof value === "string" && value.trim() && value.trim() !== "unknown" && value.trim() !== "unknown-session");
-		if (explicit) {
-			const parts = explicit.split(/[\\/]/).filter(Boolean);
-			const leaf = parts.at(-1);
-			if (leaf) return leaf.replace(/\.(?:jsonl?|log)$/i, "");
-		}
-		if (meta.metaPath) {
-			const parts = meta.metaPath.split(/[\\/]/).filter(Boolean);
-			const marker = parts.lastIndexOf("subagent-artifacts");
-			if (marker > 0) return parts[marker - 1];
-		}
-		return undefined;
-	}
-
-	function childFromMeta(
-		meta: NonNullable<ReturnType<typeof readChildMeta>>,
-		kind: DelegationKind,
-		observedInSessionId?: string,
-	): ChildUsage | undefined {
-		const sourceSessionId = sourceSessionFromMeta(meta);
-		const child = childUsageFromValue(meta.usage, kind, {
-			runId: meta.runId,
-			...(meta.ownerRootSessionId ? { ownerRootSessionId: meta.ownerRootSessionId } : {}),
-			...(meta.taskId ? { taskId: meta.taskId } : {}),
-			...(meta.executionId ? { executionId: meta.executionId } : {}),
-			...(sourceSessionId ? { sessionHint: sourceSessionId, sourceSessionId } : {}),
-			...(meta.transcriptPath ? { sourceTranscriptPath: meta.transcriptPath } : {}),
-			...(observedInSessionId ? { observedInSessionId } : {}),
-			...(!sourceSessionId ? { unknownReason: "no trusted source session in child metadata or meta location" } : {}),
-			agent: meta.agent,
-			...(meta.model ? { model: meta.model } : {}),
-			...(meta.thinking ? { thinking: meta.thinking } : {}),
-			source: "meta-file",
-			pending: false,
-		});
-		if (!child) return undefined;
-		return { ...child, outcome: childOutcome(meta.exitCode) };
-	}
 
 	function runIdFromDetails(details: Record<string, unknown> | undefined): string | undefined {
 		if (!details) return undefined;
@@ -1257,8 +1222,8 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			if (refusal) {
 				orchestrator.recordRootVerdictRefusal(task, params.verdict, refusal);
 				return {
-					content: [{ type: "text", text: `planner_verdict refused: ${refusal}` }],
-					details: { refused: "lifecycle", taskId: task.taskId, verdict: params.verdict },
+					content: [{ type: "text", text: `planner_verdict refused: ${refusal.reason}` }],
+					details: { refused: "lifecycle", refusalKind: refusal.kind, taskId: task.taskId, verdict: params.verdict },
 					isError: true,
 				};
 			}
@@ -1347,7 +1312,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		latestCtx = ctx;
 		if (!IS_SUBAGENT && !isDisabled() && event.toolName === "read") {
 			const input = event.input && typeof event.input === "object" ? event.input as Record<string, unknown> : undefined;
-			if (input) Object.assign(input, applyRootReadCeiling(input, 200, true));
+			if (input) Object.assign(input, applyRootReadCeiling(input));
 			const readNotice = rootReadLimitNotice(input);
 			if (readNotice) {
 				if (ctx.hasUI) ctx.ui.notify(readNotice, "warning");
@@ -1516,13 +1481,14 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			const attributionTaskId = targetedTaskId ?? fallbackTask?.taskId;
 			// L73 — a turn spanning multiple Tasks is attributed to all of them as
 			// shared; collapsing onto the most recent delegation target is forbidden.
+			// The tasked/shared/untasked derivation is shared with the ledger.
 			const attributionTaskIds = taskIds.length > 1 ? taskIds : attributionTaskId ? [attributionTaskId] : [];
 			const turnState = targetedTask?.state ?? fallbackTask?.state;
 			ledger.recordRootTurn({
 				usage: message.usage ?? {},
 				...(attributionTaskId ? { taskId: attributionTaskId, ...(turnState ? { state: turnState } : {}) } : {}),
 				...(attributionTaskIds.length > 0 ? { taskIds: attributionTaskIds } : {}),
-				attribution: attributionTaskIds.length > 1 ? "shared" : attributionTaskId ? "tasked" : "untasked",
+				attribution: deriveRootTurnAttribution(attributionTaskIds.length),
 				...(rootTurnToolCallIds.size > 0 ? { toolCallIds: [...rootTurnToolCallIds] } : {}),
 				...(message.model ? { model: message.model } : {}),
 				...(message.provider ? { provider: message.provider } : {}),
@@ -1890,11 +1856,11 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				// terminal-state one, and says so out loud when it does.
 				const refusal = orchestrator.rootVerdictRefusal(task, verdict);
 				if (refusal) {
-					if (isTerminalTaskState(task.state)) {
-						notify(ctx, refusal, "warning");
+					if (refusal.kind === "terminal-state") {
+						notify(ctx, refusal.reason, "warning");
 						return;
 					}
-					notify(ctx, `Operator override bypassed refusal: ${refusal}`, "warning");
+					notify(ctx, `Operator override bypassed refusal: ${refusal.reason}`, "warning");
 				}
 				const before = task.state;
 				const outcome = await orchestrator.recordRootVerdict(task, verdict, summary, { source: "operator" });

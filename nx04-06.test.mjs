@@ -8,7 +8,8 @@ import {
 } from "./floors.ts";
 import { buildAcceptanceEvidenceMatrix } from "./acceptance.ts";
 import { exportSessionEvidence } from "./usage.ts";
-import { rootReadLimitNotice, applyRootReadCeiling } from "./index.ts";
+import { rootReadLimitNotice, applyRootReadCeiling, ROOT_READ_CEILING_LINES } from "./index.ts";
+import { ACCEPTANCE_CLAIMS } from "./acceptance-claims.ts";
 
 // C10: retain raw calls and expose configured-vs-observed interception delta.
 {
@@ -33,15 +34,15 @@ import { rootReadLimitNotice, applyRootReadCeiling } from "./index.ts";
   const ledger = new ExplorationBudgetLedger();
   assert.equal(DEFAULT_EXPLORATION_BUDGET, 20);
   assert.equal(isExplorationToolCall("write", { path: "a.ts" }), false);
-  let result = ledger.record("initial-execution", "bash", { command: "cat a.ts" }, "event-1", 3);
+  let result = ledger.record({ executionId: "initial-execution", toolName: "bash", input: { command: "cat a.ts" }, eventId: "event-1", limit: 3 });
   assert.equal(result.budget.used, 1);
-  result = ledger.record("initial-execution", "bash", { command: "npm test" }, "event-2", 3);
+  result = ledger.record({ executionId: "initial-execution", toolName: "bash", input: { command: "npm test" }, eventId: "event-2", limit: 3 });
   assert.equal(result.budget.used, 1);
-  result = ledger.record("initial-execution", "read", {}, "event-3", 3);
+  result = ledger.record({ executionId: "initial-execution", toolName: "read", input: {}, eventId: "event-3", limit: 3 });
   assert.equal(result.budget.used, 2);
-  assert.equal(ledger.record("initial-execution", "read", {}, "event-3", 3).duplicate, true);
-  assert.equal(ledger.record("correction-execution", "read", {}, "event-3", 3).budget.used, 1);
-  assert.match(ledger.record("initial-execution", "read", {}, "event-4", 3).notice ?? "", /wrap up|reached/i);
+  assert.equal(ledger.record({ executionId: "initial-execution", toolName: "read", input: {}, eventId: "event-3", limit: 3 }).duplicate, true);
+  assert.equal(ledger.record({ executionId: "correction-execution", toolName: "read", input: {}, eventId: "event-3", limit: 3 }).budget.used, 1);
+  assert.match(ledger.record({ executionId: "initial-execution", toolName: "read", input: {}, eventId: "event-4", limit: 3 }).notice ?? "", /wrap up|reached/i);
 }
 
 // C13/C14: the evidence matrix distinguishes 代码完成 / handler 验证 / 宿主验证,
@@ -86,12 +87,43 @@ import { rootReadLimitNotice, applyRootReadCeiling } from "./index.ts";
 }
 
 // C15: explicit oversized reads are rejected; omitted reads are normalized by
-// the enabled adapter to the stable 200-line ceiling.
+// the adapter to the stable 200-line ceiling (one named constant), and inputs
+// that already name a limit or line range pass through untouched.
 {
   assert.match(rootReadLimitNotice({ startLine: 1, endLine: 201 }) ?? "", /200/);
   assert.equal(rootReadLimitNotice({ startLine: 1, endLine: 200 }), undefined);
-  assert.deepEqual(applyRootReadCeiling({ path: "a.ts" }), { path: "a.ts", limit: 200 });
-  assert.deepEqual(applyRootReadCeiling({ path: "a.ts" }, 200, false), { path: "a.ts" });
+  assert.deepEqual(applyRootReadCeiling({ path: "a.ts" }), { path: "a.ts", limit: ROOT_READ_CEILING_LINES });
+  assert.deepEqual(applyRootReadCeiling({ path: "a.ts", limit: 5 }), { path: "a.ts", limit: 5 });
+}
+
+// C17: the shipped claims table covers every C/B entry; handler-verified
+// claims always carry evidence (the acceptance gate would downgrade them
+// otherwise), host-pending entries record the reason, and no claim claims a
+// host pass.
+{
+  const claimed = buildAcceptanceEvidenceMatrix({ criteria: ACCEPTANCE_CLAIMS.criteria, behaviors: ACCEPTANCE_CLAIMS.behaviors });
+  const claimFor = (id) => claimed.find((entry) => entry.id === id);
+  assert.equal(claimed.length, 42);
+  assert.equal(claimed.every((entry) => entry.downgradedFrom === undefined), true, "no claim is downgraded: handler claims all carry evidence and nothing claims host-verified");
+  for (const id of ["C01", "C02", "C03", "C07", "C08", "C09", "C17"]) {
+    assert.equal(claimFor(id)?.status, "handler-verified", `${id} is handler-verified`);
+    assert.ok(claimFor(id).evidence.length > 1, `${id} cites concrete offline evidence`);
+    assert.equal(claimFor(id).notDoneReason, undefined, `${id} needs no host run`);
+  }
+  for (const id of ["C04", "C05", "C06"]) {
+    assert.equal(claimFor(id)?.status, "handler-verified", `${id} keeps its handler evidence`);
+    assert.equal(claimFor(id)?.notDoneReason, "host-run-pending", `${id} waits for the host session`);
+  }
+  for (const id of ["C10", "C11", "C12", "C13", "C14", "C15", "C16", "C18"]) {
+    assert.equal(claimFor(id)?.status, "implemented", `${id} is code-complete only`);
+    assert.equal(claimFor(id)?.notDoneReason, "host-run-pending", `${id} waits for the host session`);
+  }
+  for (let index = 1; index <= 24; index += 1) {
+    const id = `B${String(index).padStart(2, "0")}`;
+    const entry = claimFor(id);
+    assert.ok(["implemented", "handler-verified"].includes(entry?.status), `${id} is mapped`);
+    assert.equal(entry?.notDoneReason, "host-run-pending", `${id} host replay is pending`);
+  }
 }
 
 // C16-C18: export remains machine-readable and conserves the unique usage rows.

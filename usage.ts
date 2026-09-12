@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import type { AcceptanceEvidenceMatrixOptions, EvidenceMatrixEntry } from "./acceptance.ts";
 import { buildAcceptanceEvidenceMatrix } from "./acceptance.ts";
 import type {
+	ChildProvenance,
 	ChildUsage,
 	DelegationKind,
 	RootUsage,
@@ -58,7 +59,7 @@ export interface UsageEntry {
 	kind: UsageEntryKind;
 	taskId?: string;
 	taskIds?: string[];
-	attribution?: "tasked" | "shared" | "untasked";
+	attribution?: RootTurnAttribution;
 	toolCallIds?: string[];
 	at: string;
 	state?: TaskState;
@@ -78,7 +79,7 @@ export interface RootTurnRecord {
 	/** All candidate Tasks observed in this turn; more than one is explicitly shared. */
 	taskIds?: string[];
 	/** Attribution is explicit so a shared turn is never silently assigned to one Task. */
-	attribution?: "tasked" | "shared" | "untasked";
+	attribution?: RootTurnAttribution;
 	/** Tool calls that caused the Root turn to be attributable. */
 	toolCallIds?: string[];
 	at: string;
@@ -91,7 +92,7 @@ export interface RootTurnRecord {
 	phase?: UsagePhase;
 }
 
-export interface ChildUsageIds {
+export interface ChildUsageIds extends ChildProvenance {
 	runId?: string;
 	toolCallId?: string;
 	agent?: string;
@@ -99,14 +100,21 @@ export interface ChildUsageIds {
 	thinking?: string;
 	source: ChildUsage["source"];
 	pending?: boolean;
-	unknownReason?: string;
 	observedInSessionId?: string;
-	ownerRootSessionId?: string;
-	taskId?: string;
-	executionId?: string;
-	sessionHint?: string;
-	sourceSessionId?: string;
-	sourceTranscriptPath?: string;
+}
+
+export type RootTurnAttribution = "tasked" | "shared" | "untasked";
+
+/**
+ * L73 — turn attribution from candidate Tasks: a turn spanning more than one
+ * Task is shared (never collapsed onto the most recent target), exactly one
+ * candidate is tasked, none is untasked. `taskedAllowed=false` forces the
+ * untasked bucket for a single candidate — the ledger additionally requires a
+ * known lifecycle phase. The message handler and `applyRootTurn` must derive
+ * this identically, so both call this one function.
+ */
+export function deriveRootTurnAttribution(candidates: number, taskedAllowed = true): RootTurnAttribution {
+	return candidates > 1 ? "shared" : candidates === 1 && taskedAllowed ? "tasked" : "untasked";
 }
 
 const USAGE_PHASES: readonly UsagePhase[] = ["planning", "executing", "reviewing"];
@@ -553,7 +561,7 @@ export function childUsageFromValue(
 		...(thinking ? { thinking } : {}),
 		...(ids.sessionHint ? { sessionHint: ids.sessionHint } : {}),
 		...(ids.sourceSessionId ? { sourceSessionId: ids.sourceSessionId } : {}),
-		...(ids.sourceTranscriptPath ? { sourceTranscriptPath: ids.sourceTranscriptPath } : {}),
+		...(ids.transcriptPath ? { transcriptPath: ids.transcriptPath } : {}),
 		...(ids.observedInSessionId ? { observedInSessionId: ids.observedInSessionId } : {}),
 		...(ids.ownerRootSessionId ? { ownerRootSessionId: ids.ownerRootSessionId } : {}),
 		...(ids.taskId ? { taskId: ids.taskId } : {}),
@@ -626,7 +634,7 @@ export class UsageLedger {
 	private applyRootTurn(input: {
 		taskId?: string;
 		taskIds?: readonly string[];
-		attribution?: "tasked" | "shared" | "untasked";
+		attribution?: RootTurnAttribution;
 		toolCallIds?: readonly string[];
 		state?: TaskState;
 		model?: string;
@@ -637,7 +645,7 @@ export class UsageLedger {
 		const tokensUnknown = isAllZero(tokens);
 		const phase = phaseFor(input.state);
 		const candidates = [...new Set((input.taskIds ?? (input.taskId ? [input.taskId] : [])).map((id) => this.canonicalTaskId(id)).filter(Boolean))];
-		const attribution = input.attribution ?? (candidates.length === 1 && phase !== undefined ? "tasked" : candidates.length > 1 ? "shared" : "untasked");
+		const attribution = input.attribution ?? deriveRootTurnAttribution(candidates.length, phase !== undefined);
 		const tasked = attribution === "tasked" && candidates.length === 1;
 		const canonicalTaskId = tasked ? candidates[0] : undefined;
 		const costUsd = resolveCost(
@@ -690,7 +698,7 @@ export class UsageLedger {
 		usage: PiUsageLike;
 		messageId?: string;
 		taskIds?: readonly string[];
-		attribution?: "tasked" | "shared" | "untasked";
+		attribution?: RootTurnAttribution;
 		toolCallIds?: readonly string[];
 	}): RootTurnRecord {
 		const record = this.applyRootTurn(input);
@@ -1362,6 +1370,8 @@ export interface SessionEvidenceExport {
 		reviewResult: Record<string, number>;
 		task: Record<string, number>;
 		rootVerdict: Record<string, number>;
+		/** Typed refusal kinds of recorded verdict refusals (issue 04). */
+		refusalKind: Record<string, number>;
 		category: Record<string, number>;
 	};
 	findings: { items: Array<Record<string, unknown>>; total: number; duplicateNotifications: number; new: number; historical: number };
@@ -1562,7 +1572,7 @@ export function exportSessionEvidence(options: SessionEvidenceExportOptions): Se
 	});
 	const selectedTaskIds = new Set(selectedTasks.map((task) => exportString(task.taskId)).filter((id): id is string => Boolean(id)));
 	const linkage: Array<Record<string, unknown>> = [];
-	const statusKinds = ["processExit", "ingestion", "workerReport", "reviewResult", "task", "rootVerdict", "category"] as const;
+	const statusKinds = ["processExit", "ingestion", "workerReport", "reviewResult", "task", "rootVerdict", "refusalKind", "category"] as const;
 	const statuses = Object.fromEntries(statusKinds.map((kind) => [kind, {}])) as SessionEvidenceExport["statuses"];
 	const unattributed: Array<Record<string, unknown>> = [];
 	for (const task of selectedTasks) {
@@ -1571,7 +1581,12 @@ export function exportSessionEvidence(options: SessionEvidenceExportOptions): Se
 		const reviews = Array.isArray(task.reviews) ? task.reviews : [];
 		incrementExport(statuses.task, task.state);
 		for (const report of reports) incrementExport(statuses.workerReport, exportRecord(report)?.status);
-		for (const review of reviews) incrementExport(statuses.reviewResult, exportRecord(review)?.verdict);
+		for (const review of reviews) {
+			const reviewRecord = exportRecord(review);
+			incrementExport(statuses.reviewResult, reviewRecord?.verdict);
+			const refusalKind = exportString(reviewRecord?.refusalKind);
+			if (refusalKind) incrementExport(statuses.refusalKind, refusalKind);
+		}
 		const rootReview = [...reviews].reverse().map(exportRecord).find((review) => review?.source === "root" || review?.source === "operator");
 		if (rootReview?.verdict !== undefined) incrementExport(statuses.rootVerdict, rootReview.verdict);
 	}

@@ -798,7 +798,7 @@ function truncatedPreview() {
 	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	await delegateWorker(orch, "call-616", "T-20260905-616");
 	const pending = orch.store.require("T-20260905-616");
-	assert.match(orch.rootVerdictRefusal(pending, "pass"), /no recorded WorkerReport/);
+	assert.match(orch.rootVerdictRefusal(pending, "pass").reason, /no recorded WorkerReport/);
 	assert.equal(orch.rootVerdictRefusal(pending, "blocked"), undefined, "blocked must stay available while a child is pending");
 	// malformed worker output consumes the delegation without recording a report
 	await orch.handleSubagentResult({
@@ -807,7 +807,7 @@ function truncatedPreview() {
 		content: [{ type: "text", text: "I tried but gave up." }],
 	});
 	assert.equal(orch.store.require("T-20260905-616").reports.length, 0);
-	assert.match(orch.rootVerdictRefusal(orch.store.require("T-20260905-616"), "pass"), /no recorded WorkerReport/);
+	assert.match(orch.rootVerdictRefusal(orch.store.require("T-20260905-616"), "pass").reason, /no recorded WorkerReport/);
 	assert.equal(orch.rootVerdictRefusal(orch.store.require("T-20260905-616"), "blocked"), undefined);
 	const outcome = await orch.recordRootVerdict(orch.store.require("T-20260905-616"), "blocked", "worker cannot proceed", { source: "root" });
 	assert.equal(outcome.decision.action, "blocked");
@@ -820,7 +820,7 @@ function truncatedPreview() {
 	await delegateWorker(orch, "call-617", "T-20260905-617");
 	await orch.handleSubagentResult(workerResult("call-617", reportFor("T-20260905-617", "call-617")));
 	orch.store.setReviewMode("T-20260905-617", "fresh");
-	assert.match(orch.rootVerdictRefusal(orch.store.require("T-20260905-617"), "pass"), /fresh review mode/);
+	assert.match(orch.rootVerdictRefusal(orch.store.require("T-20260905-617"), "pass").reason, /fresh review mode/);
 	// request_changes and blocked never widen acceptance and stay allowed
 	assert.equal(orch.rootVerdictRefusal(orch.store.require("T-20260905-617"), "request_changes"), undefined);
 	assert.equal(orch.rootVerdictRefusal(orch.store.require("T-20260905-617"), "blocked"), undefined);
@@ -830,7 +830,7 @@ function truncatedPreview() {
 		{ toolCallId: "call-617-r", input: { agent: "reviewer", task: JSON.stringify(specFor("T-20260905-617", "reviewer")) } },
 		BASE,
 	);
-	assert.match(orch.rootVerdictRefusal(orch.store.require("T-20260905-617"), "pass"), /still pending/);
+	assert.match(orch.rootVerdictRefusal(orch.store.require("T-20260905-617"), "pass").reason, /still pending/);
 
 	// the reviewer requests changes; Root's pass is then recorded as an override
 	const reviewerOutcome = await orch.handleSubagentResult(reviewerResult("call-617-r", "T-20260905-617", "request_changes", { workspaceDigest: orch.store.require("T-20260905-617").snapshot?.digest }));
@@ -844,6 +844,32 @@ function truncatedPreview() {
 	assert.equal(task.overrides.at(-1).reviewerVerdict, "request_changes");
 	assert.equal(task.overrides.at(-1).rootVerdict, "pass");
 	assert.equal(task.reviews.at(-1).source, "root");
+}
+
+// issue 04: recorded refusals carry the typed kind; the pending-child guard
+// stays out of the review history without matching prose.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	await delegateWorker(orch, "call-620-kind", "T-20260905-620");
+	await orch.handleSubagentResult(workerResult("call-620-kind", reportFor("T-20260905-620", "call-620-kind")));
+	orch.store.setReviewMode("T-20260905-620", "fresh");
+	const freshTask = orch.store.require("T-20260905-620");
+	orch.recordRootVerdictRefusal(freshTask, "pass", orch.rootVerdictRefusal(freshTask, "pass"));
+	const recorded = orch.store.require("T-20260905-620").reviews.at(-1);
+	assert.equal(recorded.refusalKind, "fresh-review-pending");
+	assert.equal(recorded.requestedVerdict, "pass");
+	assert.match(recorded.refusedReason, /fresh review mode/);
+	// child-pending refusals are transient and must not be recorded
+	await orch.beginDelegation(
+		{ toolCallId: "call-620-kind-r", input: { agent: "reviewer", task: JSON.stringify(specFor("T-20260905-620", "reviewer")) } },
+		BASE,
+	);
+	const pendingTask = orch.store.require("T-20260905-620");
+	const pendingRefusal = orch.rootVerdictRefusal(pendingTask, "pass");
+	assert.equal(pendingRefusal.kind, "child-pending");
+	const reviewsBefore = pendingTask.reviews.length;
+	orch.recordRootVerdictRefusal(pendingTask, "pass", pendingRefusal);
+	assert.equal(orch.store.require("T-20260905-620").reviews.length, reviewsBefore, "child-pending refusal stays out of the audit trail");
 }
 
 // Ticket 22 round p10-r046 — strict fresh review requires reviewer evidence.
@@ -860,7 +886,7 @@ function truncatedPreview() {
 		const noReviewer = makeStrictTask("T-20260905-220a");
 		assert.equal(noReviewer.store.require(noReviewer.task.taskId).reviewMode, "fresh");
 		const noReviewerOrch = new PlannerOrchestrator({ gitRunner, store: noReviewer.store });
-		assert.match(noReviewerOrch.rootVerdictRefusal(noReviewer.task, "pass"), /reviewer ReviewResult/);
+		assert.match(noReviewerOrch.rootVerdictRefusal(noReviewer.task, "pass").reason, /reviewer ReviewResult/);
 
 		const zeroPaths = makeStrictTask("T-20260905-220b");
 		zeroPaths.store.recordReview(zeroPaths.task.taskId, {
@@ -871,7 +897,7 @@ function truncatedPreview() {
 			overlappingPaths: [], unrelatedPaths: [], missingPaths: [], unexplained: false,
 		});
 		const zeroPathsOrch = new PlannerOrchestrator({ gitRunner, store: zeroPaths.store });
-		assert.match(zeroPathsOrch.rootVerdictRefusal(zeroPaths.task, "pass"), /attribution paths are 0/);
+		assert.match(zeroPathsOrch.rootVerdictRefusal(zeroPaths.task, "pass").reason, /attribution paths are 0/);
 
 		const attributed = makeStrictTask("T-20260905-220c");
 		attributed.store.recordReview(attributed.task.taskId, {
@@ -1534,7 +1560,7 @@ const ROOT_MAY_STILL_JUDGE = "Root may still judge the last recorded report and 
 	orch.store.transition("T-20260905-403", "blocked");
 	const task = orch.store.require("T-20260905-403");
 	assert.equal(task.reports.length, 0);
-	assert.match(orch.rootVerdictRefusal(task, "pass"), /no recorded WorkerReport/);
+	assert.match(orch.rootVerdictRefusal(task, "pass").reason, /no recorded WorkerReport/);
 	assert.equal(orch.rootVerdictRefusal(task, "blocked"), undefined);
 	const outcome = await orch.recordRootVerdict(task, "blocked", "cannot proceed", { source: "root" });
 	assert.equal(outcome.decision.action, "blocked");
@@ -1548,8 +1574,10 @@ const ROOT_MAY_STILL_JUDGE = "Root may still judge the last recorded report and 
 	await orch.handleSubagentResult(workerResult("call-l4-done", reportFor("T-20260905-404", "call-l4-done")));
 	await orch.recordRootVerdict(orch.store.require("T-20260905-404"), "pass", "done", { source: "root" });
 	const completed = orch.store.require("T-20260905-404");
+	const terminalRefusal = orch.rootVerdictRefusal(completed, "pass");
+	assert.equal(terminalRefusal.kind, "terminal-state");
 	assert.equal(
-		orch.rootVerdictRefusal(completed, "pass"),
+		terminalRefusal.reason,
 		"Task T-20260905-404 is already completed; verdicts are final. Start a new Task with a new TaskSpec for further work.",
 	);
 	const states = ["planning", "executing", "reviewing", "changes_requested", "blocked", "completed", "failed"];
@@ -1558,7 +1586,13 @@ const ROOT_MAY_STILL_JUDGE = "Root may still judge the last recorded report and 
 		for (const verdict of verdicts) {
 			const probe = { ...completed, state, reports: state === "planning" ? [] : completed.reports };
 			const refusal = orch.rootVerdictRefusal(probe, verdict);
-			if (refusal) assert.doesNotMatch(refusal, /\/planner-only/, `${state} ${verdict}: ${refusal}`);
+			if (refusal) {
+				assert.doesNotMatch(refusal.reason, /\/planner-only/, `${state} ${verdict}: ${refusal.reason}`);
+				assert.ok(
+					["terminal-state", "no-report", "child-pending", "fresh-review-pending", "strict-zero-paths"].includes(refusal.kind),
+					`${state} ${verdict}: refusal kind is from the typed enum`,
+				);
+			}
 		}
 	}
 }
@@ -1927,9 +1961,10 @@ function reportT3(taskId, toolCallId) {
 		BASE,
 	);
 	assert.match(
-		orch.rootVerdictRefusal(orch.store.require(taskId), "pass"),
+		orch.rootVerdictRefusal(orch.store.require(taskId), "pass").reason,
 		/has a child run still pending/,
 	);
+	assert.equal(orch.rootVerdictRefusal(orch.store.require(taskId), "pass").kind, "child-pending");
 	const validatorReport = reportFor(taskId, "call-l3-v4");
 	validatorReport.evidence = { ...validatorReport.evidence, cwd: BASE };
 	await orch.handleSubagentResult(workerResult("call-l3-v4", validatorReport));
@@ -3337,10 +3372,11 @@ function realGitRunnerOf(dir) {
 	assert.equal(orch.store.require(taskId).reviews.length, 0, "the stale PASS is not recorded");
 	assert.equal(orch.store.require(taskId).state, "reviewing", "the Task does not complete");
 	assert.match(
-		orch.rootVerdictRefusal(orch.store.require(taskId), "pass"),
+		orch.rootVerdictRefusal(orch.store.require(taskId), "pass").reason,
 		/no reviewer ReviewResult exists yet/,
 		"Root does not inherit the stale reviewer PASS as current",
 	);
+	assert.equal(orch.rootVerdictRefusal(orch.store.require(taskId), "pass").kind, "fresh-review-pending");
 }
 
 // A ReviewResult whose workspace digest does not match the latest report is refused.
@@ -3972,7 +4008,7 @@ function receiptFor(toolCallId, runId, asyncDir) {
 		await orch.handleSubagentResult(receiptFor("call-rec-1b", runId, layout.asyncDir));
 		assert.equal(orch.pendingDelegationCount(), 1);
 		const pending = orch.store.require(taskId);
-		assert.match(orch.rootVerdictRefusal(pending, "pass"), /still pending/);
+		assert.match(orch.rootVerdictRefusal(pending, "pass").reason, /still pending/);
 
 		// the child finishes its work and exits; only the notice is lost
 		setDirtyTree();
@@ -4038,8 +4074,8 @@ function receiptFor(toolCallId, runId, asyncDir) {
 		);
 		await orch.handleSubagentResult(receiptFor("call-rec-2b", runId, asyncDir));
 		const pending = orch.store.require(taskId);
-		assert.match(orch.rootVerdictRefusal(pending, "pass"), /still pending/);
-		assert.match(orch.rootVerdictRefusal(pending, "request_changes"), /still pending/);
+		assert.match(orch.rootVerdictRefusal(pending, "pass").reason, /still pending/);
+		assert.match(orch.rootVerdictRefusal(pending, "request_changes").reason, /still pending/);
 		assert.equal(orch.rootVerdictRefusal(pending, "blocked"), undefined);
 		assert.equal(await orch.reconcilePendingDelegations(), 0, "nothing terminal to reconcile");
 		const outcome = await orch.recordRootVerdict(orch.store.require(taskId), "blocked", "child never reported");
