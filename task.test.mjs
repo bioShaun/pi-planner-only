@@ -215,8 +215,16 @@ assert.ok(validateWorkerReport({ ...report, taskId: undefined }).length > 0);
 // WorkerReport extraction
 // --------------------------------------------------------------------------
 
-assert.deepEqual(extractWorkerReport(""), { error: "worker returned no output", repairs: [] });
-assert.ok(extractWorkerReport("I finished the task").error);
+{
+	const empty = extractWorkerReport("");
+	assert.equal(empty.ok, false);
+	assert.deepEqual(empty, { ok: false, error: "worker returned no output", repairs: [] });
+}
+{
+	const prose = extractWorkerReport("I finished the task");
+	assert.equal(prose.ok, false);
+	assert.ok(prose.error);
+}
 
 const fenced = `Here is the result:
 
@@ -225,23 +233,37 @@ ${JSON.stringify(report, null, 2)}
 \`\`\`
 
 Let me know if you want changes.`;
-assert.deepEqual(extractWorkerReport(fenced).report, report);
+{
+	const extracted = extractWorkerReport(fenced);
+	assert.equal(extracted.ok, true);
+	assert.deepEqual(extracted.report, report);
+}
 
 // prose-wrapped JSON whose strings contain braces must still parse whole
 const braced = makeReport({ summary: "uses {a,b} syntax and } too" });
-assert.deepEqual(
-	extractWorkerReport(`Done! ${JSON.stringify(braced)} Let me know.`).report,
-	braced,
-);
+{
+	const extracted = extractWorkerReport(`Done! ${JSON.stringify(braced)} Let me know.`);
+	assert.equal(extracted.ok, true);
+	assert.deepEqual(extracted.report, braced);
+}
 
 const malformed = extractWorkerReport('```json\n{"version":1,"taskId":"T-1"}\n```');
+assert.equal(malformed.ok, false);
 assert.ok(malformed.error);
 assert.match(malformed.error, /invalid WorkerReport/);
 
 // a report whose evidence disagrees with its own taskId is rejected outright
-assert.ok(extractWorkerReport(JSON.stringify(makeReport({ taskId: "T-other" }))).error);
+{
+	const extracted = extractWorkerReport(JSON.stringify(makeReport({ taskId: "T-other" })));
+	assert.equal(extracted.ok, false);
+	assert.ok(extracted.error);
+}
 // identity against the delegated task is asserted by the caller
-assert.equal(extractWorkerReport(JSON.stringify(report)).report.taskId, "T-20260831-001");
+{
+	const extracted = extractWorkerReport(JSON.stringify(report));
+	assert.equal(extracted.ok, true);
+	assert.equal(extracted.report.taskId, "T-20260831-001");
+}
 
 // --------------------------------------------------------------------------
 // Compaction
