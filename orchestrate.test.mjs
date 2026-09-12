@@ -7966,7 +7966,8 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 // unverified degradation warning.
 {
 	const knownModel = { provider: "openai", id: "known-model" };
-	const spec = { ...specFor("T-20260911-rr07-verified"), model: "openai/known-model", thinking: "low" };
+	// Ticket 43: model/thinking stay on the delegation input, not TaskSpec.
+	const spec = specFor("T-20260911-rr07-verified");
 	const orch = new PlannerOrchestrator({
 		gitRunner,
 		store: pinnedStore(),

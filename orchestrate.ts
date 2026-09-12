@@ -2383,6 +2383,9 @@ export class PlannerOrchestrator {
 				warnings.push("Planner-only: model preflight is unverified on this host because no modelRegistry is exposed; continuing launch.");
 			}
 		} else {
+			// Ticket 43: nested TaskSpec model/thinking are audit-only (ignored for
+			// effective resolution). validateTaskSpec rejects them on admission;
+			// preflight still accepts the values only to record `ignored`.
 			const specRecord = spec && typeof spec === "object" ? spec as unknown as Record<string, unknown> : undefined;
 			const nestedSpec = inputRecord.taskSpec && typeof inputRecord.taskSpec === "object"
 				? inputRecord.taskSpec as Record<string, unknown>
@@ -2402,6 +2405,15 @@ export class PlannerOrchestrator {
 				...(taskSpecModel ? { taskSpecModel } : {}),
 				...(taskSpecThinking ? { taskSpecThinking } : {}),
 			});
+			if (preflight.ignored) {
+				const parts = [
+					preflight.ignored.model ? `model=${preflight.ignored.model}` : undefined,
+					preflight.ignored.thinking ? `thinking=${preflight.ignored.thinking}` : undefined,
+				].filter(Boolean);
+				warnings.push(
+					`Planner-only: TaskSpec execution controls ignored (${parts.join(", ")}); model/thinking come from role-policy, explicit input, or host-default.`,
+				);
+			}
 			if (preflight.effective) {
 				const effectiveModel = preflight.effective.provider
 					? `${preflight.effective.provider}/${preflight.effective.model}`
@@ -2415,6 +2427,7 @@ export class PlannerOrchestrator {
 				// A host default is already resolved by the downstream host. Keep it
 				// out of the input so the host can apply settings.json fallbacks. Each
 				// explicit field is independent: model-only must not acquire host thinking.
+				// TaskSpec is never an effective source (ticket 43), so it cannot write back.
 				if (preflight.effective.modelSource !== "host-default") inputRecord.model = effectiveModel;
 				if (preflight.effective.thinkingSource !== "host-default" && preflight.effective.thinking !== undefined) {
 					inputRecord.thinking = preflight.effective.thinking;
