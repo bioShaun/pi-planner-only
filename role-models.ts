@@ -15,7 +15,10 @@ export interface RoleModelPolicy {
 	roles: Partial<Record<RoleModelRole, RoleModelConfig>>;
 }
 
-export type ModelSelectionSource = "explicit" | "task-spec" | "role-policy" | "role-policy-fallback" | "host-default";
+export type ModelSelectionSource = "explicit" | "role-policy" | "role-policy-fallback" | "host-default";
+
+/** Audit-only: TaskSpec once carried model/thinking; they are never effective (ticket 43). */
+export type IgnoredModelSelectionSource = "task-spec";
 
 export interface RoleModelResolution {
 	role: RoleModelRole;
@@ -37,6 +40,10 @@ export interface ModelPreflightContext {
 	input: Record<string, unknown>;
 	roleResolution?: Pick<RoleModelResolution, "role" | "model" | "thinking" | "fallbacks" | "modelSource" | "thinkingSource">;
 	rolePolicy?: RoleModelPolicy;
+	/**
+	 * Nested TaskSpec model/thinking, if any. Accepted only for ignore-audit
+	 * provenance — never becomes the effective model/thinking (ticket 43).
+	 */
 	taskSpecModel?: string;
 	taskSpecThinking?: string;
 	hostModel?: { provider?: string; id?: string };
@@ -54,6 +61,8 @@ export interface ModelPreflightResult {
 	status: "verified" | "blocked" | "unverified";
 	effective?: { provider?: string; model: string; thinking?: string; source: ModelSelectionSource; modelSource: ModelSelectionSource; thinkingSource?: ModelSelectionSource };
 	error?: { code: "MODEL_UNAVAILABLE"; source: ModelSelectionSource; requested: string; candidates: string[]; verification: "verified" | "unverified"; message: string };
+	/** Present when TaskSpec carried model/thinking that were ignored for effective resolution. */
+	ignored?: { source: IgnoredModelSelectionSource; model?: string; thinking?: string };
 }
 
 
@@ -191,7 +200,19 @@ export function preflightEffectiveModel(context: ModelPreflightContext): ModelPr
 	const inputThinking = typeof context.input.thinking === "string" && context.input.thinking.trim() ? context.input.thinking.trim() : undefined;
 	const role = context.roleResolution;
 	const roleModel = role?.model?.trim() || undefined;
-	const taskModel = context.taskSpecModel?.trim() || undefined;
+	// Ticket 43: TaskSpec model/thinking are audit-only and never effective.
+	const ignoredTaskSpecModel = context.taskSpecModel?.trim() || undefined;
+	const ignoredTaskSpecThinking = context.taskSpecThinking?.trim() || undefined;
+	const ignored = (ignoredTaskSpecModel || ignoredTaskSpecThinking)
+		? {
+			source: "task-spec" as const,
+			...(ignoredTaskSpecModel ? { model: ignoredTaskSpecModel } : {}),
+			...(ignoredTaskSpecThinking ? { thinking: ignoredTaskSpecThinking } : {}),
+		}
+		: undefined;
+	const withIgnored = <T extends ModelPreflightResult>(result: T): T => (
+		ignored ? { ...result, ignored } : result
+	);
 	const roleKey = role?.role
 		?? (typeof context.hostAgent === "string" ? context.hostAgent.trim().toLowerCase() : undefined)
 		?? (typeof context.input.__delegationRole === "string" ? context.input.__delegationRole.trim().toLowerCase() : undefined)
@@ -203,29 +224,23 @@ export function preflightEffectiveModel(context: ModelPreflightContext): ModelPr
 		? "role-policy"
 		: inputModel
 			? "explicit"
-			: taskModel
-				? "task-spec"
-				: "host-default";
-	const modelValue = roleModel || inputModel || taskModel || defaultModel;
-	const thinking = role?.thinking?.trim() || inputThinking || context.taskSpecThinking?.trim()
+			: "host-default";
+	const modelValue = roleModel || inputModel || defaultModel;
+	const thinking = role?.thinking?.trim() || inputThinking
 		|| (modelSource === "host-default" ? context.hostThinking?.trim() : undefined);
 	const thinkingSource: ModelSelectionSource | undefined = role?.thinking?.trim()
 		? "role-policy"
 		: inputThinking
 			? "explicit"
-			: context.taskSpecThinking?.trim()
-				? "task-spec"
-				: modelSource === "host-default" && context.hostThinking?.trim()
-					? "host-default"
-					: undefined;
+			: modelSource === "host-default" && context.hostThinking?.trim()
+				? "host-default"
+				: undefined;
 	const provider = roleModel
 		? providerFromModel(roleModel)
 		: inputModel
 			? providerFromModel(inputModel)
-			: taskModel
-				? providerFromModel(taskModel)
-				: hostDefault?.provider?.trim() || providerFromModel(defaultModel);
-	if (!modelValue) return unavailableModel(modelSource, "(no effective model)", [], "unverified", "host default model is unavailable");
+			: hostDefault?.provider?.trim() || providerFromModel(defaultModel);
+	if (!modelValue) return withIgnored(unavailableModel(modelSource, "(no effective model)", [], "unverified", "host default model is unavailable"));
 
 	const registryState = registryModels(context.registry);
 	const candidates = registryState.models.length > 0 ? registryState.models : pricingModels(context.pricing);
@@ -243,14 +258,14 @@ export function preflightEffectiveModel(context: ModelPreflightContext): ModelPr
 		return result as { provider?: string; model: string; thinking?: string; source: ModelSelectionSource; modelSource: ModelSelectionSource; thinkingSource?: ModelSelectionSource };
 	};
 	if (registryState.unverified) {
-		return {
+		return withIgnored({
 			status: "unverified",
 			effective: effective(modelValue),
 			error: unavailableModel(modelSource, modelValue, candidates, "unverified", registryState.reason ?? "model registry is unavailable").error,
-		};
+		});
 	}
 	if (registryState.models.some((candidate) => modelMatches(modelValue, provider, candidate))) {
-		return { status: "verified", effective: effective(modelValue) };
+		return withIgnored({ status: "verified", effective: effective(modelValue) });
 	}
 
 	const roleFallbacks = role?.fallbacks ?? (role?.role && context.rolePolicy?.roles[role.role]?.fallbacks)
@@ -258,12 +273,12 @@ export function preflightEffectiveModel(context: ModelPreflightContext): ModelPr
 	for (const fallback of roleFallbacks) {
 		const fallbackModel = fallback.model?.trim();
 		if (!fallbackModel || !registryState.models.some((candidate) => modelMatches(fallbackModel, providerFromModel(fallbackModel), candidate))) continue;
-		return {
+		return withIgnored({
 			status: "verified",
 			effective: effective(fallbackModel, "role-policy-fallback", fallback.thinking?.trim() || thinking, fallback.thinking?.trim() ? "role-policy-fallback" : thinkingSource),
-		};
+		});
 	}
-	return unavailableModel(modelSource, modelValue, candidates, "verified", "effective model is absent from the host model registry");
+	return withIgnored(unavailableModel(modelSource, modelValue, candidates, "verified", "effective model is absent from the host model registry"));
 }
 
 function modelConfigValue(value: unknown): { provider?: string; id?: string } | undefined {

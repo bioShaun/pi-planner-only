@@ -503,6 +503,15 @@ export function isExplicitlyNoValidation(spec: TaskSpec | undefined): boolean {
 	return spec !== undefined && explicitlyNoValidation.has(spec);
 }
 
+/** Runtime knobs that must not ride on TaskSpec (ticket 43). Business `budget` / `cumulativeBudget` stay allowed. */
+export const TASKSPEC_FORBIDDEN_EXECUTION_CONTROLS = [
+	"model",
+	"thinking",
+	"timeoutMs",
+	"toolBudget",
+	"usageBudget",
+] as const;
+
 export function validateTaskSpec(value: unknown): string[] {
 	if (!isPlainObject(value)) return ["TaskSpec must be an object"];
 	const errors: string[] = [];
@@ -598,6 +607,15 @@ export function validateTaskSpec(value: unknown): string[] {
 					errors.push("cumulativeBudget.costUsd must be a positive finite number");
 				}
 			}
+		}
+	}
+	// TaskSpec is the business contract. Runtime execution controls belong on
+	// the delegation/host input (or role policy / host defaults), not here.
+	for (const key of TASKSPEC_FORBIDDEN_EXECUTION_CONTROLS) {
+		if (value[key] !== undefined) {
+			errors.push(
+				`${key} is an execution control and must not appear on TaskSpec; set it on the delegation/host input instead`,
+			);
 		}
 	}
 	return errors;
@@ -1092,12 +1110,6 @@ export function extractTaskSpecDetails(
 			}
 			if (isPlainObject(specValue.cumulativeBudget)) {
 				(spec as { cumulativeBudget?: unknown }).cumulativeBudget = specValue.cumulativeBudget;
-			}
-			if (isNonEmptyString(specValue.model)) {
-				(spec as { model?: string }).model = specValue.model.trim();
-			}
-			if (isNonEmptyString(specValue.thinking)) {
-				(spec as { thinking?: string }).thinking = specValue.thinking.trim();
 			}
 			if (specValue.reportOnly === true) {
 				spec.reportOnly = true;
