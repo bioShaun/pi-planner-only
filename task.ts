@@ -1227,6 +1227,15 @@ export interface TaskRecord {
 	 */
 	recoveryAttempts: number;
 	recoveryStates: string[];
+	/**
+	 * E02 (spec L106) — evidence-state keys whose automatic revalidation was
+	 * actually dispatched. Distinct from recoveryStates, which records states
+	 * already granted a revalidation for no-progress detection regardless of
+	 * dispatch outcome.
+	 */
+	recoveryDispatches?: string[];
+	/** E02 — a granted-but-not-yet-dispatched revalidation evidence key. */
+	pendingRevalidationKey?: string;
 	/** E02 — the most recent automatic recovery attempt, for no-progress checks. */
 	lastRecovery?: {
 		reportRevision: number;
@@ -1262,6 +1271,8 @@ export interface TaskStoreOptions {
 	 * shared namespace instead of the process-local sequence.
 	 */
 	allocator?: TaskIdAllocator;
+	/** C09 — sink for rolling back a never-dispatched placeholder Task. */
+	onRemove?: (taskId: string) => void;
 }
 
 const RESTORED_ID_SHAPE = /^T-(\d{8})-(\d{3,})$/;
@@ -1270,12 +1281,14 @@ export class TaskStore {
 	private readonly tasks = new Map<string, TaskRecord>();
 	private readonly clock: () => Date;
 	private readonly onPersist?: (record: TaskRecord) => void;
+	private readonly onRemove?: (taskId: string) => void;
 	private readonly allocator?: TaskIdAllocator;
 	private sequence = 0;
 
 	constructor(options: TaskStoreOptions = {}) {
 		this.clock = options.now ?? (() => new Date());
 		this.onPersist = options.onPersist;
+		this.onRemove = options.onRemove;
 		this.allocator = options.allocator;
 	}
 
@@ -1378,6 +1391,32 @@ export class TaskStore {
 		}
 		if (this.allocator) this.allocator.reserve(taskId);
 		return this.insertNew(taskId, spec, alias);
+	}
+
+	/**
+	 * C09 — roll back a Task this invocation created as a dispatch placeholder
+	 * (generated id): a refused precheck must not leave a seemingly-active
+	 * Task behind. Explicitly named Tasks are never removed here — a
+	 * legitimately created planning Task survives a failed launch. Reciprocal
+	 * successor links and the persisted snapshot are removed with it.
+	 */
+	remove(taskId: string): boolean {
+		const record = this.tasks.get(taskId);
+		if (!record) return false;
+		for (const parent of this.tasks.values()) {
+			const index = parent.successors.indexOf(taskId);
+			if (index >= 0) {
+				parent.successors.splice(index, 1);
+				this.touch(parent);
+			}
+		}
+		this.tasks.delete(taskId);
+		try {
+			this.onRemove?.(taskId);
+		} catch {
+			// Removal must not crash the launch path; the in-memory rollback stands.
+		}
+		return true;
 	}
 
 	/**
@@ -1679,19 +1718,58 @@ export class TaskStore {
 	}
 
 	/**
-	 * E02 — record one granted automatic recovery attempt. Counters live on
-	 * the Task record: a restart or a rewritten reason text cannot reset them.
+	 * E02 (spec L106) — a revalidate decision grants one bounded revalidation
+	 * for this evidence state: the key joins recoveryStates for no-progress
+	 * detection immediately, but the budget counter is only spent when the
+	 * revalidation run is actually dispatched (recordRecoveryAttempt). A
+	 * restart or a rewritten reason text cannot reset either.
 	 */
-	recordRecoveryAttempt(taskId: string, evidenceKey: string): TaskRecord {
+	markRevalidationGranted(taskId: string, evidenceKey: string): TaskRecord {
 		const record = this.require(taskId);
-		if (record.recoveryStates.includes(evidenceKey)) return record;
-		record.recoveryAttempts += 1;
 		if (!record.recoveryStates.includes(evidenceKey)) record.recoveryStates.push(evidenceKey);
+		record.pendingRevalidationKey = evidenceKey;
 		record.lastRecovery = {
 			reportRevision: record.reports.length,
 			evidenceKey,
 			at: this.now().toISOString(),
 		};
+		return this.touch(record);
+	}
+
+	/** Consume the pending revalidation key at the successful dispatch boundary. */
+	takePendingRevalidation(taskId: string): string | undefined {
+		const record = this.get(taskId);
+		if (!record?.pendingRevalidationKey) return undefined;
+		const evidenceKey = record.pendingRevalidationKey;
+		delete record.pendingRevalidationKey;
+		return evidenceKey;
+	}
+
+	/**
+	 * E02 (spec L106) — +1 only here, at the real automatic-revalidation
+	 * dispatch. Pure verdict rewrites, refused dispatches, and duplicate
+	 * requests never reach this; replaying the same dispatch is idempotent
+	 * by evidence key.
+	 */
+	recordRecoveryAttempt(taskId: string, evidenceKey: string): TaskRecord {
+		const record = this.require(taskId);
+		const dispatches = record.recoveryDispatches ?? (record.recoveryDispatches = []);
+		if (dispatches.includes(evidenceKey)) return record;
+		dispatches.push(evidenceKey);
+		record.recoveryAttempts += 1;
+		record.lastRecovery = {
+			reportRevision: record.reports.length,
+			evidenceKey,
+			at: this.now().toISOString(),
+		};
+		return this.touch(record);
+	}
+
+	/** Stamp the decision advanceReview applied onto the newest review (audit). */
+	annotateReviewDecision(taskId: string, appliedDecision: string): TaskRecord {
+		const record = this.require(taskId);
+		const review = record.reviews.at(-1);
+		if (review) review.appliedDecision = appliedDecision;
 		return this.touch(record);
 	}
 

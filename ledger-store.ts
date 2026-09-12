@@ -64,6 +64,26 @@ export class LedgerSnapshotStore {
 		}
 	}
 
+	/**
+	 * C09 — drop a rolled-back placeholder Task's snapshot so a refused launch
+	 * cannot resurrect it on the next restore. Best-effort: a missing file is
+	 * already removed.
+	 */
+	remove(taskId: string): void {
+		if (!SAFE_TASK_ID.test(taskId)) return;
+		const path = join(this.dir, "planner-only", "ledger", `${taskId}.json`);
+		try {
+			fs.unlinkSync(path);
+			this.writeErrors.delete(taskId);
+		} catch (err) {
+			const code = (err as NodeJS.ErrnoException | undefined)?.code;
+			if (code === "ENOENT") return;
+			this._lastWriteError = err;
+			this.writeErrors.set(taskId, err);
+			this.warnIo(err);
+		}
+	}
+
 	readAll(): { records: TaskRecord[]; corrupt: LedgerCorrupt[] } {
 		const ledgerDir = join(this.dir, "planner-only", "ledger");
 		if (!fs.existsSync(ledgerDir)) {

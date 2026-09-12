@@ -92,11 +92,18 @@ const usage = (input, output, cost) => ({ input, output, cacheRead: 0, cacheWrit
   assert.equal(exported.usage.buckets.untaskedShared.count, 5 + 1);
   assert.equal(exported.usage.buckets.foreign.count, 1);
   assert.equal(exported.usage.buckets.unknown.count, 1);
-  assert.equal(exported.usage.buckets.untaskedShared.costUsd, 0.01);
+  // C03 — known-cost conservation: the untasked Root turns carry known
+  // usage.cost.total (5 × 0.004), which must land in the bucket instead of
+  // being dropped as unknown.
+  assert.equal(Math.round(exported.usage.buckets.tasked.costUsd * 1e6) / 1e6, 0.018);
+  assert.equal(Math.round(exported.usage.buckets.untaskedShared.costUsd * 1e6) / 1e6, 0.03);
+  assert.equal(exported.usage.buckets.untaskedShared.unknownCost, false);
   assert.equal(exported.usage.buckets.foreign.costUsd, 0.02);
   assert.equal(exported.usage.buckets.unknown.unknownCost, true);
   const bucketTokens = Object.values(exported.usage.buckets).reduce((sum, bucket) => sum + bucket.tokens, 0);
   assert.equal(bucketTokens, exported.usage.tokens.input + exported.usage.tokens.output + exported.usage.tokens.cacheRead + exported.usage.tokens.cacheWrite);
+  const knownBucketCost = Object.values(exported.usage.buckets).reduce((sum, bucket) => sum + bucket.costUsd, 0);
+  assert.equal(Math.round(knownBucketCost * 1e6) / 1e6, 0.068, "known costs are conserved across buckets");
 }
 
 console.log("planner-only NX-01: PASS");

@@ -152,6 +152,34 @@ notices.length = 0;
 await commands.get("planner-only").handler("usage summary", ctx);
 assert.match(notices.at(-1).message, /费用对照汇总:/);
 
+// L73 — a Root turn spanning multiple Tasks is attributed shared across all
+// of them; collapsing onto the most recent delegation target is forbidden.
+const sharedTurnStamp = `${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, "0")}${String(new Date().getDate()).padStart(2, "0")}`;
+await handlers.get("tool_call")({
+	toolCallId: "call-shared-a",
+	toolName: "subagent",
+	input: { task: JSON.stringify(delegationSpec(`T-${sharedTurnStamp}-901`)) },
+}, ctx);
+await handlers.get("tool_call")({
+	toolCallId: "call-shared-b",
+	toolName: "subagent",
+	input: { task: JSON.stringify(delegationSpec(`T-${sharedTurnStamp}-902`)) },
+}, ctx);
+await handlers.get("message_end")({ message: {
+	role: "assistant", id: "msg-shared-turn", model: "test-model",
+	usage: { input: 7, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.01 }, content: "two tasks in one turn",
+} }, ctx);
+// Release the delegation slots so later fixtures keep their concurrency budget.
+for (const sharedCall of ["call-shared-a", "call-shared-b"]) {
+	await handlers.get("tool_result")(
+		{ toolCallId: sharedCall, toolName: "subagent", content: [{ type: "text", text: "no report" }], isError: false },
+		ctx,
+	);
+}
+notices.length = 0;
+await commands.get("planner-only").handler("usage session", ctx);
+assert.match(notices.at(-1).message, /shared\/ambiguous: usage: root 9\/\$0\.0100 \(1 turns\)/, "the multi-Task turn is shared, not collapsed onto one Task");
+
 notices.length = 0;
 await commands.get("planner-only").handler(`usage summary ${join(isolatedAgentDir, "missing-runs")}`, ctx);
 assert.equal(notices.at(-1).type, "warning");
@@ -178,6 +206,7 @@ const harnessTaskId = `T-${new Date().getFullYear()}${String(new Date().getMonth
 	else gitResponses.set("status --porcelain=v2 --branch", prev);
 	notices.length = 0;
 	await commands.get("planner-only").handler(`task ${harnessTaskId}`, ctx);
+	console.error("PROBE7:", JSON.stringify(notices.map((n) => n.message)));
 	assert.match(notices.at(-1).message, /State: executing/, "the harness Task anchors ctx.cwd as gather-live");
 }
 
@@ -1886,6 +1915,11 @@ assert.match(
 
 // L-4: Task blocked with one report and fresh evidence: planner_verdict(pass) → completed, one usage line with completed
 {
+	// Close the previous Root turn first: this fixture's usage must attribute to
+	// T-20260905-540 alone, not be shared across the earlier fixtures' tasks (L73).
+	await handlers.get("message_end")({ message: {
+		role: "assistant", id: "msg-l4-boundary", content: "",
+	} }, ctx);
 	const taskId = "T-20260905-540";
 	gitResponses.set("rev-parse HEAD", { stdout: "abc1234\n", stderr: "", code: 0 });
 	gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
@@ -1941,6 +1975,7 @@ assert.match(
 	);
 	assert.equal(passBlocked.isError, undefined);
 	assert.equal(passBlocked.details.state, "completed");
+
 	assert.match(passBlocked.content[0].text, /\nusage: /);
 	assert.match(passBlocked.content[0].text, /state: completed/);
 	const logPath = join(isolatedAgentDir, "planner-only", "usage.jsonl");
@@ -1958,6 +1993,9 @@ assert.match(
 	gitResponses.set("rev-parse HEAD", { stdout: "abc1234\n", stderr: "", code: 0 });
 	gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
 	gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
+	// L73 — close the prior Root turn so this fixture's usage attributes to its
+	// own task instead of being shared across earlier fixtures' tasks.
+	await handlers.get("message_end")({ message: { role: "assistant", id: "msg-boundary-l5", content: "" } }, ctx);
 	await handlers.get("tool_call")(
 		{ toolCallId: "call-l5u", toolName: "subagent", input: { task: JSON.stringify(delegationSpec("T-20260220-099")) } },
 		ctx,
@@ -2026,6 +2064,8 @@ assert.match(
 // --------------------------------------------------------------------------
 
 {
+	// L73 — close the prior Root turn before resetting the entry capture.
+	await handlers.get("message_end")({ message: { role: "assistant", id: "msg-boundary-u2", content: "" } }, ctx);
 	sessionEntries.length = 0;
 	const taskId = "T-20260905-520";
 	await handlers.get("tool_call")(
@@ -2430,6 +2470,9 @@ assert.match(
 
 {
 	const taskId = "T-20260905-526";
+	// L73 — close the prior Root turn so this fixture's usage attributes to its
+	// own task instead of being shared across earlier fixtures' tasks.
+	await handlers.get("message_end")({ message: { role: "assistant", id: "msg-boundary-u5", content: "" } }, ctx);
 	await handlers.get("tool_call")(
 		{ toolCallId: "call-u5-1", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
 		ctx,
@@ -2524,6 +2567,9 @@ assert.match(
 	const taskId = "T-20260905-527";
 	gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
 	gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
+	// L73 — close the prior Root turn so this fixture's usage attributes to its
+	// own task instead of being shared across earlier fixtures' tasks.
+	await handlers.get("message_end")({ message: { role: "assistant", id: "msg-boundary-wboth", content: "" } }, ctx);
 	await handlers.get("tool_call")(
 		{ toolCallId: "call-wboth-1", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
 		ctx,
@@ -2611,6 +2657,9 @@ assert.match(
 	const taskId = "T-20260905-528";
 	gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
 	gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
+	// L73 — close the prior Root turn so this fixture's usage attributes to its
+	// own task instead of being shared across earlier fixtures' tasks.
+	await handlers.get("message_end")({ message: { role: "assistant", id: "msg-boundary-wll", content: "" } }, ctx);
 	await handlers.get("tool_call")(
 		{ toolCallId: "call-wll-1", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
 		ctx,
@@ -2686,6 +2735,9 @@ assert.match(
 	const taskId = "T-20260905-529";
 	gitResponses.set("status --porcelain=v2 --branch", { stdout: emptyStatus, stderr: "", code: 0 });
 	gitResponses.set("diff HEAD --stat", { stdout: "", stderr: "", code: 0 });
+	// L73 — close the prior Root turn so this fixture's usage attributes to its
+	// own task instead of being shared across earlier fixtures' tasks.
+	await handlers.get("message_end")({ message: { role: "assistant", id: "msg-boundary-wls", content: "" } }, ctx);
 	await handlers.get("tool_call")(
 		{ toolCallId: "call-wls-1", toolName: "subagent", input: { task: JSON.stringify(delegationSpec(taskId)) } },
 		ctx,
@@ -4427,12 +4479,19 @@ await abandonActiveTasks();
 	);
 	assert.equal(refusedAgain?.block, true, "the workspace is Idle again after completion");
 
-	// A replayed wait cannot re-consume the run or reopen gather permission.
+	// A replayed wait re-delivers the same report (L89/C04: a consumed receipt
+	// never reads as "no match") without re-consuming the run or reopening
+	// gather permission.
 	const replay = await handlers.get("tool_result")(
 		{ toolCallId: "w-r02-3", toolName: "bg_wait", input: { id: "run-r02-idle" }, content: [] },
 		idleCtx,
 	);
-	assert.equal(replay, undefined, "a consumed id yields no further recovery");
+	assert.match(replay?.content?.[0]?.text ?? "", /\[PLANNER-ONLY WORKER REPORT\]/, "the replayed wait re-delivers the same report");
+	const stillRefused = await handlers.get("tool_call")(
+		{ toolName: "read", input: { path: "docs/api.md" } },
+		idleCtx,
+	);
+	assert.equal(stillRefused?.block, true, "the replay does not reopen gather permission");
 }
 
 // R02 another live local Task: completing one Explorer does not Idle-refuse

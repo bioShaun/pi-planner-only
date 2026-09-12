@@ -196,7 +196,8 @@ export function readLargestRunOutput(asyncDir: string | undefined, runId: string
 		try {
 			return readFileSync(path, "utf8");
 		} catch {
-			return undefined;
+			// One unreadable candidate must not abort the scan; try the next.
+			continue;
 		}
 	}
 	if (!root) return undefined;
@@ -290,6 +291,11 @@ export function is403RateLimit(value: unknown): boolean {
 	return false;
 }
 
+/** Spread-helper: `{ [key]: value }` when the field is a string, else `{}`. */
+function pickStringField(rec: Record<string, unknown>, key: string): Record<string, string> {
+	return typeof rec[key] === "string" ? { [key]: rec[key] as string } : {};
+}
+
 function tryReadChildMetaFile(
 	path: string,
 	runId: string,
@@ -328,19 +334,19 @@ function tryReadChildMetaFile(
 		// A numeric exitCode marks the run as terminal even when the completion
 		// notice was lost; its absence means the run state is unknown.
 		...(typeof rec.exitCode === "number" ? { exitCode: rec.exitCode } : {}),
-		...(typeof rec.model === "string" ? { model: rec.model } : {}),
-		...(typeof rec.thinking === "string" ? { thinking: rec.thinking } : {}),
+		...pickStringField(rec, "model"),
+		...pickStringField(rec, "thinking"),
 		...("usage" in rec ? { usage: rec.usage } : {}),
-		...(typeof rec.sourceSessionId === "string" ? { sourceSessionId: rec.sourceSessionId } : {}),
-		...(typeof rec.sessionId === "string" ? { sessionId: rec.sessionId } : {}),
-		...(typeof rec.ownerRootSessionId === "string" ? { ownerRootSessionId: rec.ownerRootSessionId } : {}),
-		...(typeof rec.taskId === "string" ? { taskId: rec.taskId } : {}),
-		...(typeof rec.executionId === "string" ? { executionId: rec.executionId } : {}),
-		...(typeof rec.transcriptPath === "string" ? { transcriptPath: rec.transcriptPath } : {}),
-		...(typeof rec.childSessionFile === "string" ? { childSessionFile: rec.childSessionFile } : {}),
-		...(typeof rec.sourceDir === "string" ? { sourceDir: rec.sourceDir } : {}),
+		...pickStringField(rec, "sourceSessionId"),
+		...pickStringField(rec, "sessionId"),
+		...pickStringField(rec, "ownerRootSessionId"),
+		...pickStringField(rec, "taskId"),
+		...pickStringField(rec, "executionId"),
+		...pickStringField(rec, "transcriptPath"),
+		...pickStringField(rec, "childSessionFile"),
+		...pickStringField(rec, "sourceDir"),
 		metaPath: path,
-		...(typeof rec.stopReason === "string" ? { stopReason: rec.stopReason } : {}),
+		...pickStringField(rec, "stopReason"),
 		...(errorStr ? { error: errorStr } : {}),
 	};
 }

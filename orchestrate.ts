@@ -866,6 +866,7 @@ export class PlannerOrchestrator {
 			this.store = new TaskStore({
 				allocator: new TaskIdAllocator(deps.ledgerDir),
 				onPersist: (record) => snapshots.write(record),
+				onRemove: (taskId) => snapshots.remove(taskId),
 			});
 		} else {
 			this.store = new TaskStore();
@@ -917,16 +918,14 @@ export class PlannerOrchestrator {
 	}
 
 	private recordedWaitDelivery(runId: string, cwd: string): { taskId: string; content: { type: "text"; text: string }[] } | undefined {
+		// Spec L89 — a repeat exact-id wait replays the delivered report; a
+		// consumed receipt or a terminal Task never reads as "no match".
 		const remembered = this.processedWaitDeliveries.get(runId);
-		if (remembered) {
-			const task = this.store.get(remembered.taskId);
-			if (!task || isFinalTaskState(task.state)) return undefined;
-			return remembered;
-		}
+		if (remembered) return remembered;
 		const durable = this.runRecords?.findByRunId(runId, this.runWorkspaceIdForCwd(cwd));
 		if (!durable || durable.ingestionState !== "recorded") return undefined;
 		const task = this.store.get(durable.taskId);
-		if (!task || isFinalTaskState(task.state) || !durable.reportRevision || durable.reportRevision < 1) return undefined;
+		if (!task || !durable.reportRevision || durable.reportRevision < 1) return undefined;
 		const report = task.reports[durable.reportRevision - 1] ?? task.validatorReports[durable.reportRevision - 1];
 		if (!report) return undefined;
 		const delivery = { taskId: task.taskId, content: [{ type: "text" as const, text: JSON.stringify(report) }] };
@@ -2317,14 +2316,10 @@ export class PlannerOrchestrator {
 							target?.task?.taskId ?? target?.spec?.taskId,
 						);
 					}
-					// Keep a rejected structured launch inspectable for a later retry,
-					// without creating or mutating a Task when it already exists.
-					if (target?.spec && !target.task) {
-						const createTask = this.store.create.bind(this.store);
-						createTask(target.spec);
-					}
-					// Preserve the more actionable cumulative-budget refusal when a
-					// retry is both workspace-conflicting and already exhausted.
+					// C09 — a refused launch must not leave a seemingly-active
+					// placeholder Task behind; the structured refusal reason is the
+					// inspectable artifact, and a later retry re-creates the Task
+					// through the normal path.
 					const conflictTask = target?.task;
 					const conflictBudget = (conflictTask?.spec as unknown as { cumulativeBudget?: unknown } | undefined)?.cumulativeBudget;
 					if (role !== "reviewer" && conflictTask?.usage && conflictBudget && typeof conflictBudget === "object") {
@@ -2827,6 +2822,10 @@ export class PlannerOrchestrator {
 		}
 
 		let task: TaskRecord;
+		// C09 — Tasks this invocation created as generated placeholders: a
+		// refused launch precheck rolls them back instead of leaving a
+		// seemingly-active Task behind. Explicitly named Tasks survive.
+		let createdPlaceholderTaskId: string | undefined;
 		// R02 — Explorer ownership is fixed at accepted launch, before any
 		// state change: a Task this invocation creates or continues is
 		// standalone, an assisted Worker/Validator Task is auxiliary, and an
@@ -2857,6 +2856,7 @@ export class PlannerOrchestrator {
 			if (role === "explorer") task.standaloneExplorer = true;
 			if (role === "explorer") explorerOwnership = "standalone";
 			this.reservations.rekey(spec.taskId, task.taskId, event.toolCallId);
+			createdPlaceholderTaskId = task.taskId;
 			warnings.push(
 				alias
 					? `Planner-only: TaskSpec id ${spec.taskId} replaced by ${generated} (generated); ${spec.taskId} is kept as an alias`
@@ -2940,6 +2940,7 @@ export class PlannerOrchestrator {
 						cwd,
 					}));
 					task.isPlaceholder = true;
+					createdPlaceholderTaskId = task.taskId;
 					if (named.length >= 1) {
 						warnings.push(
 							`Planner-only: prompt names task ${named.join(", ")} but no single live Task matched`,
@@ -2972,7 +2973,22 @@ export class PlannerOrchestrator {
 		const workerWorktrees = lockWorktreesOf(task);
 		const conflict = await this.refuseOrClearWriteLocks(workerWorktrees, role, warnings, task.taskId);
 		if (conflict.conflict) {
+			// C09 — the refused launch must not leave a seemingly-active
+			// placeholder Task (T-023). The writer reservation is released by
+			// beginDelegation once no delegation record exists.
+			if (createdPlaceholderTaskId) {
+				this.store.remove(createdPlaceholderTaskId);
+				return { conflict, ...(warnings.length ? { warnings } : {}) };
+			}
 			return { task, conflict, ...(warnings.length ? { warnings } : {}) };
+		}
+		// E02 (spec L106) — the recovery budget is spent here, at the real
+		// automatic-revalidation dispatch of a worker/validator run, after every
+		// precheck has passed. Native launch failures past this point are
+		// tracked through stateReason/lastError instead.
+		const pendingRevalidationKey = this.store.takePendingRevalidation(task.taskId);
+		if (pendingRevalidationKey && (role === "worker" || role === "validator")) {
+			this.store.recordRecoveryAttempt(task.taskId, pendingRevalidationKey);
 		}
 
 		let priorLaunchFailure: string | undefined;
@@ -3700,32 +3716,23 @@ export class PlannerOrchestrator {
 			}
 			return { content: [{ type: "text", text: `[PLANNER-ONLY] Run ${record.runId} finished, but its task ${record.taskId} is no longer in the store; the output was not recorded.` }] };
 		}
+		let result: { content: { type: "text"; text: string }[] };
 		if (this.isBlockedReceiptSealed(task)) {
-			const result = this.parkBlockedReceipt(task, toolCallId, record.kind, text);
-			this.rememberWaitDelivery(record.runId, record.taskId, result.content);
-			return result;
+			result = this.parkBlockedReceipt(task, toolCallId, record.kind, text);
+		} else if (record.kind === "validator") {
+			result = await this.handleValidatorResult(task, text, record, toolCallId);
+		} else if (record.kind === "reviewer") {
+			result = await this.handleReviewerResult(task, text, record);
+		} else if (record.kind === "explorer") {
+			result = await this.handleExplorerResult(task, text, toolCallId, record, { content: [{ type: "text", text }] });
+		} else {
+			result = await this.ingestCompletionResult(task, text, toolCallId, { delegation: record }, {
+				kind: "loaded",
+				text,
+				digest: outputDigest(text),
+				source: "reconcile",
+			});
 		}
-		if (record.kind === "validator") {
-			const result = await this.handleValidatorResult(task, text, record, toolCallId);
-			this.rememberWaitDelivery(record.runId, record.taskId, result.content);
-			return result;
-		}
-		if (record.kind === "reviewer") {
-			const result = await this.handleReviewerResult(task, text, record);
-			this.rememberWaitDelivery(record.runId, record.taskId, result.content);
-			return result;
-		}
-		if (record.kind === "explorer") {
-			const result = await this.handleExplorerResult(task, text, toolCallId, record, { content: [{ type: "text", text }] });
-			this.rememberWaitDelivery(record.runId, record.taskId, result.content);
-			return result;
-		}
-		const result = await this.ingestCompletionResult(task, text, toolCallId, { delegation: record }, {
-			kind: "loaded",
-			text,
-			digest: outputDigest(text),
-			source: "reconcile",
-		});
 		this.rememberWaitDelivery(record.runId, record.taskId, result.content);
 		return result;
 	}
@@ -3768,6 +3775,11 @@ export class PlannerOrchestrator {
 		}
 		const durable = this.runRecords?.findByRunId(id, target);
 		if (durable && this.processedRunIds.has(id) && this.recordedWaitDelivery(id, cwd)) return id;
+		// Spec L89 — a consumed id whose delivery is remembered stays
+		// re-fetchable: a repeat exact-id wait replays instead of reading as
+		// "no match". Deliveries are only remembered for ids that completed the
+		// full trusted path, so this never widens authorization.
+		if (this.processedWaitDeliveries.has(id)) return id;
 		return undefined;
 	}
 
@@ -3812,6 +3824,9 @@ export class PlannerOrchestrator {
 					if (recovered) return { status: "recovered", content: recovered.content };
 				}
 				const outputRef = record.outputRef ?? (record.asyncDir ? { outputPath: join(record.asyncDir, "output-0.log") } : undefined);
+				// Spec L90 — output-pending is the exit-0 output-never-appeared
+				// class; an exit≠0 run is already consumed by reconcileDelegation
+				// as EXECUTION_FAILED, and an ingested report replays verbatim.
 				return {
 					status: "pending",
 					code: "OUTPUT_PENDING",
@@ -3986,16 +4001,13 @@ export class PlannerOrchestrator {
 			...(comparison ? { comparison } : {}),
 			review,
 		});
-		if (decision.action === "revalidate" && decision.evidenceKey && options.source === undefined) {
-			// Legacy direct orchestrator callers represent the automatic recovery
-			// dispatch boundary; public Root verdicts remain side-effect free until
-			// their actual revalidation delegation is launched.
-			this.store.recordRecoveryAttempt(task.taskId, decision.evidenceKey);
-		}
-		const auditedReview = this.store.require(task.taskId).reviews.at(-1);
-		if (auditedReview) {
-			auditedReview.appliedDecision = decision.action;
-			this.store.persist(this.store.require(task.taskId));
+		this.store.annotateReviewDecision(task.taskId, decision.action);
+		if (decision.action === "revalidate" && decision.evidenceKey) {
+			// E02 (spec L106) — a revalidate decision only grants the bounded
+			// revalidation; the recovery counter is spent when the revalidation
+			// run is actually dispatched (beginDelegation). Verdict rewrites and
+			// refused dispatches never consume it.
+			this.store.markRevalidationGranted(task.taskId, decision.evidenceKey);
 		}
 		return {
 			task: this.store.require(task.taskId),
@@ -4606,6 +4618,11 @@ export class PlannerOrchestrator {
 			...(comparison ? { comparison } : {}),
 			review,
 		});
+		this.store.annotateReviewDecision(task.taskId, decision.action);
+		if (decision.action === "revalidate" && decision.evidenceKey) {
+			// E02 (spec L106) — grant only; the counter is spent at dispatch.
+			this.store.markRevalidationGranted(task.taskId, decision.evidenceKey);
+		}
 		return {
 			content: [{
 				type: "text",
@@ -4815,6 +4832,10 @@ export class PlannerOrchestrator {
 				...(reportError ? { reportError } : {}),
 				...(comparison ? { comparison } : {}),
 			}).decision;
+			if (decision.action === "revalidate" && decision.evidenceKey) {
+				// E02 (spec L106) — grant only; the counter is spent at dispatch.
+				this.store.markRevalidationGranted(task.taskId, decision.evidenceKey);
+			}
 		}
 
 		if (decision.action === "report_correction") {

@@ -389,7 +389,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	let loadedFingerprintInfo = createLoadedPluginFingerprint(latestCtx);
 	orchestrator.setLoadedFingerprint(loadedFingerprintInfo);
 	const allSessionEntries: UsageEntry[] = [];
-	let lastDelegatedTaskId: string | undefined;
 	/** Task targets seen in the current Root assistant turn's tool calls. */
 	const rootTurnTaskIds = new Set<string>();
 	/** Tool calls that contributed to the current Root turn's attribution. */
@@ -1404,7 +1403,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				}
 				if (outcome.task?.taskId) {
 					rootTurnTaskIds.add(outcome.task.taskId);
-					lastDelegatedTaskId = outcome.task.taskId;
 				}
 				const boundDelegation = orchestrator.getDelegation(event.toolCallId);
 				if (boundDelegation) {
@@ -1514,13 +1512,15 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			const taskIds = [...rootTurnTaskIds];
 			const targetedTaskId = taskIds.length === 1 ? taskIds[0] : undefined;
 			const targetedTask = targetedTaskId ? orchestrator.store.get(targetedTaskId) : undefined;
-			const fallbackTask = !targetedTask && taskIds.length === 0 ? orchestrator.store.activeForCwd(host.cwd || process.cwd()) : undefined;
-			const attributionTaskId = targetedTask?.taskId ?? targetedTaskId ?? fallbackTask?.taskId
-				?? (rootTurnToolCallIds.size > 0 ? lastDelegatedTaskId : undefined);
-			const attributionTaskIds = attributionTaskId ? [attributionTaskId] : taskIds;
+			const fallbackTask = taskIds.length === 0 ? orchestrator.store.activeForCwd(host.cwd || process.cwd()) : undefined;
+			const attributionTaskId = targetedTaskId ?? fallbackTask?.taskId;
+			// L73 — a turn spanning multiple Tasks is attributed to all of them as
+			// shared; collapsing onto the most recent delegation target is forbidden.
+			const attributionTaskIds = taskIds.length > 1 ? taskIds : attributionTaskId ? [attributionTaskId] : [];
+			const turnState = targetedTask?.state ?? fallbackTask?.state;
 			ledger.recordRootTurn({
 				usage: message.usage ?? {},
-				...(attributionTaskId ? { taskId: attributionTaskId, state: targetedTask?.state ?? fallbackTask?.state ?? "reviewing" } : {}),
+				...(attributionTaskId ? { taskId: attributionTaskId, ...(turnState ? { state: turnState } : {}) } : {}),
 				...(attributionTaskIds.length > 0 ? { taskIds: attributionTaskIds } : {}),
 				attribution: attributionTaskIds.length > 1 ? "shared" : attributionTaskId ? "tasked" : "untasked",
 				...(rootTurnToolCallIds.size > 0 ? { toolCallIds: [...rootTurnToolCallIds] } : {}),

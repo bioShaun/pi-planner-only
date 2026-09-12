@@ -2751,6 +2751,8 @@ function realGitRunnerOf(dir) {
 		);
 		assert.equal(second.conflict?.conflict, true, "symlink alias of a locked worktree must conflict");
 		assert.match(second.conflict.reason, /T-20260905-970/);
+		// The loser is explicitly named, so it stays a planning Task (L109) —
+		// but it never reaches executing and registers no delegation.
 		assert.equal(orch.store.get("T-20260905-971")?.state, "planning", "no executing state for the loser");
 		assert.equal(orch.pendingDelegationCount(), 1, "the loser registers no delegation");
 	} finally {
@@ -2881,7 +2883,8 @@ function realGitRunnerOf(dir) {
 			);
 			assert.equal(declaring.conflict?.conflict, true, "declaring a locked root is refused");
 			assert.match(declaring.conflict.reason, /T-20260905-504/);
-			assert.equal(orch.store.get("T-20260905-505")?.state, "planning");
+			// C09 — a refused launch leaves no seemingly-active placeholder Task.
+			assert.equal(orch.store.get("T-20260905-505"), undefined);
 			assert.equal(orch.pendingDelegationCount(), 1);
 		}
 		// A bound validator for Task A locks A and B: a writer on B is refused
@@ -4140,7 +4143,8 @@ function receiptFor(toolCallId, runId, asyncDir) {
 		BASE,
 	);
 	assert.equal(beside.conflict?.conflict, true, "a worker cannot start beside the validator");
-	assert.equal(orch.store.get("T-20260905-821")?.state, "planning", "no executing state for the loser");
+	// C09 — the refused launch leaves no seemingly-active placeholder Task.
+	assert.equal(orch.store.get("T-20260905-821"), undefined, "no executing state for the loser");
 }
 
 // A Worker begin while the Task is reviewing and a writable Delegation is
@@ -4216,7 +4220,7 @@ function receiptFor(toolCallId, runId, asyncDir) {
 			BASE,
 		);
 		assert.equal(alias.conflict?.conflict, true, "a relative-path alias of the locked worktree collides");
-		assert.equal(orch.store.get("T-20260905-825")?.state, "planning", "no executing state for the loser");
+		assert.equal(orch.store.get("T-20260905-825"), undefined, "no executing state for the loser (C09: the refused launch leaves no placeholder Task)");
 	} finally {
 		rmSync(real, { recursive: true, force: true });
 	}
@@ -7251,46 +7255,122 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	assert.equal(task().recoveryAttempts, 0, "a review verdict does not spend the recovery budget");
 	assert.equal(task().state, "changes_requested");
 
-	// First pass over the stale state: one automatic revalidation is granted.
+	// First pass over the stale state: a revalidation is granted, but the
+	// budget is only spent when the revalidation run is actually dispatched
+	// (spec L106/C08: pure verdict outcomes never consume recovery attempts).
 	const first = await orch.recordRootVerdict(task(), "pass", "accepting late");
-		assert.equal(first.decision.action, "revalidate", first.decision.reason);
+	assert.equal(first.decision.action, "revalidate", first.decision.reason);
 	assert.equal(first.decision.failureClass, "evidence");
-	assert.equal(task().recoveryAttempts, 1);
+	assert.equal(task().recoveryAttempts, 0, "a revalidate verdict grants but does not spend the budget");
+	assert.equal(task().pendingRevalidationKey, first.decision.evidenceKey, "the grant is pending dispatch");
 	assert.equal(task().reviewRound, 1, "recovery revalidations consume no correction round (only the earlier request_changes did)");
 	assert.equal(task().state, "changes_requested");
 
-	// Same stale state again: no progress, automatic re-delegation stops.
+	// Same stale state again while the grant is still pending dispatch: no
+	// progress, automatic re-delegation stops.
 	const second = await orch.recordRootVerdict(task(), "pass", "accepting late again");
 	assert.equal(second.decision.action, "blocked", second.decision.reason);
 	assert.equal(second.decision.reasonCode, "evidence-no-progress");
 	assert.match(second.decision.reason, /no progress/);
 	assert.match(second.decision.guidance.join("\n"), /Recovery/);
 	assert.equal(second.decision.consumesRound, false, "no-progress stop consumes no correction round");
-	assert.equal(task().recoveryAttempts, 1, "the refused retry does not add an attempt");
+	assert.equal(task().recoveryAttempts, 0, "neither verdict nor the refused retry adds an attempt");
 	assert.equal(task().state, "blocked");
 
 	// The workspace actually moves: a new evidence state grants a fresh bounded
 	// attempt even though the reason text is nearly identical. recordRootVerdict
-	// re-opens the blocked Task through the normal verdict path.
+	// re-opens the blocked Task through the normal verdict path. The budget is
+	// spent by dispatching the revalidation, not by the verdict itself.
 	gitOverrides.set("rev-parse HEAD", "abcdef999\n");
+	const roundBeforeThird = task().reviewRound;
 	const third = await orch.recordRootVerdict(task(), "pass", "accepting the new state");
 	assert.equal(third.decision.action, "revalidate", third.decision.reason);
-	assert.equal(task().recoveryAttempts, 2);
+	assert.equal(task().reviewRound, roundBeforeThird, "a revalidate verdict consumes no correction round");
+	assert.equal(task().recoveryAttempts, 0);
+	await delegateWorker(orch, "call-e02-2", taskId);
+	assert.equal(task().recoveryAttempts, 1, "a real revalidation dispatch spends the budget");
+	assert.equal(task().pendingRevalidationKey, undefined, "the grant is consumed at dispatch");
+	orch.store.recordRecoveryAttempt(taskId, third.decision.evidenceKey);
+	assert.equal(task().recoveryAttempts, 1, "replaying the same dispatch does not double-count");
+	await orch.handleSubagentResult(workerResult("call-e02-2", reportFor(taskId, "call-e02-2")));
 
 	gitOverrides.set("rev-parse HEAD", "bbb2222\n");
+	const roundBeforeFourth = task().reviewRound;
 	const fourth = await orch.recordRootVerdict(task(), "pass", "accepting again");
 	assert.equal(fourth.decision.action, "revalidate", fourth.decision.reason);
-	assert.equal(task().recoveryAttempts, 3);
+	assert.equal(task().reviewRound, roundBeforeFourth, "a revalidate verdict consumes no correction round");
+	await delegateWorker(orch, "call-e02-3", taskId);
+	assert.equal(task().recoveryAttempts, 2, "the second real dispatch spends the budget");
+	await orch.handleSubagentResult(workerResult("call-e02-3", reportFor(taskId, "call-e02-3")));
+
+	gitOverrides.set("rev-parse HEAD", "ccc3333\n");
+	const roundBeforeFifthGrant = task().reviewRound;
+	const fifthGrant = await orch.recordRootVerdict(task(), "pass", "accepting once more");
+	assert.equal(fifthGrant.decision.action, "revalidate", fifthGrant.decision.reason);
+	assert.equal(task().reviewRound, roundBeforeFifthGrant, "a revalidate verdict consumes no correction round");
+	await delegateWorker(orch, "call-e02-4", taskId);
+	assert.equal(task().recoveryAttempts, 3, "the third real dispatch spends the budget");
+	await orch.handleSubagentResult(workerResult("call-e02-4", reportFor(taskId, "call-e02-4")));
 
 	// Budget exhausted: the fourth distinct state still cannot auto-revalidate.
-	gitOverrides.set("rev-parse HEAD", "ccc3333\n");
+	gitOverrides.set("rev-parse HEAD", "ddd4444\n");
 	const fifth = await orch.recordRootVerdict(task(), "pass", "accepting past the budget");
 	assert.equal(fifth.decision.action, "blocked", fifth.decision.reason);
 	assert.equal(fifth.decision.reasonCode, "recovery-limit");
 	assert.match(fifth.decision.reason, /automatic recovery limit/);
 	assert.equal(task().recoveryAttempts, 3);
-	assert.equal(task().reviewRound, 1, "rounds stay at the one request_changes correction");
 	gitOverrides.delete("rev-parse HEAD");
+}
+
+// C09 — a refused launch precheck rolls back the placeholder Task it created,
+// an explicitly named Task survives as a legitimate planning Task, and a
+// pending revalidation grant is never spent by a refused dispatch.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const holderId = "T-20260905-994";
+	await delegateWorker(orch, "call-c09-holder", holderId);
+	assert.equal(orch.store.require(holderId).state, "executing", "the holder keeps the write lock");
+
+	const tasksBefore = orch.store.list().length;
+	// A stale-date TaskSpec id is replaced by a generated canonical id — the
+	// placeholder-creation path this rollback covers.
+	const rolledBack = await orch.beginDelegation(
+		{ toolCallId: "call-c09-rollback", input: { task: JSON.stringify(specFor("T-20200101-001", "worker", `/fixture/${holderId}`)) } },
+		BASE,
+	);
+	assert.equal(rolledBack.conflict?.conflict, true);
+	assert.equal(rolledBack.task, undefined, "the rolled-back placeholder is not reported as created");
+	assert.equal(orch.store.list().length, tasksBefore, "no placeholder Task survives the refused precheck");
+
+	// With the admission reservation released, the writer-lock precheck is what
+	// refuses; the generated placeholder it created is rolled back as well.
+	orch.concurrency.release("call-c09-holder");
+	await orch.beginDelegation(
+		{ toolCallId: "call-c09-rollback2", input: { task: JSON.stringify(specFor("T-20200101-002", "worker", `/fixture/${holderId}`)) } },
+		BASE,
+	);
+	assert.equal(orch.store.list().length, tasksBefore, "the writer-lock refusal leaves no placeholder either");
+
+	// An explicitly named, pre-existing Task stays (L109: legitimate planning
+	// Task survives a failed launch), and its pending revalidation grant is not
+	// spent by a refused dispatch.
+	const explicitId = "T-20260905-995";
+	orch.store.createTask(specFor(explicitId));
+	const kept = await orch.beginDelegation(
+		{ toolCallId: "call-c09-kept", input: { task: JSON.stringify(specFor(explicitId, "worker", `/fixture/${holderId}`)) } },
+		BASE,
+	);
+	assert.equal(kept.conflict?.conflict, true);
+	assert.equal(kept.task?.taskId, explicitId, "the explicitly named Task survives the refused precheck");
+	assert.ok(orch.store.get(explicitId), "the explicit Task stays in the store");
+	orch.store.markRevalidationGranted(explicitId, "c09-evidence-key");
+	const keptAgain = await orch.beginDelegation(
+		{ toolCallId: "call-c09-kept2", input: { task: JSON.stringify(specFor(explicitId, "worker", `/fixture/${holderId}`)) } },
+		BASE,
+	);
+	assert.equal(keptAgain.conflict?.conflict, true);
+	assert.equal(orch.store.require(explicitId).recoveryAttempts, 0, "a refused dispatch never spends the recovery budget");
+	assert.equal(orch.store.require(explicitId).pendingRevalidationKey, "c09-evidence-key", "the grant stays pending for a real dispatch");
 }
 
 // E02 contract failures burn no code-correction round: one report-only
@@ -7562,9 +7642,14 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 		assert.match(recovered.content[0].text, /decision: review_pending/);
 		assert.equal(orch.store.require(taskId).reports.length, 1, "the saved output closed the Task like a normal result");
 
-		// A consumed id is no longer authorized and cannot be delivered twice.
-		assert.equal(orch.authorizedWaitId({ id: runId }, BASE), undefined, "a consumed id is not re-authorized");
-		assert.equal(await orch.recoverPendingRun({ id: runId }, BASE), undefined);
+		// A consumed id stays re-fetchable: a repeat exact-id wait replays the
+		// same delivered report without re-ingesting (spec L89/C04 — a consumed
+		// receipt never reads as "no match").
+		assert.equal(orch.authorizedWaitId({ id: runId }, BASE), runId, "a consumed id re-authorizes for replay");
+		const replay = await orch.recoverPendingRun({ id: runId }, BASE);
+		assert.equal(replay?.status, "recovered", replay?.reason);
+		assert.equal(replay?.content[0].text, recovered.content[0].text, "the replay is byte-identical");
+		assert.equal(orch.store.require(taskId).reports.length, 1, "the replay does not re-ingest");
 
 		// A registered run without terminal artifacts reports pending, not failure.
 		const runId2 = "run-r02-pending";
@@ -7583,6 +7668,29 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 		const pending = await orch.recoverPendingRun({ id: runId2 }, BASE);
 		assert.equal(pending?.status, "pending", pending?.reason);
 		assert.match(pending.reason ?? "", /not reached a terminal state/);
+
+		// Spec L90 — an exit≠0 run is its own class: the exact-id wait consumes
+		// it as EXECUTION_FAILED (distinct from OUTPUT_PENDING for a zero-exit
+		// run whose output never appeared, and from an ingested report replay).
+		const runId3 = "run-r02-failed";
+		const failedTaskId = "T-20260905-986";
+		writeFileSync(join(dir, "artifacts", `${runId3}_worker_meta.json`), JSON.stringify({ runId: runId3, agent: "worker", exitCode: 1 }));
+		await orch.beginDelegation(
+			{ toolCallId: "call-r02-fail", input: { task: JSON.stringify(specFor(failedTaskId, "worker", BASE)), async: true } },
+			BASE,
+		);
+		await orch.handleSubagentResult({
+			toolCallId: "call-r02-fail",
+			toolName: "subagent",
+			input: {},
+			details: { asyncId: runId3, runId: runId3, asyncDir: join(dir, "async-subagent-runs", runId3) },
+			content: [{ type: "text", text: `Async: worker [${runId3}]\ndetached and running in the background.` }],
+			isError: false,
+		});
+		const failed = await orch.recoverPendingRun({ id: runId3 }, BASE);
+		assert.equal(failed?.status, "recovered", failed?.reason);
+		assert.match(failed?.content?.[0]?.text ?? "", /terminated with exit code 1/);
+		assert.equal(orch.store.require(failedTaskId).state, "failed", "the failed run marks its Task failed");
 		setCleanTree();
 	} finally {
 		rmSync(dir, { recursive: true, force: true });

@@ -1387,7 +1387,7 @@ export interface SessionEvidenceExport {
 		};
 	};
 	breakdown: SessionEvidenceBreakdown;
-	requirements: Array<{ id: string; status: "implemented" | "unit-verified" | "host-verified" | "unproven"; evidence: string[] }>;
+	requirements: Array<{ id: string; status: "implemented" | "unit-verified" | "handler-verified" | "host-verified" | "unproven"; evidence: string[]; downgradedFrom?: string }>;
 	evidenceMatrix: EvidenceMatrixEntry[];
 	analysis: string[];
 	unattributed: Array<Record<string, unknown>>;
@@ -1510,9 +1510,24 @@ function addBucketUsage(target: SessionEvidenceExport["usage"]["buckets"][keyof 
 	const child = exportRecord(record.child) ?? record;
 	target.count += 1;
 	target.tokens += exportUsageTokens(child);
-	const cost = exportNumber(child.costUsd) ?? exportNumber(child.calculatedCostUsd) ?? exportNumber(record.costUsd);
+	const cost = knownExportCost(record, child);
 	if (cost === undefined) target.unknownCost = true;
 	else target.costUsd += cost;
+}
+
+/** Known-cost conservation (C03): every priced source counts, including the
+ * host-reported usage.cost.total that loose event rows carry instead of a
+ * resolved costUsd. Unknown costs stay unknown — never zero-filled as priced. */
+function knownExportCost(record: Record<string, unknown>, child: Record<string, unknown>): number | undefined {
+	const childUsage = exportRecord(child.usage);
+	const recordUsage = exportRecord(record.usage);
+	return exportNumber(child.costUsd)
+		?? exportNumber(child.calculatedCostUsd)
+		?? piReportedCost(child as PiUsageLike)
+		?? (childUsage ? piReportedCost(childUsage as PiUsageLike) : undefined)
+		?? exportNumber(record.costUsd)
+		?? exportNumber(record.calculatedCostUsd)
+		?? (recordUsage ? piReportedCost(recordUsage as PiUsageLike) : undefined);
 }
 
 function emptyExportTokens(): TokenCounts {

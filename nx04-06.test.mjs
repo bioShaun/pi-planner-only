@@ -44,7 +44,8 @@ import { rootReadLimitNotice, applyRootReadCeiling } from "./index.ts";
   assert.match(ledger.record("initial-execution", "read", {}, "event-4", 3).notice ?? "", /wrap up|reached/i);
 }
 
-// C13/C14: evidence matrix refuses to imply host verification and tracks all
+// C13/C14: the evidence matrix distinguishes 代码完成 / handler 验证 / 宿主验证,
+// refuses upgrades over missing provenance (L143), and tracks all
 // criteria/behaviors independently, including report revisions.
 {
   const matrix = buildAcceptanceEvidenceMatrix({
@@ -54,12 +55,34 @@ import { rootReadLimitNotice, applyRootReadCeiling } from "./index.ts";
     rootSessionId: "session",
     runIds: ["run-1"],
     executionIds: ["execution-1"],
-    criteria: { C13: { status: "unit-verified", evidence: ["git_commit fixture"] }, C14: "host-verified" },
+    criteria: { C13: { status: "handler-verified", evidence: ["git_commit fixture"] }, C14: "host-verified" },
   });
   assert.equal(matrix.length, 42);
-  assert.equal(matrix.find((item) => item.id === "C13")?.status, "unit-verified");
+  assert.equal(matrix.find((item) => item.id === "C13")?.status, "handler-verified");
   assert.equal(matrix.find((item) => item.id === "B24")?.status, "unproven");
   assert.match(matrix.find((item) => item.id === "C14")?.evidence.join(" ") ?? "", /rootSessionId=session/);
+
+  // L143 — 任一缺失不能升格: a claimed host pass without full provenance and a
+  // handler claim without handler evidence are recorded as code-complete with
+  // an explicit downgrade note, never as verified. An unproven entry can carry
+  // an explicit not-done reason (C17).
+  const downgraded = buildAcceptanceEvidenceMatrix({
+    criteria: {
+      C01: "host-verified",
+      C02: { status: "handler-verified" },
+      C03: { status: "unproven", notDoneReason: "frozen fixture pending" },
+    },
+  });
+  const c01 = downgraded.find((item) => item.id === "C01");
+  assert.equal(c01?.status, "implemented");
+  assert.equal(c01?.downgradedFrom, "host-verified");
+  assert.match(c01?.evidence.join(" ") ?? "", /missing sourcePath/);
+  const c02 = downgraded.find((item) => item.id === "C02");
+  assert.equal(c02?.status, "implemented");
+  assert.equal(c02?.downgradedFrom, "handler-verified");
+  const c03 = downgraded.find((item) => item.id === "C03");
+  assert.equal(c03?.status, "unproven");
+  assert.equal(c03?.notDoneReason, "frozen fixture pending");
 }
 
 // C15: explicit oversized reads are rejected; omitted reads are normalized by
@@ -79,10 +102,14 @@ import { rootReadLimitNotice, applyRootReadCeiling } from "./index.ts";
     tasks: [{ taskId: "T-nx06", rootSessionId: "session-nx06", state: "completed", reports: [], usage: { root: { input: 2, output: 1, turns: 1 }, children: [] } }],
     runRecords: [{ rootSessionId: "session-nx06", taskId: "T-nx06", executionId: "execution-nx06", runId: "run-nx06", ingestionState: "recorded" }],
     usageEntries: [{ id: "root-nx06", kind: "root-turn", attribution: "tasked", taskId: "T-nx06", usage: { input: 2, output: 1 } }],
-    acceptance: { sourcePath: "index.ts", loadedFingerprint: "fp-nx06", diskHead: "head-nx06", executionIds: ["execution-nx06"], criteria: { C16: "host-verified", C18: "unit-verified" } },
+    acceptance: { sourcePath: "index.ts", loadedFingerprint: "fp-nx06", diskHead: "head-nx06", rootSessionId: "session-nx06", executionIds: ["execution-nx06"], criteria: { C16: "host-verified", C18: { status: "handler-verified", evidence: ["usage export conservation fixture"] } } },
   });
   assert.equal(exported.rootSessionId, "session-nx06");
-  assert.ok(exported.evidenceMatrix.some((item) => item.id === "C18" && item.status === "unit-verified"));
+  // Full host provenance: the host-verified claim survives the upgrade gate.
+  assert.equal(exported.evidenceMatrix.find((item) => item.id === "C16")?.status, "host-verified");
+  const c18 = exported.evidenceMatrix.find((item) => item.id === "C18");
+  assert.equal(c18?.status, "handler-verified");
+  assert.match(c18?.evidence.join(" ") ?? "", /usage export conservation fixture/);
   assert.equal(exported.usage.tokens.input, 2);
   assert.equal(exported.usage.tokens.output, 1);
 }
