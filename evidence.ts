@@ -9,7 +9,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { GIT_READ_ARGV, GIT_REF_PATTERN } from "./git-audit.ts";
 import type { GitRunner } from "./git-audit.ts";
@@ -23,6 +23,7 @@ import type {
 	ReviewRoundAttribution,
 	TaskScope,
 	WorkerReport,
+	SnapshotGap,
 } from "./types.ts";
 
 export type { GitRunner };
@@ -237,6 +238,12 @@ export interface CaptureEvidenceOptions {
 	 * directories are never scanned — only these declared roots.
 	 */
 	additionalWorktreeRoots?: readonly string[];
+	/**
+	 * Ticket 11: task scope paths (allowedPaths ∪ truthPaths). When set, content
+	 * snapshot/hashing is scoped to these paths (expanding directories to existing
+	 * files). Change detection (changedPaths/status) remains whole-worktree.
+	 */
+	scopePaths?: readonly string[];
 }
 
 function isHashableFilePath(path: string): boolean {
@@ -255,12 +262,72 @@ function isHashableFilePath(path: string): boolean {
  * a failing call also omits the map so T3 stays empty rather than
  * mis-attributing.
  */
-async function hashDirtyPaths(
+/** Ticket 11: expand scope entries to existing files at sample time. */
+function expandScopeToExistingFiles(cwd: string, scopePaths: readonly string[]): Set<string> {
+	const expanded = new Set<string>();
+	for (const raw of scopePaths) {
+		const abs = isAbsolute(raw) ? resolve(raw) : resolve(cwd, raw);
+		try {
+			const st = statSync(abs);
+			if (st.isDirectory()) {
+				const entries = readdirSync(abs, { recursive: true, withFileTypes: true });
+				for (const entry of entries) {
+					if (entry.isFile()) {
+						const parent = (entry as any).parentPath ?? abs;
+						const full = resolve(parent, entry.name);
+						expanded.add(relative(cwd, full));
+					}
+				}
+			} else {
+				expanded.add(relative(cwd, abs));
+			}
+		} catch {
+			expanded.add(isAbsolute(raw) ? relative(cwd, abs) : raw);
+		}
+	}
+	return expanded;
+}
+
+function isPathInScope(
+	path: string,
+	cwd: string,
+	scopePaths: readonly string[] | undefined,
+	expandedScope: Set<string> | undefined,
+): boolean {
+	if (!scopePaths || scopePaths.length === 0) return true;
+	if (expandedScope && expandedScope.has(path)) return true;
+	const absPath = isAbsolute(path) ? resolve(path) : resolve(cwd, path);
+	for (const sp of scopePaths) {
+		const absSp = isAbsolute(sp) ? resolve(sp) : resolve(cwd, sp);
+		if (absPath === absSp) return true;
+		if (absPath.startsWith(absSp.endsWith("/") ? absSp : absSp + "/")) return true;
+	}
+	return false;
+}
+
+interface HashPathsResult {
+	ok: boolean;
+	hashes?: Record<string, string | null>;
+	gap?: SnapshotGap;
+}
+
+async function hashDirtyPathsWithGap(
 	run: GitRunner,
 	cwd: string,
 	paths: readonly string[],
-): Promise<Record<string, string | null> | undefined> {
-	if (paths.length === 0 || paths.length > MAX_BASELINE_HASH_PATHS) return undefined;
+): Promise<HashPathsResult> {
+	if (paths.length === 0) return { ok: true, hashes: undefined };
+	if (paths.length > MAX_BASELINE_HASH_PATHS) {
+		return {
+			ok: false,
+			gap: {
+				reason: "cap-exceeded",
+				count: paths.length,
+				limit: MAX_BASELINE_HASH_PATHS,
+				paths: [...paths],
+			},
+		};
+	}
 	const hashes: Record<string, string | null> = {};
 	const hashable: string[] = [];
 	for (const path of paths) {
@@ -272,15 +339,38 @@ async function hashDirtyPaths(
 		try {
 			result = await run([...GIT_READ_ARGV.hashObject, ...hashable], cwd);
 		} catch {
-			return undefined;
+			return {
+				ok: false,
+				gap: {
+					reason: "hash-failed",
+					paths: [...paths],
+				},
+			};
 		}
 		const lines = result.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
-		if (result.code !== 0 || lines.length !== hashable.length) return undefined;
+		if (result.code !== 0 || lines.length !== hashable.length) {
+			return {
+				ok: false,
+				gap: {
+					reason: "hash-failed",
+					paths: [...paths],
+				},
+			};
+		}
 		hashable.forEach((path, index) => {
 			hashes[path] = lines[index] ?? null;
 		});
 	}
-	return hashes;
+	return { ok: true, hashes };
+}
+
+async function hashDirtyPaths(
+	run: GitRunner,
+	cwd: string,
+	paths: readonly string[],
+): Promise<Record<string, string | null> | undefined> {
+	const res = await hashDirtyPathsWithGap(run, cwd, paths);
+	return res.ok ? res.hashes : undefined;
 }
 
 function parseDiffNames(stdout: string): string[] {
@@ -407,8 +497,15 @@ export async function captureEvidence(
 	// can detect content changes on paths that were already dirty at A (T3).
 	// D1 — collapsed untracked directories are expanded to file level first so a
 	// declared file inside one is hashable and attributable.
+	// Ticket 11 — content snapshot/hash is restricted to task scope (allowedPaths ∪ truthPaths).
 	const expanded = await fileLevelProbe(run, cwd, probe);
-	const dirtyPathHashes = await hashDirtyPaths(run, cwd, expanded.changedPaths);
+	const expandedScope = options.scopePaths ? expandScopeToExistingFiles(cwd, options.scopePaths) : undefined;
+	const candidateDirtyPaths = options.scopePaths
+		? expanded.changedPaths.filter((p) => isPathInScope(p, cwd, options.scopePaths, expandedScope))
+		: expanded.changedPaths;
+	const hashResult = await hashDirtyPathsWithGap(run, cwd, candidateDirtyPaths);
+	const dirtyPathHashes = hashResult.hashes;
+	let snapshotGap = hashResult.gap;
 	// RF-1 — only the C sample carries a baseGitRef to diff against (T2).
 	const committedPaths = options.baseGitRef && probe.head
 		? await diffNamesBetweenRefs(run, cwd, options.baseGitRef, probe.head)
@@ -486,6 +583,7 @@ export async function captureEvidence(
 		...(probe.repoRoot ? { repoRoot: probe.repoRoot } : {}),
 		changedPaths,
 		...(hasDirty ? { dirtyPathHashes: mergedDirty } : {}),
+		...(snapshotGap ? { snapshotGap } : {}),
 		...(committedMerged ? { committedPaths: committedMerged } : {}),
 		...(diffStat ? { diffStat } : {}),
 		gitAvailable: true,
@@ -1083,16 +1181,50 @@ export function compareEvidence(
 		normalizeEvidencePaths(current.committedPaths ?? [], current.cwd || pathCwd),
 	);
 	const t2 = [...committedPaths];
+
+	const declareCwdEarly = reported.cwd || pathCwd;
+	const allowedPaths = new Set(
+		normalizeEvidencePaths(options.scope?.allowedPaths ?? [], declareCwdEarly),
+	);
+	for (const root of additionalRoots) {
+		for (const path of options.scope?.allowedPaths ?? []) {
+			if (!isAbsolute(path)) allowedPaths.add(normalizeEvidencePaths([path], root)[0]);
+		}
+	}
+	const hasAllowList = allowedPaths.size > 0;
+	const inScopeEarly = (path: string): boolean => {
+		if (!hasAllowList) return true;
+		if (allowedPaths.has(path)) return true;
+		for (const a of allowedPaths) {
+			if (path.startsWith(a.endsWith("/") ? a : a + "/")) return true;
+		}
+		return false;
+	};
+
 	const t3: string[] = [];
-	const baselineDirtyCount = base.changedPaths?.length ?? 0;
-	if (baselineDirtyCount > MAX_BASELINE_HASH_PATHS) {
-		// Above the cap the A sample carries no hashes; T3 stays empty and the
-		// omission is visible in reasons.
-		reasons.push(`baseline hash skipped (${baselineDirtyCount} dirty paths)`);
-	} else {
+	const baseCandidatePaths = hasAllowList
+		? [...basePaths].filter((p) => inScopeEarly(p))
+		: [...basePaths];
+	let attributionGap: SnapshotGap | undefined = base.snapshotGap;
+	if (!attributionGap && !base.dirtyPathHashes && baseCandidatePaths.length > MAX_BASELINE_HASH_PATHS) {
+		attributionGap = {
+			reason: "cap-exceeded",
+			count: baseCandidatePaths.length,
+			limit: MAX_BASELINE_HASH_PATHS,
+			paths: baseCandidatePaths,
+		};
+	}
+	if (attributionGap) {
+		if (attributionGap.reason === "cap-exceeded") {
+			const count = attributionGap.count ?? baseCandidatePaths.length;
+			reasons.push(`baseline hash skipped (${count} dirty paths)`);
+		} else {
+			reasons.push(`baseline hash failed: ${attributionGap.paths.join(", ")}`);
+		}
+	} else if (base.dirtyPathHashes) {
 		const baselineHashes = normalizedDirtyHashes(base.dirtyPathHashes, base.cwd || pathCwd);
 		const resultHashes = normalizedDirtyHashes(current.dirtyPathHashes, current.cwd || pathCwd);
-		for (const path of basePaths) {
+		for (const path of baseCandidatePaths) {
 			if (!currentPaths.has(path)) continue;
 			const baseHash = baselineHashes.get(path);
 			const currentHash = resultHashes.get(path);
@@ -1145,18 +1277,7 @@ export function compareEvidence(
 			resolveDeclaredPath(path, declareCwd, additionalRoots, knownForDeclare),
 		),
 	);
-	// Variant C — a relative allow-list entry names the same file in cwd and
-	// in every declared root, so a matching linked-worktree change is in scope.
-	const allowedPaths = new Set(
-		normalizeEvidencePaths(options.scope?.allowedPaths ?? [], declareCwd),
-	);
-	for (const root of additionalRoots) {
-		for (const path of options.scope?.allowedPaths ?? []) {
-			if (!isAbsolute(path)) allowedPaths.add(normalizeEvidencePaths([path], root)[0]);
-		}
-	}
-	const hasAllowList = allowedPaths.size > 0;
-	const inScope = (path: string): boolean => (hasAllowList ? allowedPaths.has(path) : true);
+	const inScope = inScopeEarly;
 	const outOfRepoDeclared = [...declaredPaths].filter((path) =>
 		isOutsideWorkspacePath(path, pathCwd, additionalRoots),
 	);
@@ -1170,10 +1291,13 @@ export function compareEvidence(
 			if (!declaredPaths.has(path)) undeclaredPaths.push(path);
 		}
 	}
+	const gapAffectedPaths = new Set(
+		attributionGap ? normalizeEvidencePaths(attributionGap.paths, pathCwd) : [],
+	);
 	const extraDeclaredPaths: string[] = [];
 	if (!options.readOnly) {
 		for (const path of inRepoDeclared) {
-			if (!truthSet.has(path)) extraDeclaredPaths.push(path);
+			if (!truthSet.has(path) && !gapAffectedPaths.has(path)) extraDeclaredPaths.push(path);
 		}
 	}
 
@@ -1350,14 +1474,48 @@ export function compareExecutionTruth(
 	const t1 = [...currentPaths].filter((path) => !basePaths.has(path));
 	const committedPaths = new Set(normalizeEvidencePaths(cReport.committedPaths ?? [], sampleRoot(cReport, pathCwd)));
 	const t2 = [...committedPaths];
+
+	const allowedPaths = new Set(normalizeEvidencePaths(options.scope?.allowedPaths ?? [], pathCwd));
+	for (const root of additionalRoots) {
+		for (const path of options.scope?.allowedPaths ?? []) {
+			if (!isAbsolute(path)) allowedPaths.add(normalizeEvidencePaths([path], root)[0]);
+		}
+	}
+	const hasAllowList = allowedPaths.size > 0;
+
+	const inScopeEarly = (path: string): boolean => {
+		if (!hasAllowList) return true;
+		if (allowedPaths.has(path)) return true;
+		for (const a of allowedPaths) {
+			if (path.startsWith(a.endsWith("/") ? a : a + "/")) return true;
+		}
+		return false;
+	};
+
 	const t3: string[] = [];
-	const baselineDirtyCount = aRun.changedPaths?.length ?? 0;
-	if (baselineDirtyCount > MAX_BASELINE_HASH_PATHS) {
-		reasons.push(`baseline hash skipped (${baselineDirtyCount} dirty paths)`);
-	} else {
+	const baseCandidatePaths = hasAllowList
+		? [...basePaths].filter((p) => inScopeEarly(p))
+		: [...basePaths];
+	let attributionGap: SnapshotGap | undefined = aRun.snapshotGap;
+	if (!attributionGap && !aRun.dirtyPathHashes && baseCandidatePaths.length > MAX_BASELINE_HASH_PATHS) {
+		attributionGap = {
+			reason: "cap-exceeded",
+			count: baseCandidatePaths.length,
+			limit: MAX_BASELINE_HASH_PATHS,
+			paths: baseCandidatePaths,
+		};
+	}
+	if (attributionGap) {
+		if (attributionGap.reason === "cap-exceeded") {
+			const count = attributionGap.count ?? baseCandidatePaths.length;
+			reasons.push(`baseline hash skipped (${count} dirty paths)`);
+		} else {
+			reasons.push(`baseline hash failed: ${attributionGap.paths.join(", ")}`);
+		}
+	} else if (aRun.dirtyPathHashes) {
 		const baselineHashes = normalizedDirtyHashes(aRun.dirtyPathHashes, aRun.cwd || pathCwd);
 		const resultHashes = normalizedDirtyHashes(cReport.dirtyPathHashes, cReport.cwd || pathCwd);
-		for (const path of basePaths) {
+		for (const path of baseCandidatePaths) {
 			if (!currentPaths.has(path)) continue;
 			const baseHash = baselineHashes.get(path);
 			const currentHash = resultHashes.get(path);
@@ -1383,13 +1541,7 @@ export function compareExecutionTruth(
 		),
 	);
 
-	const allowedPaths = new Set(normalizeEvidencePaths(options.scope?.allowedPaths ?? [], pathCwd));
-	for (const root of additionalRoots) {
-		for (const path of options.scope?.allowedPaths ?? []) {
-			if (!isAbsolute(path)) allowedPaths.add(normalizeEvidencePaths([path], root)[0]);
-		}
-	}
-	const hasAllowList = allowedPaths.size > 0;
+
 	const untrackedResult = new Set(
 		untrackedPathsOf(cReport).map((path) => normalizeEvidencePaths([path], cReport.cwd || pathCwd)[0]),
 	);
@@ -1446,10 +1598,13 @@ export function compareExecutionTruth(
 			normalizeEvidencePaths([path], pathCwd)[0],
 		),
 	);
+	const gapAffectedPaths = new Set(
+		attributionGap ? normalizeEvidencePaths(attributionGap.paths, pathCwd) : [],
+	);
 	const extraDeclaredPaths = options.readOnly
 		? []
 		: inRepoDeclared.filter(
-			(path) => !attributed.has(path) && !truthSet.has(path) && !priorTruth.has(path),
+			(path) => !attributed.has(path) && !truthSet.has(path) && !priorTruth.has(path) && !gapAffectedPaths.has(path),
 		);
 
 	const headChanged = Boolean(
@@ -1516,6 +1671,7 @@ export function compareExecutionTruth(
 		missingPaths: sorted(missingPaths),
 		declarationMismatch,
 		findings,
+		...(attributionGap ? { attributionGap } : {}),
 	};
 }
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import {
 	captureEvidence,
@@ -1289,3 +1289,179 @@ assert.equal(
 }
 
 console.log("planner-only evidence: PASS");
+
+// --------------------------------------------------------------------------
+// Ticket 11 — scoped baseline snapshot with global change detection
+// --------------------------------------------------------------------------
+{
+	const scratchBase = resolve(".scratch/temp-git-t11");
+	rmSync(scratchBase, { recursive: true, force: true });
+	mkdirSync(scratchBase, { recursive: true });
+
+	try {
+		const repoDir = resolve(scratchBase, "repo");
+		mkdirSync(repoDir, { recursive: true });
+		const git = realGitRunnerOf(repoDir);
+
+		// Init git repo
+		execSync("git init", { cwd: repoDir });
+		execSync("git config user.name 'Test Runner'", { cwd: repoDir });
+		execSync("git config user.email 'test@example.com'", { cwd: repoDir });
+
+		// Committed initial files
+		writeFileSync(resolve(repoDir, "in-scope.txt"), "base content\n");
+		writeFileSync(resolve(repoDir, "tracked-out-of-scope.txt"), "clean outside\n");
+		execSync("git add in-scope.txt tracked-out-of-scope.txt && git commit -m 'initial'", { cwd: repoDir });
+
+		// Pre-dirty the in-scope tracked file
+		writeFileSync(resolve(repoDir, "in-scope.txt"), "pre-dirty content\n");
+
+		// Create 300 out-of-scope untracked files
+		const noiseDir = resolve(repoDir, "noise");
+		mkdirSync(noiseDir, { recursive: true });
+		for (let i = 0; i < 300; i++) {
+			writeFileSync(resolve(noiseDir, `file-${i}.txt`), `noise ${i}\n`);
+		}
+
+		// (a) Scoped capture: 300 dirty out-of-scope untracked files + one in-scope pre-dirty tracked file
+		const aRun = await captureEvidence(git, {
+			cwd: repoDir,
+			taskId: "T-11",
+			workerRunId: "w1",
+			scopePaths: ["in-scope.txt"],
+		});
+
+		// Whole-worktree changed paths must see all 301 dirty files
+		assert.ok(aRun.changedPaths.length >= 301, "Whole-worktree detection intact");
+		// But candidate hashes are scoped to in-scope.txt, so dirtyPathHashes exists and has in-scope.txt
+		assert.ok(aRun.dirtyPathHashes, "Scoped dirtyPathHashes sampled");
+		assert.ok("in-scope.txt" in aRun.dirtyPathHashes, "in-scope.txt is hashed");
+		assert.equal(aRun.snapshotGap, undefined, "No snapshot gap on small scope");
+
+		// Worker modifies in-scope.txt
+		writeFileSync(resolve(repoDir, "in-scope.txt"), "task modified content\n");
+
+		const cReport = await captureEvidence(git, {
+			cwd: repoDir,
+			taskId: "T-11",
+			workerRunId: "w1",
+			scopePaths: ["in-scope.txt"],
+		});
+
+		const report = {
+			version: 1,
+			taskId: "T-11",
+			status: "completed",
+			summary: "modified in-scope file",
+			changedFiles: ["in-scope.txt"],
+			validation: [],
+			evidence: cReport,
+			risks: [],
+			unresolved: [],
+		};
+
+		const truthComp = compareExecutionTruth(aRun, cReport, report, {
+			executionId: "exec-1",
+			scope: { allowedPaths: ["in-scope.txt"] },
+		});
+
+		// Assert (a): T3 attributes the in-scope file, no 'baseline hash skipped' reason
+		const inScopeAbs = resolve(repoDir, "in-scope.txt");
+		assert.ok(truthComp.truthPaths.includes(inScopeAbs) || truthComp.truthPaths.includes("in-scope.txt"), "T3 attributed in-scope file");
+		assert.ok(!truthComp.reasons.some((r) => r.includes("baseline hash skipped")), "No baseline hash skipped reason");
+		// Ticket-20 check: out-of-scope untracked files are external, never attributed
+		assert.equal(truthComp.truthPaths.filter((p) => p.includes("noise")).length, 0, "Noise files not attributed");
+
+		// (b) Scoped snapshot exceeding the cap -> comparison/sample carries attribution-gap marker and no over-declared finding
+		const capDir = resolve(repoDir, "cap");
+		mkdirSync(capDir, { recursive: true });
+		const capPaths = [];
+		for (let i = 0; i < 205; i++) {
+			const name = `cap/file-${i}.txt`;
+			writeFileSync(resolve(repoDir, name), `cap ${i}\n`);
+			capPaths.push(name);
+		}
+		execSync("git add cap/ && git commit -m 'add cap files'", { cwd: repoDir });
+
+		// Pre-dirty all 205 cap files
+		for (let i = 0; i < 205; i++) {
+			writeFileSync(resolve(repoDir, `cap/file-${i}.txt`), `cap modified ${i}\n`);
+		}
+
+		const aRunCap = await captureEvidence(git, {
+			cwd: repoDir,
+			taskId: "T-11",
+			workerRunId: "w2",
+			scopePaths: ["cap/"],
+		});
+
+		assert.ok(aRunCap.snapshotGap, "Carries snapshotGap marker");
+		assert.equal(aRunCap.snapshotGap?.reason, "cap-exceeded");
+
+		// Task modifies cap/file-0.txt and declares it
+		writeFileSync(resolve(repoDir, "cap/file-0.txt"), "cap worker modified 0\n");
+		const cReportCap = await captureEvidence(git, {
+			cwd: repoDir,
+			taskId: "T-11",
+			workerRunId: "w2",
+			scopePaths: ["cap/"],
+		});
+
+		const reportCap = {
+			version: 1,
+			taskId: "T-11",
+			status: "completed",
+			summary: "modified cap file",
+			changedFiles: ["cap/file-0.txt"],
+			validation: [],
+			evidence: { ...cReportCap, changedPaths: ["cap/file-0.txt"] },
+			risks: [],
+			unresolved: [],
+		};
+
+		const truthCompCap = compareExecutionTruth(aRunCap, cReportCap, reportCap, {
+			executionId: "exec-2",
+			scope: { allowedPaths: ["cap/"] },
+		});
+
+		assert.ok(truthCompCap.attributionGap, "Carries attributionGap marker");
+
+		const overDeclaredCap = truthCompCap.findings.filter((f) => f.kind === "over-declared");
+		assert.equal(overDeclaredCap.length, 0, "No over-declared finding produced for declared path affected by gap");
+		assert.ok(!truthCompCap.extraDeclaredPaths.some((p) => p.includes("cap/file-0.txt")), "extraDeclaredPaths does not include affected declared path");
+
+		// (c) Whole-worktree detection intact: an out-of-scope tracked modification produces a scope finding
+		writeFileSync(resolve(repoDir, "tracked-out-of-scope.txt"), "worker modified out-of-scope tracked!\n");
+		const cReportGlobal = await captureEvidence(git, {
+			cwd: repoDir,
+			taskId: "T-11",
+			workerRunId: "w3",
+			scopePaths: ["in-scope.txt"],
+		});
+
+		assert.ok(cReportGlobal.changedPaths.some((p) => p.includes("tracked-out-of-scope.txt")), "Whole-worktree detected tracked modification");
+
+		const reportGlobal = {
+			version: 1,
+			taskId: "T-11",
+			status: "completed",
+			summary: "in-scope task",
+			changedFiles: ["in-scope.txt"],
+			validation: [],
+			evidence: cReportGlobal,
+			risks: [],
+			unresolved: [],
+		};
+
+		const truthCompGlobal = compareExecutionTruth(aRun, cReportGlobal, reportGlobal, {
+			executionId: "exec-3",
+			scope: { allowedPaths: ["in-scope.txt"] },
+		});
+
+		assert.ok(truthCompGlobal.outOfScopePaths.some((p) => p.includes("tracked-out-of-scope.txt")), "Tracked out-of-scope file in outOfScopePaths");
+		const scopeFinding = truthCompGlobal.findings.filter((f) => f.kind === "scope");
+		assert.ok(scopeFinding.length > 0, "Scope finding produced for out-of-scope tracked modification");
+	} finally {
+		rmSync(scratchBase, { recursive: true, force: true });
+	}
+}

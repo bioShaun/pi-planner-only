@@ -163,6 +163,15 @@ export interface ExpectedEvidence {
  * Root computes authoritative attribution from its own A and C samples; Worker
  * Git fingerprints are declaration data for cross-checking only.
  */
+
+/** Ticket 11: explicit gap recorded when content snapshotting is incomplete. */
+export interface SnapshotGap {
+	reason: "cap-exceeded" | "hash-failed";
+	count?: number;
+	limit?: number;
+	paths: string[];
+}
+
 export interface EvidenceRef {
 	cwd: string;
 	taskId: string;
@@ -177,6 +186,8 @@ export interface EvidenceRef {
 	 * deleted or unreadable paths hash to `null`.
 	 */
 	dirtyPathHashes?: Record<string, string | null>;
+	/** Ticket 11: explicit attribution evidence gap when snapshot is incomplete */
+	snapshotGap?: SnapshotGap;
 	/** Paths changed between baseGitRef and finalGitRef (C only; empty when refs are equal). */
 	committedPaths?: string[];
 	/** True when the status probe itself failed at sample time; state is unknown, not clean. */

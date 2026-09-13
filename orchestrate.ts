@@ -321,15 +321,20 @@ function lockWorktreesOf(task: TaskRecord, ...extraCwds: string[]): string[] {
 function captureEvidenceOptionsFor(
 	task: TaskRecord,
 	workerRunId: string,
-	extra: { baseGitRef?: string } = {},
+	extra: { baseGitRef?: string; truthPaths?: readonly string[] } = {},
 ) {
 	const roots = additionalWorktreeRootsOf(task);
+	const allowed = task.spec?.scope?.allowedPaths ?? [];
+	const taskTruth = task.executions.flatMap((e) => e.truthPaths ?? []);
+	const extraTruth = extra.truthPaths ?? [];
+	const combinedScope = [...new Set([...allowed, ...taskTruth, ...extraTruth])];
 	return {
 		cwd: task.cwd,
 		taskId: task.taskId,
 		workerRunId,
 		...(extra.baseGitRef ? { baseGitRef: extra.baseGitRef } : {}),
 		...(roots ? { additionalWorktreeRoots: roots } : {}),
+		...(combinedScope.length > 0 ? { scopePaths: combinedScope } : {}),
 	};
 }
 
