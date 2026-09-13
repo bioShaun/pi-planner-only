@@ -123,7 +123,7 @@ export type ReviewMode = "root" | "fresh";
 
 export type ReviewVerdict = "pass" | "request_changes" | "blocked";
 
-export type TaskCompletionKind = "superseded" | "committed";
+export type TaskCompletionKind = "superseded" | "committed"
 
 export interface DriftAcknowledgement {
 	successorTaskId?: string;
@@ -290,7 +290,8 @@ export type TaskFindingKind =
 	| "missing"
 	| "drift"
 	| "superseded"
-	| "committed";
+	| "committed"
+
 
 /**
  * A Task-level finding that outlives the execution that produced it. Later
@@ -538,7 +539,8 @@ export type RootVerdictRefusalKind =
 	| "no-report"            // no WorkerReport exists to judge
 	| "child-pending"        // a delegated run is still pending (transient, never recorded)
 	| "fresh-review-pending" // fresh mode has no reviewer ReviewResult yet
-	| "strict-zero-paths";   // strict fresh mode has 0 evidence attribution paths
+	| "strict-zero-paths"
+	| "attribution-gap-unlock-refused";   // strict fresh mode has 0 evidence attribution paths
 
 /** Structured refusal of a Root verdict request: typed kind plus prose for display. */
 export interface RootVerdictRefusal {
@@ -578,6 +580,7 @@ export interface ReviewResult {
 	/** Completion attribution for superseded/committed acceptance. */
 	completionKind?: TaskCompletionKind;
 	source?: "reviewer" | "root" | "operator";
+	attributionGapOverride?: boolean;
 }
 
 /** §12 — root arbitration over a disagreeing reviewer. In-memory only. */

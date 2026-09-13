@@ -1420,11 +1420,12 @@ function sampleRoot(sample: EvidenceRef, fallback: string): string {
 	return sample.repoRoot || sample.cwd || fallback;
 }
 
-export type TruthFindingDraftKind = "undeclared" | "scope" | "over-declared" | "missing" | "drift";
+export type TruthFindingDraftKind = "undeclared" | "scope" | "over-declared" | "missing" | "drift" | "attribution-gap";
 
 export interface TruthFindingDraft {
 	kind: TruthFindingDraftKind;
 	paths: string[];
+	reason?: string;
 }
 
 /**
@@ -1457,6 +1458,7 @@ export interface ExecutionTruthComparison {
 	/** The report declares another cwd than the one its result arrived in. */
 	declarationMismatch: boolean;
 	findings: TruthFindingDraft[];
+	attributionGapPaths?: string[];
 }
 
 /**
@@ -1647,10 +1649,34 @@ export function compareExecutionTruth(
 	const gapAffectedPaths = new Set(
 		attributionGap ? normalizeEvidencePaths(attributionGap.paths, pathCwd) : [],
 	);
+	const isBaselineIncomplete = (path: string): boolean => {
+		if (gapAffectedPaths.has(path)) return true;
+		if (basePaths.has(path) && inScopeEarly(path)) {
+			if (!aRun.dirtyPathHashes) return true;
+			const baseHashes = normalizedDirtyHashes(aRun.dirtyPathHashes, aRun.cwd || pathCwd);
+			if (baseHashes.get(path) == null) return true;
+			if (!cReport.dirtyPathHashes) return true;
+			const currentHashes = normalizedDirtyHashes(cReport.dirtyPathHashes, cReport.cwd || pathCwd);
+			if (currentHashes.get(path) == null) return true;
+		}
+		return false;
+	};
+
+	const attributionGapPaths: string[] = [];
+	for (const path of inRepoDeclared) {
+		if (truthSet.has(path)) continue; // Branch 1 (normal)
+		const hasPriorBasis = priorTruth.has(path) || basePaths.has(path);
+		if (isBaselineIncomplete(path) && hasPriorBasis) {
+			attributionGapPaths.push(path); // Branch 2 (attribution gap)
+		}
+	}
+	attributionGapPaths.sort();
+
+	// Branch 3 (unchanged): evidence complete and no task change, or out-of-scope/undeclared-without-basis
 	const extraDeclaredPaths = options.readOnly
 		? []
 		: inRepoDeclared.filter(
-			(path) => !attributed.has(path) && !truthSet.has(path) && !priorTruth.has(path) && !gapAffectedPaths.has(path),
+			(path) => !attributed.has(path) && !truthSet.has(path) && !attributionGapPaths.includes(path) && !priorTruth.has(path),
 		);
 
 	const headChanged = Boolean(
@@ -1661,7 +1687,7 @@ export function compareExecutionTruth(
 		for (const path of inRepoDeclared) {
 			if (currentPaths.has(path)) continue;
 			if (committedPaths.has(path) || t3.includes(path)) continue;
-			if (priorTruth.has(path)) continue;
+			if (priorTruth.has(path) || attributionGapPaths.includes(path)) continue;
 			missingPaths.push(path);
 		}
 	}
@@ -1671,6 +1697,10 @@ export function compareExecutionTruth(
 	}
 	if (outOfScopePaths.length > 0) {
 		reasons.push(`out-of-scope paths changed: ${sorted(outOfScopePaths).join(", ")}`);
+	}
+	if (attributionGapPaths.length > 0) {
+		// Baseline content not recoverable from hashes alone: a content snapshot is only mandatory when an increment must be DISPLAYED.
+		reasons.push(`attribution gap (baseline content not recoverable from hashes alone): ${sorted(attributionGapPaths).join(", ")}`);
 	}
 	if (extraDeclaredPaths.length > 0) {
 		reasons.push(`over-reported / unreliable declaration: ${sorted(extraDeclaredPaths).join(", ")}`);
@@ -1695,6 +1725,9 @@ export function compareExecutionTruth(
 		// A report-only restatement is not required to re-prove presence: the
 		// drift check governs the workspace, and its over/missing declarations
 		// stay visible in the fields above without becoming findings.
+		if (!options.reportOnly && attributionGapPaths.length > 0) {
+			findings.push({ kind: "attribution-gap", paths: sorted(attributionGapPaths), reason: "baseline content not recoverable from hashes alone" });
+		}
 		if (!options.reportOnly && extraDeclaredPaths.length > 0) {
 			findings.push({ kind: "over-declared", paths: sorted(extraDeclaredPaths) });
 		}
@@ -1717,6 +1750,7 @@ export function compareExecutionTruth(
 		missingPaths: sorted(missingPaths),
 		declarationMismatch,
 		findings,
+		attributionGapPaths: sorted(attributionGapPaths),
 		...(attributionGap ? { attributionGap } : {}),
 	};
 }

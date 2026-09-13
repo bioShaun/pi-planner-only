@@ -1877,7 +1877,7 @@ export class PlannerOrchestrator {
 			this.store.recordExecutionFindings(
 				task.taskId,
 				findingOwner,
-				truth.findings,
+				truth.findings.filter((f) => f.kind !== "attribution-gap") as any,
 				this.store.now().toISOString(),
 				// Declaration findings are recomputed as a set: a repaired report
 				// clears the finding kinds it no longer trips.
@@ -2119,7 +2119,7 @@ export class PlannerOrchestrator {
 		// another cwd than the one its result arrived in is equally unreliable.
 		const unreliable = truth.declarationMismatch
 			|| truth.findings.some(
-				(finding) => finding.kind === "over-declared" || finding.kind === "missing",
+				(finding) => finding.kind === "over-declared" || finding.kind === "missing" || finding.kind === "attribution-gap",
 			);
 		// The comparison shows the Task's cumulative delivery: every
 		// attribution window up to and including this revision, deduped.
@@ -2135,9 +2135,13 @@ export class PlannerOrchestrator {
 			unrelatedPaths,
 			missingPaths: truth.missingPaths,
 			unexplained: !verifiable || !freshness.fresh || unreliable,
-			truthFindings: open.map((finding) => ({ kind: finding.kind, paths: finding.paths })),
+			truthFindings: [
+				...open.map((finding) => ({ kind: finding.kind, paths: finding.paths })),
+				...truth.findings.filter((f) => f.kind === "attribution-gap").map((f) => ({ kind: f.kind, paths: f.paths })),
+			],
 			missingMaterials: comparison.missingMaterials,
 			freshness,
+			attributionGapPaths: truth.attributionGapPaths,
 			boundaryRef: currentSample.finalGitRef,
 			...(successorAttribution ? { supersession: successorAttribution } : {}),
 		} as EvidenceComparison;
@@ -3440,6 +3444,16 @@ export class PlannerOrchestrator {
 				reason: `Task ${task.taskId} is already ${task.state}; verdicts are final. Start a new Task with a new TaskSpec for further work.`,
 			};
 		}
+		if (verdict === "pass" && task.state === "blocked" && ((task as any).blockedReasonCode === "attribution-gap" || task.stateReason?.includes("attribution gap") || task.stateReason?.includes("attribution-gap"))) {
+			const lastValidator = task.validatorReports.at(-1);
+			const oraclePassed = Boolean(lastValidator && (lastWorkerValidationPassed(lastValidator) || (lastValidator.status === "completed" && lastValidator.validation.some(v => v.status === "passed" && v.exitCode === 0))));
+			if (!oraclePassed) {
+				return {
+					kind: "attribution-gap-unlock-refused",
+					reason: `Task ${task.taskId} is blocked due to attribution-gap; unlock requires an oracle-passed validator execution and explicit override`,
+				};
+			}
+		}
 		if (task.state === "completed" || (task.state !== "report-invalid" && verdict !== "blocked" && task.reports.length === 0)) {
 			return {
 				kind: "no-report",
@@ -4089,6 +4103,79 @@ export class PlannerOrchestrator {
 			});
 		}
 
+		const isGapBlocked = task.state === "blocked" && ((task as any).blockedReasonCode === "attribution-gap" || task.stateReason?.includes("attribution gap") || task.stateReason?.includes("attribution-gap"));
+		let gapUnlockApproved = false;
+
+		if (isGapBlocked && verdict === "pass") {
+			// Root unlock of attribution-gap blocked task: evaluate conditions (i)-(vi)
+			const lastValidator = task.validatorReports.at(-1);
+			const oraclePassed = Boolean(lastValidator && (lastWorkerValidationPassed(lastValidator) || (lastValidator.status === "completed" && lastValidator.validation.some(v => v.status === "passed" && v.exitCode === 0))));
+
+			const currentReport = task.reports.at(-1);
+			let hasDrift = false;
+			let comp = task.lastComparison;
+			if (currentReport) {
+				const currentSample = await captureEvidence(
+					this.gitRunner,
+					captureEvidenceOptionsFor(task, currentReport.evidence.workerRunId, {
+						...(task.baseEvidence?.finalGitRef ? { baseGitRef: task.baseEvidence.finalGitRef } : {}),
+					}),
+				);
+				const freshness = compareFreshness(currentReport.evidence, currentSample);
+				hasDrift = !freshness.verifiable || !freshness.fresh || freshness.driftPaths.length > 0 || freshness.headChanged;
+			}
+
+			const anyComp = comp as any;
+			const otherFindings = (comp?.truthFindings ?? []).filter(f => ["undeclared", "scope", "over-declared", "missing"].includes(f.kind));
+			const hasOtherOpenFindings = otherFindings.length > 0
+				|| (anyComp?.undeclaredPaths && anyComp.undeclaredPaths.length > 0)
+				|| (anyComp?.outOfScopePaths && anyComp.outOfScopePaths.length > 0)
+				|| (anyComp?.extraDeclaredPaths && anyComp.extraDeclaredPaths.length > 0)
+				|| (anyComp?.missingPaths && anyComp.missingPaths.length > 0);
+
+			const overrideText = [summary, ...(options.findings ?? []).map((f: any) => `${f.category ?? ""} ${f.severity ?? ""} ${f.summary ?? ""} ${JSON.stringify(f)}`)].join(" ");
+			const gapPaths: string[] = anyComp?.attributionGapPaths ?? [];
+			const namesGapReason = /attribution[- ]gap|baseline incomplete|hash-failed|cap-exceeded/i.test(overrideText);
+			const namesSnapshot = /(?:rev|revision|report)\s*\d+/i.test(overrideText) && /(?:status|hash|[0-9a-f]{7,40})/i.test(overrideText);
+			const namesOracle = /(?:oracle|validator).*(?:pass|ok)|pass.*(?:oracle|validator)/i.test(overrideText);
+			const namesPaths = gapPaths.length === 0 || gapPaths.every((p: string) => {
+				const rel = p.startsWith(task.cwd) ? p.slice(task.cwd.length + 1) : p;
+				const base = p.split("/").pop() || p;
+				return overrideText.includes(p) || overrideText.includes(rel) || overrideText.includes(base);
+			});
+			const explicitOverride = (summary.trim().length > 0 || (options.findings && options.findings.length > 0))
+				&& namesGapReason && namesSnapshot && namesOracle && namesPaths;
+
+			if (!oraclePassed || hasOtherOpenFindings || hasDrift || !explicitOverride) {
+				const refusalReasons: string[] = [];
+				if (!oraclePassed) refusalReasons.push("missing passing validator/oracle execution for current revision");
+				if (hasOtherOpenFindings) refusalReasons.push("open blocking findings exist (undeclared/scope/over-declared/missing)");
+				if (hasDrift) refusalReasons.push("workspace snapshot has drifted");
+				if (!explicitOverride) refusalReasons.push("missing explicit override record (must document gap reason, snapshot revision+hash, oracle result, and affected paths)");
+				const refusalMsg = refusalReasons.join("; ");
+				this.recordRootVerdictRefusal(task, verdict, {
+					kind: "attribution-gap-unlock-refused",
+					reason: refusalMsg,
+				});
+				return {
+					task: this.store.require(task.taskId),
+					decision: {
+						action: "blocked",
+						nextState: "blocked",
+						round: task.reviewRound,
+						consumesRound: false,
+						failureClass: "evidence",
+						reasonCode: "attribution-gap",
+						reason: `Root unlock refused: ${refusalMsg}`,
+						guidance: [
+							"Root may unlock only via explicit override with oracle-backed attribution checks.",
+						],
+					},
+				};
+			}
+			gapUnlockApproved = true;
+		}
+
 		if (task.state === "blocked" || task.state === "failed") {
 			this.store.transition(task.taskId, "reviewing");
 		}
@@ -4147,6 +4234,11 @@ export class PlannerOrchestrator {
 			evidence = describeComparison(comparison);
 		}
 
+		if (gapUnlockApproved && comparison) {
+			comparison.truthFindings = comparison.truthFindings?.filter(f => f.kind !== "attribution-gap");
+			comparison.unexplained = false;
+		}
+
 		const review: ReviewResult = {
 			taskId: task.taskId,
 			verdict,
@@ -4157,7 +4249,8 @@ export class PlannerOrchestrator {
 			requestedVerdict: verdict,
 			...(report?.evidence?.workerRunId ? { executionId: report.evidence.workerRunId } : {}),
 			...(options.acknowledgeDrift ? { acknowledgeDrift: options.acknowledgeDrift } : {}),
-			...(options.source ? { source: options.source } : {}),
+			source: gapUnlockApproved ? "root" : (options.source ?? "root"),
+			...(gapUnlockApproved ? { attributionGapOverride: true } : {}),
 		};
 		this.store.recordReview(task.taskId, review);
 		const latest = this.store.require(task.taskId);
