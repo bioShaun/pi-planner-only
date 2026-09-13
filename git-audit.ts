@@ -34,6 +34,10 @@ export const GIT_READ_ARGV = {
 	topLevel: ["rev-parse", "--show-toplevel"],
 	head: ["rev-parse", "HEAD"],
 	status: ["status", "--porcelain=v2", "--branch"],
+	// D1 — the plain status collapses a wholly-untracked directory into one
+	// `?? dir/` entry that cannot be hashed; this variant drills down to the
+	// file level so evidence samples can match declared files inside it.
+	statusAll: ["status", "--porcelain=v2", "--branch", "--untracked-files=all"],
 	evidenceDiffStat: ["diff", "HEAD", "--stat"],
 	// Reviewer evidence packet only. git_audit's diff-* operations build their
 	// own argv because they also support the staged variant. The check rows

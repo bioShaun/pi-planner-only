@@ -403,6 +403,56 @@ function callsInclude(aCalls, cCalls, key) {
 	}
 }
 
+// D1. A file created inside a wholly-untracked directory is invisible to the
+// collapsed `?? dir/` porcelain entry and was judged evidence-stale
+// ("reported changes no longer present" / over-declared / missing). The
+// --untracked-files=all re-probe expands the directory so the declared file
+// is attributed and the stale verdict disappears.
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+	const featureDir = join(dir, ".scratch", "feature");
+	const absFile = join(featureDir, "c14.txt");
+	try {
+		mkdirSync(featureDir, { recursive: true });
+		writeFileSync(absFile, "c14\n");
+		const collapsed = "? .scratch/feature/";
+		const base = await captureEvidence(rf1Runner({
+			"rev-parse --git-dir": { stdout: ".git\n", code: 0 },
+			"rev-parse HEAD": { stdout: "abc1234\n", code: 0 },
+			"status --porcelain=v2 --branch": { stdout: collapsed, code: 0 },
+			"status --porcelain=v2 --branch --untracked-files=all": { stdout: "", code: 0 },
+			"diff HEAD --stat": { stdout: "", code: 0 },
+		}, []), { cwd: dir, taskId: "T-1", workerRunId: "call-1" });
+
+		const current = await captureEvidence(rf1Runner({
+			"rev-parse --git-dir": { stdout: ".git\n", code: 0 },
+			"rev-parse HEAD": { stdout: "def5678\n", code: 0 },
+			"status --porcelain=v2 --branch": { stdout: collapsed, code: 0 },
+			"status --porcelain=v2 --branch --untracked-files=all": { stdout: "? .scratch/feature/c14.txt\n", code: 0 },
+			"diff HEAD --stat": { stdout: "", code: 0 },
+			"hash-object -- .scratch/feature/c14.txt": { stdout: "deadbeef\n", code: 0 },
+		}, []), { cwd: dir, taskId: "T-1", workerRunId: "call-1", baseGitRef: "abc1234" });
+
+		assert.ok(current.changedPaths.includes(".scratch/feature/c14.txt"), "declared file must appear at file level");
+		assert.equal(current.changedPaths.some((path) => path.endsWith("/")), false, "collapsed dir must be expanded");
+		assert.equal(current.dirtyPathHashes?.[".scratch/feature/c14.txt"], "deadbeef");
+
+		const report = makeReport({
+			cwd: dir,
+			finalGitRef: "def5678",
+			changedPaths: [absFile],
+			dirtyPathHashes: { [absFile]: "deadbeef" },
+		});
+		const comparison = compareEvidence(base, current, report);
+		assert.equal(comparison.fresh, true);
+		assert.deepEqual(comparison.missingPaths, []);
+		assert.deepEqual(comparison.extraDeclaredPaths, []);
+		assert.equal(isEvidenceStale(base, current, report), false);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
 // A2. baseline-dirty path whose blob hash differs at C is attributed (T3)
 {
 	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));

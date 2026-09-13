@@ -341,6 +341,45 @@ function absolutizePaths(root: string, paths: readonly string[]): string[] {
 }
 
 /**
+ * D1 — `git status --porcelain=v2` collapses a wholly-untracked directory into
+ * a single `?? dir/` entry that cannot be hashed, so a file a worker created
+ * (and declared) inside such a directory never matched the dirty set and was
+ * judged evidence-stale ("reported changes no longer present" / over-declared /
+ * missing). When the plain probe reports a collapsed entry, re-probe with
+ * `--untracked-files=all` and adopt its file-level paths. The original
+ * porcelain — and with it `statusHash` and the snapshot digest — is left
+ * untouched; when the re-probe fails or answers empty the collapsed view is
+ * kept, so callers degrade to today's behavior instead of failing.
+ */
+async function fileLevelProbe(
+	run: GitRunner,
+	cwd: string,
+	probe: GitProbe,
+): Promise<{ changedPaths: string[]; untrackedPaths: string[] }> {
+	const keep = () => ({ changedPaths: probe.changedPaths, untrackedPaths: probe.untrackedPaths });
+	const collapsed =
+		probe.changedPaths.some((path) => path.endsWith("/")) ||
+		probe.untrackedPaths.some((path) => path.endsWith("/"));
+	if (!collapsed) return keep();
+	try {
+		const result = await run([...GIT_READ_ARGV.statusAll], cwd);
+		if (result.code !== 0) return keep();
+		// The re-probe must replace the collapsed view as a PAIR: expanding only
+		// changedPaths would leave the paired untracked set collapsed and break
+		// the ticket-20 "untracked && outside allow-list -> external" rule.
+		const changedPaths = parseChangedPaths(result.stdout);
+		const untrackedPaths = parseUntrackedPaths(result.stdout);
+		if (changedPaths.length === 0 && untrackedPaths.length === 0) return keep();
+		return {
+			changedPaths: changedPaths.length > 0 ? changedPaths : probe.changedPaths,
+			untrackedPaths: untrackedPaths.length > 0 ? untrackedPaths : probe.untrackedPaths,
+		};
+	} catch {
+		return keep();
+	}
+}
+
+/**
  * Snapshot the workspace. Non-Git directories degrade to a cwd-only ref rather
  * than failing the lifecycle (spec §19.4). When `additionalWorktreeRoots` is
  * set, each declared root is probed too and its dirty paths are merged in as
@@ -366,14 +405,17 @@ export async function captureEvidence(
 
 	// RF-1 — every sample (A and C) hashes its own dirty paths so compareEvidence
 	// can detect content changes on paths that were already dirty at A (T3).
-	const dirtyPathHashes = await hashDirtyPaths(run, cwd, probe.changedPaths);
+	// D1 — collapsed untracked directories are expanded to file level first so a
+	// declared file inside one is hashable and attributable.
+	const expanded = await fileLevelProbe(run, cwd, probe);
+	const dirtyPathHashes = await hashDirtyPaths(run, cwd, expanded.changedPaths);
 	// RF-1 — only the C sample carries a baseGitRef to diff against (T2).
 	const committedPaths = options.baseGitRef && probe.head
 		? await diffNamesBetweenRefs(run, cwd, options.baseGitRef, probe.head)
 		: undefined;
 
-	const mergedChanged = [...probe.changedPaths];
-	const mergedUntracked = [...probe.untrackedPaths];
+	const mergedChanged = [...expanded.changedPaths];
+	const mergedUntracked = [...expanded.untrackedPaths];
 	const mergedDirty: Record<string, string | null> = { ...(dirtyPathHashes ?? {}) };
 	let hasDirty = dirtyPathHashes !== undefined;
 	const mergedCommitted = [...(committedPaths ?? [])];
@@ -400,11 +442,12 @@ export async function captureEvidence(
 		}
 		if (extra.statusFailed) statusFailed = true;
 		if (extra.statusPorcelain !== null) porcelainParts.push(extra.statusPorcelain);
-		const absChanged = absolutizePaths(root, extra.changedPaths);
-		const absUntracked = absolutizePaths(root, extra.untrackedPaths);
+		const extraExpanded = await fileLevelProbe(run, root, extra);
+		const absChanged = absolutizePaths(root, extraExpanded.changedPaths);
+		const absUntracked = absolutizePaths(root, extraExpanded.untrackedPaths);
 		mergedChanged.push(...absChanged);
 		mergedUntracked.push(...absUntracked);
-		const extraHashes = await hashDirtyPaths(run, root, extra.changedPaths);
+		const extraHashes = await hashDirtyPaths(run, root, extraExpanded.changedPaths);
 		if (extraHashes) {
 			hasDirty = true;
 			for (const [rel, hash] of Object.entries(extraHashes)) {
