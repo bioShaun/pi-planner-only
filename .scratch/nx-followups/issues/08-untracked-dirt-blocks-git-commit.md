@@ -1,6 +1,6 @@
 # git_commit：truth 之外的未跟踪脏路径会阻断已跟踪文件的合规提交
 
-Status: ready-for-agent
+Status: verified
 
 ## 现象
 `git_commit`（D3 解析修复后，`git-audit.ts parseGitStatusPaths` 已正确解析 porcelain v2）仍会拒绝"仅修改了已跟踪 truth 文件"的合规提交，理由是工作区存在 **truth 之外的未跟踪路径**（例如离线测试工件目录）：
@@ -40,3 +40,5 @@ git_commit refused: dirty paths outside Task T-20260913-032 truth paths:
 2. **已暂存（index 内）的新文件不属于豁免**。仅限制本次 `git add` 只加 truth paths 不够：提交前必须检查 index 实际内容，确保提交不夹带既有的 truth 外暂存变化。
 
 配套（纵深防御）：git_commit 实现本身只 add truth paths。
+
+- 2026-09-13 08 fix host-verified on host (session 01a09b32, T-20260913-045: typecheck + evidence/git-audit/index suites exit 0); status flipped by Root. Implementation commit e5281f6.

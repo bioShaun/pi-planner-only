@@ -1,6 +1,6 @@
 # 目录前缀 scope 不归属目录内新建的未跟踪文件
 
-Status: ready-for-agent
+Status: verified
 
 ## 现象
 TaskSpec 的 `scope.allowedPaths` 写**目录前缀**（如 `.scratch/nx-followups/host-validation/`）时，worker 在该目录内**新建**的未跟踪文件（`d1-verify.txt`）在 round 1 被判 `evidence-stale (out-of-scope)` —— 文件已被探测到（D1 修复后不再"no longer present"），但归属判定没有把"目录前缀下的新文件"归入 truth/allow-list，导致一轮可修复的纠正；改为**精确文件路径**绑定后 round 2 直接 `evidence: fresh (attributed 1 path)` 并 accept。
@@ -31,3 +31,5 @@ TaskSpec 的 `scope.allowedPaths` 写**目录前缀**（如 `.scratch/nx-followu
 两步分离（授权 ≠ 归属）：
 - 目录内新建的未跟踪文件是**归属候选**（非 external）；
 - 但目录授权本身不使目录内所有既存文件成为本任务 truth——既存文件仍需任务基线 + 报告时的变化证据（与票 10 的快照机制衔接）。
+
+- 2026-09-13 09 fix host-verified on host (session 01a09b32, T-20260913-044: typecheck + nx09-scope + evidence suites exit 0); status flipped by Root. Implementation commit 4d69250 (duplicate 6f1487d folded into it).

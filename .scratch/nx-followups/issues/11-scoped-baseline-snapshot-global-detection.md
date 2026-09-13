@@ -1,6 +1,6 @@
 # 基线证据：快照范围收缩到任务 scope，保留全局变化检测
 
-Status: ready-for-agent
+Status: verified
 
 ## 背景
 `baseline hash skipped (3474 dirty paths)`：证据层对**整个 worktree** 做基线哈希，脏路径超阈值即跳过并退化为保守启发式——这是票 08/09/10 三类症状的共同触发器（2026-09-13 宿主 session 01a09aca 三次复现）。
@@ -16,3 +16,5 @@ Status: ready-for-agent
 
 ## 关联
 - 票 08/09/10 实施的共同前置；ticket-20 语义不变。
+
+- 2026-09-13 11 fix host-verified on host (session 01a09b32, T-20260913-042: typecheck + evidence suite exit 0); status flipped by Root. Implementation commit 67f888a.

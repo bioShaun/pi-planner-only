@@ -1,6 +1,6 @@
 # 证据归因：基线前已脏文件 / 既存未跟踪文件的就地修改被判 over-declared 且不可清除
 
-Status: ready-for-agent
+Status: verified
 
 ## 现象
 Task 的 changedFiles 声明两类合法变更时，报告摄取恒判 `over-reported / unreliable declaration`（evidence finding: over-declared），且**任何后续轮次都无法清除**——oracle 复核全部通过后 Root 的 pass 裁定被转为 `blocked (evidence-no-progress)`，提示 "this evidence state was already revalidated"：
@@ -44,3 +44,4 @@ Task 的 changedFiles 声明两类合法变更时，报告摄取恒判 `over-rep
    - "无声明外变化"按票 08 的分类解释：已确认的 scope 外未跟踪 external finding 不阻止解锁；
    - 不能仅凭"测试全绿"解锁（功能正确 ≠ 变更归属）；oracle 未覆盖归因缺口、scope 含混或存在其他阻断 → 维持 operator-only。
 
+- 2026-09-13 10 fix host-verified on host (session 01a09b32, T-20260913-046: oracle re-ran 6 validation commands exit 0; full npm test 35/35 at 20eb6d3 + dcf6ca9); status flipped by Root. Implementation commits 20eb6d3, follow-up dcf6ca9.
