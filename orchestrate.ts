@@ -3,8 +3,8 @@
  * Delegation launch, the Review loop, and Task memory writes.
  */
 
-import { existsSync } from "node:fs";
-import { isAbsolute, resolve, join } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import {
 	captureEvidence,
 	captureReviewEvidencePacket,
@@ -68,10 +68,12 @@ import {
 	readChildMeta,
 	readLargestRunOutput,
 	tempRootFromAsyncDir,
+	verifySessionFileBinding,
 } from "./notify.ts";
 import {
 	compactWorkerReport,
 	extractWorkerReport,
+	isToolCallId,
 	renderValidationResults,
 	renderWorkerReport,
 	validateWorkerReportIdentity,
@@ -88,7 +90,7 @@ import {
 } from "./review.ts";
 import type { ReviewDecision } from "./review.ts";
 import { LedgerSnapshotStore, SAFE_TASK_ID } from "./ledger-store.ts";
-import { OutputResolver, outputDigest, normalizeCompletionReceipt, RunRecordStore } from "./completion.ts";
+import { OutputResolver, outputDigest, normalizeCompletionReceipt, RunRecordStore, OUTPUT_NOT_READABLE } from "./completion.ts";
 import type { CompletionReceipt, OutputReference, OutputResolution, RunRecord, TerminalErrorClass, TerminalSource } from "./completion.ts";
 import type { LedgerCorrupt } from "./ledger-store.ts";
 import {
@@ -200,15 +202,41 @@ function rewriteReportToCanonical(
 	report: WorkerReport,
 	task: TaskRecord,
 	repairs: string[],
+	trustedWorkerRunId?: string,
 ): WorkerReport {
-	if (report.taskId === task.taskId && report.evidence.taskId === task.taskId) return report;
-	const from = report.taskId;
-	repairs.push(`taskId ${from} → ${task.taskId}`);
-	return {
-		...report,
-		taskId: task.taskId,
-		evidence: { ...report.evidence, taskId: task.taskId },
-	};
+	let next = report;
+	if (next.taskId !== task.taskId || next.evidence.taskId !== task.taskId) {
+		const from = next.taskId;
+		repairs.push(`taskId ${from} → ${task.taskId}`);
+		next = {
+			...next,
+			taskId: task.taskId,
+			evidence: { ...next.evidence, taskId: task.taskId },
+		};
+	}
+	if (task.cwd && next.evidence.cwd !== task.cwd) {
+		const fromCwd = next.evidence.cwd;
+		repairs.push(fromCwd ? `cwd ${fromCwd} → ${task.cwd}` : `evidence.cwd missing → ${task.cwd}`);
+		next = {
+			...next,
+			evidence: { ...next.evidence, cwd: task.cwd },
+		};
+	}
+	if (trustedWorkerRunId && next.evidence.workerRunId !== trustedWorkerRunId) {
+		repairs.push(next.evidence.workerRunId ? `evidence.workerRunId "${next.evidence.workerRunId}" → ${trustedWorkerRunId}` : `evidence.workerRunId missing → ${trustedWorkerRunId}`);
+		next = {
+			...next,
+			evidence: { ...next.evidence, workerRunId: trustedWorkerRunId },
+		};
+	} else if (!trustedWorkerRunId && isToolCallId(next.evidence.workerRunId)) {
+		repairs.push(`evidence.workerRunId "${next.evidence.workerRunId}" dropped (tool call id cannot impersonate host runId)`);
+		const { workerRunId, ...restEvidence } = next.evidence;
+		next = {
+			...next,
+			evidence: restEvidence as EvidenceRef,
+		};
+	}
+	return next;
 }
 
 function missingBaseEvidence(task: TaskRecord, workerRunId: string): EvidenceRef {
@@ -1450,7 +1478,8 @@ export class PlannerOrchestrator {
 			runId: id,
 			observedAt: new Date().toISOString(),
 			outputState: "present",
-			...(persisted?.agent || execution.kind ? { agent: persisted?.agent ?? KIND_DEFAULT_AGENTS[execution.kind] } : {}),
+			...(outputRef.agent ? { agent: outputRef.agent } : (persisted?.agent || execution.kind ? { agent: persisted?.agent ?? KIND_DEFAULT_AGENTS[execution.kind] } : {})),
+			...(outputRef.stepIndex !== undefined ? { stepIndex: outputRef.stepIndex } : {}),
 			outputRef,
 		});
 		if (resolution.kind !== "loaded") {
@@ -3643,6 +3672,7 @@ export class PlannerOrchestrator {
 	private delegationArtifactDirs(record: DelegationRecord): string[] {
 		const dirs = [...this.artifactDirs()];
 		if (record.asyncDir) {
+			dirs.push(record.asyncDir);
 			const root = tempRootFromAsyncDir(record.asyncDir);
 			if (root) dirs.push(join(root, "artifacts"));
 		}
@@ -3652,24 +3682,48 @@ export class PlannerOrchestrator {
 	private resolveDelegationOutput(record: DelegationRecord): OutputResolution {
 		if (record.outputRef) {
 			const task = this.store.get(record.taskId);
-			const trustedRoots = [
+			let trustedRoots = [
 				...this.delegationArtifactDirs(record),
 				...(task?.cwd ? [task.cwd] : []),
 			].filter(Boolean);
+			if (record.runId && record.outputRef.outputPath) {
+				const isSession = !record.outputRef.outputPath.endsWith("events.jsonl") && (record.outputRef.outputPath.endsWith(".jsonl") || record.outputRef.outputPath.includes("session"));
+				if (isSession) {
+					let meta: ReturnType<typeof readChildMeta> = undefined;
+					if (record.agent) {
+						meta = readChildMeta(this.delegationArtifactDirs(record), record.runId, record.agent);
+					}
+					const valid = verifySessionFileBinding(record.outputRef.outputPath, record.runId, {
+						asyncDir: record.asyncDir,
+						stepIndex: record.outputRef.stepIndex,
+						agent: record.outputRef.agent ?? record.agent,
+						meta,
+					});
+					if (!valid) {
+						return { kind: "unavailable", code: OUTPUT_NOT_READABLE, attempted: [record.outputRef.outputPath] };
+					}
+					try {
+						const realPath = realpathSync(record.outputRef.outputPath);
+						trustedRoots = [...trustedRoots, dirname(realPath)];
+					} catch {}
+				}
+			}
 			const receipt: CompletionReceipt = {
 				version: 1,
 				source: "reconcile",
 				...(record.runId ? { runId: record.runId } : {}),
-				...(record.agent ? { agent: record.agent } : {}),
+				agent: record.outputRef.agent ?? record.agent,
+				...(record.outputRef.stepIndex !== undefined ? { stepIndex: record.outputRef.stepIndex } : {}),
 				observedAt: new Date().toISOString(),
 				outputState: "present",
 				outputRef: record.outputRef,
 			};
 			return new OutputResolver({ trustedRoots }).resolve(receipt);
 		}
-		const text = record.runId ? readLargestRunOutput(record.asyncDir, record.runId) : undefined;
+		const binding = { ...(record.agent ? { agent: record.agent } : {}) };
+		const text = record.runId ? readLargestRunOutput(record.asyncDir, record.runId, binding) : undefined;
 		return text === undefined
-			? { kind: "pending", code: "OUTPUT_PENDING", attempted: [] }
+			? { kind: "pending", code: "OUTPUT_PENDING", attempted: record.asyncDir ? [record.asyncDir] : [] }
 			: { kind: "loaded", text, digest: outputDigest(text), source: "legacy-deterministic" };
 	}
 
@@ -3846,7 +3900,92 @@ export class PlannerOrchestrator {
 					const recovered = await this.reconcileDelegation(toolCallId, record);
 					if (recovered) return { status: "recovered", content: recovered.content };
 				}
-				const outputRef = record.outputRef ?? (record.asyncDir ? { outputPath: join(record.asyncDir, "output-0.log") } : undefined);
+				let outputRef: OutputReference | undefined = record.outputRef;
+				if (!outputRef && record.asyncDir) {
+					if (existsSync(join(record.asyncDir, "events.jsonl"))) {
+						let stepIndex: number | undefined;
+						if (existsSync(join(record.asyncDir, "status.json"))) {
+							try {
+								const status = JSON.parse(readFileSync(join(record.asyncDir, "status.json"), "utf8")) as {
+									steps?: Array<{ agent?: string }>;
+								};
+								const steps = Array.isArray(status?.steps) ? status.steps : [];
+								if (steps.length === 1 && (!record.agent || !steps[0]?.agent || steps[0].agent === record.agent)) {
+									stepIndex = 0;
+								} else if (steps.length > 1 && record.agent) {
+									const matched = steps
+										.map((s, idx) => ({ ...s, idx }))
+										.filter((s) => s.agent === record.agent);
+									if (matched.length === 1) stepIndex = matched[0]?.idx;
+								}
+							} catch {
+								// Malformed status.json
+							}
+						}
+						outputRef = {
+							outputPath: join(record.asyncDir, "events.jsonl"),
+							...(record.agent ? { agent: record.agent } : {}),
+							...(stepIndex !== undefined ? { stepIndex } : {}),
+						};
+					} else if (existsSync(join(record.asyncDir, "status.json"))) {
+						try {
+							const status = JSON.parse(readFileSync(join(record.asyncDir, "status.json"), "utf8")) as {
+								runId?: string;
+								steps?: Array<{ agent?: string; sessionFile?: string }>;
+								sessionFile?: string;
+								sessionDir?: string;
+							};
+							if (status.runId && status.runId === authorized) {
+								const steps = Array.isArray(status?.steps) ? status.steps : [];
+								let sessionFile: string | undefined;
+								let stepIndex: number | undefined;
+								if (steps.length === 1 && typeof steps[0]?.sessionFile === "string") {
+									if (!record.agent || !steps[0]?.agent || steps[0].agent === record.agent) {
+										sessionFile = steps[0].sessionFile;
+										stepIndex = 0;
+									}
+								} else if (steps.length > 1 && record.agent) {
+									const matched = steps
+										.map((s, idx) => ({ ...s, idx }))
+										.filter((s) => s.agent === record.agent);
+									if (matched.length === 1) {
+										sessionFile = matched[0]?.sessionFile;
+										stepIndex = matched[0]?.idx;
+									}
+								} else if (steps.length === 0 && typeof status?.sessionFile === "string") {
+									sessionFile = status.sessionFile;
+								}
+								if (sessionFile) {
+									const sessionPath = isAbsolute(sessionFile)
+										? sessionFile
+										: resolve(record.asyncDir, sessionFile);
+									if (verifySessionFileBinding(sessionPath, authorized, {
+										asyncDir: record.asyncDir,
+										statusRunId: status.runId,
+										sessionDir: status.sessionDir,
+										expectedSessionFile: sessionPath,
+										stepIndex,
+										agent: record.agent,
+										meta,
+									})) {
+										outputRef = {
+											outputPath: sessionPath,
+											...(record.agent ? { agent: record.agent } : {}),
+											...(stepIndex !== undefined ? { stepIndex } : {}),
+										};
+									}
+								}
+							}
+						} catch {
+							// Malformed status.json
+						}
+					}
+				}
+				if (outputRef) {
+					record.outputRef = outputRef;
+					const recovered = await this.reconcileDelegation(toolCallId, record);
+					if (recovered) return { status: "recovered", content: recovered.content };
+				}
 				// Spec L90 — output-pending is the exit-0 output-never-appeared
 				// class; an exit≠0 run is already consumed by reconcileDelegation
 				// as EXECUTION_FAILED, and an ingested report replays verbatim.
@@ -4662,6 +4801,27 @@ export class PlannerOrchestrator {
 		};
 	}
 
+	private trustedHostRunIdFor(
+		task: TaskRecord,
+		executionId: string,
+		delegation?: DelegationRecord,
+	): string | undefined {
+		const candidates = [
+			delegation?.runId,
+			this.store.executionById(task.taskId, executionId)?.runId,
+			this.runRecords?.get(this.runSessionId, this.runWorkspaceIdFor(task), executionId)?.runId,
+		];
+		for (const id of candidates) {
+			if (id && typeof id === "string" && !isToolCallId(id)) {
+				return id.trim();
+			}
+		}
+		if (executionId && !isToolCallId(executionId)) {
+			return executionId.trim();
+		}
+		return undefined;
+	}
+
 	private async ingestCompletionResult(
 		task: TaskRecord,
 		text: string,
@@ -4675,9 +4835,7 @@ export class PlannerOrchestrator {
 		},
 	): Promise<{ content: { type: "text"; text: string }[] }> {
 		const current = this.runRecords?.get(this.runSessionId, this.runWorkspaceIdFor(task), executionId);
-		const expectedWorkerRunId = options.delegation?.action === "execution"
-			? options.delegation.runId ?? executionId
-			: executionId;
+		const expectedWorkerRunId = this.trustedHostRunIdFor(task, executionId, options.delegation);
 		const canJournalReport = !options.forceReportError && Boolean(extractWorkerReport(text, {
 			expectedTaskId: task.taskId,
 			...(expectedWorkerRunId ? { expectedWorkerRunId } : {}),
@@ -4702,9 +4860,7 @@ export class PlannerOrchestrator {
 		toolCallId: string,
 		options: { forceReportError?: string; delegation?: DelegationRecord } = {},
 	): Promise<{ content: { type: "text"; text: string }[] }> {
-		const expectedWorkerRunId = options.delegation?.action === "execution"
-			? options.delegation.runId ?? toolCallId
-			: toolCallId;
+		const expectedWorkerRunId = this.trustedHostRunIdFor(task, toolCallId, options.delegation);
 		const extracted = options.forceReportError
 			? { error: options.forceReportError, repairs: [] as string[] }
 			: extractWorkerReport(text, {
@@ -4717,16 +4873,13 @@ export class PlannerOrchestrator {
 
 		if (extracted.report) {
 			// §P0-1 — a valid report for the wrong task is not a report.
-			const identityRunId = options.delegation?.action === "execution"
-				? options.delegation.runId ?? toolCallId
-				: toolCallId;
 			identityErrors = validateWorkerReportIdentity(extracted.report, {
 				taskId: task.taskId,
 				...(task.aliases.length > 0 ? { aliases: task.aliases } : {}),
-				...(identityRunId ? { workerRunId: identityRunId } : {}),
+				...(expectedWorkerRunId ? { workerRunId: expectedWorkerRunId } : {}),
 			});
 			if (identityErrors.length === 0) {
-				const canonical = rewriteReportToCanonical(extracted.report, task, extracted.repairs);
+				const canonical = rewriteReportToCanonical(extracted.report, task, extracted.repairs, expectedWorkerRunId);
 				const result = compactWorkerReport(canonical, MAX_WORKER_REPORT_CHARS);
 				report = result.report;
 				compacted = result.compacted;
@@ -4985,16 +5138,17 @@ export class PlannerOrchestrator {
 		toolCallId: string,
 		record: DelegationRecord,
 	): Promise<{ content: { type: "text"; text: string }[] }> {
+		const trustedWorkerRunId = this.trustedHostRunIdFor(task, toolCallId, record);
 		const extracted = extractWorkerReport(text, {
 			expectedTaskId: task.taskId,
-			...(toolCallId ? { expectedWorkerRunId: toolCallId } : {}),
+			...(trustedWorkerRunId ? { expectedWorkerRunId: trustedWorkerRunId } : {}),
 		});
 		let identityErrors: string[] = [];
 		if (extracted.report) {
 			identityErrors = validateWorkerReportIdentity(extracted.report, {
 				taskId: task.taskId,
 				...(task.aliases.length > 0 ? { aliases: task.aliases } : {}),
-				...(toolCallId ? { workerRunId: toolCallId } : {}),
+				...(trustedWorkerRunId ? { workerRunId: trustedWorkerRunId } : {}),
 			});
 		}
 		const rawInvalid = !extracted.report
@@ -5085,15 +5239,20 @@ export class PlannerOrchestrator {
 				this.completeExecutionSample(task, toolCallId, current);
 			}
 		}
-		const extracted = extractWorkerReport(text, { expectedTaskId: task.taskId });
+		const trustedValidatorRunId = toolCallId ? this.trustedHostRunIdFor(task, toolCallId, delegation) : undefined;
+		const extracted = extractWorkerReport(text, {
+			expectedTaskId: task.taskId,
+			...(trustedValidatorRunId ? { expectedWorkerRunId: trustedValidatorRunId } : {}),
+		});
 		let report: WorkerReport | undefined;
 		if (extracted.report) {
 			const identityErrors = validateWorkerReportIdentity(extracted.report, {
 				taskId: task.taskId,
 				...(task.aliases.length > 0 ? { aliases: task.aliases } : {}),
+				...(trustedValidatorRunId ? { workerRunId: trustedValidatorRunId } : {}),
 			});
 			if (identityErrors.length === 0) {
-				report = rewriteReportToCanonical(extracted.report, task, extracted.repairs);
+				report = rewriteReportToCanonical(extracted.report, task, extracted.repairs, trustedValidatorRunId);
 				this.store.recordValidatorReport(task.taskId, report);
 			}
 		}

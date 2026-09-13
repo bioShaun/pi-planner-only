@@ -13,7 +13,16 @@ const cwd = process.cwd();
   try {
     const asyncDir = join(root, "async-subagent-runs", "run-c04");
     mkdirSync(asyncDir, { recursive: true });
-    writeFileSync(join(asyncDir, "output-0.log"), "{\"taskId\":\"T-c04\",\"status\":\"completed\"}\n");
+    writeFileSync(
+      join(asyncDir, "events.jsonl"),
+      JSON.stringify({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "{\"taskId\":\"T-c04\",\"status\":\"completed\"}" }],
+        },
+      }) + "\n",
+    );
     assert.match(readLargestRunOutput(asyncDir, "run-c04") ?? "", /T-c04/);
   } finally {
     rmSync(root, { recursive: true, force: true });
