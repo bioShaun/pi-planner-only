@@ -8,6 +8,7 @@
 
 import { statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { matchesScopePath, unquoteGitPath } from "./evidence.ts";
 import {
 	DEFAULT_GIT_AUDIT_ENTRIES,
 	MAX_GIT_AUDIT_ENTRIES,
@@ -116,14 +117,66 @@ export function resolveGitCommit(request: GitCommitRequest): GitCommitPlan {
 	};
 }
 
-/** Parse porcelain v2 paths into repository-relative names for dirty-tree checks. */
-export function parseGitStatusPaths(stdout: string): string[] {
-	const paths: string[] = [];
+export interface CommitPathClassification { blocking: string[]; external: string[]; }
+
+/** Ticket 08 — narrow untracked exemption for the git_commit gate. */
+export function classifyCommitDirtyPaths(opts: {
+	trackedDirty: readonly string[];   // porcelain 1/2/u entries
+	untrackedDirty: readonly string[]; // porcelain ? entries (dirs keep trailing slash)
+	ignoredDirty: readonly string[];   // porcelain ! entries
+	truthPaths: readonly string[];
+	scopeAllowedPaths: readonly string[]; // may be empty
+}): CommitPathClassification {
+	const truth = new Set(opts.truthPaths.map((p) => p.replaceAll("\\", "/").replace(/^\.\//, "")));
+	const blocking: string[] = [];
+	const external: string[] = [];
+
+	for (const raw of opts.trackedDirty) {
+		const path = raw.replaceAll("\\", "/").replace(/^\.\//, "");
+		if (!truth.has(path)) {
+			blocking.push(path);
+		}
+	}
+
+	for (const raw of opts.untrackedDirty) {
+		const path = raw.replaceAll("\\", "/").replace(/^\.\//, "");
+		if (truth.has(path)) continue;
+		if (matchesScopePath(opts.scopeAllowedPaths, path)) {
+			blocking.push(path);
+		} else {
+			external.push(path);
+		}
+	}
+
+	for (const raw of opts.ignoredDirty) {
+		const path = raw.replaceAll("\\", "/").replace(/^\.\//, "");
+		if (!truth.has(path)) {
+			external.push(path);
+		}
+	}
+
+	return {
+		blocking: [...new Set(blocking)],
+		external: [...new Set(external)],
+	};
+}
+
+export function parseGitStatusKinds(stdout: string): { tracked: string[]; untracked: string[]; ignored: string[] } {
+	const tracked: string[] = [];
+	const untracked: string[] = [];
+	const ignored: string[] = [];
+
 	for (const rawLine of stdout.split(/\r?\n/)) {
 		const line = rawLine.replace(/\r$/, "");
 		if (!line || line.startsWith("#")) continue;
-		if (line.startsWith("? ") || line.startsWith("! ")) {
-			paths.push(line.slice(2));
+		if (line.startsWith("? ")) {
+			const path = unquoteGitPath(line.slice(2));
+			if (path) untracked.push(path);
+			continue;
+		}
+		if (line.startsWith("! ")) {
+			const path = unquoteGitPath(line.slice(2));
+			if (path) ignored.push(path);
 			continue;
 		}
 		const fields = line.split(" ");
@@ -134,11 +187,22 @@ export function parseGitStatusPaths(stdout: string): string[] {
 		// `u XY sub m1 m2 m3 mW h1 h2 h3 path`           -> path at 10
 		const pathIndex = kind === "1" ? 8 : kind === "2" ? 9 : kind === "u" ? 10 : -1;
 		if (pathIndex === -1 || fields.length <= pathIndex) continue;
-		// Renames/copies carry "new<TAB>old" (NUL-separated with -z); keep the new path.
-		const path = fields.slice(pathIndex).join(" ").split(/[\0\t]/)[0];
-		if (path) paths.push(path);
+		const rawPath = fields.slice(pathIndex).join(" ").split(/[\0\t]/)[0];
+		const path = unquoteGitPath(rawPath);
+		if (path) tracked.push(path);
 	}
-	return [...new Set(paths)];
+
+	return {
+		tracked: [...new Set(tracked)],
+		untracked: [...new Set(untracked)],
+		ignored: [...new Set(ignored)],
+	};
+}
+
+/** Parse porcelain v2 paths into repository-relative names for dirty-tree checks. */
+export function parseGitStatusPaths(stdout: string): string[] {
+	const kinds = parseGitStatusKinds(stdout);
+	return [...new Set([...kinds.tracked, ...kinds.untracked, ...kinds.ignored])];
 }
 
 export function dirtyPathsOutsideTruth(dirtyPaths: readonly string[], truthPaths: readonly string[]): string[] {
