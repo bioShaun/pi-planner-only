@@ -1665,7 +1665,7 @@ export function compareExecutionTruth(
 	const attributionGapPaths: string[] = [];
 	for (const path of inRepoDeclared) {
 		if (truthSet.has(path)) continue; // Branch 1 (normal)
-		const hasPriorBasis = priorTruth.has(path) || basePaths.has(path);
+		const hasPriorBasis = priorTruth.has(path) || (basePaths.has(path) && gapAffectedPaths.has(path));
 		if (isBaselineIncomplete(path) && hasPriorBasis) {
 			attributionGapPaths.push(path); // Branch 2 (attribution gap)
 		}
