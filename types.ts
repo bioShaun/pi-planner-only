@@ -71,6 +71,9 @@ export const MAX_GIT_AUDIT_OUTPUT_CHARS = 20000;
 /** RF-1 — cap on dirty paths hashed per Evidence sample for the T3 baseline comparison. */
 export const MAX_BASELINE_HASH_PATHS = 200;
 
+/** Ticket 09 — cap on directory entries expanded during scope pre-expansion. */
+export const MAX_SCOPE_EXPAND_ENTRIES = 2000;
+
 export type RecoveryBindingStatus = "bound" | "identity-conflict" | "unbound";
 
 /** Auditable result of reconciling one persisted run-state record. */

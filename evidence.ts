@@ -13,7 +13,7 @@ import { readdirSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { GIT_READ_ARGV, GIT_REF_PATTERN } from "./git-audit.ts";
 import type { GitRunner } from "./git-audit.ts";
-import { MAX_BASELINE_HASH_PATHS } from "./types.ts";
+import { MAX_BASELINE_HASH_PATHS, MAX_SCOPE_EXPAND_ENTRIES } from "./types.ts";
 import { stableStringify } from "./report.ts";
 import type {
 	BinaryChange,
@@ -108,6 +108,33 @@ export function unquoteGitPath(path: string): string {
 		index += 1;
 	}
 	return Buffer.from(bytes).toString("utf8");
+}
+
+/** Ticket 09 — canonical repo-relative form; null when the path escapes the workspace ('..', absolute, empty). */
+export function normalizeRepoRelativePath(path: string): string | null {
+	if (typeof path !== "string") return null;
+	let normalized = path.trim().replaceAll("\\", "/");
+	while (normalized.startsWith("./")) normalized = normalized.slice(2);
+	normalized = normalized.replace(/\/+/g, "/");
+	if (!normalized || normalized === "." || isAbsolute(normalized)) return null;
+	if (normalized.split("/").includes("..")) return null;
+	return normalized;
+}
+
+/**
+ * Ticket 09 — the ONE scope matcher. Entry 'foo' matches exactly 'foo' (a file).
+ * Entry 'foo/' (trailing slash) matches descendants inside foo only: 'foo/bar',
+ * 'foo/a/b.txt'; never 'foobar/x' (separator boundary), never 'foo.txt'.
+ */
+export function matchesScopePath(scopeEntries: readonly string[], path: string): boolean {
+	const candidate = normalizeRepoRelativePath(path);
+	if (candidate === null) return false;
+	for (const rawEntry of scopeEntries) {
+		const entry = normalizeRepoRelativePath(rawEntry);
+		if (entry === null) continue;
+		if (entry.endsWith("/") ? candidate.startsWith(entry) : candidate === entry) return true;
+	}
+	return false;
 }
 
 /**
@@ -265,13 +292,17 @@ function isHashableFilePath(path: string): boolean {
 /** Ticket 11: expand scope entries to existing files at sample time. */
 function expandScopeToExistingFiles(cwd: string, scopePaths: readonly string[]): Set<string> {
 	const expanded = new Set<string>();
+	let visited = 0;
 	for (const raw of scopePaths) {
+		if (visited >= MAX_SCOPE_EXPAND_ENTRIES) break;
 		const abs = isAbsolute(raw) ? resolve(raw) : resolve(cwd, raw);
 		try {
 			const st = statSync(abs);
 			if (st.isDirectory()) {
 				const entries = readdirSync(abs, { recursive: true, withFileTypes: true });
 				for (const entry of entries) {
+					visited += 1;
+					if (visited > MAX_SCOPE_EXPAND_ENTRIES) break;
 					if (entry.isFile()) {
 						const parent = (entry as any).parentPath ?? abs;
 						const full = resolve(parent, entry.name);
@@ -279,9 +310,11 @@ function expandScopeToExistingFiles(cwd: string, scopePaths: readonly string[]):
 					}
 				}
 			} else {
+				visited += 1;
 				expanded.add(relative(cwd, abs));
 			}
 		} catch {
+			visited += 1;
 			expanded.add(isAbsolute(raw) ? relative(cwd, abs) : raw);
 		}
 	}
@@ -296,13 +329,19 @@ function isPathInScope(
 ): boolean {
 	if (!scopePaths || scopePaths.length === 0) return true;
 	if (expandedScope && expandedScope.has(path)) return true;
-	const absPath = isAbsolute(path) ? resolve(path) : resolve(cwd, path);
-	for (const sp of scopePaths) {
-		const absSp = isAbsolute(sp) ? resolve(sp) : resolve(cwd, sp);
-		if (absPath === absSp) return true;
-		if (absPath.startsWith(absSp.endsWith("/") ? absSp : absSp + "/")) return true;
-	}
-	return false;
+	const prefix = cwd.endsWith("/") ? cwd : cwd + "/";
+	const normalizedEntries = scopePaths.map((sp) => {
+		if (isAbsolute(sp) && sp.startsWith(prefix)) {
+			return sp.slice(prefix.length);
+		}
+		if (isAbsolute(sp)) {
+			const rel = relative(cwd, sp);
+			return sp.endsWith("/") && !rel.endsWith("/") ? rel + "/" : rel;
+		}
+		return sp;
+	});
+	const relPath = isAbsolute(path) ? relative(cwd, path) : path;
+	return matchesScopePath(normalizedEntries, relPath);
 }
 
 interface HashPathsResult {
@@ -1481,13 +1520,20 @@ export function compareExecutionTruth(
 			if (!isAbsolute(path)) allowedPaths.add(normalizeEvidencePaths([path], root)[0]);
 		}
 	}
-	const hasAllowList = allowedPaths.size > 0;
+	const scopeEntries = options.scope?.allowedPaths ?? [];
+	const hasAllowList = scopeEntries.length > 0;
 
 	const inScopeEarly = (path: string): boolean => {
 		if (!hasAllowList) return true;
-		if (allowedPaths.has(path)) return true;
-		for (const a of allowedPaths) {
-			if (path.startsWith(a.endsWith("/") ? a : a + "/")) return true;
+		const rel = isAbsolute(path) ? relative(pathCwd, path) : path;
+		if (!rel.startsWith("..") && !isAbsolute(rel) && matchesScopePath(scopeEntries, rel)) {
+			return true;
+		}
+		for (const root of additionalRoots) {
+			const relRoot = isAbsolute(path) ? relative(root, path) : path;
+			if (!relRoot.startsWith("..") && !isAbsolute(relRoot) && matchesScopePath(scopeEntries, relRoot)) {
+				return true;
+			}
 		}
 		return false;
 	};
@@ -1557,7 +1603,7 @@ export function compareExecutionTruth(
 	for (const path of truthSet) {
 		const untracked = untrackedResult.has(path);
 		const declared = declaredPaths.has(path);
-		const inAllowList = hasAllowList && allowedPaths.has(path);
+		const inAllowList = hasAllowList && inScopeEarly(path);
 		// A read-only execution may overlap a writer in the same worktree. Its
 		// window is still useful evidence, but observed paths are never charged
 		// to the read-only report or turned into declaration findings.
@@ -1584,7 +1630,7 @@ export function compareExecutionTruth(
 	const outOfScopePaths = options.readOnly
 		? []
 		: hasAllowList
-			? truthPaths.filter((path) => !allowedPaths.has(path))
+			? truthPaths.filter((path) => !inScopeEarly(path))
 			: [];
 	const undeclaredPaths = options.readOnly ? [] : truthPaths.filter((path) => !declaredPaths.has(path));
 	const outOfRepoDeclared = [...declaredPaths].filter((path) =>
@@ -1730,15 +1776,18 @@ export function compareFreshness(
 	// Ticket 20 — untracked runtime noise outside the declared scope (session
 	// dirs, isolated agent dirs) is rewritten by every delegation. It neither
 	// invalidates a report nor becomes an attribution path.
-	const allowed = new Set(normalizeEvidencePaths(options.scope?.allowedPaths ?? [], pathCwd));
+	const allowedEntries = options.scope?.allowedPaths ?? [];
 	const untrackedReport = new Set(
 		untrackedPathsOf(cReport).map((path) => normalizeEvidencePaths([path], rootReport)[0]),
 	);
 	const untrackedNow = new Set(
 		untrackedPathsOf(cNow).map((path) => normalizeEvidencePaths([path], rootNow)[0]),
 	);
-	const isNoise = (path: string): boolean =>
-		(untrackedReport.has(path) || untrackedNow.has(path)) && !allowed.has(path);
+	const isNoise = (path: string): boolean => {
+		if (!untrackedReport.has(path) && !untrackedNow.has(path)) return false;
+		const rel = isAbsolute(path) ? relative(pathCwd, path) : path;
+		return !matchesScopePath(allowedEntries, rel);
+	};
 
 	const reportPaths = new Set(normalizeEvidencePaths(cReport.changedPaths ?? [], rootReport));
 	const nowPaths = new Set(normalizeEvidencePaths(cNow.changedPaths ?? [], rootNow));

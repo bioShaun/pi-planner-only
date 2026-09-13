@@ -40,7 +40,7 @@ import type {
 	TaskValidation,
 	WorkerReport,
 } from "./types.ts";
-import type { EvidenceComparison } from "./evidence.ts";
+import { normalizeRepoRelativePath, type EvidenceComparison } from "./evidence.ts";
 import type { WorkspaceSnapshotBinding } from "./workspace-snapshot.ts";
 import { jsonCandidates } from "./report.ts";
 import { emptyTaskUsage } from "./usage.ts";
@@ -512,8 +512,34 @@ export function validateTaskSpec(value: unknown): string[] {
 	if (!isNonEmptyString(value.role) || !TASK_ROLES.includes(value.role as TaskRole)) {
 		errors.push(`role must be one of ${TASK_ROLES.join(", ")}`);
 	}
-	if (value.scope !== undefined && !isPlainObject(value.scope)) {
-		errors.push("scope must be an object when present");
+	if (value.scope !== undefined) {
+		if (!isPlainObject(value.scope)) {
+			errors.push("scope must be an object when present");
+		} else {
+			const scope = value.scope as Record<string, unknown>;
+			if (scope.allowedPaths !== undefined) {
+				if (!isStringArray(scope.allowedPaths)) {
+					errors.push("scope.allowedPaths must be an array of strings when present");
+				} else {
+					for (const p of scope.allowedPaths) {
+						if (normalizeRepoRelativePath(p) === null) {
+							errors.push(`scope path escapes the workspace: ${p}`);
+						}
+					}
+				}
+			}
+			if (scope.forbiddenPaths !== undefined) {
+				if (!isStringArray(scope.forbiddenPaths)) {
+					errors.push("scope.forbiddenPaths must be an array of strings when present");
+				} else {
+					for (const p of scope.forbiddenPaths) {
+						if (normalizeRepoRelativePath(p) === null) {
+							errors.push(`scope path escapes the workspace: ${p}`);
+						}
+					}
+				}
+			}
+		}
 	}
 	if (value.constraints !== undefined && !isStringArray(value.constraints)) {
 		errors.push("constraints must be an array of strings");
