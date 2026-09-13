@@ -10,7 +10,12 @@ if (plan.ok) {
 	assert.match(plan.message, /T-20260912-027/);
 }
 assert.equal(resolveGitCommit({ taskId: "T-pending", cwd: "/repo", truthPaths: ["src/index.ts"] }).ok, false);
-assert.deepEqual(parseGitStatusPaths("1 .M N... 100644 100644 100644 abc abc\tsrc/index.ts\n? notes.txt\n"), ["src/index.ts", "notes.txt"]);
+// Real `git status --porcelain=v2` separates the path with a SPACE (a tab only
+// splits the two paths of a rename). The previous fixture used a tab, which the
+// buggy parser happened to accept; keep the fixture faithful to git output.
+assert.deepEqual(parseGitStatusPaths("1 .M N... 100644 100644 100644 abc abc src/index.ts\n? notes.txt\n"), ["src/index.ts", "notes.txt"]);
+// A modified tracked truth path must not be reported as an external dirty path.
+assert.deepEqual(dirtyPathsOutsideTruth(parseGitStatusPaths("1 .M N... 100644 100644 100644 abc abc src/index.ts\n"), ["src/index.ts"]), []);
 assert.deepEqual(dirtyPathsOutsideTruth(["src/index.ts", "notes.txt"], ["src/index.ts"]), ["notes.txt"]);
 
 assert.match(rootReadLimitNotice({ startLine: 1, endLine: 201 }) ?? "", /200/);
