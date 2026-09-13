@@ -385,3 +385,12 @@ cursor 自评「最容易被自己绕过的是第 1 条 CAP_USD，因为绕过�
 按 cursor 的提议归入 G3 第 (2) 项「记账性勾选」，由 planner 自己按 round-3 证据复核后勾，不另派轮次。
 **复核时注意 G1 的两个诚实缺口**：没有真实 `/planner-only status` 输出、
 没测「运行途中越线」——凡结论依赖这两点的条款**不许勾**。
+
+---
+
+# I. 2026-09-13 backlog addenda
+
+## I1. 票 44 — 意图 vs 宿主 tool plan（不阻塞）
+
+见 `.scratch/planner-only-cost-control/issues/44-intent-vs-host-tool-plan.md`。
+产品路径**禁止**复制 `resolvePiLaunchToolPlan`；角色意图靠 builtin remap + 预算地板；tools/extensions/session launch 留给 pi-subagents。可选演进：显式 capability 声明、削弱 `ROLE_TOOL_PROFILES` 镜像。
