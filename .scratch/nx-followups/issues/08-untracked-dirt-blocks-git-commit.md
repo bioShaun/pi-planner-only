@@ -1,6 +1,6 @@
 # git_commit：truth 之外的未跟踪脏路径会阻断已跟踪文件的合规提交
 
-Status: needs-triage
+Status: ready-for-agent
 
 ## 现象
 `git_commit`（D3 解析修复后，`git-audit.ts parseGitStatusPaths` 已正确解析 porcelain v2）仍会拒绝"仅修改了已跟踪 truth 文件"的合规提交，理由是工作区存在 **truth 之外的未跟踪路径**（例如离线测试工件目录）：
@@ -28,3 +28,15 @@ git_commit refused: dirty paths outside Task T-20260913-032 truth paths:
 
 ## 关联
 - 07 号票（D3 解析缺陷）已修复并验证；本票是**另一道独立闸门**的策略问题。
+
+## Triage 结论（2026-09-13，operator 裁定）
+
+采用方案 2（收窄版豁免）：
+- truth 外、scope 外、**未暂存**的未跟踪路径 → external finding：不阻断、不归属、不计费（ticket-20 语义不变）。
+- truth 外的已跟踪修改 → 维持硬拒（可能被 `git commit -a` 扫入，有真实安全收益）。
+
+边界条件：
+1. **scope 内但未被 truth 包含的新文件不适用 external 豁免**——必须进入任务归因 / 声明一致性检查，否则与票 09 的目录前缀归属冲突。
+2. **已暂存（index 内）的新文件不属于豁免**。仅限制本次 `git add` 只加 truth paths 不够：提交前必须检查 index 实际内容，确保提交不夹带既有的 truth 外暂存变化。
+
+配套（纵深防御）：git_commit 实现本身只 add truth paths。

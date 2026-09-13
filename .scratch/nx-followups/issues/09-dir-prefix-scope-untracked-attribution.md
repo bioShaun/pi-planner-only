@@ -1,6 +1,6 @@
 # 目录前缀 scope 不归属目录内新建的未跟踪文件
 
-Status: needs-triage
+Status: ready-for-agent
 
 ## 现象
 TaskSpec 的 `scope.allowedPaths` 写**目录前缀**（如 `.scratch/nx-followups/host-validation/`）时，worker 在该目录内**新建**的未跟踪文件（`d1-verify.txt`）在 round 1 被判 `evidence-stale (out-of-scope)` —— 文件已被探测到（D1 修复后不再"no longer present"），但归属判定没有把"目录前缀下的新文件"归入 truth/allow-list，导致一轮可修复的纠正；改为**精确文件路径**绑定后 round 2 直接 `evidence: fresh (attributed 1 path)` 并 accept。
@@ -19,3 +19,15 @@ TaskSpec 的 `scope.allowedPaths` 写**目录前缀**（如 `.scratch/nx-followu
 
 ## 关联
 - 06 号票（D1 折叠目录解析/哈希）已修复并验证；本票是其验证过程中发现的**独立 scope 语义**问题。
+
+## Triage 结论（2026-09-13，operator 裁定）
+
+支持目录前缀语义，统一匹配契约：
+- `foo`：精确匹配该文件。
+- `foo/`：匹配目录内所有后代路径；不匹配 `foobar/`（前缀边界必须是路径分隔符）。
+- 统一使用仓库相对路径规范化；拒绝越出仓库根的路径。
+- scope 校验、证据归因、报告检查使用**同一套**匹配规则。
+
+两步分离（授权 ≠ 归属）：
+- 目录内新建的未跟踪文件是**归属候选**（非 external）；
+- 但目录授权本身不使目录内所有既存文件成为本任务 truth——既存文件仍需任务基线 + 报告时的变化证据（与票 10 的快照机制衔接）。

@@ -1,6 +1,6 @@
 # 证据归因：基线前已脏文件 / 既存未跟踪文件的就地修改被判 over-declared 且不可清除
 
-Status: needs-triage
+Status: ready-for-agent
 
 ## 现象
 Task 的 changedFiles 声明两类合法变更时，报告摄取恒判 `over-reported / unreliable declaration`（evidence finding: over-declared），且**任何后续轮次都无法清除**——oracle 复核全部通过后 Root 的 pass 裁定被转为 `blocked (evidence-no-progress)`，提示 "this evidence state was already revalidated"：
@@ -25,3 +25,22 @@ Task 的 changedFiles 声明两类合法变更时，报告摄取恒判 `over-rep
 - 08 号票（未跟踪脏路径阻断 git_commit）是提交侧闸门；本票是**报告摄取侧**的归因缺口；
 - 09 号票（目录前缀 scope 语义）与第 2 点相邻但不同：09 是"目录内新建"，本票是"既存文件就地改"。
 - 触发任务链：T-20260913-031/032/033/034/035（2026-09-13）。
+
+## Triage 结论（2026-09-13，operator 裁定）
+
+三项均采纳，各加限定：
+
+1. **台账感知降级**：台账只证明历史归属，不证明本次变更。三分支：
+   - 有本任务增量证据 → 正常归属；
+   - 缺完整基线但有前序台账依据 → 归因缺口（降级为可复核 finding）；
+   - 证据完整且无本任务变化，或路径越界 → 维持声明不一致 / scope finding。
+2. **任务启动快照**：比较"任务启动时工作区状态 → 报告时工作区状态"（而非仅 HEAD）；快照同时覆盖 scope 内**既存脏的已跟踪文件**；哈希证明内容是否变化，需展示/核验具体增量时须保存基线内容或其他可恢复快照；mtime 不作内容归因的权威依据。
+3. **Root 解 blocked 严格限定为已识别的 attribution-gap**，全部条件：
+   - blocked 原因仅为可复核的归因缺口；
+   - bounded oracle 针对当前证据快照通过，且覆盖所缺失的归因检查；
+   - 当前 scope、声明与工作区变化一致，无其他阻断 finding；
+   - 裁定前验证快照未漂移；
+   - Root 显式 override，并记录原因、证据快照、oracle 结果和受影响路径；
+   - "无声明外变化"按票 08 的分类解释：已确认的 scope 外未跟踪 external finding 不阻止解锁；
+   - 不能仅凭"测试全绿"解锁（功能正确 ≠ 变更归属）；oracle 未覆盖归因缺口、scope 含混或存在其他阻断 → 维持 operator-only。
+
