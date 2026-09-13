@@ -1,6 +1,6 @@
 # git_commit 误拒已跟踪文件的修改：porcelain v2 路径解析错位
 
-Status: ready-for-agent
+Status: verified
 
 ## 现象
 `git_commit` 在"**仅 truth 路径本身脏、且该路径是已跟踪文件的修改**"时被误拒：
@@ -39,3 +39,4 @@ porcelain v2 的非 rename `1 ` 行中，路径与前面字段之间是**空格*
 
 ## Comments
 - 来源：宿主验证扫描 C13 隔离回放，场景 S5（2026-09-13）。规范：`docs/runtime-session-013147-2026-09-12-followup-split.md`。
+- 2026-09-13 D3 fix verified on host @ 2026-09-13T12:53:34Z
