@@ -115,22 +115,24 @@ export function resolveGitCommit(request: GitCommitRequest): GitCommitPlan {
 /** Parse porcelain v2 paths into repository-relative names for dirty-tree checks. */
 export function parseGitStatusPaths(stdout: string): string[] {
 	const paths: string[] = [];
-	for (const line of stdout.split(/\r?\n/)) {
-		if (!line) continue;
-		if (line.startsWith("? ")) {
+	for (const rawLine of stdout.split(/\r?\n/)) {
+		const line = rawLine.replace(/\r$/, "");
+		if (!line || line.startsWith("#")) continue;
+		if (line.startsWith("? ") || line.startsWith("! ")) {
 			paths.push(line.slice(2));
 			continue;
 		}
-		if (line.startsWith("1 ") || line.startsWith("u ")) {
-			const path = line.slice(line.indexOf("\t") + 1);
-			if (path && !path.includes("\t")) paths.push(path);
-			continue;
-		}
-		if (line.startsWith("2 ")) {
-			const fields = line.split("\t");
-			if (fields[1]) paths.push(fields[1]);
-			if (fields[2]) paths.push(fields[2]);
-		}
+		const fields = line.split(" ");
+		const kind = fields[0];
+		// porcelain v2 layout (the path is the final field and may contain spaces):
+		// `1 XY sub mH mI mW hH hI path`                 -> path at 8
+		// `2 XY sub mH mI mW hH hI Xscore path<TAB>orig` -> path at 9
+		// `u XY sub m1 m2 m3 mW h1 h2 h3 path`           -> path at 10
+		const pathIndex = kind === "1" ? 8 : kind === "2" ? 9 : kind === "u" ? 10 : -1;
+		if (pathIndex === -1 || fields.length <= pathIndex) continue;
+		// Renames/copies carry "new<TAB>old" (NUL-separated with -z); keep the new path.
+		const path = fields.slice(pathIndex).join(" ").split(/[\0\t]/)[0];
+		if (path) paths.push(path);
 	}
 	return [...new Set(paths)];
 }

@@ -5,7 +5,9 @@ import {
 	FORBIDDEN_GIT_OPERATIONS,
 	GIT_AUDIT_OPERATIONS,
 	GIT_READ_ARGV,
+	dirtyPathsOutsideTruth,
 	isSafeAuditCommand,
+	parseGitStatusPaths,
 	resolveGitAudit,
 	runGitAudit,
 	validateGitAuditCwd,
@@ -289,5 +291,48 @@ assert.match(truncated, /500 chars total/);
 assert.equal(isSafeAuditCommand("pwd"), true);
 assert.equal(isSafeAuditCommand("git status --short --branch"), true);
 assert.equal(isSafeAuditCommand("git diff --output=/tmp/leak"), false);
+
+// --------------------------------------------------------------------------
+// porcelain v2 path parsing (D3 regression)
+//
+// The git_commit handler inspects `git status --porcelain=v2 --branch`. In v2
+// the path is the final SPACE-separated field (a tab only separates the two
+// paths of a rename), so a tab-based split returned the whole raw line. That
+// made `dirtyPathsOutsideTruth` treat a modified tracked file as an external
+// dirty path, refusing every commit of a tracked change.
+// --------------------------------------------------------------------------
+
+const porcelainV2 = [
+	"# branch.oid abc1234",
+	"# branch.head master",
+	"1 .M N... 100644 100644 100644 47bf9e5f 47bf9e5f declared.txt",
+	"1 .M N... 100644 100644 100644 1111111 2222222 dir/with spaces.ts",
+	"2 R. N... 100644 100644 100644 3333333 4444444 R100 src/renamed.ts\tsrc/old.ts",
+	"u UU N... 100644 100644 100644 100644 aaaa bbbb cccc src/conflict.ts",
+	"? src/new.ts",
+	"? docs/with spaces.md",
+].join("\n");
+
+assert.deepEqual(parseGitStatusPaths(porcelainV2), [
+	"declared.txt",
+	"dir/with spaces.ts",
+	"src/renamed.ts",
+	"src/conflict.ts",
+	"src/new.ts",
+	"docs/with spaces.md",
+]);
+// The regression: a modified tracked file must parse to its path, never the raw line.
+assert.equal(parseGitStatusPaths("1 .M N... 100644 100644 100644 47bf9e5f 47bf9e5f declared.txt")[0], "declared.txt");
+assert.deepEqual(parseGitStatusPaths(""), []);
+assert.deepEqual(parseGitStatusPaths("# branch.oid abc\n# branch.head main"), []);
+
+// truth-only dirty tracked path -> nothing outside truth (the D3 blocking case)
+assert.deepEqual(dirtyPathsOutsideTruth(parseGitStatusPaths(
+	"1 .M N... 100644 100644 100644 47bf9e5f 47bf9e5f declared.txt",
+), ["declared.txt"]), []);
+// an untracked external path is still reported
+assert.deepEqual(dirtyPathsOutsideTruth(parseGitStatusPaths(
+	"1 .M N... 100644 100644 100644 47bf9e5f 47bf9e5f declared.txt\n? outside.txt",
+), ["declared.txt"]), ["outside.txt"]);
 
 console.log("planner-only git_audit: PASS");
