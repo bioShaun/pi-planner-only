@@ -1565,6 +1565,44 @@ function truncatedPreview() {
 	}
 }
 
+// Ticket 48 (host path): index.ts runs prepareRoleDelegation *before*
+// beginDelegation, and prepare rewrites a valid embedded spec into an oracle
+// TaskPacket. The gate must read the packet's nested spec — reading the raw
+// candidate (the packet object) never finds a `validation` key, which is why
+// the host admitted a disagreeing definition while the direct-call tests above
+// passed. Stored shape is the real T-20260912-016 one: `{required:false}`.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	setCleanTree();
+	const taskId = "T-20260914-934";
+	orch.store.create({ ...specFor(taskId, "worker", BASE), validation: { required: false } });
+	// The operator's minimal embedded spec, verbatim in shape.
+	const submitted = { taskId, objective: `Validate ${taskId}`, cwd: BASE, role: "validator", validation: { required: true, commands: ["npm test"] } };
+	const input = { agent: "oracle", task: `Validate ${taskId}\n\nEmbedded TaskSpec:\n\`\`\`json\n${JSON.stringify(submitted, null, 2)}\n\`\`\`\n\nBounded validation only, no edits.` };
+	await orch.prepareRoleDelegation(input, BASE);
+	assert.match(String(input.task), /^\[PLANNER-ONLY ORACLE\]/, "prepare packetised the prompt (host shape)");
+	assert.equal(/```json/.test(String(input.task)), false, "the raw fenced spec is gone; only the packet's nested spec remains");
+	const outcome = await orch.beginDelegation({ toolCallId: "call-48-host-packet", input }, BASE);
+	assert.equal(outcome.block?.code, "VALIDATOR_SPEC_CONFLICT", "a packetised disagreeing definition is still refused");
+	assert.match(outcome.block?.reason ?? "", /validation\.required differs/);
+	assert.match(outcome.block?.reason ?? "", new RegExp(taskId));
+	assert.equal(orch.pendingDelegationCount(), 0, "a spec conflict starts no run");
+}
+
+// Ticket 48 (host path): a packetised *agreeing* definition is not a conflict.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	setCleanTree();
+	const taskId = "T-20260914-935";
+	orch.store.create({ ...specFor(taskId, "worker", BASE), validation: { required: true, commands: ["npm test"] } });
+	const submitted = { ...specFor(taskId, "validator", BASE), validation: { required: true, commands: ["npm test"] } };
+	const input = { agent: "oracle", task: `Validate ${taskId}\n\`\`\`json\n${JSON.stringify(submitted)}\n\`\`\`` };
+	await orch.prepareRoleDelegation(input, BASE);
+	assert.match(String(input.task), /^\[PLANNER-ONLY ORACLE\]/, "prepare packetised the prompt (host shape)");
+	const outcome = await orch.beginDelegation({ toolCallId: "call-48-host-packet-ok", input }, BASE);
+	assert.notEqual(outcome.block?.code, "VALIDATOR_SPEC_CONFLICT", "an agreeing packetised definition passes the gate");
+}
+
 // Ticket 49: the verdict target resolves through the ledger-aware lookup, so a
 // Task beyond the session restore cap can still be addressed by id — and a miss
 // that is not simply "unknown" says why.

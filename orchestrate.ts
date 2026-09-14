@@ -2467,9 +2467,19 @@ export class PlannerOrchestrator {
 	// and would make ticket 45's stored-task refusal bypassable by that same move.
 	// Only an *explicitly submitted* validation counts: the extraction path always
 	// materialises `{required:false}`, so a spec that simply omits the field must
-	// keep today's behaviour.
-	const submittedValidationExplicit = specDetails.candidate !== undefined
-		&& "validation" in specDetails.candidate;
+	// keep today's behaviour. The key is looked up on the submitted *spec*, not on
+	// the raw candidate: on the host, prepareRoleDelegation has already rewritten
+	// the prompt into a TaskPacket (`{version, spec, instructions, …}`), whose top
+	// level never has a `validation` key — reading the candidate there skipped
+	// this check for every packetised delegation (the ticket 48 host-run miss).
+	const submittedValidationExplicit = specDetails.submitted !== undefined
+		&& "validation" in specDetails.submitted;
+	// Ticket 48 diagnosis (TEMPORARY) — record the gate inputs even when the
+	// check is not entered, so a host miss explains itself.
+	if (diag48State) {
+		diag48State.detail = `gate48: targetRole=${target?.role ?? "-"} explicit=${submittedValidationExplicit} candidateKeys=${specDetails.candidate ? Object.keys(specDetails.candidate).join("|") : "-"} submittedKeys=${specDetails.submitted ? Object.keys(specDetails.submitted).join("|") : "-"} targetSpec=${Boolean(target?.spec)} targetTask=${target?.task?.taskId ?? "-"} storedValidation=${JSON.stringify(target?.task?.spec?.validation) ?? "undefined"}`;
+		diag48(event.toolCallId, diag48State.detail);
+	}
 	if (target?.role === "validator" && submittedValidationExplicit && target.spec && target.task?.spec) {
 		const conflict = describeValidationConflict(target.spec.validation, target.task.spec.validation);
 		// Ticket 48 diagnosis (TEMPORARY) — record the four inputs and the decision.

@@ -1131,6 +1131,14 @@ export interface ExtractedTaskSpecResult {
 	titleAliasUsed: boolean;
 	errors: string[];
 	candidate?: Record<string, unknown>;
+	/**
+	 * The submitted spec object itself: the nested `spec` when the candidate is
+	 * a TaskPacket (the host's prepare stage wraps every valid embedded spec in
+	 * one before admission), otherwise the candidate. Callers that ask "did the
+	 * submitter write field X" must read this, not `candidate` — a packet never
+	 * carries TaskSpec fields at its top level (ticket 48 host run).
+	 */
+	submitted?: Record<string, unknown>;
 	/** Exact source slice used for the embedded JSON candidate, when available. */
 	candidateText?: string;
 }
@@ -1271,6 +1279,7 @@ export function extractTaskSpecDetails(
 				titleAliasUsed,
 				errors: [],
 				candidate: parsed,
+				submitted: specValue as Record<string, unknown>,
 				candidateText: candidate,
 			};
 		}
@@ -1281,6 +1290,7 @@ export function extractTaskSpecDetails(
 				titleAliasUsed: false,
 				errors,
 				candidate: parsed,
+				submitted: specValue as Record<string, unknown>,
 				candidateText: candidate,
 			};
 		}
