@@ -34,8 +34,15 @@ function readRun5Output(prefix) {
 	return readFileSync(join(RUN5_ARTIFACTS, name), "utf8");
 }
 
-assert.equal(hasMissingRequiredValidationCommands(createTaskSpec({ objective: "missing commands", cwd: process.cwd(), validation: { required: true } })), true);
-assert.equal(hasMissingRequiredValidationCommands(createTaskSpec({ objective: "empty commands", cwd: process.cwd(), validation: { required: true, commands: [] } })), true);
+// Ticket 45 — the guard keeps refusing these definitions (a ledger written
+// before the schema tightened can still hold them), so the assertion value is
+// unchanged. Only the construction changed: `createTaskSpec` now refuses to
+// build the shape, so it is injected raw.
+assert.equal(hasMissingRequiredValidationCommands({ validation: { required: true } }), true);
+assert.equal(hasMissingRequiredValidationCommands({ validation: { required: true, commands: [] } }), true);
+// Blanks are not commands: `uniqueNonEmpty` trims them away, so the guard must
+// refuse this shape too.
+assert.equal(hasMissingRequiredValidationCommands({ validation: { required: true, commands: ["  "] } }), true);
 assert.equal(hasMissingRequiredValidationCommands(createTaskSpec({ objective: "defined commands", cwd: process.cwd(), validation: { required: true, commands: ["npm test"] } })), false);
 assert.deepEqual(
 	missingTaskSpecValidationCommands(

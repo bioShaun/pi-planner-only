@@ -253,6 +253,41 @@ function missingBaseEvidence(task: TaskRecord, workerRunId: string): EvidenceRef
 }
 
 /**
+ * Ticket 45 — the validator guard used to answer with a bare string, so the
+ * operator could not tell which field was missing and received no repair
+ * template. The refusal now names `commands`, names the stored Task when the
+ * incomplete definition came from the ledger rather than from the submitted
+ * prompt, and carries the same repair pack as the invalid-TaskSpec refusal.
+ *
+ * The offending definition is deliberately passed as `submitted`: with no
+ * submission the repair renderer would fall back to `required: false` and
+ * silently relax a mandatory validation.
+ */
+function validatorValidationRefusal(options: {
+	input: unknown;
+	cwd: string;
+	submitted: Record<string, unknown> | undefined;
+	storedTaskId: string | undefined;
+}): { reason: string; code: string } {
+	const nextStep = options.storedTaskId
+		? `Task ${options.storedTaskId} is stored with validation.required = true but no usable validation.commands, so no Validator delegation for it can start. The stored TaskSpec is not editable: create a new Task that carries a complete validation definition.`
+		: "Add validation.commands as a non-empty array of strings, or set validation.required to false when no validation is mandatory.";
+	const reason = appendTaskSpecRepair(
+		[
+			`${MISSING_VALIDATION_DEFINITION_REASON} validation.required is true, but validation.commands is missing or empty.`,
+			nextStep,
+		].join("\n"),
+		buildTaskSpecRepair({
+			toolName: "subagent",
+			input: options.input,
+			cwd: options.cwd,
+			submitted: options.submitted,
+		}),
+	);
+	return { reason, code: "VALIDATION_DEFINITION_INCOMPLETE" };
+}
+
+/**
  * FR-01 — bind a recorded report to the Root sample taken when it was
  * validated. These fields are Root-owned: at the acceptance boundary
  * compareEvidence re-samples and detects content drift the worker could never
@@ -2672,8 +2707,22 @@ export class PlannerOrchestrator {
 			};
 		}
 
-	if (target?.role === "validator" && hasMissingRequiredValidationCommands(specDetails.spec ?? spec ?? target?.task?.spec)) {
-		return { block: { reason: MISSING_VALIDATION_DEFINITION_REASON } };
+	// Ticket 45 — the effective definition can come from the submitted prompt
+	// or from the ledger; only the latter is uneditable, and the refusal has to
+	// say which one it hit. `spec` is checked via `target.spec` rather than for
+	// undefined, because a report-only delegation clones `target.task.spec` and
+	// that clone is still a ledger definition.
+	const guardedValidationSpec = specDetails.spec ?? spec ?? target?.task?.spec;
+	if (target?.role === "validator" && hasMissingRequiredValidationCommands(guardedValidationSpec)) {
+		const storedTaskId = specDetails.spec === undefined && target?.spec === undefined ? target?.task?.taskId : undefined;
+		return {
+			block: validatorValidationRefusal({
+				input: event.input,
+				cwd,
+				submitted: (specDetails.candidate ?? guardedValidationSpec) as Record<string, unknown> | undefined,
+				storedTaskId,
+			}),
+		};
 	}
 
 	// A Reviewer is an invocation over an existing Task: it must not create,

@@ -434,6 +434,22 @@ export function inferTaskRoleFromAgent(agent: string | undefined): TaskRole | un
 	return AGENT_TASK_ROLES[agent.trim().toLowerCase()];
 }
 
+export type TaskSpecContractErrorCode = "TASKSPEC_VALIDATION_INCOMPLETE";
+
+/**
+ * Ticket 45 — a TaskSpec constructor was handed a contradictory validation
+ * definition. Adapters and tests match on `code`, never on message text.
+ */
+export class TaskSpecContractError extends Error {
+	readonly code: TaskSpecContractErrorCode;
+
+	constructor(code: TaskSpecContractErrorCode, message: string) {
+		super(message);
+		this.name = "TaskSpecContractError";
+		this.code = code;
+	}
+}
+
 export function createTaskId(now: Date = new Date(), sequence = 1): string {
 	const year = String(now.getFullYear());
 	const month = String(now.getMonth() + 1).padStart(2, "0");
@@ -443,6 +459,15 @@ export function createTaskId(now: Date = new Date(), sequence = 1): string {
 }
 
 export function createTaskSpec(input: CreateTaskSpecInput, taskId?: string): TaskSpec {
+	// Ticket 45 — refuse rather than invent intent. Dropping the empty command
+	// list would relax a mandatory validation; inventing commands would
+	// fabricate acceptance criteria. Either way the caller must decide.
+	if (isValidationDefinitionIncomplete(input.validation)) {
+		throw new TaskSpecContractError(
+			"TASKSPEC_VALIDATION_INCOMPLETE",
+			`createTaskSpec refused: ${VALIDATION_COMMANDS_REQUIRED_ERROR}. Supply the commands, or set validation.required to false when no validation is mandatory.`,
+		);
+	}
 	const suppliedTaskId = input.taskId?.trim();
 	const effectiveTaskId = taskId ?? createTaskId();
 	const spec: TaskSpec = {
@@ -599,6 +624,12 @@ export function validateTaskSpec(value: unknown): string[] {
 			if (value.validation.commands !== undefined && !isStringArray(value.validation.commands)) {
 				errors.push("validation.commands must be an array of strings");
 			}
+			// Ticket 45 — the validator guard refuses this shape, so the schema
+			// must refuse it too: one judgment, decided here and named after the
+			// field that is actually missing.
+			if (isValidationDefinitionIncomplete(value.validation)) {
+				errors.push(VALIDATION_COMMANDS_REQUIRED_ERROR);
+			}
 		}
 	}
 	if (value.budget !== undefined) {
@@ -704,12 +735,44 @@ function validBudget(value: unknown): boolean {
 	return dimension(budget.tokens) && dimension(budget.costUsd);
 }
 
+/** Ticket 45 — the schema error that names the field actually missing. */
+export const VALIDATION_COMMANDS_REQUIRED_ERROR =
+	"validation.commands must be a non-empty array of strings when validation.required is true";
+
+/**
+ * Ticket 45 — the one definition of "this validation block cannot be honoured".
+ *
+ * `required: true` means the commands are mandatory, so a definition with no
+ * *usable* command is unsatisfiable. "Usable" is deliberately not `length > 0`:
+ * `uniqueNonEmpty` (used by the constructor and the repair renderer) trims and
+ * drops blanks, so `["  "]` normalises down to no commands at all. Counting
+ * length there re-opened the very gap this ticket exists to close — a shape the
+ * schema accepts and the validator guard then refuses.
+ *
+ * The schema (`validateTaskSpec`), the constructor (`createTaskSpec`), the
+ * repair renderer (`repairSubmittedValidation`) and the validator guard
+ * (`roles.ts`) all ask this single question, so the two judgments can no longer
+ * drift apart.
+ *
+ * A malformed `commands` value is deliberately NOT this predicate's business:
+ * the shape checks report it separately, and double-reporting one field helps
+ * nobody.
+ */
+export function isValidationDefinitionIncomplete(validation: unknown): boolean {
+	if (!isPlainObject(validation)) return false;
+	const { required, commands } = validation as { required?: unknown; commands?: unknown };
+	if (required !== true) return false;
+	if (commands === undefined) return true;
+	if (!isStringArray(commands)) return false;
+	return commands.every((command) => command.trim() === "");
+}
+
 function validValidation(value: unknown): boolean {
 	if (!isPlainObject(value)) return false;
 	const validation = value as Record<string, unknown>;
 	if (typeof validation.required !== "boolean") return false;
 	if (validation.commands !== undefined && !isStringArray(validation.commands)) return false;
-	return true;
+	return !isValidationDefinitionIncomplete(value);
 }
 
 /**
@@ -761,6 +824,10 @@ interface SubmittedValidationRepair {
  * object whose commands are valid strings) is repaired with the intent made
  * explicit; anything else is unresolved, so the refusal cannot downgrade a
  * mandatory validation to `required: false`.
+ *
+ * Ticket 45 — "valid" now means complete: `required: true` without a non-empty
+ * command list is unresolved rather than kept, because keeping it would hand
+ * the operator a template that the validator guard is bound to refuse.
  */
 function repairSubmittedValidation(raw: unknown): SubmittedValidationRepair {
 	if (raw === undefined) {
@@ -805,12 +872,26 @@ function repairSubmittedValidation(raw: unknown): SubmittedValidationRepair {
 			}],
 		};
 	}
+	if (isPlainObject(raw) && (raw as Record<string, unknown>).required === true) {
+		// Ticket 45 — reached only when `commands` is absent or empty (the two
+		// branches above claim every complete definition). Nothing can be
+		// converted here: the commands are the only thing that could make a
+		// mandatory validation satisfiable, so guessing them would fabricate
+		// acceptance and dropping them would relax the requirement.
+		return {
+			changes: [{
+				field: "validation",
+				reason: "validation.required is true but no usable validation.commands were supplied",
+			}],
+			unresolved: "validation.required is true, which makes validation.commands mandatory, but the submission carries no usable command list. Supply validation.commands as a non-empty array of strings, or set validation.required to false when no validation is mandatory.",
+		};
+	}
 	return {
 		changes: [{
 			field: "validation",
 			reason: "the submitted validation shape cannot be converted without losing the validation intent",
 		}],
-		unresolved: "validation must be an object shaped { required: boolean, commands?: string[] }; required states whether validation is mandatory and commands lists the applicable validation definitions. The submitted shape cannot be converted without losing that intent.",
+		unresolved: "validation must be a self-consistent object shaped { required: boolean, commands?: string[] }: required states whether validation is mandatory, and when required is true, commands must be a non-empty array of strings listing the applicable validation definitions. The submitted shape cannot be converted without losing that intent.",
 	};
 }
 

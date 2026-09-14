@@ -160,41 +160,60 @@ async function delegateWorker(orch, toolCallId, taskId) {
 	assert.match(input.task, /must not ask Root or supervisor for the taskId/);
 }
 
-// Ticket 11: required validation without commands blocks Validator delegation before
-// the oracle contract can substitute ORACLE_SUITE=full/bounded.
+// Ticket 11 + 45: a Validator delegation carrying a required-but-commandless
+// definition is refused before the oracle contract can substitute
+// ORACLE_SUITE=full/bounded. Ticket 45 moved the refusal to the schema gate, so
+// it now arrives as the invalid-TaskSpec refusal, naming the missing field and
+// carrying a repair pack instead of a bare reason string.
 {
-	const missingCommandsSpec = createTaskSpec({
+	// Raw literal on purpose — `createTaskSpec` refuses to build this shape now.
+	const missingCommandsSpec = {
+		taskId: "T-20260914-045",
 		objective: "validator definition required",
 		cwd: BASE,
 		role: "validator",
+		scope: {},
+		constraints: [],
+		acceptanceCriteria: [],
 		validation: { required: true },
-	});
+		expectedEvidence: {},
+		stopConditions: [],
+	};
 	const input = { task: JSON.stringify(missingCommandsSpec) };
 	const orch = new PlannerOrchestrator({ store: pinnedStore(), gitRunner });
 	await orch.prepareRoleDelegation(input);
 	assert.doesNotMatch(input.task, /ORACLE_SUITE=(?:full|bounded)/);
 	const outcome = await orch.beginDelegation({ toolCallId: "call-missing-validation", input }, BASE);
-	assert.match(outcome.block?.reason ?? "", /需补充验证定义/);
+	assert.match(outcome.block?.reason ?? "", /embedded TaskSpec is invalid/);
+	assert.match(outcome.block?.reason ?? "", /validation\.commands/);
+	assert.match(outcome.block?.reason ?? "", /TaskSpec repair summary/);
 	assert.equal(orch.pendingDelegationCount(), 0);
 }
 
-// Ticket 11: an existing Task with a required but undefined validation block also
-// blocks a task-id-only Validator delegation before launch.
+// Ticket 45, behavior change: the schema gate applies to every role, so a WORKER
+// delegation carrying the same incomplete definition is now refused before
+// launch. Before this ticket the worker was admitted and executed, and only the
+// oracle suggestion that followed was refused.
+{
+	const workerInput = {
+		task: JSON.stringify({ ...specFor("T-20260914-045b", "worker"), validation: { required: true } }),
+	};
+	const orch = new PlannerOrchestrator({ store: pinnedStore(), gitRunner });
+	const outcome = await orch.beginDelegation({ toolCallId: "call-missing-validation-worker", input: workerInput }, BASE);
+	assert.match(outcome.block?.reason ?? "", /validation\.commands/);
+	assert.equal(orch.pendingDelegationCount(), 0);
+}
+
+// Ticket 11 + 45: an EXISTING Task whose stored definition is required-but-
+// commandless still blocks a task-id-only Validator delegation. Ticket 45
+// refuses to build that shape, so the ledger record is injected raw: the guard
+// must keep working for Tasks written before the schema tightened, and it must
+// point at the stored Task instead of at the (uneditable) submission.
 {
 	const taskId = "T-20260905-811";
-	const missingCommandsSpec = createTaskSpec({
-		taskId,
-		objective: "worker task with undefined validation",
-		cwd: BASE,
-		role: "worker",
-		validation: { required: true },
-	});
 	const orch = new PlannerOrchestrator({ store: pinnedStore(), gitRunner });
-	const workerInput = { task: JSON.stringify(missingCommandsSpec) };
-	await orch.beginDelegation({ toolCallId: "call-missing-validation-worker", input: workerInput }, BASE);
-	const report = reportFor(taskId, "call-missing-validation-worker");
-	report.evidence.cwd = BASE;
-	await orch.handleSubagentResult(workerResult("call-missing-validation-worker", report));
+	// Raw literal on purpose — `createTaskSpec` refuses this shape now.
+	orch.store.create({ ...specFor(taskId, "worker"), validation: { required: true } });
 
 	const validatorInput = { agent: "oracle", task: `Validate ${taskId}` };
 	await orch.prepareRoleDelegation(validatorInput);
@@ -203,7 +222,14 @@ async function delegateWorker(orch, toolCallId, taskId) {
 		{ toolCallId: "call-missing-validation-store", input: validatorInput },
 		BASE,
 	);
-	assert.match(outcome.block?.reason ?? "", /需补充验证定义/);
+	assert.equal(outcome.block?.code, "VALIDATION_DEFINITION_INCOMPLETE");
+	assert.ok(
+		(outcome.block?.reason ?? "").startsWith(MISSING_VALIDATION_DEFINITION_REASON),
+		"the guard's marker line is preserved for hosts that match on it",
+	);
+	assert.match(outcome.block?.reason ?? "", /validation\.commands/);
+	assert.match(outcome.block?.reason ?? "", new RegExp(taskId));
+	assert.match(outcome.block?.reason ?? "", /create a new Task/);
 	assert.equal(orch.pendingDelegationCount(), 0);
 }
 
@@ -2200,7 +2226,8 @@ function boundedBudgetUsage(tokens, costUsd) {
 	for (let i = 0; i < 5; i++) {
 		const invalid = { ...task.spec, role: "validator", validation: { required: true } };
 		const outcome = await orch.beginDelegation({ toolCallId: `call-v13-${i}`, input: { agent: "oracle", task: JSON.stringify(invalid) } }, BASE);
-		assert.equal(outcome.block?.reason, MISSING_VALIDATION_DEFINITION_REASON);
+		// Ticket 45 — the incomplete definition is now refused at the schema gate.
+		assert.match(outcome.block?.reason ?? "", /validation\.commands/);
 	}
 	assert.equal(orch.pendingDelegationCount(), before);
 	const normal = await orch.beginDelegation({ toolCallId: "call-v13-ok", input: { task: JSON.stringify(task.spec) } }, BASE);

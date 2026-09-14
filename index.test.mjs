@@ -3223,7 +3223,9 @@ assert.match(
 		ctx,
 	);
 	assert.equal(callMissingCommands?.block, true);
-	assert.match(callMissingCommands?.reason, /需补充验证定义/);
+	// Ticket 45 — the refusal moved to the schema gate and now names the field
+	// that is actually missing instead of only saying "需补充验证定义".
+	assert.match(callMissingCommands?.reason, /validation\.commands/);
 
 	// 4. title alias allowed and creates Task
 	const promptTitle = `\`\`\`json\n{"taskId":"oracle-status-line-01","title":"Ext title feature","cwd":"/fixture/ext-cb3","acceptanceCriteria":["tests pass"]}\n\`\`\``;

@@ -1,6 +1,6 @@
 import type { ReviewEvidencePacket, TaskPacket, TaskRole, TaskSpec, WorkerReport } from "./types.ts";
 import { canRebindNamedTask } from "./types.ts";
-import { extractTaskSpec, extractTaskSpecDetails, inferTaskRoleFromAgent } from "./task.ts";
+import { extractTaskSpec, extractTaskSpecDetails, inferTaskRoleFromAgent, isValidationDefinitionIncomplete } from "./task.ts";
 import type { TaskRecord } from "./task.ts";
 import { buildFreshReviewerTask, extractReviewRequest } from "./review.ts";
 import type { ReviewRequest } from "./types.ts";
@@ -70,7 +70,10 @@ export function wrapWorkerContract(task: string, taskId: string): string {
 export const MISSING_VALIDATION_DEFINITION_REASON = "Planner-only guard: 需补充验证定义。";
 
 export function hasMissingRequiredValidationCommands(spec: TaskSpec | undefined): boolean {
-	return spec?.validation.required === true && (!spec.validation.commands || spec.validation.commands.length === 0);
+	// Ticket 45 — the definition of "incomplete" lives in task.ts and is shared
+	// with the TaskSpec schema, so the admission judgment and this delegation
+	// guard can no longer disagree about the same shape.
+	return isValidationDefinitionIncomplete(spec?.validation);
 }
 
 export function taskSpecRequestsFullSuite(spec: TaskSpec | undefined): boolean {

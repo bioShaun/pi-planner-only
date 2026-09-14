@@ -13,10 +13,13 @@ import {
 	findWriterConflict,
 	isExecutingStale,
 	validateTaskSpec,
+	VALIDATION_COMMANDS_REQUIRED_ERROR,
 	canTransition,
 	TASKSPEC_CHARACTERISTIC_FIELDS,
 	TASKSPEC_FORBIDDEN_EXECUTION_CONTROLS,
 	buildTaskSpecExample,
+	buildTaskSpecRepair,
+	appendTaskSpecRepair,
 } from "./task.ts";
 import {
 	compactWorkerReport,
@@ -78,11 +81,75 @@ const spec = createTaskSpec(
 	"T-20260831-001",
 );
 assert.deepEqual(validateTaskSpec(spec), []);
+// Ticket 45 — the four shapes whose behavior must not change with the rule above.
+for (const unchanged of [
+	{ required: true, commands: ["npm test"] },
+	{ required: false },
+	{ required: false, commands: ["npm test"] },
+	undefined,
+]) {
+	assert.deepEqual(
+		validateTaskSpec({ ...spec, validation: unchanged }),
+		[],
+		`${JSON.stringify(unchanged)} must stay admissible`,
+	);
+}
 assert.equal(spec.cwd, resolve(cwd));
 assert.equal(spec.role, "worker");
-assert.equal(createTaskSpec({ objective: "required without commands", cwd, validation: { required: true } }).validation.commands, undefined);
-assert.equal(createTaskSpec({ objective: "required with empty commands", cwd, validation: { required: true, commands: [] } }).validation.commands, undefined);
-assert.deepEqual(validateTaskSpec(createTaskSpec({ objective: "required without commands", cwd, validation: { required: true } })), []);
+// Ticket 45 — "incomplete" counts USABLE commands, not array length. The
+// constructor and the repair renderer both normalise through `uniqueNonEmpty`,
+// which trims and drops blanks, so `["  "]` must be refused too: counting
+// length admitted it and then handed the guard a definition with no commands.
+for (const incomplete of [
+	{ required: true },
+	{ required: true, commands: [] },
+	{ required: true, commands: ["  "] },
+]) {
+	assert.ok(
+		validateTaskSpec({ ...spec, validation: incomplete }).includes(VALIDATION_COMMANDS_REQUIRED_ERROR),
+		`the schema must reject ${JSON.stringify(incomplete)} and name the missing commands field`,
+	);
+	assert.throws(
+		() => createTaskSpec({ objective: "incomplete validation", cwd, validation: incomplete }),
+		(error) => error?.code === "TASKSPEC_VALIDATION_INCOMPLETE",
+		`the constructor must refuse ${JSON.stringify(incomplete)}`,
+	);
+}
+// A blank entry next to a real command is not "incomplete": the same
+// normalisation drops the blank and leaves a satisfiable definition.
+assert.deepEqual(validateTaskSpec({ ...spec, validation: { required: true, commands: ["  ", "npm test"] } }), []);
+assert.deepEqual(
+	createTaskSpec({ objective: "blank plus real", cwd, validation: { required: true, commands: ["  ", "npm test"] } }).validation.commands,
+	["npm test"],
+);
+
+// Ticket 45 — the repair renderer must not paper over that refusal. Keeping the
+// incomplete definition verbatim would hand back a template the validator guard
+// is bound to refuse; downgrading it to `required: false` would silently drop a
+// mandatory validation. It has to come back as needs-input instead — including
+// for a blanks-only command list, which normalises down to no commands.
+for (const incomplete of [
+	{ required: true },
+	{ required: true, commands: ["  "] },
+]) {
+	const incompleteRepair = buildTaskSpecRepair({
+		toolName: "subagent",
+		cwd,
+		submitted: {
+			taskId: "T-20260831-045",
+			objective: "needs commands",
+			cwd,
+			role: "validator",
+			validation: incomplete,
+		},
+	});
+	assert.equal(incompleteRepair.status, "needs-input", `${JSON.stringify(incomplete)} must not be repairable`);
+	assert.deepEqual(incompleteRepair.unresolvedFields, ["validation"]);
+	assert.equal(incompleteRepair.example, undefined);
+	const renderedIncompleteRepair = appendTaskSpecRepair("refused", incompleteRepair);
+	assert.match(renderedIncompleteRepair, /validation\.commands/);
+	assert.doesNotMatch(renderedIncompleteRepair, /resubmitted as-is/);
+}
 
 
 const explicitlyDisabledSpec = createTaskSpec({ objective: "skip validation", cwd, validation: { required: false } }, "T-20260831-002");

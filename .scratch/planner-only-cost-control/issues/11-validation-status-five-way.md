@@ -10,7 +10,7 @@
 - [x] validation 为空且 status 不是 failed：状态未知，Validator 合同为 full。
 - [x] 含 not-run 或状态 passed 但退出码非零：状态失败或矛盾，必需验证不通过。
 - [x] TaskSpec validation.required 为假：状态无需验证，status 显示理由。
-- [x] required 为真但 commands 为空：委派返回需补充验证定义的原因。
+- [x] required 为真但 commands 为空：委派返回需补充验证定义的原因。**（2026-09-14 由 [工单 45](45-taskspec-validation-shape-vs-validator-guard.md) 取代：改为在 TaskSpec schema 层拒绝该形状，委派守卫仅保留给遗留的已入库 spec。原「委派时才拦」的行为不再适用于新提交。）**
 - [x] 完整通过且与当前 Evidence 匹配：状态通过。
 
 ## Comments
