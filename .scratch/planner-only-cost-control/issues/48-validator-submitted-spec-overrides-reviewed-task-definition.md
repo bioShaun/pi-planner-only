@@ -61,7 +61,25 @@
 
 **复验**：宿主形状复现脚本（ledger-backed + 超上限记录 + 活跃 046 + prepare 前置）现到达检查并拒绝（`VALIDATOR_SPEC_CONFLICT`）；全套件 exit 0。
 
-**Status:** done（实现 + 根因修复落地、门禁绿。**宿主复跑待 operator 以 `144ed9e` 重跑检查 2** —— 通过即翻 verified。）
+**2026-09-14 23:30 更正：上面的「根因」是错的，`144ed9e` 没有修到宿主路径。** 证据：`144ed9e` 于 22:35:45 落到 pin checkout 之后，operator 在 22:39 与 22:54 新开的两个会话里又跑了 3 次检查 2 形状的探针（tool_4SRz…、tool_78TM…、tool_QtMO…），`diag48.log` 仍是 `reachedCheck=false | block=none | task=T-20260912-016`。
+
+**真实根因（本机已按宿主接线精确复现）：**
+
+1. 宿主 `index.ts:1380-1381` 先调 `prepareRoleDelegation(event.input)` 再调 `beginDelegation(event)`。prepare 会把合法的嵌入 spec 改写成 oracle **TaskPacket**（`[PLANNER-ONLY ORACLE] … {"version":1,"spec":{…},"instructions":…}`），原来的 ```json 围栏块从 prompt 里消失（子进程会话 `2026-09-14T14-54-13-293Z/f4dd2640…/run-0/session.jsonl` 的首条 user 消息可证）。
+2. `extractTaskSpecDetails` 对 packet 是透明的（`spec` 读的是嵌套的 `parsed.spec`），**但 `candidate` 仍是 packet 外层对象**（键为 `version|spec|instructions|knownFacts|artifactRefs`）。
+3. 48 的显式判定 `"validation" in specDetails.candidate` 在 packet 外层上永远为 false → `submittedValidationExplicit=false` → 检查整体跳过 → 45 守卫看到的是提交 spec（有 commands）→ 放行，绑定到 016 并启动。
+4. 单测和 `p48-impl/repro-host.mjs` 都没复现的原因相同：单测直接调 `beginDelegation`（不打包）；复现脚本调的是 `orch.prepareRoleDelegation(delegationInput, BASE)`——传的是外层 event 而不是 `event.input`，prepare 对没有 `task` 字段的对象直接 no-op，prompt 从未被打包。把参数改成 `delegationInput.input` 后本机立刻复现放行（`p48-impl/repro-host-flow.mjs`）。
+
+**顺带纠正两个一直被当作事实的假设：**
+
+- 宿主账本（`~/.pi/agent/planner-only/ledger/T-20260912-016.json`）里 016 的 stored `spec.validation` 是 **`{"required":false}`**，不是「`{required:true}` 无 commands」。所谓「遗留不完整形状」来自检查 1 的拒绝文案「Task T-20260912-016 is stored with validation.required = true but no usable validation.commands」——那条文案把**提交的**（无效）定义说成了**存储的**定义（`storedTaskId` 在 `specDetails.spec` 与 `target.spec` 都为 undefined 时被置为被审 Task，而 packet 外层恰好让两者都 undefined）。这是 45/50 文案的归因缺陷，另立工单 52。因此「016 三条路都堵死、只能 abandon」的结论不成立：task-id-only 委派会按 stored `{required:false}` 放行；嵌 `{required:true, commands:[…]}` 才应被 48 拒（`validation.required differs`）。
+- 「未绑定 validator 路径」不是宿主走的路径：016 在宿主里通过 ledger-aware lookup 正常解析（run-state 记录 `taskId: T-20260912-016, role: validator`）。`144ed9e` 把检查提前是无害的，保留。
+
+**修复**（本提交）：`task.ts` 的 `ExtractedTaskSpecResult` 新增 `submitted`（packet 时为嵌套 spec，否则为 candidate 本身）；`orchestrate.ts` 的显式判定改读 `specDetails.submitted`。DIAG48 插针额外在门口记录 `gate48: … candidateKeys=… submittedKeys=…`，宿主若再 miss 可直接从日志读出是哪个条件为 false。回归测试：`orchestrate.test.mjs` 新增两例走 `prepareRoleDelegation → beginDelegation` 的宿主路径（打包后的不一致定义 → `VALIDATOR_SPEC_CONFLICT`；打包后的一致定义 → 放行）。`npm run typecheck` / `npm test` 均 exit 0。
+
+**行为变化须知：** 宿主路径下，嵌入 spec **省略** `validation` 时，packet 里的 spec 会物化为 `{required:false}`，现在会与 stored `{required:true,…}` 判定为冲突而被拒（直接调用路径保持「省略 = 不判定」）。这是 fail-closed 方向的收紧，且正是 48 要堵的洞（子进程原本会拿到 `required:false` 的 packet）；如需保留「省略不判定」，需要 prepare 在打包前把「是否显式提交了 validation」盖章到 input，另议。
+
+**Status:** done（真实根因已修、本机按宿主接线复现并转绿、门禁绿。**宿主复跑：operator 用本提交重跑检查 2 一次**，预期同步拒绝 `VALIDATOR_SPEC_CONFLICT: … validation.required differs (submitted true, stored false)`，无 `Async delegation … has started`；通过即翻 verified，并移除 DIAG48 插针。）
 
 ## Comments
 
