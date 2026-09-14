@@ -230,6 +230,9 @@ async function delegateWorker(orch, toolCallId, taskId) {
 	assert.match(outcome.block?.reason ?? "", /validation\.commands/);
 	assert.match(outcome.block?.reason ?? "", new RegExp(taskId));
 	assert.match(outcome.block?.reason ?? "", /create a new Task/);
+	// Ticket 50 — the repair pack must say the role comes from the reviewed Task,
+	// not read as an instruction to resubmit a worker spec.
+	assert.match(outcome.block?.reason ?? "", /kept the reviewed Task's role "worker"/);
 	assert.equal(orch.pendingDelegationCount(), 0);
 }
 

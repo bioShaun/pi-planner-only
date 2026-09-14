@@ -23,7 +23,17 @@
 
 **Blocked by:** 无（45/47 均已 `verified`）。**优先级**：不阻塞任何票。
 
-**Status:** ready-for-agent
+**实现记录（2026-09-14，本机）：**
+
+- **跨 workspace 主诉（第 1 条）**：`restoreTaskOnDemand()` 的 note 改写为独立可拼句 —— `belongs to workspace <X>, while this delegation runs in <Y>; cross-workspace binding is refused`（去掉原「its ledger record」开头，否则拼上 `Task <id> ${note}` 后读不顺）。`resolveValidatorReviewedTask()` 的单 id 未命中分支改为：**有 note 就以 `Task <id> <note>` 为主诉**，否则才用 `names unknown Task`。读取失败的 note 同步改为 `could not be read from the ledger`。
+- **修复包角色标签（第 2 条）**：`TaskSpecExampleInput` 新增 `roleOrigin`；`validatorValidationRefusal` 在 **storedTaskId 存在**（即「submitted」其实是被点名 Task 自己的 spec）时传 `"reviewed-task"`，修复包角色行显示 `kept the reviewed Task's role "worker"`，不再被读成「请重报 worker spec」。
+- **歧义 note 首字母大写**（`Resolves to …`），使 `planner_verdict: unknown task X. ${note}` 的组合可读 —— 属 49 引入的 note 顺手修正。
+
+**测试**：既有断言全部保持 —— 46 的跨 workspace alias 用例仍断言 `/belongs to workspace/`；45 的 stored-task 用例新增 `/kept the reviewed Task's role "worker"/`。**未新增**「validator 引用别 workspace 的 in-memory Task 应被拒」的用例：那是工单 51 明确留白的 in-memory 缺口，不得在 51 定契约前把现状写成预期（operator 亦明示不得外推）。
+
+**门禁**：`npm run typecheck` exit 0；`npm test` exit 0（35 个测试文件无失败）。日志 `.scratch/planner-only-cost-control/p50-impl/`。
+
+**Status:** done（2026-09-14 本机落地、门禁绿。纯文案：判定、状态码与拒绝时机逐字不变。**未做宿主复跑** —— 与 46/48/49 同在 `fix/tickets-46-48-49-50` 分支上。）
 
 ## Comments
 

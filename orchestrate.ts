@@ -271,6 +271,7 @@ function validatorValidationRefusal(options: {
 	cwd: string;
 	submitted: Record<string, unknown> | undefined;
 	storedTaskId: string | undefined;
+	roleOrigin: "submitted" | "reviewed-task";
 }): { reason: string; code: string } {
 	const nextStep = options.storedTaskId
 		? `Task ${options.storedTaskId} is stored with validation.required = true but no usable validation.commands, so no Validator delegation for it can start. The stored TaskSpec is not editable: create a new Task that carries a complete validation definition.`
@@ -285,6 +286,7 @@ function validatorValidationRefusal(options: {
 			input: options.input,
 			cwd: options.cwd,
 			submitted: options.submitted,
+			roleOrigin: options.roleOrigin,
 		}),
 	);
 	return { reason, code: "VALIDATION_DEFINITION_INCOMPLETE" };
@@ -1136,7 +1138,7 @@ export class PlannerOrchestrator {
 			if (candidates.length > 1) {
 				const taskIds = candidates.map((candidate) => candidate.taskId);
 				ambiguous.set(taskId, taskIds);
-				notes.set(taskId, `it resolves to ${taskIds.length} Tasks as an alias (${taskIds.join(", ")}), so no single Task can be meant`);
+				notes.set(taskId, `Resolves to ${taskIds.length} Tasks as an alias (${taskIds.join(", ")}), so no single Task can be meant`);
 				cache.set(taskId, undefined);
 				return undefined;
 			}
@@ -1171,7 +1173,7 @@ export class PlannerOrchestrator {
 			record = records.find((candidate) => candidate.taskId === taskId)
 				?? records.find((candidate) => Array.isArray(candidate.aliases) && candidate.aliases.includes(taskId));
 		} catch {
-			return { note: "its ledger record could not be read" };
+			return { note: "could not be read from the ledger" };
 		}
 		if (!record) return {};
 		if (
@@ -1179,7 +1181,9 @@ export class PlannerOrchestrator {
 			&& normalizeWorkspaceIdentity(record.cwd) !== normalizeWorkspaceIdentity(cwd)
 		) {
 			return {
-				note: `its ledger record belongs to workspace ${record.cwd} and this delegation runs in ${cwd}; cross-workspace binding is refused`,
+				// Ticket 50 — written so a refusal that prefixes `Task ${id} ${note}`
+				// reads as a sentence: the Task exists, it simply belongs elsewhere.
+				note: `belongs to workspace ${record.cwd}, while this delegation runs in ${cwd}; cross-workspace binding is refused`,
 			};
 		}
 		this.store.restore(record);
@@ -2862,6 +2866,7 @@ export class PlannerOrchestrator {
 				cwd,
 				submitted: (specDetails.candidate ?? guardedValidationSpec) as Record<string, unknown> | undefined,
 				storedTaskId,
+				roleOrigin: storedTaskId ? "reviewed-task" : "submitted",
 			}),
 		};
 	}
@@ -3405,7 +3410,7 @@ export class PlannerOrchestrator {
 		const candidates = ambiguous.get(taskId);
 		if (candidates) {
 			return {
-				note: `it resolves to ${candidates.length} Tasks as an alias (${candidates.join(", ")}), so no verdict can be attributed to one of them`,
+				note: `Resolves to ${candidates.length} Tasks as an alias (${candidates.join(", ")}), so no verdict can be attributed to one of them`,
 			};
 		}
 		const note = notes.get(taskId);
@@ -3477,10 +3482,10 @@ export class PlannerOrchestrator {
 		].filter((id): id is string => isCanonicalTaskId(id));
 		if (referenceIds.length > 0) {
 			const uniqueDeclared = [...new Set(referenceIds)];
-			const detail = uniqueDeclared
-				.map((id) => `${id}${notes.has(id) ? ` (${notes.get(id)})` : ""}`)
-				.join("; ");
 			if (unique.length > 1) {
+				const detail = uniqueDeclared
+					.map((id) => (notes.has(id) ? `${id} ${notes.get(id)}` : id))
+					.join("; ");
 				return {
 					refused: {
 						code: "VALIDATOR_TARGET_AMBIGUOUS",
@@ -3488,12 +3493,28 @@ export class PlannerOrchestrator {
 					},
 				};
 			}
+			// Ticket 50 — a single miss with an explanation (the record exists but is
+			// not bindable from this workspace) leads with that: the Task is not
+			// "unknown", it is simply out of reach here.
+			if (uniqueDeclared.length === 1) {
+				const id = uniqueDeclared[0] as string;
+				const note = notes.get(id);
+				return {
+					refused: {
+						code: "VALIDATOR_TARGET_UNBOUND",
+						reason: note
+							? `Planner-only guard: Task ${id} ${note}. No Validator run is started against a substitute Task. Name a Task in this workspace, or embed its TaskSpec.`
+							: `Planner-only guard: validator delegation names unknown Task ${id}; no Validator run is started against a substitute Task. Name an existing canonical Task id, or embed its TaskSpec.`,
+					},
+				};
+			}
+			const detail = uniqueDeclared
+				.map((id) => (notes.has(id) ? `${id} (${notes.get(id)})` : id))
+				.join("; ");
 			return {
 				refused: {
 					code: uniqueDeclared.length > 1 ? "VALIDATOR_TARGET_AMBIGUOUS" : "VALIDATOR_TARGET_UNBOUND",
-					reason: uniqueDeclared.length > 1
-						? `Planner-only guard: validator delegation names Task ids that cannot be resolved (${detail}); no Validator run is started against a substitute Task. Name one existing canonical Task id, or embed its TaskSpec.`
-						: `Planner-only guard: validator delegation names unknown Task ${detail}; no Validator run is started against a substitute Task. Name an existing canonical Task id, or embed its TaskSpec.`,
+					reason: `Planner-only guard: validator delegation names Task ids that cannot be resolved (${detail}); no Validator run is started against a substitute Task. Name one existing canonical Task id, or embed its TaskSpec.`,
 				},
 			};
 		}

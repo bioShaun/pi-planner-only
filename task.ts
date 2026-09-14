@@ -716,6 +716,9 @@ export interface TaskSpecExampleInput {
 	cwd?: string;
 	/** An invalid TaskSpec candidate whose valid fields should be preserved. */
 	submitted?: Record<string, unknown>;
+	/** Ticket 50 — where `submitted` came from, so a repair line can name it
+	 * honestly: a validator refusal reuses the reviewed Task's own spec. */
+	roleOrigin?: "submitted" | "reviewed-task";
 }
 
 function exampleStringField(input: unknown, keys: readonly string[]): string | undefined {
@@ -967,7 +970,15 @@ export function buildTaskSpecRepair(options: TaskSpecExampleInput): TaskSpecRepa
 	const changes: TaskSpecRepairChange[] = [];
 	const unresolvedFields: string[] = [];
 	if (submittedRole) {
-		changes.push({ field: "role", reason: `kept the submitted role "${submittedRole}"` });
+		// Ticket 50 — when the "submitted" spec is really the *reviewed Task's* own
+		// spec (a validator refusal against a named Task), say so: "kept the
+		// submitted role" reads as an instruction to resubmit a spec of that role.
+		changes.push({
+			field: "role",
+			reason: options.roleOrigin === "reviewed-task"
+				? `kept the reviewed Task's role "${submittedRole}"`
+				: `kept the submitted role "${submittedRole}"`,
+		});
 	} else if (toolRole) {
 		changes.push({ field: "role", reason: `derived role "${toolRole}" from the refused ${toolName} tool` });
 	} else if (agentRole) {
