@@ -2440,16 +2440,14 @@ export class PlannerOrchestrator {
 	// Task's stored definition. A submitted spec that disagrees would let the
 	// operator be validated under commands the worker was never asked to meet —
 	// and would make ticket 45's stored-task refusal bypassable by that same move.
-	// Only an *explicitly submitted* validation counts: the extraction path always
-	// materialises `{required:false}`, so a spec that simply omits the field must
-	// keep today's behaviour. The key is looked up on the submitted *spec*, not on
-	// the raw candidate: on the host, prepareRoleDelegation has already rewritten
-	// the prompt into a TaskPacket (`{version, spec, instructions, …}`), whose top
-	// level never has a `validation` key — reading the candidate there skipped
-	// this check for every packetised delegation (the ticket 48 host-run miss).
-	const submittedValidationExplicit = specDetails.submitted !== undefined
-		&& "validation" in specDetails.submitted;
-	if (target?.role === "validator" && submittedValidationExplicit && target.spec && target.task?.spec) {
+	// Ticket 52 — the comparison uses the *effective* submitted definition: the
+	// extraction path materialises an omitted `validation` as `{required:false}`,
+	// and that materialised value is exactly what the child receives in its
+	// packet, so it is judged as written. A spec that omits the field against a
+	// Task whose stored definition requires commands is therefore a conflict, on
+	// the host path and the direct path alike; the refusal names the way out
+	// (name the Task without embedding a spec).
+	if (target?.role === "validator" && target.spec && target.task?.spec) {
 		const conflict = describeValidationConflict(target.spec.validation, target.task.spec.validation);
 		if (conflict) {
 			return {
@@ -2851,7 +2849,7 @@ export class PlannerOrchestrator {
 							toolName: "subagent",
 							input: event.input,
 							cwd,
-							submitted: specDetails.candidate as Record<string, unknown> | undefined,
+							submitted: specDetails.submitted as Record<string, unknown> | undefined,
 						}),
 					),
 				},
@@ -2870,7 +2868,7 @@ export class PlannerOrchestrator {
 			block: validatorValidationRefusal({
 				input: event.input,
 				cwd,
-				submitted: (specDetails.candidate ?? guardedValidationSpec) as Record<string, unknown> | undefined,
+				submitted: (specDetails.submitted ?? guardedValidationSpec) as Record<string, unknown> | undefined,
 				storedTaskId,
 				roleOrigin: storedTaskId ? "reviewed-task" : "submitted",
 			}),

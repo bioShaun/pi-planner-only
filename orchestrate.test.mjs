@@ -1543,26 +1543,63 @@ function truncatedPreview() {
 	assert.match(outcome.block?.reason ?? "", /validation\.required differs/);
 }
 
-// Ticket 48: an agreeing definition and an omitted one both keep today's behaviour.
+// Ticket 48: an agreeing definition keeps today's behaviour.
 {
-	for (const [taskId, submittedValidation] of [
-		["T-20260914-932", { required: true, commands: ["npm test"] }],
-		["T-20260914-933", undefined],
-	]) {
-		const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
-		setCleanTree();
-		orch.store.create({ ...specFor(taskId, "worker", BASE), validation: { required: true, commands: ["npm test"] } });
-		const base = specFor(taskId, "validator", BASE);
-		const submitted = submittedValidation === undefined
-			? { ...base, validation: undefined }
-			: { ...base, validation: submittedValidation };
-		if (submittedValidation === undefined) delete submitted.validation;
-		const outcome = await orch.beginDelegation(
-			{ toolCallId: `call-48-ok-${taskId}`, input: { agent: "oracle", task: `Validate ${taskId}\n\`\`\`json\n${JSON.stringify(submitted)}\n\`\`\`` } },
-			BASE,
-		);
-		assert.notEqual(outcome.block?.code, "VALIDATOR_SPEC_CONFLICT", `${taskId} must not be a spec conflict`);
-	}
+	const taskId = "T-20260914-932";
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	setCleanTree();
+	orch.store.create({ ...specFor(taskId, "worker", BASE), validation: { required: true, commands: ["npm test"] } });
+	const submitted = { ...specFor(taskId, "validator", BASE), validation: { required: true, commands: ["npm test"] } };
+	const outcome = await orch.beginDelegation(
+		{ toolCallId: `call-48-ok-${taskId}`, input: { agent: "oracle", task: `Validate ${taskId}\n\`\`\`json\n${JSON.stringify(submitted)}\n\`\`\`` } },
+		BASE,
+	);
+	assert.notEqual(outcome.block?.code, "VALIDATOR_SPEC_CONFLICT", `${taskId} must not be a spec conflict`);
+}
+
+// Ticket 52: an *omitted* validation is judged as the `{required:false}` it
+// materialises to — that is what the child would receive — so against a stored
+// definition that requires commands it is a conflict, on the direct path and on
+// the host (packetised) path alike. Against a stored `{required:false}` it is not.
+{
+	const taskId = "T-20260914-933";
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	setCleanTree();
+	orch.store.create({ ...specFor(taskId, "worker", BASE), validation: { required: true, commands: ["npm test"] } });
+	const submitted = { ...specFor(taskId, "validator", BASE) };
+	delete submitted.validation;
+	const outcome = await orch.beginDelegation(
+		{ toolCallId: "call-52-omitted-direct", input: { agent: "oracle", task: `Validate ${taskId}\n\`\`\`json\n${JSON.stringify(submitted)}\n\`\`\`` } },
+		BASE,
+	);
+	assert.equal(outcome.block?.code, "VALIDATOR_SPEC_CONFLICT", "omitted validation against a required definition is a conflict (direct path)");
+	assert.match(outcome.block?.reason ?? "", /validation\.required differs \(submitted false, stored true\)/);
+	assert.match(outcome.block?.reason ?? "", /name the Task without embedding one/, "the refusal names the way out");
+	assert.equal(orch.pendingDelegationCount(), 0);
+}
+{
+	const taskId = "T-20260914-936";
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	setCleanTree();
+	orch.store.create({ ...specFor(taskId, "worker", BASE), validation: { required: true, commands: ["npm test"] } });
+	const submitted = { taskId, objective: `Validate ${taskId}`, cwd: BASE, role: "validator" };
+	const input = { agent: "oracle", task: `Validate ${taskId}\n\`\`\`json\n${JSON.stringify(submitted)}\n\`\`\`` };
+	await orch.prepareRoleDelegation(input, BASE);
+	assert.match(String(input.task), /^\[PLANNER-ONLY ORACLE\]/, "prepare packetised the prompt (host shape)");
+	const outcome = await orch.beginDelegation({ toolCallId: "call-52-omitted-host", input }, BASE);
+	assert.equal(outcome.block?.code, "VALIDATOR_SPEC_CONFLICT", "omitted validation against a required definition is a conflict (host path)");
+	assert.match(outcome.block?.reason ?? "", /validation\.required differs \(submitted false, stored true\)/);
+}
+{
+	const taskId = "T-20260914-937";
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	setCleanTree();
+	orch.store.create({ ...specFor(taskId, "worker", BASE), validation: { required: false } });
+	const submitted = { taskId, objective: `Validate ${taskId}`, cwd: BASE, role: "validator" };
+	const input = { agent: "oracle", task: `Validate ${taskId}\n\`\`\`json\n${JSON.stringify(submitted)}\n\`\`\`` };
+	await orch.prepareRoleDelegation(input, BASE);
+	const outcome = await orch.beginDelegation({ toolCallId: "call-52-omitted-host-ok", input }, BASE);
+	assert.notEqual(outcome.block?.code, "VALIDATOR_SPEC_CONFLICT", "omitted validation against a stored {required:false} agrees");
 }
 
 // Ticket 48 (host path): index.ts runs prepareRoleDelegation *before*
