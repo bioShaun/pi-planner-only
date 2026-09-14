@@ -11,4 +11,8 @@
 
 **宿主验收（待 operator）：** 对一个 stored 为 `{required:true, commands:[…]}` 的 Task 嵌入不含 `validation` 的 validator TaskSpec → 预期同步拒绝 `validation.required differs (submitted false, stored true)`，无 run。
 
-**Status:** done（本机落地、门禁绿；宿主验收待跑。原「文案归因」前提不成立，见上；真实缺陷转 53。）
+**2026-09-15 07:02 宿主验收：PASS。** 构建 `bd784c0`（pin checkout，会话 `2026-09-14T23-01-42-828Z`）。root 对 046（stored validation 6 条命令）发起 agent=oracle 委派，嵌入 `{taskId, objective, cwd, role:"validator"}`、无 `validation`（root 未逐字转发，加了「TaskSpec (echo this taskId in your report):」前缀，四个字段原样）。同步拒绝，无 run，回执逐字：`Planner-only guard: the submitted TaskSpec disagrees with Task T-20260913-046's stored validation — validation.required differs (submitted false, stored true). A Validator is judged against the Task's stored definition: resubmit with that definition, or name the Task without embedding one.` 回执不含 `VALIDATOR_SPEC_CONFLICT` 字面量——该码只在 `block.code` 上，宿主只渲染 `block.reason`（会话 jsonl 中该字符串 0 次），验收以措辞为准。
+
+披露：root 被拒后自行重试 5 次（补 `{required:true}` → 拒「commands 为空」；补两条 git 命令 → 拒「commands 与 stored 不同」；照抄 stored 六条 → 放行），实际拉起两个 046 validator run（`dad7a18b…`、`9a91bd53…`，六条命令均 exit 0），046 由 changes_requested 转 blocked（evidence-no-progress）。属 root 自主行为，与本票判定无关。
+
+**Status:** verified（2026-09-15 宿主验收 PASS on `bd784c0`。原「文案归因」前提不成立，见上；真实缺陷转 53，已一并 verified。）
