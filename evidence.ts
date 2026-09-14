@@ -11,7 +11,7 @@
 import { createHash } from "node:crypto";
 import { readdirSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { GIT_READ_ARGV, GIT_REF_PATTERN } from "./git-audit.ts";
+import { GIT_READ_ARGV, GIT_REF_PATTERN, parseGitStatusKinds } from "./git-audit.ts";
 import type { GitRunner } from "./git-audit.ts";
 import { MAX_BASELINE_HASH_PATHS, MAX_SCOPE_EXPAND_ENTRIES } from "./types.ts";
 import { stableStringify } from "./report.ts";
@@ -140,29 +140,19 @@ export function matchesScopePath(scopeEntries: readonly string[], path: string):
 /**
  * Parse `git status --porcelain=v2` into changed paths.
  *
- * Only entry lines are relevant: `1` (ordinary), `2` (rename/copy), `u`
- * (unmerged) and `?` (untracked). Branch header lines start with `#`.
+ * Field layout lives in exactly one place: `parseGitStatusKinds` owns the
+ * per-kind path index (git-audit.ts). This used to carry its own copy of that
+ * index, and the `u` (unmerged) entry was off by three fields — the four-token
+ * `u XY sub m1 m2 m3 m4 path` shape it assumed does not exist, so real
+ * `u XY sub m1 m2 m3 mW h1 h2 h3 path` lines yielded "h1 h2 h3 path".
+ * Delegate instead of re-deriving the index.
+ *
+ * Ignored (`!`) entries stay excluded here: this is the changed set, and
+ * `parseGitStatusKinds` is asked only for tracked + untracked.
  */
 export function parseChangedPaths(porcelain: string): string[] {
-	const paths: string[] = [];
-	for (const rawLine of porcelain.split("\n")) {
-		const line = rawLine.replace(/\r$/, "");
-		if (!line || line.startsWith("#")) continue;
-		if (line.startsWith("? ")) {
-			paths.push(unquoteGitPath(line.slice(2)));
-			continue;
-		}
-		const fields = line.split(" ");
-		const kind = fields[0];
-		// `1 XY sub mH mI mW hH hI path`           -> path at 8
-		// `2 XY sub mH mI mW hH hI Xscore path`    -> path at 9
-		// `u XY sub m1 m2 m3 m4 path`              -> path at 7
-		const pathIndex = kind === "1" ? 8 : kind === "2" ? 9 : kind === "u" ? 7 : -1;
-		if (pathIndex === -1 || fields.length <= pathIndex) continue;
-		// Renames carry "new<SEP>old"; keep the new path.
-		paths.push(unquoteGitPath(fields.slice(pathIndex).join(" ").split(/[\0\t]/)[0] as string));
-	}
-	return [...new Set(paths.filter(Boolean))].sort();
+	const { tracked, untracked } = parseGitStatusKinds(porcelain);
+	return [...new Set([...tracked, ...untracked])].sort();
 }
 
 /**

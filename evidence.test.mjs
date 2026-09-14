@@ -83,7 +83,7 @@ const porcelain = [
 	"# branch.head main",
 	"1 .M N... 100644 100644 100644 1111111 2222222 src/a.ts",
 	"2 R. N... 100644 100644 100644 3333333 4444444 R100 src/renamed.ts\tsrc/old.ts",
-	"u UU N... 100644 100644 100644 100644 src/conflict.ts",
+	"u UU N... 100644 100644 100644 100644 aaaa bbbb cccc src/conflict.ts",
 	"? src/new.ts",
 	"? docs/with spaces.md",
 ].join("\n");
@@ -95,6 +95,13 @@ assert.deepEqual(parseChangedPaths(porcelain), [
 	"src/new.ts",
 	"src/renamed.ts",
 ]);
+// A truncated `u` fixture ("u XY sub m1 m2 m3 m4 path") used to let a
+// three-fields-short index pass: real porcelain v2 unmerged entries carry
+// `m1 m2 m3 mW h1 h2 h3` before the path, so the hash triple must never leak
+// into the parsed path.
+for (const path of parseChangedPaths(porcelain)) {
+	assert.doesNotMatch(path, /(?:[0-9a-f]{4}\s)/i, `hash soup leaked into parsed path: ${path}`);
+}
 assert.deepEqual(parseChangedPaths(""), []);
 assert.deepEqual(parseChangedPaths("# branch.oid abc\n# branch.head main"), []);
 
