@@ -3445,6 +3445,11 @@ export class PlannerOrchestrator {
 				reason: `Task ${task.taskId} is already ${task.state}; verdicts are final. Start a new Task with a new TaskSpec for further work.`,
 			};
 		}
+		// Pre-screen only: this runs before a verdict exists and has no summary or
+		// findings to read, so it cannot evaluate the override record. It answers
+		// "is an oracle execution present at all?". The authoritative gate — gap
+		// reason, snapshot freshness, absence of other open findings, and the
+		// documented affected paths — is recordRootVerdict.
 		if (verdict === "pass" && task.state === "blocked" && ((task as any).blockedReasonCode === "attribution-gap" || task.stateReason?.includes("attribution gap") || task.stateReason?.includes("attribution-gap"))) {
 			const lastValidator = task.validatorReports.at(-1);
 			const oraclePassed = Boolean(lastValidator && (lastWorkerValidationPassed(lastValidator) || (lastValidator.status === "completed" && lastValidator.validation.some(v => v.status === "passed" && v.exitCode === 0))));
@@ -4139,7 +4144,11 @@ export class PlannerOrchestrator {
 			const namesGapReason = /attribution[- ]gap|baseline incomplete|hash-failed|cap-exceeded/i.test(overrideText);
 			const namesSnapshot = /(?:rev|revision|report)\s*\d+/i.test(overrideText) && /(?:status|hash|[0-9a-f]{7,40})/i.test(overrideText);
 			const namesOracle = /(?:oracle|validator).*(?:pass|ok)|pass.*(?:oracle|validator)/i.test(overrideText);
-			const namesPaths = gapPaths.length === 0 || gapPaths.every((p: string) => {
+			// Fail closed: a gap unlock must document the affected paths, so an
+			// empty gap list cannot satisfy this vacuously. A task recorded as
+			// attribution-gap whose current comparison names no path has no gap
+			// to unlock against; that needs a normal verdict, not this override.
+			const namesPaths = gapPaths.length > 0 && gapPaths.every((p: string) => {
 				const rel = p.startsWith(task.cwd) ? p.slice(task.cwd.length + 1) : p;
 				const base = p.split("/").pop() || p;
 				return overrideText.includes(p) || overrideText.includes(rel) || overrideText.includes(base);

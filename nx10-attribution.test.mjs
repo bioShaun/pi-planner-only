@@ -396,7 +396,33 @@ const CWD = "/repo";
 		// Restore fresh workspace
 		gitState.head = "head-1";
 
-		// Subcase 3: fresh workspace + oracle-passed validator + explicit override findings
+		// Subcase 3: the recorded gap names NO paths => the override cannot
+		// document the affected paths, so the unlock must fail closed. Without
+		// the non-empty requirement this case accepted vacuously.
+		const recordedComparison = orch.store.require(taskId).lastComparison;
+		const recordedGapPaths = recordedComparison.attributionGapPaths;
+		assert.ok(
+			recordedGapPaths && recordedGapPaths.length > 0,
+			"precondition: the blocked revision records the affected gap paths",
+		);
+		orch.store.setLastComparison(taskId, { ...recordedComparison, attributionGapPaths: [] });
+		const refusedWithoutPaths = await orch.recordRootVerdict(
+			orch.store.require(taskId),
+			"pass",
+			"Root override: attribution-gap on report revision 1 status hash 1111111, oracle passed",
+			{ source: "root" },
+		);
+		assert.equal(
+			refusedWithoutPaths.task.state,
+			"blocked",
+			"An attribution-gap unlock that names no affected path must stay blocked",
+		);
+		orch.store.setLastComparison(taskId, {
+			...orch.store.require(taskId).lastComparison,
+			attributionGapPaths: recordedGapPaths,
+		});
+
+		// Subcase 4: fresh workspace + oracle-passed validator + explicit override findings
 		const passedOutcome = await orch.recordRootVerdict(
 			orch.store.require(taskId),
 			"pass",
