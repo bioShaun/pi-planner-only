@@ -45,7 +45,23 @@
 - 诊断方向：需要带插针的复跑（在 48 检查处打印 `target.role` / `submittedValidationExplicit` / `target.spec?.validation` / `target.task?.spec?.validation` 与最终判定），或 operator 提供该次委派的完整 tool_call/tool_result 之外的 orchestrator 决策记录。
 - 同时记录的 operator 披露：门禁取证委派的文本含 016 文件名，被账本感知绑定到 016 并启动（016 的 mtime 基线因此变更）；未点名委派 4/4 次落到 active Task `T-20260913-046`（文档化的 active 兜底）；嵌入 spec 的 `T-p46-pos` 未生效（validator 的被审对象解析不消费 spec 声明 —— 与 46/51 的语义一致）。
 
-**Status:** done（本机落地、门禁绿；**宿主复跑 FAIL 且未复现本机行为** —— 48 不得翻 verified，待插针诊断。分支 `fix/tickets-46-48-49-50` 保留。）
+**2026-09-14 补充结论：`T-20260912-016` 被双重拦截是设计使然，其宿主复跑不可能出现 stored-task 拒绝或放行二选一以外的结果。** 该 Task 的 stored 定义是遗留不完整形状（`{required:true}` 无可用 commands，base `e7a4247` = RS-03，objective 为 Batch-4 RS-04+RS-05）。因此：
+
+- 嵌**与 stored 一致**的定义（`{required:true}` 无命令）→ 45 的 stored-task 守卫以「定义不完整」拒绝，指引 create a new Task；
+- 嵌**不一致**的定义（如补上 commands）→ 48 的 `VALIDATOR_SPEC_CONFLICT` 拒绝；
+- 不嵌 spec、task-id-only → 同样命中 45 的 stored-task 守卫。
+
+三条路都指向同一指引：**新建一个携带完整 validation 定义的 Task** 来承接该交付物的验收（016 本身留 blocked 或 abandon → failed 清账均可）。operator 的「复验 016」选项因此不可行——不是缺陷，是 45+48 的设计合力。
+
+**2026-09-14 根因定位并修复（插针诊断命中）。** operator 的复跑采集显示：宿主实况委派有 `enter`/`exit` 但 `reachedCheck=false | block=none | task=T-20260912-016` —— 即委派走了**未绑定 validator 路径**（`resolveValidatorReviewedTask` 返回 undefined → 占位绑定 → 放行），**48 检查从未到达**。
+
+**根因：48 检查的落点错误。** 它被放在 `beginDelegationInner` 的未绑定 validator 提前返回**之后**（为取 `specDetails` 而后移），所以任何「被审对象未解析」的 validator 委派都会走该路径被放行，永远到不了检查。而单测直接调 `beginDelegation` 且 Task 已在 store 里，所以单测过了 —— 测试与实况的路径差异掩盖了落点错误。
+
+**修复**（commit `144ed9e`，分支 `fix/tickets-46-48-49-50`）：48 检查移回**早期位置**（47 的目标解析之后、未绑定提前返回之前），`prompt`/`specDetails` 一并上提（提取为纯函数、无副作用，提前调用等价）；45 的守卫与 architecture C37-3 不变量不变。
+
+**复验**：宿主形状复现脚本（ledger-backed + 超上限记录 + 活跃 046 + prepare 前置）现到达检查并拒绝（`VALIDATOR_SPEC_CONFLICT`）；全套件 exit 0。
+
+**Status:** done（实现 + 根因修复落地、门禁绿。**宿主复跑待 operator 以 `144ed9e` 重跑检查 2** —— 通过即翻 verified。）
 
 ## Comments
 
