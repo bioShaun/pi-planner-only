@@ -113,3 +113,5 @@ isValidationDefinitionIncomplete(结果)     → true      （守卫必拒）
 2026-09-14 复核修订二：`code` 到不了宿主边界（**既有行为，未改**）
 
 要求 3 写的「结构化 code」只能在 orchestrator 层断言 —— `index.ts:1379` 把 `outcome.block` 压成 `{ block: true, reason: outcome.block.reason }`，`code` 与 `details` 都丢在这一层。**所有** block code 皆如此，并非本票引入。操作者实际收到的是 `reason` 文本；修复包是拼进 `reason` 的，故要求 3、4、6 的**可行动性不受影响**。是否让 host 边界透传 `code`/`details`，另立小票评估。
+
+2026-09-14 宿主终验（`.scratch/planner-only-cost-control/p45-host/summary.md`，被验构建 clone HEAD `bfc70e9`）：A/B/C/D/E/G PASS，**F FAIL**。F 的根因不在本票代码：点名的 `T-20260911-001` 排在会话恢复上限之外（rank 100 > `MAX_LEDGER_RESTORE_PER_SESSION` = 64），validator 解析按 §5 第五级退到本 cwd 的 active Task `T-20260913-046`，stored-task 守卫因此未触及。已立 [工单 47](47-validator-named-task-unresolved-falls-back-to-active.md)。本票状态保持 done；转 verified 需在 47 落地后复跑检查 F。
