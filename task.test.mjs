@@ -15,6 +15,7 @@ import {
 	validateTaskSpec,
 	canTransition,
 	TASKSPEC_CHARACTERISTIC_FIELDS,
+	TASKSPEC_FORBIDDEN_EXECUTION_CONTROLS,
 	buildTaskSpecExample,
 } from "./task.ts";
 import {
@@ -177,6 +178,23 @@ assert.ok(validateTaskSpec({ ...spec, budget: { tokens: "5000" } }).some((e) => 
 assert.ok(validateTaskSpec({ ...spec, budget: { costUsd: 0 } }).some((e) => /budget\.costUsd must be a positive finite number/.test(e)));
 assert.ok(validateTaskSpec({ ...spec, budget: { costUsd: -0.05 } }).some((e) => /budget\.costUsd must be a positive finite number/.test(e)));
 assert.ok(validateTaskSpec({ ...spec, budget: { costUsd: Number.NaN } }).some((e) => /budget\.costUsd must be a positive finite number/.test(e)));
+
+// Ticket 43: TaskSpec must reject runtime execution controls (error, not warn).
+{
+	for (const key of TASKSPEC_FORBIDDEN_EXECUTION_CONTROLS) {
+		const sample = key === "timeoutMs" ? 30_000
+			: key === "toolBudget" ? { hard: 20 }
+				: key === "usageBudget" ? { tokens: { hard: 1000 } }
+					: "forbidden-value";
+		const errors = validateTaskSpec({ ...spec, [key]: sample });
+		assert.ok(
+			errors.some((e) => e.includes(`${key} is an execution control`)),
+			`expected validateTaskSpec to reject ${key}, got: ${JSON.stringify(errors)}`,
+		);
+	}
+	// Business budget fields remain allowed.
+	assert.deepEqual(validateTaskSpec({ ...spec, budget: { tokens: 10_000 }, cumulativeBudget: { costUsd: 0.5 } }), []);
+}
 
 
 

@@ -82,9 +82,33 @@ assert.deepEqual(resolveRoleModel(loadRoleModelPolicy({}), "worker", {}), undefi
 		preflightEffectiveModel({ input: {}, roleResolution: { role: "worker", model: "openai/gpt-5.6-luna", thinking: "medium" }, registry, pricing }).effective?.source,
 		"role-policy",
 	);
+	// Ticket 43: TaskSpec model/thinking are ignored for effective resolution.
+	const ignoredTaskSpec = preflightEffectiveModel({
+		input: {},
+		taskSpecModel: "anthropic/claude-sonnet",
+		taskSpecThinking: "high",
+		hostModel: { provider: "openai", id: "gpt-5.6-luna" },
+		hostThinking: "low",
+		registry,
+		pricing,
+	});
+	assert.equal(ignoredTaskSpec.effective?.source, "host-default");
+	assert.equal(ignoredTaskSpec.effective?.model, "gpt-5.6-luna");
+	assert.equal(ignoredTaskSpec.effective?.thinking, "low");
+	assert.deepEqual(ignoredTaskSpec.ignored, {
+		source: "task-spec",
+		model: "anthropic/claude-sonnet",
+		thinking: "high",
+	});
 	assert.equal(
-		preflightEffectiveModel({ input: {}, taskSpecModel: "anthropic/claude-sonnet", hostThinking: "low", registry, pricing }).effective?.source,
-		"task-spec",
+		preflightEffectiveModel({
+			input: { model: "openai/gpt-5.6-luna", thinking: "medium" },
+			taskSpecModel: "anthropic/claude-sonnet",
+			taskSpecThinking: "high",
+			registry,
+			pricing,
+		}).effective?.source,
+		"explicit",
 	);
 	const unavailable = preflightEffectiveModel({ input: { model: "openai/gpt-5.6-luna" }, registry: { getAvailable: () => { throw new Error("registry unreadable"); } }, pricing });
 	assert.equal(unavailable.status, "unverified");

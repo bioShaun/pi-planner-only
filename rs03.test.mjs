@@ -45,7 +45,7 @@ const spec = (taskId) => JSON.stringify({
 }
 
 // A12: model and thinking provenance is resolved independently, including
-// model-only, thinking-only, TaskSpec, and role-policy-shaped inputs.
+// model-only, thinking-only, ignored TaskSpec, and role-policy-shaped inputs.
 {
 	const modelOnly = preflightEffectiveModel({ input: { model: "moon/luna" }, hostThinking: "high", registry });
 	assert.equal(modelOnly.effective?.modelSource, "explicit");
@@ -57,9 +57,20 @@ const spec = (taskId) => JSON.stringify({
 	assert.equal(thinkingOnly.effective?.thinkingSource, "explicit");
 	assert.equal(thinkingOnly.effective?.thinking, "low");
 
-	const taskSpec = preflightEffectiveModel({ input: {}, taskSpecModel: "moon/luna", taskSpecThinking: "medium", registry });
-	assert.equal(taskSpec.effective?.modelSource, "task-spec");
-	assert.equal(taskSpec.effective?.thinkingSource, "task-spec");
+	// Ticket 43: TaskSpec model/thinking never become effective sources.
+	const taskSpec = preflightEffectiveModel({
+		input: {},
+		taskSpecModel: "moon/luna",
+		taskSpecThinking: "medium",
+		hostModel: { provider: "root", id: "kimi" },
+		hostThinking: "high",
+		registry,
+	});
+	assert.equal(taskSpec.effective?.modelSource, "host-default");
+	assert.equal(taskSpec.effective?.thinkingSource, "host-default");
+	assert.equal(taskSpec.effective?.model, "kimi");
+	assert.equal(taskSpec.effective?.thinking, "high");
+	assert.deepEqual(taskSpec.ignored, { source: "task-spec", model: "moon/luna", thinking: "medium" });
 
 	const rolePolicy = preflightEffectiveModel({
 		input: {},
@@ -68,6 +79,53 @@ const spec = (taskId) => JSON.stringify({
 	});
 	assert.equal(rolePolicy.effective?.modelSource, "role-policy");
 	assert.equal(rolePolicy.effective?.thinkingSource, "role-policy");
+}
+
+// Ticket 43: nested TaskSpec model/thinking must not write into effective launch input.
+{
+	const input = {
+		agent: "worker",
+		task: spec("T-20260912-143"),
+		// Nested side-channel only — admitted TaskSpec JSON must not carry these keys.
+		taskSpec: { model: "moon/luna", thinking: "medium" },
+	};
+	const orch = new PlannerOrchestrator({
+		gitRunner: async () => ({ stdout: "", stderr: "", code: 0 }),
+		getModelPreflightContext: () => ({
+			hostModel: { provider: "root", id: "kimi" },
+			hostThinking: "low",
+			agentOverrides: { worker: { provider: "root", id: "kimi" } },
+			registry,
+			pricing,
+		}),
+	});
+	const result = await orch.beginDelegation({ toolCallId: "rs03-43-ignore", input }, "/repo");
+	assert.equal(result.block, undefined);
+	assert.equal(input.model, undefined, "ignored TaskSpec model must not write into launch input");
+	assert.equal(input.thinking, undefined, "ignored TaskSpec thinking must not write into launch input");
+	assert.ok(
+		(result.warnings ?? []).some((w) => /TaskSpec execution controls ignored/.test(w)),
+		`expected ignore warning, got: ${JSON.stringify(result.warnings)}`,
+	);
+}
+
+// Explicit input still wins when TaskSpec also carries model/thinking.
+{
+	const input = {
+		agent: "worker",
+		model: "moon/luna",
+		thinking: "high",
+		task: spec("T-20260912-144"),
+		taskSpec: { model: "root/kimi", thinking: "low" },
+	};
+	const orch = new PlannerOrchestrator({
+		gitRunner: async () => ({ stdout: "", stderr: "", code: 0 }),
+		getModelPreflightContext: () => ({ registry, pricing }),
+	});
+	const result = await orch.beginDelegation({ toolCallId: "rs03-43-explicit", input }, "/repo");
+	assert.equal(result.block, undefined);
+	assert.equal(input.model, "moon/luna");
+	assert.equal(input.thinking, "high");
 }
 
 // A13: unavailable registry state is a warning/continue condition; only a

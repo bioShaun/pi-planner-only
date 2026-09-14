@@ -1,0 +1,162 @@
+
+> pi-planner-only@0.4.1 test
+> node --experimental-strip-types policy.test.mjs && node --experimental-strip-types roles.test.mjs && node --experimental-strip-types floors.test.mjs && node --experimental-strip-types role-models.test.mjs && node --experimental-strip-types task.test.mjs && node --experimental-strip-types ledger-store.test.mjs && node --experimental-strip-types report.test.mjs && node --experimental-strip-types review.test.mjs && node --experimental-strip-types completion.test.mjs && node --experimental-strip-types notify.test.mjs && node --experimental-strip-types usage.test.mjs && node --experimental-strip-types orchestrate.test.mjs && node --experimental-strip-types evidence.test.mjs && node --experimental-strip-types git-audit.test.mjs && node --experimental-strip-types index.test.mjs && node --experimental-strip-types workspace-snapshot.test.mjs && node --experimental-strip-types architecture.test.mjs && node --experimental-strip-types naming.test.mjs && node --experimental-strip-types rr05.test.mjs && node --experimental-strip-types concurrency.test.mjs && node --experimental-strip-types rs01.test.mjs && node --experimental-strip-types rs05.test.mjs && node --experimental-strip-types rs05-identity.test.mjs && node --experimental-strip-types rs02.test.mjs && node --experimental-strip-types rs02-concurrency.test.mjs && node --experimental-strip-types rs03.test.mjs && node --experimental-strip-types rs04.test.mjs && node --experimental-strip-types rt03.test.mjs && node --experimental-strip-types rt04.test.mjs && node --experimental-strip-types rt06.test.mjs && node --experimental-strip-types nx01.test.mjs && node --experimental-strip-types nx02-03.test.mjs && node --experimental-strip-types nx04-06.test.mjs
+
+planner-only policy: PASS
+planner-only roles: PASS
+planner-only floors: PASS
+role-models: PASS
+planner-only task lifecycle: PASS
+planner-only ledger-store: PASS
+planner-only report: PASS
+planner-only review: PASS
+planner-only completion RR-02 C01-C06: PASS
+planner-only notify: PASS
+run4 fixture: children 0.24052828 total 0.29581593
+planner-only usage: PASS
+planner-only orchestration: PASS
+planner-only evidence: PASS
+planner-only git_audit: PASS
+PROBE7: ["Task: T-20260912-900\nState: executing\nWorker round: 0/3\nReview mode: root\nLoaded provenance: fingerprint=bc9b23a6a2fdb3089c4166e4ef2c1312cc9f7ef7c1a56c7b2fdf22d070aa31fa; source=/workspace/pi-planner-only-taskspec-exec/index.ts; package=0.4.1; host=unknown; subagents=unknown; session=test; workspace=/workspace/pi-planner-only-taskspec-exec; capabilities=planner-only,concurrency,shared-identity,run-convergence,output-resolver; disk HEAD=5b76f0df8d93775e3b09794f341bd9ab36f52369\nPersisted run provenance: same loaded build\nEvidence: no report yet\nChanged files: 0\nExecutions: 1 (1 attribution windows)\nDelegations:\n  - explorer: unknown (thinking: unknown)\nBudget: 未设累计上限（已知消耗 tokens=0，费用 $0.0000；未知项 tokens 0 项、费用 0 项）"]
+planner-only extension: PASS
+planner-only workspace snapshot: PASS
+planner-only architecture: PASS
+planner-only naming: PASS
+planner-only RR-05: PASS
+TAP version 13
+# Subtest: A01: Loaded plugin fingerprint is recorded from loaded build, distinct from disk HEAD
+ok 1 - A01: Loaded plugin fingerprint is recorded from loaded build, distinct from disk HEAD
+  ---
+  duration_ms: 9.475783
+  type: 'test'
+  ...
+# Subtest: A02: Replaying E04 launch receipt -> final report does not produce REPORT_SCHEMA_INVALID at launch time and maintains single report
+ok 2 - A02: Replaying E04 launch receipt -> final report does not produce REPORT_SCHEMA_INVALID at launch time and maintains single report
+  ---
+  duration_ms: 23.212293
+  type: 'test'
+  ...
+# Subtest: A03: 403 errors release run slot once, record terminal state without fake completion or unprompted model switch
+ok 3 - A03: 403 errors release run slot once, record terminal state without fake completion or unprompted model switch
+  ---
+  duration_ms: 8.841138
+  type: 'test'
+  ...
+# Subtest: A04: notify/wait/recover idempotency: deduplicate receipts, ensure report and usage are counted once
+ok 4 - A04: notify/wait/recover idempotency: deduplicate receipts, ensure report and usage are counted once
+  ---
+  duration_ms: 12.22539
+  type: 'test'
+  ...
+# Subtest: A04 permutations: notify/wait/recover arrivals converge once across reload and late output
+ok 5 - A04 permutations: notify/wait/recover arrivals converge once across reload and late output
+  ---
+  duration_ms: 15109.504573
+  type: 'test'
+  ...
+# Subtest: A04 crash point: loaded receipt state retries through a fresh orchestrator once
+ok 6 - A04 crash point: loaded receipt state retries through a fresh orchestrator once
+  ---
+  duration_ms: 7.290421
+  type: 'test'
+  ...
+# Subtest: A05: Multi-process shared ledger allocation, quarantine, and cross-workspace checks pass
+ok 7 - A05: Multi-process shared ledger allocation, quarantine, and cross-workspace checks pass
+  ---
+  duration_ms: 2.236684
+  type: 'test'
+  ...
+# Subtest: A19 minimal fixtures: frozen minimal fixture for E01-E05 events
+ok 8 - A19 minimal fixtures: frozen minimal fixture for E01-E05 events
+  ---
+  duration_ms: 0.282072
+  type: 'test'
+  ...
+1..8
+# tests 8
+# suites 0
+# pass 8
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 15178.96142
+TAP version 13
+# Subtest: A19: export reproduces frozen E01-E05 statistics and separates history
+ok 1 - A19: export reproduces frozen E01-E05 statistics and separates history
+  ---
+  duration_ms: 2.4279
+  type: 'test'
+  ...
+# Subtest: A20: export explains mixed workspace and premature launch records
+ok 2 - A20: export explains mixed workspace and premature launch records
+  ---
+  duration_ms: 0.405264
+  type: 'test'
+  ...
+# Subtest: A21: persisted run state reaches the final multi-dimensional payload
+ok 3 - A21: persisted run state reaches the final multi-dimensional payload
+  ---
+  duration_ms: 1.300771
+  type: 'test'
+  ...
+# Subtest: B19: RT-05 repair keeps T-004 children closed and accounts for all foreign runs
+ok 4 - B19: RT-05 repair keeps T-004 children closed and accounts for all foreign runs
+  ---
+  duration_ms: 2.047851
+  type: 'test'
+  ...
+1..4
+# tests 4
+# suites 0
+# pass 4
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 28.069437
+planner-only A05 identity regression: PASS
+TAP version 13
+# Subtest: A05: concurrent child allocators persist unique claims and recover a stale lock
+ok 1 - A05: concurrent child allocators persist unique claims and recover a stale lock
+  ---
+  duration_ms: 285.085541
+  type: 'test'
+  ...
+# Subtest: A05: corrupt snapshot occupies its id and is quarantined during recovery
+ok 2 - A05: corrupt snapshot occupies its id and is quarantined during recovery
+  ---
+  duration_ms: 4.151877
+  type: 'test'
+  ...
+# Subtest: A05: continuation enforces workspace identity and completed ids remain occupied
+ok 3 - A05: continuation enforces workspace identity and completed ids remain occupied
+  ---
+  duration_ms: 2.784677
+  type: 'test'
+  ...
+# Subtest: A05: recovery view distinguishes bound and cross-workspace identity conflicts
+ok 4 - A05: recovery view distinguishes bound and cross-workspace identity conflicts
+  ---
+  duration_ms: 7.360718
+  type: 'test'
+  ...
+1..4
+# tests 4
+# suites 0
+# pass 4
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 309.057733
+rs02 tests passed
+rs02 concurrency tests passed
+rs03: PASS
+rs04: PASS
+rt03: PASS
+rt04: PASS
+rt06: PASS
+planner-only NX-01: PASS
+planner-only NX-02/NX-03: PASS
+planner-only NX-04/NX-05/NX-06: PASS
