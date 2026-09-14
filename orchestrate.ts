@@ -3,7 +3,7 @@
  * Delegation launch, the Review loop, and Task memory writes.
  */
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import {
 	captureEvidence,
@@ -266,20 +266,6 @@ function missingBaseEvidence(task: TaskRecord, workerRunId: string): EvidenceRef
  * submission the repair renderer would fall back to `required: false` and
  * silently relax a mandatory validation.
  */
-// Ticket 48 diagnosis (TEMPORARY — remove after the host re-run).
-const DIAG48_MARK = "DIAG48-v1";
-// Ticket 48 diagnosis — the host's stderr is a TTY with no file mirror, so the
-// emission must land in a file the diagnosis can read back.
-const DIAG48_LOG = "/public/pi/pi-planner-only/.scratch/planner-only-cost-control/p48-impl/diag48.log";
-function diag48(callId: string, message: string): void {
-	console.error(`[${DIAG48_MARK} call=${callId}] ${message}`);
-	try {
-		mkdirSync(dirname(DIAG48_LOG), { recursive: true });
-		appendFileSync(DIAG48_LOG, `[${new Date().toISOString()} call=${callId}] ${message}\n`);
-	} catch {
-		// diagnostics must never break the delegation path
-	}
-}
 
 function validatorValidationRefusal(options: {
 	input: unknown;
@@ -2324,13 +2310,8 @@ export class PlannerOrchestrator {
 		event: { toolCallId: string; input?: unknown },
 		baseCwd: string,
 	): Promise<DelegationOutcome> {
-		// Ticket 48 diagnosis (TEMPORARY).
-		diag48(event.toolCallId, "enter");
 		try {
-			const diag48State: { reachedCheck: boolean; detail: string } = { reachedCheck: false, detail: "" };
-			const outcome = await this.beginDelegationInner(event, baseCwd, diag48State);
-			// Ticket 48 diagnosis (TEMPORARY).
-			diag48(event.toolCallId, `exit reachedCheck=${diag48State.reachedCheck} ${diag48State.detail} | outcome: block=${outcome.block ? JSON.stringify(outcome.block).slice(0, 220) : "none"} task=${outcome.task?.taskId ?? "-"}`);
+			const outcome = await this.beginDelegationInner(event, baseCwd);
 			if (outcome.block) {
 				// A reservation is provisional until a delegation record is created.
 				// Release it before returning every blocked launch outcome.
@@ -2359,14 +2340,8 @@ export class PlannerOrchestrator {
 	private async beginDelegationInner(
 		event: { toolCallId: string; input?: unknown },
 		baseCwd: string,
-		diag48State?: { reachedCheck: boolean; detail: string },
 	): Promise<DelegationOutcome> {
 		const input = event.input ?? {};
-		// Ticket 48 diagnosis (TEMPORARY).
-		if (diag48State) {
-			diag48State.reachedCheck = false;
-			diag48State.detail = "";
-		}
 		// Ticket 42 — stamp explicit reportOnly before composite/target checks so
 		// machine-generated corrections bind even when prepareRoleDelegation was skipped.
 		stampReportOnlyCorrectionInput(input);
@@ -2474,20 +2449,8 @@ export class PlannerOrchestrator {
 	// this check for every packetised delegation (the ticket 48 host-run miss).
 	const submittedValidationExplicit = specDetails.submitted !== undefined
 		&& "validation" in specDetails.submitted;
-	// Ticket 48 diagnosis (TEMPORARY) — record the gate inputs even when the
-	// check is not entered, so a host miss explains itself.
-	if (diag48State) {
-		diag48State.detail = `gate48: targetRole=${target?.role ?? "-"} explicit=${submittedValidationExplicit} candidateKeys=${specDetails.candidate ? Object.keys(specDetails.candidate).join("|") : "-"} submittedKeys=${specDetails.submitted ? Object.keys(specDetails.submitted).join("|") : "-"} targetSpec=${Boolean(target?.spec)} targetTask=${target?.task?.taskId ?? "-"} storedValidation=${JSON.stringify(target?.task?.spec?.validation) ?? "undefined"}`;
-		diag48(event.toolCallId, diag48State.detail);
-	}
 	if (target?.role === "validator" && submittedValidationExplicit && target.spec && target.task?.spec) {
 		const conflict = describeValidationConflict(target.spec.validation, target.task.spec.validation);
-		// Ticket 48 diagnosis (TEMPORARY) — record the four inputs and the decision.
-		if (diag48State) {
-			diag48State.reachedCheck = true;
-			diag48State.detail = `check48: targetRole=${target.role} explicit=${submittedValidationExplicit} submittedValidation=${JSON.stringify(target.spec.validation) ?? "undefined"} storedValidation=${JSON.stringify(target.task.spec.validation) ?? "undefined"} conflict=${conflict ?? "none"} decision=${conflict ? "refused(VALIDATOR_SPEC_CONFLICT)" : "passthrough"}`;
-			diag48(event.toolCallId, diag48State.detail);
-		}
 		if (conflict) {
 			return {
 				block: {
