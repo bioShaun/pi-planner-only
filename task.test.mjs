@@ -549,6 +549,40 @@ assert.equal(store.require(abandoned.taskId).state, "failed");
 assert.equal(store.require(abandoned.taskId).stateReason, "operator reset");
 assert.throws(() => store.abandon(abandoned.taskId), /terminal task/);
 
+// --------------------------------------------------------------------------
+// Ticket 46 — an alias must resolve to exactly one Task
+// --------------------------------------------------------------------------
+{
+	const aliasStore = new TaskStore({ now: () => new Date("2026-09-14T00:00:00.000Z") });
+	const owner = aliasStore.create(createTaskSpec({ objective: "canonical owner", cwd }, "T-20260914-920"));
+
+	// An alias that is another Task's canonical id could never resolve: `get()`
+	// prefers the canonical match, so the alias would be shadowed forever.
+	assert.throws(
+		() => aliasStore.create(createTaskSpec({ objective: "shadowed", cwd }, "T-20260914-921"), owner.taskId),
+		(error) => error?.code === "TASK_ALIAS_CONFLICT",
+		"an alias must not shadow a canonical id",
+	);
+
+	// Nor may two Tasks claim the same alias.
+	const holder = aliasStore.create(createTaskSpec({ objective: "alias holder", cwd }, "T-20260914-922"), "T-46-shared-alias");
+	assert.equal(aliasStore.get("T-46-shared-alias")?.taskId, holder.taskId, "a single-holder alias still resolves");
+	assert.throws(
+		() => aliasStore.create(createTaskSpec({ objective: "alias thief", cwd }, "T-20260914-923"), "T-46-shared-alias"),
+		(error) => error?.code === "TASK_ALIAS_CONFLICT",
+		"an alias resolves to one Task only",
+	);
+
+	// A ledger shared across hosts can still hold a duplicated alias. `get` must
+	// then resolve to neither rather than silently picking the first holder.
+	const first = aliasStore.create(createTaskSpec({ objective: "dup one", cwd }, "T-20260914-924"));
+	const second = aliasStore.create(createTaskSpec({ objective: "dup two", cwd }, "T-20260914-925"));
+	first.aliases.push("T-46-duplicated");
+	second.aliases.push("T-46-duplicated");
+	assert.equal(aliasStore.resolveCandidates("T-46-duplicated").length, 2, "both holders are reported");
+	assert.equal(aliasStore.get("T-46-duplicated"), undefined, "get never picks the first of several holders");
+}
+
 // Ticket 41: abandon allows blocked → failed
 {
 	const blockedStore = new TaskStore();

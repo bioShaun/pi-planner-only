@@ -144,6 +144,7 @@ export type TaskIdentityErrorCode =
 	| "TASK_ID_CONFLICT"
 	| "TASK_ID_ALLOCATION_FAILED"
 	| "TASK_WORKSPACE_MISMATCH"
+	| "TASK_ALIAS_CONFLICT"
 	| "TASK_NOT_FOUND";
 
 export class TaskIdentityError extends Error {
@@ -1422,10 +1423,47 @@ export class TaskStore {
 	}
 
 	/**
+	 * Ticket 46 — an alias that is already somebody's canonical id, or already
+	 * claimed by another Task, can never resolve: `get()` prefers the canonical
+	 * match, so the alias would be permanently shadowed and the operator's
+	 * "reuse this id" intent would silently land on a different Task.
+	 *
+	 * Pure in-memory: callers that can also see the ledger (the delegation path)
+	 * must check there too, because such a shadowing id is exactly the kind of
+	 * record the session restore cap leaves out of memory.
+	 */
+	aliasConflict(alias: string, ownerTaskId?: string): { taskId: string; kind: "canonical" | "alias" } | undefined {
+		const canonical = this.tasks.get(alias);
+		if (canonical && canonical.taskId !== ownerTaskId) {
+			return { taskId: canonical.taskId, kind: "canonical" };
+		}
+		for (const task of this.tasks.values()) {
+			if (task.taskId === ownerTaskId) continue;
+			if (Array.isArray(task.aliases) && task.aliases.includes(alias)) {
+				return { taskId: task.taskId, kind: "alias" };
+			}
+		}
+		return undefined;
+	}
+
+	/**
 	 * IS-01 — build a fresh record for an id the caller has already proven free.
 	 */
 	private insertNew(taskId: string, spec: TaskSpec | undefined, alias: string | undefined): TaskRecord {
 		const timestamp = this.now().toISOString();
+		// Ticket 46 — never register an alias that could not resolve.
+		if (alias && alias !== taskId) {
+			const conflict = this.aliasConflict(alias, taskId);
+			if (conflict) {
+				throw new TaskIdentityError(
+					"TASK_ALIAS_CONFLICT",
+					conflict.kind === "canonical"
+						? `alias ${alias} is already the canonical id of Task ${conflict.taskId}; an alias must not shadow a canonical id`
+						: `alias ${alias} is already claimed by Task ${conflict.taskId}; an alias resolves to one Task only`,
+					{ taskId },
+				);
+			}
+		}
 		const aliases = alias && alias !== taskId ? [alias] : [];
 		const record: TaskRecord = {
 			taskId,
@@ -1567,13 +1605,26 @@ export class TaskStore {
 		return record;
 	}
 
-	get(taskId: string): TaskRecord | undefined {
+	/**
+	 * Ticket 46 — every Task a lookup would match: the canonical id (which always
+	 * wins, so it is the only candidate) or, failing that, every Task that claims
+	 * the string as an alias. Callers that must not guess use this; `get` is the
+	 * convenience view.
+	 */
+	resolveCandidates(taskId: string): TaskRecord[] {
 		const direct = this.tasks.get(taskId);
-		if (direct) return direct;
-		for (const task of this.tasks.values()) {
-			if (task.aliases.includes(taskId)) return task;
-		}
-		return undefined;
+		if (direct) return [direct];
+		return [...this.tasks.values()].filter(
+			(task) => Array.isArray(task.aliases) && task.aliases.includes(taskId),
+		);
+	}
+
+	get(taskId: string): TaskRecord | undefined {
+		// Ticket 46 — never silently pick the first of several alias holders: an
+		// alias shared by two Tasks resolves to neither. Callers that need to say
+		// why use `resolveCandidates`.
+		const candidates = this.resolveCandidates(taskId);
+		return candidates.length === 1 ? candidates[0] : undefined;
 	}
 
 	/** Record a reciprocal parent/successor link when both Tasks are known. */

@@ -1122,12 +1122,24 @@ export class PlannerOrchestrator {
 		/** Why a named id did not resolve. The record existing but being unusable
 		 * must not read as "unknown Task". */
 		notes: Map<string, string>;
+		/** Ticket 46 — ids that resolve to more than one Task through aliases. */
+		ambiguous: Map<string, string[]>;
 	} {
 		const cache = new Map<string, TaskRecord | undefined>();
 		const notes = new Map<string, string>();
+		const ambiguous = new Map<string, string[]>();
 		const lookup = (taskId: string): TaskRecord | undefined => {
 			if (cache.has(taskId)) return cache.get(taskId);
-			let found = this.store.get(taskId);
+			// Ticket 46 — an alias claimed by several Tasks resolves to none of them.
+			const candidates = this.store.resolveCandidates(taskId);
+			if (candidates.length > 1) {
+				const taskIds = candidates.map((candidate) => candidate.taskId);
+				ambiguous.set(taskId, taskIds);
+				notes.set(taskId, `it resolves to ${taskIds.length} Tasks as an alias (${taskIds.join(", ")}), so no single Task can be meant`);
+				cache.set(taskId, undefined);
+				return undefined;
+			}
+			let found: TaskRecord | undefined = candidates[0];
 			if (!found) {
 				const restored = this.restoreTaskOnDemand(taskId, cwd);
 				found = restored.record;
@@ -1136,7 +1148,7 @@ export class PlannerOrchestrator {
 			cache.set(taskId, found);
 			return found;
 		};
-		return { lookup, notes };
+		return { lookup, notes, ambiguous };
 	}
 
 	/**
@@ -2342,7 +2354,7 @@ export class PlannerOrchestrator {
 		// Ticket 47 — the delegation lookup resolves canonical ids from the ledger
 		// on demand, so naming a Task is not silently defeated by the session
 		// restore cap.
-		const { lookup, notes: lookupNotes } = this.delegationLookup(cwd);
+		const { lookup, notes: lookupNotes, ambiguous: lookupAmbiguous } = this.delegationLookup(cwd);
 		let target = resolveDelegationTarget(input, lookup);
 		if (resume) {
 			const previousRunId = this.resumeRunId(input);
@@ -2415,6 +2427,20 @@ export class PlannerOrchestrator {
 			const resolution = this.resolveValidatorReviewedTask(input, cwd, target, lookup, lookupNotes);
 			if (resolution.refused) return { block: resolution.refused };
 			validatorReviewed = resolution.task;
+		}
+		// Ticket 46 — a named id that resolves to more than one Task (an alias two
+		// Tasks both claim) is ambiguous: refuse and name the candidates rather
+		// than letting a lookup pick one. Applies to every role, and to embedded
+		// TaskSpec ids too — registering such an id as an alias is an error as well.
+		for (const id of new Set([...(target?.namedTaskIds ?? []), ...promptTaskIds(delegationPrompt(input))])) {
+			const candidates = lookupAmbiguous.get(id);
+			if (!candidates) continue;
+			return {
+				block: {
+					code: "TASK_ID_AMBIGUOUS",
+					reason: `Planner-only guard: Task id ${id} resolves to ${candidates.length} Tasks as an alias (${candidates.join(", ")}); a delegation target is never chosen silently. Name one canonical Task id.`,
+				},
+			};
 		}
 		// Reserve capacity before any Task, budget, evidence, or writer mutation.
 		// Reader/reader overlap is safe in phase one; every other overlapping
@@ -3050,6 +3076,39 @@ export class PlannerOrchestrator {
 					spec.taskId === existing.taskId ? persisted : { ...persisted, taskId: existing.taskId },
 				);
 		} else if (hasGeneratedTaskId(spec) || shouldReplaceTaskId(spec.taskId, this.store.now())) {
+			// Ticket 46 — refuse a TaskSpec id that could only be kept as an alias of
+			// somebody else's Task: `get()` prefers the canonical match, so such an
+			// alias would be permanently shadowed and the operator's "reuse this id"
+			// intent would silently land on a different Task. Checked before the
+			// allocation so a refusal leaks no id claim, and against the ledger as
+			// well as memory — a beyond-cap snapshot is exactly the shadowing case.
+			// (The alias/allocate/rekey sequence below stays adjacent: architecture
+			// test C37-3 pins it.)
+			const aliasWouldRegister = !hasGeneratedTaskId(spec)
+				&& spec.taskId !== TASKSPEC_EXAMPLE_SENTINEL
+				&& !this.store.get(spec.taskId);
+			if (aliasWouldRegister) {
+				// `lookup` is ledger-aware. A resolved record means the id belongs to
+				// somebody else; a note means the record exists but is not bindable
+				// here (another workspace, an ambiguous alias, unreadable). Either way
+				// storing it as an alias would re-create the shadowing this ticket
+				// closes, so refuse instead of minting a Task that can never be reached
+				// by that id again.
+				const shadowed = lookup(spec.taskId);
+				const why = shadowed
+					? `already resolves to Task ${shadowed.taskId}`
+					: lookupNotes.has(spec.taskId)
+						? `exists but is not bindable here (${lookupNotes.get(spec.taskId)})`
+						: undefined;
+				if (why) {
+					return {
+						block: {
+							code: "TASK_ALIAS_CONFLICT",
+							reason: `Planner-only guard: TaskSpec id ${spec.taskId} ${why}, so it cannot be kept as an alias without being permanently shadowed. Use a different TaskSpec id, or name the existing Task explicitly.`,
+						},
+					};
+				}
+			}
 			const generated = this.store.nextTaskId();
 			const storedSpec = { ...persisted, taskId: generated };
 			// R01 — the example sentinel is never stored as an alias, so pasting

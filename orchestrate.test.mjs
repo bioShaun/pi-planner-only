@@ -1433,6 +1433,78 @@ function truncatedPreview() {
 }
 
 
+// Ticket 46: an id that resolves to two Tasks through a shared alias is refused
+// and both candidates are named, instead of a lookup quietly picking one.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	const cwdAmb = "/repo/v-46-ambiguous";
+	const first = orch.store.create(specFor("T-20260914-910", "worker", cwdAmb));
+	const second = orch.store.create(specFor("T-20260914-911", "worker", cwdAmb));
+	// A ledger shared across hosts can hold this: both records claim one alias.
+	first.aliases.push("T-20260914-912");
+	second.aliases.push("T-20260914-912");
+	const outcome = await orch.beginDelegation(
+		{ toolCallId: "call-46-ambiguous", input: { agent: "worker", cwd: cwdAmb, task: "Continue T-20260914-912 please." } },
+		cwdAmb,
+	);
+	assert.equal(outcome.block?.code, "TASK_ID_AMBIGUOUS");
+	assert.match(outcome.block?.reason ?? "", /T-20260914-910/);
+	assert.match(outcome.block?.reason ?? "", /T-20260914-911/);
+	assert.equal(orch.pendingDelegationCount(), 0, "an ambiguous target starts no run");
+}
+
+// Ticket 46 + 47: a repeated prompt whose id exists on disk but is outside the
+// session store must BIND to that record instead of minting a second Task that
+// keeps the id only as an alias — `get()` would prefer the canonical record and
+// the alias could never resolve again.
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-46-rebind-"));
+	try {
+		const ledger = new LedgerSnapshotStore(dir);
+		const seed = new TaskStore({ now: FIXED_NOW });
+		ledger.write(seed.create(specFor("T-20260912-903", "worker", dir)));
+
+		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
+		assert.equal(orch.store.get("T-20260912-903"), undefined, "precondition: the snapshot was not restored");
+
+		const stale = { ...specFor("T-20260912-903", "worker", dir), validation: { required: true, commands: ["npm test"] } };
+		const outcome = await orch.beginDelegation(
+			{ toolCallId: "call-46-rebind", input: { task: JSON.stringify(stale) } },
+			dir,
+		);
+		assert.equal(outcome.block, undefined, "the stale id binds instead of being refused");
+		assert.equal(outcome.task?.taskId, "T-20260912-903");
+		assert.deepEqual(orch.store.require("T-20260912-903").aliases, [], "no alias is minted for a canonical id");
+		assert.equal(orch.store.list().length, 1, "no second Task was created");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// Ticket 46: the id exists, but in another workspace, so it can never be bound
+// from here. Minting a Task that keeps it as an alias would re-create exactly
+// the shadowing this ticket closes, so it is refused instead.
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-46-foreign-"));
+	try {
+		const ledger = new LedgerSnapshotStore(dir);
+		const seed = new TaskStore({ now: FIXED_NOW });
+		ledger.write(seed.create(specFor("T-20260912-904", "worker", "/public/scripts/finance-check-workspace")));
+
+		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
+		const reused = { ...specFor("T-20260912-904", "worker", dir), validation: { required: true, commands: ["npm test"] } };
+		const outcome = await orch.beginDelegation(
+			{ toolCallId: "call-46-foreign", input: { task: JSON.stringify(reused) } },
+			dir,
+		);
+		assert.equal(outcome.block?.code, "TASK_ALIAS_CONFLICT");
+		assert.match(outcome.block?.reason ?? "", /belongs to workspace/, "the reason names the foreign workspace");
+		assert.equal(orch.store.list().length, 0, "no Task is created for an id that belongs elsewhere");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
 // p12-r058: a bound validator (resolveValidatorReviewedTask hit via report)
 // keeps taskId = reviewed Task and does not set accountingTaskId.
 {
