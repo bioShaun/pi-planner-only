@@ -9,11 +9,11 @@
  */
 
 import { createHash } from "node:crypto";
-import { statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { GIT_READ_ARGV, GIT_REF_PATTERN } from "./git-audit.ts";
+import { GIT_READ_ARGV, GIT_REF_PATTERN, parseGitStatusKinds } from "./git-audit.ts";
 import type { GitRunner } from "./git-audit.ts";
-import { MAX_BASELINE_HASH_PATHS } from "./types.ts";
+import { MAX_BASELINE_HASH_PATHS, MAX_SCOPE_EXPAND_ENTRIES } from "./types.ts";
 import { stableStringify } from "./report.ts";
 import type {
 	BinaryChange,
@@ -23,6 +23,7 @@ import type {
 	ReviewRoundAttribution,
 	TaskScope,
 	WorkerReport,
+	SnapshotGap,
 } from "./types.ts";
 
 export type { GitRunner };
@@ -109,32 +110,95 @@ export function unquoteGitPath(path: string): string {
 	return Buffer.from(bytes).toString("utf8");
 }
 
+/** Ticket 09 — canonical repo-relative form; null when the path escapes the workspace ('..', absolute, empty). */
+export function normalizeRepoRelativePath(path: string): string | null {
+	if (typeof path !== "string") return null;
+	let normalized = path.trim().replaceAll("\\", "/");
+	while (normalized.startsWith("./")) normalized = normalized.slice(2);
+	normalized = normalized.replace(/\/+/g, "/");
+	if (!normalized || normalized === "." || isAbsolute(normalized)) return null;
+	if (normalized.split("/").includes("..")) return null;
+	return normalized;
+}
+
+/**
+ * Ticket 09 — the ONE scope matcher. Entry 'foo' matches exactly 'foo' (a file).
+ * Entry 'foo/' (trailing slash) matches descendants inside foo only: 'foo/bar',
+ * 'foo/a/b.txt'; never 'foobar/x' (separator boundary), never 'foo.txt'.
+ */
+export function matchesScopePath(scopeEntries: readonly string[], path: string): boolean {
+	const candidate = normalizeRepoRelativePath(path);
+	if (candidate === null) return false;
+	for (const rawEntry of scopeEntries) {
+		const entry = normalizeRepoRelativePath(rawEntry);
+		if (entry === null) continue;
+		if (entry.endsWith("/") ? candidate.startsWith(entry) : candidate === entry) return true;
+	}
+	return false;
+}
+
+/**
+ * The one scope classifier: is `path` inside the task's declared scope?
+ *
+ * An absent or empty allow-list means "no restriction" and answers true, so
+ * callers that need to distinguish "declared scope" from "everything" must
+ * check the entry list themselves.
+ *
+ * `additionalRoots` covers declared extra worktrees: porcelain paths hang off
+ * the cwd git ran in, while a path under an extra root only resolves against
+ * that root, so each base is tried in turn and escaping relatives are skipped.
+ *
+ * Entries are passed through to `matchesScopePath` so that the ticket-09
+ * contract holds everywhere: a bare entry names one file, only a trailing
+ * slash opens the subtree. An entry that is written absolutely is first
+ * rewritten against the base it lives under, preserving its trailing slash —
+ * story 28-C allows the declared allow-list to name a path under a declared
+ * worktree root in absolute form. Entries that are relative apply to every
+ * base, which is what lets one entry cover the same file under each root.
+ */
+function scopeEntryRelativeTo(entry: string, base: string): string | null {
+	if (!isAbsolute(entry)) return entry;
+	const rel = relative(base, entry);
+	if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null;
+	return entry.endsWith("/") && !rel.endsWith("/") ? `${rel}/` : rel;
+}
+
+export function isPathInDeclaredScope(
+	path: string,
+	cwd: string,
+	scopeEntries: readonly string[] | undefined,
+	additionalRoots: readonly string[] = [],
+): boolean {
+	if (!scopeEntries || scopeEntries.length === 0) return true;
+	for (const base of [cwd, ...additionalRoots]) {
+		const relCandidate = isAbsolute(path) ? relative(base, path) : path;
+		if (relCandidate === "" || relCandidate.startsWith("..") || isAbsolute(relCandidate)) continue;
+		const entries: string[] = [];
+		for (const entry of scopeEntries) {
+			const relEntry = scopeEntryRelativeTo(entry, base);
+			if (relEntry !== null) entries.push(relEntry);
+		}
+		if (entries.length > 0 && matchesScopePath(entries, relCandidate)) return true;
+	}
+	return false;
+}
+
 /**
  * Parse `git status --porcelain=v2` into changed paths.
  *
- * Only entry lines are relevant: `1` (ordinary), `2` (rename/copy), `u`
- * (unmerged) and `?` (untracked). Branch header lines start with `#`.
+ * Field layout lives in exactly one place: `parseGitStatusKinds` owns the
+ * per-kind path index (git-audit.ts). This used to carry its own copy of that
+ * index, and the `u` (unmerged) entry was off by three fields — the four-token
+ * `u XY sub m1 m2 m3 m4 path` shape it assumed does not exist, so real
+ * `u XY sub m1 m2 m3 mW h1 h2 h3 path` lines yielded "h1 h2 h3 path".
+ * Delegate instead of re-deriving the index.
+ *
+ * Ignored (`!`) entries stay excluded here: this is the changed set, and
+ * `parseGitStatusKinds` is asked only for tracked + untracked.
  */
 export function parseChangedPaths(porcelain: string): string[] {
-	const paths: string[] = [];
-	for (const rawLine of porcelain.split("\n")) {
-		const line = rawLine.replace(/\r$/, "");
-		if (!line || line.startsWith("#")) continue;
-		if (line.startsWith("? ")) {
-			paths.push(unquoteGitPath(line.slice(2)));
-			continue;
-		}
-		const fields = line.split(" ");
-		const kind = fields[0];
-		// `1 XY sub mH mI mW hH hI path`           -> path at 8
-		// `2 XY sub mH mI mW hH hI Xscore path`    -> path at 9
-		// `u XY sub m1 m2 m3 m4 path`              -> path at 7
-		const pathIndex = kind === "1" ? 8 : kind === "2" ? 9 : kind === "u" ? 7 : -1;
-		if (pathIndex === -1 || fields.length <= pathIndex) continue;
-		// Renames carry "new<SEP>old"; keep the new path.
-		paths.push(unquoteGitPath(fields.slice(pathIndex).join(" ").split(/[\0\t]/)[0] as string));
-	}
-	return [...new Set(paths.filter(Boolean))].sort();
+	const { tracked, untracked } = parseGitStatusKinds(porcelain);
+	return [...new Set([...tracked, ...untracked])].sort();
 }
 
 /**
@@ -237,6 +301,12 @@ export interface CaptureEvidenceOptions {
 	 * directories are never scanned — only these declared roots.
 	 */
 	additionalWorktreeRoots?: readonly string[];
+	/**
+	 * Ticket 11: task scope paths (allowedPaths ∪ truthPaths). When set, content
+	 * snapshot/hashing is scoped to these paths (expanding directories to existing
+	 * files). Change detection (changedPaths/status) remains whole-worktree.
+	 */
+	scopePaths?: readonly string[];
 }
 
 function isHashableFilePath(path: string): boolean {
@@ -255,12 +325,84 @@ function isHashableFilePath(path: string): boolean {
  * a failing call also omits the map so T3 stays empty rather than
  * mis-attributing.
  */
-async function hashDirtyPaths(
+/** Ticket 11: expand scope entries to existing files at sample time. */
+function expandScopeToExistingFiles(cwd: string, scopePaths: readonly string[]): Set<string> {
+	const expanded = new Set<string>();
+	let visited = 0;
+	for (const raw of scopePaths) {
+		if (visited >= MAX_SCOPE_EXPAND_ENTRIES) break;
+		const abs = isAbsolute(raw) ? resolve(raw) : resolve(cwd, raw);
+		try {
+			const st = statSync(abs);
+			if (st.isDirectory()) {
+				const entries = readdirSync(abs, { recursive: true, withFileTypes: true });
+				for (const entry of entries) {
+					visited += 1;
+					if (visited > MAX_SCOPE_EXPAND_ENTRIES) break;
+					if (entry.isFile()) {
+						const parent = (entry as any).parentPath ?? abs;
+						const full = resolve(parent, entry.name);
+						expanded.add(relative(cwd, full));
+					}
+				}
+			} else {
+				visited += 1;
+				expanded.add(relative(cwd, abs));
+			}
+		} catch {
+			visited += 1;
+			expanded.add(isAbsolute(raw) ? relative(cwd, abs) : raw);
+		}
+	}
+	return expanded;
+}
+
+function isPathInScope(
+	path: string,
+	cwd: string,
+	scopePaths: readonly string[] | undefined,
+	expandedScope: Set<string> | undefined,
+): boolean {
+	if (!scopePaths || scopePaths.length === 0) return true;
+	if (expandedScope && expandedScope.has(path)) return true;
+	const prefix = cwd.endsWith("/") ? cwd : cwd + "/";
+	const normalizedEntries = scopePaths.map((sp) => {
+		if (isAbsolute(sp) && sp.startsWith(prefix)) {
+			return sp.slice(prefix.length);
+		}
+		if (isAbsolute(sp)) {
+			const rel = relative(cwd, sp);
+			return sp.endsWith("/") && !rel.endsWith("/") ? rel + "/" : rel;
+		}
+		return sp;
+	});
+	const relPath = isAbsolute(path) ? relative(cwd, path) : path;
+	return matchesScopePath(normalizedEntries, relPath);
+}
+
+interface HashPathsResult {
+	ok: boolean;
+	hashes?: Record<string, string | null>;
+	gap?: SnapshotGap;
+}
+
+async function hashDirtyPathsWithGap(
 	run: GitRunner,
 	cwd: string,
 	paths: readonly string[],
-): Promise<Record<string, string | null> | undefined> {
-	if (paths.length === 0 || paths.length > MAX_BASELINE_HASH_PATHS) return undefined;
+): Promise<HashPathsResult> {
+	if (paths.length === 0) return { ok: true, hashes: undefined };
+	if (paths.length > MAX_BASELINE_HASH_PATHS) {
+		return {
+			ok: false,
+			gap: {
+				reason: "cap-exceeded",
+				count: paths.length,
+				limit: MAX_BASELINE_HASH_PATHS,
+				paths: [...paths],
+			},
+		};
+	}
 	const hashes: Record<string, string | null> = {};
 	const hashable: string[] = [];
 	for (const path of paths) {
@@ -272,15 +414,38 @@ async function hashDirtyPaths(
 		try {
 			result = await run([...GIT_READ_ARGV.hashObject, ...hashable], cwd);
 		} catch {
-			return undefined;
+			return {
+				ok: false,
+				gap: {
+					reason: "hash-failed",
+					paths: [...paths],
+				},
+			};
 		}
 		const lines = result.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
-		if (result.code !== 0 || lines.length !== hashable.length) return undefined;
+		if (result.code !== 0 || lines.length !== hashable.length) {
+			return {
+				ok: false,
+				gap: {
+					reason: "hash-failed",
+					paths: [...paths],
+				},
+			};
+		}
 		hashable.forEach((path, index) => {
 			hashes[path] = lines[index] ?? null;
 		});
 	}
-	return hashes;
+	return { ok: true, hashes };
+}
+
+async function hashDirtyPaths(
+	run: GitRunner,
+	cwd: string,
+	paths: readonly string[],
+): Promise<Record<string, string | null> | undefined> {
+	const res = await hashDirtyPathsWithGap(run, cwd, paths);
+	return res.ok ? res.hashes : undefined;
 }
 
 function parseDiffNames(stdout: string): string[] {
@@ -341,6 +506,45 @@ function absolutizePaths(root: string, paths: readonly string[]): string[] {
 }
 
 /**
+ * D1 — `git status --porcelain=v2` collapses a wholly-untracked directory into
+ * a single `?? dir/` entry that cannot be hashed, so a file a worker created
+ * (and declared) inside such a directory never matched the dirty set and was
+ * judged evidence-stale ("reported changes no longer present" / over-declared /
+ * missing). When the plain probe reports a collapsed entry, re-probe with
+ * `--untracked-files=all` and adopt its file-level paths. The original
+ * porcelain — and with it `statusHash` and the snapshot digest — is left
+ * untouched; when the re-probe fails or answers empty the collapsed view is
+ * kept, so callers degrade to today's behavior instead of failing.
+ */
+async function fileLevelProbe(
+	run: GitRunner,
+	cwd: string,
+	probe: GitProbe,
+): Promise<{ changedPaths: string[]; untrackedPaths: string[] }> {
+	const keep = () => ({ changedPaths: probe.changedPaths, untrackedPaths: probe.untrackedPaths });
+	const collapsed =
+		probe.changedPaths.some((path) => path.endsWith("/")) ||
+		probe.untrackedPaths.some((path) => path.endsWith("/"));
+	if (!collapsed) return keep();
+	try {
+		const result = await run([...GIT_READ_ARGV.statusAll], cwd);
+		if (result.code !== 0) return keep();
+		// The re-probe must replace the collapsed view as a PAIR: expanding only
+		// changedPaths would leave the paired untracked set collapsed and break
+		// the ticket-20 "untracked && outside allow-list -> external" rule.
+		const changedPaths = parseChangedPaths(result.stdout);
+		const untrackedPaths = parseUntrackedPaths(result.stdout);
+		if (changedPaths.length === 0 && untrackedPaths.length === 0) return keep();
+		return {
+			changedPaths: changedPaths.length > 0 ? changedPaths : probe.changedPaths,
+			untrackedPaths: untrackedPaths.length > 0 ? untrackedPaths : probe.untrackedPaths,
+		};
+	} catch {
+		return keep();
+	}
+}
+
+/**
  * Snapshot the workspace. Non-Git directories degrade to a cwd-only ref rather
  * than failing the lifecycle (spec §19.4). When `additionalWorktreeRoots` is
  * set, each declared root is probed too and its dirty paths are merged in as
@@ -366,14 +570,24 @@ export async function captureEvidence(
 
 	// RF-1 — every sample (A and C) hashes its own dirty paths so compareEvidence
 	// can detect content changes on paths that were already dirty at A (T3).
-	const dirtyPathHashes = await hashDirtyPaths(run, cwd, probe.changedPaths);
+	// D1 — collapsed untracked directories are expanded to file level first so a
+	// declared file inside one is hashable and attributable.
+	// Ticket 11 — content snapshot/hash is restricted to task scope (allowedPaths ∪ truthPaths).
+	const expanded = await fileLevelProbe(run, cwd, probe);
+	const expandedScope = options.scopePaths ? expandScopeToExistingFiles(cwd, options.scopePaths) : undefined;
+	const candidateDirtyPaths = options.scopePaths
+		? expanded.changedPaths.filter((p) => isPathInScope(p, cwd, options.scopePaths, expandedScope))
+		: expanded.changedPaths;
+	const hashResult = await hashDirtyPathsWithGap(run, cwd, candidateDirtyPaths);
+	const dirtyPathHashes = hashResult.hashes;
+	let snapshotGap = hashResult.gap;
 	// RF-1 — only the C sample carries a baseGitRef to diff against (T2).
 	const committedPaths = options.baseGitRef && probe.head
 		? await diffNamesBetweenRefs(run, cwd, options.baseGitRef, probe.head)
 		: undefined;
 
-	const mergedChanged = [...probe.changedPaths];
-	const mergedUntracked = [...probe.untrackedPaths];
+	const mergedChanged = [...expanded.changedPaths];
+	const mergedUntracked = [...expanded.untrackedPaths];
 	const mergedDirty: Record<string, string | null> = { ...(dirtyPathHashes ?? {}) };
 	let hasDirty = dirtyPathHashes !== undefined;
 	const mergedCommitted = [...(committedPaths ?? [])];
@@ -400,11 +614,12 @@ export async function captureEvidence(
 		}
 		if (extra.statusFailed) statusFailed = true;
 		if (extra.statusPorcelain !== null) porcelainParts.push(extra.statusPorcelain);
-		const absChanged = absolutizePaths(root, extra.changedPaths);
-		const absUntracked = absolutizePaths(root, extra.untrackedPaths);
+		const extraExpanded = await fileLevelProbe(run, root, extra);
+		const absChanged = absolutizePaths(root, extraExpanded.changedPaths);
+		const absUntracked = absolutizePaths(root, extraExpanded.untrackedPaths);
 		mergedChanged.push(...absChanged);
 		mergedUntracked.push(...absUntracked);
-		const extraHashes = await hashDirtyPaths(run, root, extra.changedPaths);
+		const extraHashes = await hashDirtyPaths(run, root, extraExpanded.changedPaths);
 		if (extraHashes) {
 			hasDirty = true;
 			for (const [rel, hash] of Object.entries(extraHashes)) {
@@ -443,6 +658,7 @@ export async function captureEvidence(
 		...(probe.repoRoot ? { repoRoot: probe.repoRoot } : {}),
 		changedPaths,
 		...(hasDirty ? { dirtyPathHashes: mergedDirty } : {}),
+		...(snapshotGap ? { snapshotGap } : {}),
 		...(committedMerged ? { committedPaths: committedMerged } : {}),
 		...(diffStat ? { diffStat } : {}),
 		gitAvailable: true,
@@ -1040,16 +1256,42 @@ export function compareEvidence(
 		normalizeEvidencePaths(current.committedPaths ?? [], current.cwd || pathCwd),
 	);
 	const t2 = [...committedPaths];
+
+	const declareCwdEarly = reported.cwd || pathCwd;
+	const scopeEntries = options.scope?.allowedPaths ?? [];
+	const hasAllowList = scopeEntries.length > 0;
+
+	// One matcher for scope classification — see isPathInDeclaredScope. This
+	// used to treat a bare entry ("foo") as a directory prefix, which the
+	// ticket-09 contract forbids: bare entries name a file, only "foo/" opens
+	// the subtree.
+	const inScopeEarly = (path: string): boolean =>
+		isPathInDeclaredScope(path, declareCwdEarly, scopeEntries, additionalRoots);
+
 	const t3: string[] = [];
-	const baselineDirtyCount = base.changedPaths?.length ?? 0;
-	if (baselineDirtyCount > MAX_BASELINE_HASH_PATHS) {
-		// Above the cap the A sample carries no hashes; T3 stays empty and the
-		// omission is visible in reasons.
-		reasons.push(`baseline hash skipped (${baselineDirtyCount} dirty paths)`);
-	} else {
+	const baseCandidatePaths = hasAllowList
+		? [...basePaths].filter((p) => inScopeEarly(p))
+		: [...basePaths];
+	let attributionGap: SnapshotGap | undefined = base.snapshotGap;
+	if (!attributionGap && !base.dirtyPathHashes && baseCandidatePaths.length > MAX_BASELINE_HASH_PATHS) {
+		attributionGap = {
+			reason: "cap-exceeded",
+			count: baseCandidatePaths.length,
+			limit: MAX_BASELINE_HASH_PATHS,
+			paths: baseCandidatePaths,
+		};
+	}
+	if (attributionGap) {
+		if (attributionGap.reason === "cap-exceeded") {
+			const count = attributionGap.count ?? baseCandidatePaths.length;
+			reasons.push(`baseline hash skipped (${count} dirty paths)`);
+		} else {
+			reasons.push(`baseline hash failed: ${attributionGap.paths.join(", ")}`);
+		}
+	} else if (base.dirtyPathHashes) {
 		const baselineHashes = normalizedDirtyHashes(base.dirtyPathHashes, base.cwd || pathCwd);
 		const resultHashes = normalizedDirtyHashes(current.dirtyPathHashes, current.cwd || pathCwd);
-		for (const path of basePaths) {
+		for (const path of baseCandidatePaths) {
 			if (!currentPaths.has(path)) continue;
 			const baseHash = baselineHashes.get(path);
 			const currentHash = resultHashes.get(path);
@@ -1102,18 +1344,7 @@ export function compareEvidence(
 			resolveDeclaredPath(path, declareCwd, additionalRoots, knownForDeclare),
 		),
 	);
-	// Variant C — a relative allow-list entry names the same file in cwd and
-	// in every declared root, so a matching linked-worktree change is in scope.
-	const allowedPaths = new Set(
-		normalizeEvidencePaths(options.scope?.allowedPaths ?? [], declareCwd),
-	);
-	for (const root of additionalRoots) {
-		for (const path of options.scope?.allowedPaths ?? []) {
-			if (!isAbsolute(path)) allowedPaths.add(normalizeEvidencePaths([path], root)[0]);
-		}
-	}
-	const hasAllowList = allowedPaths.size > 0;
-	const inScope = (path: string): boolean => (hasAllowList ? allowedPaths.has(path) : true);
+	const inScope = inScopeEarly;
 	const outOfRepoDeclared = [...declaredPaths].filter((path) =>
 		isOutsideWorkspacePath(path, pathCwd, additionalRoots),
 	);
@@ -1127,10 +1358,13 @@ export function compareEvidence(
 			if (!declaredPaths.has(path)) undeclaredPaths.push(path);
 		}
 	}
+	const gapAffectedPaths = new Set(
+		attributionGap ? normalizeEvidencePaths(attributionGap.paths, pathCwd) : [],
+	);
 	const extraDeclaredPaths: string[] = [];
 	if (!options.readOnly) {
 		for (const path of inRepoDeclared) {
-			if (!truthSet.has(path)) extraDeclaredPaths.push(path);
+			if (!truthSet.has(path) && !gapAffectedPaths.has(path)) extraDeclaredPaths.push(path);
 		}
 	}
 
@@ -1214,11 +1448,12 @@ function sampleRoot(sample: EvidenceRef, fallback: string): string {
 	return sample.repoRoot || sample.cwd || fallback;
 }
 
-export type TruthFindingDraftKind = "undeclared" | "scope" | "over-declared" | "missing" | "drift";
+export type TruthFindingDraftKind = "undeclared" | "scope" | "over-declared" | "missing" | "drift" | "attribution-gap";
 
 export interface TruthFindingDraft {
 	kind: TruthFindingDraftKind;
 	paths: string[];
+	reason?: string;
 }
 
 /**
@@ -1251,6 +1486,7 @@ export interface ExecutionTruthComparison {
 	/** The report declares another cwd than the one its result arrived in. */
 	declarationMismatch: boolean;
 	findings: TruthFindingDraft[];
+	attributionGapPaths?: string[];
 }
 
 /**
@@ -1307,14 +1543,37 @@ export function compareExecutionTruth(
 	const t1 = [...currentPaths].filter((path) => !basePaths.has(path));
 	const committedPaths = new Set(normalizeEvidencePaths(cReport.committedPaths ?? [], sampleRoot(cReport, pathCwd)));
 	const t2 = [...committedPaths];
+
+	const scopeEntries = options.scope?.allowedPaths ?? [];
+	const hasAllowList = scopeEntries.length > 0;
+
+	const inScopeEarly = (path: string): boolean =>
+		isPathInDeclaredScope(path, pathCwd, scopeEntries, additionalRoots);
+
 	const t3: string[] = [];
-	const baselineDirtyCount = aRun.changedPaths?.length ?? 0;
-	if (baselineDirtyCount > MAX_BASELINE_HASH_PATHS) {
-		reasons.push(`baseline hash skipped (${baselineDirtyCount} dirty paths)`);
-	} else {
+	const baseCandidatePaths = hasAllowList
+		? [...basePaths].filter((p) => inScopeEarly(p))
+		: [...basePaths];
+	let attributionGap: SnapshotGap | undefined = aRun.snapshotGap;
+	if (!attributionGap && !aRun.dirtyPathHashes && baseCandidatePaths.length > MAX_BASELINE_HASH_PATHS) {
+		attributionGap = {
+			reason: "cap-exceeded",
+			count: baseCandidatePaths.length,
+			limit: MAX_BASELINE_HASH_PATHS,
+			paths: baseCandidatePaths,
+		};
+	}
+	if (attributionGap) {
+		if (attributionGap.reason === "cap-exceeded") {
+			const count = attributionGap.count ?? baseCandidatePaths.length;
+			reasons.push(`baseline hash skipped (${count} dirty paths)`);
+		} else {
+			reasons.push(`baseline hash failed: ${attributionGap.paths.join(", ")}`);
+		}
+	} else if (aRun.dirtyPathHashes) {
 		const baselineHashes = normalizedDirtyHashes(aRun.dirtyPathHashes, aRun.cwd || pathCwd);
 		const resultHashes = normalizedDirtyHashes(cReport.dirtyPathHashes, cReport.cwd || pathCwd);
-		for (const path of basePaths) {
+		for (const path of baseCandidatePaths) {
 			if (!currentPaths.has(path)) continue;
 			const baseHash = baselineHashes.get(path);
 			const currentHash = resultHashes.get(path);
@@ -1340,13 +1599,7 @@ export function compareExecutionTruth(
 		),
 	);
 
-	const allowedPaths = new Set(normalizeEvidencePaths(options.scope?.allowedPaths ?? [], pathCwd));
-	for (const root of additionalRoots) {
-		for (const path of options.scope?.allowedPaths ?? []) {
-			if (!isAbsolute(path)) allowedPaths.add(normalizeEvidencePaths([path], root)[0]);
-		}
-	}
-	const hasAllowList = allowedPaths.size > 0;
+
 	const untrackedResult = new Set(
 		untrackedPathsOf(cReport).map((path) => normalizeEvidencePaths([path], cReport.cwd || pathCwd)[0]),
 	);
@@ -1362,7 +1615,7 @@ export function compareExecutionTruth(
 	for (const path of truthSet) {
 		const untracked = untrackedResult.has(path);
 		const declared = declaredPaths.has(path);
-		const inAllowList = hasAllowList && allowedPaths.has(path);
+		const inAllowList = hasAllowList && inScopeEarly(path);
 		// A read-only execution may overlap a writer in the same worktree. Its
 		// window is still useful evidence, but observed paths are never charged
 		// to the read-only report or turned into declaration findings.
@@ -1389,7 +1642,7 @@ export function compareExecutionTruth(
 	const outOfScopePaths = options.readOnly
 		? []
 		: hasAllowList
-			? truthPaths.filter((path) => !allowedPaths.has(path))
+			? truthPaths.filter((path) => !inScopeEarly(path))
 			: [];
 	const undeclaredPaths = options.readOnly ? [] : truthPaths.filter((path) => !declaredPaths.has(path));
 	const outOfRepoDeclared = [...declaredPaths].filter((path) =>
@@ -1403,10 +1656,37 @@ export function compareExecutionTruth(
 			normalizeEvidencePaths([path], pathCwd)[0],
 		),
 	);
+	const gapAffectedPaths = new Set(
+		attributionGap ? normalizeEvidencePaths(attributionGap.paths, pathCwd) : [],
+	);
+	const isBaselineIncomplete = (path: string): boolean => {
+		if (gapAffectedPaths.has(path)) return true;
+		if (basePaths.has(path) && inScopeEarly(path)) {
+			if (!aRun.dirtyPathHashes) return true;
+			const baseHashes = normalizedDirtyHashes(aRun.dirtyPathHashes, aRun.cwd || pathCwd);
+			if (baseHashes.get(path) == null) return true;
+			if (!cReport.dirtyPathHashes) return true;
+			const currentHashes = normalizedDirtyHashes(cReport.dirtyPathHashes, cReport.cwd || pathCwd);
+			if (currentHashes.get(path) == null) return true;
+		}
+		return false;
+	};
+
+	const attributionGapPaths: string[] = [];
+	for (const path of inRepoDeclared) {
+		if (truthSet.has(path)) continue; // Branch 1 (normal)
+		const hasPriorBasis = priorTruth.has(path) || (basePaths.has(path) && gapAffectedPaths.has(path));
+		if (isBaselineIncomplete(path) && hasPriorBasis) {
+			attributionGapPaths.push(path); // Branch 2 (attribution gap)
+		}
+	}
+	attributionGapPaths.sort();
+
+	// Branch 3 (unchanged): evidence complete and no task change, or out-of-scope/undeclared-without-basis
 	const extraDeclaredPaths = options.readOnly
 		? []
 		: inRepoDeclared.filter(
-			(path) => !attributed.has(path) && !truthSet.has(path) && !priorTruth.has(path),
+			(path) => !attributed.has(path) && !truthSet.has(path) && !attributionGapPaths.includes(path) && !priorTruth.has(path),
 		);
 
 	const headChanged = Boolean(
@@ -1417,7 +1697,7 @@ export function compareExecutionTruth(
 		for (const path of inRepoDeclared) {
 			if (currentPaths.has(path)) continue;
 			if (committedPaths.has(path) || t3.includes(path)) continue;
-			if (priorTruth.has(path)) continue;
+			if (priorTruth.has(path) || attributionGapPaths.includes(path)) continue;
 			missingPaths.push(path);
 		}
 	}
@@ -1427,6 +1707,10 @@ export function compareExecutionTruth(
 	}
 	if (outOfScopePaths.length > 0) {
 		reasons.push(`out-of-scope paths changed: ${sorted(outOfScopePaths).join(", ")}`);
+	}
+	if (attributionGapPaths.length > 0) {
+		// Baseline content not recoverable from hashes alone: a content snapshot is only mandatory when an increment must be DISPLAYED.
+		reasons.push(`attribution gap (baseline content not recoverable from hashes alone): ${sorted(attributionGapPaths).join(", ")}`);
 	}
 	if (extraDeclaredPaths.length > 0) {
 		reasons.push(`over-reported / unreliable declaration: ${sorted(extraDeclaredPaths).join(", ")}`);
@@ -1451,6 +1735,9 @@ export function compareExecutionTruth(
 		// A report-only restatement is not required to re-prove presence: the
 		// drift check governs the workspace, and its over/missing declarations
 		// stay visible in the fields above without becoming findings.
+		if (!options.reportOnly && attributionGapPaths.length > 0) {
+			findings.push({ kind: "attribution-gap", paths: sorted(attributionGapPaths), reason: "baseline content not recoverable from hashes alone" });
+		}
 		if (!options.reportOnly && extraDeclaredPaths.length > 0) {
 			findings.push({ kind: "over-declared", paths: sorted(extraDeclaredPaths) });
 		}
@@ -1473,6 +1760,8 @@ export function compareExecutionTruth(
 		missingPaths: sorted(missingPaths),
 		declarationMismatch,
 		findings,
+		attributionGapPaths: sorted(attributionGapPaths),
+		...(attributionGap ? { attributionGap } : {}),
 	};
 }
 
@@ -1531,15 +1820,18 @@ export function compareFreshness(
 	// Ticket 20 — untracked runtime noise outside the declared scope (session
 	// dirs, isolated agent dirs) is rewritten by every delegation. It neither
 	// invalidates a report nor becomes an attribution path.
-	const allowed = new Set(normalizeEvidencePaths(options.scope?.allowedPaths ?? [], pathCwd));
+	const allowedEntries = options.scope?.allowedPaths ?? [];
 	const untrackedReport = new Set(
 		untrackedPathsOf(cReport).map((path) => normalizeEvidencePaths([path], rootReport)[0]),
 	);
 	const untrackedNow = new Set(
 		untrackedPathsOf(cNow).map((path) => normalizeEvidencePaths([path], rootNow)[0]),
 	);
-	const isNoise = (path: string): boolean =>
-		(untrackedReport.has(path) || untrackedNow.has(path)) && !allowed.has(path);
+	const isNoise = (path: string): boolean => {
+		if (!untrackedReport.has(path) && !untrackedNow.has(path)) return false;
+		const rel = isAbsolute(path) ? relative(pathCwd, path) : path;
+		return !matchesScopePath(allowedEntries, rel);
+	};
 
 	const reportPaths = new Set(normalizeEvidencePaths(cReport.changedPaths ?? [], rootReport));
 	const nowPaths = new Set(normalizeEvidencePaths(cNow.changedPaths ?? [], rootNow));

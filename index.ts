@@ -13,7 +13,7 @@ import {
 	READ_ONLY_TOOLS,
 	decidePolicy,
 } from "./policy.ts";
-import { GIT_AUDIT_OPERATIONS, dirtyPathsOutsideTruth, parseGitStatusPaths, resolveGitCommit, runGitAudit } from "./git-audit.ts";
+import { GIT_AUDIT_OPERATIONS, classifyCommitDirtyPaths, dirtyPathsOutsideTruth, parseGitStatusKinds, parseGitStatusPaths, resolveGitCommit, runGitAudit } from "./git-audit.ts";
 import type { GitAuditRequest, GitRunner } from "./git-audit.ts";
 import { PlannerOrchestrator, compositeWorkflowBlockReason, isDelegationCall, isExecutionCreatingAction } from "./orchestrate.ts";
 import type { DelegationRecord } from "./orchestrate.ts";
@@ -1052,9 +1052,23 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			if (!plan.ok) return { content: [{ type: "text", text: `git_commit refused: ${plan.error}` }], details: {}, isError: true };
 			const status = await gitRunner(["status", "--porcelain=v2", "--branch"], repoRoot);
 			if (status.code !== 0) return { content: [{ type: "text", text: `git_commit refused: cannot inspect dirty paths (${status.stderr || status.stdout}).` }], details: {}, isError: true };
-			const external = dirtyPathsOutsideTruth(parseGitStatusPaths(status.stdout), plan.paths);
-			if (external.length > 0) {
-				return { content: [{ type: "text", text: `git_commit refused: dirty paths outside Task ${task.taskId} truth paths: ${external.join(", ")}` }], details: {}, isError: true };
+			const statusKinds = parseGitStatusKinds(status.stdout);
+			const classification = classifyCommitDirtyPaths({
+				trackedDirty: statusKinds.tracked,
+				untrackedDirty: statusKinds.untracked,
+				ignoredDirty: statusKinds.ignored,
+				truthPaths: plan.paths,
+				scopeAllowedPaths: task.spec?.scope?.allowedPaths ?? [],
+			});
+			if (classification.blocking.length > 0) {
+				return { content: [{ type: "text", text: `git_commit refused: dirty paths outside Task ${task.taskId} truth paths: ${classification.blocking.join(", ")}` }], details: {}, isError: true };
+			}
+			const stagedDiff = await gitRunner(["diff", "--cached", "--name-only", "--no-ext-diff", "--no-textconv"], repoRoot);
+			if (stagedDiff.code !== 0) return { content: [{ type: "text", text: `git_commit refused: cannot inspect staged paths (${stagedDiff.stderr || stagedDiff.stdout}).` }], details: {}, isError: true };
+			const stagedPaths = stagedDiff.stdout.split(/\r?\n/).map((p) => p.trim()).filter(Boolean);
+			const stagedOutside = dirtyPathsOutsideTruth(stagedPaths, plan.paths);
+			if (stagedOutside.length > 0) {
+				return { content: [{ type: "text", text: `git_commit refused: staged changes outside Task ${task.taskId} truth paths: ${stagedOutside.join(", ")}` }], details: {}, isError: true };
 			}
 			const beforeHead = await gitRunner(["rev-parse", "HEAD"], repoRoot);
 			const missingGates = [
@@ -1072,12 +1086,17 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			const commit = await gitRunner(plan.commitArgv, repoRoot);
 			if (commit.code !== 0) return { content: [{ type: "text", text: `git_commit refused: commit failed (${commit.stderr || commit.stdout}).` }], details: {}, isError: true };
 			const afterHead = await gitRunner(["rev-parse", "HEAD"], repoRoot);
+			let successText = `git_commit: committed Task ${task.taskId} truth paths (${plan.paths.join(", ")} ).\n${commit.stdout.trim()}`;
+			if (classification.external.length > 0) {
+				successText += `\nexternal findings (not committed, not attributed): ${classification.external.join(", ")}`;
+			}
 			return {
-				content: [{ type: "text", text: `git_commit: committed Task ${task.taskId} truth paths (${plan.paths.join(", ")} ).\n${commit.stdout.trim()}` }],
+				content: [{ type: "text", text: successText }],
 				details: {
 					taskId: task.taskId,
 					paths: plan.paths,
 					message: plan.message,
+					externalPaths: classification.external,
 					gateRan: true,
 					validationVerified: true,
 					commitLineage: { before: beforeHead.stdout.trim() || "unknown", after: afterHead.stdout.trim() || "unknown", truthPaths: plan.paths },

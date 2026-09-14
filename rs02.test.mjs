@@ -7,7 +7,7 @@ import {
 	compareFreshness,
 } from "./evidence.ts";
 import { PlannerOrchestrator } from "./orchestrate.ts";
-import { TaskStore, createTaskSpec } from "./task.ts";
+import { TaskStore, createTaskSpec, createTaskId } from "./task.ts";
 import { decideReview } from "./review.ts";
 import { resolveDelegationTarget, stampReportOnlyCorrectionInput } from "./roles.ts";
 
@@ -197,12 +197,16 @@ async function runIntegrationFlow(orch, taskId, toolCallId, role, changedFiles =
 }
 
 const integrationLedger = mkdtempSync(join(process.cwd(), ".planner-only-test-rs02-"));
+const taskId606 = createTaskId(new Date(), 606);
+const taskId607 = createTaskId(new Date(), 607);
+const taskId608 = createTaskId(new Date(), 608);
+const taskId609 = createTaskId(new Date(), 609);
 try {
 	// A06: a read-only explorer observes concurrent external dirt without
 	// attributing it or creating an execution finding.
 	integrationStatus.paths = ["external.txt"];
 	const a06 = new PlannerOrchestrator({ ledgerDir: integrationLedger, gitRunner: integrationGitRunner });
-	const a06Task = await runIntegrationFlow(a06, "T-20260912-606", "rs02-a06", "explorer");
+	const a06Task = await runIntegrationFlow(a06, taskId606, "rs02-a06", "explorer");
 	assert.deepEqual(a06Task.lastComparison?.undeclaredPaths, []);
 	assert.deepEqual(a06.store.openFindings(a06Task.taskId), []);
 
@@ -210,9 +214,9 @@ try {
 	// guidance must not suggest reverting a path the explorer never owned.
 	integrationStatus.paths = [];
 	const a07 = new PlannerOrchestrator({ ledgerDir: integrationLedger, gitRunner: integrationGitRunner });
-	await runIntegrationFlow(a07, "T-20260912-607", "rs02-a07", "explorer");
+	await runIntegrationFlow(a07, taskId607, "rs02-a07", "explorer");
 	integrationStatus.paths = ["src/target.ts"];
-	const a07Verdict = await a07.recordRootVerdict(a07.store.require("T-20260912-607"), "pass", "stale check");
+	const a07Verdict = await a07.recordRootVerdict(a07.store.require(taskId607), "pass", "stale check");
 	assert.equal(a07Verdict.decision.action, "revalidate");
 	assert.doesNotMatch(a07.renderDecisionBlock(a07Verdict.task, a07Verdict.decision), /revert/i);
 
@@ -222,38 +226,38 @@ try {
 	const a08 = new PlannerOrchestrator({ ledgerDir: integrationLedger, gitRunner: integrationGitRunner });
 	const a08Outcome = await a08.beginDelegation({
 		toolCallId: "rs02-a08",
-		input: { agent: "worker", task: JSON.stringify(integrationSpec("T-20260912-608", "worker")) },
+		input: { agent: "worker", task: JSON.stringify(integrationSpec(taskId608, "worker")) },
 	}, CWD);
-	assert.equal(a08Outcome.task?.taskId, "T-20260912-608");
+	assert.equal(a08Outcome.task?.taskId, taskId608);
 	integrationStatus.paths = ["src/target.ts"];
-	await a08.handleSubagentResult(integrationResult("rs02-a08", integrationReport("T-20260912-608", "rs02-a08", [])));
-	const a08Task = a08.store.require("T-20260912-608");
+	await a08.handleSubagentResult(integrationResult("rs02-a08", integrationReport(taskId608, "rs02-a08", [])));
+	const a08Task = a08.store.require(taskId608);
 	assert.equal(a08.store.openFindings(a08Task.taskId).some((finding) => finding.kind === "undeclared"), true);
 	integrationStatus.paths = [];
 	const repair = await a08.beginDelegation({
 		toolCallId: "rs02-a08-repair",
-		input: { agent: "worker", reportOnly: true, task: JSON.stringify(integrationSpec("T-20260912-608")) },
+		input: { agent: "worker", reportOnly: true, task: JSON.stringify(integrationSpec(taskId608)) },
 	}, CWD);
 	assert.equal(repair.task?.taskId, a08Task.taskId);
 	const repairExecution = a08.store.require(a08Task.taskId).executions.at(-1);
 	assert.ok(repairExecution);
 	repairExecution.previousExecutionId = "missing-origin";
-	await a08.handleSubagentResult(integrationResult("rs02-a08-repair", integrationReport("T-20260912-608", "rs02-a08-repair", ["src/target.ts"])));
-	const a08AfterRepair = a08.store.require("T-20260912-608");
+	await a08.handleSubagentResult(integrationResult("rs02-a08-repair", integrationReport(taskId608, "rs02-a08-repair", ["src/target.ts"])));
+	const a08AfterRepair = a08.store.require(taskId608);
 	assert.match(a08AfterRepair.lastComparison?.missingMaterials ?? "", /no linked prior execution/);
-	assert.equal(a08.store.openFindings("T-20260912-608").some((finding) => finding.kind === "undeclared"), true);
+	assert.equal(a08.store.openFindings(taskId608).some((finding) => finding.kind === "undeclared"), true);
 
 	// Deadlock replay: a fresh correction baseline clears prior drift evidence,
 	// allowing a verified PASS to complete the task.
 	integrationStatus.paths = [];
 	const replay = new PlannerOrchestrator({ ledgerDir: integrationLedger, gitRunner: integrationGitRunner });
-	await runIntegrationFlow(replay, "T-20260912-609", "rs02-replay-1", "worker");
+	await runIntegrationFlow(replay, taskId609, "rs02-replay-1", "worker");
 	integrationStatus.paths = ["src/target.ts"];
-	const stale = await replay.recordRootVerdict(replay.store.require("T-20260912-609"), "pass", "drift");
+	const stale = await replay.recordRootVerdict(replay.store.require(taskId609), "pass", "drift");
 	assert.equal(stale.decision.action, "revalidate");
 	integrationStatus.paths = [];
-	await runIntegrationFlow(replay, "T-20260912-609", "rs02-replay-2", "worker");
-	const clean = await replay.recordRootVerdict(replay.store.require("T-20260912-609"), "pass", "replayed clean baseline");
+	await runIntegrationFlow(replay, taskId609, "rs02-replay-2", "worker");
+	const clean = await replay.recordRootVerdict(replay.store.require(taskId609), "pass", "replayed clean baseline");
 	assert.equal(clean.task.state, "completed");
 } finally {
 	rmSync(integrationLedger, { recursive: true, force: true });

@@ -284,9 +284,199 @@ function repairValidationEntries(entries: unknown[], repairs: string[]): void {
 
 const GIT_STATUS_HASH_RE = /^[0-9a-f]{16}$/;
 
+export function isToolCallId(id: string | undefined): boolean {
+	if (!id || typeof id !== "string") return false;
+	const trimmed = id.trim();
+	return trimmed.startsWith("call_") || trimmed.startsWith("tool_") || trimmed.startsWith("toolu_") || trimmed.includes("|");
+}
+
+export interface FinalAssistantOptions {
+	stepIndex?: number;
+	agent?: string;
+}
+
+export function extractFinalAssistantText(
+	raw: string,
+	options?: FinalAssistantOptions,
+): { text?: string; hasRoles: boolean; ambiguous?: boolean } {
+	if (typeof raw !== "string" || !raw.trim()) return { hasRoles: false };
+	const lines = raw.trim().split("\n");
+
+	interface StepState {
+		stepIndex?: number;
+		agent?: string;
+		lastRole?: string;
+		currentAssistantText?: string;
+		currentAssistantTurnHasText: boolean;
+		inAssistantTurn: boolean;
+		seenAnyRole: boolean;
+	}
+
+	const steps = new Map<number, StepState>();
+	let defaultState: StepState = {
+		currentAssistantTurnHasText: false,
+		inAssistantTurn: false,
+		seenAnyRole: false,
+	};
+	let currentStepIndex: number | undefined;
+	let currentAgent: string | undefined;
+	let anyRoleGlobal = false;
+	const globalAgentsSeen = new Set<string>();
+
+	function getOrCreateStep(idx: number): StepState {
+		let state = steps.get(idx);
+		if (!state) {
+			state = {
+				stepIndex: idx,
+				currentAssistantTurnHasText: false,
+				inAssistantTurn: false,
+				seenAnyRole: false,
+			};
+			steps.set(idx, state);
+		}
+		return state;
+	}
+
+	for (const line of lines) {
+		const trimmed = line.trim();
+		if (!trimmed || !trimmed.startsWith("{")) continue;
+		let obj: unknown;
+		try {
+			obj = JSON.parse(trimmed);
+		} catch {
+			continue;
+		}
+		if (!obj || typeof obj !== "object" || Array.isArray(obj)) continue;
+		const rec = obj as Record<string, unknown>;
+		const type = typeof rec.type === "string" ? rec.type : undefined;
+
+		const recStep = typeof rec.subagentStepIndex === "number" ? rec.subagentStepIndex
+			: typeof rec.stepIndex === "number" ? rec.stepIndex : undefined;
+		const recAgent = typeof rec.subagentAgent === "string" && rec.subagentAgent.trim() ? rec.subagentAgent.trim()
+			: typeof rec.agent === "string" && rec.agent.trim() ? rec.agent.trim() : undefined;
+
+		if (type === "subagent.step.started" || type === "step_start") {
+			if (recStep !== undefined) currentStepIndex = recStep;
+			if (recAgent !== undefined) currentAgent = recAgent;
+		}
+
+		const effectiveStep = recStep ?? currentStepIndex;
+		const effectiveAgent = recAgent ?? currentAgent;
+
+		const targetState = effectiveStep !== undefined ? getOrCreateStep(effectiveStep) : defaultState;
+		if (effectiveAgent && !targetState.agent) {
+			targetState.agent = effectiveAgent;
+		}
+
+		if (type === "turn_start") {
+			targetState.inAssistantTurn = false;
+			targetState.lastRole = undefined;
+		}
+		if (type?.startsWith("tool_") || rec.toolName || Array.isArray(rec.toolResults)) {
+			targetState.inAssistantTurn = false;
+			targetState.lastRole = "tool";
+		}
+
+		const msg = (rec.message && typeof rec.message === "object" && !Array.isArray(rec.message)
+			? rec.message
+			: rec) as Record<string, unknown>;
+		const role = typeof msg.role === "string" ? msg.role : typeof rec.role === "string" ? rec.role : undefined;
+		if (!role) continue;
+
+		targetState.seenAnyRole = true;
+		anyRoleGlobal = true;
+		if (effectiveAgent) globalAgentsSeen.add(effectiveAgent);
+
+		if (role === "assistant") {
+			if (!targetState.inAssistantTurn || type === "message_start" || type === "message") {
+				targetState.inAssistantTurn = true;
+				targetState.currentAssistantText = undefined;
+				targetState.currentAssistantTurnHasText = false;
+			}
+			let text = "";
+			if (typeof msg.text === "string") {
+				text = msg.text;
+			} else if (typeof msg.content === "string") {
+				text = msg.content;
+			} else if (Array.isArray(msg.content)) {
+				text = (msg.content as unknown[])
+					.filter((part): part is { type: string; text: string } =>
+						Boolean(part && typeof part === "object" && (part as { type?: unknown }).type === "text" && typeof (part as { text?: unknown }).text === "string"))
+					.map((part) => part.text)
+					.join("\n");
+			}
+			const trimmedText = text.trim();
+			if (trimmedText) {
+				targetState.currentAssistantText = trimmedText;
+				targetState.currentAssistantTurnHasText = true;
+			}
+			targetState.lastRole = "assistant";
+		} else {
+			targetState.inAssistantTurn = false;
+			targetState.lastRole = role;
+		}
+	}
+
+	function resolveTextFromState(st: StepState): string | undefined {
+		return st.lastRole === "assistant" && st.currentAssistantTurnHasText ? st.currentAssistantText : undefined;
+	}
+
+	if (steps.size > 1) {
+		// Multi-step session
+		if (options?.stepIndex !== undefined) {
+			const st = steps.get(options.stepIndex);
+			if (!st) return { hasRoles: anyRoleGlobal, text: undefined };
+			if (options.agent && st.agent && st.agent !== options.agent) {
+				return { hasRoles: anyRoleGlobal, text: undefined };
+			}
+			return { hasRoles: anyRoleGlobal, text: resolveTextFromState(st) };
+		}
+		if (options?.agent) {
+			const matchedSteps = [...steps.values()].filter((st) => st.agent === options.agent);
+			if (matchedSteps.length === 1) {
+				return { hasRoles: anyRoleGlobal, text: resolveTextFromState(matchedSteps[0]!) };
+			}
+			if (matchedSteps.length > 1) {
+				// Same-name agent ambiguity
+				return { hasRoles: anyRoleGlobal, ambiguous: true };
+			}
+			return { hasRoles: anyRoleGlobal, text: undefined };
+		}
+		// Unbound multi-step session is ambiguous
+		return { hasRoles: anyRoleGlobal, ambiguous: true };
+	}
+
+	if (steps.size === 1) {
+		const [onlyIndex, onlyStep] = [...steps.entries()][0]!;
+		if (options?.stepIndex !== undefined && options.stepIndex !== onlyIndex) {
+			return { hasRoles: anyRoleGlobal, text: undefined };
+		}
+		if (options?.agent && onlyStep.agent && onlyStep.agent !== options.agent) {
+			return { hasRoles: anyRoleGlobal, text: undefined };
+		}
+		return { hasRoles: anyRoleGlobal, text: resolveTextFromState(onlyStep) };
+	}
+
+	// No numeric stepIndex found; check global multi-agent roles if any
+	if (globalAgentsSeen.size > 1) {
+		if (options?.agent) {
+			// Filter and replay for the single agent
+			return extractFinalAssistantText(raw, { ...options, stepIndex: undefined });
+		}
+		return { hasRoles: anyRoleGlobal, ambiguous: true };
+	}
+
+	if (options?.agent && globalAgentsSeen.size === 1 && !globalAgentsSeen.has(options.agent)) {
+		return { hasRoles: anyRoleGlobal, text: undefined };
+	}
+
+	const text = resolveTextFromState(defaultState);
+	return { text, hasRoles: anyRoleGlobal };
+}
+
 /**
  * Root-owned evidence fields a worker cannot know. `gitStatusHash` is Root's
- * own digest and `workerRunId` is the tool-call id minted at launch; a worker
+ * own digest and `workerRunId` is the host run id; a worker
  * that fills them in is guessing, and a guess would fail freshness or identity
  * on every round (observed 2026-09-05, re-measurement T4). Drop values that
  * cannot be right and stamp the run id the orchestrator knows.
@@ -308,7 +498,7 @@ function hardenEvidence(
 		repairs.push("evidence.dirtyPathHashes dropped (Root-owned binding)");
 	}
 	const expected = context?.expectedWorkerRunId;
-	if (expected) {
+	if (expected && !isToolCallId(expected)) {
 		const runId = evidence.workerRunId;
 		if (runId === undefined || runId === "") {
 			evidence.workerRunId = expected;
@@ -317,6 +507,10 @@ function hardenEvidence(
 			evidence.workerRunId = expected;
 			repairs.push(`evidence.workerRunId "${formatRaw(runId)}" → ${expected} (worker cannot know the run id)`);
 		}
+	} else if (!expected && isToolCallId(evidence.workerRunId as string | undefined)) {
+		const raw = evidence.workerRunId;
+		delete evidence.workerRunId;
+		repairs.push(`evidence.workerRunId "${formatRaw(raw)}" dropped (tool call id cannot impersonate host runId)`);
 	}
 }
 
@@ -527,13 +721,21 @@ function scanBalancedObjects(text: string): string[] {
 	return found;
 }
 
+export function stripContractReminders(text: string): string {
+	return text.replace(
+		/\[PLANNER-ONLY WORKER CONTRACT\][\s\S]*?(?:If a lockfile is modified anyway, list it in changedFiles\.|\n(?=[a-zA-Z0-9_\-\.\/]+:|\n|\Z))/g,
+		"",
+	);
+}
+
 export function jsonCandidates(text: string): string[] {
-	const candidates = [text.trim()];
-	for (const match of text.matchAll(/```(?:json|jsonc)?\s*([\s\S]*?)```/g)) {
+	const cleanText = stripContractReminders(text);
+	const candidates = [cleanText.trim()];
+	for (const match of cleanText.matchAll(/```(?:json|jsonc)?\s*([\s\S]*?)```/g)) {
 		if (match[1]?.trim()) candidates.push(match[1].trim());
 	}
-	candidates.push(...scanBalancedObjects(text));
-	return [...new Set(candidates)];
+	candidates.push(...scanBalancedObjects(cleanText));
+	return [...new Set(candidates.filter(Boolean))];
 }
 
 function looksLikeReport(value: unknown): boolean {
@@ -571,6 +773,21 @@ export function extractWorkerReport(
 		return { error: "worker returned no output", repairs: [] };
 	}
 
+	const assistant = extractFinalAssistantText(text);
+	if (assistant.hasRoles) {
+		if (!assistant.text) {
+			return { error: "worker session did not produce a final assistant report", repairs: [] };
+		}
+		return extractWorkerReportFromText(assistant.text, context);
+	}
+
+	return extractWorkerReportFromText(text, context);
+}
+
+function extractWorkerReportFromText(
+	text: string,
+	context?: { expectedTaskId?: string; expectedWorkerRunId?: string },
+): ExtractedReport {
 	let best:
 		| {
 			errors: string[];

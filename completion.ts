@@ -4,11 +4,13 @@ import {
 	mkdirSync,
 	readdirSync,
 	readFileSync,
+	realpathSync,
 	renameSync,
 	writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
+import { extractFinalAssistantText } from "./report.ts";
 import type { LoadedPluginFingerprint } from "./types.ts";
 
 export type CompletionSource = "sync" | "bg-wait" | "notify" | "reconcile";
@@ -19,6 +21,8 @@ export type OutputState = "present" | "absent" | "unknown";
 export interface OutputReference {
 	outputPath?: string;
 	archivePath?: string;
+	agent?: string;
+	stepIndex?: number;
 }
 
 export interface CompletionReceipt {
@@ -30,6 +34,7 @@ export interface CompletionReceipt {
 	action?: string;
 	taskIdHint?: string;
 	agent?: string;
+	stepIndex?: number;
 	observedAt: string;
 	/** Optional host-reported child usage, forwarded to the accounting hook. */
 	usage?: unknown;
@@ -119,7 +124,16 @@ function outputReference(value: unknown): OutputReference | undefined {
 	if (!isRecord(value)) return undefined;
 	const outputPath = nonEmptyString(value.outputPath);
 	const archivePath = nonEmptyString(value.archivePath);
-	return outputPath || archivePath ? { ...(outputPath ? { outputPath } : {}), ...(archivePath ? { archivePath } : {}) } : undefined;
+	const agent = nonEmptyString(value.agent);
+	const stepIndex = typeof value.stepIndex === "number" ? value.stepIndex
+		: typeof value.step_index === "number" ? value.step_index : undefined;
+	if (!outputPath && !archivePath) return undefined;
+	return {
+		...(outputPath ? { outputPath } : {}),
+		...(archivePath ? { archivePath } : {}),
+		...(agent ? { agent } : {}),
+		...(stepIndex !== undefined ? { stepIndex } : {}),
+	};
 }
 
 function terminalOf(value: unknown): CompletionReceipt["terminal"] {
@@ -158,6 +172,7 @@ export function normalizeCompletionReceipt(value: unknown, source: CompletionSou
 		...(nonEmptyString(details.action) ?? nonEmptyString(value.action) ? { action: nonEmptyString(details.action) ?? nonEmptyString(value.action) } : {}),
 		...(nonEmptyString(details.taskIdHint) ?? nonEmptyString(details.taskId) ?? nonEmptyString(value.taskIdHint) ?? nonEmptyString(value.taskId) ? { taskIdHint: nonEmptyString(details.taskIdHint) ?? nonEmptyString(details.taskId) ?? nonEmptyString(value.taskIdHint) ?? nonEmptyString(value.taskId) } : {}),
 		...(nonEmptyString(details.agent) ? { agent: nonEmptyString(details.agent) } : {}),
+		...(typeof details.stepIndex === "number" ? { stepIndex: details.stepIndex } : typeof value.stepIndex === "number" ? { stepIndex: value.stepIndex } : {}),
 		observedAt,
 		...(details.usage !== undefined ? { usage: details.usage } : value.usage !== undefined ? { usage: value.usage } : {}),
 		...(terminal ? { terminal } : {}),
@@ -175,9 +190,20 @@ function digest(text: string): string {
 
 function withinRoots(path: string, roots: readonly string[]): boolean {
 	if (roots.length === 0) return true;
-	const target = resolve(path);
+	let target: string;
+	try {
+		target = realpathSync(path);
+	} catch {
+		target = resolve(path);
+	}
 	return roots.some((root) => {
-		const rel = relative(resolve(root), target);
+		let realRoot: string;
+		try {
+			realRoot = realpathSync(root);
+		} catch {
+			realRoot = resolve(root);
+		}
+		const rel = relative(realRoot, target);
 		return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 	});
 }
@@ -255,7 +281,21 @@ export class OutputResolver {
 			attempted.push(refs.outputPath);
 			if (!withinRoots(refs.outputPath, this.trustedRoots)) return { kind: "unavailable", code: OUTPUT_NOT_READABLE, attempted };
 			const loaded = readRegularFile(refs.outputPath, this.maxOutputBytes);
-			if (loaded.text !== undefined) return { kind: "loaded", text: loaded.text, digest: digest(loaded.text), source: refs.outputPath };
+			if (loaded.text !== undefined) {
+				const binding = {
+					agent: refs.agent ?? receipt.agent,
+					stepIndex: refs.stepIndex ?? receipt.stepIndex,
+				};
+				const assistant = extractFinalAssistantText(loaded.text, binding);
+				if (assistant.ambiguous) {
+					return { kind: "unavailable", code: OUTPUT_AMBIGUOUS, attempted };
+				}
+				if (assistant.hasRoles) {
+					if (!assistant.text) return { kind: "unavailable", code: OUTPUT_UNAVAILABLE, attempted };
+					return { kind: "loaded", text: assistant.text, digest: digest(assistant.text), source: refs.outputPath };
+				}
+				return { kind: "loaded", text: loaded.text, digest: digest(loaded.text), source: refs.outputPath };
+			}
 			if (loaded.code === OUTPUT_TOO_LARGE || loaded.code === OUTPUT_NOT_READABLE) return { kind: "unavailable", code: loaded.code, attempted };
 			failureCode = loaded.code;
 		}

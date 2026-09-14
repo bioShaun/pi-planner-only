@@ -4542,6 +4542,96 @@ await abandonActiveTasks();
 	assert.equal(stillLive?.block, undefined, "a sibling live Task keeps inspect on in this cwd");
 }
 
+// --------------------------------------------------------------------------
+// Ticket 08: git_commit in-memory handler tests
+// - untracked-outside-scope dirty => commit proceeds and details.externalPaths lists it
+// - staged-outside-truth => refused
+// - tracked-outside-truth => refused
+// --------------------------------------------------------------------------
+{
+	const repoDir = mkdtempSync(join(process.cwd(), ".git-commit-test-"));
+	try {
+		spawnSync("git", ["init", "-q"], { cwd: repoDir });
+		spawnSync("git", ["config", "user.name", "test"], { cwd: repoDir });
+		spawnSync("git", ["config", "user.email", "test@example.com"], { cwd: repoDir });
+		writeFileSync(join(repoDir, "base.txt"), "init\n");
+		spawnSync("git", ["add", "base.txt"], { cwd: repoDir });
+		spawnSync("git", ["commit", "-qm", "init"], { cwd: repoDir });
+
+		const originalExec = pi.exec;
+		let interceptedStatus = null;
+		let interceptedDiffCached = null;
+
+		pi.exec = async (cmd, args, opts) => {
+			if (cmd === "git") {
+				const key = args.join(" ");
+				if (key.startsWith("status --porcelain=v2") && interceptedStatus !== null) {
+					return { stdout: interceptedStatus, stderr: "", code: 0 };
+				}
+				if (key.startsWith("diff --cached --name-only") && interceptedDiffCached !== null) {
+					return { stdout: interceptedDiffCached, stderr: "", code: 0 };
+				}
+				const res = spawnSync("git", args, { cwd: opts?.cwd ?? repoDir, encoding: "utf8" });
+				return { stdout: res.stdout ?? "", stderr: res.stderr ?? "", code: res.status ?? 0 };
+			}
+			if (cmd === "npm") {
+				return { stdout: "", stderr: "", code: 0 };
+			}
+			return { stdout: "", stderr: "", code: 0 };
+		};
+
+		const repoCtx = { cwd: repoDir, hasUI: false, sessionManager: { getEntries() { return []; }, getSessionFile() { return join(isolatedAgentDir, "sessions", "test.jsonl"); } } };
+		const ymd = `${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, "0")}${String(new Date().getDate()).padStart(2, "0")}`;
+		const taskId = `T-${ymd}-661`;
+		const spec = { taskId, objective: "commit gate test", cwd: repoDir, role: "worker", validation: { required: false }, scope: { allowedPaths: ["file.txt"] } };
+
+		await handlers.get("tool_call")({ toolCallId: "call-commit-test", toolName: "subagent", input: { agent: "worker", task: JSON.stringify(spec) } }, repoCtx);
+		writeFileSync(join(repoDir, "file.txt"), "hello world\n");
+		await handlers.get("tool_result")({
+			toolCallId: "call-commit-test",
+			toolName: "subagent",
+			content: [{ type: "text", text: JSON.stringify({
+				version: 1, taskId, status: "completed", summary: "done",
+				changedFiles: ["file.txt"], validation: [],
+				evidence: { cwd: repoDir, taskId, workerRunId: "call-commit-test", changedPaths: ["file.txt"], truthPaths: ["file.txt"], gitAvailable: true, generatedAt: new Date().toISOString() },
+				risks: [], unresolved: [],
+			}) }],
+			isError: false,
+		}, repoCtx);
+
+		const v = await tools.get("planner_verdict").execute("v-commit-test", { verdict: "pass", summary: "ok", taskId }, undefined, undefined, repoCtx);
+		assert.equal(v.details?.state, "completed");
+
+		// Test 1: untracked-outside-scope dirty => commit proceeds and details.externalPaths lists it
+		interceptedStatus = "? file.txt\n? outside.txt\n";
+		interceptedDiffCached = "";
+		const res1 = await tools.get("git_commit").execute("c-1", { taskId, message: "feat: add file" }, undefined, undefined, repoCtx);
+		assert.equal(res1.isError, undefined);
+		assert.deepEqual(res1.details?.externalPaths, ["outside.txt"]);
+		assert.ok(res1.content[0].text.includes("external findings (not committed, not attributed): outside.txt"));
+
+		// Test 2: staged-outside-truth => refused
+		interceptedStatus = "? file.txt\n";
+		interceptedDiffCached = "staged_outside.txt\n";
+		const res2 = await tools.get("git_commit").execute("c-2", { taskId, message: "feat: add file" }, undefined, undefined, repoCtx);
+		assert.equal(res2.isError, true);
+		assert.ok(res2.content[0].text.includes("git_commit refused: staged changes outside Task"));
+		assert.ok(res2.content[0].text.includes("staged_outside.txt"));
+
+		// Test 3: tracked-outside-truth => refused
+		interceptedStatus = "1 .M N... 100644 100644 100644 1111 2222 base.txt\n";
+		interceptedDiffCached = "";
+		const res3 = await tools.get("git_commit").execute("c-3", { taskId, message: "feat: add file" }, undefined, undefined, repoCtx);
+		assert.equal(res3.isError, true);
+		assert.ok(res3.content[0].text.includes("git_commit refused: dirty paths outside Task"));
+		assert.ok(res3.content[0].text.includes("base.txt"));
+
+		pi.exec = originalExec;
+	} finally {
+		rmSync(repoDir, { recursive: true, force: true });
+	}
+}
+
 rmSync(isolatedAgentDir, { recursive: true, force: true });
 
 console.log("planner-only extension: PASS");

@@ -71,6 +71,9 @@ export const MAX_GIT_AUDIT_OUTPUT_CHARS = 20000;
 /** RF-1 — cap on dirty paths hashed per Evidence sample for the T3 baseline comparison. */
 export const MAX_BASELINE_HASH_PATHS = 200;
 
+/** Ticket 09 — cap on directory entries expanded during scope pre-expansion. */
+export const MAX_SCOPE_EXPAND_ENTRIES = 2000;
+
 export type RecoveryBindingStatus = "bound" | "identity-conflict" | "unbound";
 
 /** Auditable result of reconciling one persisted run-state record. */
@@ -120,7 +123,7 @@ export type ReviewMode = "root" | "fresh";
 
 export type ReviewVerdict = "pass" | "request_changes" | "blocked";
 
-export type TaskCompletionKind = "superseded" | "committed";
+export type TaskCompletionKind = "superseded" | "committed"
 
 export interface DriftAcknowledgement {
 	successorTaskId?: string;
@@ -163,6 +166,15 @@ export interface ExpectedEvidence {
  * Root computes authoritative attribution from its own A and C samples; Worker
  * Git fingerprints are declaration data for cross-checking only.
  */
+
+/** Ticket 11: explicit gap recorded when content snapshotting is incomplete. */
+export interface SnapshotGap {
+	reason: "cap-exceeded" | "hash-failed";
+	count?: number;
+	limit?: number;
+	paths: string[];
+}
+
 export interface EvidenceRef {
 	cwd: string;
 	taskId: string;
@@ -177,6 +189,8 @@ export interface EvidenceRef {
 	 * deleted or unreadable paths hash to `null`.
 	 */
 	dirtyPathHashes?: Record<string, string | null>;
+	/** Ticket 11: explicit attribution evidence gap when snapshot is incomplete */
+	snapshotGap?: SnapshotGap;
 	/** Paths changed between baseGitRef and finalGitRef (C only; empty when refs are equal). */
 	committedPaths?: string[];
 	/** True when the status probe itself failed at sample time; state is unknown, not clean. */
@@ -276,7 +290,8 @@ export type TaskFindingKind =
 	| "missing"
 	| "drift"
 	| "superseded"
-	| "committed";
+	| "committed"
+
 
 /**
  * A Task-level finding that outlives the execution that produced it. Later
@@ -524,7 +539,8 @@ export type RootVerdictRefusalKind =
 	| "no-report"            // no WorkerReport exists to judge
 	| "child-pending"        // a delegated run is still pending (transient, never recorded)
 	| "fresh-review-pending" // fresh mode has no reviewer ReviewResult yet
-	| "strict-zero-paths";   // strict fresh mode has 0 evidence attribution paths
+	| "strict-zero-paths"
+	| "attribution-gap-unlock-refused";   // strict fresh mode has 0 evidence attribution paths
 
 /** Structured refusal of a Root verdict request: typed kind plus prose for display. */
 export interface RootVerdictRefusal {
@@ -564,6 +580,7 @@ export interface ReviewResult {
 	/** Completion attribution for superseded/committed acceptance. */
 	completionKind?: TaskCompletionKind;
 	source?: "reviewer" | "root" | "operator";
+	attributionGapOverride?: boolean;
 }
 
 /** §12 — root arbitration over a disagreeing reviewer. In-memory only. */

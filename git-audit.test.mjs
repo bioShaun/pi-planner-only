@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
 	FORBIDDEN_GIT_OPERATIONS,
 	GIT_AUDIT_OPERATIONS,
 	GIT_READ_ARGV,
+	classifyCommitDirtyPaths,
+	dirtyPathsOutsideTruth,
 	isSafeAuditCommand,
+	parseGitStatusKinds,
+	parseGitStatusPaths,
 	resolveGitAudit,
 	runGitAudit,
 	validateGitAuditCwd,
@@ -289,5 +294,163 @@ assert.match(truncated, /500 chars total/);
 assert.equal(isSafeAuditCommand("pwd"), true);
 assert.equal(isSafeAuditCommand("git status --short --branch"), true);
 assert.equal(isSafeAuditCommand("git diff --output=/tmp/leak"), false);
+
+// --------------------------------------------------------------------------
+// porcelain v2 path parsing (D3 regression)
+//
+// The git_commit handler inspects `git status --porcelain=v2 --branch`. In v2
+// the path is the final SPACE-separated field (a tab only separates the two
+// paths of a rename), so a tab-based split returned the whole raw line. That
+// made `dirtyPathsOutsideTruth` treat a modified tracked file as an external
+// dirty path, refusing every commit of a tracked change.
+// --------------------------------------------------------------------------
+
+const porcelainV2 = [
+	"# branch.oid abc1234",
+	"# branch.head master",
+	"1 .M N... 100644 100644 100644 47bf9e5f 47bf9e5f declared.txt",
+	"1 .M N... 100644 100644 100644 1111111 2222222 dir/with spaces.ts",
+	"2 R. N... 100644 100644 100644 3333333 4444444 R100 src/renamed.ts\tsrc/old.ts",
+	"u UU N... 100644 100644 100644 100644 aaaa bbbb cccc src/conflict.ts",
+	"? src/new.ts",
+	"? docs/with spaces.md",
+].join("\n");
+
+assert.deepEqual(parseGitStatusPaths(porcelainV2), [
+	"declared.txt",
+	"dir/with spaces.ts",
+	"src/renamed.ts",
+	"src/conflict.ts",
+	"src/new.ts",
+	"docs/with spaces.md",
+]);
+// The regression: a modified tracked file must parse to its path, never the raw line.
+assert.equal(parseGitStatusPaths("1 .M N... 100644 100644 100644 47bf9e5f 47bf9e5f declared.txt")[0], "declared.txt");
+assert.deepEqual(parseGitStatusPaths(""), []);
+assert.deepEqual(parseGitStatusPaths("# branch.oid abc\n# branch.head main"), []);
+
+// truth-only dirty tracked path -> nothing outside truth (the D3 blocking case)
+assert.deepEqual(dirtyPathsOutsideTruth(parseGitStatusPaths(
+	"1 .M N... 100644 100644 100644 47bf9e5f 47bf9e5f declared.txt",
+), ["declared.txt"]), []);
+// an untracked external path is still reported
+assert.deepEqual(dirtyPathsOutsideTruth(parseGitStatusPaths(
+	"1 .M N... 100644 100644 100644 47bf9e5f 47bf9e5f declared.txt\n? outside.txt",
+), ["declared.txt"]), ["outside.txt"]);
+
+// --------------------------------------------------------------------------
+// Ticket 08: classifyCommitDirtyPaths and parseGitStatusKinds real-git tests
+// --------------------------------------------------------------------------
+{
+	const testRepo = mkdtempSync(join(process.cwd(), ".git-audit-test-"));
+	try {
+		const git = (...args) => {
+			const res = spawnSync("git", args, { cwd: testRepo, encoding: "utf8" });
+			if (res.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${res.stderr}`);
+			return res.stdout;
+		};
+		git("init", "-q");
+		git("config", "user.name", "test");
+		git("config", "user.email", "test@example.com");
+		writeFileSync(join(testRepo, "tracked1.txt"), "t1\n");
+		writeFileSync(join(testRepo, "tracked2.txt"), "t2\n");
+		git("add", ".");
+		git("commit", "-qm", "init");
+
+		// Setup changes:
+		// - tracked modification (tracked1.txt)
+		// - rename (tracked2.txt -> renamed.txt)
+		// - untracked file (untracked.txt)
+		writeFileSync(join(testRepo, "tracked1.txt"), "t1 mod\n");
+		git("mv", "tracked2.txt", "renamed.txt");
+		writeFileSync(join(testRepo, "untracked.txt"), "untracked\n");
+
+		// (vi) parseGitStatusKinds assertions on REAL git status --porcelain=v2 --branch output
+		const realStatus = git("status", "--porcelain=v2", "--branch");
+		const kinds = parseGitStatusKinds(realStatus);
+		assert.ok(kinds.tracked.includes("tracked1.txt"), "tracked includes modified file");
+		assert.ok(kinds.tracked.includes("renamed.txt"), "tracked includes renamed file");
+		assert.ok(kinds.untracked.includes("untracked.txt"), "untracked includes untracked file");
+		assert.deepEqual(kinds.ignored, []);
+
+		// (i) tracked modification outside truth => blocking
+		const cTracked = classifyCommitDirtyPaths({
+			trackedDirty: kinds.tracked.filter((p) => p === "tracked1.txt"),
+			untrackedDirty: [],
+			ignoredDirty: [],
+			truthPaths: [],
+			scopeAllowedPaths: [],
+		});
+		assert.deepEqual(cTracked.blocking, ["tracked1.txt"]);
+		assert.deepEqual(cTracked.external, []);
+
+		// (ii) rename tracked file outside truth => blocking
+		const cRename = classifyCommitDirtyPaths({
+			trackedDirty: kinds.tracked.filter((p) => p === "renamed.txt"),
+			untrackedDirty: [],
+			ignoredDirty: [],
+			truthPaths: [],
+			scopeAllowedPaths: [],
+		});
+		assert.deepEqual(cRename.blocking, ["renamed.txt"]);
+		assert.deepEqual(cRename.external, []);
+
+		// (iii) untracked file + collapsed untracked dir outside scope => external only
+		mkdirSync(join(testRepo, "untracked_dir"));
+		writeFileSync(join(testRepo, "untracked_dir", "nested.txt"), "nested\n");
+		const statusWithDir = git("status", "--porcelain=v2", "--branch");
+		const kindsWithDir = parseGitStatusKinds(statusWithDir);
+		assert.ok(kindsWithDir.untracked.includes("untracked_dir/"), "untracked includes collapsed dir with trailing slash");
+		const cExternal = classifyCommitDirtyPaths({
+			trackedDirty: [],
+			untrackedDirty: ["untracked.txt", "untracked_dir/"],
+			ignoredDirty: [],
+			truthPaths: [],
+			scopeAllowedPaths: ["other_scope/"],
+		});
+		assert.deepEqual(cExternal.blocking, []);
+		assert.deepEqual(cExternal.external.sort(), ["untracked.txt", "untracked_dir/"].sort());
+
+		// (iv) untracked file INSIDE scope allowedPaths but not truth => blocking
+		const cInScope = classifyCommitDirtyPaths({
+			trackedDirty: [],
+			untrackedDirty: ["untracked.txt"],
+			ignoredDirty: [],
+			truthPaths: [],
+			scopeAllowedPaths: ["untracked.txt"],
+		});
+		assert.deepEqual(cInScope.blocking, ["untracked.txt"]);
+		assert.deepEqual(cInScope.external, []);
+
+		// (v) staged (git add -N or git add) new file outside truth => blocking
+		writeFileSync(join(testRepo, "staged_new.txt"), "staged\n");
+		git("add", "staged_new.txt");
+		const kindsStaged = parseGitStatusKinds(git("status", "--porcelain=v2", "--branch"));
+		assert.ok(kindsStaged.tracked.includes("staged_new.txt"), "staged new file is in tracked kinds");
+		const cStaged = classifyCommitDirtyPaths({
+			trackedDirty: kindsStaged.tracked,
+			untrackedDirty: [],
+			ignoredDirty: [],
+			truthPaths: [],
+			scopeAllowedPaths: [],
+		});
+		assert.ok(cStaged.blocking.includes("staged_new.txt"));
+
+		writeFileSync(join(testRepo, "intent_new.txt"), "intent\n");
+		git("add", "-N", "intent_new.txt");
+		const kindsIntent = parseGitStatusKinds(git("status", "--porcelain=v2", "--branch"));
+		assert.ok(kindsIntent.tracked.includes("intent_new.txt"), "intent-to-add file is in tracked kinds");
+		const cIntent = classifyCommitDirtyPaths({
+			trackedDirty: kindsIntent.tracked,
+			untrackedDirty: [],
+			ignoredDirty: [],
+			truthPaths: [],
+			scopeAllowedPaths: [],
+		});
+		assert.ok(cIntent.blocking.includes("intent_new.txt"));
+	} finally {
+		rmSync(testRepo, { recursive: true, force: true });
+	}
+}
 
 console.log("planner-only git_audit: PASS");

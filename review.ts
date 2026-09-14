@@ -1,3 +1,4 @@
+const sorted = <T>(arr: readonly T[]): T[] => [...arr].sort();
 /**
  * Review lifecycle: verdict derivation, bounded correction loop, and the
  * evidence-driven review policy (spec §7, §8, §10, §19).
@@ -645,6 +646,24 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 	// it into the validation-retry budget would convert a review into a spin.
 	const staleOverride = !input.review || input.review.verdict === "pass";
 	if (staleOverride && input.comparison && evidenceAction(input.comparison) === "revalidate") {
+		const truthFindings = input.comparison.truthFindings ?? [];
+		const onlyAttributionGap = truthFindings.length > 0 && truthFindings.every((f) => f.kind === "attribution-gap");
+		if (onlyAttributionGap && !input.review?.attributionGapOverride) {
+			const gapPaths = sorted([...new Set(truthFindings.flatMap((f) => f.paths))]);
+			return {
+				action: "blocked",
+				nextState: "blocked",
+				round,
+				consumesRound: false,
+				failureClass: "evidence",
+				reasonCode: "attribution-gap",
+				reason: `attribution gap for declared paths: ${gapPaths.join(", ")}; Root may unlock only via explicit override with oracle-backed attribution checks`,
+				guidance: [
+					"Attribution gap: baseline is incomplete for pre-existing dirty/untracked paths.",
+					"Root may unlock only via explicit override with oracle-backed attribution checks.",
+				],
+			};
+		}
 		const evidenceKey = evidenceStateKey(input.comparison, task.reports.length);
 		if (input.comparison.environmentFailure) {
 			return {
@@ -710,6 +729,26 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 	// Worker correction and consume a code-correction round.
 	if ((input.comparison?.truthFindings?.length ?? 0) > 0) {
 		const findings = input.comparison?.truthFindings ?? [];
+		const onlyAttributionGap = findings.length > 0 && findings.every((f) => f.kind === "attribution-gap");
+		if (onlyAttributionGap && !input.review?.attributionGapOverride) {
+			const gapPaths = sorted([...new Set(findings.flatMap((f) => f.paths))]);
+			return {
+				action: "blocked",
+				nextState: "blocked",
+				round,
+				consumesRound: false,
+				failureClass: "evidence",
+				reasonCode: "attribution-gap",
+				reason: `attribution gap for declared paths: ${gapPaths.join(", ")}; Root may unlock only via explicit override with oracle-backed attribution checks`,
+				guidance: [
+					"Attribution gap: baseline is incomplete for pre-existing dirty/untracked paths.",
+					"Root may unlock only via explicit override with oracle-backed attribution checks.",
+				],
+			};
+		}
+		if (onlyAttributionGap && input.review?.attributionGapOverride) {
+			// Explicit override: bypass findings block so pass verdict can accept
+		} else {
 		const label = findings
 			.map((finding) => `${finding.kind} [${finding.paths.join(", ") || "revision changed"}]`)
 			.join("; ");
@@ -762,6 +801,7 @@ export function decideReview(input: DecideReviewInput): ReviewDecision {
 			failureClass: "implementation",
 			reasonCode: "evidence-findings-exhausted",
 		});
+		}
 	}
 
 	if (!input.review) {
@@ -865,6 +905,13 @@ export function applyReviewDecision(
 	}
 	if (decision.nextState !== "reviewing" && store.require(taskId).state === "reviewing") {
 		store.transition(taskId, decision.nextState);
+	}
+	if (decision.nextState === "blocked" || decision.action === "blocked") {
+		if (decision.reasonCode) {
+			const rec = store.require(taskId) as any;
+			rec.blockedReasonCode = decision.reasonCode;
+			store.setStateReason(taskId, decision.reason);
+		}
 	}
 	if (decision.action === "report_correction") store.useReportCorrection(taskId);
 	if (decision.consumesRound) store.incrementRound(taskId);

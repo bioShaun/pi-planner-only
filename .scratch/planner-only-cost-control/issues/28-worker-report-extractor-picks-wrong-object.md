@@ -177,3 +177,59 @@ oracle 从 `ORACLE_SUITE=full` 掉到 `ORACLE_SUITE=bounded`（明写「不要�
 成因是本票条款 1 与条款 2 选项 ① 叠加逼出的形状，**责任在工单，不在执行者**，故 28 照常收口。
 
 round_id=p12-r055（验收接收）
+
+---
+
+### 2026-09-13 修复记录：真实宿主报告摄取选中提示示例而非最终 WorkerReport (ticket: host-report-ingestion-repair)
+
+**现场与根因分析（依据真实 runId f0953eba-864e-4da2-baea-7cb6dbd80492 及前序 5104e118、b288293b）：**
+
+1. **错选示例根因**：
+   - 宿主以 `artifacts=false` 运行异步 subagent 时，不生成 `subagent-artifacts/*_output.md`。
+   - 上游 `readLargestRunOutput`（`notify.ts`）与 `resolveDelegationOutput`（`orchestrate.ts`）直接回退读取 `output-0.log`。
+   - `output-0.log` 实际上是子进程的全局标准输出流日志，依次包含开头的 task prompt（内含 Worker contract reminder 的 `completed` 示例）、中间工具调用的输出（可能包含 grep 回显中的历史 WorkerReport）、末尾才是真实的 assistant 最终回答。
+   - `extractWorkerReport` 在纯文本扫描时从第 0 个字符顺序生成候选（`scanBalancedObjects`），首个命中的有效 JSON 就是第 54 行的示例，立即提早返回 `completed / Scoped change is done.`，完全忽略了约 1236 行的最终真实输出（在 `f0953eba` 中为 `partial` 并带 6 条未决项）。
+2. **身份伪造与缺失字段根因**：
+   - `orchestrate.ts` 在 `options.delegation.runId` 缺失或 action 非 execution 时，将 `toolCallId`（形如 `call_bUnZUxp6oD2AipaKGrOMMJa0|fc_...`）当作 `expectedWorkerRunId` 传入 `normalizeWorkerReport`。
+   - `hardenEvidence` 将该 tool call id 强行覆盖写入 `evidence.workerRunId`。
+   - `rewriteReportToCanonical` 未从 `task.cwd` 校正 `evidence.cwd`，导致宿主显示 `cwd: undefined`，且真实完整宿主 runId 丢失。
+3. **异步控制目录仍落在 `/tmp` 的核实结果**：
+   - 核心文档 `/home/tcuni/.nvm/versions/node/v24.14.0/lib/node_modules/@earendil-works/pi-coding-agent/docs/settings.md:250`：`sessionDir` 仅控制子会话目录（`.jsonl` 路径已正确指向工作区）。
+   - 安装包源码 `/home/tcuni/.pi/agent/npm/node_modules/pi-subagents/src/shared/types.ts:2733-2738`：
+     `configuredTempRoot = process.env.PI_SUBAGENTS_TEMP_ROOT?.trim();`
+     `export const TEMP_ROOT_DIR = configuredTempRoot ? path.resolve(configuredTempRoot) : path.join(os.tmpdir(), "pi-subagents-...");`
+     `export const ASYNC_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-runs");`
+   - `pi-subagents` 的 `artifacts` 参数和工作区 `sessionDir` 完全不影响 `ASYNC_DIR`；异步控制目录唯一受环境变量 `PI_SUBAGENTS_TEMP_ROOT` 控制。由于宿主启动时未设此环境变量，故默认 fallback 到 `/tmp`。子进程无法动态修改已启动宿主进程的环境，后续需在启动宿主前显式 `export PI_SUBAGENTS_TEMP_ROOT=<工作区路径>/.pi-subagents-temp`。
+
+**修复方案与实现：**
+
+- `report.ts`：
+  - 新增 `extractFinalAssistantText`，解析 JSONL 事件/会话流，严格按角色提取最后一个 `role === "assistant"` 的文本消息，排除 `role === "user"`（提示词）和 `role === "tool"` / `toolResult`（工具回显）。
+  - `extractWorkerReport` 优先执行角色化流提取：若输入为角色化流，仅在最终 assistant 文本中提取 WorkerReport；若最终 assistant 消息缺失或内容无效，明确报错失败并保留原文证据，绝不退回 prompt 示例或工具回显。
+  - `jsonCandidates` 增加 `stripContractReminders`，扫描前剔除 `[PLANNER-ONLY WORKER CONTRACT]` 块，杜绝将提示词模版示例当成报告候选。
+  - `isToolCallId` 识别 `call_...`、`tool_...`、`|` 格式，`hardenEvidence` 严禁 tool call id 写入 `evidence.workerRunId`。
+- `notify.ts`：
+  - `readLargestRunOutput` 优先读取 `asyncDir` 下的 `events.jsonl`，提取真实的最终 assistant 输出；次选 `status.json` 中的 `sessionFile`；无角色流时才回退至常规文件列表（保持既有单文件测试兼容）。
+- `completion.ts`：
+  - `OutputResolver.resolve` 当读取输出文件为角色化流时，按角色提取最终 assistant 文本。
+- `orchestrate.ts`：
+  - 新增 `trustedHostRunIdFor`，只从 `delegation.runId`、`execution.runId`、`runRecords` 中读取真实宿主 runId，严禁 `toolCallId` 冒充。
+  - `rewriteReportToCanonical` 从 `task.cwd` 受信边界校正 `evidence.cwd`，并将可信 host runId 绑定至 `evidence.workerRunId`（无受信绑定时清除伪造的 tool call id）。
+  - `handleWorkerResult` 确保真实的 `status: partial` 与 `unresolved` 原样入账保留。
+  - `bg_wait` 恢复收据优先指向 `events.jsonl`。
+
+**验证结果：**
+
+- `report.test.mjs` 新增针对性回归用例：
+  1. 角色化会话流（user completed + tool echo completed + assistant partial）精准提取最终 partial 并保留 unresolved 项；
+  2. assistant 回复为散文/无有效 JSON 时明确报错，绝不退回 prompt completed 或 tool echo；
+  3. 会话流无 assistant 消息时明确报错；
+  4. 原始文本含 `[PLANNER-ONLY WORKER CONTRACT]` 时忽略模版示例；
+  5. `isToolCallId` 识别工具调用 ID，阻止写入 `evidence.workerRunId`。
+- `notify.test.mjs` 新增用例：`asyncDir` 存在 `events.jsonl` 与 `output-0.log` 时，`readLargestRunOutput` 准确提取 assistant 消息，不取 `output-0.log`。
+- 3 组真实历史日志（`5104e118`、`b288293b`、`f0953eba`）回放测试：
+  - `5104e118` -> 提取 `status: completed, summary: "Completed host validation baseline..."`；
+  - `b288293b` -> 提取 `status: completed, summary: "已完成 report-only correction..."`；
+  - `f0953eba` -> 提取 `status: partial, summary: "Read-only diagnosis partially completed...", unresolved: 6 条`；
+  - 彻底消除 `Scoped change is done.` 假象。
+- 门禁：`npm run typecheck` 通过，`git diff --check` 通过，相关单元测试与集成测试全部通过。

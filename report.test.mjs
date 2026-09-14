@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import {
 	compactWorkerReport,
 	extractWorkerReport,
+	extractFinalAssistantText,
+	isToolCallId,
 	normalizeWorkerReport,
 	renderWorkerReport,
 	validateWorkerReport,
@@ -706,6 +708,157 @@ for (const prefix of ["75d7ae1c", "e63c7583"]) {
 		assert.match(extracted.error, /picked candidate with keys \[/);
 		assert.match(extracted.error, /validation/);
 	}
+}
+
+// Regression: Role-based assistant extraction prevents prompt example or tool echoes from overriding final report.
+{
+	const promptCompleted = JSON.stringify({
+		version: 1, taskId: "T-diag-001", status: "completed", summary: "Scoped change is done.",
+		changedFiles: [], validation: [{ command: "npm test", type: "test", status: "not-run", summary: "not run" }],
+		evidence: { taskId: "T-diag-001" }, risks: [], unresolved: [],
+	});
+	const toolEcho = JSON.stringify({
+		version: 1, taskId: "T-other", status: "completed", summary: "permuted completion",
+		changedFiles: [], validation: [{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "ok" }],
+		evidence: { taskId: "T-other", workerRunId: "call_tool" }, risks: [], unresolved: [],
+	});
+	const assistantPartial = JSON.stringify({
+		version: 1, taskId: "T-diag-001", status: "partial", summary: "Real diagnosis was partial.",
+		changedFiles: [], validation: [{ command: "npm test", type: "diagnostic", status: "not-run", summary: "replay not run" }],
+		evidence: { taskId: "T-diag-001", cwd: "/public/pi/pi-planner-only" },
+		risks: ["risk a"], unresolved: ["unresolved item 1", "unresolved item 2"],
+	});
+
+	// 1. Role-bearing transcript with prompt completed + tool echo + assistant partial -> picks assistant partial
+	const transcript = [
+		JSON.stringify({ type: "message_end", message: { role: "user", content: [{ type: "text", text: `Task:\n${promptCompleted}` }] } }),
+		JSON.stringify({ type: "tool_execution_end", toolName: "read", result: { content: [{ type: "text", text: toolEcho }] } }),
+		JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: assistantPartial }] } }),
+	].join("\n");
+
+	const extracted = extractWorkerReport(transcript);
+	assert.equal(extracted.error, undefined);
+	assert.equal(extracted.report?.status, "partial");
+	assert.equal(extracted.report?.summary, "Real diagnosis was partial.");
+	assert.deepEqual(extracted.report?.unresolved, ["unresolved item 1", "unresolved item 2"]);
+
+	// 2. Role-bearing transcript where assistant output is invalid/prose -> MUST fail, never fall back to prompt example or tool echo
+	const invalidAssistantTranscript = [
+		JSON.stringify({ type: "message_end", message: { role: "user", content: [{ type: "text", text: `Task:\n${promptCompleted}` }] } }),
+		JSON.stringify({ type: "tool_execution_end", toolName: "read", result: { content: [{ type: "text", text: toolEcho }] } }),
+		JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "I tried to finish the task but failed to produce a valid report." }] } }),
+	].join("\n");
+
+	const extractedInvalid = extractWorkerReport(invalidAssistantTranscript);
+	assert.ok(extractedInvalid.error, "invalid final assistant message must fail");
+	assert.equal(extractedInvalid.report, undefined, "must not return a report from user prompt or tool echo");
+
+	// 3. Role-bearing transcript with NO assistant message -> MUST fail, never fall back to prompt example
+	const noAssistantTranscript = [
+		JSON.stringify({ type: "message_end", message: { role: "user", content: [{ type: "text", text: `Task:\n${promptCompleted}` }] } }),
+		JSON.stringify({ type: "tool_execution_end", toolName: "read", result: { content: [{ type: "text", text: toolEcho }] } }),
+	].join("\n");
+
+	const extractedNoAssistant = extractWorkerReport(noAssistantTranscript);
+	assert.ok(extractedNoAssistant.error, "transcript with no assistant message must fail");
+	assert.equal(extractedNoAssistant.report, undefined);
+
+	// 4. Raw text containing [PLANNER-ONLY WORKER CONTRACT] example does not pick the example
+	const rawWithContract = [
+		"Task details here",
+		"[PLANNER-ONLY WORKER CONTRACT]",
+		"Do not run /code-review or spawn a reviewer. Return only a WorkerReport JSON object:",
+		promptCompleted,
+		"Do not run npm install, pnpm install, or any other command that modifies a lockfile, unless the TaskSpec explicitly requires it.",
+		"If dependencies must be installed, use a lockfile-readonly install (npm ci, pnpm install --frozen-lockfile).",
+		"If a lockfile is modified anyway, list it in changedFiles.",
+		"",
+		"Worker execution finishes here.",
+		assistantPartial,
+	].join("\n");
+
+	const extractedRaw = extractWorkerReport(rawWithContract);
+	assert.equal(extractedRaw.error, undefined);
+	assert.equal(extractedRaw.report?.status, "partial");
+	assert.equal(extractedRaw.report?.summary, "Real diagnosis was partial.");
+
+	// 5. Tool-call-only / non-text final assistant message following earlier assistant text
+	// MUST NOT fall back to earlier assistant text, prompt contract example, or tool echo.
+	const toolCallOnlyTranscript = [
+		JSON.stringify({ type: "message_end", message: { role: "user", content: [{ type: "text", text: `Task:\n${promptCompleted}` }] } }),
+		JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "I will now begin investigating the repo..." }] } }),
+		JSON.stringify({ type: "tool_execution_end", toolName: "read", result: { content: [{ type: "text", text: toolEcho }] } }),
+		JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "toolCall", id: "call_123", name: "bash", arguments: "{}" }] } }),
+	].join("\n");
+
+	const finalToolOnly = extractFinalAssistantText(toolCallOnlyTranscript);
+	assert.equal(finalToolOnly.text, undefined, "final assistant with tool-call-only must have text: undefined, not earlier assistant text");
+	assert.equal(finalToolOnly.hasRoles, true, "hasRoles must be true when role-bearing messages exist");
+
+	const extractedToolOnly = extractWorkerReport(toolCallOnlyTranscript);
+	assert.ok(extractedToolOnly.error, "session with tool-call-only final assistant must fail extraction");
+	assert.equal(extractedToolOnly.report, undefined, "must not fall back to earlier assistant text, prompt, or tool echo");
+	assert.match(extractedToolOnly.error ?? "", /worker session did not produce a final assistant report/);
+
+	// 6. Non-text final assistant message (e.g. thinking-only)
+	const thinkingOnlyTranscript = [
+		JSON.stringify({ type: "message_end", message: { role: "user", content: [{ type: "text", text: `Task:\n${promptCompleted}` }] } }),
+		JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "thinking", thinking: "Thinking about the task..." }] } }),
+	].join("\n");
+
+	const finalThinkingOnly = extractFinalAssistantText(thinkingOnlyTranscript);
+	assert.equal(finalThinkingOnly.text, undefined, "thinking-only assistant must have text: undefined");
+	assert.equal(finalThinkingOnly.hasRoles, true);
+
+	const extractedThinkingOnly = extractWorkerReport(thinkingOnlyTranscript);
+	assert.ok(extractedThinkingOnly.error);
+	assert.equal(extractedThinkingOnly.report, undefined);
+
+	// 7. Session ending on tool_execution_end (terminated before assistant response)
+	const interruptedToolTranscript = [
+		JSON.stringify({ type: "message_end", message: { role: "user", content: [{ type: "text", text: `Task:\n${promptCompleted}` }] } }),
+		JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Running tool..." }] } }),
+		JSON.stringify({ type: "tool_execution_end", toolName: "bash", result: { content: [{ type: "text", text: toolEcho }] } }),
+	].join("\n");
+
+	const finalInterrupted = extractFinalAssistantText(interruptedToolTranscript);
+	assert.equal(finalInterrupted.text, undefined, "interrupted session ending on tool must not treat earlier running text as final report");
+	assert.equal(finalInterrupted.hasRoles, true);
+
+	const extractedInterrupted = extractWorkerReport(interruptedToolTranscript);
+	assert.ok(extractedInterrupted.error);
+	assert.equal(extractedInterrupted.report, undefined);
+}
+
+// Regression: Tool call id cannot impersonate evidence.workerRunId; trusted host runId is preserved.
+{
+	const fakeToolCallId = "call_bUnZUxp6oD2AipaKGrOMMJa0|fc_08a9c3de653b161f016aa57576b51087d0b4fb69f7e94568b8";
+	assert.equal(isToolCallId(fakeToolCallId), true);
+	assert.equal(isToolCallId("tool_12345"), true);
+	assert.equal(isToolCallId("toolu_12345"), true);
+	assert.equal(isToolCallId("5104e118-b919-4a07-992a-e3ee2d6af34b"), false);
+	assert.equal(isToolCallId("f0953eba-864e-4da2-baea-7cb6dbd80492"), false);
+
+	// When tool call id is passed as expectedWorkerRunId, normalizeWorkerReport does not stamp it
+	const rawReport = {
+		version: 1, taskId: "T-1", status: "completed", summary: "done",
+		changedFiles: [], validation: [], evidence: { taskId: "T-1" }, risks: [], unresolved: [],
+	};
+	const normalizedWithToolCallId = normalizeWorkerReport(rawReport, { expectedWorkerRunId: fakeToolCallId });
+	assert.equal(normalizedWithToolCallId.report.evidence.workerRunId, undefined, "tool call id must not be stamped into workerRunId");
+
+	// When report already had a tool call id, it is dropped as invalid
+	const rawWithToolRunId = {
+		...rawReport,
+		evidence: { taskId: "T-1", workerRunId: fakeToolCallId },
+	};
+	const normalizedDropped = normalizeWorkerReport(rawWithToolRunId);
+	assert.equal(normalizedDropped.report.evidence.workerRunId, undefined, "tool call id in evidence must be dropped");
+
+	// When a real host runId is passed, it is stamped
+	const realRunId = "f0953eba-864e-4da2-baea-7cb6dbd80492";
+	const normalizedWithRealId = normalizeWorkerReport(rawReport, { expectedWorkerRunId: realRunId });
+	assert.equal(normalizedWithRealId.report.evidence.workerRunId, realRunId);
 }
 
 console.log("planner-only report: PASS");
