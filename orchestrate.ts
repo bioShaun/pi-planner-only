@@ -3,7 +3,7 @@
  * Delegation launch, the Review loop, and Task memory writes.
  */
 
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import {
 	captureEvidence,
@@ -268,8 +268,17 @@ function missingBaseEvidence(task: TaskRecord, workerRunId: string): EvidenceRef
  */
 // Ticket 48 diagnosis (TEMPORARY — remove after the host re-run).
 const DIAG48_MARK = "DIAG48-v1";
+// Ticket 48 diagnosis — the host's stderr is a TTY with no file mirror, so the
+// emission must land in a file the diagnosis can read back.
+const DIAG48_LOG = "/public/pi/pi-planner-only/.scratch/planner-only-cost-control/p48-impl/diag48.log";
 function diag48(callId: string, message: string): void {
 	console.error(`[${DIAG48_MARK} call=${callId}] ${message}`);
+	try {
+		mkdirSync(dirname(DIAG48_LOG), { recursive: true });
+		appendFileSync(DIAG48_LOG, `[${new Date().toISOString()} call=${callId}] ${message}\n`);
+	} catch {
+		// diagnostics must never break the delegation path
+	}
 }
 
 function validatorValidationRefusal(options: {
