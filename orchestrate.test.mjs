@@ -1341,6 +1341,98 @@ function truncatedPreview() {
 	);
 }
 
+// Ticket 47: a canonical Task id written in PROSE is a reference to an existing
+// Task. When it resolves nowhere the delegation is refused, instead of silently
+// running against whatever Task happens to be active for this cwd (the old
+// fail-open this ticket exists to close).
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	const cwdActive = "/repo/v-47-absent";
+	const active = orch.store.create(specFor("T-20260908-591", "worker", cwdActive));
+	// Give the active Task a report: that is what made the old fifth-level
+	// fallback bind it, so this case would previously have been admitted.
+	active.reports.push(reportFor(active.taskId, "call-v-47-seed"));
+	const outcome = await orch.beginDelegation(
+		{
+			toolCallId: "call-v-47-absent",
+			input: { agent: "oracle", cwd: cwdActive, task: "Validate T-20260908-999 before we close it." },
+		},
+		BASE,
+	);
+	assert.equal(outcome.block?.code, "VALIDATOR_TARGET_UNBOUND");
+	assert.match(outcome.block?.reason ?? "", /T-20260908-999/, "the refusal names the id that was asked for");
+	assert.match(outcome.block?.reason ?? "", /substitute Task/);
+	assert.equal(orch.getDelegation("call-v-47-absent"), undefined, "a refused target creates no delegation record");
+	assert.equal(orch.pendingDelegationCount(), 0, "a refused target starts no run");
+}
+
+// Ticket 47: several prose ids, none resolvable -> ambiguous refusal, not a guess.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	const outcome = await orch.beginDelegation(
+		{
+			toolCallId: "call-v-47-ambiguous",
+			input: { agent: "oracle", cwd: "/repo/v-47-ambiguous", task: "Validate T-20260908-997 and T-20260908-998." },
+		},
+		BASE,
+	);
+	assert.equal(outcome.block?.code, "VALIDATOR_TARGET_AMBIGUOUS");
+	assert.match(outcome.block?.reason ?? "", /T-20260908-997/);
+	assert.match(outcome.block?.reason ?? "", /T-20260908-998/);
+	assert.equal(orch.pendingDelegationCount(), 0);
+}
+
+// Ticket 47: an id whose snapshot is on disk but NOT in the session store -- the
+// restore cap only adopts the freshest MAX_LEDGER_RESTORE_PER_SESSION records --
+// still resolves on demand. Ticket 45's stored-task refusal then fires, instead
+// of the delegation drifting onto another Task. This is check F's unit twin.
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-47-ondemand-"));
+	try {
+		const ledger = new LedgerSnapshotStore(dir);
+		const seed = new TaskStore({ now: FIXED_NOW });
+		ledger.write(seed.create({ ...specFor("T-20260912-901", "worker", dir), validation: { required: true } }));
+
+		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
+		assert.equal(orch.store.get("T-20260912-901"), undefined, "precondition: nothing was restored into the session store");
+
+		const outcome = await orch.beginDelegation(
+			{ toolCallId: "call-v-47-ondemand", input: { agent: "oracle", task: "Validate T-20260912-901" } },
+			dir,
+		);
+		assert.equal(orch.store.get("T-20260912-901")?.taskId, "T-20260912-901", "the record is adopted on demand");
+		assert.equal(outcome.block?.code, "VALIDATION_DEFINITION_INCOMPLETE");
+		assert.match(outcome.block?.reason ?? "", /T-20260912-901/);
+		assert.match(outcome.block?.reason ?? "", /create a new Task/);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// Ticket 47: on-demand restore must not become a cross-workspace binding entry.
+// The record exists, so the refusal has to say why it is unusable rather than
+// reporting an unknown Task.
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-47-foreign-"));
+	try {
+		const ledger = new LedgerSnapshotStore(dir);
+		const seed = new TaskStore({ now: FIXED_NOW });
+		ledger.write(seed.create(specFor("T-20260912-902", "worker", join(dir, "elsewhere"))));
+
+		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
+		const outcome = await orch.beginDelegation(
+			{ toolCallId: "call-v-47-foreign", input: { agent: "oracle", task: "Validate T-20260912-902" } },
+			dir,
+		);
+		assert.equal(outcome.block?.code, "VALIDATOR_TARGET_UNBOUND");
+		assert.match(outcome.block?.reason ?? "", /belongs to workspace/, "the reason explains the foreign workspace");
+		assert.equal(orch.store.get("T-20260912-902"), undefined, "a foreign-workspace record is never adopted");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+
 // p12-r058: a bound validator (resolveValidatorReviewedTask hit via report)
 // keeps taskId = reviewed Task and does not set accountingTaskId.
 {

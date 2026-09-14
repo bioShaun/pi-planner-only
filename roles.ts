@@ -477,6 +477,14 @@ export interface DelegationTarget {
 
 export const TASK_ID_RE = /\bT-\d{8}-\d{3}\b/g;
 
+/** Ticket 47 — canonical shape only (`T-YYYYMMDD-NNN`), anchored and non-global
+ * so it is safe for repeated `test()` calls. A model-chosen alias or a fresh
+ * TaskSpec id such as `T-p45-recon` is deliberately NOT canonical: it describes
+ * a Task that may not exist yet, which is a different case from naming one. */
+export function isCanonicalTaskId(id: string | undefined): boolean {
+	return typeof id === "string" && /^T-\d{8}-\d{3}$/.test(id);
+}
+
 export function promptTaskIds(prompt: string): string[] {
 	return [...new Set(prompt.match(TASK_ID_RE) ?? [])];
 }

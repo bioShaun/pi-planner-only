@@ -29,6 +29,7 @@ import {
 	hasMissingRequiredValidationCommands,
 	hasFullSuiteRequest,
 	delegationPrompt,
+	isCanonicalTaskId,
 	lastWorkerValidationPassed,
 	missingTaskSpecValidationCommands,
 	ORACLE_CONTRACT_MARKER,
@@ -111,6 +112,7 @@ import {
 	isExplicitlyNoValidation,
 	isExecutingStale,
 	isHolderStale,
+	isValidationDefinitionIncomplete,
 	isWriterRole,
 	normalizeWorkspaceIdentity,
 } from "./task.ts";
@@ -1103,6 +1105,75 @@ export class PlannerOrchestrator {
 		return { restored, corrupt };
 	}
 
+	/**
+	 * Ticket 47 — a delegation lookup that is not blinded by the session restore
+	 * cap. `restoreFromLedger()` only adopts the freshest
+	 * MAX_LEDGER_RESTORE_PER_SESSION records, so a canonical Task id the operator
+	 * names by hand can be absent from memory even though its ledger record
+	 * exists. Resolving it on demand keeps a *named* Task distinguishable from an
+	 * unnamed one, instead of silently degrading to the active Task.
+	 *
+	 * On-demand records must pass the workspace check: this lookup must never
+	 * become a new cross-workspace binding entry. Records already in memory keep
+	 * their existing (unfiltered) behaviour — that is ticket 46's scope.
+	 */
+	private delegationLookup(cwd: string | undefined): {
+		lookup: (taskId: string) => TaskRecord | undefined;
+		/** Why a named id did not resolve. The record existing but being unusable
+		 * must not read as "unknown Task". */
+		notes: Map<string, string>;
+	} {
+		const cache = new Map<string, TaskRecord | undefined>();
+		const notes = new Map<string, string>();
+		const lookup = (taskId: string): TaskRecord | undefined => {
+			if (cache.has(taskId)) return cache.get(taskId);
+			let found = this.store.get(taskId);
+			if (!found) {
+				const restored = this.restoreTaskOnDemand(taskId, cwd);
+				found = restored.record;
+				if (!found && restored.note) notes.set(taskId, restored.note);
+			}
+			cache.set(taskId, found);
+			return found;
+		};
+		return { lookup, notes };
+	}
+
+	/**
+	 * Ticket 47 — read one Task snapshot from the ledger and adopt it when the
+	 * workspace matches. A read error and a cross-workspace record both surface
+	 * as "not adopted" so the caller fails closed rather than binding elsewhere.
+	 */
+	private restoreTaskOnDemand(
+		taskId: string,
+		cwd: string | undefined,
+	): { record?: TaskRecord; note?: string } {
+		if (!this.snapshots) return {};
+		// Without a workspace there is nothing to validate the record against;
+		// adopting it could bind across workspaces, so refuse to resolve.
+		if (!cwd) return { note: "the delegation carries no workspace to validate it against" };
+		let record: TaskRecord | undefined;
+		try {
+			const { records } = this.snapshots.readAll();
+			record = records.find((candidate) => candidate.taskId === taskId)
+				?? records.find((candidate) => Array.isArray(candidate.aliases) && candidate.aliases.includes(taskId));
+		} catch {
+			return { note: "its ledger record could not be read" };
+		}
+		if (!record) return {};
+		if (
+			record.cwd
+			&& normalizeWorkspaceIdentity(record.cwd) !== normalizeWorkspaceIdentity(cwd)
+		) {
+			return {
+				note: `its ledger record belongs to workspace ${record.cwd} and this delegation runs in ${cwd}; cross-workspace binding is refused`,
+			};
+		}
+		this.store.restore(record);
+		this.restoredTaskIds.add(record.taskId);
+		return { record: this.store.get(record.taskId) ?? record };
+	}
+
 	private releaseRunSlot(task: TaskRecord | undefined, executionId: string, toolCallId: string): boolean {
 		let alreadyReleased = false;
 		if (task && this.runRecords) {
@@ -1623,7 +1694,10 @@ export class PlannerOrchestrator {
 	 */
 	async prepareRoleDelegation(rawInput: unknown, baseCwd?: string): Promise<void> {
 		if (compositeWorkflowBlockReason(rawInput)) return;
-		const lookup = (taskId: string): TaskRecord | undefined => this.store.get(taskId);
+		// Ticket 47 — the ledger-aware lookup, so the packet embeds the same Task
+		// the admission gate will resolve instead of binding only the ones that
+		// happened to fit the session restore cap.
+		const { lookup } = this.delegationLookup(this.delegationCwd(rawInput, baseCwd) ?? baseCwd);
 		const target = resolveDelegationTarget(rawInput, lookup);
 		const options: PrepareRoleDelegationOptions = {};
 		const requestedOracleMode = rawInput && typeof rawInput === "object" && !Array.isArray(rawInput)
@@ -2265,7 +2339,11 @@ export class PlannerOrchestrator {
 			? resolve(baseCwd, rawCwd.trim())
 			: baseCwd;
 		let resumeBinding: { task: TaskRecord; executionId: string; runId: string } | undefined;
-		let target = resolveDelegationTarget(input, (taskId) => this.store.get(taskId));
+		// Ticket 47 — the delegation lookup resolves canonical ids from the ledger
+		// on demand, so naming a Task is not silently defeated by the session
+		// restore cap.
+		const { lookup, notes: lookupNotes } = this.delegationLookup(cwd);
+		let target = resolveDelegationTarget(input, lookup);
 		if (resume) {
 			const previousRunId = this.resumeRunId(input);
 			const binding = previousRunId ? this.resolveRunBinding(previousRunId, cwd) : undefined;
@@ -2327,6 +2405,17 @@ export class PlannerOrchestrator {
 			? (inputRecord.__delegationRole as TaskRole)
 			: undefined;
 		const role = stampedRole ?? target?.role ?? "worker";
+		// Ticket 47 — resolve the Validator's Task under review before any
+		// admission side effect, so an unresolvable name fails closed without
+		// reserving capacity, taking a write lock, or starting a run. The same
+		// condition as the Validator branch below, so the two can never disagree.
+		const isValidatorDelegation = target?.role === "validator" || inferRoleFromAgent(inputAgent(input)) === "validator";
+		let validatorReviewed: TaskRecord | undefined;
+		if (isValidatorDelegation) {
+			const resolution = this.resolveValidatorReviewedTask(input, cwd, target, lookup, lookupNotes);
+			if (resolution.refused) return { block: resolution.refused };
+			validatorReviewed = resolution.task;
+		}
 		// Reserve capacity before any Task, budget, evidence, or writer mutation.
 		// Reader/reader overlap is safe in phase one; every other overlapping
 		// capability is conservatively serialized by the controller.
@@ -2342,7 +2431,12 @@ export class PlannerOrchestrator {
 				if (!validation || typeof validation !== "object") return false;
 				const validationRecord = validation as Record<string, unknown>;
 				if ("required" in validationRecord && typeof validationRecord.required !== "boolean") return true;
-				return validationRecord.required === true && (!Array.isArray(validationRecord.commands) || validationRecord.commands.length === 0);
+				// Ticket 45/47 — the "required without usable commands" clause comes
+				// from the one shared predicate, not a local copy of it. The malformed
+				// `commands` case stays here: it is a shape error the schema reports,
+				// and the shared predicate deliberately ignores it.
+				if (validationRecord.required !== true) return false;
+				return !Array.isArray(validationRecord.commands) || isValidationDefinitionIncomplete(validationRecord);
 			} catch {
 				return false;
 			}
@@ -2797,7 +2891,7 @@ export class PlannerOrchestrator {
 		// rebind, transition, or sample. It can run a general shell, so it is
 		// writable and contends for the same write lock (FR-04).
 		if (target?.role === "validator" || inferRoleFromAgent(inputAgent(input)) === "validator") {
-			const reviewed = this.resolveValidatorReviewedTask(input, cwd, target);
+			const reviewed = validatorReviewed;
 			if (!reviewed) {
 				const prompt = delegationPrompt(input);
 				const specId = (target?.spec ?? extractTaskSpec(prompt))?.taskId;
@@ -3214,36 +3308,94 @@ export class PlannerOrchestrator {
 	 * id (or alias) is an existing Task; exactly one distinct known Task named
 	 * in the prompt; otherwise the active Task in this cwd with a report.
 	 */
+	/**
+	 * Ticket 47 — resolve which Task a Validator delegation reviews, keeping
+	 * "named nothing" distinct from "named something that cannot be resolved".
+	 *
+	 * The old resolver fell through to `store.active()` in both cases, so naming
+	 * a Task that did not resolve silently ran the validator against whatever
+	 * Task happened to be active for this cwd — fail-open, and the operator had
+	 * explicitly said which Task they meant. Anything *declared* now refuses
+	 * instead of substituting; the active fallback survives only for a prompt
+	 * that names no canonical Task id at all, which keeps the unbound-validator
+	 * capability intact.
+	 *
+	 * `lookup` is the ledger-aware one, so a canonical id whose snapshot exists
+	 * on disk resolves even when it sits beyond the session restore cap.
+	 */
 	private resolveValidatorReviewedTask(
 		input: unknown,
 		cwd: string,
 		target: DelegationTarget | undefined,
-	): TaskRecord | undefined {
+		lookup: (taskId: string) => TaskRecord | undefined,
+		notes: Map<string, string>,
+	): { task?: TaskRecord; refused?: { code: string; reason: string } } {
 		const prompt = delegationPrompt(input);
 		const request = extractReviewRequest(prompt);
 		const spec = target?.spec ?? extractTaskSpec(prompt);
-		if (request?.taskId) return this.store.get(request.taskId);
+		if (request?.taskId) {
+			const requested = lookup(request.taskId);
+			if (requested) return { task: requested };
+		}
 		if (target?.taskId) {
-			const namedTarget = this.store.get(target.taskId);
-			if (namedTarget) return namedTarget;
+			const namedTarget = lookup(target.taskId);
+			if (namedTarget) return { task: namedTarget };
 		}
 		if (spec?.taskId) {
-			const existing = this.store.get(spec.taskId);
-			if (existing) return existing;
+			const existing = lookup(spec.taskId);
+			if (existing) return { task: existing };
 		}
 		const unique: TaskRecord[] = [];
 		const seen = new Set<string>();
-		for (const id of promptTaskIds(prompt)) {
-			const found = this.store.get(id);
+		const named = promptTaskIds(prompt);
+		for (const id of named) {
+			const found = lookup(id);
 			if (found && !seen.has(found.taskId)) {
 				seen.add(found.taskId);
 				unique.push(found);
 			}
 		}
-		if (unique.length === 1) return unique[0] as TaskRecord;
+		if (unique.length === 1) return { task: unique[0] as TaskRecord };
+
+		// Ticket 47 — a *reference* is a canonical id the operator wrote in the
+		// prompt, or one an explicit ReviewRequest/input names: it points at a
+		// Task that is supposed to exist, so it must resolve or the delegation is
+		// refused. The embedded TaskSpec's own `taskId` is a *declaration* of the
+		// run being started, not a reference — a TaskSpec may describe a Task that
+		// does not exist yet, and that case keeps the unbound path (p12-r058).
+		const specDeclaredId = spec?.taskId;
+		const referenceIds = [
+			...named.filter((id) => id !== specDeclaredId),
+			...(request?.taskId && request.taskId !== specDeclaredId ? [request.taskId] : []),
+			...(target?.taskId && target.taskId !== specDeclaredId && target.taskId !== request?.taskId
+				? [target.taskId]
+				: []),
+		].filter((id): id is string => isCanonicalTaskId(id));
+		if (referenceIds.length > 0) {
+			const uniqueDeclared = [...new Set(referenceIds)];
+			const detail = uniqueDeclared
+				.map((id) => `${id}${notes.has(id) ? ` (${notes.get(id)})` : ""}`)
+				.join("; ");
+			if (unique.length > 1) {
+				return {
+					refused: {
+						code: "VALIDATOR_TARGET_AMBIGUOUS",
+						reason: `Planner-only guard: validator delegation names multiple resolvable Task ids (${detail}); no Validator run is started against a substitute Task. Name exactly one Task.`,
+					},
+				};
+			}
+			return {
+				refused: {
+					code: uniqueDeclared.length > 1 ? "VALIDATOR_TARGET_AMBIGUOUS" : "VALIDATOR_TARGET_UNBOUND",
+					reason: uniqueDeclared.length > 1
+						? `Planner-only guard: validator delegation names Task ids that cannot be resolved (${detail}); no Validator run is started against a substitute Task. Name one existing canonical Task id, or embed its TaskSpec.`
+						: `Planner-only guard: validator delegation names unknown Task ${detail}; no Validator run is started against a substitute Task. Name an existing canonical Task id, or embed its TaskSpec.`,
+				},
+			};
+		}
 		const active = this.store.active();
-		if (active && active.cwd === cwd && active.reports.length >= 1) return active;
-		return undefined;
+		if (active && active.cwd === cwd && active.reports.length >= 1) return { task: active };
+		return {};
 	}
 
 	renderDecisionBlock(
