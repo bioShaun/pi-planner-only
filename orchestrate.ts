@@ -13,6 +13,7 @@ import {
 	compareFreshness,
 	describeComparison,
 	describeFreshness,
+	isPathInDeclaredScope,
 	normalizeEvidencePaths,
 	untrackedPathsOf,
 } from "./evidence.ts";
@@ -2087,15 +2088,15 @@ export class PlannerOrchestrator {
 		// in-scope path is overlapping (under-report), an out-of-scope one is
 		// an independent scope finding.
 		const pathCwd = currentSample.cwd || task.cwd;
-		const allowedPaths = new Set(normalizeEvidencePaths(task.spec?.scope?.allowedPaths ?? [], pathCwd));
-		for (const root of roots ?? []) {
-			for (const path of task.spec?.scope?.allowedPaths ?? []) {
-				if (!isAbsolute(path)) allowedPaths.add(normalizeEvidencePaths([path], root)[0]);
-			}
-		}
-		const hasAllowList = allowedPaths.size > 0;
-		const overlappingPaths = truth.undeclaredPaths.filter((path) => !hasAllowList || allowedPaths.has(path));
-		const unrelatedPaths = truth.undeclaredPaths.filter((path) => hasAllowList && !allowedPaths.has(path));
+		const scopeEntries = task.spec?.scope?.allowedPaths ?? [];
+		// Same classifier the evidence side uses. An exact Set of resolved paths
+		// cannot express scope semantics: `path.resolve` drops a trailing slash,
+		// so an entry "sub/" became "/abs/.../sub" and never matched the files
+		// under it -- every in-scope undeclared path fell through to unrelated.
+		const inDeclaredScope = (path: string): boolean =>
+			isPathInDeclaredScope(path, pathCwd, scopeEntries, roots ?? []);
+		const overlappingPaths = truth.undeclaredPaths.filter(inDeclaredScope);
+		const unrelatedPaths = truth.undeclaredPaths.filter((path) => !inDeclaredScope(path));
 
 		const open = this.store.openFindings(task.taskId);
 		const reasons = [...truth.reasons, ...freshness.reasons];

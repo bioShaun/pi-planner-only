@@ -138,6 +138,52 @@ export function matchesScopePath(scopeEntries: readonly string[], path: string):
 }
 
 /**
+ * The one scope classifier: is `path` inside the task's declared scope?
+ *
+ * An absent or empty allow-list means "no restriction" and answers true, so
+ * callers that need to distinguish "declared scope" from "everything" must
+ * check the entry list themselves.
+ *
+ * `additionalRoots` covers declared extra worktrees: porcelain paths hang off
+ * the cwd git ran in, while a path under an extra root only resolves against
+ * that root, so each base is tried in turn and escaping relatives are skipped.
+ *
+ * Entries are passed through to `matchesScopePath` so that the ticket-09
+ * contract holds everywhere: a bare entry names one file, only a trailing
+ * slash opens the subtree. An entry that is written absolutely is first
+ * rewritten against the base it lives under, preserving its trailing slash —
+ * story 28-C allows the declared allow-list to name a path under a declared
+ * worktree root in absolute form. Entries that are relative apply to every
+ * base, which is what lets one entry cover the same file under each root.
+ */
+function scopeEntryRelativeTo(entry: string, base: string): string | null {
+	if (!isAbsolute(entry)) return entry;
+	const rel = relative(base, entry);
+	if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null;
+	return entry.endsWith("/") && !rel.endsWith("/") ? `${rel}/` : rel;
+}
+
+export function isPathInDeclaredScope(
+	path: string,
+	cwd: string,
+	scopeEntries: readonly string[] | undefined,
+	additionalRoots: readonly string[] = [],
+): boolean {
+	if (!scopeEntries || scopeEntries.length === 0) return true;
+	for (const base of [cwd, ...additionalRoots]) {
+		const relCandidate = isAbsolute(path) ? relative(base, path) : path;
+		if (relCandidate === "" || relCandidate.startsWith("..") || isAbsolute(relCandidate)) continue;
+		const entries: string[] = [];
+		for (const entry of scopeEntries) {
+			const relEntry = scopeEntryRelativeTo(entry, base);
+			if (relEntry !== null) entries.push(relEntry);
+		}
+		if (entries.length > 0 && matchesScopePath(entries, relCandidate)) return true;
+	}
+	return false;
+}
+
+/**
  * Parse `git status --porcelain=v2` into changed paths.
  *
  * Field layout lives in exactly one place: `parseGitStatusKinds` owns the
@@ -1212,23 +1258,15 @@ export function compareEvidence(
 	const t2 = [...committedPaths];
 
 	const declareCwdEarly = reported.cwd || pathCwd;
-	const allowedPaths = new Set(
-		normalizeEvidencePaths(options.scope?.allowedPaths ?? [], declareCwdEarly),
-	);
-	for (const root of additionalRoots) {
-		for (const path of options.scope?.allowedPaths ?? []) {
-			if (!isAbsolute(path)) allowedPaths.add(normalizeEvidencePaths([path], root)[0]);
-		}
-	}
-	const hasAllowList = allowedPaths.size > 0;
-	const inScopeEarly = (path: string): boolean => {
-		if (!hasAllowList) return true;
-		if (allowedPaths.has(path)) return true;
-		for (const a of allowedPaths) {
-			if (path.startsWith(a.endsWith("/") ? a : a + "/")) return true;
-		}
-		return false;
-	};
+	const scopeEntries = options.scope?.allowedPaths ?? [];
+	const hasAllowList = scopeEntries.length > 0;
+
+	// One matcher for scope classification — see isPathInDeclaredScope. This
+	// used to treat a bare entry ("foo") as a directory prefix, which the
+	// ticket-09 contract forbids: bare entries name a file, only "foo/" opens
+	// the subtree.
+	const inScopeEarly = (path: string): boolean =>
+		isPathInDeclaredScope(path, declareCwdEarly, scopeEntries, additionalRoots);
 
 	const t3: string[] = [];
 	const baseCandidatePaths = hasAllowList
@@ -1506,29 +1544,11 @@ export function compareExecutionTruth(
 	const committedPaths = new Set(normalizeEvidencePaths(cReport.committedPaths ?? [], sampleRoot(cReport, pathCwd)));
 	const t2 = [...committedPaths];
 
-	const allowedPaths = new Set(normalizeEvidencePaths(options.scope?.allowedPaths ?? [], pathCwd));
-	for (const root of additionalRoots) {
-		for (const path of options.scope?.allowedPaths ?? []) {
-			if (!isAbsolute(path)) allowedPaths.add(normalizeEvidencePaths([path], root)[0]);
-		}
-	}
 	const scopeEntries = options.scope?.allowedPaths ?? [];
 	const hasAllowList = scopeEntries.length > 0;
 
-	const inScopeEarly = (path: string): boolean => {
-		if (!hasAllowList) return true;
-		const rel = isAbsolute(path) ? relative(pathCwd, path) : path;
-		if (!rel.startsWith("..") && !isAbsolute(rel) && matchesScopePath(scopeEntries, rel)) {
-			return true;
-		}
-		for (const root of additionalRoots) {
-			const relRoot = isAbsolute(path) ? relative(root, path) : path;
-			if (!relRoot.startsWith("..") && !isAbsolute(relRoot) && matchesScopePath(scopeEntries, relRoot)) {
-				return true;
-			}
-		}
-		return false;
-	};
+	const inScopeEarly = (path: string): boolean =>
+		isPathInDeclaredScope(path, pathCwd, scopeEntries, additionalRoots);
 
 	const t3: string[] = [];
 	const baseCandidatePaths = hasAllowList

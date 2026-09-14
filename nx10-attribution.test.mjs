@@ -420,4 +420,114 @@ const CWD = "/repo";
 	}
 }
 
+// =========================================================================
+// (d) scope classification inside the recorded comparison:
+// a task scoped to "sub/" whose report leaves sub/other.txt undeclared must
+// record that path as overlapping (under-report), not unrelated (independent
+// out-of-scope finding). An exact set of resolved scope paths could never
+// match it, because path.resolve drops the trailing slash that carries the
+// directory-vs-file meaning.
+// =========================================================================
+{
+	const tempDir = mkdtempSync(join(process.cwd(), ".planner-only-test-nx10-scope-"));
+	try {
+		mkdirSync(join(tempDir, "sub"), { recursive: true });
+		writeFileSync(join(tempDir, "sub/declared.txt"), "declared");
+		writeFileSync(join(tempDir, "sub/other.txt"), "other");
+
+		// Clean at delegation start (A), dirty at result handling (C): the A->C
+		// delta is what makes sub/other.txt an undeclared change.
+		const gitState = { head: "head-scope", statusPaths: [] };
+
+		const mockGitRunner = async (args) => {
+			const key = args.join(" ");
+			if (key === "rev-parse --git-dir") return { stdout: ".git\n", stderr: "", code: 0 };
+			if (key === "rev-parse HEAD") return { stdout: `${gitState.head}\n`, stderr: "", code: 0 };
+			if (key === "status --porcelain=v2 --branch") {
+				const stdout = gitState.statusPaths
+					.map((path) => `1 .M N... 100644 100644 100644 1111111 2222222 ${path}`)
+					.join("\n");
+				return { stdout, stderr: "", code: 0 };
+			}
+			if (key === "diff HEAD --stat") {
+				return { stdout: gitState.statusPaths.map((p) => ` ${p} | 1 +`).join("\n"), stderr: "", code: 0 };
+			}
+			if (args[0] === "hash-object") {
+				return { stdout: "hash1234567890abcdef\n", stderr: "", code: 0 };
+			}
+			return { stdout: "", stderr: "", code: 0 };
+		};
+
+		const orch = new PlannerOrchestrator({ ledgerDir: tempDir, gitRunner: mockGitRunner });
+		const taskId = "T-20260913-004";
+
+		await orch.beginDelegation({
+			toolCallId: "call-worker-scope",
+			input: {
+				agent: "worker",
+				task: JSON.stringify({
+					version: 1,
+					taskId,
+					objective: "test scope classification in the recorded comparison",
+					cwd: tempDir,
+					role: "worker",
+					scope: { allowedPaths: ["sub/"] },
+					constraints: [],
+					acceptanceCriteria: [],
+					validation: { required: true, commands: ["npm test"] },
+					expectedEvidence: {},
+					stopConditions: [],
+				}),
+			},
+		}, tempDir);
+
+		gitState.statusPaths = ["sub/declared.txt", "sub/other.txt"];
+
+		await orch.handleSubagentResult({
+			toolCallId: "call-worker-scope",
+			toolName: "subagent",
+			input: {},
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({
+						version: 1,
+						taskId,
+						status: "completed",
+						summary: "declared one of the two dirty files",
+						changedFiles: ["sub/declared.txt"],
+						validation: [
+							{ type: "test", status: "passed", summary: "tests passed", exitCode: 0, command: "npm test" },
+						],
+						evidence: {
+							cwd: tempDir,
+							taskId,
+							workerRunId: "call-worker-scope",
+							finalGitRef: "head-scope",
+							gitStatusHash: "status-scope",
+							changedPaths: ["sub/declared.txt"],
+							gitAvailable: true,
+							generatedAt: new Date().toISOString(),
+						},
+						risks: [],
+						unresolved: [],
+					}),
+				},
+			],
+			isError: false,
+		});
+
+		const comparison = orch.store.require(taskId).lastComparison;
+		const other = join(tempDir, "sub/other.txt");
+		assert.ok(comparison, "the ingested report records a comparison");
+		assert.ok(
+			comparison.overlappingPaths.includes(other),
+			`in-scope undeclared path must be overlapping, got ${JSON.stringify(comparison.overlappingPaths)}`,
+		);
+		assert.deepEqual(comparison.unrelatedPaths, [], "a path inside a scoped directory is never unrelated");
+	} finally {
+		rmSync(tempDir, { recursive: true, force: true });
+	}
+}
+
 console.log("nx10-attribution.test.mjs passed!");

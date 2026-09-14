@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { normalizeRepoRelativePath, matchesScopePath, captureEvidence, compareExecutionTruth } from "./evidence.ts";
+import { normalizeRepoRelativePath, matchesScopePath, isPathInDeclaredScope, captureEvidence, compareExecutionTruth } from "./evidence.ts";
 import { validateTaskSpec } from "./task.ts";
 
 function realGitRunnerOf(repoDir) {
@@ -48,6 +48,36 @@ test("matchesScopePath", () => {
 	assert.equal(matchesScopePath(["foo\\bar/"], "foo/bar/baz.txt"), true);
 	assert.equal(matchesScopePath(["../x"], "x"), false);
 	assert.equal(matchesScopePath(["foo/"], "/abs/out"), false);
+});
+
+test("isPathInDeclaredScope routes every entry form through the one matcher", () => {
+	const cwd = "/repo";
+	const wt = "/worktrees/review";
+
+	// No allow-list is "no restriction", not "nothing allowed".
+	assert.equal(isPathInDeclaredScope("/repo/anything.txt", cwd, undefined), true);
+	assert.equal(isPathInDeclaredScope("/repo/anything.txt", cwd, []), true);
+
+	// A bare entry names one file; only a trailing slash opens the subtree.
+	assert.equal(isPathInDeclaredScope("/repo/sub", cwd, ["sub"]), true);
+	assert.equal(isPathInDeclaredScope("/repo/sub/x.txt", cwd, ["sub"]), false);
+	assert.equal(isPathInDeclaredScope("/repo/sub/x.txt", cwd, ["sub/"]), true);
+	assert.equal(isPathInDeclaredScope("/repo/sub/a/b.txt", cwd, ["sub/"]), true);
+	assert.equal(isPathInDeclaredScope("/repo/subbar/x.txt", cwd, ["sub/"]), false);
+
+	// A relative entry covers the same file under a declared worktree root.
+	assert.equal(isPathInDeclaredScope(resolve(wt, "src/a.ts"), cwd, ["src/a.ts"], [wt]), true);
+	assert.equal(isPathInDeclaredScope(resolve(wt, "src/b.ts"), cwd, ["src/a.ts"], [wt]), false);
+
+	// An absolute entry matches directly (story 28-C), and a trailing slash
+	// still means "subtree" in absolute form.
+	assert.equal(isPathInDeclaredScope(resolve(wt, "src/a.ts"), cwd, [resolve(wt, "src/a.ts")], [wt]), true);
+	assert.equal(isPathInDeclaredScope(resolve(wt, "src/a.ts"), cwd, [`${wt}/src/`], [wt]), true);
+	assert.equal(isPathInDeclaredScope(resolve(wt, "src/a.ts"), cwd, ["/elsewhere/src/a.ts"], [wt]), false);
+
+	// Paths that escape every base are never in scope.
+	assert.equal(isPathInDeclaredScope("/elsewhere/x.txt", cwd, ["sub/"]), false);
+	assert.equal(isPathInDeclaredScope("/repo/../escape.txt", cwd, ["sub/"]), false);
 });
 
 test("validateTaskSpec rejects scope escaping workspace", () => {
