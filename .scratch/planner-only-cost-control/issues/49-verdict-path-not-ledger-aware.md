@@ -22,7 +22,20 @@
 
 **Blocked by:** 无。**优先级**：46 之后、48 之后（用户定：46 → 48 → 49）。
 
-**Status:** ready-for-agent
+**实现记录（2026-09-14，本机）：**
+
+- **新增** `PlannerOrchestrator.resolveVerdictTask(taskId, cwd)`：复用 46/47 的 `delegationLookup`（账本感知 + workspace 校验 + 歧义检测），返回 `{ task?, note? }`。解析成功即返回该 Task；未命中时 `note` 解释原因 —— 记录存在但不可用（别的 workspace、不可读）或该 id 被两个 Task 当作别名（列出候选）。**任何情况下都不换一个 Task 顶替**。
+- **`index.ts` 的 `planner_verdict`** 改用该方法；仍保留「不给 id 才退到 `active()`」的语义。未命中的文案**保持既有前缀** `planner_verdict: unknown task <id>.`（`index.test.mjs:1722` 断言了它），后面按需追加 `note`。
+
+**测试**：`orchestrate.test.mjs` 新增两组 —— 账本里有快照但未恢复（超出上限）的 id 能被解析；跨 workspace 的记录不被采纳且 note 含 `belongs to workspace`；纯未知 id 无 note；被两个 Task 争用的别名 id 不解析且 note 列出两名。既有 `index.test.mjs` 的「unknown taskId → isError、无记录」逐字保持通过。
+
+**回归证据**（本轮新验证）：把 `resolveVerdictTask` 里的账本感知 `lookup` 临时换成裸 `this.store.get` → `orchestrate.test.mjs:1580` 失败（`a beyond-cap id resolves from the ledger`、`actual: undefined`）；恢复后全绿。
+
+**门禁**：`npm run typecheck` exit 0；`npm test` exit 0（35 个测试文件无失败）。日志 `.scratch/planner-only-cost-control/p49-impl/`。
+
+**说明（覆盖边界）**：本票只覆盖**按 id 记 verdict** 的解析。in-memory 已加载 Task 的跨 workspace 绑定仍是 46 留下的缺口（见票 51），本票**不改变**它 —— 只是让「跨 workspace 的账本记录」在这里也不会被静默采纳。
+
+**Status:** done（2026-09-14 本机落地、门禁绿。**未做宿主复跑** —— 与 46、48 同在 `fix/tickets-46-48-49-50` 分支上。）
 
 ## Comments
 

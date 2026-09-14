@@ -1562,6 +1562,49 @@ function truncatedPreview() {
 	}
 }
 
+// Ticket 49: the verdict target resolves through the ledger-aware lookup, so a
+// Task beyond the session restore cap can still be addressed by id — and a miss
+// that is not simply "unknown" says why.
+{
+	const dir = mkdtempSync(join(process.cwd(), ".planner-only-49-verdict-"));
+	try {
+		const ledger = new LedgerSnapshotStore(dir);
+		const seed = new TaskStore({ now: FIXED_NOW });
+		ledger.write(seed.create(specFor("T-20260912-940", "worker", dir)));
+		ledger.write(seed.create(specFor("T-20260912-941", "worker", "/public/scripts/finance-check-workspace")));
+
+		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
+		assert.equal(orch.store.get("T-20260912-940"), undefined, "precondition: nothing was restored");
+
+		const beyond = orch.resolveVerdictTask("T-20260912-940", dir);
+		assert.equal(beyond.task?.taskId, "T-20260912-940", "a beyond-cap id resolves from the ledger");
+		assert.equal(beyond.note, undefined);
+
+		const foreign = orch.resolveVerdictTask("T-20260912-941", dir);
+		assert.equal(foreign.task, undefined, "a foreign-workspace record is never adopted");
+		assert.match(foreign.note ?? "", /belongs to workspace/);
+
+		const unknown = orch.resolveVerdictTask("T-20260912-999", dir);
+		assert.equal(unknown.task, undefined);
+		assert.equal(unknown.note, undefined, "a plain unknown id carries no extra note");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// Ticket 49: an id two Tasks claim as an alias is ambiguous, and the note names them.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	const first = orch.store.create(specFor("T-20260914-942", "worker", BASE));
+	const second = orch.store.create(specFor("T-20260914-943", "worker", BASE));
+	first.aliases.push("T-20260914-944");
+	second.aliases.push("T-20260914-944");
+	const resolved = orch.resolveVerdictTask("T-20260914-944", BASE);
+	assert.equal(resolved.task, undefined, "an ambiguous id resolves to no single Task");
+	assert.match(resolved.note ?? "", /T-20260914-942/);
+	assert.match(resolved.note ?? "", /T-20260914-943/);
+}
+
 // p12-r058: a bound validator (resolveValidatorReviewedTask hit via report)
 // keeps taskId = reviewed Task and does not set accountingTaskId.
 {

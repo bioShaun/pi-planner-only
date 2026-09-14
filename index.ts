@@ -1215,16 +1215,21 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			findings?: ReviewFinding[];
 			acknowledgeDrift?: DriftAcknowledgement;
 		}, _signal, _onUpdate, _ctx: ExtensionContext) {
-			const task = params.taskId
-				? orchestrator.store.get(params.taskId)
-				: orchestrator.store.active();
+			// Ticket 49 — the target resolves through the same ledger-aware lookup the
+			// delegation path uses, so a Task beyond the session restore cap can still be
+			// addressed by id. An explicit id never falls back to another Task.
+			const verdictResolution = params.taskId
+				? orchestrator.resolveVerdictTask(params.taskId, _ctx.cwd || process.cwd())
+				: undefined;
+			const task = params.taskId ? verdictResolution?.task : orchestrator.store.active();
+			const missNote = verdictResolution?.note;
 			if (!task) {
 				return {
 					content: [{
 						type: "text",
 						text: [
 							params.taskId
-								? `planner_verdict: unknown task ${params.taskId}.`
+								? `planner_verdict: unknown task ${params.taskId}.${missNote ? ` ${missNote}.` : ""}`
 								: "planner_verdict: no active planner-only task.",
 							'Usage: planner_verdict({ verdict: "pass" | "request_changes" | "blocked", summary, taskId?, findings? }).',
 						].join(" "),

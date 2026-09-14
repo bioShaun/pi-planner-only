@@ -3389,6 +3389,30 @@ export class PlannerOrchestrator {
 	 * in the prompt; otherwise the active Task in this cwd with a report.
 	 */
 	/**
+	 * Ticket 49 — resolve a `planner_verdict` target with the delegation path's
+	 * ledger-aware lookup, so a Task beyond the session restore cap is still
+	 * addressable by id.
+	 *
+	 * It never substitutes another Task: the caller falls back to the active Task
+	 * only when no id was named at all. The returned `note` explains a miss that is
+	 * not simply "unknown" (a record that exists but is unusable, or an alias two
+	 * Tasks claim).
+	 */
+	resolveVerdictTask(taskId: string, cwd: string): { task?: TaskRecord; note?: string } {
+		const { lookup, notes, ambiguous } = this.delegationLookup(cwd);
+		const task = lookup(taskId);
+		if (task) return { task };
+		const candidates = ambiguous.get(taskId);
+		if (candidates) {
+			return {
+				note: `it resolves to ${candidates.length} Tasks as an alias (${candidates.join(", ")}), so no verdict can be attributed to one of them`,
+			};
+		}
+		const note = notes.get(taskId);
+		return { note: note ? `${note}` : undefined };
+	}
+
+	/**
 	 * Ticket 47 — resolve which Task a Validator delegation reviews, keeping
 	 * "named nothing" distinct from "named something that cannot be resolved".
 	 *
