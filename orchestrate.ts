@@ -266,6 +266,12 @@ function missingBaseEvidence(task: TaskRecord, workerRunId: string): EvidenceRef
  * submission the repair renderer would fall back to `required: false` and
  * silently relax a mandatory validation.
  */
+// Ticket 48 diagnosis (TEMPORARY — remove after the host re-run).
+const DIAG48_MARK = "DIAG48-v1";
+function diag48(callId: string, message: string): void {
+	console.error(`[${DIAG48_MARK} call=${callId}] ${message}`);
+}
+
 function validatorValidationRefusal(options: {
 	input: unknown;
 	cwd: string;
@@ -2309,8 +2315,13 @@ export class PlannerOrchestrator {
 		event: { toolCallId: string; input?: unknown },
 		baseCwd: string,
 	): Promise<DelegationOutcome> {
+		// Ticket 48 diagnosis (TEMPORARY).
+		diag48(event.toolCallId, "enter");
 		try {
-			const outcome = await this.beginDelegationInner(event, baseCwd);
+			const diag48State: { reachedCheck: boolean; detail: string } = { reachedCheck: false, detail: "" };
+			const outcome = await this.beginDelegationInner(event, baseCwd, diag48State);
+			// Ticket 48 diagnosis (TEMPORARY).
+			diag48(event.toolCallId, `exit reachedCheck=${diag48State.reachedCheck} ${diag48State.detail} | outcome: block=${outcome.block ? JSON.stringify(outcome.block).slice(0, 220) : "none"} task=${outcome.task?.taskId ?? "-"}`);
 			if (outcome.block) {
 				// A reservation is provisional until a delegation record is created.
 				// Release it before returning every blocked launch outcome.
@@ -2339,8 +2350,14 @@ export class PlannerOrchestrator {
 	private async beginDelegationInner(
 		event: { toolCallId: string; input?: unknown },
 		baseCwd: string,
+		diag48State?: { reachedCheck: boolean; detail: string },
 	): Promise<DelegationOutcome> {
 		const input = event.input ?? {};
+		// Ticket 48 diagnosis (TEMPORARY).
+		if (diag48State) {
+			diag48State.reachedCheck = false;
+			diag48State.detail = "";
+		}
 		// Ticket 42 — stamp explicit reportOnly before composite/target checks so
 		// machine-generated corrections bind even when prepareRoleDelegation was skipped.
 		stampReportOnlyCorrectionInput(input);
@@ -2843,6 +2860,12 @@ export class PlannerOrchestrator {
 		&& "validation" in specDetails.candidate;
 	if (target?.role === "validator" && submittedValidationExplicit && target.spec && target.task?.spec) {
 		const conflict = describeValidationConflict(target.spec.validation, target.task.spec.validation);
+		// Ticket 48 diagnosis (TEMPORARY) — record the four inputs and the decision.
+		if (diag48State) {
+			diag48State.reachedCheck = true;
+			diag48State.detail = `check48: targetRole=${target.role} explicit=${submittedValidationExplicit} submittedValidation=${JSON.stringify(target.spec.validation) ?? "undefined"} storedValidation=${JSON.stringify(target.task.spec.validation) ?? "undefined"} conflict=${conflict ?? "none"} decision=${conflict ? "refused(VALIDATOR_SPEC_CONFLICT)" : "passthrough"}`;
+			diag48(event.toolCallId, diag48State.detail);
+		}
 		if (conflict) {
 			return {
 				block: {
