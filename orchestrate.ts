@@ -2448,6 +2448,8 @@ export class PlannerOrchestrator {
 			? (inputRecord.__delegationRole as TaskRole)
 			: undefined;
 		const role = stampedRole ?? target?.role ?? "worker";
+	const prompt = delegationPrompt(input);
+	const specDetails = extractTaskSpecDetails(prompt, cwd);
 		// Ticket 47 — resolve the Validator's Task under review before any
 		// admission side effect, so an unresolvable name fails closed without
 		// reserving capacity, taking a write lock, or starting a run. The same
@@ -2459,6 +2461,33 @@ export class PlannerOrchestrator {
 			if (resolution.refused) return { block: resolution.refused };
 			validatorReviewed = resolution.task;
 		}
+	// Ticket 48 — a Validator bound to an existing Task is judged against THAT
+	// Task's stored definition. A submitted spec that disagrees would let the
+	// operator be validated under commands the worker was never asked to meet —
+	// and would make ticket 45's stored-task refusal bypassable by that same move.
+	// Only an *explicitly submitted* validation counts: the extraction path always
+	// materialises `{required:false}`, so a spec that simply omits the field must
+	// keep today's behaviour.
+	const submittedValidationExplicit = specDetails.candidate !== undefined
+		&& "validation" in specDetails.candidate;
+	if (target?.role === "validator" && submittedValidationExplicit && target.spec && target.task?.spec) {
+		const conflict = describeValidationConflict(target.spec.validation, target.task.spec.validation);
+		// Ticket 48 diagnosis (TEMPORARY) — record the four inputs and the decision.
+		if (diag48State) {
+			diag48State.reachedCheck = true;
+			diag48State.detail = `check48: targetRole=${target.role} explicit=${submittedValidationExplicit} submittedValidation=${JSON.stringify(target.spec.validation) ?? "undefined"} storedValidation=${JSON.stringify(target.task.spec.validation) ?? "undefined"} conflict=${conflict ?? "none"} decision=${conflict ? "refused(VALIDATOR_SPEC_CONFLICT)" : "passthrough"}`;
+			diag48(event.toolCallId, diag48State.detail);
+		}
+		if (conflict) {
+			return {
+				block: {
+					code: "VALIDATOR_SPEC_CONFLICT",
+					reason: `Planner-only guard: the submitted TaskSpec disagrees with Task ${target.task.taskId}'s stored validation — ${conflict}. A Validator is judged against the Task's stored definition: resubmit with that definition, or name the Task without embedding one.`,
+				},
+			};
+		}
+	}
+
 		// Ticket 46 — a named id that resolves to more than one Task (an alias two
 		// Tasks both claim) is ambiguous: refuse and name the candidates rather
 		// than letting a lookup pick one. Applies to every role, and to embedded
@@ -2834,8 +2863,6 @@ export class PlannerOrchestrator {
 			);
 		}
 
-		const prompt = delegationPrompt(input);
-		const specDetails = extractTaskSpecDetails(prompt, cwd);
 		if (target?.role !== "reviewer" && specDetails.hasCharacteristics && !specDetails.spec) {
 			// R01 — the refusal shares the Policy example renderer: still no Task,
 			// no child, but the reason carries a validating TaskSpec JSON built
@@ -2858,32 +2885,6 @@ export class PlannerOrchestrator {
 			};
 		}
 
-	// Ticket 48 — a Validator bound to an existing Task is judged against THAT
-	// Task's stored definition. A submitted spec that disagrees would let the
-	// operator be validated under commands the worker was never asked to meet —
-	// and would make ticket 45's stored-task refusal bypassable by that same move.
-	// Only an *explicitly submitted* validation counts: the extraction path always
-	// materialises `{required:false}`, so a spec that simply omits the field must
-	// keep today's behaviour.
-	const submittedValidationExplicit = specDetails.candidate !== undefined
-		&& "validation" in specDetails.candidate;
-	if (target?.role === "validator" && submittedValidationExplicit && target.spec && target.task?.spec) {
-		const conflict = describeValidationConflict(target.spec.validation, target.task.spec.validation);
-		// Ticket 48 diagnosis (TEMPORARY) — record the four inputs and the decision.
-		if (diag48State) {
-			diag48State.reachedCheck = true;
-			diag48State.detail = `check48: targetRole=${target.role} explicit=${submittedValidationExplicit} submittedValidation=${JSON.stringify(target.spec.validation) ?? "undefined"} storedValidation=${JSON.stringify(target.task.spec.validation) ?? "undefined"} conflict=${conflict ?? "none"} decision=${conflict ? "refused(VALIDATOR_SPEC_CONFLICT)" : "passthrough"}`;
-			diag48(event.toolCallId, diag48State.detail);
-		}
-		if (conflict) {
-			return {
-				block: {
-					code: "VALIDATOR_SPEC_CONFLICT",
-					reason: `Planner-only guard: the submitted TaskSpec disagrees with Task ${target.task.taskId}'s stored validation — ${conflict}. A Validator is judged against the Task's stored definition: resubmit with that definition, or name the Task without embedding one.`,
-				},
-			};
-		}
-	}
 	// Ticket 45 — the effective definition can come from the submitted prompt
 	// or from the ledger; only the latter is uneditable, and the refusal has to
 	// say which one it hit. `spec` is checked via `target.spec` rather than for
