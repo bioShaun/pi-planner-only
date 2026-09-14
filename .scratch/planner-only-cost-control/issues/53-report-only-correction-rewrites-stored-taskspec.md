@@ -19,4 +19,10 @@
 3. 占位 Task（`isPlaceholder`）首次被带 spec 的委派绑定时，行为不变。
 4. 016 的 stored 定义无法从账本恢复（无历史），记账说明即可；其原始 objective 见 48 票档案表。
 
-**Status:** open（2026-09-14 立案，源自 52 票的前提复核。）
+**2026-09-15 落地（分支 `fix/ticket-52-refusal-attribution`）：** `beginDelegationInner` 的 `if (existing)` 分支只在 `existing.isPlaceholder || !existing.spec` 时 `bindSpec`；其余情况沿用 stored spec，若提交定义在 objective / cwd / role / scope / constraints / acceptanceCriteria / validation / expectedEvidence / stopConditions 任一项上不同，追加 warning「Task X keeps its stored TaskSpec; the submitted definition differs and applies to this invocation's packet only」。新增 `storedDefinitionDiffers()`（invocation-only 字段 reportOnly / budget / contextPack / readFirst 不计入）。
+
+测试（`orchestrate.test.mjs`）：普通 worker 再委派与 report-only 纠正各一例，嵌入不同 objective / 无 validation 的 spec → 放行、绑定到既有 Task、stored spec 逐字不变、mandatory validation 未被放宽、warning 出现；占位 Task 首次绑定一例 → 取提交定义、`isPlaceholder=false`。既有 C09 测试原本依赖「再委派把 stored cwd 改到 holder 的目录」制造写锁冲突，改为创建时即用该 cwd（意图不变）。`npm run typecheck` / `npm test` exit 0。
+
+**宿主验收（待 operator）：** 对 `T-20260913-046`（changes_requested，stored validation 6 条命令）发一次 report-only 纠正委派并嵌入不同 objective 的 TaskSpec → 放行后 `~/.pi/agent/planner-only/ledger/T-20260913-046.json` 的 `task.spec` 与委派前逐字一致（基线指纹由本机记录），且工具回执含 keeps its stored TaskSpec 的 warning。
+
+**Status:** done（本机落地、门禁绿；宿主验收待跑。）
