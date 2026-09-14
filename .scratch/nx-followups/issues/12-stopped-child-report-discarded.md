@@ -1,6 +1,6 @@
 # 被 stopped 的子运行：其已产出的合规 WorkerReport 被丢弃，任务被置 failed 且无法收口
 
-Status: ready-for-human
+Status: verified
 
 ## 现象
 
@@ -80,3 +80,9 @@ explorer 角色的任务正常绑定 WorkerReport，也能进入可裁定状态�
 **测试**（`orchestrate.test.mjs`，ticket 12-a..d）：stopped+合规产物→recording；stopped+不合规产物→failed（fail-closed）；stopped+双 agent 产物→歧义 fail-closed；recover 按 runId 命中非默认 agent 产物。
 
 **残留风险**：salvage 仅覆盖 async-notify 路径；sync 前台路径的 `text` 本来就是子运行真实输出，不存在同一缺陷。`hasExplicitReference && resolution pending` 分支（显式 outputRef 读取失败）不在本票范围。
+
+### 2026-09-14 — 宿主验证通过，翻 verified
+
+宿主 session `01a09e5d-853a-742c-99b6-f963c4665186`（session 文件 `2026-09-14T05-22-04-219Z_…`），worker run `596c94a5-c211-4e58-b952-6a5afda4c31c`（verification-only，changedFiles=[]）：HEAD 确认为 `f6e9786`，`npm run typecheck`、`notify.test.mjs`、`orchestrate.test.mjs`（含 12-a..d）、`completion.test.mjs` 全部 exit 0。Root 独立复跑三件套 + `git status` 核对：树在验证前后 byte-identical（仅既有未跟踪 `.scratch/` 目录），结论与 WorkerReport 一致。
+
+注：本 session 的 planner-only 未接管 subagent 委派（worker 以纯 pi-subagents 运行，无 Task 落账），故本次验证未走 Task 生命周期/裁定闸门，证据为宿主实跑 + Root 独立复跑。运行中的扩展副本（`~/.pi/agent/git/…` @ `09071ab`）尚未包含本修复，推送与 `pi update` 待 operator 执行。
