@@ -64,10 +64,12 @@ import type { EffectiveLimits } from "./floors.ts";
 import {
 	ASYNC_PREVIEW_TRUNCATED_REASON,
 	PREVIEW_TRUNCATED_MARKER,
+	findRunOutputArtifacts,
 	is403RateLimit,
 	parseSubagentNotify,
 	readChildMeta,
 	readLargestRunOutput,
+	readRunOutputArtifact,
 	tempRootFromAsyncDir,
 	verifySessionFileBinding,
 } from "./notify.ts";
@@ -1460,15 +1462,17 @@ export class PlannerOrchestrator {
 			...(outputRef ? { outputRef } : {}),
 		}, "reconcile");
 		if (!outputRef && /^[A-Za-z0-9_.-]+$/.test(id)) {
-			const agent = KIND_DEFAULT_AGENTS[execution.kind];
-			const candidates = this.artifactDirs().flatMap((dir) => [
-				join(dir, `${id}_${agent}_output.md`),
-				join(dir, `${id}_${agent}_output.json`),
-				join(dir, "outputs", id, "result.json"),
-				join(dir, "outputs", id, "output.json"),
-				join(dir, "outputs", id, "output.md"),
-			]);
-			const found = candidates.filter((path) => existsSync(path));
+			// Ticket 12 — match the saved artifact by runId alone; the persisted
+			// default agent name may differ from the agent actually delegated
+			// (e.g. an explorer-kind run delegated to the reviewer agent).
+			const found = [
+				...findRunOutputArtifacts(this.artifactDirs(), id),
+				...this.artifactDirs().flatMap((dir) => [
+					join(dir, "outputs", id, "result.json"),
+					join(dir, "outputs", id, "output.json"),
+					join(dir, "outputs", id, "output.md"),
+				]).filter((path) => existsSync(path)),
+			];
 			if (found.length > 1) {
 				return { status: "pending", taskId: binding.task.taskId, runId: id, code: "OUTPUT_AMBIGUOUS", executionState: persisted?.executionState ?? "terminal", ingestionState: "unavailable", nextAction: "retry-output-reconcile", retryable: true, message: "more than one deterministic legacy artifact is bound to this run" };
 			}
@@ -3717,6 +3721,20 @@ export class PlannerOrchestrator {
 		return dirs;
 	}
 
+	/**
+	 * Ticket 12 — deterministic saved-output artifact of a stopped run
+	 * (`<runId>_<agent>_output.md|json`). A stop notice's text is only the
+	 * control-plane signal; the child may already have written its final
+	 * output. Returns the artifact text only when exactly one candidate
+	 * exists; ambiguity or an unreadable artifact fails closed.
+	 */
+	private readStoppedRunArtifact(record: DelegationRecord): string | undefined {
+		if (!record.runId) return undefined;
+		const candidates = findRunOutputArtifacts(this.delegationArtifactDirs(record), record.runId);
+		if (candidates.length !== 1) return undefined;
+		return readRunOutputArtifact(candidates[0]);
+	}
+
 	private resolveDelegationOutput(record: DelegationRecord): OutputResolution {
 		if (record.outputRef) {
 			const task = this.store.get(record.taskId);
@@ -4581,8 +4599,8 @@ export class PlannerOrchestrator {
 
 			if (runId) this.processedRunIds.add(runId);
 			this.endDelegation(found.toolCallId);
-			const fileText = resolution.kind === "loaded" ? resolution.text : undefined;
-			const chosen = fileText ?? parsed.preview;
+			let fileText = resolution.kind === "loaded" ? resolution.text : undefined;
+			let chosen = fileText ?? parsed.preview;
 
 			const sealedTask = this.store.get(found.record.taskId);
 			if (this.isBlockedReceiptSealed(sealedTask)) {
@@ -4629,20 +4647,36 @@ export class PlannerOrchestrator {
 				};
 				continue;
 			}
-			if (isBudgetOrStopped && !extractWorkerReport(chosen, { expectedTaskId: found.record.taskId }).ok) {
-				const task = this.store.get(found.record.taskId);
-				if (task && !isFinalTaskState(task.state)) {
-					this.store.transition(task.taskId, "failed");
-					this.store.setStateReason(task.taskId, `subagent stopped (${parsed.status}): ${chosen.split(/\r?\n/, 1)[0] ?? ""}`);
+			// Ticket 12 — the compliant-payload check is kind-aware: a reviewer
+			// settles with a ReviewResult, every other kind with a WorkerReport.
+			const hasCompliantPayload = (text: string): boolean =>
+				found.record.kind === "reviewer"
+					? extractReviewResult(text).review !== undefined
+					: extractWorkerReport(text, { expectedTaskId: found.record.taskId }).ok;
+			if (isBudgetOrStopped && !hasCompliantPayload(chosen)) {
+				// Ticket 12 — a stopped child may already have written its final
+				// output artifact; prefer it over the notice preview before
+				// failing the Task. A missing, ambiguous, or non-compliant
+				// artifact fails closed exactly as before.
+				const salvaged = this.readStoppedRunArtifact(found.record);
+				if (salvaged !== undefined && hasCompliantPayload(salvaged)) {
+					fileText = salvaged;
+					chosen = salvaged;
+				} else {
+					const task = this.store.get(found.record.taskId);
+					if (task && !isFinalTaskState(task.state)) {
+						this.store.transition(task.taskId, "failed");
+						this.store.setStateReason(task.taskId, `subagent stopped (${parsed.status}): ${chosen.split(/\r?\n/, 1)[0] ?? ""}`);
+					}
+					const limitsLine = found.record.floorSummary ? `\nLimits: ${found.record.floorSummary}` : "";
+					outcome = {
+						content: [{
+							type: "text",
+							text: `[PLANNER-ONLY] Subagent for task ${found.record.taskId} stopped (${parsed.status}): ${chosen}${limitsLine}`,
+						}],
+					};
+					continue;
 				}
-				const limitsLine = found.record.floorSummary ? `\nLimits: ${found.record.floorSummary}` : "";
-				outcome = {
-					content: [{
-						type: "text",
-						text: `[PLANNER-ONLY] Subagent for task ${found.record.taskId} stopped (${parsed.status}): ${chosen}${limitsLine}`,
-					}],
-				};
-				continue;
 			}
 
 			const task = this.store.get(found.record.taskId);

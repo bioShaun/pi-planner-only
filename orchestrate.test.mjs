@@ -5583,6 +5583,125 @@ const oracle1ForegroundText = [
 }
 
 // --------------------------------------------------------------------------
+// Ticket 12: a stopped child whose compliant report artifact already exists
+// is ingested from the artifact; the stop notice text is control-plane only.
+// --------------------------------------------------------------------------
+
+// 12-a. stopped async worker + compliant saved artifact -> report recorded, not failed
+{
+	const taskId = "T-20260905-926";
+	const runId = "run-t12-salvage";
+	const tmp = mkdtempSync(join(process.cwd(), ".planner-only-t12-"));
+	try {
+		const artifacts = join(tmp, "artifacts");
+		mkdirSync(artifacts, { recursive: true });
+		writeFileSync(join(artifacts, `${runId}_worker_output.md`), JSON.stringify(reportFor(taskId, "call-t12")));
+		const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), artifactDirs: () => [artifacts] });
+		const input = { agent: "worker", async: true, task: JSON.stringify(specFor(taskId, "worker")) };
+		await orch.prepareRoleDelegation(input);
+		setCleanTree();
+		await orch.beginDelegation({ toolCallId: "call-t12", input }, BASE);
+		setDirtyTree();
+		await orch.handleSubagentResult(receiptFor("call-t12", runId, join(tmp, "async-subagent-runs", runId)));
+		assert.equal(orch.store.require(taskId).state, "executing");
+
+		const outcome = await orch.handleAsyncNotify(`Background task stopped: **worker**\n\nSubagent stopped by user.\n\nChild runs: ${runId}`);
+		assert.ok(outcome !== undefined);
+		assert.match(outcome.content[0].text, /\[PLANNER-ONLY REVIEW STATE\]/);
+		const task = orch.store.require(taskId);
+		assert.equal(task.state, "reviewing");
+		assert.equal(task.reports.length, 1);
+		assert.doesNotMatch(task.stateReason ?? "", /subagent stopped/);
+		assert.equal(orch.pendingDelegationCount(), 0);
+	} finally {
+		rmSync(tmp, { recursive: true, force: true });
+	}
+}
+
+// 12-b. stopped async worker + non-compliant artifact -> still failed (fail closed)
+{
+	const taskId = "T-20260905-927";
+	const runId = "run-t12-garbage";
+	const tmp = mkdtempSync(join(process.cwd(), ".planner-only-t12-"));
+	try {
+		const artifacts = join(tmp, "artifacts");
+		mkdirSync(artifacts, { recursive: true });
+		writeFileSync(join(artifacts, `${runId}_worker_output.md`), "partial prose, never reached a report");
+		const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), artifactDirs: () => [artifacts] });
+		const input = { agent: "worker", async: true, task: JSON.stringify(specFor(taskId, "worker")) };
+		await orch.prepareRoleDelegation(input);
+		await orch.beginDelegation({ toolCallId: "call-t12b", input }, BASE);
+		await orch.handleSubagentResult(receiptFor("call-t12b", runId, join(tmp, "async-subagent-runs", runId)));
+
+		const outcome = await orch.handleAsyncNotify(`Background task stopped: **worker**\n\nSubagent stopped by user.\n\nChild runs: ${runId}`);
+		assert.ok(outcome !== undefined);
+		assert.match(outcome.content[0].text, /stopped/);
+		const task = orch.store.require(taskId);
+		assert.equal(task.state, "failed");
+		assert.equal(task.reports.length, 0);
+		assert.match(task.stateReason ?? "", /subagent stopped/);
+	} finally {
+		rmSync(tmp, { recursive: true, force: true });
+	}
+}
+
+// 12-c. stopped async worker + two agent artifacts for one runId -> ambiguous, fail closed
+{
+	const taskId = "T-20260905-928";
+	const runId = "run-t12-ambiguous";
+	const tmp = mkdtempSync(join(process.cwd(), ".planner-only-t12-"));
+	try {
+		const artifacts = join(tmp, "artifacts");
+		mkdirSync(artifacts, { recursive: true });
+		writeFileSync(join(artifacts, `${runId}_worker_output.md`), JSON.stringify(reportFor(taskId, "call-t12c")));
+		writeFileSync(join(artifacts, `${runId}_reviewer_output.md`), JSON.stringify(reportFor(taskId, "call-t12c")));
+		const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), artifactDirs: () => [artifacts] });
+		const input = { agent: "worker", async: true, task: JSON.stringify(specFor(taskId, "worker")) };
+		await orch.prepareRoleDelegation(input);
+		await orch.beginDelegation({ toolCallId: "call-t12c", input }, BASE);
+		await orch.handleSubagentResult(receiptFor("call-t12c", runId, join(tmp, "async-subagent-runs", runId)));
+
+		const outcome = await orch.handleAsyncNotify(`Background task stopped: **worker**\n\nSubagent stopped by user.\n\nChild runs: ${runId}`);
+		assert.ok(outcome !== undefined);
+		const task = orch.store.require(taskId);
+		assert.equal(task.state, "failed");
+		assert.equal(task.reports.length, 0);
+	} finally {
+		rmSync(tmp, { recursive: true, force: true });
+	}
+}
+
+// 12-d. planner_recover finds the saved artifact by runId even when the
+// artifact's agent segment differs from the kind's default agent.
+{
+	const outputDir = mkdtempSync(join(process.cwd(), ".planner-only-t12-recover-"));
+	try {
+		const taskId = "T-20260905-929";
+		const runId = "run-t12-recover";
+		const store = pinnedStore();
+		const task = store.create({ ...specFor(taskId, "worker", BASE), validation: { required: false } });
+		store.transition(task.taskId, "executing");
+		store.beginExecution(task.taskId, {
+			executionId: "t12-call",
+			kind: "worker",
+			cwd: BASE,
+			worktreeRoots: [],
+			aRun: { cwd: BASE, taskId, workerRunId: "t12-call", gitAvailable: false, generatedAt: new Date(0).toISOString() },
+			runId,
+		});
+		// The run was delegated to a non-default agent; the saved artifact name
+		// carries that agent, not the kind default.
+		writeFileSync(join(outputDir, `${runId}_reviewer_output.md`), JSON.stringify(reportFor(taskId, "t12-call")));
+		const orch = new PlannerOrchestrator({ store, gitRunner, artifactDirs: () => [outputDir] });
+		const recovered = await orch.reingestOriginalReport(runId, BASE, taskId);
+		assert.equal(recovered.status, "recorded");
+		assert.equal(store.require(taskId).reports.length, 1);
+	} finally {
+		rmSync(outputDir, { recursive: true, force: true });
+	}
+}
+
+// --------------------------------------------------------------------------
 // Ticket 15: status discloses debt as an estimate on 已用, never as remaining (X7–X10)
 // --------------------------------------------------------------------------
 

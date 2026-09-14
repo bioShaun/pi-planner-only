@@ -1,6 +1,6 @@
 # 被 stopped 的子运行：其已产出的合规 WorkerReport 被丢弃，任务被置 failed 且无法收口
 
-Status: needs-triage
+Status: ready-for-human
 
 ## 现象
 
@@ -63,3 +63,20 @@ explorer 角色的任务正常绑定 WorkerReport，也能进入可裁定状态�
 - **T-20260913-046**：同为「lifecycle 无法收口 + `reports` 与裁定不匹配」的观测点，但成因不同（那张票是 rebase 抹掉基线导致比较恒 stale），不可合并处理。
 - `orchestrate.ts:3457` 的 `no-report` 拒绝是**正确的**闸门：无报告不应被 pass。本票问的是「报告为什么没进来」，不是要求放宽该闸门。
 - 与 ticket 43/44 的 TaskSpec 契约收紧同属「入口/边界」类问题，但方向不同（那张是拒绝不该出现的东西，本票是没接住已经出现的东西）。
+
+## Comments
+
+### 2026-09-14 — 裁定与修复（待宿主验证后由 Root 翻 verified）
+
+**设计裁定**（对应「设计问题」1/2/3）：采用「产物优先于通知文本」。stop 通知文本只是控制面信号；子运行在被 stop 前已完整写出的合规报告**可验收**——它不绕过任何下游闸门（`extractWorkerReport` 身份绑定、C_report 证据采样、`no-report` 裁定闸门全部照旧）。产物缺失、多义（同一 runId 多于一个候选）或不合规时**维持 fail-closed**，任务照旧置 failed。
+
+**修复**（本地 typecheck + 全部 33 个测试套件 exit 0）：
+
+1. `orchestrate.ts` `handleAsyncNotify` stopped 分支：preview 抽取失败时，回退读取该 run 的确定性保存产物 `<runId>_<agent>_output.md|json`（`delegationArtifactDirs`，即 session `subagent-artifacts/` 等）。读到且合规则以产物文本走正常 kind 分发（worker/validator/explorer/reviewer），任务进入 `reviewing` 而非 `failed`。
+2. 守卫改为 kind 感知：reviewer 的合规载荷是 ReviewResult（`extractReviewResult`），其余kind 仍是 WorkerReport。此前 stopped reviewer 即使 preview 里带完整 ReviewResult 也必死。
+3. `planner_recover`（`reingestOriginalReport`）的产物扫描从「kind 默认 agent 名」改为**按 runId 匹配**（`findRunOutputArtifacts`）——本票事故中产物名为 `*_reviewer_output.md` 而 execution.kind 的默认 agent 不是 reviewer，这正是两次 recover 均无功的原因。
+4. 新 helper（`notify.ts`）：`findRunOutputArtifacts`（按 runId 前缀 + `_output.md|json` 后缀，大小上限、不随符号链接、多候选即歧义）与 `readRunOutputArtifact`。
+
+**测试**（`orchestrate.test.mjs`，ticket 12-a..d）：stopped+合规产物→recording；stopped+不合规产物→failed（fail-closed）；stopped+双 agent 产物→歧义 fail-closed；recover 按 runId 命中非默认 agent 产物。
+
+**残留风险**：salvage 仅覆盖 async-notify 路径；sync 前台路径的 `text` 本来就是子运行真实输出，不存在同一缺陷。`hasExplicitReference && resolution pending` 分支（显式 outputRef 读取失败）不在本票范围。

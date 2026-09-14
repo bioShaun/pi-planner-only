@@ -701,3 +701,55 @@ export function readChildMeta(
 	}
 	return undefined;
 }
+
+/**
+ * Ticket 12 — deterministic saved-output artifacts of a run:
+ * `<runId>_<agent>_output.md|json` (pi-subagents `getArtifactPaths`). Matched
+ * by runId alone: the persisted/default agent name may differ from the agent
+ * actually delegated (e.g. an explorer-kind run delegated to the reviewer
+ * agent). Size-capped, no symlink following; zero, one, or more candidates —
+ * more than one is ambiguous and callers must fail closed.
+ */
+export function findRunOutputArtifacts(
+	artifactDirs: readonly string[],
+	runId: string,
+): string[] {
+	if (isUnsafeRunId(runId)) return [];
+	const prefix = `${runId}_`;
+	const found: string[] = [];
+	const seen = new Set<string>();
+	for (const dir of artifactDirs) {
+		if (!dir) continue;
+		let entries: string[];
+		try {
+			entries = readdirSync(dir);
+		} catch {
+			continue;
+		}
+		for (const entry of entries) {
+			if (!entry.startsWith(prefix) || !/_output\.(?:md|json)$/.test(entry)) continue;
+			const path = join(dir, entry);
+			if (seen.has(path)) continue;
+			try {
+				const st = lstatSync(path);
+				if (!st.isFile() || st.size > MAX_OUTPUT_BYTES) continue;
+			} catch {
+				continue;
+			}
+			seen.add(path);
+			found.push(path);
+		}
+	}
+	return found;
+}
+
+/** Size-capped read of one saved-output artifact; no symlink following. */
+export function readRunOutputArtifact(path: string): string | undefined {
+	try {
+		const st = lstatSync(path);
+		if (!st.isFile() || st.size > MAX_OUTPUT_BYTES) return undefined;
+		return readFileSync(path, "utf8");
+	} catch {
+		return undefined;
+	}
+}
