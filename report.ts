@@ -106,12 +106,32 @@ export function isWorkerReport(value: unknown): value is WorkerReport {
 	return validateWorkerReport(value).length === 0;
 }
 
-export interface ExtractedReport {
-	report?: WorkerReport;
-	error?: string;
+export type ExtractedOk = {
+	ok: true;
+	report: WorkerReport;
 	repairs: string[];
-	/** Parsing outcome: valid, salvaged, or retained as raw invalid output. */
-	level?: "schema-valid" | "repairable" | "irreparable";
+	level: "schema-valid" | "repairable";
+};
+
+export type ExtractedErr = {
+	ok: false;
+	error: string;
+	repairs: string[];
+	/** Present when a report-shaped candidate was seen but could not be accepted. */
+	level?: "irreparable";
+	/** Keys of the best failed candidate, when known — diagnostic only, not trusted fields. */
+	seenKeys?: string;
+};
+
+/**
+ * Discriminated parse result. Success carries a schema-valid WorkerReport;
+ * failure never pretends success fields exist (same honesty bar as host
+ * SubagentDelegationInvalidResponse / invalid_request).
+ */
+export type ExtractedReport = ExtractedOk | ExtractedErr;
+
+export function isExtractedOk(r: ExtractedReport): r is ExtractedOk {
+	return r.ok === true;
 }
 
 export interface NormalisedReport {
@@ -770,13 +790,13 @@ export function extractWorkerReport(
 	context?: { expectedTaskId?: string; expectedWorkerRunId?: string },
 ): ExtractedReport {
 	if (typeof text !== "string" || !text.trim()) {
-		return { error: "worker returned no output", repairs: [] };
+		return { ok: false, error: "worker returned no output", repairs: [] };
 	}
 
 	const assistant = extractFinalAssistantText(text);
 	if (assistant.hasRoles) {
 		if (!assistant.text) {
-			return { error: "worker session did not produce a final assistant report", repairs: [] };
+			return { ok: false, error: "worker session did not produce a final assistant report", repairs: [] };
 		}
 		return extractWorkerReportFromText(assistant.text, context);
 	}
@@ -812,6 +832,7 @@ function extractWorkerReportFromText(
 		const errors = validateWorkerReport(normalised.report);
 		if (errors.length === 0) {
 			return {
+				ok: true,
 				report: normalised.report as WorkerReport,
 				repairs: normalised.repairs,
 				level: normalised.repairs.length > 0 ? "repairable" : "schema-valid",
@@ -834,13 +855,15 @@ function extractWorkerReportFromText(
 
 	if (best) {
 		return {
+			ok: false,
 			error: `invalid WorkerReport: picked candidate with keys [${best.keys}]; ${best.errors.join("; ")}`,
 			repairs: best.repairs,
 			level: "irreparable",
+			seenKeys: best.keys,
 		};
 	}
-	if (sawReportShape) return { error: "invalid WorkerReport", repairs: [], level: "irreparable" };
-	return { error: "worker output did not contain a WorkerReport object", repairs: [] };
+	if (sawReportShape) return { ok: false, error: "invalid WorkerReport", repairs: [], level: "irreparable" };
+	return { ok: false, error: "worker output did not contain a WorkerReport object", repairs: [] };
 }
 
 const COMPACTION_LEVELS = [
