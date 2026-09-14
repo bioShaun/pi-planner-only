@@ -40,7 +40,7 @@
 
 **Blocked by:** 无。与 03（`validation.required` 非布尔）、11（验证状态五分法）、27/28（WorkerReport `validation` 元素形状）同族但**不是同一缺陷**：那几条管的是**报告**契约，本票管的是**委派**契约与 `commands` 在 `required: true` 下的地位。
 
-**Status:** done（2026-09-14 本机落地：`npm run typecheck` 与 `npm test` 均 exit 0。**未做宿主终验**；运行中的插件仍是 clone 上的 `091fa28`，需更新/pin 该 ref 并重启 session 后才生效。）
+**Status:** verified（2026-09-14：本机 `npm run typecheck` / `npm test` exit 0；宿主终验 A–E/G PASS，检查 F 在工单 47 落地后由 operator 于构建 `59d9ee3` 上以严格 task-id-only 的 `Validate T-20260912-016` 复跑并通过。要求 1–6 均有宿主或本机回归证据支撑。）
 
 ## Comments
 
@@ -117,3 +117,6 @@ isValidationDefinitionIncomplete(结果)     → true      （守卫必拒）
 2026-09-14 宿主终验（`.scratch/planner-only-cost-control/p45-host/summary.md`，被验构建 clone HEAD `bfc70e9`）：A/B/C/D/E/G PASS，**F FAIL**。F 的根因不在本票代码：点名的 `T-20260911-001` 排在会话恢复上限之外（rank 100 > `MAX_LEDGER_RESTORE_PER_SESSION` = 64），validator 解析按 §5 第五级退到本 cwd 的 active Task `T-20260913-046`，stored-task 守卫因此未触及。已立 [工单 47](47-validator-named-task-unresolved-falls-back-to-active.md)。本票状态保持 done；转 verified 需在 47 落地后复跑检查 F。
 
 2026-09-14 实现补充（随工单 47 一并落地，追加于上段之后）：要求 1 的「判据合一」当时漏了**第五处副本** —— `orchestrate.ts` 的 `embeddedTaskLooksInvalid` 闭包内仍是旧的 length 判据（`required === true && (!Array.isArray(commands) || commands.length === 0)`，不 trim）。现改走 `isValidationDefinitionIncomplete()`；malformed `commands` 仍留在本地判断，因为那是 shape 错误、共享谓词刻意不管。另：检查 F 的宿主复跑目标已由工单 47 定为 **`T-20260912-016`**（原因见 47 的 Acceptance：`T-20260911-001` 属别的 workspace，在 47 §2 的 workspace 校验下必然拒绝采纳，拿不到 stored-task 拒绝）。
+
+2026-09-14 宿主复跑检查 F（operator 会话，被验构建 `59d9ee3`，`loaded=629b4b6133e9`）：**PASS**。严格 task-id-only 的 `Validate T-20260912-016` 触发了本票的 stored-task 拒绝，逐字含 `Task T-20260912-016 is stored with validation.required = true but no usable validation.commands, so no Validator delegation for it can start. The stored TaskSpec is not editable: create a new Task that carries a complete validation definition.`，reason 同时含 `validation.required is true, but validation.commands is missing or empty`（要求 4）并附修复包（要求 3）；**无 run、无警告、无 active 兜底**。同轮次另有 `Validate T-20260911-001` → 47 的 `VALIDATOR_TARGET_UNBOUND` + `belongs to workspace` 说明（测的是 47 的引用判据）。门禁 `npm run typecheck` / `npm test` 在 `59d9ee3` 上均 exit 0。至此要求 1–6 全部有宿主证据或本机回归证据支撑。
+

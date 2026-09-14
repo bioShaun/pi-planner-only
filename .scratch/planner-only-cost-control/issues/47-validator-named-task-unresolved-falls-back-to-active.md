@@ -28,9 +28,19 @@
 - 宿主复跑 p45-host 检查 F：以 `Validate T-20260912-016`（见上）复现，出现 `create a new Task that carries a complete validation definition` 拒绝；并复跑 `Validate T-20260911-001` 确认得到 `VALIDATOR_TARGET_UNBOUND` + 「belongs to workspace」说明。（**本机未做**，待 operator。）
 - `npm run typecheck` 与 `npm test` 绿。
 
+**宿主复跑结果（2026-09-14，operator 会话，被验构建 `59d9ee3`，loaded=629b4b6133e9）：**
+
+- ✅ **跨 workspace 点名**：`Validate T-20260911-001`（task-id-only）在解析层被拒，**无 run、无 active 兜底**；reason 含 `names unknown Task T-20260911-001 (its ledger record belongs to workspace /public/scripts/tc-probe-design-v2 and this delegation runs in /public/pi/pi-planner-only; cross-workspace binding is refused)`。
+- ✅ **严格 task-id-only 复现**：`Validate T-20260912-016`（rank 72 > 上限 64，不嵌 spec / 不嵌 ReviewRequest）→ 45 的 stored-task 拒绝触发，逐字含 `Task T-20260912-016 is stored with validation.required = true but no usable validation.commands, so no Validator delegation for it can start. The stored TaskSpec is not editable: create a new Task that carries a complete validation definition.`；**无 run、无警告**。
+- ✅ **按需恢复越过上限**：两条探针都说明点名查找不再受 `MAX_LEDGER_RESTORE_PER_SESSION = 64` 遮挡（016 rank 72、011 rank 100 均在限外却被正确解析/识别）。
+- ✅ **无 active-Task 兜底**：两条均未出现 `Async delegation … has started`；016 的按需采纳只进内存（`restore()` 无 `persist`，其 `.json` mtime 未变）。
+- ✅ **门禁**：`59d9ee3` 上 `npm run typecheck` exit 0、`npm test` exit 0（35 个测试文件无失败），日志 `.scratch/planner-only-cost-control/p47-impl/{typecheck,npm-test}-rerun.log`。
+
+**遗留跟进项（不影响本票结论）：** 跨 workspace 拒绝的文案以 `names unknown Task X` 起头、随后才给 workspace 原因；措辞应改为主诉 workspace 冲突。见 Comments。
+
 **Blocked by:** 无。与 46 改同一处查找（`Store.get()` / 委派路径），建议一并排期；若分开，本票在前——它挡着 45 的宿主终验转 verified。
 
-**Status:** done（2026-09-14 本机落地：`npm run typecheck` 与全量 `npm test` 均 exit 0，35 个测试文件无失败。**宿主复跑待 operator**，它同时也是 45 转 verified 的前置。）
+**Status:** verified（2026-09-14：本机 `npm run typecheck` / 全量 `npm test` exit 0；宿主复跑两条探针均 PASS —— 跨 workspace 的 `Validate T-20260911-001` 得 `VALIDATOR_TARGET_UNBOUND` + `belongs to workspace` 说明，严格 task-id-only 的 `Validate T-20260912-016` 得 stored-task 拒绝 + `create a new Task` 指引；两条都无 run、无警告、无 active 兜底。）
 
 **实现者裁定（要求 2 的两条路）。** 倾向在 `Store.get()` 之外加一层「委派 lookup」做按需恢复，而不是让 `Store.get()` 自己读盘：`get` 在热路径上被大量调用（usage 归并、alias 解析），读盘副作用放在委派入口更可控，也便于与 46 的 workspace 校验放在同一个函数里。若实现者选择改 `Store.get()`，须在回执说明读盘失败（损坏记录、并发写）时的行为。
 
@@ -60,4 +70,10 @@
 
 **门禁**：`npm run typecheck` exit 0；`npm test` exit 0（35 个测试文件，无失败）。日志 `.scratch/planner-only-cost-control/p47-impl/{typecheck,npm-test}.log`（gitignored）。
 
-**仍未做**：宿主复跑检查 F（见 Acceptance）。运行中的插件仍 pin 在 `bfc70e9`，本票代码要生效需把提交推到该分支、`pi update --extensions`、重启 session。
+**宿主复跑**：已完成（见上）。本票实现提交 `9d80701`（docs `59d9ee3`），运行中的 clone 已更新到 `59d9ee3`（`/planner-only status` 报 `loaded=629b4b6133e9`）。
+
+2026-09-14 宿主复跑（operator 会话；Acceptance 上方「宿主复跑结果」即本轮记录）：
+
+- 第一次尝试**未复现**，原因是探针嵌了**完整 spec**：守卫取值序 `specDetails.spec ?? spec ?? target?.task?.spec` 里，**提交的** spec 优先于 `target.task.spec`，016 的 stored 定义因此被遮蔽 —— 这是工单 45 要求 6 已记录、刻意保留的隐藏逃生口，不是缺陷。**严格探针必须彻底 task-id-only。**
+- 按 task-id-only 重跑后两条探针都 PASS（逐字见上）。
+- 复跑期间的一次误操作：`planner_verdict` **未给 `taskId`** 时落到 `store.active()`（`index.ts:1218-1220` 的文档化默认），在 `T-20260913-046` 上记了一条 `blocked`（reviewRound 0→1）。该 Task 仍是 `changes_requested`、生命周期本就由 `T-20260914-010` 收口，故保留不 override；成因记此，以免后人误读成对 046 的真实评审结论。该路径用裸 `store.get`、**未接账本感知 lookup**，新会话里按 id 处置超上限 Task 会报 `unknown task` —— 与 §2 同族，待定是否开票。
