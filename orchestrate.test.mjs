@@ -1640,6 +1640,59 @@ function truncatedPreview() {
 	assert.notEqual(outcome.block?.code, "VALIDATOR_SPEC_CONFLICT", "an agreeing packetised definition passes the gate");
 }
 
+// Ticket 53: a stored TaskSpec is written once. Re-delegating an existing Task
+// with a *different* embedded definition — a plain worker delegation or a
+// report-only correction carrying its machine-generated spec — must leave the
+// stored objective / scope / acceptance criteria / validation untouched; the
+// submitted definition applies to that invocation's packet only.
+{
+	for (const [label, extraInput] of [["worker", {}], ["report-only correction", { reportOnly: true }]]) {
+		const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+		setCleanTree();
+		const taskId = label === "worker" ? "T-20260914-940" : "T-20260914-941";
+		const stored = { ...specFor(taskId, "worker", BASE), objective: "Batch-4: implement RS-04 and RS-05", validation: { required: true, commands: ["npm test", "npm run typecheck"] } };
+		orch.store.create(stored);
+		const before = JSON.stringify(orch.store.require(taskId).spec);
+		const correction = {
+			taskId,
+			objective: `Report-only correction: submit an amended WorkerReport declaring the complete changed-file set for ${taskId}. No file modifications of any kind.`,
+			cwd: BASE,
+			role: "worker",
+			constraints: ["Report-only: no edit/write/create/delete/stage/commit."],
+		};
+		const outcome = await orch.beginDelegation(
+			{ toolCallId: `call-53-${taskId}`, input: { agent: "worker", ...extraInput, task: `Correction (report-only) for ${taskId} — second attempt.\n\nTaskSpec:\n\`\`\`json\n${JSON.stringify(correction, null, 2)}\n\`\`\`` } },
+			BASE,
+		);
+		assert.equal(outcome.block, undefined, `${label}: the delegation itself is admitted (${outcome.block?.reason ?? ""})`);
+		assert.equal(outcome.task?.taskId, taskId, `${label}: bound to the existing Task`);
+		const after = orch.store.require(taskId).spec;
+		assert.equal(JSON.stringify(after), before, `${label}: the stored TaskSpec is byte-for-byte unchanged`);
+		assert.equal(after.objective, "Batch-4: implement RS-04 and RS-05");
+		assert.deepEqual(after.validation, { required: true, commands: ["npm test", "npm run typecheck"] }, `${label}: mandatory validation is not relaxed`);
+		assert.ok((outcome.warnings ?? []).some((warning) => /keeps its stored TaskSpec/.test(warning)), `${label}: the divergence is surfaced as a warning`);
+	}
+}
+
+// Ticket 53: a placeholder Task (created without a definition) still takes the
+// first submitted spec — that is the one legitimate binding.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	setCleanTree();
+	const ghost = orch.store.create(createTaskSpec({ objective: "(unspecified — parent did not embed a TaskSpec)", cwd: BASE }));
+	ghost.isPlaceholder = true;
+	const submitted = { ...specFor(ghost.taskId, "worker", BASE), objective: "implement the parser", validation: { required: true, commands: ["npm test"] } };
+	const outcome = await orch.beginDelegation(
+		{ toolCallId: "call-53-placeholder", input: { agent: "worker", task: `\`\`\`json\n${JSON.stringify(submitted)}\n\`\`\`` } },
+		BASE,
+	);
+	assert.equal(outcome.block, undefined, `placeholder binding is admitted (${outcome.block?.reason ?? ""})`);
+	const bound = orch.store.require(ghost.taskId);
+	assert.equal(bound.spec.objective, "implement the parser", "the placeholder took the submitted definition");
+	assert.equal(bound.isPlaceholder, false);
+	assert.deepEqual(bound.spec.validation, { required: true, commands: ["npm test"] });
+}
+
 // Ticket 49: the verdict target resolves through the ledger-aware lookup, so a
 // Task beyond the session restore cap can still be addressed by id — and a miss
 // that is not simply "unknown" says why.
@@ -7879,7 +7932,9 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	// Task survives a failed launch), and its pending revalidation grant is not
 	// spent by a refused dispatch.
 	const explicitId = "T-20260905-995";
-	orch.store.createTask(specFor(explicitId));
+	// Ticket 53 — the stored workspace is no longer rewritten by a re-delegation,
+	// so the Task is created in the holder's workspace to begin with.
+	orch.store.createTask(specFor(explicitId, "worker", `/fixture/${holderId}`));
 	const kept = await orch.beginDelegation(
 		{ toolCallId: "call-c09-kept", input: { task: JSON.stringify(specFor(explicitId, "worker", `/fixture/${holderId}`)) } },
 		BASE,

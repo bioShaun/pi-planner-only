@@ -143,6 +143,7 @@ import type {
 	TaskCompletionKind,
 	TaskFinding,
 	TaskRole,
+	TaskSpec,
 	WorkerReport,
 	RecoveryBindingCheck,
 } from "./types.ts";
@@ -818,6 +819,27 @@ function runIdFromReceipt(event: SubagentEvent): string | undefined {
 		if (match?.[1]) return match[1];
 	}
 	return undefined;
+}
+
+/**
+ * Ticket 53 — does a submitted definition differ from the stored one in any
+ * field that changes what the Task *is* (what to do, where, under which
+ * acceptance and validation)? Invocation-only fields (reportOnly, budgets,
+ * contextPack, readFirst) are not part of the identity.
+ */
+function storedDefinitionDiffers(stored: TaskSpec, submitted: TaskSpec): boolean {
+	const identity = (spec: TaskSpec): string => JSON.stringify({
+		objective: spec.objective,
+		cwd: spec.cwd,
+		role: spec.role,
+		scope: spec.scope ?? {},
+		constraints: spec.constraints ?? [],
+		acceptanceCriteria: spec.acceptanceCriteria ?? [],
+		validation: spec.validation ?? { required: false },
+		expectedEvidence: spec.expectedEvidence ?? {},
+		stopConditions: spec.stopConditions ?? [],
+	});
+	return identity(stored) !== identity(submitted);
 }
 
 function untrustedPlaceholder(taskId: string): TaskRecord {
@@ -3101,10 +3123,26 @@ export class PlannerOrchestrator {
 				if (role === "explorer") {
 					explorerOwnership = existing.standaloneExplorer ? "standalone" : "auxiliary";
 				}
-				this.store.bindSpec(
-					existing.taskId,
-					spec.taskId === existing.taskId ? persisted : { ...persisted, taskId: existing.taskId },
-				);
+				// Ticket 53 — a stored TaskSpec is written once. Only a placeholder (a
+				// ghost created without a spec, or an untrusted ledger stand-in) takes
+				// the submitted definition; every other existing Task keeps its stored
+				// objective, scope, acceptance criteria and validation, and the
+				// submitted spec applies to this invocation's packet only. Before
+				// this, a report-only correction that embedded its own machine-
+				// generated spec replaced the reviewed Task's definition outright
+				// (T-20260912-016 lost its Batch-4 objective and had its mandatory
+				// validation relaxed to {required:false}), which is exactly the
+				// "stored TaskSpec is not editable" promise of ticket 45 broken.
+				if (existing.isPlaceholder || !existing.spec) {
+					this.store.bindSpec(
+						existing.taskId,
+						spec.taskId === existing.taskId ? persisted : { ...persisted, taskId: existing.taskId },
+					);
+				} else if (storedDefinitionDiffers(existing.spec, persisted)) {
+					warnings.push(
+						`Planner-only: Task ${existing.taskId} keeps its stored TaskSpec; the submitted definition differs and applies to this invocation's packet only.`,
+					);
+				}
 		} else if (hasGeneratedTaskId(spec) || shouldReplaceTaskId(spec.taskId, this.store.now())) {
 			// Ticket 46 — refuse a TaskSpec id that could only be kept as an alias of
 			// somebody else's Task: `get()` prefers the canonical match, so such an
