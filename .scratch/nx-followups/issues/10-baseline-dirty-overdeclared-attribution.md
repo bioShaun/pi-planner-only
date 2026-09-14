@@ -45,3 +45,29 @@ Task 的 changedFiles 声明两类合法变更时，报告摄取恒判 `over-rep
    - 不能仅凭"测试全绿"解锁（功能正确 ≠ 变更归属）；oracle 未覆盖归因缺口、scope 含混或存在其他阻断 → 维持 operator-only。
 
 - 2026-09-13 10 fix host-verified on host (session 01a09b32, T-20260913-046: oracle re-ran 6 validation commands exit 0; full npm test 35/35 at 20eb6d3 + dcf6ca9); status flipped by Root. Implementation commits 20eb6d3, follow-up dcf6ca9.
+
+## 2026-09-14 lifecycle 收口记录（未达 completed）
+
+新代码（本分支 HEAD `9d45f8d`，经 pi git-package ref pin 加载）下重跑 operator override，**封锁已解除但未收口**：
+
+- operator override 生效：`reviews` 末条为 `pass | source=operator`，`state` 由 `blocked` 变为 `changes_requested`，`blockedReasonCode` 与 `stateReason` 均为 `null`；
+- 但 `recordRootVerdict` 在裁定瞬间重新采样工作区，判为 `evidence-stale` → decision `revalidate`，未进 `completed`。
+
+**这次不是本票描述的归因缺口症状。** 决定性依据：新比较里 `attributionGapPaths: []` —— 三分支归因降级逻辑**明确判定不构成 attribution-gap**，与 2026-09-13 的日志重吸收误归属不是同一回事。
+
+真实原因是取证基线已不可复现：
+
+1. **baseline 提交被 rebase 抹出分支谱系**：报告写于 `5f9b4e1`，而 `5f9b4e1` 不在 HEAD 谱系内（`git branch -a --contains 5f9b4e1` 为空），它是本票提交被重写前的版本（与 `20eb6d3` 同题）。故比较恒得 `headChanged (5f9b4e1 → 9d45f8d)`、`missing` 与 `over-declared`；
+2. `missing` (4) + `over-declared` (4)：`.scratch/c13-repo/`、`.scratch/nx-followups/host-validation/{c13-isolation,d1-review,d3-review}/repo/`；
+3. `drift` (1)：`docs/pi-planner-only-recursive-improvement-plan.md`；
+4. `undeclared` (1)，聚合 142 个路径，全部位于 `.scratch/nx-followups/host-validation/**`（宿主验证 scratch 产物，非本票变更）。本票 scope 为空，按空 scope 即全 in-scope，故拿不到票 08 的 scope-exempt external 豁免。
+
+**结论：该 lifecycle 位无法靠 override 收口**，因为 baseline 已被重写，任何重新采样都会判 stale。可选的正当路径只有两条：
+
+1. **新开 TaskSpec**：基线取当前 `9d45f8d`，声明本票实际交付文件（`evidence.ts`、`orchestrate.ts`、`review.ts`、`package.json`），跑 bounded oracle 取新鲜证据后记 verdict。这不是重做实现，是在未被重写的基线上重新见证已交付工作；
+2. **接受现状**：本文件 `Status: verified` 与上文 Root 审码 + 6 项 oracle 记录即为权威结论，PR #8 复核不依赖该生命周期位。
+
+**明确不得采用**（属事后改验收标准以凑过闸门，与本项目「不得回填历史 RED」同类）：
+
+- 为消除 `undeclared` 而删除 `.scratch/nx-followups/host-validation/**`（含受保护目录）；
+- 为本票事后补 scope / allow-list 使 142 条 finding 变为 non-blocking。
