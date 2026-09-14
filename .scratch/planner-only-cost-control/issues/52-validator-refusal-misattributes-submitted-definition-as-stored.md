@@ -1,13 +1,14 @@
-# 52: validator 拒绝文案把「提交的定义」说成「存储的定义」（45/50 文案归因缺陷）
+# 52: validator 的 validation 判定统一按「有效提交定义」执行；`submitted` 渲染参数改读嵌套 spec（原「文案归因缺陷」前提不成立）
 
-**What to build:** `validatorValidationRefusal` 的 `storedTaskId` / `roleOrigin="reviewed-task"` 只在**真的以存储定义作判定**时使用；判定对象来自提交 spec（含 packet 嵌套 spec）时，文案必须说「the submitted TaskSpec」，不得写「Task X is stored with …」。
+**2026-09-14 立案时的前提已被推翻。** 立案依据是宿主检查 1（20:03，`tool_2efQQUInS5R6mMGYctb0fwt9`，task-id-only 委派「Validate T-20260912-016」）返回「Task T-20260912-016 is stored with validation.required = true but no usable validation.commands」，而 23:33 时账本里 016 的 stored validation 是 `{"required":false}`。复盘会话记录后确认：**20:03 那条文案是准确的**，当时 stored 就是 `{required:true}` 无 commands；是 22:13:32 的一次 root 发起的 report-only 纠正委派（`tool_1NQkH65wpljhCBCrM8l42LKM`，agent=worker，嵌入 objective 为「Report-only correction: submit an amended WorkerReport declaring the complete 91-path changed-file set…」、`validation` 未给、role worker 的 TaskSpec）经 `beginDelegationInner` 的 `if (existing) this.store.bindSpec(existing.taskId, persisted)` 把 016 的 stored spec 整个替换掉了（objective / scope / constraints / validation 全部变成纠正委派的内容）。该缺陷另立 **工单 53**。
 
-**Why:** 工单 48 宿主终验的检查 1 返回「Task T-20260912-016 is stored with validation.required = true but no usable validation.commands」，而账本里 016 的 stored `spec.validation` 实为 `{"required":false}`。原因：`orchestrate.ts` 45 守卫处 `storedTaskId = specDetails.spec === undefined && target?.spec === undefined ? target?.task?.taskId : undefined`——提交的定义无效时两者都 undefined，于是把提交的（无效）定义归因给被审 Task。宿主 prepare 打包后 `candidate` 是 packet 外层对象，放大了这个误判。这条错误文案把 48 的诊断带偏了一整天（「016 是遗留不完整形状，只能 abandon」的结论由此而来，见 48 票 23:30 更正）。
+**本票实际落地的两项（commit 见分支 `fix/ticket-52-refusal-attribution`）：**
 
-**Acceptance:**
-1. 提交 `{required:true}` 无 commands、stored 为 `{required:false}` 的 validator 委派：拒绝文案说提交定义不完整，不出现「is stored with」。
-2. 真正的 stored 不完整（stored `{required:true}` 无 commands、未嵌 spec）：文案保持现状（「stored … create a new Task」）。
-3. 两种情况在 `prepareRoleDelegation → beginDelegation`（宿主路径，prompt 已打包）下各加一例回归测试；直接调用路径的既有测试不变。
-4. 顺手核对 `buildTaskSpecRepair` / `validatorValidationRefusal` 的 `submitted` 参数：现在传的是 `specDetails.candidate`（packet 时是外层对象），应改为 `specDetails.submitted`。
+1. **省略 `validation` 的判定统一。** 48 门不再要求「显式提交了 validation 键」：提交 spec 经提取物化后的 `validation`（省略即 `{required:false}`，这也正是子进程 packet 里拿到的定义）直接与 stored 比较。省略 validation 而 stored 要求 commands → `VALIDATOR_SPEC_CONFLICT`（`validation.required differs (submitted false, stored true)`），直接调用路径与宿主打包路径一致；stored 也是 `{required:false}` 则放行。理由：fail-closed，且子进程实际执行的就是物化后的定义，按它判才诚实；文案已指明出路（不嵌 spec、只点名 Task）。
+2. **`submitted` 渲染参数改读 `specDetails.submitted`**（R01 无效 spec 拒绝与 45 守卫两处）。packet 直接提交时 `candidate` 是外层对象，渲染器会拿不到 objective/role；非 packet 时两者相同，无行为变化。
 
-**Status:** open（2026-09-14 立案，源自 48 票的误诊复盘。）
+**测试**（`orchestrate.test.mjs`）：省略 validation vs stored 要求 commands，直接路径与 `prepareRoleDelegation → beginDelegation` 宿主路径各一例 → 冲突；省略 validation vs stored `{required:false}` 宿主路径 → 放行。原 933 例改为上述预期。`npm run typecheck` / `npm test` exit 0。
+
+**宿主验收（待 operator）：** 对一个 stored 为 `{required:true, commands:[…]}` 的 Task 嵌入不含 `validation` 的 validator TaskSpec → 预期同步拒绝 `validation.required differs (submitted false, stored true)`，无 run。
+
+**Status:** done（本机落地、门禁绿；宿主验收待跑。原「文案归因」前提不成立，见上；真实缺陷转 53。）

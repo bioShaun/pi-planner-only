@@ -77,7 +77,7 @@
 
 **修复**（本提交）：`task.ts` 的 `ExtractedTaskSpecResult` 新增 `submitted`（packet 时为嵌套 spec，否则为 candidate 本身）；`orchestrate.ts` 的显式判定改读 `specDetails.submitted`。DIAG48 插针额外在门口记录 `gate48: … candidateKeys=… submittedKeys=…`，宿主若再 miss 可直接从日志读出是哪个条件为 false。回归测试：`orchestrate.test.mjs` 新增两例走 `prepareRoleDelegation → beginDelegation` 的宿主路径（打包后的不一致定义 → `VALIDATOR_SPEC_CONFLICT`；打包后的一致定义 → 放行）。`npm run typecheck` / `npm test` 均 exit 0。
 
-**行为变化须知：** 宿主路径下，嵌入 spec **省略** `validation` 时，packet 里的 spec 会物化为 `{required:false}`，现在会与 stored `{required:true,…}` 判定为冲突而被拒（直接调用路径保持「省略 = 不判定」）。这是 fail-closed 方向的收紧，且正是 48 要堵的洞（子进程原本会拿到 `required:false` 的 packet）；如需保留「省略不判定」，需要 prepare 在打包前把「是否显式提交了 validation」盖章到 input，另议。
+**行为变化须知：** 宿主路径下，嵌入 spec **省略** `validation` 时，packet 里的 spec 会物化为 `{required:false}`，与 stored 的 required 定义判冲突。2026-09-14 工单 52 已把这条规则统一到直接调用路径（省略 = 按物化值判定），不再区分「显式/省略」。另：016 的 stored validation 在 22:13 被一次 report-only 纠正委派改写为 `{required:false}`（工单 53），所以 23:33 的宿主复跑命中的是 `validation.required differs` 而非 `commands differ`；两者都是 48 的拒绝分支。
 
 **2026-09-14 23:33 宿主复跑：PASS。** 构建 `54a0dd5`（pin checkout 23:29 更新，新会话 `2026-09-14T15-30-59-307Z`）。检查 2 委派 `tool_53FabCHnDbCDTOkkGaurx3K3`（agent=oracle，嵌入 `{required:true, commands:["npm test"]}`）同步拒绝，无 run 启动。回执逐字：`Planner-only guard: the submitted TaskSpec disagrees with Task T-20260912-016's stored validation — validation.required differs (submitted true, stored false). A Validator is judged against the Task's stored definition: resubmit with that definition, or name the Task without embedding one.` 门口日志：`explicit=true candidateKeys=version|spec|instructions|knownFacts|artifactRefs submittedKeys=…|validation|… targetTask=T-20260912-016 storedValidation={"required":false}` → `decision=refused(VALIDATOR_SPEC_CONFLICT)`。
 
