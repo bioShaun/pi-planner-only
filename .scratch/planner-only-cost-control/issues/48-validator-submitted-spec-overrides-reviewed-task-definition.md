@@ -37,7 +37,15 @@
 
 **门禁**：`npm run typecheck` exit 0；`npm test` exit 0（35 个测试文件无失败）。日志 `.scratch/planner-only-cost-control/p48-impl/`。
 
-**Status:** done（2026-09-14 本机落地、门禁绿。**未做宿主复跑** —— 与 46 同在 `fix/tickets-46-48-49-50` 分支上，待一次性宿主验证后再进 main。）
+
+**2026-09-14 宿主复跑：FAIL（未复现本机行为，待诊断）。** operator 在构建 `aacd59a`（loaded=50c0f30e66f2，步骤 0 已核）上跑了严格探针：对 `T-20260912-016` 嵌入不一致 validation（`{required:true, commands:["npm test"]}` vs stored `{required:true}` 无命令）→ **未被拒**，返回 `Async delegation … has started`，oracle 子进程真实执行了 `npm test` 并 passed。证据：会话 `2026-09-14T11-53-56-917Z` 的 tool_call `tool_JUwBAttqE3w4MdLTLqURQnsG`（输入已逐字提取，确认含不一致 validation）与 12:04:11 的 tool_result。
+
+- 本机无法复现：`task.test` 全绿；ledger-backed store + 超上限记录 + 活跃 046 + `prepareRoleDelegation` 前置的完整复现脚本（`p48-impl/repro-host.mjs`）**正确拒绝**（`VALIDATOR_SPEC_CONFLICT`，文案与单测一致）。
+- 另注意：operator 引用的 oracle 报告（`86296c17`，mtime 17:21–17:22）运行于 `59d9ee3` —— **早于 46/48/49/50 的实现提交**（18:13–19:25），其内容是对**票 47 文档状态**的审计（其 criteria 即 47 的验收项、typecheck/test 标注 reused），**不是**对本批行为的观测。「48 号洞在 aacd59a 上仍敞开」的结论因此不成立；但 operator 会话内 12:04 的放行是真实的，需要诊断。
+- 诊断方向：需要带插针的复跑（在 48 检查处打印 `target.role` / `submittedValidationExplicit` / `target.spec?.validation` / `target.task?.spec?.validation` 与最终判定），或 operator 提供该次委派的完整 tool_call/tool_result 之外的 orchestrator 决策记录。
+- 同时记录的 operator 披露：门禁取证委派的文本含 016 文件名，被账本感知绑定到 016 并启动（016 的 mtime 基线因此变更）；未点名委派 4/4 次落到 active Task `T-20260913-046`（文档化的 active 兜底）；嵌入 spec 的 `T-p46-pos` 未生效（validator 的被审对象解析不消费 spec 声明 —— 与 46/51 的语义一致）。
+
+**Status:** done（本机落地、门禁绿；**宿主复跑 FAIL 且未复现本机行为** —— 48 不得翻 verified，待插针诊断。分支 `fix/tickets-46-48-49-50` 保留。）
 
 ## Comments
 
