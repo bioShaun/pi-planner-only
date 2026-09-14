@@ -35,7 +35,7 @@
 
 **说明（覆盖边界）**：本票只覆盖**按 id 记 verdict** 的解析。in-memory 已加载 Task 的跨 workspace 绑定仍是 46 留下的缺口（见票 51），本票**不改变**它 —— 只是让「跨 workspace 的账本记录」在这里也不会被静默采纳。
 
-**Status:** done（2026-09-14 本机落地、门禁绿。**未做宿主复跑** —— 与 46、48 同在 `fix/tickets-46-48-49-50` 分支上。）
+**Status:** verified（2026-09-14 本机落地、门禁绿；宿主批次终验检查 3 PASS on `aacd59a`（`planner_verdict` 对超上限的 016 不再回 `unknown task`，返回其 review state；mtime 子断言因窗口内其他写入无法唯一归因，见 summary「污染披露 4」）。此后 `144ed9e`/`13cd8d6`/本次插针移除均不触及 verdict 解析路径。）
 
 ## Comments
 

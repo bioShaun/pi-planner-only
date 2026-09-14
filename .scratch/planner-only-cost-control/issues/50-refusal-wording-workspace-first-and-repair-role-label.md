@@ -33,7 +33,7 @@
 
 **门禁**：`npm run typecheck` exit 0；`npm test` exit 0（35 个测试文件无失败）。日志 `.scratch/planner-only-cost-control/p50-impl/`。
 
-**Status:** done（2026-09-14 本机落地、门禁绿。纯文案：判定、状态码与拒绝时机逐字不变。**未做宿主复跑** —— 与 46/48/49 同在 `fix/tickets-46-48-49-50` 分支上。）
+**Status:** verified（2026-09-14 本机落地、门禁绿；宿主批次终验检查 4、5 PASS on `aacd59a`（workspace 主诉起头、`kept the reviewed Task's role` 逐字命中）。检查 6 正向对照 INCONCLUSIVE（三次未点名委派全部回退绑定到活跃 046，未绑定路径未受测），不影响本票的文案断言。文案归因缺陷另立工单 52。）
 
 ## Comments
 

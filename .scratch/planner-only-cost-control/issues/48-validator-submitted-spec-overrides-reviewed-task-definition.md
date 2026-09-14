@@ -79,8 +79,10 @@
 
 **行为变化须知：** 宿主路径下，嵌入 spec **省略** `validation` 时，packet 里的 spec 会物化为 `{required:false}`，现在会与 stored `{required:true,…}` 判定为冲突而被拒（直接调用路径保持「省略 = 不判定」）。这是 fail-closed 方向的收紧，且正是 48 要堵的洞（子进程原本会拿到 `required:false` 的 packet）；如需保留「省略不判定」，需要 prepare 在打包前把「是否显式提交了 validation」盖章到 input，另议。
 
-**Status:** done（真实根因已修、本机按宿主接线复现并转绿、门禁绿。**宿主复跑：operator 用本提交重跑检查 2 一次**，预期同步拒绝 `VALIDATOR_SPEC_CONFLICT: … validation.required differs (submitted true, stored false)`，无 `Async delegation … has started`；通过即翻 verified，并移除 DIAG48 插针。）
+**2026-09-14 23:33 宿主复跑：PASS。** 构建 `54a0dd5`（pin checkout 23:29 更新，新会话 `2026-09-14T15-30-59-307Z`）。检查 2 委派 `tool_53FabCHnDbCDTOkkGaurx3K3`（agent=oracle，嵌入 `{required:true, commands:["npm test"]}`）同步拒绝，无 run 启动。回执逐字：`Planner-only guard: the submitted TaskSpec disagrees with Task T-20260912-016's stored validation — validation.required differs (submitted true, stored false). A Validator is judged against the Task's stored definition: resubmit with that definition, or name the Task without embedding one.` 门口日志：`explicit=true candidateKeys=version|spec|instructions|knownFacts|artifactRefs submittedKeys=…|validation|… targetTask=T-20260912-016 storedValidation={"required":false}` → `decision=refused(VALIDATOR_SPEC_CONFLICT)`。
 
-## Comments
+正向对照（同会话 root 按指引改为 stored 的 `{required:false}` 重提，`tool_6OE31…`、`tool_EyBUX…`）：`conflict=none decision=passthrough`，放行并绑定 016 启动 run —— 一致定义放行，符合设计。
 
-2026-09-14 立案（工单 47 宿主复跑第一轮「未复现」的根因分析）。与 47 §1 的判据相邻但不同：47 管**点名解析不到**，本票管**指名解析到了、但提交方提供了不同的定义**。
+DIAG48 插针已随本次记账一并移除（`orchestrate.ts` 无残留；`p48-impl/diag48.log` 留作证据）。
+
+**Status:** verified（2026-09-14 宿主复跑 PASS on `54a0dd5`；插针已移除。）
