@@ -71,3 +71,21 @@ Task 的 changedFiles 声明两类合法变更时，报告摄取恒判 `over-rep
 
 - 为消除 `undeclared` 而删除 `.scratch/nx-followups/host-validation/**`（含受保护目录）；
 - 为本票事后补 scope / allow-list 使 142 条 finding 变为 non-blocking。
+
+## 2026-09-14 收口完成（T-20260914-010）
+
+上文两条路径中的第 1 条已执行并成功。PR #8 以 squash 合入 main（`ac59a16`），分支 `fix/host-validation-cumulative-patch` 已删除 —— 因此上文中「基线取 `9d45f8d`」**已失效，基线必须取当前 main HEAD**。
+
+收口的实际落点是一个新的 verification-only 任务 **T-20260914-010**，首轮即达 `state: completed`：
+
+- baseline：`ac59a162be82a670636b94acd3b763391f5e058b`（main），worker 与 oracle 各自在前后核对；
+- worker（run c110adda）与独立 oracle 复核（run b3f180ab）分别重跑 6 项 validation（`npm run typecheck`、`nx10-attribution.test.mjs`、`evidence.test.mjs`、`review.test.mjs`、`orchestrate.test.mjs`、`rs02.test.mjs`）全部 exit 0；
+- `changedFiles: []`；`truthPaths` / `undeclaredPaths` / `extraDeclaredPaths` / `missingPaths` 全为空 → comparison 干净，Root 记 `pass`；
+- 工作树逐字节未变，仅存两个预存在的未跟踪目录。
+
+**本票 T-20260913-046 自身仍为 `changes_requested`**，这是预期的：收口落在新任务的 `completed`，而不是旧任务位的改判。旧 baseline 已被重写，任何重新采样都会判 stale —— 这一点不因收口而改变。
+
+**复用这条 recipe 时的两个坑**（均已实测踩过）：
+
+1. 新任务若把本票交付文件声明为 `changedFiles`，会因 `priorTruthPaths` 只取自**同一任务**的历史轮次（`orchestrate.ts:1997-1999`）、**不继承父任务**，而落进 `extraDeclaredPaths`（`evidence.ts:1686-1690` 的 `!priorTruth.has(path)` 豁免不成立）→ 判 `over-declared / unreliable declaration`，永远到不了 `completed`。**必须报 `changedFiles: []`**。
+2. `scope.allowedPaths` 必须非空（填真实交付面）。空 scope 在证据侧等于全 in-scope，正是本票 142 条 `undeclared` 的成因。
