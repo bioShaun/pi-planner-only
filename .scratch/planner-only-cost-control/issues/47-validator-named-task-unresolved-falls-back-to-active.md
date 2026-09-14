@@ -2,7 +2,11 @@
 
 **What to build:** 点了名却解析不到的 Task id 必须 fail-closed；ledger 上真实存在的 canonical id 不得因会话恢复上限而对点名查找不可见。
 
-1. **点名未命中不得退到 active。** `resolveValidatorReviewedTask()`（`orchestrate.ts:3217-3247`）的取值序是 ReviewRequest.taskId → target.taskId → spec.taskId → prompt 中恰好一个已知 id → **本 cwd 的 active Task**。前四级全部未命中时，无论 prompt 是否点了名，都落到第五级。要求：prompt 点了名（`promptTaskIds` 非空）或显式给了 taskId 而**一个都解析不到**时，返回结构化拒绝（例如 `VALIDATOR_TARGET_UNBOUND`，多名皆未命中时 `VALIDATOR_TARGET_AMBIGUOUS`），文案写明点的是哪个 id；不得用 active Task 顶替。active 回退只在 prompt **完全没点名**时保留。report-only 路径已经是这个语义（`orchestrate.ts:2290-2320` 的 `REPORT_TARGET_UNBOUND` / `REPORT_TARGET_AMBIGUOUS`），validator 路径照此对齐。
+1. **点名未命中不得退到 active。** `resolveValidatorReviewedTask()` 的取值序是 ReviewRequest.taskId → target.taskId → spec.taskId → prompt 中恰好一个已知 id → **本 cwd 的 active Task**。前四级全部未命中时，无论 prompt 是否点了名，都落到第五级。要求：**引用**（reference）—— prompt 正文里出现的 canonical id、或 ReviewRequest / input 显式给的 id —— **一个都解析不到**时，返回结构化拒绝（`VALIDATOR_TARGET_UNBOUND`，多名皆未命中时 `VALIDATOR_TARGET_AMBIGUOUS`），文案写明点的是哪个 id；不得用 active Task 顶替。active 回退只在**没有任何引用**时保留。
+
+   **引用 vs 声明（2026-09-14 定案）。** 嵌入 TaskSpec 自身的 `taskId` 是**声明**（declaration）而非引用：TaskSpec 可以描述一个尚不存在的 Task，所以此类 absent id 仍走未绑定路径（这是 issue 29 / p12-r058 刻意保留的能力，`orchestrate.test.mjs:1275-1299` 覆盖）。判据落在 `isCanonicalTaskId()`（`roles.ts`，锚定非全局的正则）与「promptTaskIds 减去 spec 自身 taskId」上。注意 `promptTaskIds` 是**文本扫描**，嵌入 spec 的 id 同样会被它命中——不减去 `spec.taskId` 就无法区分这两种语义。
+
+   report-only 路径已经是「未命中即拒」的语义（`orchestrate.ts` 的 `REPORT_TARGET_UNBOUND` / `REPORT_TARGET_AMBIGUOUS`）；validator 路径照此对齐，但按上一条保留声明的例外。
 2. **恢复上限不得遮蔽显式点名。** 会话启动只恢复按 `updatedAt` 最新的 `MAX_LEDGER_RESTORE_PER_SESSION = 64` 条（`types.ts:58`；`orchestrate.ts:1052-1064`），`Store.get()`（`task.ts:1570-1577`）只查内存。要求：对 canonical 形状的 id，`get` 未命中时按需从 ledger 读取并 `restore()`（或委派路径的 lookup 回退到 ledger），使点名查找不受上限影响；上限本身保留（它防的是无界 flood，不是查找）。按需恢复必须走与工单 46 相同的 workspace 校验，不得成为跨 workspace 绑定的新入口。
 3. **`resolveDelegationTarget()` 不得把未命中的点名当作没点名。** `roles.ts:490-525` 在 lookup 未命中时 `taskId` 留空、只保留 `namedTaskIds`；下游看不出「点了名但没找到」与「没点名」的区别。要求：该区别在 `DelegationTarget` 上可辨（保留 `namedTaskIds` 已够，但 validator 路径必须消费它），并在准入层据此拒绝。
 
@@ -17,18 +21,43 @@
 **Acceptance:**
 
 - validator 委派点名的 id 一个都解析不到时，被结构化拒绝并写明该 id；不启动 run，不用 active Task 顶替。多名皆未命中给歧义拒绝。
-- 点名一个存在于 ledger 但超出恢复上限的 canonical id 能被解析（按需恢复），于是 45 的 stored-task 拒绝对 `T-20260911-001` 这类记录真正触发。回归测试用超过上限的记录集（或注入较小上限）覆盖。
+- 点名一个存在于 ledger 但超出恢复上限的 canonical id 能被解析（按需恢复），于是 45 的 stored-task 拒绝对该记录真正触发。回归测试用超过上限的记录集（或注入较小上限）覆盖。
+  **宿主复跑目标改用 `T-20260912-016`**（2026-09-14 定案），不用 `T-20260911-001`：后者 `cwd=/public/scripts/tc-probe-design-v2` 属**别的 workspace**，在 §2 的 workspace 校验下必然拒绝采纳，因此拿不到 stored-task 拒绝。`T-20260912-016` 是同 workspace（`/public/pi/pi-planner-only`）、rank 72（超上限 64）、`blocked`（非终态、可重绑）、stored spec 为 `required:true` 无可用 commands。`T-20260911-001` 这类跨 workspace 的点名应得到 `VALIDATOR_TARGET_UNBOUND`，并在 reason 里写明「belongs to workspace …」，不得报成 unknown Task。
 - prompt 完全没点名时，active 回退行为不变（既有测试保持通过）。
 - 按需恢复的记录经过 workspace 校验；跨 workspace 的 id 不因本票被静默绑定。
-- 宿主复跑 p45-host 检查 F：出现 `create a new Task that carries a complete validation definition` 拒绝。
+- 宿主复跑 p45-host 检查 F：以 `Validate T-20260912-016`（见上）复现，出现 `create a new Task that carries a complete validation definition` 拒绝；并复跑 `Validate T-20260911-001` 确认得到 `VALIDATOR_TARGET_UNBOUND` + 「belongs to workspace」说明。（**本机未做**，待 operator。）
 - `npm run typecheck` 与 `npm test` 绿。
 
 **Blocked by:** 无。与 46 改同一处查找（`Store.get()` / 委派路径），建议一并排期；若分开，本票在前——它挡着 45 的宿主终验转 verified。
 
-**Status:** ready-for-agent
+**Status:** done（2026-09-14 本机落地：`npm run typecheck` 与全量 `npm test` 均 exit 0，35 个测试文件无失败。**宿主复跑待 operator**，它同时也是 45 转 verified 的前置。）
 
 **实现者裁定（要求 2 的两条路）。** 倾向在 `Store.get()` 之外加一层「委派 lookup」做按需恢复，而不是让 `Store.get()` 自己读盘：`get` 在热路径上被大量调用（usage 归并、alias 解析），读盘副作用放在委派入口更可控，也便于与 46 的 workspace 校验放在同一个函数里。若实现者选择改 `Store.get()`，须在回执说明读盘失败（损坏记录、并发写）时的行为。
 
 ## Comments
 
 2026-09-14 立案（工单 45 宿主终验检查 F 失败的根因）。证据脚本 `p45-impl/rank-ledger.mjs` 可在本机重跑复现排名。
+
+2026-09-14 实现（本机；未 commit）：
+
+**改动**（`orchestrate.ts` + `roles.ts`）
+
+- `delegationLookup(cwd)` / `restoreTaskOnDemand(taskId, cwd)`（新增，挂在 `restoreFromLedger` 之后）：`store.get` 未命中时按需读 ledger 并 `restore()`，**每条委派一份缓存**。采纳前必须过 workspace 校验；`cwd` 缺失或记录属别的 workspace 一律不采纳，并记下原因（"belongs to workspace …"），避免把「记录存在但不可用」报成 unknown Task。按实现者裁定走**首选路线**（在 `Store.get()` 之外加委派层），不动 `Store.get()` 的热路径；读盘异常被吞掉并视为「未采纳」→ fail-closed，不会半途绑到别的 Task。
+- `resolveValidatorReviewedTask()` 改为返回 `{ task } | { refused }`，并把「引用」与「声明」分开：引用 = prompt 正文的 canonical id（`promptTaskIds` 减去 spec 自身 `taskId`）+ ReviewRequest / input 显式 id；引用非空而一个都解析不到 → `VALIDATOR_TARGET_UNBOUND`（多名为 `VALIDATOR_TARGET_AMBIGUOUS`）。spec 声明的 absent id 仍走未绑定，保住 p12-r058。
+- 解析提前到**任何准入副作用之前**（早于结构化委派闸门 `:3005`、容量预留、写锁、起 run），拒绝因此零副作用。
+- `prepareRoleDelegation` 与 `beginDelegation` 改用同一条账本感知 lookup，打包与准入不会再各绑一个 Task。
+- 新增 `isCanonicalTaskId()`（`roles.ts`，锚定非全局正则），供上面判据复用。
+- 顺手补掉工单 45 漏掉的**第五处判据副本**（`embeddedTaskLooksInvalid` 里原为 `required === true && (!Array.isArray(commands) || commands.length === 0)`），现走 `isValidationDefinitionIncomplete()`；malformed `commands` 仍留在本地判断（它是 shape 错误，共享谓词刻意不管）。
+
+**测试**（`orchestrate.test.mjs`，4 组新用例 + 既有 p12-r058 全部保持通过）
+
+1. prose 点名一个不存在的 canonical id，且本 cwd 的 active Task **带报告**（旧代码正好会在此 fail-open）→ `VALIDATOR_TARGET_UNBOUND`，文案含该 id；`getDelegation()` 为 `undefined`、`pendingDelegationCount() === 0`。
+2. prose 点名两个都不存在的 id → `VALIDATOR_TARGET_AMBIGUOUS`，两个 id 都在文案里。
+3. 快照在 ledger 但**不在会话 store**（构造后写盘，模拟超出恢复上限）→ 按需采纳 → 45 的 stored-task 拒绝触发（`VALIDATION_DEFINITION_INCOMPLETE` + `create a new Task`）。这是检查 F 的本机孪生用例。
+4. 跨 workspace 的快照 → 不采纳、`VALIDATOR_TARGET_UNBOUND`，文案含 `belongs to workspace`。
+
+**回归证据**（本轮新验证，非历史 RED 声明）：临时把 `if (referenceIds.length > 0)` 关掉后，用例 1 在 `orchestrate.test.mjs:1362` 失败（`actual: undefined, expected: 'VALIDATOR_TARGET_UNBOUND'`），即旧路径确实放行；恢复后全绿。
+
+**门禁**：`npm run typecheck` exit 0；`npm test` exit 0（35 个测试文件，无失败）。日志 `.scratch/planner-only-cost-control/p47-impl/{typecheck,npm-test}.log`（gitignored）。
+
+**仍未做**：宿主复跑检查 F（见 Acceptance）。运行中的插件仍 pin 在 `bfc70e9`，本票代码要生效需把提交推到该分支、`pi update --extensions`、重启 session。
