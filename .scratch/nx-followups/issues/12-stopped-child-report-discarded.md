@@ -86,3 +86,8 @@ explorer 角色的任务正常绑定 WorkerReport，也能进入可裁定状态�
 宿主 session `01a09e5d-853a-742c-99b6-f963c4665186`（session 文件 `2026-09-14T05-22-04-219Z_…`），worker run `596c94a5-c211-4e58-b952-6a5afda4c31c`（verification-only，changedFiles=[]）：HEAD 确认为 `f6e9786`，`npm run typecheck`、`notify.test.mjs`、`orchestrate.test.mjs`（含 12-a..d）、`completion.test.mjs` 全部 exit 0。Root 独立复跑三件套 + `git status` 核对：树在验证前后 byte-identical（仅既有未跟踪 `.scratch/` 目录），结论与 WorkerReport 一致。
 
 注：本 session 的 planner-only 未接管 subagent 委派（worker 以纯 pi-subagents 运行，无 Task 落账），故本次验证未走 Task 生命周期/裁定闸门，证据为宿主实跑 + Root 独立复跑。运行中的扩展副本（`~/.pi/agent/git/…` @ `09071ab`）尚未包含本修复，推送与 `pi update` 待 operator 执行。
+
+### 2026-09-14 — 两条已知非阻断点（择机处理，不影响本票 verified 结论）
+
+1. **`source: "notify"` 标签失真。** 从停掉的子进程拯救出来的产物文本，入库时标记为 `source: "notify"`，但它实际来自磁盘上的产物文件，不是 notify 事件。当前**无下游消费者**读取该字段做分支判断，故仅为标签不准确，不影响行为。修复方向是让拯救路径标注真实的来源（磁盘产物）而非复用 notify 标签。
+2. **拯救路径的绑定弱于常规路径。** 拯救路径只按 `runId` 匹配，而常规路径是 `runId` + `agent` 绑定。提交信息说明这是**有意为之**，靠「唯一候选」兜底：命中不唯一时不静默择一。风险在于：若将来出现同 runId 多 agent 的场景，该兜底会退化为「拯救失败」而非「绑错」，属 fail-closed，可接受，但弱于常规路径的显式绑定。若要收紧，应把 agent 绑定纳入拯救路径并保留「不唯一即拒」的语义。

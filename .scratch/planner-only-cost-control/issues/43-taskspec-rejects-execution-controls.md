@@ -26,3 +26,11 @@
 2026-09-12: Intake for cloud-backlog taskspec-exec split on branch `cloud-backlog-2-taskspec-exec-2026-09-12`.
 
 2026-09-12 executor：cloud PR #6 在 `cloud-backlog-2-taskspec-exec-2026-09-12`。validateTaskSpec 拒执行控制字段；preflight 去掉 task-spec 有效来源；ignored 仅审计；e2e 标「待本机终验」。
+
+2026-09-14 事后代码评审（补记）：本票合并时无评审在案 —— `0548350` 的提交信息自述 "merged without a review on record"，而本票已标 `done` 且引用的是另一个哈希 `4a01320`，两者对不上，故补一次评审落档。
+
+- **范围**：`0548350` 中 `task.ts`、`role-models.ts`、`orchestrate.ts` 的全部 diff。
+- **核对点**：`validateTaskSpec` 确实对五个执行控制字段（`model`、`thinking`、`timeoutMs`、`toolBudget`、`usageBudget`）报错而非告警，且业务字段 `budget` / `cumulativeBudget` 仍照常校验；preflight 的有效来源链中已无 task-spec，仅余 role-policy > explicit > host-default；被忽略的字段只留审计、不写回 launch input。
+- **结论**：未发现语义问题。
+
+遗留（非本票缺陷，供后续参考）：本票引用哈希与实际合并哈希不一致，工单与代码的对应关系需要人工核对才能确定；本票 `done` 状态因此缺少可追溯的评审锚点，本条即为补锚。
