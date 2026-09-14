@@ -23,7 +23,21 @@
 
 **Blocked by:** 无。**优先级**：46 之后、49 之前（用户定：46 → 48 → 49）。
 
-**Status:** ready-for-agent
+**实现记录（2026-09-14，本机）：**
+
+- **判据**：`task.ts` 新增 `describeValidationConflict(submitted, stored)` —— `required` 必须相等；`required === true` 时再比较**可用命令集合**（`uniqueNonEmpty`，与其余归一化一致）；`required === false` 的命令不比较（无义务）。返回不一致的描述串，或 `undefined` 表示一致。
+- **落点**：`orchestrate.ts` 中置于 45 的守卫**之前**（`specDetails` 可用处）：`target.role === "validator"`、提交方**显式带了 `validation` 键**（`specDetails.candidate` 含该键）、且已绑定 `target.task.spec` 时，不一致 → `VALIDATOR_SPEC_CONFLICT`，文案含 `validation.required/commands differ`、双方取值与 Task id。
+- **为什么必须按「显式键」判定**：提取路径（`extractTaskSpec` → `createTaskSpec`）总把 `validation` 物化成 `{ required: false, … }`，所以「未提交 validation」与「显式 false」在这一层**不可分**。直接比较会误伤「嵌了 spec 但没提 validation」的常规用法，违背票面「未提交 validation → 行为逐字不变」。故以原始候选（`specDetails.candidate`）是否含该键为准。
+- **为什么放在 45 守卫之前**：48 与 45 是同一个「validator 的有效定义」问题的两面；48 先拦，45 的 stored-task 拒绝就不再能被提交 spec 绕过。
+- **本票不覆盖（需单独定）**：stored spec **没有** `validation` 字段、而提交方显式给了一个（如 `required:true` + commands）——按本票「双方都需有 validation」的字面判据**不算冲突**，该形状仍按今天的行为放行。是否把「stored 无 validation」视作 `{required:false}` 参与比较，留待决定。
+
+**测试**（`orchestrate.test.mjs`）：提交 commands 与 stored 不一致（45 的 stored-task 形状 + 提交 `{required:true, commands:["npm test"]}`）→ `VALIDATOR_SPEC_CONFLICT`，文案含 `validation.commands differ`、`npm test` 与 Task id，且无 run；`required` 不一致 → 文案含 `validation.required differs`；两者一致、以及**完全省略** `validation` 键 → 均不按本票拒绝。
+
+**回归证据**（本轮新验证）：临时关掉本票检查 → `orchestrate.test.mjs:1522` 失败（`expected: 'VALIDATOR_SPEC_CONFLICT'`、`actual: undefined`）；恢复后全绿。
+
+**门禁**：`npm run typecheck` exit 0；`npm test` exit 0（35 个测试文件无失败）。日志 `.scratch/planner-only-cost-control/p48-impl/`。
+
+**Status:** done（2026-09-14 本机落地、门禁绿。**未做宿主复跑** —— 与 46 同在 `fix/tickets-46-48-49-50` 分支上，待一次性宿主验证后再进 main。）
 
 ## Comments
 

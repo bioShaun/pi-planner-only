@@ -1505,6 +1505,63 @@ function truncatedPreview() {
 	}
 }
 
+// Ticket 48: a Validator bound to an existing Task is judged against that Task's
+// stored definition. Embedding a *disagreeing* validation must be refused — that
+// was both the "validated under commands the worker never met" hole and the way
+// ticket 45's stored-task refusal could be bypassed.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	const taskId = "T-20260914-930";
+	// Stored definition: mandatory validation with no usable commands (ticket 45's shape).
+	orch.store.create({ ...specFor(taskId, "worker", BASE), validation: { required: true } });
+	const submitted = { ...specFor(taskId, "validator", BASE), validation: { required: true, commands: ["npm test"] } };
+	const outcome = await orch.beginDelegation(
+		{ toolCallId: "call-48-commands", input: { agent: "oracle", task: `Validate ${taskId}\n\`\`\`json\n${JSON.stringify(submitted)}\n\`\`\`` } },
+		BASE,
+	);
+	assert.equal(outcome.block?.code, "VALIDATOR_SPEC_CONFLICT");
+	assert.match(outcome.block?.reason ?? "", /validation\.commands differ/);
+	assert.match(outcome.block?.reason ?? "", /npm test/, "the reason names the submitted value");
+	assert.match(outcome.block?.reason ?? "", new RegExp(taskId));
+	assert.equal(orch.pendingDelegationCount(), 0, "a spec conflict starts no run");
+}
+
+// Ticket 48: `required` itself may not be swapped either.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	const taskId = "T-20260914-931";
+	orch.store.create({ ...specFor(taskId, "worker", BASE), validation: { required: true, commands: ["npm test"] } });
+	const submitted = { ...specFor(taskId, "validator", BASE), validation: { required: false } };
+	const outcome = await orch.beginDelegation(
+		{ toolCallId: "call-48-required", input: { agent: "oracle", task: `Validate ${taskId}\n\`\`\`json\n${JSON.stringify(submitted)}\n\`\`\`` } },
+		BASE,
+	);
+	assert.equal(outcome.block?.code, "VALIDATOR_SPEC_CONFLICT");
+	assert.match(outcome.block?.reason ?? "", /validation\.required differs/);
+}
+
+// Ticket 48: an agreeing definition and an omitted one both keep today's behaviour.
+{
+	for (const [taskId, submittedValidation] of [
+		["T-20260914-932", { required: true, commands: ["npm test"] }],
+		["T-20260914-933", undefined],
+	]) {
+		const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+		setCleanTree();
+		orch.store.create({ ...specFor(taskId, "worker", BASE), validation: { required: true, commands: ["npm test"] } });
+		const base = specFor(taskId, "validator", BASE);
+		const submitted = submittedValidation === undefined
+			? { ...base, validation: undefined }
+			: { ...base, validation: submittedValidation };
+		if (submittedValidation === undefined) delete submitted.validation;
+		const outcome = await orch.beginDelegation(
+			{ toolCallId: `call-48-ok-${taskId}`, input: { agent: "oracle", task: `Validate ${taskId}\n\`\`\`json\n${JSON.stringify(submitted)}\n\`\`\`` } },
+			BASE,
+		);
+		assert.notEqual(outcome.block?.code, "VALIDATOR_SPEC_CONFLICT", `${taskId} must not be a spec conflict`);
+	}
+}
+
 // p12-r058: a bound validator (resolveValidatorReviewedTask hit via report)
 // keeps taskId = reviewed Task and does not set accountingTaskId.
 {

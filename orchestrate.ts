@@ -111,6 +111,7 @@ import {
 	hasGeneratedTaskId,
 	isExplicitlyNoValidation,
 	isExecutingStale,
+	describeValidationConflict,
 	isHolderStale,
 	isValidationDefinitionIncomplete,
 	isWriterRole,
@@ -2827,6 +2828,26 @@ export class PlannerOrchestrator {
 			};
 		}
 
+	// Ticket 48 — a Validator bound to an existing Task is judged against THAT
+	// Task's stored definition. A submitted spec that disagrees would let the
+	// operator be validated under commands the worker was never asked to meet —
+	// and would make ticket 45's stored-task refusal bypassable by that same move.
+	// Only an *explicitly submitted* validation counts: the extraction path always
+	// materialises `{required:false}`, so a spec that simply omits the field must
+	// keep today's behaviour.
+	const submittedValidationExplicit = specDetails.candidate !== undefined
+		&& "validation" in specDetails.candidate;
+	if (target?.role === "validator" && submittedValidationExplicit && target.spec && target.task?.spec) {
+		const conflict = describeValidationConflict(target.spec.validation, target.task.spec.validation);
+		if (conflict) {
+			return {
+				block: {
+					code: "VALIDATOR_SPEC_CONFLICT",
+					reason: `Planner-only guard: the submitted TaskSpec disagrees with Task ${target.task.taskId}'s stored validation — ${conflict}. A Validator is judged against the Task's stored definition: resubmit with that definition, or name the Task without embedding one.`,
+				},
+			};
+		}
+	}
 	// Ticket 45 — the effective definition can come from the submitted prompt
 	// or from the ledger; only the latter is uneditable, and the refusal has to
 	// say which one it hit. `spec` is checked via `target.spec` rather than for

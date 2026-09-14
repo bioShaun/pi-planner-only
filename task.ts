@@ -768,6 +768,38 @@ export function isValidationDefinitionIncomplete(validation: unknown): boolean {
 	return commands.every((command) => command.trim() === "");
 }
 
+/**
+ * Ticket 48 — how a *submitted* validation definition disagrees with the one a
+ * Task already carries, or `undefined` when they agree.
+ *
+ * A Validator bound to an existing Task is judged against that Task's stored
+ * definition. If the submitted spec can silently replace it, the operator can be
+ * "validated" under commands the worker was never asked to meet — and ticket
+ * 45's stored-task refusal becomes bypassable by the same move.
+ *
+ * `required: false` carries no command obligation, so its commands are not
+ * compared — only `required` must match. Commands are compared as *usable* sets
+ * (`uniqueNonEmpty`), matching how they are normalised everywhere else.
+ */
+export function describeValidationConflict(
+	submitted: unknown,
+	stored: unknown,
+): string | undefined {
+	if (!isPlainObject(submitted) || !isPlainObject(stored)) return undefined;
+	const from = submitted as { required?: unknown; commands?: unknown };
+	const to = stored as { required?: unknown; commands?: unknown };
+	if (from.required !== to.required) {
+		return `validation.required differs (submitted ${JSON.stringify(from.required)}, stored ${JSON.stringify(to.required)})`;
+	}
+	if (from.required !== true) return undefined;
+	const submittedCommands = isStringArray(from.commands) ? uniqueNonEmpty(from.commands) : [];
+	const storedCommands = isStringArray(to.commands) ? uniqueNonEmpty(to.commands) : [];
+	const same = submittedCommands.length === storedCommands.length
+		&& submittedCommands.every((command) => storedCommands.includes(command));
+	if (same) return undefined;
+	return `validation.commands differ (submitted [${submittedCommands.join(", ") || "none"}], stored [${storedCommands.join(", ") || "none"}])`;
+}
+
 function validValidation(value: unknown): boolean {
 	if (!isPlainObject(value)) return false;
 	const validation = value as Record<string, unknown>;
