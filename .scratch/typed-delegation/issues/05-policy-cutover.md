@@ -1,7 +1,7 @@
 # 05: Policy 切换 —— Root 只走 `planner_delegate`，旧拦截链不可达
 
-Status: A 段 verified（10eeb20）；B 段 ready，Blocked by 06
-Blocked by: 04（A 段）；04, 06（B 段，见「依赖修正」）
+Status: A 段 verified（10eeb20，A′ 10d8509）；B 段 in progress，06 待验收
+Blocked by: 04（A 段）；06（仅 B 段宿主验证，见「依赖修正」与 2026-09-15 备注）
 Type: task
 
 **What to build：** 把 Root 的委派面从 `subagent` 切到 `planner_delegate`。分两段、两个 commit：
@@ -205,6 +205,15 @@ There is no asynchronous wait: planner_delegate returns when the child finishes.
 - [ ] 账本里该 Task 有一条 execution（kind worker，无 `auxiliary`），usage 行的 `ownerRootSessionId` 记下来（10 的承接项要对账，本票只采集）。
 - [ ] Root 会话中**没有** `subagent` 工具调用。
 
+**检查 3b（正例，reviewer 走新链；06 承接项）** 对检查 3 的 Task 接着说（taskId 用检查 3 返回的 canonical id）：
+
+> 对 taskId=<检查 3 的 taskId> 用 `planner_delegate` 派 role=reviewer，审它最新的 WorkerReport。把工具结果原样贴给我。
+
+判定：
+- [ ] `details.review.verdict` 存在且是合法枚举值；`details.review.source === "reviewer"`。
+- [ ] 账本里该 Task 的 `reviews` 有一条 `source === "reviewer"` 的记录；reviewer 不铸新 Task、不加 execution 记录。
+- [ ] Root 会话中这一步**没有** `subagent` 工具调用。
+
 **检查 4（正例，validator auxiliary）** 接着说：
 
 > 对刚才那个 taskId 用 `planner_delegate` 派 role=validator：objective「验证 hello.txt 存在且内容为 hi」，validation={"required":true,"commands":["cat hello.txt"]}。把结果原样贴给我。
@@ -263,3 +272,5 @@ B 段：验收七条命令原样输出；`policy.ts` 全文（新 `decidePolicy`
 
 不阻塞的保留意见（一条，**建议在 B 段之前先落一个三行的 A′ commit**）：
 1. **prompt 与策略在 A 段窗口内不一致。** 新 Gather 句写「planner_verdict and git_audit stay allowed」，但 `git_audit` 在 Idle 下仍被拒（`policy.test.mjs` 的 Idle 拒绝循环里它还在名单里；审核方实测 `decidePolicy({toolName:"git_audit", liveTask:false})` → block=true）。Idle 放行 `git_audit` 本来是 B 段的事，但 B 段等 06，宿主在这个窗口里会按 prompt 去调 `git_audit` 然后吃到带 repair 的拒绝。这是票面自己的顺序问题，不是执行方的错。修法：`policy.ts:161` 的 Idle 放行加 `git_audit`；`policy.test.mjs` Idle 循环把 `git_audit` 从拒绝名单挪到放行断言；README「Idle gather policy」段加一句「`git_audit` is allowed while Idle.」。三行，单独 commit，B 段的 `IDLE_TOOLS` 定义时自然吸收。
+
+**2026-09-15 B 段开工（规划方决定）。** B 段实现不等 06 验收：B 段改面（`policy.ts` / `policy-cutover.test.mjs` / `index.ts` 旗标一行）与 06 的 `delegate.ts` 无交集；06 验收不通过的最坏结果是宿主验证推迟而非返工；本地七条验收命令不依赖 06。宿主验证（B6 检查 1–5 + 3b）推迟到 06 验收通过后执行，采集物进 `.scratch/typed-delegation/host-05/`。检查 3b 按 06 承接项补入 B6。
