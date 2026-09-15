@@ -274,3 +274,46 @@ B 段：验收七条命令原样输出；`policy.ts` 全文（新 `decidePolicy`
 1. **prompt 与策略在 A 段窗口内不一致。** 新 Gather 句写「planner_verdict and git_audit stay allowed」，但 `git_audit` 在 Idle 下仍被拒（`policy.test.mjs` 的 Idle 拒绝循环里它还在名单里；审核方实测 `decidePolicy({toolName:"git_audit", liveTask:false})` → block=true）。Idle 放行 `git_audit` 本来是 B 段的事，但 B 段等 06，宿主在这个窗口里会按 prompt 去调 `git_audit` 然后吃到带 repair 的拒绝。这是票面自己的顺序问题，不是执行方的错。修法：`policy.ts:161` 的 Idle 放行加 `git_audit`；`policy.test.mjs` Idle 循环把 `git_audit` 从拒绝名单挪到放行断言；README「Idle gather policy」段加一句「`git_audit` is allowed while Idle.」。三行，单独 commit，B 段的 `IDLE_TOOLS` 定义时自然吸收。
 
 **2026-09-15 B 段开工（规划方决定）。** B 段实现不等 06 验收：B 段改面（`policy.ts` / `policy-cutover.test.mjs` / `index.ts` 旗标一行）与 06 的 `delegate.ts` 无交集；06 验收不通过的最坏结果是宿主验证推迟而非返工；本地七条验收命令不依赖 06。宿主验证（B6 检查 1–5 + 3b）推迟到 06 验收通过后执行，采集物进 `.scratch/typed-delegation/host-05/`。检查 3b 按 06 承接项补入 B6。
+
+**2026-09-15 B 段实现回执（Devin，执行方）。** feat commit `90a1975`（docs 开工 commit `e89200d` 在前）。**宿主检查 1–5 + 3b 待 06 验收后执行**，采集物届时进 `.scratch/typed-delegation/host-05/`；交回要求的三点说明（toolResult 持久化形态、Root 被拒后的自发行为、检查 4 status 渲染）同属宿主观察项，一并推迟。
+
+七条验收命令原样输出：
+
+```text
+$ npm run typecheck && npm test
+# typecheck exit 0；npm test exit 0（38 文件，29 段 PASS；日志 .scratch/typed-delegation/05b-npm-test.log）
+
+$ grep -c 'PI_PLANNER_ONLY_LEGACY_SUBAGENT' index.ts
+1
+
+$ grep -l 'PI_PLANNER_ONLY_LEGACY_SUBAGENT' *.ts *.mjs *.md
+index.ts
+index.test.mjs
+policy-cutover.test.mjs
+
+$ grep -n 'subagentDelegatesToChildren\|idleWaitRefusal\|authorizedWaitId' policy.ts
+71:	authorizedWaitId?: string;                     # PolicyInput 字段（票面自带，注释标 legacy）
+87/110/114:                                       # 两个 legacy helper（定义与内部引用）
+189/227:                                          # legacyDecidePolicy 体内两处；新 decidePolicy 0 处
+
+$ grep -n '"subagent"' index.ts
+1397 / 1426 / 1515                               # 归因名单、hook 分支、tool_result 分支；PLANNER_SAFE_TOOLS 0 处（均为 08 删除面）
+
+$ git diff -- '*.ts' | grep -cE '^\+.*(JSON\.parse|\.match\(|new RegExp|\.split\()'
+0
+
+$ git show --stat 90a1975
+9 files: policy.ts index.ts index.test.mjs policy.test.mjs package.json README.md CONTEXT.md .gitignore + 新文件 policy-cutover.test.mjs
+```
+
+`policy-cutover.test.mjs` 用例清单（假宿主照 `index.test.mjs:1-120` 搭法，`PI_CODING_AGENT_DIR` 隔离 + tmpdir，`finally` 语义由文件末尾 `rmSync` 承担）：(1) `subagent` 带合法 TaskSpec JSON 的 `input.task` → `{block:true}`，reason 以 `Planner-only guard` 开头、含 `planner_delegate`、不含 fenced JSON，toast 为 `Blocked parent tool: subagent`，账本 0 Task，迟到的 tool_result 原样穿透（`handleSubagentResult` 无绑定返回 undefined，即 `getDelegation` 为空的可观测代理）；(2) `{gate, workflow}` 复合形态 → 同一 cutover 文案，无 `composite` 字样；(3) 旗标下注册真 pending run（`run-05b-pending`），同 id `bg_wait` 旗标内放行、撤旗标后拒绝且 reason 含 `no asynchronous wait`；(4) Idle：`git_audit` 放行、`planner_recover` 拒绝（reason 含 `idle for gather`）、`read` 拒绝且带 fenced TaskSpec repair；(5) `planner_delegate` 在 live（检查 3 铸的 executing Task）与 Idle 下 hook 均返回 undefined；(6) `PI_SUBAGENT_CHILD=1` 子进程实例整个 no-op（不注册任何 handler，子进程内 subagent 天然不被拦），`isChild` 短路本身由 `policy.test.mjs` 顶部 cutover 段覆盖；(7) `/planner-only off` 后 `subagent` 放行、账本无新增，`on` 后重新拒绝。
+
+与票面的偏差（按意图收敛，逐条）：
+
+1. **`LEGACY_ORCHESTRATION_TOOLS`（私有集合，新增）。** 票面让 `ORCHESTRATION_TOOLS` 缩为 `QUESTION_TOOLS` 且 legacy 函数体「一行不改」——二者不能同时成立：legacy 的 live 放行用 `ORCHESTRATION_TOOLS.has(...)`，缩集会让旗标下的 live `bg_wait` / `contact_supervisor` 变拒绝（`policy.test.mjs` live 段与 `index.test.mjs` 全红）。收敛：导出的 `ORCHESTRATION_TOOLS = QUESTION_TOOLS`（`PLANNER_SAFE_TOOLS` 随之缩小，符合票面），`legacyDecidePolicy` 内改用一个私有 `LEGACY_ORCHESTRATION_TOOLS`（旧六工具）——函数体内仅此一个标识符的替换。
+2. **验收命令 3 的文件清单。** 票面预期 `index.ts index.test.mjs policy.test.mjs`；实际 `index.ts index.test.mjs policy-cutover.test.mjs`。`policy.test.mjs` 走 `PolicyInput.legacyDelegation` 字段、不碰环境变量；`policy-cutover.test.mjs` 引用该变量恰为 B4 检查 3 许可的「经旗标路径注册 pending delegation」——只开关两次（铸 run + 对照放行），随即 `delete`，断言全在无旗标路径上。
+3. **`index.test.mjs:220` 文案断言。** `blockedReason` 是新旧路径共用函数，票面已预告 `policy.test.mjs` 的文案断言要改；`index.test.mjs` 同句断言一并改为 `/Delegate execution with planner_delegate/`（旗标内语义未动）。
+4. **检查 6 的实现形态。** 票面写「`PI_SUBAGENT_CHILD=1` 的实例调 `subagent` → 放行」；实测该实例的 `plannerOnly()` 整体 no-op（`index.ts:347` 提前 return，连 `tool_call` handler 都不注册），适配层无可断言之物——用 spawn 探针断言「子进程实例注册 0 个 handler」（即 subagent 必不被拦），`isChild` 短路顺序另在 `policy.test.mjs` 用 `decidePolicy` 直测覆盖。
+5. **检查 1 的 `getDelegation` 断言。** orchestrator 在扩展闭包内不可达，用两个可观测代理代替：同 toolCallId 的迟到 `tool_result` 穿透为 undefined、`ledger/*.json` 计数为 0。
+
+未做的承接项：`planner_recover` 拒绝→throw 的 `assert.rejects` 覆盖（承接项说「顺手可加」）未加，留 08 注销工具时一并处理。`PLANNER_PROMPT` 未再改（A 段措辞对 B 段仍成立；06 票面同注）。
