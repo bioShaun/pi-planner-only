@@ -1538,7 +1538,7 @@ await handlers.get("tool_call")(
 	{ toolCallId: "call-203", toolName: "subagent", input: explorerInput },
 	ctx,
 );
-assert.equal(explorerInput.agent, "reviewer");
+assert.equal(explorerInput.agent, "scout");
 
 const workerInput = { agent: "worker", context: "fork", task: JSON.stringify(delegationSpec("T-20260905-204")) };
 await handlers.get("tool_call")(

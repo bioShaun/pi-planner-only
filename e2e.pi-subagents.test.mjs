@@ -424,7 +424,7 @@ try {
 			{ role: "worker", agent: "worker", model: "policy-test/worker", thinking: "off" },
 			{ role: "reviewer", agent: "reviewer", model: "policy-test/reviewer", thinking: "low" },
 			{ role: "validator", agent: "oracle", model: "policy-test/validator", thinking: "medium" },
-			{ role: "explorer", agent: "reviewer", model: "policy-test/explorer", thinking: "high" },
+			{ role: "explorer", agent: "scout", model: "policy-test/explorer", thinking: "high" },
 		];
 		const availableModels = [
 			...roleCases.map(({ model }) => ({

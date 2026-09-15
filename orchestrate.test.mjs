@@ -363,7 +363,7 @@ assert.equal(isDelegationCall({ action: "status", tasks: [{ agent: "worker" }] }
 			["worker", "policy-test/worker", "off", "worker"],
 			["reviewer", "policy-test/reviewer", "low", "reviewer"],
 			["validator", "policy-test/validator", "medium", "oracle"],
-			["explorer", "policy-test/explorer", "high", "reviewer"],
+			["explorer", "policy-test/explorer", "high", "scout"],
 		]) {
 			process.env[`PI_PLANNER_ONLY_MODEL_${role.toUpperCase()}`] = model;
 			process.env[`PI_PLANNER_ONLY_THINKING_${role.toUpperCase()}`] = thinking;

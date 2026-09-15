@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
@@ -52,6 +52,13 @@ import {
 } from "./floors.ts";
 import { configuredRoleModelSummaries, loadRoleModelPolicy } from "./role-models.ts";
 import { ConcurrencyController, loadConcurrencyDefault, saveConcurrencyDefault, parseConcurrencyLimit } from "./concurrency.ts";
+import {
+	PLANNER_DELEGATE_PARAMETERS,
+	createHostLauncher,
+	renderDelegationOutcome,
+	runDelegation,
+} from "./delegate.ts";
+import type { PlannerDelegateParams } from "./delegate.ts";
 
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
 	? resolve(process.env.PI_CODING_AGENT_DIR)
@@ -352,6 +359,10 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	let ledger = new UsageLedger({ pricing, resolveTaskId: (taskId) => orchestrator.store.get(taskId)?.taskId ?? taskId });
 	const concurrencyConfig = loadConcurrencyDefault(CONCURRENCY_CONFIG);
 	const concurrency = new ConcurrencyController({ savedLimit: concurrencyConfig.limit, saved: concurrencyConfig.source === "saved", enforceWorkspace: true });
+	// ADR-0001 — the structured-delegation launcher for planner_delegate.
+	// Fallback owner identity when the session id is not yet known.
+	const delegationLaunch = createHostLauncher(pi);
+	const PROCESS_OWNER_RUN_ID = randomUUID();
 	orchestrator = new PlannerOrchestrator({
 		concurrency,
 		gitRunner,
@@ -1101,6 +1112,55 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					validationVerified: true,
 					commitLineage: { before: beforeHead.stdout.trim() || "unknown", after: afterHead.stdout.trim() || "unknown", truthPaths: plan.paths },
 					workerCommitRuns: 0,
+				},
+			};
+		},
+	});
+
+	// ADR-0001 — typed Root/child delegation. execute only composes deps,
+	// calls the shared runDelegation seam, and renders the outcome; the
+	// WorkerReport arrives launcher-validated in details.report. Failure is
+	// signalled by throwing (the host marks the tool result accordingly).
+	pi.registerTool({
+		name: "planner_delegate",
+		label: "Planner Delegate",
+		description: [
+			"Delegate one TaskSpec to a leaf agent through the structured delegation API.",
+			"Returns the launcher-validated WorkerReport in details.report; prose output is never parsed.",
+			"Root should prefer this tool over subagent for worker, explorer, and validator tasks.",
+		].join(" "),
+		promptSnippet: "planner_delegate: typed TaskSpec delegation with a structured WorkerReport result",
+		promptGuidelines: [
+			"Prefer planner_delegate over subagent: supply the full TaskSpec fields, not a prose brief.",
+			"The child's WorkerReport arrives schema-validated in details.report; a non-completed status is a tool error, not a parse failure.",
+		],
+		parameters: PLANNER_DELEGATE_PARAMETERS,
+		async execute(toolCallId, params: PlannerDelegateParams, signal, _onUpdate, ctx) {
+			latestCtx = ctx;
+			const outcome = await runDelegation(
+				{
+					store: orchestrator.store,
+					gitRunner,
+					concurrency,
+					usage: ledger,
+					launch: delegationLaunch,
+					ownerRunId: ctx.sessionManager?.getSessionId?.() || PROCESS_OWNER_RUN_ID,
+				},
+				params,
+				ctx.cwd || process.cwd(),
+				{ signal, executionId: toolCallId },
+			);
+			return {
+				content: [{ type: "text", text: renderDelegationOutcome(outcome) }],
+				details: {
+					taskId: outcome.task.taskId,
+					executionId: outcome.executionId,
+					runId: outcome.runId,
+					state: outcome.task.state,
+					decision: outcome.decision?.action,
+					report: outcome.report,
+					usage: outcome.usage,
+					warnings: outcome.warnings,
 				},
 			};
 		},

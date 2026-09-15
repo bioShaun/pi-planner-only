@@ -29,7 +29,7 @@ export { ROLE_TOOL_PROFILES, MUTATING_TOOLS, roleAllowsMutatingTools } from "./t
 
 /** Builtin pi-subagents agents whose declared tools match the role profile. */
 export const ROLE_AGENTS: Record<TaskRole, string | undefined> = {
-	explorer: "reviewer",
+	explorer: "scout",
 	reviewer: "reviewer",
 	validator: "oracle",
 	worker: undefined,

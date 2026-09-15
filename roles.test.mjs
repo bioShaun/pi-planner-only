@@ -104,7 +104,7 @@ for (const tool of MUTATING_TOOLS) {
 assert.equal(ROLE_TOOL_PROFILES.validator.includes("edit"), false);
 assert.equal(ROLE_TOOL_PROFILES.validator.includes("write"), false);
 
-assert.equal(ROLE_AGENTS.explorer, "reviewer");
+assert.equal(ROLE_AGENTS.explorer, "scout");
 assert.equal(ROLE_AGENTS.reviewer, "reviewer");
 assert.equal(ROLE_AGENTS.validator, "oracle");
 assert.equal(ROLE_AGENTS.worker, undefined);
@@ -137,7 +137,7 @@ assert.equal(applyRoleDelegation(worker, { role: "worker", taskId: "T-20260831-0
 
 const explorer = { agent: "worker", task: "find the parser" };
 assert.equal(applyRoleDelegation(explorer, { role: "explorer" }).mutated, true);
-assert.equal(explorer.agent, "reviewer");
+assert.equal(explorer.agent, "scout");
 assert.equal(explorer.task, "find the parser");
 assert.equal("context" in explorer, false);
 
