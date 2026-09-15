@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 import { readLargestRunOutput } from "./notify.ts";
 import { TaskStore } from "./task.ts";
@@ -9,7 +10,7 @@ const cwd = process.cwd();
 
 // C04/C05: detached output is consumable from the async run directory.
 {
-  const root = mkdtempSync(join(cwd, ".planner-only-test-"));
+  const root = mkdtempSync(join(tmpdir(), "planner-only-test-"));
   try {
     const asyncDir = join(root, "async-subagent-runs", "run-c04");
     mkdirSync(asyncDir, { recursive: true });

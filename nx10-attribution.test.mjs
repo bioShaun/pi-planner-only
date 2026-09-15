@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
 	compareExecutionTruth,
 	captureEvidence,
@@ -256,7 +257,7 @@ const CWD = "/repo";
 // with drifted workspace => stays blocked.
 // =========================================================================
 {
-	const tempDir = mkdtempSync(join(process.cwd(), ".planner-only-test-nx10-"));
+	const tempDir = mkdtempSync(join(tmpdir(), "planner-only-test-nx10-"));
 	try {
 		mkdirSync(join(tempDir, "src"), { recursive: true });
 		writeFileSync(join(tempDir, "src/target.ts"), "initial content");
@@ -455,7 +456,7 @@ const CWD = "/repo";
 // directory-vs-file meaning.
 // =========================================================================
 {
-	const tempDir = mkdtempSync(join(process.cwd(), ".planner-only-test-nx10-scope-"));
+	const tempDir = mkdtempSync(join(tmpdir(), "planner-only-test-nx10-scope-"));
 	try {
 		mkdirSync(join(tempDir, "sub"), { recursive: true });
 		writeFileSync(join(tempDir, "sub/declared.txt"), "declared");

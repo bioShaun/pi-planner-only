@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { mkdtempSync, mkdirSync, symlinkSync, rmSync, writeFileSync } from "node:fs";
 import {
 	TaskStore,
@@ -160,7 +161,7 @@ assert.equal(isExplicitlyNoValidation(createTaskSpec({ objective: "default valid
 // IS-01/I01-I05 — the persistent allocator owns ids outside the restored
 // in-memory subset, including claims and unreadable historical snapshots.
 {
-	const root = mkdtempSync(join(cwd, ".planner-only-task-id-"));
+	const root = mkdtempSync(join(tmpdir(), "planner-only-task-id-"));
 	const now = () => new Date("2026-09-11T12:00:00.000Z");
 	try {
 		const firstAllocator = new TaskIdAllocator(root, { now });
@@ -525,14 +526,19 @@ assert.equal(
 assert.equal(findWriterConflict([writerA], "/elsewhere", "worker").conflict, false);
 // relative and symlink aliases of one worktree collide
 {
-	const real = mkdtempSync(join(process.cwd(), ".planner-only-lock-"));
-	const aliasParent = mkdtempSync(join(process.cwd(), ".planner-only-lock-"));
-	const alias = join(aliasParent, "alias");
-	symlinkSync(real, alias);
-	const holder = { ...writerA, cwd: real };
-	assert.equal(findWriterConflict([holder], alias, "worker").conflict, true, "symlink alias collides");
-	assert.equal(findWriterConflict([holder], `${real}/sub/..`, "worker").conflict, true, "relative alias collides");
-	assert.equal(findWriterConflict([holder], alias, "explorer").conflict, false);
+	const real = mkdtempSync(join(tmpdir(), "planner-only-lock-"));
+	const aliasParent = mkdtempSync(join(tmpdir(), "planner-only-lock-"));
+	try {
+		const alias = join(aliasParent, "alias");
+		symlinkSync(real, alias);
+		const holder = { ...writerA, cwd: real };
+		assert.equal(findWriterConflict([holder], alias, "worker").conflict, true, "symlink alias collides");
+		assert.equal(findWriterConflict([holder], `${real}/sub/..`, "worker").conflict, true, "relative alias collides");
+		assert.equal(findWriterConflict([holder], alias, "explorer").conflict, false);
+	} finally {
+		rmSync(real, { recursive: true, force: true });
+		rmSync(aliasParent, { recursive: true, force: true });
+	}
 }
 
 // D07 — a stale-looking holder still blocks: timeout is not exit

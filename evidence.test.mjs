@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { execSync, spawnSync } from "node:child_process";
 import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import {
 	captureEvidence,
 	captureReviewEvidencePacket,
@@ -363,7 +364,7 @@ function callsInclude(aCalls, cCalls, key) {
 
 // A1. worker commits between A and C: the committed delta (T2) is attributed
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 	try {
 		const aCalls = [];
 		const base = await captureEvidence(rf1Runner({
@@ -416,7 +417,7 @@ function callsInclude(aCalls, cCalls, key) {
 // --untracked-files=all re-probe expands the directory so the declared file
 // is attributed and the stale verdict disappears.
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 	const featureDir = join(dir, ".scratch", "feature");
 	const absFile = join(featureDir, "c14.txt");
 	try {
@@ -462,7 +463,7 @@ function callsInclude(aCalls, cCalls, key) {
 
 // A2. baseline-dirty path whose blob hash differs at C is attributed (T3)
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 	try {
 		writeFileSync(join(dir, "legacy.ts"), "v1\n");
 		const porcelain = [
@@ -513,7 +514,7 @@ function callsInclude(aCalls, cCalls, key) {
 
 // T3 edge: a path deleted at A hashes to null and counts as changed when C has a hash
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 	try {
 		const base = await captureEvidence(rf1Runner({
 			"rev-parse --git-dir": { stdout: ".git\n", code: 0 },
@@ -632,7 +633,7 @@ function realGit(dir, ...args) {
 }
 
 function initRealRepo() {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-realgit-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-realgit-"));
 	realGit(dir, "init", "-q");
 	realGit(dir, "config", "user.email", "test@example.com");
 	realGit(dir, "config", "user.name", "Test");
@@ -1040,7 +1041,7 @@ assert.equal(
 // Real linked worktree: blind spot vs declared-roots fix end-to-end.
 {
 	const main = initRealRepo();
-	const wtParent = mkdtempSync(join(process.cwd(), ".planner-only-realwt-"));
+	const wtParent = mkdtempSync(join(tmpdir(), "planner-only-realwt-"));
 	const wt = join(wtParent, "linked");
 	try {
 		realGit(main, "worktree", "add", "-b", "variant-c-wt", wt);
@@ -1170,7 +1171,7 @@ assert.equal(
 // Review packet covers declared roots; an unsampled root truncates the packet.
 {
 	const main = initRealRepo();
-	const wtParent = mkdtempSync(join(process.cwd(), ".planner-only-reviewwt-"));
+	const wtParent = mkdtempSync(join(tmpdir(), "planner-only-reviewwt-"));
 	const wt = join(wtParent, "linked");
 	try {
 		realGit(main, "worktree", "add", "-b", "variant-c-review", wt);
@@ -1214,7 +1215,7 @@ assert.equal(
 // E01 — subdirectory cwd and quoted non-ASCII paths normalize against the
 // repository root, and the new truth/freshness functions consume them.
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-e01-paths-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-e01-paths-"));
 	const git = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
 	try {
 		git("init", "-q");

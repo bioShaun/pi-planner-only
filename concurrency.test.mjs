@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
 	ConcurrencyController,
 	DEFAULT_CONCURRENCY_LIMIT,
@@ -26,7 +27,7 @@ controller.release("r1");
 controller.release("r2");
 controller.release("w2");
 
-const root = mkdtempSync(join(process.cwd(), ".planner-only-concurrency-test-"));
+const root = mkdtempSync(join(tmpdir(), "planner-only-concurrency-test-"));
 try {
 	const config = join(root, "planner-only", "concurrency.json");
 	assert.equal(loadConcurrencyDefault(config).source, "default");

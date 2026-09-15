@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
 	FORBIDDEN_GIT_OPERATIONS,
 	GIT_AUDIT_OPERATIONS,
@@ -170,7 +171,7 @@ assert.equal(resolveGitAudit({ operation: "commit" }).ok, false);
 // cwd validation
 // --------------------------------------------------------------------------
 
-const fixtureRoot = mkdtempSync(join(process.cwd(), ".git-audit-test-"));
+const fixtureRoot = mkdtempSync(join(tmpdir(), "git-audit-test-"));
 try {
 	const dir = join(fixtureRoot, "repo");
 	mkdirSync(dir);
@@ -342,7 +343,7 @@ assert.deepEqual(dirtyPathsOutsideTruth(parseGitStatusPaths(
 // Ticket 08: classifyCommitDirtyPaths and parseGitStatusKinds real-git tests
 // --------------------------------------------------------------------------
 {
-	const testRepo = mkdtempSync(join(process.cwd(), ".git-audit-test-"));
+	const testRepo = mkdtempSync(join(tmpdir(), "git-audit-test-"));
 	try {
 		const git = (...args) => {
 			const res = spawnSync("git", args, { cwd: testRepo, encoding: "utf8" });

@@ -46,7 +46,7 @@ test("A01: Loaded plugin fingerprint is recorded from loaded build, distinct fro
 	assert.ok(fpInfo.capabilities.includes("concurrency"));
 
 	// Modifying disk files in a separate directory should produce a different fingerprint on reload
-	const tempDir = mkdtempSync(join(process.cwd(), ".planner-only-test-a01-"));
+	const tempDir = mkdtempSync(join(tmpdir(), "planner-only-test-a01-"));
 	try {
 		writeFileSync(join(tempDir, "package.json"), JSON.stringify({ name: "test-pkg", version: "0.4.1" }));
 		writeFileSync(join(tempDir, "index.ts"), "export const dummy = 1;");
@@ -77,7 +77,7 @@ test("A01: Loaded plugin fingerprint is recorded from loaded build, distinct fro
 });
 
 test("A02: Replaying E04 launch receipt -> final report does not produce REPORT_SCHEMA_INVALID at launch time and maintains single report", async () => {
-	const tempDir = mkdtempSync(join(process.cwd(), ".planner-only-test-a02-"));
+	const tempDir = mkdtempSync(join(tmpdir(), "planner-only-test-a02-"));
 	const orch = new PlannerOrchestrator({
 		gitRunner: dummyGitRunner,
 		ledgerDir: tempDir,
@@ -162,7 +162,7 @@ test("A02: Replaying E04 launch receipt -> final report does not produce REPORT_
 });
 
 test("A03: 403 errors release run slot once, record terminal state without fake completion or unprompted model switch", async () => {
-	const tempDir = mkdtempSync(join(process.cwd(), ".planner-only-test-a03-"));
+	const tempDir = mkdtempSync(join(tmpdir(), "planner-only-test-a03-"));
 	const concurrency = new ConcurrencyController({ savedLimit: 3 });
 	const orch = new PlannerOrchestrator({
 		gitRunner: dummyGitRunner,
@@ -280,7 +280,7 @@ test("A03: 403 errors release run slot once, record terminal state without fake 
 });
 
 test("A04: notify/wait/recover idempotency: deduplicate receipts, ensure report and usage are counted once", async () => {
-	const tempDir = mkdtempSync(join(process.cwd(), ".planner-only-test-a04-"));
+	const tempDir = mkdtempSync(join(tmpdir(), "planner-only-test-a04-"));
 	const concurrency = new ConcurrencyController({ savedLimit: 3 });
 	const pricing = { version: 1, currency: "USD", rates: { "test/model": { inputRate: 1, outputRate: 2 } } };
 	let store;
@@ -428,7 +428,7 @@ test("A04 permutations: notify/wait/recover arrivals converge once across reload
 		["wait", "recover", "notify"],
 	];
 	for (const [index, order] of orders.entries()) {
-		const tempDir = mkdtempSync(join(process.cwd(), `.planner-only-test-a04-order-${index}-`));
+		const tempDir = mkdtempSync(join(tmpdir(), `planner-only-test-a04-order-${index}-`));
 		const artifactsDir = join(tempDir, "artifacts");
 		mkdirSync(artifactsDir, { recursive: true });
 		const concurrency = new ConcurrencyController({ savedLimit: 1 });
@@ -518,7 +518,7 @@ test("A04 permutations: notify/wait/recover arrivals converge once across reload
 
 
 test("A04 crash point: loaded receipt state retries through a fresh orchestrator once", async () => {
-	const tempDir = mkdtempSync(join(process.cwd(), ".planner-only-test-a04-crash-"));
+	const tempDir = mkdtempSync(join(tmpdir(), "planner-only-test-a04-crash-"));
 	const artifactsDir = join(tempDir, "artifacts");
 	mkdirSync(artifactsDir, { recursive: true });
 	const taskId = "T-20260911-007";
@@ -570,7 +570,7 @@ test("A04 crash point: loaded receipt state retries through a fresh orchestrator
 	rmSync(tempDir, { recursive: true, force: true });
 });
 test("A05: Multi-process shared ledger allocation, quarantine, and cross-workspace checks pass", async () => {
-	const root = mkdtempSync(join(process.cwd(), ".planner-only-test-a05-"));
+	const root = mkdtempSync(join(tmpdir(), "planner-only-test-a05-"));
 	const now = () => new Date("2026-09-11T12:00:00.000Z");
 
 	try {

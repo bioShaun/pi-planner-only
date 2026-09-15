@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { LedgerSnapshotStore } from "./ledger-store.ts";
 import { TaskStore, validateTaskSpec } from "./task.ts";
 import { emptyTaskUsage } from "./usage.ts";
 
-const isolatedAgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+const isolatedAgentDir = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
 process.env.PI_PLANNER_ONLY_SEED_PRICING = "0";
 
@@ -364,7 +364,7 @@ assert.equal(childProbe.status, 0, childProbe.stderr || childProbe.stdout);
 
 const userMarker = join(homedir(), ".pi", "agent", "planner-only.off");
 const userMarkerWasPresent = existsSync(userMarker);
-const fixtureAgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+const fixtureAgentDir = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 try {
 	const toggleProbe = spawnSync(
 		process.execPath,
@@ -443,7 +443,7 @@ const e2ePath = new URL("./e2e.pi-subagents.test.mjs", import.meta.url).pathname
 
 // Local run without the peer: the missing public contract is explicit, exit 0
 {
-	const emptyAgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-e2e-"));
+	const emptyAgentDir = mkdtempSync(join(tmpdir(), "planner-only-test-e2e-"));
 	try {
 		const local = spawnSync(process.execPath, [e2ePath], {
 			env: { ...process.env, PI_CODING_AGENT_DIR: emptyAgentDir, PI_SUBAGENT_CHILD: "0" },
@@ -458,7 +458,7 @@ const e2ePath = new URL("./e2e.pi-subagents.test.mjs", import.meta.url).pathname
 
 // Release-gate run: the same skip condition fails the job
 {
-	const emptyAgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-e2e-"));
+	const emptyAgentDir = mkdtempSync(join(tmpdir(), "planner-only-test-e2e-"));
 	try {
 		const gated = spawnSync(process.execPath, [e2ePath], {
 			env: {
@@ -478,7 +478,7 @@ const e2ePath = new URL("./e2e.pi-subagents.test.mjs", import.meta.url).pathname
 
 // Out-of-range peer: the public contract is unverified locally, fail under the gate
 {
-	const fakeAgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-e2e-"));
+	const fakeAgentDir = mkdtempSync(join(tmpdir(), "planner-only-test-e2e-"));
 	try {
 		const fakePkgDir = join(fakeAgentDir, "npm", "node_modules", "pi-subagents");
 		mkdirSync(fakePkgDir, { recursive: true });
@@ -510,7 +510,7 @@ const e2ePath = new URL("./e2e.pi-subagents.test.mjs", import.meta.url).pathname
 // RF-4: D1 & D2 per-session force-on and status source reporting
 // --------------------------------------------------------------------------
 
-const rf4AgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-rf4-"));
+const rf4AgentDir = mkdtempSync(join(tmpdir(), "planner-only-test-rf4-"));
 try {
 	const rf4Probe = spawnSync(
 		process.execPath,
@@ -599,7 +599,7 @@ try {
 // T02-T04: restore keeps operator/extension/environment intent; headless status
 // --------------------------------------------------------------------------
 
-const t05AgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-t05-"));
+const t05AgentDir = mkdtempSync(join(tmpdir(), "planner-only-test-t05-"));
 try {
 	const t05Probe = spawnSync(
 		process.execPath,
@@ -664,7 +664,7 @@ try {
 	rmSync(t05AgentDir, { recursive: true, force: true });
 }
 
-const t05bAgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-t05b-"));
+const t05bAgentDir = mkdtempSync(join(tmpdir(), "planner-only-test-t05b-"));
 try {
 	const t05bProbe = spawnSync(
 		process.execPath,
@@ -3395,7 +3395,7 @@ assert.match(
 // Issue 07: Root model with no pricing rate — startup & status warning
 // --------------------------------------------------------------------------
 
-const i07AgentDir = mkdtempSync(join(process.cwd(), ".planner-only-test-i07-"));
+const i07AgentDir = mkdtempSync(join(tmpdir(), "planner-only-test-i07-"));
 try {
 	const i07Probe = spawnSync(
 		process.execPath,
@@ -4219,7 +4219,7 @@ await abandonActiveTasks();
 }
 
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-16b-idx-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-16b-idx-"));
 	const previous = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = dir;
 	try {
@@ -4273,7 +4273,7 @@ await abandonActiveTasks();
 }
 
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-child-tools-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-child-tools-"));
 	const previous = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = dir;
 	try {
@@ -4551,7 +4551,7 @@ await abandonActiveTasks();
 // - tracked-outside-truth => refused
 // --------------------------------------------------------------------------
 {
-	const repoDir = mkdtempSync(join(process.cwd(), ".git-commit-test-"));
+	const repoDir = mkdtempSync(join(tmpdir(), "git-commit-test-"));
 	try {
 		spawnSync("git", ["init", "-q"], { cwd: repoDir });
 		spawnSync("git", ["config", "user.name", "test"], { cwd: repoDir });

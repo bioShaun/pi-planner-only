@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
 	delegationRateKind,
 	UsageLedger,
@@ -714,7 +715,7 @@ assert.equal(modelIdForPricing("volcengine/glm-5-3"), "volcengine/glm-5-3");
 
 
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 	try {
 		const path = join(dir, "pricing.json");
 		writeFileSync(path, JSON.stringify({
@@ -748,7 +749,7 @@ assert.equal(modelIdForPricing("volcengine/glm-5-3"), "volcengine/glm-5-3");
 }
 
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 	try {
 		const env = { PI_CODING_AGENT_DIR: dir };
 		const dest = pricingPath(env);
@@ -773,7 +774,7 @@ assert.equal(modelIdForPricing("volcengine/glm-5-3"), "volcengine/glm-5-3");
 		assert.equal(merged.rates["claude-opus-5"].input, 5, "missing default keys are filled in");
 		assert.equal(merged.rates["gpt-6-astra"].input, 10, "gpt-6-astra is filled from bundled defaults");
 
-		const overrideDir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+		const overrideDir = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 		try {
 			ensurePricingFile({
 				PI_CODING_AGENT_DIR: overrideDir,
@@ -784,7 +785,7 @@ assert.equal(modelIdForPricing("volcengine/glm-5-3"), "volcengine/glm-5-3");
 			rmSync(overrideDir, { recursive: true, force: true });
 		}
 
-		const skipDir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+		const skipDir = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 		try {
 			ensurePricingFile({ PI_CODING_AGENT_DIR: skipDir, PI_PLANNER_ONLY_SEED_PRICING: "0" });
 			assert.equal(

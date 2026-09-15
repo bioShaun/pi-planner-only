@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
 	compareEvidence,
 	compareExecutionTruth,
@@ -196,7 +197,7 @@ async function runIntegrationFlow(orch, taskId, toolCallId, role, changedFiles =
 	return orch.store.require(taskId);
 }
 
-const integrationLedger = mkdtempSync(join(process.cwd(), ".planner-only-test-rs02-"));
+const integrationLedger = mkdtempSync(join(tmpdir(), "planner-only-test-rs02-"));
 const taskId606 = createTaskId(new Date(), 606);
 const taskId607 = createTaskId(new Date(), 607);
 const taskId608 = createTaskId(new Date(), 608);

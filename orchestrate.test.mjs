@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { PlannerOrchestrator, isDelegationCall } from "./orchestrate.ts";
 import { LedgerSnapshotStore } from "./ledger-store.ts";
 import { BudgetReservations } from "./reservations.ts";
@@ -675,7 +676,7 @@ function truncatedPreview() {
 	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-602";
 	const runId = "run-b2-00000000-0000-0000-000000000002";
-	const tmp = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+	const tmp = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 	try {
 		// Real pi-subagents layout: asyncDir = <root>/async-subagent-runs/<id>,
 		// saved output = <root>/artifacts/outputs/<id>/…
@@ -1390,7 +1391,7 @@ function truncatedPreview() {
 // still resolves on demand. Ticket 45's stored-task refusal then fires, instead
 // of the delegation drifting onto another Task. This is check F's unit twin.
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-47-ondemand-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-47-ondemand-"));
 	try {
 		const ledger = new LedgerSnapshotStore(dir);
 		const seed = new TaskStore({ now: FIXED_NOW });
@@ -1416,7 +1417,7 @@ function truncatedPreview() {
 // The record exists, so the refusal has to say why it is unusable rather than
 // reporting an unknown Task.
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-47-foreign-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-47-foreign-"));
 	try {
 		const ledger = new LedgerSnapshotStore(dir);
 		const seed = new TaskStore({ now: FIXED_NOW });
@@ -1461,7 +1462,7 @@ function truncatedPreview() {
 // keeps the id only as an alias — `get()` would prefer the canonical record and
 // the alias could never resolve again.
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-46-rebind-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-46-rebind-"));
 	try {
 		const ledger = new LedgerSnapshotStore(dir);
 		const seed = new TaskStore({ now: FIXED_NOW });
@@ -1488,7 +1489,7 @@ function truncatedPreview() {
 // from here. Minting a Task that keeps it as an alias would re-create exactly
 // the shadowing this ticket closes, so it is refused instead.
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-46-foreign-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-46-foreign-"));
 	try {
 		const ledger = new LedgerSnapshotStore(dir);
 		const seed = new TaskStore({ now: FIXED_NOW });
@@ -1697,7 +1698,7 @@ function truncatedPreview() {
 // Task beyond the session restore cap can still be addressed by id — and a miss
 // that is not simply "unknown" says why.
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-49-verdict-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-49-verdict-"));
 	try {
 		const ledger = new LedgerSnapshotStore(dir);
 		const seed = new TaskStore({ now: FIXED_NOW });
@@ -3086,7 +3087,7 @@ function realGitRunnerOf(dir) {
 // E01 at the acceptance boundary: dirty file content changes after the report
 // with identical status/HEAD — PASS must revalidate, not complete.
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-passbound-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-passbound-"));
 	const git = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
 	try {
 		git("init", "-q");
@@ -3131,7 +3132,7 @@ function realGitRunnerOf(dir) {
 
 // E06 at the acceptance boundary: a status probe failure is unknown — PASS revalidates.
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-passbound-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-passbound-"));
 	const git = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
 	try {
 		git("init", "-q");
@@ -3188,8 +3189,8 @@ function realGitRunnerOf(dir) {
 // alias): only one obtains the lock; the loser never reaches executing and
 // registers no delegation.
 {
-	const real = mkdtempSync(join(process.cwd(), ".planner-only-wlock-"));
-	const aliasParent = mkdtempSync(join(process.cwd(), ".planner-only-wlock-"));
+	const real = mkdtempSync(join(tmpdir(), "planner-only-wlock-"));
+	const aliasParent = mkdtempSync(join(tmpdir(), "planner-only-wlock-"));
 	const alias = join(aliasParent, "wt");
 	symlinkSync(real, alias);
 	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
@@ -3272,8 +3273,8 @@ function realGitRunnerOf(dir) {
 
 // A validator delegated through an alias of the locked worktree collides too (D06).
 {
-	const real = mkdtempSync(join(process.cwd(), ".planner-only-wlock-"));
-	const aliasParent = mkdtempSync(join(process.cwd(), ".planner-only-wlock-"));
+	const real = mkdtempSync(join(tmpdir(), "planner-only-wlock-"));
+	const aliasParent = mkdtempSync(join(tmpdir(), "planner-only-wlock-"));
 	const alias = join(aliasParent, "wt");
 	symlinkSync(real, alias);
 	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
@@ -3298,9 +3299,9 @@ function realGitRunnerOf(dir) {
 // Task declaring root B collides with a writer whose cwd is B, in both orders,
 // and its bound validator locks the same set.
 {
-	const rootA = mkdtempSync(join(process.cwd(), ".planner-only-wlock-"));
-	const rootB = mkdtempSync(join(process.cwd(), ".planner-only-wlock-"));
-	const rootC = mkdtempSync(join(process.cwd(), ".planner-only-wlock-"));
+	const rootA = mkdtempSync(join(tmpdir(), "planner-only-wlock-"));
+	const rootB = mkdtempSync(join(tmpdir(), "planner-only-wlock-"));
+	const rootC = mkdtempSync(join(tmpdir(), "planner-only-wlock-"));
 	try {
 		// Task A (cwd A, declares B) holds; a writer on B is refused.
 		{
@@ -3376,8 +3377,8 @@ function realGitRunnerOf(dir) {
 // linked-worktree-only edit reaches the ReviewRequest; when a declared root
 // cannot be sampled the packet is truncated and PASS is ineligible.
 {
-	const main = mkdtempSync(join(process.cwd(), ".planner-only-reviewwt-"));
-	const wtParent = mkdtempSync(join(process.cwd(), ".planner-only-reviewwt-"));
+	const main = mkdtempSync(join(tmpdir(), "planner-only-reviewwt-"));
+	const wtParent = mkdtempSync(join(tmpdir(), "planner-only-reviewwt-"));
 	const wt = join(wtParent, "linked");
 	const git = (...args) => spawnSync("git", ["-C", main, ...args], { encoding: "utf8" });
 	try {
@@ -3501,7 +3502,7 @@ function realGitRunnerOf(dir) {
 	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const taskId = "T-20260905-982";
 	const runId = "run-t9-2";
-	const tmp = mkdtempSync(join(process.cwd(), ".planner-only-t9-"));
+	const tmp = mkdtempSync(join(tmpdir(), "planner-only-t9-"));
 	const asyncDir = join(tmp, "async-subagent-runs", runId);
 	mkdirSync(asyncDir, { recursive: true });
 	try {
@@ -3933,7 +3934,7 @@ function realGitRunnerOf(dir) {
 // In a real repo: an mtime-only touch does not block PASS; deleting an
 // in-scope file after the report does.
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-snapbound-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-snapbound-"));
 	const git = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
 	try {
 		git("init", "-q");
@@ -4005,7 +4006,7 @@ function realGitRunnerOf(dir) {
 // inputs: churn there must not stale the binding, while in-scope untracked
 // (E02) and tracked content changes still do.
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-snapuntracked-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-snapuntracked-"));
 	const git = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
 	try {
 		git("init", "-q");
@@ -4390,7 +4391,7 @@ for (const [suffix, validation] of [
 // Real pi-subagents layout: asyncDir = <root>/async-subagent-runs/<id>, saved
 // output = <root>/artifacts/outputs/<id>/…, meta = <root>/artifacts/<id>_<agent>_meta.json.
 function artifactLayout(runId, agent, exitCode, report) {
-	const tmp = mkdtempSync(join(process.cwd(), ".planner-only-reconcile-"));
+	const tmp = mkdtempSync(join(tmpdir(), "planner-only-reconcile-"));
 	const asyncDir = join(tmp, "async-subagent-runs", runId);
 	mkdirSync(asyncDir, { recursive: true });
 	mkdirSync(join(tmp, "artifacts", "outputs", runId), { recursive: true });
@@ -4478,7 +4479,7 @@ function receiptFor(toolCallId, runId, asyncDir) {
 {
 	const taskId = "T-20260905-951";
 	const runId = "run-rec-2";
-	const tmp = mkdtempSync(join(process.cwd(), ".planner-only-reconcile-"));
+	const tmp = mkdtempSync(join(tmpdir(), "planner-only-reconcile-"));
 	const asyncDir = join(tmp, "async-subagent-runs", runId);
 	mkdirSync(asyncDir, { recursive: true });
 	const orch = new PlannerOrchestrator({
@@ -4664,7 +4665,7 @@ function receiptFor(toolCallId, runId, asyncDir) {
 
 // Relative-path aliases of one worktree share the lock.
 {
-	const real = mkdtempSync(join(process.cwd(), ".planner-only-wlock-"));
+	const real = mkdtempSync(join(tmpdir(), "planner-only-wlock-"));
 	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	try {
 		setCleanTree();
@@ -4743,7 +4744,7 @@ function receiptFor(toolCallId, runId, asyncDir) {
 // A PASS whose re-sampled snapshot does not match the bound digest does not
 // complete the Task (real Git repo, in-scope content changes after the report).
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-revsnap-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-revsnap-"));
 	const git = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
 	try {
 		git("init", "-q");
@@ -4794,7 +4795,7 @@ function receiptFor(toolCallId, runId, asyncDir) {
 // A PASS over an unknown accept-time snapshot sample (unreadable in-scope
 // file) does not complete the Task: truncated sampling cannot look fresh.
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-revsnap-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-revsnap-"));
 	const git = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
 	const secret = join(dir, "secret.txt");
 	try {
@@ -6013,7 +6014,7 @@ const oracle1ForegroundText = [
 {
 	const taskId = "T-20260905-926";
 	const runId = "run-t12-salvage";
-	const tmp = mkdtempSync(join(process.cwd(), ".planner-only-t12-"));
+	const tmp = mkdtempSync(join(tmpdir(), "planner-only-t12-"));
 	try {
 		const artifacts = join(tmp, "artifacts");
 		mkdirSync(artifacts, { recursive: true });
@@ -6044,7 +6045,7 @@ const oracle1ForegroundText = [
 {
 	const taskId = "T-20260905-927";
 	const runId = "run-t12-garbage";
-	const tmp = mkdtempSync(join(process.cwd(), ".planner-only-t12-"));
+	const tmp = mkdtempSync(join(tmpdir(), "planner-only-t12-"));
 	try {
 		const artifacts = join(tmp, "artifacts");
 		mkdirSync(artifacts, { recursive: true });
@@ -6071,7 +6072,7 @@ const oracle1ForegroundText = [
 {
 	const taskId = "T-20260905-928";
 	const runId = "run-t12-ambiguous";
-	const tmp = mkdtempSync(join(process.cwd(), ".planner-only-t12-"));
+	const tmp = mkdtempSync(join(tmpdir(), "planner-only-t12-"));
 	try {
 		const artifacts = join(tmp, "artifacts");
 		mkdirSync(artifacts, { recursive: true });
@@ -6096,7 +6097,7 @@ const oracle1ForegroundText = [
 // 12-d. planner_recover finds the saved artifact by runId even when the
 // artifact's agent segment differs from the kind's default agent.
 {
-	const outputDir = mkdtempSync(join(process.cwd(), ".planner-only-t12-recover-"));
+	const outputDir = mkdtempSync(join(tmpdir(), "planner-only-t12-recover-"));
 	try {
 		const taskId = "T-20260905-929";
 		const runId = "run-t12-recover";
@@ -6251,7 +6252,7 @@ const oracle1ForegroundText = [
 	// Y5: an error for a live async child (runId set, artifacts not terminal) keeps the reservation.
 	const { store, task } = budgetTaskFixture("T-20260908-745", { tokens: 200000, costUsd: 0.5 }, boundedBudgetUsage(0, 0));
 	const orch = new PlannerOrchestrator({ gitRunner, store });
-	const tmp = mkdtempSync(join(process.cwd(), ".planner-only-15b-y5-"));
+	const tmp = mkdtempSync(join(tmpdir(), "planner-only-15b-y5-"));
 	try {
 		await orch.beginDelegation({ toolCallId: "call-15b-y5", input: { task: JSON.stringify(task.spec) } }, BASE);
 		await orch.handleSubagentResult(receiptFor("call-15b-y5", "run-15b-y5", join(tmp, "async")));
@@ -6272,7 +6273,7 @@ const oracle1ForegroundText = [
 	// Y6: the same unconfirmed async error still shows the D4 in-flight line.
 	const { store, task } = budgetTaskFixture("T-20260908-746", { tokens: 200000, costUsd: 0.5 }, boundedBudgetUsage(0, 0));
 	const orch = new PlannerOrchestrator({ gitRunner, store });
-	const tmp = mkdtempSync(join(process.cwd(), ".planner-only-15b-y6-"));
+	const tmp = mkdtempSync(join(tmpdir(), "planner-only-15b-y6-"));
 	try {
 		await orch.beginDelegation({ toolCallId: "call-15b-y6", input: { task: JSON.stringify(task.spec) } }, BASE);
 		await orch.handleSubagentResult(receiptFor("call-15b-y6", "run-15b-y6", join(tmp, "async")));
@@ -6294,7 +6295,7 @@ const oracle1ForegroundText = [
 	// Y7: an unconfirmed async error is not classified as confirmed-not-launched.
 	const { store, task } = budgetTaskFixture("T-20260908-747", { tokens: 200000, costUsd: 0.5 }, boundedBudgetUsage(0, 0));
 	const orch = new PlannerOrchestrator({ gitRunner, store });
-	const tmp = mkdtempSync(join(process.cwd(), ".planner-only-15b-y7-"));
+	const tmp = mkdtempSync(join(tmpdir(), "planner-only-15b-y7-"));
 	try {
 		await orch.beginDelegation({ toolCallId: "call-15b-y7", input: { task: JSON.stringify(task.spec) } }, BASE);
 		await orch.handleSubagentResult(receiptFor("call-15b-y7", "run-15b-y7", join(tmp, "async")));
@@ -6535,7 +6536,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 }
 
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-16b-l2-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-16b-l2-"));
 	try {
 		new LedgerSnapshotStore(dir).write(spentTaskRecord("T-20260908-l2"));
 		const injected = new TaskStore();
@@ -6548,7 +6549,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 }
 
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-16b-l1-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-16b-l1-"));
 	try {
 		const task = spentTaskRecord("T-20260908-l1", 0.04, 0.05);
 		new LedgerSnapshotStore(dir).write(task);
@@ -6573,7 +6574,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 }
 
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-16b-l13-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-16b-l13-"));
 	try {
 		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
 		const spec = { ...specFor("T-20260908-l13"), cumulativeBudget: { tokens: 200000, costUsd: 0.05 } };
@@ -6591,7 +6592,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 }
 
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-16b-l6-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-16b-l6-"));
 	try {
 		const good = spentTaskRecord("T-20260908-962", 0.01, 0.05);
 		const bad = spentTaskRecord("T-20260908-961", 0.04, 0.05);
@@ -6627,7 +6628,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 }
 
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-16b-l14-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-16b-l14-"));
 	try {
 		const bad = spentTaskRecord("T-20260908-963", 0.04, 0.05);
 		new LedgerSnapshotStore(dir).write(bad);
@@ -6675,7 +6676,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 }
 
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-16b-l25-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-16b-l25-"));
 	try {
 		const bad = spentTaskRecord("T-20260908-965", 0.04, 0.05);
 		new LedgerSnapshotStore(dir).write(bad);
@@ -6779,7 +6780,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 // Ticket 38 / F6 — session_start restore is capped and skips empty-cwd ghosts
 // --------------------------------------------------------------------------
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-38-restore-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-38-restore-"));
 	try {
 		const ledger = new LedgerSnapshotStore(dir);
 		const real = spentTaskRecord("T-20260908-38a", 0.01, 0.05);
@@ -6817,7 +6818,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	}
 }
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-38-cap-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-38-cap-"));
 	try {
 		const ledger = new LedgerSnapshotStore(dir);
 		const { MAX_LEDGER_RESTORE_PER_SESSION } = await import("./types.ts");
@@ -7401,7 +7402,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 // attributed to the execution, never reaches the Reviewer patch, and the Task
 // completes with one review — no baseline-lag Validator spin.
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-e01-lag-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-e01-lag-"));
 	const git = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
 	try {
 		git("init", "-q");
@@ -7457,7 +7458,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 // that refuses PASS; a report-only correction that declares it repairs the
 // revision without re-editing files, and the review then completes.
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-e01-under-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-e01-under-"));
 	const git = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
 	try {
 		git("init", "-q");
@@ -7524,7 +7525,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 // E01 untracked work without an allow-list is attributed, not dropped as
 // runtime noise: an empty declaration cannot PASS over a new untracked file.
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-e01-untracked-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-e01-untracked-"));
 	const git = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
 	try {
 		git("init", "-q");
@@ -7710,7 +7711,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 // E01 ledger restore: a pre-E01 record without per-execution material cannot
 // complete through the PASS gate; a restored record with full material can.
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-e01-ledger-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-e01-ledger-"));
 	try {
 		const ledgerDir = join(dir, "state");
 		mkdirSync(join(ledgerDir, "planner-only", "ledger"), { recursive: true });
@@ -8174,7 +8175,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 // R02 exact-id recovery: a registered pending run is consumed once through the
 // shared completion path; prefixes, other cwds, and consumed ids never authorize.
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-r02-rec-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-r02-rec-"));
 	const artifactDirs = () => [dir];
 	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), artifactDirs });
 	const taskId = "T-20260905-985";
@@ -8280,7 +8281,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 // management-only wait is not completion proof, and trusted artifacts return
 // the raw findings once without creating a Task.
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-r02-unbound-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-r02-unbound-"));
 	const artifactDirs = () => [dir];
 	const orch = new PlannerOrchestrator({
 		gitRunner,
@@ -8325,7 +8326,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 // R02 restore fail-closed: a restored non-final Task makes gather live, but a
 // missing trusted pending binding never authorizes Idle recovery.
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-r02-restore-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-r02-restore-"));
 	try {
 		const ledgerDir = join(dir, "state");
 		mkdirSync(join(ledgerDir, "planner-only", "ledger"), { recursive: true });
@@ -8405,8 +8406,8 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 // RR-06 C18: explicit recovery accepts one exact bound run, is idempotent,
 // and refuses guessed task/run ownership without touching report corrections.
 {
-	const ledgerDir = mkdtempSync(join(process.cwd(), ".planner-only-recover-") );
-	const outputDir = mkdtempSync(join(process.cwd(), ".planner-only-recover-output-") );
+	const ledgerDir = mkdtempSync(join(tmpdir(), "planner-only-recover-") );
+	const outputDir = mkdtempSync(join(tmpdir(), "planner-only-recover-output-") );
 	try {
 		const taskId = "T-20260905-998";
 		const runId = "run-c18-bound";
@@ -8445,7 +8446,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 // RR-06 C18: a restored legacy Task ledger can use its bound run id and the
 // deterministic legacy artifact name without a current RunRecord entry.
 {
-	const outputDir = mkdtempSync(join(process.cwd(), ".planner-only-legacy-output-"));
+	const outputDir = mkdtempSync(join(tmpdir(), "planner-only-legacy-output-"));
 	try {
 		const taskId = "T-20260905-997";
 		const runId = "run-c18-legacy";

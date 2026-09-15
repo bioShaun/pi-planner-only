@@ -32,7 +32,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { register } from "node:module";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Check } from "typebox/value";
@@ -109,7 +109,7 @@ if (typeof exportTarget !== "string") {
 	reportUnavailable(`installed pi-subagents does not export ${PUBLIC_SUBPATH}`);
 }
 
-const workDir = mkdtempSync(join(process.cwd(), ".planner-only-e2e-"));
+const workDir = mkdtempSync(join(tmpdir(), "planner-only-e2e-"));
 try {
 	const pkgCopy = join(workDir, "pi-subagents");
 	cpSync(pkgDir, pkgCopy, { recursive: true });

@@ -4,6 +4,7 @@ import { ConcurrencyController } from "./concurrency.ts";
 import { createTaskSpec } from "./task.ts";
 import { existsSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
 	ARCHIVE_UNSUPPORTED,
 	OUTPUT_AMBIGUOUS,
@@ -17,7 +18,7 @@ import {
 	normalizeCompletionReceipt,
 } from "./completion.ts";
 
-const root = mkdtempSync(join(process.cwd(), ".planner-only-completion-"));
+const root = mkdtempSync(join(tmpdir(), "planner-only-completion-"));
 try {
 	const resolver = new OutputResolver({ trustedRoots: [root], maxOutputBytes: 64 });
 	const reportOnly = normalizeCompletionReceipt({ runId: "run-report", status: "completed", output: '{"status":"completed"}' }, "notify");

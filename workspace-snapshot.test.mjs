@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
 	captureWorkspaceSnapshot,
 	compareSnapshotBinding,
@@ -8,7 +9,7 @@ import {
 } from "./workspace-snapshot.ts";
 
 function scratch() {
-	return mkdtempSync(join(process.cwd(), ".planner-only-snap-"));
+	return mkdtempSync(join(tmpdir(), "planner-only-snap-"));
 }
 
 function snapshot(dir, paths, limits = {}) {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { compareEvidence, compareExecutionTruth, compareFreshness } from "./evidence.ts";
 import { ConcurrencyController } from "./concurrency.ts";
 import { PlannerOrchestrator } from "./orchestrate.ts";
@@ -85,7 +86,7 @@ const scopedExternal = compareEvidence(
 );
 assert.deepEqual(scopedExternal.unrelatedPaths, ["/repo/external.txt"]);
 
-const root = mkdtempSync(join(process.cwd(), ".planner-only-test-rs02-concurrency-"));
+const root = mkdtempSync(join(tmpdir(), "planner-only-test-rs02-concurrency-"));
 const workspaceA = join(root, "workspace-a");
 const workspaceB = join(root, "workspace-b");
 const workspaceC = join(root, "workspace-c");

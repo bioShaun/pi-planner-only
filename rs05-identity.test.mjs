@@ -9,6 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 
 import { PlannerOrchestrator } from "./orchestrate.ts";
@@ -42,7 +43,7 @@ function allocateInChild(root) {
 }
 
 test("A05: concurrent child allocators persist unique claims and recover a stale lock", async () => {
-  const root = mkdtempSync(join(process.cwd(), ".planner-only-rs05-process-"));
+  const root = mkdtempSync(join(tmpdir(), "planner-only-rs05-process-"));
   try {
     const ids = await Promise.all(Array.from({ length: 8 }, () => allocateInChild(root)));
     assert.equal(new Set(ids).size, ids.length, "child processes receive unique ids");
@@ -63,7 +64,7 @@ test("A05: concurrent child allocators persist unique claims and recover a stale
 });
 
 test("A05: corrupt snapshot occupies its id and is quarantined during recovery", () => {
-  const root = mkdtempSync(join(process.cwd(), ".planner-only-rs05-corrupt-"));
+  const root = mkdtempSync(join(tmpdir(), "planner-only-rs05-corrupt-"));
   try {
     const occupied = createTaskId(new Date(), 1);
     const ledgerDir = join(root, "planner-only", "ledger");
@@ -82,7 +83,7 @@ test("A05: corrupt snapshot occupies its id and is quarantined during recovery",
 });
 
 test("A05: continuation enforces workspace identity and completed ids remain occupied", () => {
-  const root = mkdtempSync(join(process.cwd(), ".planner-only-rs05-identity-"));
+  const root = mkdtempSync(join(tmpdir(), "planner-only-rs05-identity-"));
   try {
     const allocator = new TaskIdAllocator(root);
     const store = new TaskStore({ allocator });
@@ -101,7 +102,7 @@ test("A05: continuation enforces workspace identity and completed ids remain occ
 });
 
 test("A05: recovery view distinguishes bound and cross-workspace identity conflicts", async () => {
-  const root = mkdtempSync(join(process.cwd(), ".planner-only-rs05-recovery-"));
+  const root = mkdtempSync(join(tmpdir(), "planner-only-rs05-recovery-"));
   try {
     const cwd = join(root, "workspace");
     const taskId = "T-20260911-902";

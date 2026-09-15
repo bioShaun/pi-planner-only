@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { PlannerOrchestrator } from "./orchestrate.ts";
 import { RunRecordStore } from "./completion.ts";
 import { applyRoleDelegation } from "./roles.ts";
@@ -69,7 +70,7 @@ import { normalizeWorkerReport, validateWorkerReport } from "./report.ts";
 // A18: provider failure is terminal and non-retryable; the persisted run
 // record exposes the recovery action instead of inventing a completion.
 {
-	const tempDir = mkdtempSync(join(process.cwd(), ".planner-only-rs04-"));
+	const tempDir = mkdtempSync(join(tmpdir(), "planner-only-rs04-"));
 	const artifactsDir = join(tempDir, "artifacts");
 	mkdirSync(artifactsDir, { recursive: true });
 	const taskId = "T-20260912-018";

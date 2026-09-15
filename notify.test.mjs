@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { tmpdir } from "node:os";
 import { parseSubagentNotify, readChildMeta, readLargestRunOutput, tempRootFromAsyncDir, verifySessionFileBinding } from "./notify.ts";
 
 // Fixtures generated 2026-09-05 by copying pi-subagents 0.65.1 out of node_modules
@@ -77,7 +78,7 @@ const GROUPED_FIXTURE = "Background tasks completed (2): **worker**, **reviewer*
 {
 	const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
 	const { join } = await import("node:path");
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 	try {
 		const artifacts = join(dir, "subagent-artifacts");
 		mkdirSync(artifacts, { recursive: true });
@@ -131,7 +132,7 @@ const GROUPED_FIXTURE = "Background tasks completed (2): **worker**, **reviewer*
 {
 	const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
 	const { join } = await import("node:path");
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-notify-events-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-test-notify-events-"));
 	try {
 		const asyncDir = join(dir, "async-subagent-runs", "run-ingest-test");
 		mkdirSync(asyncDir, { recursive: true });
@@ -178,7 +179,7 @@ const GROUPED_FIXTURE = "Background tasks completed (2): **worker**, **reviewer*
 {
 	const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
 	const { join } = await import("node:path");
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-notify-fallback-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-test-notify-fallback-"));
 	try {
 		const asyncDir = join(dir, "async-subagent-runs", "run-stdout-fallback-test");
 		mkdirSync(asyncDir, { recursive: true });
@@ -225,7 +226,7 @@ const GROUPED_FIXTURE = "Background tasks completed (2): **worker**, **reviewer*
 {
 	const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
 	const { join } = await import("node:path");
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-notify-multistep-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-test-notify-multistep-"));
 	try {
 		const asyncDir = join(dir, "async-subagent-runs", "run-multistep-test");
 		mkdirSync(asyncDir, { recursive: true });
@@ -284,7 +285,7 @@ const GROUPED_FIXTURE = "Background tasks completed (2): **worker**, **reviewer*
 {
 	const { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } = await import("node:fs");
 	const { join } = await import("node:path");
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-notify-binding-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-test-notify-binding-"));
 	try {
 		const runA = join(dir, "async-subagent-runs", "run-A");
 		const runB = join(dir, "async-subagent-runs", "run-B");
