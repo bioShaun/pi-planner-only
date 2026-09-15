@@ -3,7 +3,7 @@ import { AUDIT_TOOLS, ROOT_TOOLS, decidePolicy, isSafeAuditCommand } from "./pol
 import { TASKSPEC_EXAMPLE_SENTINEL, buildTaskSpecExample, buildTaskSpecRepair, validateTaskSpec } from "./task.ts";
 
 function blocked(toolName, input = undefined) {
-	return decidePolicy({ toolName, input, isChild: false, disabled: false }).block;
+	return decidePolicy({ toolName, input, isChild: false, disabled: false, legacyDelegation: true }).block;
 }
 
 // R01 — parse the fenced example out of a refusal reason (never a snapshot of
@@ -13,6 +13,76 @@ function exampleFromReason(reason) {
 	assert.ok(match, "refusal carries a fenced JSON example");
 	return JSON.parse(match[1]);
 }
+
+// ==========================================================================
+// Ticket 05 B — post-cutover path (no legacyDelegation flag)
+// ==========================================================================
+
+function cutover(toolName, input = undefined, liveTask = true) {
+	return decidePolicy({ toolName, input, isChild: false, disabled: false, liveTask });
+}
+
+// subagent and bg_wait are refused outright: static reason, no TaskSpec
+// repair, and the input is never read — a valid embedded TaskSpec changes
+// nothing, and neither does the composite {gate, workflow} shape.
+{
+	const spec = buildTaskSpecExample({ toolName: "subagent", input: { agent: "worker" } });
+	const decision = cutover("subagent", { agent: "worker", task: JSON.stringify(spec) });
+	assert.equal(decision.block, true);
+	assert.match(decision.reason, /^Planner-only guard: the parent process may not call 'subagent'\./);
+	assert.ok(decision.reason.includes("planner_delegate"), "the refusal names the replacement tool");
+	assert.equal(decision.reason.includes("```json"), false, "the cutover refusal carries no repair example");
+
+	const composite = cutover("subagent", { agent: "worker", gate: "npm test", workflow: "review" });
+	assert.equal(composite.block, true);
+	assert.equal(composite.reason, decision.reason, "the composite shape gets the same cutover refusal");
+
+	for (const live of [true, false]) {
+		const wait = cutover("bg_wait", { id: "run-1" }, live);
+		assert.equal(wait.block, true, `bg_wait is refused (liveTask=${live})`);
+		assert.match(wait.reason, /may not call 'bg_wait'/);
+		assert.ok(wait.reason.includes("no asynchronous wait"));
+	}
+}
+
+// Live allowlist: inspect, questions, Root tools, safe-shell Git-read.
+assert.equal(cutover("read", { path: "x" }).block, false);
+assert.equal(cutover("question", {}).block, false);
+assert.equal(cutover("questionnaire", {}).block, false);
+assert.equal(cutover("planner_delegate", { role: "worker", objective: "x" }).block, false);
+assert.equal(cutover("planner_verdict", { verdict: "pass", summary: "x" }).block, false);
+assert.equal(cutover("planner_recover", { taskId: "T-20260915-001", runId: "run-1" }).block, false);
+assert.equal(cutover("git_audit", { operation: "status" }).block, false);
+assert.equal(cutover("bash", { command: "git status --short" }).block, false);
+// The async receipt tools lose the live allowlist with the cutover.
+for (const name of ["subagent_wait", "subagent_supervisor", "contact_supervisor"]) {
+	assert.equal(cutover(name, {}).block, true, `${name} is refused post-cutover`);
+}
+const liveRefusal = cutover("write", { path: "x" });
+assert.equal(liveRefusal.block, true);
+assert.ok(liveRefusal.reason.includes("```json"), "non-delegation refusals keep the TaskSpec repair");
+assert.ok(liveRefusal.reason.includes("planner_delegate"), "the repair text names planner_delegate");
+
+// Idle allowlist is IDLE_TOOLS + questions; planner_recover left it.
+for (const name of ["planner_delegate", "planner_verdict", "git_audit", "question", "questionnaire"]) {
+	assert.equal(cutover(name, {}, false).block, false, `${name} is allowed while Idle`);
+}
+const idleRecover = cutover("planner_recover", { taskId: "T-20260915-001", runId: "run-1" }, false);
+assert.equal(idleRecover.block, true, "planner_recover is refused while Idle");
+assert.match(idleRecover.reason, /idle for gather/);
+const idleRead = cutover("read", { path: "x" }, false);
+assert.equal(idleRead.block, true);
+assert.match(idleRead.reason, /idle for gather/);
+assert.ok(idleRead.reason.includes("```json"), "the Idle repair still applies to inspect tools");
+assert.equal(idleRead.reason.includes("bg_wait"), false, "the Idle reason no longer offers bg_wait recovery");
+
+// The isChild/disabled short-circuits precede the flag check.
+assert.equal(decidePolicy({ toolName: "subagent", isChild: true, disabled: false }).block, false);
+assert.equal(decidePolicy({ toolName: "subagent", isChild: false, disabled: true }).block, false);
+assert.equal(
+	decidePolicy({ toolName: "subagent", isChild: true, disabled: false, legacyDelegation: true }).block,
+	false,
+);
 
 assert.equal(blocked("read", { path: "/tmp/a" }), false);
 assert.equal(blocked("contact_supervisor", {}), false);
@@ -27,7 +97,7 @@ assert.equal(blocked("planner_delegate", { role: "worker", objective: "x" }), fa
 assert.equal(AUDIT_TOOLS, ROOT_TOOLS, "AUDIT_TOOLS stays as an alias export for one release");
 assert.equal(blocked("planner_verdict", { verdict: "pass", summary: "looks good" }), false);
 assert.equal(
-	decidePolicy({ toolName: "planner_verdict", input: { verdict: "blocked", summary: "x" }, isChild: false, disabled: true }).block,
+	decidePolicy({ toolName: "planner_verdict", input: { verdict: "blocked", summary: "x" }, isChild: false, disabled: true, legacyDelegation: true }).block,
 	false,
 	"planner_verdict stays unblocked when the guard is off",
 );
@@ -53,15 +123,15 @@ assert.equal(isSafeAuditCommand("git status && rm -rf /tmp/x"), false);
 assert.equal(isSafeAuditCommand("pwd $(touch /tmp/x)"), false);
 
 assert.equal(
-	decidePolicy({ toolName: "write", isChild: true, disabled: false }).block,
+	decidePolicy({ toolName: "write", isChild: true, disabled: false, legacyDelegation: true }).block,
 	false,
 );
 assert.equal(
-	decidePolicy({ toolName: "planner_delegate", isChild: true, disabled: false }).block,
+	decidePolicy({ toolName: "planner_delegate", isChild: true, disabled: false, legacyDelegation: true }).block,
 	false,
 );
 assert.equal(
-	decidePolicy({ toolName: "write", isChild: false, disabled: true }).block,
+	decidePolicy({ toolName: "write", isChild: false, disabled: true, legacyDelegation: true }).block,
 	false,
 );
 
@@ -77,6 +147,7 @@ assert.equal(
 		isChild: false,
 		disabled: false,
 		cwd: "/repo",
+		legacyDelegation: true,
 	});
 	assert.equal(decision.block, true);
 	assert.match(
@@ -103,6 +174,7 @@ assert.equal(
 		isChild: false,
 		disabled: false,
 		cwd: "/repo",
+		legacyDelegation: true,
 	});
 	// read is allowed today; exercise the fill table directly through the
 	// renderer (the Idle gather policy will route read refusals here).
@@ -127,6 +199,7 @@ assert.equal(
 		isChild: false,
 		disabled: false,
 		cwd: "/repo",
+		legacyDelegation: true,
 	});
 	assert.equal(decision.block, true);
 	const example = exampleFromReason(decision.reason);
@@ -200,6 +273,7 @@ assert.equal(
 		input: { workflow: "review" },
 		isChild: false,
 		disabled: false,
+		legacyDelegation: true,
 	});
 	assert.equal(composite.block, true);
 	assert.equal(composite.reason.includes("```json"), false, "composite refusal gains no example JSON");
@@ -211,7 +285,7 @@ assert.equal(
 
 {
 	const idle = (toolName, input, extra = {}) =>
-		decidePolicy({ toolName, input, isChild: false, disabled: false, liveTask: false, cwd: "/repo", ...extra });
+		decidePolicy({ toolName, input, isChild: false, disabled: false, liveTask: false, cwd: "/repo", legacyDelegation: true, ...extra });
 
 	// Idle allowlist: child-delegating subagent, questions, Verdict.
 	assert.equal(idle("subagent", { agent: "worker", task: "x" }).block, false);
@@ -244,7 +318,7 @@ assert.equal(
 
 	// liveTask: true keeps today's allowlist; liveTask undefined stays legacy.
 	const live = (toolName, input) =>
-		decidePolicy({ toolName, input, isChild: false, disabled: false, liveTask: true, cwd: "/repo" });
+		decidePolicy({ toolName, input, isChild: false, disabled: false, liveTask: true, cwd: "/repo", legacyDelegation: true });
 	assert.equal(live("read", { path: "x" }).block, false);
 	assert.equal(live("grep", { pattern: "x" }).block, false);
 	assert.equal(live("git_audit", { operation: "status" }).block, false);

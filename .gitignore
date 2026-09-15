@@ -23,3 +23,6 @@ node_modules/
 
 # local pre-pull backup dumps
 .scratch/.local-backup*/
+
+# ticket 05 B host-verification probe repo (the collected artifacts around it stay committed)
+.scratch/typed-delegation/host-05/probe-repo/

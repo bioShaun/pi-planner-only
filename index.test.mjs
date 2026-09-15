@@ -10,6 +10,8 @@ import { emptyTaskUsage } from "./usage.ts";
 const isolatedAgentDir = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
 process.env.PI_PLANNER_ONLY_SEED_PRICING = "0";
+// ticket 05 → 08: this file drives the pre-cutover subagent chain through the hook; deleted with it.
+process.env.PI_PLANNER_ONLY_LEGACY_SUBAGENT = "1";
 
 delete process.env.PI_SUBAGENT_CHILD;
 const { default: plannerOnly, filterPlannerTools, restorePlannerTools, PLANNER_PROMPT } = await import("./index.ts");
@@ -215,7 +217,7 @@ const blocked = await handlers.get("tool_call")(
 	ctx,
 );
 assert.equal(blocked.block, true);
-assert.match(blocked.reason, /Delegate execution to a worker/);
+assert.match(blocked.reason, /Delegate execution with planner_delegate/);
 
 const allowed = await handlers.get("tool_call")(
 	{ toolName: "bash", input: { command: "git status --short" } },

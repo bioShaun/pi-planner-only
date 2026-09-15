@@ -197,13 +197,13 @@ instead. Explorers stay permissive; validators are warned in both modes.
 Root's gather phase is derived from the Task store for the adapter workspace.
 While a non-final Task is live for this cwd, the ordinary allowlist applies
 (inspect tools, `git_audit`, Verdict, one Delegation at a time). When no Task
-is live (Idle for gather), Root may only start a Delegation, ask a question,
-record a Verdict (`planner_verdict` works on blocked/failed Tasks too), or
-recover one registered pending run through an exact-id `bg_wait` (≤ 60 s
-blocking timeout; prefixes, all-runs requests, unknown fields, and other
-workspaces are refused). `git_audit` is allowed while Idle. Every Idle
-refusal carries a fenced TaskSpec JSON that passes validation, filled from
-the refused call, so the repair is one paste. A standalone Explorer Task — one with its own TaskSpec — closes like a
+is live (Idle for gather), Root may only start a Delegation with
+`planner_delegate`, ask a question, or record a Verdict (`planner_verdict`
+works on blocked/failed Tasks too). `git_audit` is allowed while Idle. Every
+Idle refusal of an inspect, shell, or mutation tool carries a fenced TaskSpec
+JSON that passes validation, filled from the refused call, so the repair is
+one paste; `subagent` and `bg_wait` are refused outright. A standalone
+Explorer Task — one with its own TaskSpec — closes like a
 Worker Task: validated WorkerReport → reviewing → Root `planner_verdict`; a
 read-only zero-change outcome is valid, and a malformed terminal report blocks
 the Task with a repair instruction. Blocked and failed Tasks do not keep

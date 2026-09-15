@@ -10,7 +10,26 @@ export const READ_ONLY_TOOLS = new Set([
 	"ls",
 ]);
 
-export const ORCHESTRATION_TOOLS = new Set([
+/**
+ * Ticket 05 B — the only orchestration-shaped tools still admitted
+ * post-cutover. The asynchronous receipt tools (bg_wait, subagent_wait,
+ * subagent_supervisor, contact_supervisor) served the legacy delegation
+ * chain and are refused outright now.
+ */
+export const QUESTION_TOOLS = new Set(["question", "questionnaire"]);
+
+/** @deprecated Ticket 05 B — kept exported for one release; exactly QUESTION_TOOLS post-cutover. */
+export const ORCHESTRATION_TOOLS = QUESTION_TOOLS;
+
+/**
+ * Ticket 05 B — the Idle-for-gather allowlist. planner_recover only served
+ * the legacy chain, so it is not here (a live Task still admits it via
+ * ROOT_TOOLS; the tool itself is deleted in ticket 08).
+ */
+export const IDLE_TOOLS = new Set(["planner_delegate", "planner_verdict", "git_audit"]);
+
+/** Pre-cutover live allowlist, consulted only by legacyDecidePolicy; ticket 08 deletes it. */
+const LEGACY_ORCHESTRATION_TOOLS = new Set([
 	"bg_wait",
 	"subagent_wait",
 	"subagent_supervisor",
@@ -46,9 +65,12 @@ export interface PolicyInput {
 	/**
 	 * R02 — the exact host run id the orchestrator authorized for this bg_wait
 	 * call (registered pending Delegation, same cwd, not consumed). Absent
-	 * means the call is not recoverable while Idle.
+	 * means the call is not recoverable while Idle. Read only by the legacy
+	 * path; deleted in ticket 08.
 	 */
 	authorizedWaitId?: string;
+	/** Migration flag (ticket 05 → 08): keep the pre-cutover subagent/bg_wait rules. Tests only. */
+	legacyDelegation?: boolean;
 }
 
 export interface PolicyDecision {
@@ -74,7 +96,7 @@ function blockedReason(toolName: string): string {
 	return [
 		`Planner-only guard: the parent process may not call '${toolName}' directly.`,
 		"The parent owns planning, delegation, arbitration, and review only.",
-		"Delegate execution to a worker with the subagent tool. Include the objective, cwd, edit boundary, constraints, acceptance criteria, validation, and required evidence in the task.",
+		"Delegate execution with planner_delegate. Include the objective, cwd, edit boundary, constraints, acceptance criteria, validation, and required evidence in the call.",
 		"When the worker returns, review its evidence with read/grep/find/ls. Delegate any fixes instead of editing or running commands in the parent.",
 		"Use '/planner-only off' for an explicit temporary override.",
 	].join("\n");
@@ -108,19 +130,59 @@ function idleWaitRefusal(input: unknown, authorizedWaitId: string | undefined): 
 
 /**
  * R02 — Idle-for-gather refusal: no inspect tools, no Git-read, no general
- * shell, no mutation, no generic wait/supervisor calls. Root may start a
- * Delegation, ask a question, record a Verdict, recover one exact bound run,
- * or recover one registered pending run through an exact-id bg_wait.
+ * shell, no mutation, no generic wait/supervisor calls. Post-cutover Root may
+ * start a Delegation, record a Verdict, inspect Git with git_audit, or ask a
+ * question. (The legacy path additionally admitted planner_recover and the
+ * exact-id bg_wait recovery; both are deleted in ticket 08.)
  */
 function idleBlockReason(toolName: string): string {
 	return [
 		`Planner-only guard (idle for gather): the parent process may not call '${toolName}' while no Task is live for this cwd.`,
 		"New gather starts with one Delegation: inspect tools, Git-read, and a general shell are refused so they cannot substitute for it.",
-		"Name the skill or lookup in the TaskSpec constraints and let the Worker follow them. Record a Verdict with planner_verdict, ask a question, or recover one known pending run with an exact-id bg_wait.",
+		"Name the skill or lookup in the TaskSpec constraints and let the Worker follow them. Record a Verdict with planner_verdict, inspect Git with git_audit, or ask a question.",
 	].join("\n");
 }
 
+/**
+ * Ticket 05 B — the post-cutover refusal for the legacy delegation surface.
+ * Static text by design: the refused input is a prompt, and this path never
+ * reads it, so no TaskSpec repair is appended.
+ */
+function delegationCutoverReason(toolName: string): string {
+	return [
+		`Planner-only guard: the parent process may not call '${toolName}'.`,
+		"Delegation goes through planner_delegate (role, objective, scope, constraints, acceptanceCriteria, validation); its result carries the WorkerReport in details.",
+		"There is no asynchronous wait: planner_delegate returns when the child finishes.",
+	].join("\n");
+}
+
+/**
+ * Ticket 05 B — post-cutover policy. subagent and bg_wait are refused
+ * outright regardless of input or phase; the live allowlist is inspect +
+ * question + Root tools, and the Idle-for-gather allowlist is IDLE_TOOLS +
+ * question tools. The pre-cutover rules survive only under
+ * PolicyInput.legacyDelegation (tests; ticket 08 deletes them).
+ */
 export function decidePolicy(policy: PolicyInput): PolicyDecision {
+	if (policy.isChild || policy.disabled) return { block: false };
+	if (policy.legacyDelegation) return legacyDecidePolicy(policy);
+
+	const toolName = policy.toolName;
+	if (toolName === "subagent" || toolName === "bg_wait") {
+		return { block: true, reason: delegationCutoverReason(toolName) };
+	}
+	const liveTask = policy.liveTask ?? true;
+	if (liveTask) {
+		if (READ_ONLY_TOOLS.has(toolName) || QUESTION_TOOLS.has(toolName) || ROOT_TOOLS.has(toolName)) return { block: false };
+		if (toolName === "bash" && isSafeAuditCommand(getCommand(policy.input))) return { block: false };
+		return { block: true, reason: appendTaskSpecRepair(blockedReason(toolName), buildTaskSpecRepair({ toolName, input: policy.input, cwd: policy.cwd })) };
+	}
+	if (IDLE_TOOLS.has(toolName) || QUESTION_TOOLS.has(toolName)) return { block: false };
+	return { block: true, reason: appendTaskSpecRepair(idleBlockReason(toolName), buildTaskSpecRepair({ toolName, input: policy.input, cwd: policy.cwd })) };
+}
+
+/** Pre-cutover policy, reachable only via PolicyInput.legacyDelegation; ticket 08 deletes it and its helpers. */
+function legacyDecidePolicy(policy: PolicyInput): PolicyDecision {
 	if (policy.isChild || policy.disabled) return { block: false };
 
 	const toolName = policy.toolName;
@@ -141,7 +203,7 @@ export function decidePolicy(policy: PolicyInput): PolicyDecision {
 	if (liveTask) {
 		if (
 			READ_ONLY_TOOLS.has(toolName) ||
-			ORCHESTRATION_TOOLS.has(toolName) ||
+			LEGACY_ORCHESTRATION_TOOLS.has(toolName) ||
 			ROOT_TOOLS.has(toolName)
 		) {
 			return { block: false };

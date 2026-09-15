@@ -72,7 +72,6 @@ const PLANNER_SAFE_TOOLS = new Set([
 	...READ_ONLY_TOOLS,
 	...ORCHESTRATION_TOOLS,
 	...ROOT_TOOLS,
-	"subagent",
 	"planner_delegate",
 	"git_commit",
 ]);
@@ -1416,6 +1415,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			disabled: isDisabled(),
 			cwd: policyCwd,
 			liveTask: Boolean(orchestrator.store.activeForCwd(policyCwd)),
+			// ticket 05 → 08: the pre-cutover subagent/bg_wait rules survive only
+			// under this test-only flag; the host never sets it.
+			legacyDelegation: process.env.PI_PLANNER_ONLY_LEGACY_SUBAGENT === "1",
 			...(event.toolName === "bg_wait"
 				? { authorizedWaitId: orchestrator.authorizedWaitId(event.input, policyCwd) }
 				: {}),
