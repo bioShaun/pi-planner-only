@@ -1,7 +1,7 @@
 # 06: Reviewer 走结构化返回 —— `planner_delegate` 加 `role=reviewer`，ReviewResult 由 launcher 校验直进 `advanceReview`
 
-Status: ready
-Blocked by: 04（05 A 段已落地，10eeb20）
+Status: implemented（48a5fc5），待验收
+Blocked by: 04（05 A 段已落地，10eeb20；A′ 10d8509 已先把 git_audit 放进 Idle 放行侧）
 Type: task
 
 **What to build：** `runDelegation` 增加 reviewer 分支。Root 对一个已有 WorkerReport 的 Task 调 `planner_delegate({ role: "reviewer", taskId })`，`delegate.ts` 用 `buildReviewRequest` 单向渲染 ReviewRequest（含 Root 自己采的 Git 证据包），经结构化委派 API 派给内置 `reviewer` agent，要求子进程按 **ReviewResult 的 JSON schema** 结构化返回；返回值经身份 / 绑定 / 截断三道既有校验后 `store.recordReview` → `advanceReview({ review })`，结果进 `DelegationOutcome.review` 与 `decision`。**零文本解析**：`extractReviewResult` / `extractReviewRequest` 在本票标 `@deprecated`，08 删。
@@ -184,3 +184,23 @@ node --experimental-strip-types --input-type=module -e 'const {REVIEW_RESULT_SCH
 - **07**：G4（非 completed 终态的 usage）。
 - **08**：删除清单加 `review.test.mjs:114-121`（`extractReviewResult` 用例）、`REVIEWER_PROMPT` 末尾的 JSON 样例段、`orchestrate.ts` 的 `reviewAttribution` 原件。
 - **10**：G1 / G2 / G3 的去留。
+
+## Comments
+
+**2026-09-15 实现回执（Devin，执行方）。** commit `48a5fc5`；diffstat 恰 `delegate.ts` / `delegate.test.mjs` / `review.ts` / `index.ts` 四个文件（`index.test.mjs` 没有 planner_delegate 参数断言，按票面未动）。验收七条全过：`npm run typecheck` exit 0；`npm test` exit 0（37 文件，含 delegate.test.mjs 新增 9 组用例）；`extractReviewResult|extractReviewRequest` 在 delegate.ts 0 命中；`@deprecated` 在 review.ts 恰 2 处（:430/:456）；四个导出命中 :31/:90/:91/:304；`git diff -- '*.ts'` 新增行无 `JSON.parse` / `.match(` / `new RegExp` / `.split(`；`REVIEW_RESULT_SCHEMA` 序列化 1064 字节、无 `~kind`。
+
+四点说明：
+
+1. **R9**：`usage.ts:1633` 的导出确实按 `run.executionId` 反查 `task.executions`（`ledger-store.ts` 无此字段）。reviewer 没有 TaskExecutionRecord，usage 行只带 `toolCallId`（= 宿主 toolCallId）与 `taskId` / `ownerRootSessionId`，`executionId` 不传——避免一条指向不存在 execution 的假绑定。
+2. **R7**：`decideReview` 对「pass 且无 comparison」会径直落 `accept`——stale 块要求 `input.comparison` 非空（review.ts:648），truthFindings 块同理（:730），verdict switch 的 pass 分支（:827）不再问证据。**拒绝保留为 `REVIEW_NO_EXECUTION_EVIDENCE`**，未降级。
+3. **`reviewAttributionOf`** 逐字搬自 `orchestrate.ts:1677-1728`，只读 `task.executions` / `task.findings` / `task.baseEvidence`，无 `this` 以外的依赖；原件未动，08 删。
+4. **包大小**：正例 fixture 的 `buildFreshReviewerTask` 文本 3804 字节（committed repo、单 execution、无 findings 的最小包）。
+
+与票面的偏差（按意图收敛）：
+
+- `REVIEW_RESULT_SCHEMA` 的断言用 `as unknown as`（与 `WORKER_REPORT_SCHEMA` 一致）——`TObject` 与 `Record<string, unknown>` 互相不可直接 `as`。
+- R6.1 新增拒绝码 `REVIEW_INVALID`（票面六个之外）：`result.kind` 非 structured 或 `validateReviewResult` 非空时的二道闸，usage 已落、review 不落。
+- usage 在 `status === "completed"` 之后、所有回程校验之前统一落账一次——等价于票面的「任一失败 usage 先落账」，且覆盖 R7 的 `REVIEW_NO_EXECUTION_EVIDENCE`。
+- 测试 helper 的 `gitRunner` 按调用方 `cwd` 执行（既有 `makeDeps` 忽略 cwd，多 root 探测会错跑主 repo）；fixture 仓库先 seed 一个 commit——unborn HEAD 下 `aRun.finalGitRef` 缺席会让每个包都 attributionIncomplete。
+
+已知缺口（本票明确不补，逐条）：**G1** 新链无 workspace snapshot，`workspaceDigest` 全链缺席，accept 新鲜度只剩 A_run↔当前采样比对；**G2** `augmentExecutionEvidence` / `preparePassFindings` 未搬，带 open finding 的 Task 被 pass 时偏保守（revalidate/blocked 而非 accept）；**G3** request 不设 `model` / `thinking` / `toolBudget` / `timeoutMs`；**G4** 非 completed 终态不落 usage（07 收）。
