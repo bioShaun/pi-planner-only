@@ -717,6 +717,10 @@ function reviewerParams(taskId, overrides = {}) {
 	assert.deepEqual(REVIEW_RESULT_SCHEMA.required, ["taskId", "verdict", "summary", "evidenceFresh", "findings"]);
 	assert.equal(REVIEW_RESULT_SCHEMA.additionalProperties, false);
 	assert.equal(REVIEW_RESULT_SCHEMA.properties.findings.items.additionalProperties, false);
+	// Non-empty parity with validateReviewResult: an empty successorTaskId once
+	// passed the launcher schema and was only refused by R6.1, wasting the run.
+	assert.equal(REVIEW_RESULT_SCHEMA.properties.acknowledgeDrift.properties.successorTaskId.minLength, 1);
+	assert.equal(REVIEW_RESULT_SCHEMA.properties.workspaceDigest.minLength, 1);
 	assert.deepEqual(JSON.parse(JSON.stringify(REVIEW_RESULT_SCHEMA)), REVIEW_RESULT_SCHEMA, "schema is plain JSON data (no ~kind markers)");
 }
 

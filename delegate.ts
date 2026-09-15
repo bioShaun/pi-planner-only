@@ -185,10 +185,13 @@ export const REVIEW_RESULT_SCHEMA = structuredClone(Type.Object(
 			{ additionalProperties: false },
 		)),
 		reportRevision: Type.Optional(Type.Integer({ minimum: 1 })),
-		workspaceDigest: Type.Optional(Type.String()),
+		workspaceDigest: Type.Optional(Type.String({ minLength: 1 })),
 		acknowledgeDrift: Type.Optional(Type.Object(
-			{ successorTaskId: Type.Optional(Type.String()), commit: Type.Optional(Type.Boolean()) },
-			{ additionalProperties: false },
+			{ successorTaskId: Type.Optional(Type.String({ minLength: 1 })), commit: Type.Optional(Type.Boolean()) },
+			{
+				additionalProperties: false,
+				description: "Set only when the reviewed work drifted onto a successor Task — name successorTaskId or set commit=true. Omit entirely when there is no drift.",
+			},
 		)),
 		attributionGapOverride: Type.Optional(Type.Boolean()),
 	},
