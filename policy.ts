@@ -158,7 +158,7 @@ export function decidePolicy(policy: PolicyInput): PolicyDecision {
 	// Idle allowlist: child-delegating subagent, questions, planner_verdict,
 	// planner_recover, and the bounded exact-id bg_wait recovery. Everything else is refused
 	// with the pasteable TaskSpec example (R01).
-	if (toolName === "planner_delegate" || toolName === "planner_verdict" || toolName === "planner_recover" || toolName === "question" || toolName === "questionnaire") {
+	if (toolName === "planner_delegate" || toolName === "planner_verdict" || toolName === "git_audit" || toolName === "planner_recover" || toolName === "question" || toolName === "questionnaire") {
 		return { block: false };
 	}
 	if (toolName === "bg_wait") {

@@ -201,9 +201,9 @@ is live (Idle for gather), Root may only start a Delegation, ask a question,
 record a Verdict (`planner_verdict` works on blocked/failed Tasks too), or
 recover one registered pending run through an exact-id `bg_wait` (≤ 60 s
 blocking timeout; prefixes, all-runs requests, unknown fields, and other
-workspaces are refused). Every Idle refusal carries a fenced TaskSpec JSON
-that passes validation, filled from the refused call, so the repair is one
-paste. A standalone Explorer Task — one with its own TaskSpec — closes like a
+workspaces are refused). `git_audit` is allowed while Idle. Every Idle
+refusal carries a fenced TaskSpec JSON that passes validation, filled from
+the refused call, so the repair is one paste. A standalone Explorer Task — one with its own TaskSpec — closes like a
 Worker Task: validated WorkerReport → reviewing → Root `planner_verdict`; a
 read-only zero-change outcome is valid, and a malformed terminal report blocks
 the Task with a repair instruction. Blocked and failed Tasks do not keep

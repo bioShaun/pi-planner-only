@@ -220,9 +220,10 @@ assert.equal(
 	assert.equal(idle("planner_verdict", { verdict: "blocked", summary: "x" }).block, false);
 	assert.equal(idle("planner_recover", { taskId: "T-20260911-001", runId: "run-001" }).block, false);
 	assert.equal(idle("planner_delegate", { role: "worker", objective: "x" }).block, false);
+	assert.equal(idle("git_audit", { operation: "status" }).block, false);
 
 	// Everything else is refused with the pasteable TaskSpec example.
-	for (const toolName of ["read", "grep", "find", "ls", "git_audit", "bash", "write", "edit", "subagent_wait", "subagent_supervisor", "custom_tool"]) {
+	for (const toolName of ["read", "grep", "find", "ls", "bash", "write", "edit", "subagent_wait", "subagent_supervisor", "custom_tool"]) {
 		const input = toolName === "bash" ? { command: "git status" } : { path: "docs/x.md" };
 		const decision = idle(toolName, input);
 		assert.equal(decision.block, true, `${toolName} is refused while Idle for gather`);
