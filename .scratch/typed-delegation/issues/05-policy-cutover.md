@@ -1,6 +1,6 @@
 # 05: Policy 切换 —— Root 只走 `planner_delegate`，旧拦截链不可达
 
-Status: ready
+Status: A 段 verified（10eeb20）；B 段 ready，Blocked by 06
 Blocked by: 04（A 段）；04, 06（B 段，见「依赖修正」）
 Type: task
 
@@ -249,3 +249,17 @@ B 段：验收七条命令原样输出；`policy.ts` 全文（新 `decidePolicy`
 
 - 10 的宿主验收要对账检查 3 采到的 `ownerRootSessionId`（04 承接项）。
 - `planner_recover` 拒绝→throw 仍无测试覆盖（09 保留意见 2）：B4 的第 4 条会覆盖它在 Idle 被策略拒绝的路径，但工具自身 `throw` 的路径仍缺一条 `assert.rejects`——若执行方顺手在 `policy-cutover.test.mjs` 里加，交回时说明；否则留给 08 在删工具时一并注销。
+
+## Comments
+
+**2026-09-15 A 段验收（Claude，审核方）。判定：通过。** 四条验收命令在审核方本机独立复跑：`npm run typecheck` exit 0；`npm test` exit 0（fail 0 ×4 段，37 文件）；`grep -n planner_delegate policy.ts` 命中 `ROOT_TOOLS`（:27）与 Idle 放行（:161）两处；`grep -n auxiliary delegate.ts` 命中新增 validator 行（:304）与既有过滤（:351）；`PLANNER_PROMPT` 实测 1785 字节。`git show --stat 10eeb20` 恰好六个文件。
+
+逐点核对：
+- `ROOT_TOOLS` 在 `policy.ts` 定义处加，没有在适配层 add；Idle 放行列表加在既有 `if` 上，legacy 结构未动，B 段改名 `legacyDecidePolicy` 时不会有冲突。
+- `auxiliary` 一行与票面逐字一致；`delegate.test.mjs` 三处断言（worker / standalone explorer 为 undefined、validator 为 true）覆盖了 04 承接项的正反两面。
+- 归因：hook 名单加 `planner_delegate`，`input.taskId` 经 `canonicalTaskId` 进 `rootTurnTaskIds`；execute 返回前 `rootTurnTaskIds.add(outcome.task.taskId)` 补在 `index.ts:1154`，确认 04 确实没做。新用例放文件末尾（:4662 起），`sessionEntries` 先清空再断言 `toolCallIds` / `taskIds`，不扰动前面的顺序断言——处理得当。
+- 两处偏离（`:254-257` 的 `before_agent_start` 段断言、末尾新用例）均按票面意图收敛，接受。
+- `PLANNER_PROMPT` 四句替换与票面一致；1785 字节，余量 15。
+
+不阻塞的保留意见（一条，**建议在 B 段之前先落一个三行的 A′ commit**）：
+1. **prompt 与策略在 A 段窗口内不一致。** 新 Gather 句写「planner_verdict and git_audit stay allowed」，但 `git_audit` 在 Idle 下仍被拒（`policy.test.mjs` 的 Idle 拒绝循环里它还在名单里；审核方实测 `decidePolicy({toolName:"git_audit", liveTask:false})` → block=true）。Idle 放行 `git_audit` 本来是 B 段的事，但 B 段等 06，宿主在这个窗口里会按 prompt 去调 `git_audit` 然后吃到带 repair 的拒绝。这是票面自己的顺序问题，不是执行方的错。修法：`policy.ts:161` 的 Idle 放行加 `git_audit`；`policy.test.mjs` Idle 循环把 `git_audit` 从拒绝名单挪到放行断言；README「Idle gather policy」段加一句「`git_audit` is allowed while Idle.」。三行，单独 commit，B 段的 `IDLE_TOOLS` 定义时自然吸收。
