@@ -29,19 +29,35 @@ import {
 } from "./subagent-delegation-contract.ts";
 import type { GitRunner } from "./git-audit.ts";
 import type { ConcurrencyController, ConcurrencyReservation } from "./concurrency.ts";
-import { captureEvidence, compareEvidence, compareExecutionTruth } from "./evidence.ts";
+import { captureEvidence, captureReviewEvidencePacket, compareEvidence, compareExecutionTruth, describeComparison } from "./evidence.ts";
 import type { ExecutionTruthComparison } from "./evidence.ts";
 import { buildTaskPacket, ROLE_AGENTS } from "./roles.ts";
 import { createTaskSpec, normalizeWorkspaceIdentity } from "./task.ts";
 import type { TaskRecord, TaskStore } from "./task.ts";
 import { validateWorkerReportIdentity } from "./report.ts";
-import { advanceReview } from "./review.ts";
-import type { ReviewDecision } from "./review.ts";
+import {
+	advanceReview,
+	bindReviewResultFromRequest,
+	buildFreshReviewerTask,
+	FINDING_CATEGORIES,
+	FINDING_SEVERITIES,
+	REVIEW_VERDICTS,
+	reviewAttributionOf,
+	summarizeFindings,
+	validateReviewResult,
+	validateReviewResultBinding,
+	validateReviewResultIdentity,
+} from "./review.ts";
+import type { FreshReviewerTaskInput, ReviewDecision } from "./review.ts";
 import { childUsageFromValue } from "./usage.ts";
 import type { UsageLedger } from "./usage.ts";
-import { isFinalTaskState } from "./types.ts";
+import { isFinalTaskState, isTerminalTaskState } from "./types.ts";
 import type {
 	DelegationKind,
+	FindingCategory,
+	FindingSeverity,
+	ReviewResult,
+	ReviewVerdict,
 	TaskFinding,
 	TaskSpec,
 	WorkerReport,
@@ -59,8 +75,8 @@ export const PLANNER_DELEGATE_PARAMETERS = Type.Object({
 			description: "Existing Task id (T-YYYYMMDD-NNN) to re-delegate. A new Task is minted when omitted.",
 		}),
 	),
-	role: Type.Union([Type.Literal("worker"), Type.Literal("explorer"), Type.Literal("validator")], {
-		description: "Delegation role. worker implements; explorer does read-only recon (scout agent); validator runs an oracle verdict.",
+	role: Type.Union([Type.Literal("worker"), Type.Literal("explorer"), Type.Literal("validator"), Type.Literal("reviewer")], {
+		description: "Delegation role. worker implements; explorer does read-only recon (scout agent); validator runs an oracle verdict; reviewer reviews an existing Task's latest WorkerReport — taskId is required and objective / scope / constraints / acceptanceCriteria / validation / instructions are ignored, the Task's stored spec is the reviewer's context.",
 	}),
 	objective: Type.String({ minLength: 1, description: "What the child must accomplish." }),
 	cwd: Type.Optional(
@@ -144,6 +160,41 @@ export const WORKER_REPORT_SCHEMA = structuredClone(Type.Object(
 	{ additionalProperties: false },
 )) as unknown as SubagentDelegationJsonSchemaObject;
 
+/**
+ * ReviewResult JSON schema (types.ts) as plain JSON data — only the fields a
+ * reviewer child may write; Root-side audit stamps (appliedDecision,
+ * refusalKind, source, …) are not in the contract. `Type.Unsafe({enum})`
+ * keeps the enum a flat array so tests can deepEqual it against the same
+ * exported constants `validateReviewResult` checks. Same structuredClone
+ * rationale as WORKER_REPORT_SCHEMA above.
+ */
+export const REVIEW_RESULT_SCHEMA = structuredClone(Type.Object(
+	{
+		taskId: Type.String({ pattern: TASK_ID_PATTERN }),
+		verdict: Type.Unsafe<ReviewVerdict>({ type: "string", enum: [...REVIEW_VERDICTS] }),
+		summary: Type.String(),
+		evidenceFresh: Type.Boolean(),
+		findings: Type.Array(Type.Object(
+			{
+				severity: Type.Unsafe<FindingSeverity>({ type: "string", enum: [...FINDING_SEVERITIES] }),
+				category: Type.Unsafe<FindingCategory>({ type: "string", enum: [...FINDING_CATEGORIES] }),
+				description: Type.String({ minLength: 1 }),
+				requestedChange: Type.Optional(Type.String()),
+				evidence: Type.Optional(Type.Array(Type.String())),
+			},
+			{ additionalProperties: false },
+		)),
+		reportRevision: Type.Optional(Type.Integer({ minimum: 1 })),
+		workspaceDigest: Type.Optional(Type.String()),
+		acknowledgeDrift: Type.Optional(Type.Object(
+			{ successorTaskId: Type.Optional(Type.String()), commit: Type.Optional(Type.Boolean()) },
+			{ additionalProperties: false },
+		)),
+		attributionGapOverride: Type.Optional(Type.Boolean()),
+	},
+	{ additionalProperties: false },
+)) as unknown as SubagentDelegationJsonSchemaObject;
+
 export interface DelegationDeps {
 	store: TaskStore;
 	gitRunner: GitRunner;
@@ -159,6 +210,7 @@ export interface DelegationOutcome {
 	executionId: string;
 	runId?: string;
 	report?: WorkerReport;            // launcher 校验过的原物，零改动
+	review?: ReviewResult;            // reviewer 分支：绑定后的 ReviewResult
 	comparison?: ExecutionTruthComparison;
 	decision?: ReviewDecision;        // advanceReview 的结果
 	usage?: SubagentDelegationUsage;
@@ -216,6 +268,13 @@ export async function runDelegation(
 	const executionId = options.executionId ?? requestId;
 	const warnings: string[] = [];
 
+	// A reviewer call only exists over an existing Task — minting one would
+	// leave nothing to review. Checked before binding so the refusal never
+	// consumes an id.
+	if (role === "reviewer" && !params.taskId) {
+		throw new DelegationRefused("TASK_REQUIRED", "planner_delegate refused: role=reviewer requires taskId of the Task under review");
+	}
+
 	// 1. Task binding: an explicit id binds the existing record verbatim —
 	//    its stored spec is never rewritten (ticket 53); this call's spec
 	//    only goes into the packet.
@@ -233,6 +292,11 @@ export async function runDelegation(
 			);
 		}
 		task = record;
+		// The reviewer fork: binding is identical, but the call mints no spec
+		// of its own — the stored spec is the reviewer's read-only context.
+		if (role === "reviewer") {
+			return runReviewInvocation(deps, task, { requestId, executionId }, options.signal);
+		}
 		thisSpec = specFromParams(params, record.taskId, record.cwd || effectiveCwd);
 	} else {
 		// nextTaskId() already claims the id (process-local sequence or the
@@ -462,6 +526,210 @@ export async function runDelegation(
 	}
 }
 
+/**
+ * role=reviewer: one invocation over an existing Task, never an execution —
+ * no write lock, no transition, no A_run, no TaskExecutionRecord. The
+ * ReviewRequest is rendered one-way from the stored spec, the latest
+ * WorkerReport, and Root's own bounded Git packet; the launcher-validated
+ * ReviewResult comes back over the same structured channel and feeds
+ * `advanceReview` directly (ticket 06). `packetBinding` stays a local: in
+ * this chain request and response share one function scope, so the
+ * DelegationRecord round-trip the legacy chain needed is not required.
+ */
+async function runReviewInvocation(
+	deps: DelegationDeps,
+	task: TaskRecord,
+	ids: { requestId: string; executionId: string },
+	signal: AbortSignal | undefined,
+): Promise<DelegationOutcome> {
+	const warnings: string[] = [];
+
+	// R1 — only a non-terminal Task with a WorkerReport is reviewable. The
+	//    no-report refusal moved forward from the legacy return path: with no
+	//    report there is no revision to bind and nothing to judge.
+	if (isTerminalTaskState(task.state)) {
+		throw new DelegationRefused(
+			"REVIEW_TERMINAL",
+			`planner_delegate refused: Task ${task.taskId} is ${task.state}; there is nothing left to review`,
+		);
+	}
+	if (task.reports.length === 0) {
+		throw new DelegationRefused(
+			"REVIEW_NO_REPORT",
+			`planner_delegate refused: Task ${task.taskId} has no WorkerReport to review`,
+		);
+	}
+
+	// R3 — build the ReviewRequest: stored spec (read-only), latest report,
+	//    the revision/digest the verdict binds to, and Root's bounded Git
+	//    evidence packet (reviewer children carry no git_audit).
+	const attribution = reviewAttributionOf(task);
+	const roots = task.spec?.additionalWorktreeRoots;
+	const git = await captureReviewEvidencePacket(deps.gitRunner, task.cwd, task.lastComparison, {
+		...(attribution.baselineRef ? { baselineRef: attribution.baselineRef } : {}),
+		...(roots?.length ? { additionalWorktreeRoots: roots } : {}),
+		...(attribution.rounds.length > 0 ? { rounds: attribution.rounds } : {}),
+		...(attribution.unresolvedFindings.length > 0 ? { unresolvedFindings: attribution.unresolvedFindings } : {}),
+		...(attribution.attributionIncomplete ? { attributionIncomplete: attribution.attributionIncomplete } : {}),
+	});
+	const report = task.reports.at(-1)!;
+	const packetInput: FreshReviewerTaskInput = {
+		taskId: task.taskId,
+		...(task.spec ? { spec: task.spec } : {}),
+		report,
+		reportRevision: task.reports.length,
+		...(task.snapshot ? { workspaceDigest: task.snapshot.digest } : {}),
+		...(task.lastComparison ? { evidence: describeComparison(task.lastComparison) } : {}),
+		git,
+	};
+	const packetBinding = {
+		reportRevision: task.reports.length,
+		...(task.snapshot ? { workspaceDigest: task.snapshot.digest } : {}),
+	};
+	const packetTruncated = git.patchTruncated === true || (git.patchOmittedPaths?.length ?? 0) > 0;
+
+	// R4 — the launcher schema-checks the child's ReviewResult.
+	const request: SubagentDelegationRequest = {
+		requestId: ids.requestId,
+		ownerRunId: deps.ownerRunId,
+		nodeId: task.taskId,
+		agent: ROLE_AGENTS.reviewer ?? "reviewer",
+		task: buildFreshReviewerTask(packetInput),
+		context: "fresh",
+		cwd: task.cwd,
+		result: { kind: "structured", schema: REVIEW_RESULT_SCHEMA },
+	};
+	// A launch throw propagates as-is: a reviewer failure never moves the Task.
+	const response = await deps.launch(request, signal);
+
+	// R5 — non-completed statuses are refusals, not outcomes; nothing is
+	//    transitioned and (G4) no usage is recorded.
+	if (response.status !== "completed") {
+		throw new DelegationRefused(
+			response.status.toUpperCase(),
+			`planner_delegate ${task.taskId} review ${response.status}: ${response.error ?? "no error text"} (run=${"runId" in response ? response.runId : "none"})`,
+		);
+	}
+	const runId = response.runId;
+
+	// R9 — usage lands before any return-side refusal so every refused
+	//    verdict is still accounted. `executionId` stays unset: the reviewer
+	//    has no TaskExecutionRecord for a consumer to resolve (the usage
+	//    export joins run.executionId against task.executions); toolCallId
+	//    still carries the host call identity.
+	if (response.usage) {
+		const child = childUsageFromValue(response.usage, "reviewer", {
+			...(runId ? { runId } : {}),
+			toolCallId: ids.executionId,
+			...(response.agent ? { agent: response.agent } : {}),
+			...(response.model ? { model: response.model } : {}),
+			...(response.thinking ? { thinking: response.thinking } : {}),
+			source: "sync-details",
+			pending: false,
+			taskId: task.taskId,
+			ownerRootSessionId: deps.ownerRunId,
+		});
+		if (child) deps.usage.recordChild(task.taskId, child);
+	}
+
+	// R6 — identity, binding, packet completeness. Every failure below leaves
+	//    usage recorded, no review recorded, the Task unchanged.
+	const value = response.result?.kind === "structured" ? response.result.value : undefined;
+	const shapeErrors = validateReviewResult(value);
+	if (response.result?.kind !== "structured" || shapeErrors.length > 0) {
+		throw new DelegationRefused(
+			"REVIEW_INVALID",
+			`planner_delegate refused: reviewer result for ${task.taskId} failed ReviewResult validation: ${shapeErrors.join("; ") || "not a structured value"}`,
+		);
+	}
+	const review: ReviewResult = { ...(value as ReviewResult), source: "reviewer" };
+	const identityErrors = validateReviewResultIdentity(review, task.taskId);
+	if (identityErrors.length > 0) {
+		throw new DelegationRefused("REVIEW_IDENTITY", `planner_delegate refused: ${identityErrors.join("; ")}`);
+	}
+	// Re-read after the launch: the verdict binds against the Task as it is
+	// now; omitted bindings are filled from the packet the reviewer saw.
+	const fresh = deps.store.require(task.taskId);
+	const currentBinding = {
+		reportRevision: fresh.reports.length,
+		...(fresh.snapshot ? { workspaceDigest: fresh.snapshot.digest } : {}),
+	};
+	const bound = bindReviewResultFromRequest(review, packetBinding);
+	const bindingErrors = validateReviewResultBinding(bound, currentBinding);
+	if (bindingErrors.length > 0) {
+		throw new DelegationRefused("REVIEW_BINDING", `planner_delegate refused: ${bindingErrors.join("; ")}`);
+	}
+	if (bound.verdict === "pass" && packetTruncated) {
+		throw new DelegationRefused(
+			"REVIEW_PACKET_TRUNCATED",
+			`planner_delegate refused: the review packet for ${task.taskId} was truncated (patchTruncated or omitted patch paths); a pass over a partial packet is not eligible`,
+		);
+	}
+
+	// R7 — accept-time re-sample for every verdict; only a pass can be
+	//    stopped by it. scopePaths mirrors the worker branch's shape, sourced
+	//    from the Task's stored spec and recorded truth paths.
+	const scopePaths = [...new Set([
+		...(task.spec?.scope?.allowedPaths ?? []),
+		...task.executions.flatMap((item) => item.truthPaths ?? []),
+	])];
+	const current = await captureEvidence(deps.gitRunner, {
+		cwd: task.cwd,
+		taskId: task.taskId,
+		workerRunId: `review-${ids.executionId}`,
+		...(roots?.length ? { additionalWorktreeRoots: roots } : {}),
+		...(scopePaths.length > 0 ? { scopePaths } : {}),
+	});
+	const latest = fresh.executions
+		.filter((item) => !item.auxiliary && !item.reportOnly && item.reportIndex === fresh.reports.length - 1)
+		.at(-1);
+	const comparison = latest
+		? compareEvidence(latest.aRun, current, report, {
+			...(fresh.spec?.scope ? { scope: fresh.spec.scope } : {}),
+			...(roots?.length ? { additionalWorktreeRoots: roots } : {}),
+			...(latest.readOnly ? { readOnly: true } : {}),
+		})
+		: undefined;
+	if (comparison) deps.store.setLastComparison(task.taskId, comparison);
+	if (!latest) {
+		// decideReview accepts a pass with no comparison at all, so the
+		// missing per-execution binding must refuse here — a pass over
+		// unverifiable material is never eligible.
+		warnings.push(`report revision ${fresh.reports.length} has no per-execution evidence record; a pass cannot be judged fresh`);
+		if (bound.verdict === "pass") {
+			throw new DelegationRefused(
+				"REVIEW_NO_EXECUTION_EVIDENCE",
+				`planner_delegate refused: report revision ${fresh.reports.length} of ${task.taskId} has no per-execution A_run/C_report binding; a pass cannot be judged fresh`,
+			);
+		}
+	}
+
+	// R8 — record then decide, mirroring the legacy return path.
+	const freshReport = fresh.reports.at(-1)!;
+	deps.store.recordReview(task.taskId, bound);
+	const { task: reviewed, decision } = advanceReview({
+		store: deps.store,
+		taskId: task.taskId,
+		report: freshReport,
+		...(comparison ? { comparison } : {}),
+		review: bound,
+	});
+	deps.store.annotateReviewDecision(task.taskId, decision.action);
+	if (decision.action === "revalidate" && decision.evidenceKey) {
+		deps.store.markRevalidationGranted(task.taskId, decision.evidenceKey);
+	}
+
+	return {
+		task: reviewed,
+		executionId: ids.executionId,
+		...(runId ? { runId } : {}),
+		review: bound,
+		decision,
+		...(response.usage ? { usage: response.usage } : {}),
+		warnings,
+	};
+}
+
 /** Text the Root reads; all contract fields stay in `details`. */
 export function renderDelegationOutcome(outcome: DelegationOutcome): string {
 	const lines = [
@@ -471,6 +739,10 @@ export function renderDelegationOutcome(outcome: DelegationOutcome): string {
 	if (outcome.decision) {
 		lines.push(`review: ${outcome.decision.action} -> ${outcome.decision.nextState} — ${outcome.decision.reason}`);
 		for (const guidance of outcome.decision.guidance) lines.push(`guidance: ${guidance}`);
+	}
+	if (outcome.review) {
+		lines.push(`review: ${outcome.review.verdict} (evidenceFresh: ${outcome.review.evidenceFresh}) — ${outcome.review.summary}`);
+		lines.push(...summarizeFindings(outcome.review.findings));
 	}
 	for (const warning of outcome.warnings) lines.push(`warning: ${warning}`);
 	return lines.join("\n");

@@ -15,6 +15,7 @@ import type {
 	ReviewFinding,
 	ReviewRequest,
 	ReviewResult,
+	ReviewRoundAttribution,
 	ReviewVerdict,
 	TaskCompletionKind,
 	TaskSpec,
@@ -27,7 +28,7 @@ import { jsonCandidates, stableStringify } from "./report.ts";
 import { TASK_TRANSITIONS } from "./task.ts";
 import type { TaskRecord, TaskStore } from "./task.ts";
 
-const REVIEW_VERDICTS: readonly ReviewVerdict[] = ["pass", "request_changes", "blocked"];
+export const REVIEW_VERDICTS: readonly ReviewVerdict[] = ["pass", "request_changes", "blocked"];
 
 export type ReviewAction =
 	| "accept"
@@ -86,8 +87,8 @@ export function evidenceStateKey(comparison: EvidenceComparison, reportRevision:
 	});
 }
 
-const FINDING_SEVERITIES: readonly FindingSeverity[] = ["blocker", "major", "minor", "info"];
-const FINDING_CATEGORIES: readonly FindingCategory[] = [
+export const FINDING_SEVERITIES: readonly FindingSeverity[] = ["blocker", "major", "minor", "info"];
+export const FINDING_CATEGORIES: readonly FindingCategory[] = [
 	"correctness",
 	"scope",
 	"test",
@@ -291,6 +292,68 @@ export function bindReviewResultFromRequest(
 	};
 }
 
+/**
+ * E01 — the cumulative attribution a Fresh Reviewer must see: per-round
+ * windows, the earliest trustworthy baseline ref, and the findings that
+ * survived earlier rounds. A chain with missing material is truncated, so
+ * a PASS over it is ineligible.
+ *
+ * Ticket 06 — pure-function copy of the legacy orchestrate.ts private method
+ * (`reviewAttribution`); the original is deleted in ticket 08.
+ */
+export function reviewAttributionOf(task: TaskRecord): {
+	baselineRef?: string;
+	rounds: ReviewRoundAttribution[];
+	unresolvedFindings: string[];
+	attributionIncomplete?: string;
+} {
+	const executions = task.executions.filter((execution) => !execution.auxiliary && !execution.reportOnly);
+	const rounds: ReviewRoundAttribution[] = executions.map((execution) => ({
+		executionId: execution.executionId,
+		role: execution.kind,
+		...(execution.runId ? { runId: execution.runId } : {}),
+		...(execution.reportIndex !== undefined ? { reportRevision: execution.reportIndex + 1 } : {}),
+		...(execution.aRun.finalGitRef ? { aRef: execution.aRun.finalGitRef } : {}),
+		...(execution.cReport?.finalGitRef ? { cRef: execution.cReport.finalGitRef } : {}),
+		attributedFiles: execution.truthPaths ?? [],
+		...(execution.executionChangedPaths?.length ? { executionChangedFiles: execution.executionChangedPaths } : {}),
+		...(execution.committedPaths?.length ? { committedFiles: execution.committedPaths } : {}),
+		...(execution.observedExternalPaths?.length ? { observedExternalFiles: execution.observedExternalPaths } : {}),
+		undeclaredFiles: execution.undeclaredPaths ?? [],
+		outOfScopeFiles: execution.outOfScopePaths ?? [],
+		...(execution.freshness
+			? {
+				freshness: execution.freshness.fresh
+					? "fresh" as const
+					: execution.freshness.verifiable ? "stale" as const : "unknown" as const,
+			}
+			: {}),
+	}));
+	const incomplete: string[] = [];
+	if (executions.length === 0) {
+		incomplete.push("no per-execution attribution record exists for this Task");
+	}
+	for (const execution of executions) {
+		if (!execution.aRun.finalGitRef) incomplete.push(`execution ${execution.executionId} has no A_run ref`);
+		if (!execution.cReport) incomplete.push(`execution ${execution.executionId} has no C_report sample`);
+	}
+	const baselineRef = executions.find((execution) => execution.aRun.finalGitRef)?.aRun.finalGitRef
+		?? task.baseEvidence?.finalGitRef;
+	const unresolvedFindings = task.findings
+		.filter((finding) => finding.status === "open")
+		.map((finding) =>
+			`${finding.kind}: ${finding.paths.join(", ") || "revised workspace"}${
+				finding.evidenceResolvedBy ? " (restore proven; review confirmation pending)" : ""
+			}`,
+		);
+	return {
+		...(baselineRef ? { baselineRef } : {}),
+		rounds,
+		unresolvedFindings,
+		...(incomplete.length > 0 ? { attributionIncomplete: incomplete.join("; ") } : {}),
+	};
+}
+
 export interface FreshReviewerTaskInput {
 	taskId: string;
 	/** The Task's original spec, shown read-only. Never a reviewer spec. */
@@ -364,6 +427,7 @@ export function validateReviewRequest(value: unknown): string[] {
  * packet is the only place the reviewer's task identity is declared, so a
  * malformed one is ignored rather than guessed at.
  */
+/** @deprecated ticket 06 — legacy text path (orchestrate.ts only); deleted in ticket 08. */
 export function extractReviewRequest(text: string): ReviewRequest | undefined {
 	if (typeof text !== "string" || !text.trim()) return undefined;
 	for (const candidate of jsonCandidates(text)) {
@@ -389,6 +453,7 @@ export function extractReviewRequest(text: string): ReviewRequest | undefined {
  * Pull a ReviewResult out of a fresh reviewer's output. Reviewers return a
  * different shape than workers, so this is keyed on `verdict` + `findings`.
  */
+/** @deprecated ticket 06 — legacy text path (orchestrate.ts only); deleted in ticket 08. */
 export function extractReviewResult(text: string): { review?: ReviewResult; error?: string } {
 	if (typeof text !== "string" || !text.trim()) return { error: "reviewer returned no output" };
 

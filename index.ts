@@ -1128,12 +1128,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		description: [
 			"Delegate one TaskSpec to a leaf agent through the structured delegation API.",
 			"Returns the launcher-validated WorkerReport in details.report; prose output is never parsed.",
-			"Root should prefer this tool over subagent for worker, explorer, and validator tasks.",
+			"Root should prefer this tool over subagent for worker, explorer, validator, and reviewer tasks.",
 		].join(" "),
 		promptSnippet: "planner_delegate: typed TaskSpec delegation with a structured WorkerReport result",
 		promptGuidelines: [
 			"Prefer planner_delegate over subagent: supply the full TaskSpec fields, not a prose brief.",
 			"The child's WorkerReport arrives schema-validated in details.report; a non-completed status is a tool error, not a parse failure.",
+			"role=reviewer takes taskId and reviews the Task's latest WorkerReport; the launcher-validated ReviewResult arrives in details.review.",
 		],
 		parameters: PLANNER_DELEGATE_PARAMETERS,
 		async execute(toolCallId, params: PlannerDelegateParams, signal, _onUpdate, ctx) {
@@ -1161,6 +1162,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					state: outcome.task.state,
 					decision: outcome.decision?.action,
 					report: outcome.report,
+					review: outcome.review,
 					usage: outcome.usage,
 					warnings: outcome.warnings,
 				},
