@@ -1,6 +1,6 @@
 # 06: Reviewer 走结构化返回 —— `planner_delegate` 加 `role=reviewer`，ReviewResult 由 launcher 校验直进 `advanceReview`
 
-Status: verified（48a5fc5，审核 2026-09-15）；宿主 3b 保留意见 1 条（launcher schema 松于 validateReviewResult，见 Comments 末）
+Status: verified（48a5fc5，审核 2026-09-15）；宿主 3b 保留意见已在 49f3caa 消化（launcher schema 与 validateReviewResult 对齐，见 Comments 末）
 Blocked by: 无（04、05 A 段均已落地；05 B 段的宿主检查 3b 在 05 票内跟进）
 Type: task
 
@@ -240,3 +240,5 @@ node --experimental-strip-types --input-type=module -e 'const {REVIEW_RESULT_SCH
 保留意见（不阻塞 verified，建议 08 之前修，一行）：`REVIEW_RESULT_SCHEMA` 比 `validateReviewResult` 松——`acknowledgeDrift.successorTaskId` 应为 `Type.String({ minLength: 1 })`，`workspaceDigest` / `taskId` 同理可加 minLength；validator 的「name successorTaskId 或 commit=true」在 JSON schema 里表达不了，所以 R6.1 仍要留。另可在 schema 或 `REVIEWER_PROMPT` 里说明「无 drift 就省略 `acknowledgeDrift`」，避免模型把可选对象填成空值白跑一次 reviewer。
 
 宿主数据补两条：reviewer 包（`buildFreshReviewerTask` 文本）在真实 Task 上 4857 字节（fixture 3804）；Root 照 D2 填了被忽略字段，没有困惑。
+
+**2026-09-15 保留意见消化（Devin）。** commit `49f3caa`：`delegate.ts` `REVIEW_RESULT_SCHEMA` 的 `acknowledgeDrift.successorTaskId` 与 `workspaceDigest` 加 `minLength: 1`（与 `validateReviewResult` 的非空口径对齐；`taskId` 已有 `TASK_ID_PATTERN`，无需再加），`acknowledgeDrift` 对象加 `description` 说明「无 drift 就整个省略」；「name successorTaskId 或 commit=true」的 OR 仍表达不了，R6.1 保留。`delegate.test.mjs` schema 镜像块新增两条 `minLength` 断言钉住 parity。`npm run typecheck` 与 `npm test`（38 文件）全绿。
