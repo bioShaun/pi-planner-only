@@ -3,33 +3,8 @@ import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtempSync, mkdirSync, symlinkSync, rmSync, writeFileSync } from "node:fs";
-import {
-	TaskStore,
-	TaskIdAllocator,
-	createTaskId,
-	createTaskSpec,
-	isExplicitlyNoValidation,
-	extractTaskSpec,
-	extractTaskSpecDetails,
-	findWriterConflict,
-	isExecutingStale,
-	validateTaskSpec,
-	VALIDATION_COMMANDS_REQUIRED_ERROR,
-	canTransition,
-	TASKSPEC_CHARACTERISTIC_FIELDS,
-	TASKSPEC_FORBIDDEN_EXECUTION_CONTROLS,
-	buildTaskSpecExample,
-	buildTaskSpecRepair,
-	appendTaskSpecRepair,
-} from "./task.ts";
-import {
-	compactWorkerReport,
-	extractWorkerReport,
-	isWorkerReport,
-	renderWorkerReport,
-	stableStringify,
-	validateWorkerReport,
-} from "./report.ts";
+import { TaskStore, TaskIdAllocator, createTaskId, createTaskSpec, isExplicitlyNoValidation, isExecutingStale, validateTaskSpec, VALIDATION_COMMANDS_REQUIRED_ERROR, canTransition, TASKSPEC_CHARACTERISTIC_FIELDS, TASKSPEC_FORBIDDEN_EXECUTION_CONTROLS, buildTaskSpecExample, buildTaskSpecRepair, appendTaskSpecRepair } from "./task.ts";
+import { compactWorkerReport, isWorkerReport, renderWorkerReport, stableStringify, validateWorkerReport } from "./report.ts";
 import { EXECUTING_STALE_MS, MAX_WORKER_REPORT_CHARS, WORKER_REPORT_VERSION } from "./types.ts";
 
 const cwd = process.cwd();
@@ -217,9 +192,6 @@ assert.ok(validateTaskSpec({ ...spec, cumulativeBudget: "not-an-object" }).inclu
 assert.ok(validateTaskSpec({ ...spec, cumulativeBudget: { tokens: 0 } }).includes("cumulativeBudget.tokens must be a positive finite number"));
 assert.ok(validateTaskSpec({ ...spec, cumulativeBudget: { tokens: -1 } }).includes("cumulativeBudget.tokens must be a positive finite number"));
 assert.ok(validateTaskSpec({ ...spec, cumulativeBudget: { costUsd: "x" } }).includes("cumulativeBudget.costUsd must be a positive finite number"));
-const extractedCumulative = extractTaskSpecDetails(JSON.stringify({ taskId: "T-cumulative", objective: "budgeted", cwd, role: "worker", cumulativeBudget: { tokens: 100, costUsd: 2 } }));
-assert.deepEqual(extractedCumulative.spec.cumulativeBudget, { tokens: 100, costUsd: 2 });
-assert.equal(extractTaskSpecDetails(JSON.stringify({ ...spec, budget: { tokens: 10 } })).spec.cumulativeBudget, undefined);
 
 // Variant C — additionalWorktreeRoots on TaskSpec
 assert.deepEqual(validateTaskSpec({ ...spec, additionalWorktreeRoots: ["/worktrees/review"] }), []);
@@ -231,15 +203,6 @@ const withRoots = createTaskSpec({
 	additionalWorktreeRoots: ["/worktrees/review", "/worktrees/review", cwd, "  "],
 }, "T-worktree-c");
 assert.deepEqual(withRoots.additionalWorktreeRoots, [resolve("/worktrees/review")]);
-const extractedRoots = extractTaskSpecDetails(JSON.stringify({
-	taskId: "T-worktree-c2",
-	objective: "cross-worktree extract",
-	cwd,
-	role: "worker",
-	additionalWorktreeRoots: ["/worktrees/review"],
-}));
-assert.deepEqual(extractedRoots.spec.additionalWorktreeRoots, [resolve("/worktrees/review")]);
-assert.equal(extractTaskSpecDetails(JSON.stringify({ ...spec, budget: { tokens: 10 } })).spec.additionalWorktreeRoots, undefined);
 
 assert.ok(validateTaskSpec({ ...spec, budget: { tokens: Number.POSITIVE_INFINITY } }).some((e) => /budget\.tokens must be a positive finite number/.test(e)));
 assert.ok(validateTaskSpec({ ...spec, budget: { tokens: "5000" } }).some((e) => /budget\.tokens must be a positive finite number/.test(e)));
@@ -263,7 +226,6 @@ assert.ok(validateTaskSpec({ ...spec, budget: { costUsd: Number.NaN } }).some((e
 	// Business budget fields remain allowed.
 	assert.deepEqual(validateTaskSpec({ ...spec, budget: { tokens: 10_000 }, cumulativeBudget: { costUsd: 0.5 } }), []);
 }
-
 
 
 const explorerExample = buildTaskSpecExample({ toolName: "read", input: { path: "docs/api.md" }, cwd: "/repo" });
@@ -296,60 +258,6 @@ assert.ok(
 );
 // missing taskId is rejected, not silently accepted
 assert.ok(validateWorkerReport({ ...report, taskId: undefined }).length > 0);
-
-// --------------------------------------------------------------------------
-// WorkerReport extraction
-// --------------------------------------------------------------------------
-
-{
-	const empty = extractWorkerReport("");
-	assert.equal(empty.ok, false);
-	assert.deepEqual(empty, { ok: false, error: "worker returned no output", repairs: [] });
-}
-{
-	const prose = extractWorkerReport("I finished the task");
-	assert.equal(prose.ok, false);
-	assert.ok(prose.error);
-}
-
-const fenced = `Here is the result:
-
-\`\`\`json
-${JSON.stringify(report, null, 2)}
-\`\`\`
-
-Let me know if you want changes.`;
-{
-	const extracted = extractWorkerReport(fenced);
-	assert.equal(extracted.ok, true);
-	assert.deepEqual(extracted.report, report);
-}
-
-// prose-wrapped JSON whose strings contain braces must still parse whole
-const braced = makeReport({ summary: "uses {a,b} syntax and } too" });
-{
-	const extracted = extractWorkerReport(`Done! ${JSON.stringify(braced)} Let me know.`);
-	assert.equal(extracted.ok, true);
-	assert.deepEqual(extracted.report, braced);
-}
-
-const malformed = extractWorkerReport('```json\n{"version":1,"taskId":"T-1"}\n```');
-assert.equal(malformed.ok, false);
-assert.ok(malformed.error);
-assert.match(malformed.error, /invalid WorkerReport/);
-
-// a report whose evidence disagrees with its own taskId is rejected outright
-{
-	const extracted = extractWorkerReport(JSON.stringify(makeReport({ taskId: "T-other" })));
-	assert.equal(extracted.ok, false);
-	assert.ok(extracted.error);
-}
-// identity against the delegated task is asserted by the caller
-{
-	const extracted = extractWorkerReport(JSON.stringify(report));
-	assert.equal(extracted.ok, true);
-	assert.equal(extracted.report.taskId, "T-20260831-001");
-}
 
 // --------------------------------------------------------------------------
 // Compaction
@@ -491,63 +399,15 @@ assert.equal(store.active()?.taskId, "T-20260831-003");
 }
 
 // --------------------------------------------------------------------------
-// One writer per cwd
+// Stale executing detection (the write lock itself died in ticket 08)
 // --------------------------------------------------------------------------
 
-const writerA = {
+const staleWriter = {
 	taskId: "A", role: "worker", state: "executing", cwd,
 	reports: [], reviews: [], overrides: [], reportCorrections: 0,
-	createdAt: "", updatedAt: "",
+	createdAt: "", updatedAt: new Date(Date.now() - EXECUTING_STALE_MS - 1).toISOString(),
 };
-const writerB = { ...writerA, taskId: "B" };
-const readerC = { ...writerA, taskId: "C", role: "explorer" };
-
-// FR-04 — the lock follows write ability; same-Task re-entry is not a free pass
-assert.equal(findWriterConflict([writerA], cwd, "worker").conflict, true);
-assert.equal(findWriterConflict([writerA], cwd, "worker").taskId, "A");
-const clash = findWriterConflict([writerA], cwd, "worker");
-assert.equal(clash.conflict, true);
-assert.equal(clash.taskId, "A");
-assert.match(clash.reason, /write lock/);
-// readers never take the lock and never conflict
-assert.equal(findWriterConflict([writerA], cwd, "explorer").conflict, false);
-assert.equal(findWriterConflict([readerC], cwd, "worker").conflict, false);
-// a shell-capable validator is writable and contends; explorers do not
-const shellValidator = { ...writerA, taskId: "V", role: "validator" };
-assert.equal(findWriterConflict([writerA], cwd, "validator").conflict, true);
-assert.equal(findWriterConflict([shellValidator], cwd, "worker").conflict, true);
-assert.equal(findWriterConflict([shellValidator], cwd, "explorer").conflict, false);
-// store-level helper still keys on executing; live lock is Orchestration
-assert.equal(
-	findWriterConflict([{ ...writerA, state: "reviewing" }], cwd, "worker").conflict,
-	false,
-);
-// different cwd is fine
-assert.equal(findWriterConflict([writerA], "/elsewhere", "worker").conflict, false);
-// relative and symlink aliases of one worktree collide
-{
-	const real = mkdtempSync(join(tmpdir(), "planner-only-lock-"));
-	const aliasParent = mkdtempSync(join(tmpdir(), "planner-only-lock-"));
-	try {
-		const alias = join(aliasParent, "alias");
-		symlinkSync(real, alias);
-		const holder = { ...writerA, cwd: real };
-		assert.equal(findWriterConflict([holder], alias, "worker").conflict, true, "symlink alias collides");
-		assert.equal(findWriterConflict([holder], `${real}/sub/..`, "worker").conflict, true, "relative alias collides");
-		assert.equal(findWriterConflict([holder], alias, "explorer").conflict, false);
-	} finally {
-		rmSync(real, { recursive: true, force: true });
-		rmSync(aliasParent, { recursive: true, force: true });
-	}
-}
-
-// D07 — a stale-looking holder still blocks: timeout is not exit
-const staleWriter = { ...writerA, updatedAt: new Date(Date.now() - EXECUTING_STALE_MS - 1).toISOString() };
 assert.equal(isExecutingStale(staleWriter), true);
-const staleClash = findWriterConflict([staleWriter], cwd, "worker");
-assert.equal(staleClash.conflict, true, "stale executing must keep blocking until the child is confirmed stopped");
-assert.match(staleClash.reason, /not been confirmed exited/);
-assert.equal(findWriterConflict([writerA], cwd, "worker").conflict, true);
 const abandoned = store.create(createTaskSpec({ objective: "stuck", cwd }, "T-abandon-001"));
 store.transition(abandoned.taskId, "executing");
 store.abandon(abandoned.taskId, "operator reset");
@@ -654,86 +514,6 @@ assert.throws(() => store.abandon(abandoned.taskId), /terminal task/);
 	assert.equal(aliased.now().getDate(), 5);
 }
 
-{
-	const store = new TaskStore();
-	const spec = createTaskSpec({ objective: "bind", cwd, role: "explorer" }, "T-bind-001");
-	const task = store.create(createTaskSpec({ objective: "x", cwd, role: "worker" }, "T-bind-001"));
-	store.bindSpec(task.taskId, spec);
-	assert.equal(store.require(task.taskId).role, "explorer");
-	assert.equal(store.require(task.taskId).spec?.objective, "bind");
-	store.ensureCwd(task.taskId, "/should-not-overwrite");
-	assert.equal(store.require(task.taskId).cwd, spec.cwd);
-	const comparison = {
-		verifiable: true,
-		fresh: true,
-		reasons: [],
-		truthPaths: [],
-		undeclaredPaths: [],
-		extraDeclaredPaths: [],
-		overlappingPaths: [],
-		unrelatedPaths: [],
-		missingPaths: [],
-		unexplained: false,
-	};
-	store.setLastComparison(task.taskId, comparison);
-	assert.equal(store.require(task.taskId).lastComparison?.fresh, true);
-	assert.ok(extractTaskSpec(`please do:\n\`\`\`json\n${JSON.stringify(spec)}\n\`\`\``));
-}
-
-// --------------------------------------------------------------------------
-// Issue 03: extractTaskSpecDetails unit tests
-// --------------------------------------------------------------------------
-{
-	// 1. Characteristic fields present (taskId, acceptanceCriteria, scope) but missing objective
-	const missingObjPrompt = `Please work on:\n\`\`\`json\n${JSON.stringify({
-		taskId: "oracle-status-line-01",
-		acceptanceCriteria: ["test passes"],
-		scope: { allowedPaths: ["src/"] },
-	})}\n\`\`\``;
-	const res1 = extractTaskSpecDetails(missingObjPrompt);
-	assert.equal(res1.hasCharacteristics, true);
-	assert.equal(res1.spec, undefined);
-	assert.ok(res1.errors.includes("objective must be a non-empty string"));
-	assert.equal(res1.titleAliasUsed, false);
-
-	// 2. validation.required is not a boolean
-	const invalidValPrompt = `Please work on:\n\`\`\`json\n${JSON.stringify({
-		taskId: "oracle-status-line-01",
-		objective: "Fix bug",
-		validation: { required: "true", commands: ["npm test"] },
-	})}\n\`\`\``;
-	const res2 = extractTaskSpecDetails(invalidValPrompt);
-	assert.equal(res2.hasCharacteristics, true);
-	assert.equal(res2.spec, undefined);
-	assert.ok(res2.errors.includes("validation.required must be a boolean"));
-
-	// 3. title used as alias for objective
-	const titlePrompt = `Please work on:\n\`\`\`json\n${JSON.stringify({
-		taskId: "oracle-status-line-01",
-		title: "Fix bug via title",
-		acceptanceCriteria: ["unit test passes"],
-	})}\n\`\`\``;
-	const res3 = extractTaskSpecDetails(titlePrompt);
-	assert.equal(res3.hasCharacteristics, true);
-	assert.ok(res3.spec !== undefined);
-	assert.equal(res3.spec.objective, "Fix bug via title");
-	assert.equal(res3.titleAliasUsed, true);
-	assert.deepEqual(res3.errors, []);
-	assert.equal(extractTaskSpec(titlePrompt)?.objective, "Fix bug via title");
-
-	// 4. No characteristic fields
-	const plainPrompt = "Just run npm test and let me know.";
-	const res4 = extractTaskSpecDetails(plainPrompt);
-	assert.equal(res4.hasCharacteristics, false);
-	assert.equal(res4.spec, undefined);
-	assert.equal(res4.errors.length, 0);
-
-	// 5. Bare JSON without characteristic fields (e.g. random object)
-	const randomJsonPrompt = `Context:\n\`\`\`json\n{"foo": "bar", "count": 42}\n\`\`\``;
-	const res5 = extractTaskSpecDetails(randomJsonPrompt);
-	assert.equal(res5.hasCharacteristics, false);
-	assert.equal(res5.spec, undefined);
-}
 
 {
 	const seen = [];

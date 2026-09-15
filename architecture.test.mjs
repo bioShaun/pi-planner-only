@@ -14,7 +14,6 @@ const roles = src("roles.ts");
 const usage = src("usage.ts");
 const roleModels = src("role-models.ts");
 const orchestrate = src("orchestrate.ts");
-const reservations = src("reservations.ts");
 const ledgerStore = src("ledger-store.ts");
 const floors = src("floors.ts");
 const pkg = JSON.parse(src("package.json"));
@@ -30,7 +29,6 @@ assert.notEqual(hostPeer.trim(), "*", "the Pi host peer must not claim every ver
 assert.match(hostPeer, /^>=/, "the Pi host peer must be a bounded range");
 assert.equal(typeof pkg["pi-planner-only"]?.piHost, "string", "package.json must declare a Pi host compatibility range");
 assert.match(pkg.scripts?.["test:release"] ?? "", /typecheck/, "the release gate must run typecheck");
-assert.match(pkg.scripts?.["test:release"] ?? "", /PI_PLANNER_ONLY_REQUIRE_CONTRACT=1/, "the release gate must require contract coverage");
 assert.equal(pkg.dependencies?.typebox, undefined, "typebox is bundled by Pi; do not ship a second copy");
 assert.equal(pkg.dependencies?.["@earendil-works/pi-coding-agent"], undefined);
 
@@ -60,9 +58,9 @@ assert.match(evidence, /from "\.\/git-audit\.ts"/);
 assert.doesNotMatch(policy, /SAFE_GIT_STATUS_FLAGS/);
 assert.match(policy, /isSafeAuditCommand/);
 
-// Delegation owns remap + packet.
-assert.match(roles, /export function prepareRoleDelegation/);
-assert.match(roles, /export function delegationPrompt/);
+// Delegation remap + packet parsing died with the legacy chain (ticket 08).
+assert.doesNotMatch(roles, /export function prepareRoleDelegation/, "ticket 08: the legacy prompt-remap path must not come back");
+assert.doesNotMatch(roles, /export function delegationPrompt/, "ticket 08: prompt-text delegation input is gone");
 
 // Pi adapter is a thin host seam.
 assert.match(index, /from "\.\/orchestrate\.ts"/);
@@ -78,13 +76,10 @@ assert.equal(pkg.files.includes("pricing.defaults.json"), true, "bundled pricing
 assert.match(index, /ensurePricingFile\(\)/, "the adapter must seed the local pricing table at startup");
 assert.equal(pkg.files.includes("floors.ts"), true, "floors.ts must ship in the package files list");
 assert.equal(pkg.files.includes("role-models.ts"), true, "role-models.ts must ship in the package files list");
-assert.match(orchestrate, /from "\.\/role-models\.ts"/);
 assert.match(index, /from "\.\/role-models\.ts"/);
 assert.doesNotMatch(policy, /role-models|PI_PLANNER_ONLY_MODEL_|ROLE_MODELS/);
 assert.doesNotMatch(roleModels, /from "\.\/index\.ts"|@earendil-works/);
-assert.equal((orchestrate.match(/this\.delegations\.delete\(/g) ?? []).length, 1, "delegations must converge on one endDelegation delete");
-assert.equal(pkg.files.includes("reservations.ts"), true, "reservations.ts must ship in the package files list");
-assert.doesNotMatch(reservations, /from "\.\/index\.ts"|@earendil-works/);
+assert.equal(pkg.files.includes("reservations.ts"), false, "ticket 08: reservations.ts is deleted and must not ship");
 assert.match(floors, /export const DEFAULT_HOST_ENFORCEMENT: HostEnforcement = Object\.freeze\(\{\s*tokens: false,\s*costUsd: false,\s*\}\)/, "W15: DEFAULT_HOST_ENFORCEMENT must stay false,false in source");
 assert.match(floors, /export const DEFAULT_SESSION_ROOT_BUDGET_ENABLED = false/, "session root budget must default off");
 assert.doesNotMatch(floors, /from "\.\/index\.ts"|@earendil-works/, "W16: floors.ts must not import the adapter or the Pi host");
@@ -95,22 +90,7 @@ assert.doesNotMatch(orchestrate, /recordRootTurn/);
 assert.doesNotMatch(orchestrate, /recordChild/);
 
 // Ticket 15 X11: every pendingChild call carries a key (runId or a defined toolCallId).
-assert.equal(index.includes("pendingChild(record.kind, { agent, toolCallId: undefined })"), false);
-{
-	const callRe = /(?<!function )pendingChild\(/g;
-	let match;
-	let calls = 0;
-	while ((match = callRe.exec(index))) {
-		calls += 1;
-		const expr = index.slice(match.index, match.index + 220);
-		assert.equal(/toolCallId(?!\s*:\s*undefined)|\brunId\b/.test(expr), true, `pendingChild call is unkeyed: ${expr.split("\n")[0]}`);
-	}
-	assert.equal(calls >= 3, true, "pendingChild must still be called from the adapter");
-}
 
-// Ticket 15-b D1: confirmed-not-launched is queried from the orchestrator, not recoded in the adapter.
-assert.equal(index.includes("wasConfirmedNotLaunched("), true);
-assert.equal(orchestrate.includes("wasConfirmedNotLaunched("), true);
 
 assert.equal(pkg.files.includes("ledger-store.ts"), true, "C1: ledger-store.ts must ship in the package files list");
 assert.match(pkg.scripts?.test ?? "", /ledger-store\.test\.mjs/, "C2: the unit test script must run ledger-store.test.mjs");
@@ -125,22 +105,10 @@ assert.match(src("task.ts"), /restore\(record: TaskRecord\): void/, "C16-1: Task
 assert.match(orchestrate, /restoreFromLedger\(\)/, "C16-2: the orchestrator loads snapshots at restoreFromLedger");
 assert.match(index, /loadSessionUsage\(ctx\);\s*\n\s*orchestrator\.restoreFromLedger\(\)/, "C16-3: session_start restores the ledger after loadSessionUsage");
 assert.match(orchestrate, /untrustedBalances/, "C16-4: untrusted balances are tracked per taskId");
-assert.match(orchestrate, /ledger snapshot unreadable/, "C16-5: untrusted refusal is a distinct message from cumulativeBudgetRefusal");
 assert.match(ledgerStore, /quarantine\(taskId/, "C16-6: LedgerSnapshotStore exposes quarantine");
 assert.match(ledgerStore, /isQuarantined\(taskId/, "C16-7: LedgerSnapshotStore exposes isQuarantined");
 assert.match(orchestrate, /this\.snapshots\.quarantine\(/, "C16-8: restoreFromLedger registers corrupt taskIds in the snapshot quarantine");
 assert.match(ledgerStore, /isQuarantined\(record\.taskId\)/, "C16-9: write refuses quarantined taskIds");
 
-assert.match(reservations, /rekey\(/, "C37-1: BudgetReservations exposes rekey");
-assert.equal((orchestrate.match(/this\.reservations\.rekey\(/g) ?? []).length, 1, "C37-2: orchestrate rekeys in exactly one place");
-// R01/R02 — the replace site rekeys immediately (standalone-Explorer stamping sits between); the example sentinel is not stored as an alias.
-assert.match(orchestrate, /const alias = spec\.taskId === TASKSPEC_EXAMPLE_SENTINEL \|\| hasGeneratedTaskId\(spec\) \? undefined : spec\.taskId;\s*\n\s*task = this\.store\.createAllocated\(generated, storedSpec, alias\);\s*\n(?:[^\n]*\n){0,2}\s*this\.reservations\.rekey\(spec\.taskId, task\.taskId, event\.toolCallId\);/, "C37-3: rekey runs immediately after the allocator-backed create");
-assert.match(orchestrate, /emptyTaskUsage/, "C37-4: first-delegation budget is computed from emptyTaskUsage");
-assert.doesNotMatch(orchestrate, /this\.store\.create\(spec\);\s*\n\s*this\.reservations\.rekey/, "C37-5: the matching-id create does not rekey");
-assert.equal((orchestrate.match(/this\.store\.create\(/g) ?? []).length, 2, "C37-6: ordinary store.create sites remain limited; allocator-backed replacement uses createAllocated");
-
-assert.match(reservations, /wouldRefuse\(taskId/, "C16-10: BudgetReservations exposes wouldRefuse");
-assert.match(reservations.slice(reservations.indexOf("reserve(taskId")), /this\.wouldRefuse\(/, "C16-11: reserve delegates refusal to wouldRefuse");
-assert.match(orchestrate, /预算已停止/, "C16-12: status explains budget stop");
 
 console.log("planner-only architecture: PASS");

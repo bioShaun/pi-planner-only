@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { appendFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -9,26 +9,21 @@ import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	ROOT_TOOLS,
-	ORCHESTRATION_TOOLS,
+	QUESTION_TOOLS,
 	READ_ONLY_TOOLS,
 	decidePolicy,
 } from "./policy.ts";
 import { GIT_AUDIT_OPERATIONS, classifyCommitDirtyPaths, dirtyPathsOutsideTruth, parseGitStatusKinds, parseGitStatusPaths, resolveGitCommit, runGitAudit } from "./git-audit.ts";
 import type { GitAuditRequest, GitRunner } from "./git-audit.ts";
-import { PlannerOrchestrator, compositeWorkflowBlockReason, isDelegationCall, isExecutionCreatingAction } from "./orchestrate.ts";
-import type { DelegationRecord } from "./orchestrate.ts";
-import { childFromMeta, parseSubagentNotify, readChildMeta, tempRootFromAsyncDir } from "./notify.ts";
+import { PlannerOrchestrator } from "./orchestrate.ts";
 import { MAX_REVIEW_ROUNDS, WORKER_REPORT_VERSION, isFinalTaskState } from "./types.ts";
-import type { ChildUsage, DelegationKind, DriftAcknowledgement, LoadedPluginFingerprint, ReviewFinding, ReviewMode, ReviewVerdict, TaskState } from "./types.ts";
+import type { DriftAcknowledgement, LoadedPluginFingerprint, ReviewFinding, ReviewMode, ReviewVerdict, TaskState } from "./types.ts";
 import {
 	UsageLedger,
 	buildRunRecord,
 	summarizeRuns,
 	renderRunSummary,
-	childUsageFromValue,
-	childOutcomeFromExitCode,
 	deriveRootTurnAttribution,
-	delegationRateKind,
 	hasUsableRate,
 	loadPricingTable,
 	ensurePricingFile,
@@ -70,7 +65,7 @@ const STATUS_KEY = "planner-only";
 const IS_SUBAGENT = process.env.PI_SUBAGENT_CHILD === "1";
 const PLANNER_SAFE_TOOLS = new Set([
 	...READ_ONLY_TOOLS,
-	...ORCHESTRATION_TOOLS,
+	...QUESTION_TOOLS,
 	...ROOT_TOOLS,
 	"planner_delegate",
 	"git_commit",
@@ -89,27 +84,21 @@ const PLUGIN_DIR = dirname(SOURCE_PATH);
 export function computeLoadedFingerprint(dir = PLUGIN_DIR): string {
 	const hasher = createHash("sha256");
 	const files = [
-		"acceptance.ts",
-		"acceptance-claims.ts",
-		"completion.ts",
 		"concurrency.ts",
 		"evidence.ts",
 		"floors.ts",
 		"git-audit.ts",
 		"index.ts",
 		"ledger-store.ts",
-		"notify.ts",
 		"orchestrate.ts",
 		"package.json",
 		"policy.ts",
 		"pricing.defaults.json",
 		"report.ts",
-		"reservations.ts",
 		"review.ts",
 		"role-models.ts",
 		"roles.ts",
 		"task.ts",
-		"test-fixtures.ts",
 		"types.ts",
 		"usage.ts",
 		"workspace-snapshot.ts",
@@ -236,26 +225,6 @@ function envForcingValue(): string | undefined {
 	return envForcesGuard() || envDisablesGuard() ? (process.env.PI_PLANNER_ONLY ?? "").trim() : undefined;
 }
 
-const SUBAGENT_NOTIFY_TYPE = "subagent-notify";
-
-function isSubagentNotifyMessage(message: unknown): boolean {
-	if (!message || typeof message !== "object") return false;
-	const value = message as { role?: unknown; customType?: unknown };
-	return value.role === "custom" && value.customType === SUBAGENT_NOTIFY_TYPE;
-}
-
-function customMessageText(message: unknown): string {
-	if (!message || typeof message !== "object") return "";
-	const content = (message as { content?: unknown }).content;
-	if (typeof content === "string") return content;
-	if (!Array.isArray(content)) return "";
-	return content
-		.filter((part): part is { type: string; text?: string } =>
-			Boolean(part && typeof part === "object" && (part as { type?: string }).type === "text"))
-		.map((part) => (typeof part.text === "string" ? part.text : ""))
-		.join("\n");
-}
-
 /**
  * Root read ceiling in lines (NX-05/C15): applied to Root `read` calls that
  * name no explicit line range. The single named constant is the ceiling
@@ -350,8 +319,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", code: result.code };
 	};
 
-	// Most recent host context, kept so reconcile can find session artifact
-	// directories even when it runs from planner_verdict.
+	// Most recent host context, kept for the verdict and shutdown paths.
 	let latestCtx: ExtensionContext | undefined;
 	ensurePricingFile();
 	let pricing = loadPricingTable();
@@ -366,45 +334,10 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	orchestrator = new PlannerOrchestrator({
 		concurrency,
 		gitRunner,
-		artifactDirs: () => artifactDirsFor(latestCtx ?? ({ hasUI: false, cwd: process.cwd() } as ExtensionContext)),
 		ledgerDir: AGENT_DIR,
 		getSessionRootUsage: () => ledger.sessionRootSpend(),
 		sessionRootBudgetConfig: sessionRootBudget,
-		delegationRateKind: (model) => delegationRateKind(pricing, undefined, model),
-		getModelPreflightContext: () => {
-			const ctx = latestCtx;
-			if (!ctx?.modelRegistry) return undefined;
-			return {
-				registry: ctx.modelRegistry,
-				hostModel: ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined,
-				hostThinking: ctx.thinkingLevel,
-				pricing,
-			};
-		},
 		getUsageEntries: () => allSessionEntries,
-		recordCompletionUsage: (taskId, receipt, toolCallId) => {
-			const usage = receipt.usage;
-			if (!usage || typeof usage !== "object") return;
-			const child = childUsageFromValue(usage, "worker", {
-				runId: receipt.runId,
-				toolCallId,
-				source: "sync-details",
-				pending: false,
-			});
-			if (!child) return;
-			const targetId = canonicalTaskId(taskId);
-			ledger.recordChild(targetId, bindOwnedChild(targetId, toolCallId, child));
-			syncUsage(targetId);
-		},
-		automaticOracleDispatch: (task) => {
-			if (typeof pi.sendMessage !== "function" || !task.spec) return;
-			const oracleSpec = { ...task.spec, role: "validator", taskId: task.taskId };
-			pi.sendMessage({
-				customType: "planner-only-oracle-suggestion",
-				content: `Oracle suggestion for ${task.taskId} reportRevision=${task.reports.length}: ${JSON.stringify({ agent: "oracle", task: JSON.stringify(oracleSpec), dispatchMode: "suggestion" })}`,
-				display: false,
-			}, { triggerTurn: true, deliverAs: "steer" });
-		},
 	});
 	let loadedFingerprintInfo = createLoadedPluginFingerprint(latestCtx);
 	orchestrator.setLoadedFingerprint(loadedFingerprintInfo);
@@ -538,18 +471,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		return typeof file === "string" && file.trim() ? file : undefined;
 	}
 
-	function artifactDirsFor(ctx: ExtensionContext, asyncDir?: string): string[] {
-		const dirs: string[] = [];
-		const sessionFile = sessionFileOf(ctx);
-		if (sessionFile) dirs.push(join(dirname(sessionFile), "subagent-artifacts"));
-		if (asyncDir) {
-			const root = tempRootFromAsyncDir(asyncDir);
-			if (root) dirs.push(join(root, "artifacts"));
-		}
-		dirs.push(join(ctx.cwd || process.cwd(), ".pi", "subagents", "artifacts"));
-		return dirs;
-	}
-
 	function usageLogPath(): string | undefined {
 		const override = process.env.PI_PLANNER_ONLY_USAGE_LOG;
 		if (override === "0") return undefined;
@@ -557,91 +478,8 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		return join(AGENT_DIR, "planner-only", "usage.jsonl");
 	}
 
-	/**
-	 * A child whose usage cannot be read yet.
-	 *
-	 * Ticket 15: it MUST carry a key (runId or toolCallId). An unkeyed child is
-	 * appended rather than upserted, so a second record of the same child adds a
-	 * second row -- and with debt attached that double-charges the Task and the
-	 * real usage can never replace it. `debt` is the budget granted at launch,
-	 * charged while the real value is missing.
-	 */
-	function pendingChild(
-		kind: DelegationKind,
-		ids: { runId?: string; agent?: string; toolCallId?: string },
-		debt?: { tokens?: number; costUsd?: number },
-	): ChildUsage {
-		return {
-			input: 0,
-			output: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			kind,
-			pending: true,
-			source: "unavailable",
-			...(ids.runId ? { runId: ids.runId } : {}),
-			...(ids.agent ? { agent: ids.agent } : {}),
-			...(ids.toolCallId ? { toolCallId: ids.toolCallId } : {}),
-			...(debt?.tokens !== undefined ? { tokensDebt: debt.tokens } : {}),
-			...(debt?.costUsd !== undefined ? { costDebtUsd: debt.costUsd } : {}),
-		};
-	}
-
-	/** The budget granted to this invocation, charged as debt while usage is unknown (ticket 15). */
-	function grantedDebt(record: DelegationRecord): { tokens?: number; costUsd?: number } {
-		return {
-			...(record.grantedTokens !== undefined ? { tokens: record.grantedTokens } : {}),
-			...(record.grantedCostUsd !== undefined ? { costUsd: record.grantedCostUsd } : {}),
-		};
-	}
-
-	const CHILD_META_AGENTS = ["worker", "oracle", "reviewer", "explorer", "scout"] as const;
-
-	function runIdFromDetails(details: Record<string, unknown> | undefined): string | undefined {
-		if (!details) return undefined;
-		if (typeof details.runId === "string" && details.runId.trim()) return details.runId;
-		if (typeof details.asyncId === "string" && details.asyncId.trim()) return details.asyncId;
-		return undefined;
-	}
-
-	function harvestMetaUsage(
-		taskId: string,
-		kind: DelegationKind,
-		runId: string | undefined,
-		preferredAgent: string | undefined,
-		ctx: ExtensionContext,
-		asyncDir?: string,
-	): boolean {
-		if (!runId) return false;
-		const dirs = artifactDirsFor(ctx, asyncDir);
-		const agents = [...new Set([preferredAgent, ...CHILD_META_AGENTS].filter((name): name is string => Boolean(name)))];
-		for (const agent of agents) {
-			const meta = readChildMeta(dirs, runId, agent);
-			if (!meta?.usage) continue;
-			const child = childFromMeta(meta, kind);
-			if (child) {
-				ledger.recordChild(taskId, bindOwnedChild(taskId, runId, child));
-				orchestrator.noteDelegationModel(taskId, runId, child.model, child.thinking);
-				syncUsage(taskId);
-				return true;
-			}
-		}
-		return false;
-	}
-
 	function canonicalTaskId(taskId: string): string {
 		return orchestrator.store.get(taskId)?.taskId ?? taskId;
-	}
-
-	function bindOwnedChild(taskId: string, executionId: string | undefined, child: ChildUsage): ChildUsage {
-		if (taskId === "unattributed") return child;
-		const ownerRootSessionId = orchestrator.getLoadedProvenance()?.sessionId;
-		return {
-			...child,
-			taskId: canonicalTaskId(taskId),
-			...(executionId ? { executionId } : {}),
-			...(ownerRootSessionId && ownerRootSessionId !== "unknown" && ownerRootSessionId !== "unknown-session" ? { ownerRootSessionId } : {}),
-		};
 	}
 
 	function syncUsage(taskId?: string): void {
@@ -653,26 +491,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			task.usage = usage;
 			orchestrator.store.persist(task);
 		}
-	}
-
-	function resolveTaskPending(taskId: string, ctx: ExtensionContext, asyncDir?: string): void {
-		const targetId = canonicalTaskId(taskId);
-		ledger.resolvePending(targetId, (child) => {
-			if (!child.runId) return undefined;
-			const agents = [...new Set([child.agent, ...CHILD_META_AGENTS].filter((name): name is string => Boolean(name)))];
-			for (const agent of agents) {
-				const meta = readChildMeta(artifactDirsFor(ctx, asyncDir), child.runId, agent);
-				if (!meta) continue;
-				const resolved = childFromMeta(meta, child.kind);
-				if (resolved) {
-					orchestrator.noteDelegationModel(targetId, child.runId, resolved.model, resolved.thinking);
-					return bindOwnedChild(targetId, child.runId, resolved);
-				}
-				return undefined;
-			}
-			return undefined;
-		});
-		syncUsage(targetId);
 	}
 
 	async function writeUsageLog(
@@ -720,69 +538,16 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		taskId: string | undefined,
 		before: TaskState | undefined,
 		ctx: ExtensionContext,
-		asyncDir?: string,
 	): Promise<void> {
 		if (!taskId) return;
 		const after = orchestrator.store.get(taskId);
 		if (!after || !isFinalTaskState(after.state)) return;
 		if (before === after.state) return;
-		resolveTaskPending(taskId, ctx, asyncDir);
 		persistSessionEntries();
 		await writeUsageLog(taskId, ctx);
 	}
 
-	const META_FILE_RE = /^(.*)_(worker|oracle|reviewer|explorer|scout)(?:_0)?_meta\.json$/;
-	const AGENT_KIND: Record<string, DelegationKind> = {
-		worker: "worker",
-		oracle: "validator",
-		reviewer: "reviewer",
-		explorer: "explorer",
-		scout: "explorer",
-	};
-
-	function ledgerHasRunId(runId: string): boolean {
-		for (const id of ledger.sessionUsage().tasks) {
-			const usage = ledger.taskUsage(id);
-			if (usage?.children.some((child) => child.runId === runId)) return true;
-		}
-		return false;
-	}
-
-	async function harvestOrphanMetas(ctx: ExtensionContext): Promise<void> {
-		const dirs = [...new Set(artifactDirsFor(ctx))];
-		for (const dir of dirs) {
-			let names: string[] = [];
-			try {
-				names = await readdir(dir);
-			} catch {
-				continue;
-			}
-			for (const name of names) {
-				const match = META_FILE_RE.exec(name);
-				if (!match) continue;
-				const runId = match[1] as string;
-				const agent = match[2] as string;
-				if (ledgerHasRunId(runId)) continue;
-				const meta = readChildMeta([dir], runId, agent);
-				if (!meta?.usage) continue;
-				const observedInSessionId = orchestrator.getLoadedProvenance()?.sessionId
-					?? process.env.PI_SESSION_ID?.trim()
-					?? "unknown-session";
-				const kind = AGENT_KIND[agent] ?? "worker";
-				const child = childFromMeta(meta, kind, observedInSessionId);
-				if (!child) continue;
-				const target = orchestrator.taskIdForSessionRun(runId) ?? "unattributed";
-				ledger.recordChild(target, child);
-				if (target !== "unattributed") {
-					orchestrator.noteDelegationModel(target, runId, child.model, child.thinking);
-				}
-				syncUsage(target);
-			}
-		}
-	}
-
 	async function flushOpenUsageOnShutdown(ctx: ExtensionContext): Promise<void> {
-		await harvestOrphanMetas(ctx);
 		persistSessionEntries();
 		const storeIds = new Set(orchestrator.store.list().map((task) => task.taskId));
 		for (const taskId of ledger.sessionUsage().tasks) {
@@ -797,144 +562,8 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		];
 		for (const task of ordered) {
 			if (!ledger.taskUsage(task.taskId)) continue;
-			resolveTaskPending(task.taskId, ctx);
 			await writeUsageLog(task.taskId, ctx, { incomplete: true });
 		}
-	}
-
-	/** Child usage belongs to the real active Task when explorer behavior remains unbound. */
-	function accountingTaskId(record: DelegationRecord): string {
-		return canonicalTaskId(record.accountingTaskId ?? record.taskId);
-	}
-
-	function recordSyncChildren(event: { toolCallId: string; details?: unknown }, delegation: DelegationRecord): void {
-		const details = asRecord(event.details);
-		const results = details && Array.isArray(details.results) ? details.results : [];
-		const taskId = accountingTaskId(delegation);
-		const runId = runIdFromDetails(details) ?? delegation.runId;
-		for (const item of results) {
-			const rec = asRecord(item);
-			if (!rec) continue;
-			const child = childUsageFromValue(rec.usage, delegation.kind, {
-				toolCallId: event.toolCallId,
-				source: "sync-details",
-				pending: false,
-				...(runId ? { runId } : {}),
-				...(typeof rec.agent === "string" ? { agent: rec.agent } : delegation.agent ? { agent: delegation.agent } : {}),
-				...(typeof rec.model === "string" ? { model: rec.model } : {}),
-				...(typeof rec.thinking === "string" ? { thinking: rec.thinking } : {}),
-			});
-			if (child) {
-				ledger.recordChild(taskId, bindOwnedChild(taskId, event.toolCallId, child));
-				orchestrator.noteDelegationModel(taskId, event.toolCallId, child.model, child.thinking);
-				if (runId) {
-					orchestrator.noteDelegationModel(taskId, runId, child.model, child.thinking);
-				}
-			}
-		}
-		if (results.length === 0 || !results.some((item) => asRecord(item)?.usage)) {
-			harvestMetaUsage(
-				taskId,
-				delegation.kind,
-				runId,
-				delegation.agent,
-				latestCtx ?? ({ hasUI: false, cwd: process.cwd() } as ExtensionContext),
-				typeof details?.asyncDir === "string" ? details.asyncDir : undefined,
-			);
-		}
-		if (results.length === 0 && !runId) {
-			// Confirmed start failure: consume nothing. A never-launched child
-			// has no spend, so it must not receive a debt row (ticket 15-b D2).
-			if (!orchestrator.wasConfirmedNotLaunched(event.toolCallId)) {
-				// The toolCallId is the key here: without it this row can never be
-				// replaced by the real usage, and a repeat would add a second charge.
-				ledger.recordChild(taskId, bindOwnedChild(taskId, event.toolCallId, pendingChild(
-					delegation.kind,
-					{ agent: delegation.agent, toolCallId: event.toolCallId },
-					grantedDebt(delegation),
-				)));
-			}
-			syncUsage(taskId);
-			return;
-		}
-		syncUsage(taskId);
-	}
-
-	function recordBgWaitChildren(event: { details?: unknown }): void {
-		const details = asRecord(event.details);
-		const completions = details && Array.isArray(details.completions) ? details.completions : [];
-		const pending = orchestrator.listDelegations();
-		for (const raw of completions) {
-			const completion = asRecord(raw);
-			if (!completion) continue;
-			orchestrator.registerCompletionReceipt(completion);
-			const runId = typeof completion.runId === "string" ? completion.runId : undefined;
-			if (!runId) continue;
-			const found = pending.find((item) => item.record.runId === runId);
-			if (!found) continue;
-			const results = Array.isArray(completion.results) ? completion.results : [];
-			const taskId = accountingTaskId(found.record);
-			if (ledger.taskUsage(taskId)?.children.some((item) => item.runId === runId && !item.pending)) {
-				syncUsage(taskId);
-				continue;
-			}
-			for (const item of results) {
-				const rec = asRecord(item);
-				const usageValue = rec?.usage ?? rec;
-				const child = childUsageFromValue(usageValue, found.record.kind, {
-					runId,
-					source: "bg-wait",
-					pending: false,
-					...(typeof completion.agent === "string" ? { agent: completion.agent }
-						: found.record.agent ? { agent: found.record.agent } : {}),
-					...(typeof rec?.model === "string" ? { model: rec.model } : {}),
-					...(typeof rec?.thinking === "string" ? { thinking: rec.thinking } : {}),
-				});
-				if (child) {
-					ledger.recordChild(taskId, bindOwnedChild(taskId, found.record.executionId, child));
-					orchestrator.noteDelegationModel(taskId, runId, child.model, child.thinking);
-				}
-			}
-			syncUsage(taskId);
-		}
-	}
-
-	function recordAsyncChild(
-		record: DelegationRecord,
-		ctx: ExtensionContext,
-		notifyAgent?: string,
-		toolCallId?: string,
-	): void {
-		const taskId = accountingTaskId(record);
-		const agent = notifyAgent || record.agent;
-		const runId = record.runId;
-		if (!runId) {
-			ledger.recordChild(taskId, pendingChild(record.kind, { agent, toolCallId }, grantedDebt(record)));
-			syncUsage(taskId);
-			return;
-		}
-		const agents = [...new Set([
-			agent,
-			record.agent,
-			...CHILD_META_AGENTS,
-		].filter((name): name is string => Boolean(name)))];
-		for (const name of agents) {
-			const meta = readChildMeta(artifactDirsFor(ctx, record.asyncDir), runId, name);
-			if (!meta) continue;
-			const child = childFromMeta(meta, record.kind);
-			if (child) {
-				ledger.recordChild(taskId, bindOwnedChild(taskId, record.executionId, child));
-				orchestrator.noteDelegationModel(taskId, runId, child.model, child.thinking);
-				syncUsage(taskId);
-				return;
-			}
-		}
-		ledger.recordChild(taskId, bindOwnedChild(taskId, record.executionId, pendingChild(
-			record.kind,
-			{ runId, agent: agent || record.agent, ...(toolCallId ? { toolCallId } : {}) },
-			grantedDebt(record),
-		)));
-		syncUsage(taskId);
 	}
 
 	function recordInjectedText(taskId: string | undefined, text: string): void {
@@ -1168,54 +797,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			};
 		},
 	});
-	pi.registerTool({
-		name: "planner_recover",
-		label: "Planner Recover",
-		description: [
-			"Re-ingest a completion receipt and final artifact for one exact, persisted task/run binding.",
-			"This is read-only: it never starts a subprocess and accepts no file paths.",
-			"The taskId, runId, and current workspace must match the durable execution record, including restored legacy ledgers.",
-		].join(" "),
-		promptSnippet: "planner_recover: re-ingest one exact bound task/run receipt without starting a child",
-		promptGuidelines: [
-			"Use the canonical taskId and complete host runId exactly as recorded; never guess a runId or provide an artifact path.",
-			"Native notification mode returns control and wakes on completion; detached mode permits one exact-id bounded bg_wait; unknown capability permits one status/recovery attempt only. Do not poll.",
-		],
-		parameters: Type.Object({
-			taskId: Type.String({ minLength: 1, description: "Canonical persisted Task id." }),
-			runId: Type.String({ minLength: 1, description: "Complete host run id bound to that Task." }),
-		}),
-		async execute(_toolCallId, params: { taskId: string; runId: string }, _signal, _onUpdate, ctx: ExtensionContext) {
-			latestCtx = ctx;
-			const result = await orchestrator.reingestOriginalReport(
-				params.runId,
-				ctx.cwd || process.cwd(),
-				params.taskId,
-			);
-			const nextAction = result.retryable
-				? { tool: "planner_recover", taskId: params.taskId, runId: params.runId }
-				: undefined;
-			const details = {
-				...result,
-				...(nextAction ? { nextAction } : {}),
-				guidance: [
-					"Native host capability: return control and wait for the host notification; do not poll with bg_wait.",
-					"Detached host capability: one exact-id bounded bg_wait (at most 60 seconds) may wake the run, followed by planner_recover.",
-					"Unknown host capability: make one exact-id bounded status/recovery attempt, then use planner_recover; do not start a polling loop.",
-				],
-			};
-			const text = result.message ?? (result.status === "recorded"
-				? `planner_recover: re-ingested task ${params.taskId}, run ${params.runId}.`
-				: `planner_recover: ${result.code ?? result.status} for task ${params.taskId}, run ${params.runId}.`);
-			if (result.status === "unbound" || result.status === "identity-conflict" || result.status === "duplicate") {
-				throw new Error(nextAction ? `${text} Next action: ${JSON.stringify(nextAction)}.` : text);
-			}
-			return {
-				content: [{ type: "text", text }],
-				details,
-			};
-		},
-	});
 
 	pi.registerTool({
 		name: "planner_verdict",
@@ -1299,9 +880,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				);
 			}
 			latestCtx = _ctx;
-			// A child run that already finished must be consumed before the
-			// refusal check, or a lost notice would deadlock every verdict.
-			await orchestrator.reconcilePendingDelegations(task.taskId);
 			const refusal = orchestrator.rootVerdictRefusal(task, params.verdict);
 			if (refusal) {
 				orchestrator.recordRootVerdictRefusal(task, params.verdict, refusal);
@@ -1379,10 +957,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
-		// R02 — the adapter derives the gather phase and the exact-id recovery
-		// authorization from the store for this workspace; PolicyInput always
-		// carries them (a store read cannot fail in memory, and a failure would
-		// read as Idle: fail closed).
+		// R02 — the adapter derives the gather phase from the store for this
+		// workspace; PolicyInput always carries it (a store read cannot fail in
+		// memory, and a failure would read as Idle: fail closed).
 		const policyCwd = ctx?.cwd || process.cwd();
 		latestCtx = ctx;
 		if (!IS_SUBAGENT && !isDisabled() && event.toolName === "read") {
@@ -1399,10 +976,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			const input = asRecord(event.input);
 			if ((event.toolName === "planner_verdict" || event.toolName === "planner_delegate") && typeof input?.taskId === "string") {
 				rootTurnTaskIds.add(canonicalTaskId(input.taskId));
-			} else if (event.toolName === "bg_wait") {
-				const runId = typeof input?.runId === "string" ? input.runId : typeof input?.id === "string" ? input.id : undefined;
-				const taskId = runId ? orchestrator.taskIdForSessionRun(runId) : undefined;
-				if (taskId) rootTurnTaskIds.add(taskId);
 			} else if (event.toolName === "planner_verdict" || event.toolName === "git_audit") {
 				const active = orchestrator.store.activeForCwd(policyCwd);
 				if (active) rootTurnTaskIds.add(active.taskId);
@@ -1415,46 +988,8 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			disabled: isDisabled(),
 			cwd: policyCwd,
 			liveTask: Boolean(orchestrator.store.activeForCwd(policyCwd)),
-			// ticket 05 → 08: the pre-cutover subagent/bg_wait rules survive only
-			// under this test-only flag; the host never sets it.
-			legacyDelegation: process.env.PI_PLANNER_ONLY_LEGACY_SUBAGENT === "1",
-			...(event.toolName === "bg_wait"
-				? { authorizedWaitId: orchestrator.authorizedWaitId(event.input, policyCwd) }
-				: {}),
 		});
-		if (!decision.block) {
-			if (event.toolName === "subagent" && !isDisabled() &&
-				(isDelegationCall(event.input) || isExecutionCreatingAction(event.input))) {
-				const composite = compositeWorkflowBlockReason(event.input);
-				if (composite) {
-					if (ctx.hasUI) ctx.ui.notify("Blocked composite subagent workflow", "warning");
-					return { block: true, reason: composite };
-				}
-				const rootCwd = ctx.cwd || process.cwd();
-				await orchestrator.prepareRoleDelegation(event.input, rootCwd);
-				const outcome = await orchestrator.beginDelegation(event, rootCwd);
-				if (outcome.block) {
-					if (ctx.hasUI) ctx.ui.notify("Blocked unstructured delegation", "warning");
-					return { block: true, reason: outcome.block.reason };
-				}
-				if (outcome.conflict?.conflict) {
-					if (ctx.hasUI) ctx.ui.notify("Blocked concurrent writer for this cwd", "warning");
-					return { block: true, reason: outcome.conflict.reason as string };
-				}
-				for (const warning of outcome.warnings ?? []) {
-					notify(ctx, warning, "warning");
-				}
-				if (outcome.task?.taskId) {
-					rootTurnTaskIds.add(outcome.task.taskId);
-				}
-				const boundDelegation = orchestrator.getDelegation(event.toolCallId);
-				if (boundDelegation) {
-					const boundTask = orchestrator.store.get(boundDelegation.taskId);
-					if (boundTask) rootTurnTaskIds.add(boundTask.taskId);
-				}
-			}
-			return;
-		}
+		if (!decision.block) return;
 		if (ctx.hasUI) ctx.ui.notify(`Blocked parent tool: ${event.toolName}`, "warning");
 		return { block: true, reason: decision.reason };
 	});
@@ -1462,47 +997,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	pi.on("tool_result", async (event, ctx) => {
 		if (isDisabled()) return;
 		latestCtx = ctx;
-		const host = ctx ?? ({ hasUI: false, cwd: process.cwd() } as ExtensionContext);
-		const toolDetails = asRecord(event.details);
-		const parentDelegation = orchestrator.getDelegation(event.toolCallId)
-			?? (typeof toolDetails?.parentToolCallId === "string" ? orchestrator.getDelegation(toolDetails.parentToolCallId) : undefined);
-		const executionId = typeof toolDetails?.executionId === "string"
-			? toolDetails.executionId
-			: typeof toolDetails?.runId === "string" ? toolDetails.runId : parentDelegation?.executionId;
-		if (executionId && parentDelegation && orchestrator.isExplorationToolCall(event.toolName, event.input)) {
-			const budget = orchestrator.recordExplorationToolCall(
-				parentDelegation.taskId,
-				event.toolName,
-				event.input,
-				executionId,
-				event.toolCallId,
-				parentDelegation.floorLimits?.toolBudget?.value,
-			);
-			if (budget.notice) notify(host, budget.notice, "warning");
-		}
-		if (event.toolName === "bg_wait") {
-			// R02 — the existing Usage recording is retained and is not mistaken
-			// for lifecycle processing; an authorized exact-id wait reconciles
-			// only its registered run through the shared completion path.
-			recordBgWaitChildren(event);
-			persistSessionEntries();
-			if (!IS_SUBAGENT && !isDisabled()) {
-				const waitCwd = ctx?.cwd || process.cwd();
-				const recovered = await orchestrator.recoverPendingRun(event.input, waitCwd);
-				if (recovered?.status === "recovered" && recovered.content) {
-					return { content: recovered.content };
-				}
-				if (recovered?.status === "pending" && recovered.reason) {
-					const details = [
-						recovered.code ? `code=${recovered.code}` : "",
-						recovered.nextAction ? `nextAction=${recovered.nextAction}` : "",
-						recovered.outputRef?.outputPath ? `outputRef=${recovered.outputRef.outputPath}` : "",
-					].filter(Boolean).join("; ");
-					return { content: [{ type: "text", text: `[PLANNER-ONLY] Exact-id wait: ${recovered.reason}${details ? ` (${details})` : ""}` }] };
-				}
-			}
-			return;
-		}
 		if (REVIEW_LEAK_TOOLS.has(event.toolName)) {
 			const active = orchestrator.store.active();
 			if (active && (active.state === "reviewing" || active.state === "changes_requested")) {
@@ -1512,25 +1006,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			}
 			return;
 		}
-		if (event.toolName !== "subagent") return;
-		const delegation = orchestrator.getDelegation(event.toolCallId);
-		const before = delegation ? orchestrator.store.get(accountingTaskId(delegation))?.state : undefined;
-		const result = await orchestrator.handleSubagentResult({ ...event });
-		if (delegation) {
-			const usageTaskId = accountingTaskId(delegation);
-			recordSyncChildren(event, delegation);
-			let text = result?.content?.[0]?.text ?? "";
-			if (text && !text.includes("has started") && !text.includes("failed to launch")) {
-				text = enrichDecisionText(text, delegation.taskId);
-				if (result?.content?.[0]) {
-					result.content[0].text = text;
-				}
-				recordInjectedText(usageTaskId, text);
-			}
-			persistSessionEntries();
-			await flushIfTerminal(usageTaskId, before, host, typeof asRecord(event.details)?.asyncDir === "string" ? asRecord(event.details)?.asyncDir as string : undefined);
-		}
-		return result;
 	});
 
 	pi.on("message_end", async (event, ctx) => {
@@ -1581,73 +1056,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					notify(host, formatSessionRootBudgetSoftWarning(rootEval), "warning");
 				}
 			} else if (rootEval.level === "hard" && !sessionRootHardWarned) {
-				// Hard is enforced at the next paid-delegation gate; disclose here so the
-				// operator sees the stop even before a launch attempt (E1/E2 disclosure).
+				// Ticket 08 K1: the launch-time hard-cap gate died with the legacy
+				// delegation chain; this disclosure is the only remaining signal.
 				sessionRootHardWarned = true;
 				sessionRootSoftWarned = true;
 				notify(host, formatSessionRootBudgetStatus(rootEval), "warning");
 			}
 		}
-		if (!isSubagentNotifyMessage(event.message)) return;
-		const snapshot = orchestrator.listDelegations();
-		const notifyText = customMessageText(event.message);
-		const parsed = parseSubagentNotify(notifyText);
-		const beforeByTask = new Map<string, TaskState>();
-		for (const item of snapshot) {
-			const usageTaskId = accountingTaskId(item.record);
-			const state = orchestrator.store.get(usageTaskId)?.state;
-			if (state) beforeByTask.set(usageTaskId, state);
-		}
-		const outcome = await orchestrator.handleAsyncNotify(notifyText);
-		const remaining = new Set(orchestrator.listDelegations().map((item) => item.toolCallId));
-		for (const item of snapshot) {
-			if (remaining.has(item.toolCallId)) continue;
-			const usageTaskId = accountingTaskId(item.record);
-			recordAsyncChild(item.record, host, parsed?.agent, item.toolCallId);
-			let text = outcome?.content[0]?.text ?? "";
-			if (text) {
-				text = enrichDecisionText(text, item.record.taskId);
-				if (outcome?.content[0]) {
-					outcome.content[0].text = text;
-				}
-				recordInjectedText(usageTaskId, text);
-			}
-			persistSessionEntries();
-			await flushIfTerminal(usageTaskId, beforeByTask.get(usageTaskId), host, item.record.asyncDir);
-		}
-		if (!outcome) return;
-		return { message: { ...event.message, content: outcome.content[0]?.text ?? "" } as typeof event.message };
-	});
-
-	pi.on("context", async (event) => {
-		if (isDisabled()) return;
-		const seen = new Set<string>();
-		let changed = false;
-		const next = [];
-		for (const entry of event.messages) {
-			if (!isSubagentNotifyMessage(entry)) {
-				next.push(entry);
-				continue;
-			}
-			const text = customMessageText(entry);
-			const parsed = parseSubagentNotify(text);
-			const runIds = parsed?.runIds ?? [];
-			if (runIds.length > 0 && runIds.every((id) => seen.has(id))) {
-				next.push(entry);
-				continue;
-			}
-			const outcome = await orchestrator.handleAsyncNotify(text);
-			if (!outcome) {
-				next.push(entry);
-				continue;
-			}
-			let content = outcome.content[0]?.text ?? "";
-			content = enrichDecisionText(content);
-			for (const id of runIds) seen.add(id);
-			next.push({ ...entry, content } as typeof entry);
-			changed = true;
-		}
-		if (changed) return { messages: next };
 	});
 
 	const noticeKeys = new Set<string>();
@@ -1719,25 +1134,15 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				}
 				lines.push(`Usage log: ${logStatus}`);
 				lines.push(orchestrator.renderConcurrencyStatus());
-				lines.push(orchestrator.renderRecoveryView(ctx.cwd || process.cwd()));
 				lines.push(`Oracle suite: ${oracleSuiteMode()}`);
 				const rateWarning = rootRateWarning(ctx);
 				if (rateWarning) lines.push(rateWarning);
-				const sessionId = orchestrator.getLoadedProvenance()?.sessionId;
 				const currentCwd = ctx.cwd || process.cwd();
-				const delegatedStatusTask = orchestrator.listDelegations()
-					.map((item) => orchestrator.store.get(item.record.taskId))
-					.find((item) => item && item.cwd === currentCwd && ["planning", "executing", "reviewing", "changes_requested"].includes(item.state));
-				const persistedStatusTask = orchestrator.store.list().find((item) => {
-					if (item.cwd !== currentCwd || !["reviewing", "changes_requested"].includes(item.state)) return false;
-					return orchestrator.getRunRecords().some((record) => record.taskId === item.taskId && (!sessionId || record.sessionId === sessionId));
-				});
-				const active = persistedStatusTask ?? store.activeForCwd(currentCwd);
+				const active = store.activeForCwd(currentCwd);
 				if (active) {
 					lines.push("", orchestrator.renderTaskStatus(active));
 				} else {
 					lines.push("", "无活跃 Task");
-					if (orchestrator.listDelegations().length > 0) lines.push("Budget: 未设累计上限（已知消耗 tokens=0，费用 $0.0000；未知项 tokens 0 项、费用 0 项）");
 				}
 				const sessionUsage = summarizeSessionUsage(ledger);
 				lines.push(`Session usage: tokens=${sessionUsage.totalTokens}，已知费用 $${sessionUsage.totalCostUsd.toFixed(4)}，未知项 ${sessionUsage.costUnknownParts} 项`);
@@ -1957,7 +1362,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 
 				const renderTaskBlock = (tId: string): string | undefined => {
 					const targetId = canonicalTaskId(tId);
-					resolveTaskPending(targetId, ctx);
 					const u = ledger.taskUsage(targetId);
 					if (!u) return undefined;
 					const t = store.get(targetId);
@@ -1976,7 +1380,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					const lines: string[] = [`Usage for session (${session.tasks.length} task${session.tasks.length === 1 ? "" : "s"}):`];
 					for (const tId of session.tasks) {
 						const targetId = canonicalTaskId(tId);
-						resolveTaskPending(targetId, ctx);
 						const u = ledger.taskUsage(targetId);
 						if (!u) continue;
 						const t = store.get(targetId);
@@ -1991,7 +1394,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				if (sub.toLowerCase() === "export") {
 					persistSessionEntries();
 					const requestedRootSession = parts[2]?.trim() || orchestrator.getLoadedProvenance()?.sessionId || process.env.PI_SESSION_ID?.trim() || "unknown-session";
-					const evidence = orchestrator.exportEvidence(requestedRootSession, computeLoadedFingerprint());
+					const evidence = orchestrator.exportEvidence(requestedRootSession);
 					notify(ctx, JSON.stringify(evidence, null, 2));
 					return;
 				}

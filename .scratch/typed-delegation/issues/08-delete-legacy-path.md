@@ -1,6 +1,6 @@
 # 08: 删除旧委派路径 —— 按去向表收掉 orchestrate 拦截链、六个整文件与全部文本解析
 
-Status: ready-for-agent（2026-09-15 由 needs-triage 展开；行号基于 4883189；同日二审后 R2 修订，补六处保活侧耦合、纠正四处自相矛盾，见 Comments）
+Status: done（2026-09-15 落地；整文件删除经 git rm --cached 落索引；交回见 ../08-handback.md）
 Blocked by: 05 B 段（90a1975，verified）、06（48a5fc5，verified；保留意见 49f3caa 已消化）
 Type: task
 

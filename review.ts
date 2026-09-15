@@ -24,7 +24,7 @@ import type {
 } from "./types.ts";
 import { evidenceAction } from "./evidence.ts";
 import type { EvidenceComparison } from "./evidence.ts";
-import { jsonCandidates, stableStringify } from "./report.ts";
+import { stableStringify } from "./report.ts";
 import { TASK_TRANSITIONS } from "./task.ts";
 import type { TaskRecord, TaskStore } from "./task.ts";
 
@@ -410,82 +410,6 @@ export function buildFreshReviewerTask(input: FreshReviewerTaskInput): string {
 	].join("\n");
 }
 
-export function validateReviewRequest(value: unknown): string[] {
-	if (!isPlainObject(value)) return ["ReviewRequest must be an object"];
-	const errors: string[] = [];
-	if (value.version !== 1) errors.push("version must be 1");
-	if (!isNonEmptyString(value.taskId)) errors.push("taskId must be a non-empty string");
-	if (!isNonEmptyString(value.reportTaskId)) {
-		errors.push("reportTaskId must be a non-empty string");
-	}
-	if (value.reviewMode !== "fresh") errors.push("reviewMode must be fresh");
-	return errors;
-}
-
-/**
- * Pull the ReviewRequest Root embedded in a reviewer delegation prompt. The
- * packet is the only place the reviewer's task identity is declared, so a
- * malformed one is ignored rather than guessed at.
- */
-/** @deprecated ticket 06 — legacy text path (orchestrate.ts only); deleted in ticket 08. */
-export function extractReviewRequest(text: string): ReviewRequest | undefined {
-	if (typeof text !== "string" || !text.trim()) return undefined;
-	for (const candidate of jsonCandidates(text)) {
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(candidate);
-		} catch {
-			continue;
-		}
-		if (
-			!isPlainObject(parsed) ||
-			!("reviewMode" in parsed) ||
-			!("reportTaskId" in parsed)
-		) {
-			continue;
-		}
-		if (validateReviewRequest(parsed).length === 0) return parsed as unknown as ReviewRequest;
-	}
-	return undefined;
-}
-
-/**
- * Pull a ReviewResult out of a fresh reviewer's output. Reviewers return a
- * different shape than workers, so this is keyed on `verdict` + `findings`.
- */
-/** @deprecated ticket 06 — legacy text path (orchestrate.ts only); deleted in ticket 08. */
-export function extractReviewResult(text: string): { review?: ReviewResult; error?: string } {
-	if (typeof text !== "string" || !text.trim()) return { error: "reviewer returned no output" };
-
-	let bestErrors: string[] | undefined;
-	let sawShape = false;
-
-	for (const candidate of jsonCandidates(text)) {
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(candidate);
-		} catch {
-			continue;
-		}
-		if (
-			typeof parsed !== "object" ||
-			parsed === null ||
-			Array.isArray(parsed) ||
-			!("verdict" in parsed) ||
-			!("findings" in parsed)
-		) {
-			continue;
-		}
-		sawShape = true;
-		const errors = validateReviewResult(parsed);
-		if (errors.length === 0) return { review: parsed as ReviewResult };
-		if (!bestErrors || errors.length < bestErrors.length) bestErrors = errors;
-	}
-
-	if (bestErrors) return { error: `invalid ReviewResult: ${bestErrors.join("; ")}` };
-	if (sawShape) return { error: "invalid ReviewResult" };
-	return { error: "reviewer output did not contain a ReviewResult object" };
-}
 
 export function summarizeFindings(findings: readonly ReviewFinding[]): string[] {
 	if (findings.length === 0) return ["Findings: (none)"];

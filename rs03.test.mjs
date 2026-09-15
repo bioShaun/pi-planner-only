@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { PlannerOrchestrator } from "./orchestrate.ts";
 import { preflightEffectiveModel } from "./role-models.ts";
-import { applyRoleDelegation, stripDelegationKeys } from "./roles.ts";
 
 const registry = {
 	getAvailable: () => [
@@ -24,25 +23,6 @@ const spec = (taskId) => JSON.stringify({
 	stopConditions: [],
 });
 
-// A11: the child default is selected from the host override, not Root's model;
-// neither omitted field is synthesized into the host payload.
-{
-	const input = { agent: "worker", task: spec("T-20260912-111") };
-	const original = structuredClone(input);
-	const orch = new PlannerOrchestrator({
-		gitRunner: async () => ({ stdout: "", stderr: "", code: 0 }),
-		getModelPreflightContext: () => ({
-			hostModel: { provider: "root", id: "kimi" },
-			agentOverrides: { worker: { provider: "moon", id: "luna" } },
-			registry,
-			pricing,
-		}),
-	});
-	await orch.beginDelegation({ toolCallId: "rs03-a11", input }, "/repo");
-	assert.equal(input.model, undefined);
-	assert.equal(input.thinking, undefined);
-	assert.deepEqual(original, { agent: "worker", task: spec("T-20260912-111") });
-}
 
 // A12: model and thinking provenance is resolved independently, including
 // model-only, thinking-only, ignored TaskSpec, and role-policy-shaped inputs.
@@ -81,130 +61,8 @@ const spec = (taskId) => JSON.stringify({
 	assert.equal(rolePolicy.effective?.thinkingSource, "role-policy");
 }
 
-// Ticket 43: nested TaskSpec model/thinking must not write into effective launch input.
-{
-	const input = {
-		agent: "worker",
-		task: spec("T-20260912-143"),
-		// Nested side-channel only — admitted TaskSpec JSON must not carry these keys.
-		taskSpec: { model: "moon/luna", thinking: "medium" },
-	};
-	const orch = new PlannerOrchestrator({
-		gitRunner: async () => ({ stdout: "", stderr: "", code: 0 }),
-		getModelPreflightContext: () => ({
-			hostModel: { provider: "root", id: "kimi" },
-			hostThinking: "low",
-			agentOverrides: { worker: { provider: "root", id: "kimi" } },
-			registry,
-			pricing,
-		}),
-	});
-	const result = await orch.beginDelegation({ toolCallId: "rs03-43-ignore", input }, "/repo");
-	assert.equal(result.block, undefined);
-	assert.equal(input.model, undefined, "ignored TaskSpec model must not write into launch input");
-	assert.equal(input.thinking, undefined, "ignored TaskSpec thinking must not write into launch input");
-	assert.ok(
-		(result.warnings ?? []).some((w) => /TaskSpec execution controls ignored/.test(w)),
-		`expected ignore warning, got: ${JSON.stringify(result.warnings)}`,
-	);
-}
 
-// Explicit input still wins when TaskSpec also carries model/thinking.
-{
-	const input = {
-		agent: "worker",
-		model: "moon/luna",
-		thinking: "high",
-		task: spec("T-20260912-144"),
-		taskSpec: { model: "root/kimi", thinking: "low" },
-	};
-	const orch = new PlannerOrchestrator({
-		gitRunner: async () => ({ stdout: "", stderr: "", code: 0 }),
-		getModelPreflightContext: () => ({ registry, pricing }),
-	});
-	const result = await orch.beginDelegation({ toolCallId: "rs03-43-explicit", input }, "/repo");
-	assert.equal(result.block, undefined);
-	assert.equal(input.model, "moon/luna");
-	assert.equal(input.thinking, "high");
-}
 
-// A13: unavailable registry state is a warning/continue condition; only a
-// provably absent explicit model in an active registry is blocked.
-{
-	assert.equal(preflightEffectiveModel({
-		input: { agent: "worker" },
-		hostModel: { provider: "root", id: "missing-root" },
-		agentOverrides: { worker: { provider: "moon", id: "luna" } },
-		registry,
-	}).status, "verified");
-	assert.equal(preflightEffectiveModel({ input: { model: "moon/luna" }, registry: undefined }).status, "unverified");
-	assert.equal(preflightEffectiveModel({ input: { model: "moon/luna" }, registry: { getAvailable: () => { throw new Error("unreadable"); } } }).status, "unverified");
 
-	const unavailableOrch = new PlannerOrchestrator({
-		gitRunner: async () => ({ stdout: "", stderr: "", code: 0 }),
-		getModelPreflightContext: () => ({ registry: { getAvailable: () => { throw new Error("unreadable"); } } }),
-	});
-	const unavailable = await unavailableOrch.beginDelegation({
-		toolCallId: "rs03-a13-unverified",
-		input: { agent: "worker", task: spec("T-20260912-114") },
-	}, "/repo");
-	assert.equal(unavailable.block, undefined);
-	assert.ok((unavailable.warnings ?? []).some((warning) => warning.includes("unverified") && warning.includes("continuing launch")));
-
-	const invalid = preflightEffectiveModel({ input: { model: "moon/no-such-model" }, registry });
-	assert.equal(invalid.status, "blocked");
-	const orch = new PlannerOrchestrator({
-		gitRunner: async () => ({ stdout: "", stderr: "", code: 0 }),
-		getModelPreflightContext: () => ({ registry }),
-	});
-	const blockedInput = { agent: "worker", model: "moon/no-such-model", task: spec("T-20260912-113") };
-	const blocked = await orch.beginDelegation({ toolCallId: "rs03-a13", input: blockedInput }, "/repo");
-	assert.equal(blocked.block?.code, "MODEL_UNAVAILABLE");
-	assert.equal(orch.store.get("T-20260912-113"), undefined);
-	assert.equal(orch.pendingDelegationCount(), 0);
-	assert.equal(orch.getConcurrencyStatus().occupied, 0);
-	assert.deepEqual(orch.reservations.inFlight("T-20260912-113"), { tokens: 0, costUsd: 0 });
-	assert.equal(orch.reservations.heldCount("T-20260912-113"), 0);
-}
-
-// A14: transforms preserve valid host budget fields and do not mutate a
-// caller's nested budget objects while diagnostics are stripped before launch.
-{
-	const input = {
-		agent: "worker",
-		task: "plain task",
-		usageBudget: { tokens: { soft: 100, hard: 500 }, custom: "preserve" },
-		extraPayload: { keep: true },
-	};
-	const originalBudget = structuredClone(input.usageBudget);
-	applyRoleDelegation(input, {
-		role: "worker",
-		budget: { tokens: 1000 },
-	});
-	assert.equal(input.usageBudget.tokens.soft, 100);
-	assert.equal(input.usageBudget.custom, "preserve");
-	assert.deepEqual(originalBudget, { tokens: { soft: 100, hard: 500 }, custom: "preserve" });
-	assert.equal(input.__floorLimits !== undefined, true);
-	input.__delegationRole = "worker";
-	input.__oracleSuiteConflict = true;
-	input.__reuseOutcome = { reused: true };
-	input.__contextOverridden = true;
-	input.reuseTaskId = "T-20260912-115";
-	input.reuseContext = "diagnostic";
-	input.reuseRootHistory = ["history"];
-	input.reuse = true;
-	const preservedPayload = {
-		agent: input.agent,
-		task: input.task,
-		usageBudget: structuredClone(input.usageBudget),
-		extraPayload: structuredClone(input.extraPayload),
-		context: input.context,
-	};
-	stripDelegationKeys(input);
-	assert.deepEqual(input, preservedPayload);
-	for (const key of ["__delegationRole", "__floorLimits", "__oracleSuiteConflict", "__reuseOutcome", "__contextOverridden", "reuseTaskId", "reuseContext", "reuseRootHistory", "reuse"]) {
-		assert.equal(key in input, false, `${key} must be stripped`);
-	}
-}
 
 console.log("rs03: PASS");

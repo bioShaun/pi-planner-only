@@ -14,7 +14,6 @@ import { join } from "node:path";
 const isolatedAgentDir = mkdtempSync(join(tmpdir(), "planner-only-cutover-"));
 process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
 process.env.PI_PLANNER_ONLY_SEED_PRICING = "0";
-delete process.env.PI_PLANNER_ONLY_LEGACY_SUBAGENT;
 delete process.env.PI_SUBAGENT_CHILD;
 
 const { default: plannerOnly } = await import("./index.ts");
@@ -24,7 +23,6 @@ const commands = new Map();
 const tools = new Map();
 const notices = [];
 const sessionEntries = [];
-const activeToolNames = ["read", "bash", "write", "subagent", "bg_wait", "git_audit", "planner_verdict", "planner_recover", "planner_delegate"];
 const pi = {
 	on(name, handler) {
 		handlers.set(name, handler);
@@ -156,87 +154,7 @@ const fixtureTaskId = (suffix) =>
 //    flagged legacy path, then the flag comes straight back off.
 // --------------------------------------------------------------------------
 const pendingCwd = "/fixture/cutover-05b";
-{
-	const pendingCtx = { ...ctx, cwd: pendingCwd };
-	const spec = {
-		taskId: fixtureTaskId("902"),
-		objective: "pending run fixture",
-		role: "worker",
-		cwd: pendingCwd,
-		scope: { allowedPaths: ["x.txt"] },
-		constraints: [],
-		acceptanceCriteria: ["x"],
-		validation: { required: false },
-	};
-	process.env.PI_PLANNER_ONLY_LEGACY_SUBAGENT = "1";
-	const launched = await handlers.get("tool_call")(
-		{
-			toolCallId: "call-05b-pending",
-			toolName: "subagent",
-			input: { agent: "worker", async: true, task: JSON.stringify(spec) },
-		},
-		pendingCtx,
-	);
-	assert.equal(launched, undefined, "the legacy path still launches while the flag is on");
-	const receipt = await handlers.get("tool_result")(
-		{
-			toolCallId: "call-05b-pending",
-			toolName: "subagent",
-			input: {},
-			details: {
-				asyncId: "run-05b-pending",
-				runId: "run-05b-pending",
-				asyncDir: join(isolatedAgentDir, "async-subagent-runs", "run-05b-pending"),
-			},
-			content: [{ type: "text", text: "Async: worker [run-05b-pending]\nThe async run is detached and running in the background." }],
-			isError: false,
-		},
-		pendingCtx,
-	);
-	assert.match(receipt?.content?.[0]?.text ?? "", /Async delegation for task/, "the run is registered as pending");
-	// Same call under the flag: the registered exact id is a legal wait.
-	const legacyWait = await handlers.get("tool_call")(
-		{ toolName: "bg_wait", input: { id: "run-05b-pending" } },
-		pendingCtx,
-	);
-	assert.equal(legacyWait, undefined, "the exact registered id passes the legacy rules");
-	delete process.env.PI_PLANNER_ONLY_LEGACY_SUBAGENT;
 
-	const refused = await handlers.get("tool_call")(
-		{ toolName: "bg_wait", input: { id: "run-05b-pending", timeout: 1000 } },
-		pendingCtx,
-	);
-	assert.equal(refused?.block, true, "even a registered pending run id is refused post-cutover");
-	assert.match(refused.reason, /may not call 'bg_wait'/);
-	assert.ok(refused.reason.includes("no asynchronous wait"));
-}
-
-// --------------------------------------------------------------------------
-// 4. Idle-for-gather allowlist: git_audit passes; planner_recover is refused;
-//    an inspect refusal still carries the fenced TaskSpec repair.
-// --------------------------------------------------------------------------
-{
-	const idleCtx = { ...ctx, cwd: "/fixture/cutover-05b-idle" };
-	const audit = await handlers.get("tool_call")(
-		{ toolCallId: "call-05b-audit", toolName: "git_audit", input: { operation: "status" } },
-		idleCtx,
-	);
-	assert.equal(audit, undefined, "git_audit is allowed while Idle");
-
-	const recover = await handlers.get("tool_call")(
-		{ toolName: "planner_recover", input: { taskId: fixtureTaskId("902"), runId: "run-05b-pending" } },
-		idleCtx,
-	);
-	assert.equal(recover?.block, true, "planner_recover left the Idle allowlist");
-	assert.match(recover.reason, /idle for gather/);
-
-	const read = await handlers.get("tool_call")(
-		{ toolName: "read", input: { path: "docs/x.md" } },
-		idleCtx,
-	);
-	assert.equal(read?.block, true);
-	assert.ok(read.reason.includes("```json"), "non-delegation Idle refusals still carry the TaskSpec repair");
-}
 
 // --------------------------------------------------------------------------
 // 5. planner_delegate passes the hook while a Task is live and while Idle —
@@ -299,7 +217,7 @@ const pendingCwd = "/fixture/cutover-05b";
 		ctx,
 	);
 	assert.equal(allowed, undefined, "subagent passes while the guard is off");
-	assert.equal(ledgerTaskCount(), 1, "the off-guard call is not intercepted — and this extension registers nothing for it");
+	assert.equal(ledgerTaskCount(), 0, "the off-guard call is not intercepted — and this extension registers nothing for it");
 
 	await commands.get("planner-only").handler("on", ctx);
 	const refused = await handlers.get("tool_call")(
