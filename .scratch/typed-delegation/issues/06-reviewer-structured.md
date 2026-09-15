@@ -1,7 +1,7 @@
 # 06: Reviewer 走结构化返回 —— `planner_delegate` 加 `role=reviewer`，ReviewResult 由 launcher 校验直进 `advanceReview`
 
-Status: implemented（48a5fc5），待验收
-Blocked by: 04（05 A 段已落地，10eeb20；A′ 10d8509 已先把 git_audit 放进 Idle 放行侧）
+Status: verified（48a5fc5，审核 2026-09-15）
+Blocked by: 无（04、05 A 段均已落地；05 B 段的宿主检查 3b 在 05 票内跟进）
 Type: task
 
 **What to build：** `runDelegation` 增加 reviewer 分支。Root 对一个已有 WorkerReport 的 Task 调 `planner_delegate({ role: "reviewer", taskId })`，`delegate.ts` 用 `buildReviewRequest` 单向渲染 ReviewRequest（含 Root 自己采的 Git 证据包），经结构化委派 API 派给内置 `reviewer` agent，要求子进程按 **ReviewResult 的 JSON schema** 结构化返回；返回值经身份 / 绑定 / 截断三道既有校验后 `store.recordReview` → `advanceReview({ review })`，结果进 `DelegationOutcome.review` 与 `decision`。**零文本解析**：`extractReviewResult` / `extractReviewRequest` 在本票标 `@deprecated`，08 删。
@@ -204,3 +204,33 @@ node --experimental-strip-types --input-type=module -e 'const {REVIEW_RESULT_SCH
 - 测试 helper 的 `gitRunner` 按调用方 `cwd` 执行（既有 `makeDeps` 忽略 cwd，多 root 探测会错跑主 repo）；fixture 仓库先 seed 一个 commit——unborn HEAD 下 `aRun.finalGitRef` 缺席会让每个包都 attributionIncomplete。
 
 已知缺口（本票明确不补，逐条）：**G1** 新链无 workspace snapshot，`workspaceDigest` 全链缺席，accept 新鲜度只剩 A_run↔当前采样比对；**G2** `augmentExecutionEvidence` / `preparePassFindings` 未搬，带 open finding 的 Task 被 pass 时偏保守（revalidate/blocked 而非 accept）；**G3** request 不设 `model` / `thinking` / `toolBudget` / `timeoutMs`；**G4** 非 completed 终态不落 usage（07 收）。
+
+**2026-09-15 验收（Claude，审核方）。判定：通过。** 七条验收命令在审核方本机独立复跑（日志 `.scratch/typed-delegation/06-review-typecheck.log` / `06-review-npm.log`）：`npm run typecheck` exit 0；`npm test` exit 0（05 B 落地后为 38 文件，`delegate.test.mjs: all cases passed`）；`delegate.ts` 中 `extractReviewResult|extractReviewRequest` 0 命中；`@deprecated` 恰 `review.ts:430/:456`；四个导出命中 `:31/:90/:91/:304`；`git diff 10d8509 48a5fc5 -- '*.ts'` 新增行 0 条 `JSON.parse` / `.match(` / `new RegExp` / `.split(`；diffstat 恰 `delegate.ts` / `delegate.test.mjs` / `review.ts` / `index.ts`（+736/−11）；`REVIEW_RESULT_SCHEMA` 序列化 1064 字节、无 `~kind`。与回执逐项一致。
+
+逐点核对（`delegate.ts:539` `runReviewInvocation`，按 R 标注行号）：
+- **R1** `:547-561`：`REVIEW_TERMINAL` 用 `isTerminalTaskState`，`TERMINAL_TASK_STATES` 只有 `completed` / `closed-superseded`（`types.ts:598`），所以 blocked / failed / changes_requested / reviewing 都可审，与票面一致；`REVIEW_NO_REPORT` 在 launch 前。`TASK_REQUIRED` 提到绑定之前（`:275`），拒绝不消耗 id——比票面更早，接受。
+- **R2**：分支内无 `reserve` / `beginExecution` / `transition`；`captureEvidence` 只在 R7 采当前样，不采 A_run。
+- **R3** `:563-589` 与票面逐字对应；`spec` 用条件展开（`FreshReviewerTaskInput.spec` 本就可选，`review.ts:360`），不是偏差。
+- **R4** `:591-603`：`agent: "reviewer"`、`context: "fresh"`、structured schema；`delegate.test.mjs:492` 断言 `objective` 标记串不进包。
+- **R5** `:605-613`；**R9** `:615-633` 放在 R6 之前——等价票面「任一失败 usage 先落账」，且覆盖 R7 的拒绝，接受。
+- **R6** `:635-667` 顺序 `REVIEW_INVALID` → `REVIEW_IDENTITY` → 重读 store → `REVIEW_BINDING` → `REVIEW_PACKET_TRUNCATED`。`REVIEW_INVALID` 是票面外新增码，只在 launcher 已校过的值上做二道闸，不是解析，接受。
+- **R7** `:669-705`：`scopePaths` 形状与 worker 分支（`:345-357`）一致，来源改为 `task.spec`；`latest` 用 `fresh.executions` 过滤 `!auxiliary && !reportOnly && reportIndex === reports.length-1`；`REVIEW_NO_EXECUTION_EVIDENCE` 保留（见说明 2）。
+- **R8** `:707-717` 四步与 `orchestrate.ts:5297-5310` 逐一对应。
+- **`reviewAttributionOf`**：审核方把 `orchestrate.ts:1677` 原件与 `review.ts:304` 副本去掉一层缩进与 `this.` 后 diff，52 行逐字相同。
+- **`index.ts`** 三处（description / promptGuidelines / `details.review`）与 D5 一致；`index.test.mjs` 无 `planner_delegate` 参数断言，未动正确。
+- **单测九组**（`delegate.test.mjs:462-748`）与票面 1–9 一一对应；schema 镜像（`:709-722`）用导出数组 deepEqual，`required` 与 `additionalProperties` 都断了。
+
+四点说明核对：
+1. **R9**：`usage.ts:1633` 确按 `run.executionId` 反查 `executions`，`:1637` 的 identityIndex 同理——不传 `executionId` 正确。附带后果（回执没写）：`usage.ts:1630` 导出时 reviewer 行的 `executionId` 落为 `"unknown-execution"`，`toolCallId` 经 `:1654` 仍保留。10 对账时按 `toolCallId + taskId` 找 reviewer 行。
+2. **R7**：审核方实看 `review.ts:892` pass 分支——不读 `comparison` 直接 accept；`:713` stale 块与 `:795` truthFindings 块都要求 `comparison` 非空。`REVIEW_NO_EXECUTION_EVIDENCE` 必须留，未降级正确。
+3. 逐字，见上。
+4. 3804 字节：测试无断言，审核方未复核，按回执采纳。
+
+偏差四条（`as unknown as`、`REVIEW_INVALID`、usage 统一落账点、测试 helper 的 cwd / seed commit）均按意图收敛，接受。G1–G4 原样交 10。
+
+不阻塞的观察（三条，不开票，10 看）：
+- `renderDelegationOutcome`（`delegate.ts:740-746`）里 decision 行与 verdict 行都以 `review:` 开头且 decision 在前：Root 先读到 `review: accept -> completed`，再读到 `review: pass (evidenceFresh: …)`。08/10 若嫌绕，把 verdict 行提前。
+- `ROLE_AGENTS.reviewer ?? "reviewer"`（`:596`）的兜底不可达（`roles.ts:33` 是字面量）；08 顺手删。
+- R7 的 `scopePaths` 读 launch 前的 `task.executions`，`latest` 读 launch 后的 `fresh.executions`；reviewer 不加 execution，并发 worker 落新 report 会被 `REVIEW_BINDING` 拦，无实际差异，记一笔即可。
+
+宿主侧的 reviewer 正例按承接项走 05 B6 检查 3b，采集物进 `.scratch/typed-delegation/host-05/`。
