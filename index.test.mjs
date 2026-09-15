@@ -1711,16 +1711,20 @@ assert.doesNotMatch(PLANNER_PROMPT, /\/planner-only/);
 assert.doesNotMatch(PLANNER_PROMPT, /record a verdict or switch/);
 
 // unknown taskId -> isError, nothing recorded
-const unknownVerdict = await verdictTool.execute(
-	"v-0",
-	{ verdict: "pass", summary: "no such task", taskId: "T-20260905-nope" },
-	undefined,
-	undefined,
-	ctx,
+await assert.rejects(
+	verdictTool.execute(
+		"v-0",
+		{ verdict: "pass", summary: "no such task", taskId: "T-20260905-nope" },
+		undefined,
+		undefined,
+		ctx,
+	),
+	(error) => {
+		assert.match(error.message, /unknown task T-20260905-nope/);
+		assert.match(error.message, /planner_verdict/);
+		return true;
+	},
 );
-assert.equal(unknownVerdict.isError, true);
-assert.match(unknownVerdict.content[0].text, /unknown task T-20260905-nope/);
-assert.match(unknownVerdict.content[0].text, /planner_verdict/);
 
 // Ticket 22 round p10-r046: public planner_verdict refuses strict pass without reviewer.
 {
@@ -1749,16 +1753,20 @@ assert.match(unknownVerdict.content[0].text, /planner_verdict/);
 			ctx,
 		);
 		assert.equal(worker.isError, undefined);
-		const refused = await verdictTool.execute(
-			"v-221",
-			{ verdict: "pass", summary: "strict gate", taskId },
-			undefined,
-			undefined,
-			ctx,
+		await assert.rejects(
+			verdictTool.execute(
+				"v-221",
+				{ verdict: "pass", summary: "strict gate", taskId },
+				undefined,
+				undefined,
+				ctx,
+			),
+			(error) => {
+				assert.match(error.message, /planner_verdict refused/);
+				assert.match(error.message, /reviewer ReviewResult/);
+				return true;
+			},
 		);
-		assert.equal(refused.isError, true);
-		assert.match(refused.content[0].text, /planner_verdict refused:/);
-		assert.match(refused.content[0].text, /reviewer ReviewResult/);
 	} finally {
 		if (previous === undefined) delete process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW;
 		else process.env.PI_PLANNER_ONLY_REQUIRE_REVIEW = previous;
@@ -1766,15 +1774,16 @@ assert.match(unknownVerdict.content[0].text, /planner_verdict/);
 }
 
 // pass with no recorded WorkerReport -> refused, state unchanged
-const noReportVerdict = await verdictTool.execute(
-	"v-1",
-	{ verdict: "pass", summary: "nothing to judge", taskId: "T-20260905-110" },
-	undefined,
-	undefined,
-	ctx,
+await assert.rejects(
+	verdictTool.execute(
+		"v-1",
+		{ verdict: "pass", summary: "nothing to judge", taskId: "T-20260905-110" },
+		undefined,
+		undefined,
+		ctx,
+	),
+	/no recorded WorkerReport/,
 );
-assert.equal(noReportVerdict.isError, true);
-assert.match(noReportVerdict.content[0].text, /no recorded WorkerReport/);
 notices.length = 0;
 await commands.get("planner-only").handler("task T-20260905-110", ctx);
 assert.match(notices.at(-1).message, /State: executing/, "a refused verdict changes nothing");
@@ -1809,15 +1818,16 @@ await handlers.get("tool_call")(
 	{ toolCallId: "call-v11", toolName: "subagent", input: { agent: "reviewer", task: JSON.stringify(delegationSpec("T-20260905-510", "reviewer")) } },
 	ctx,
 );
-const pendingVerdict = await verdictTool.execute(
-	"v-2",
-	{ verdict: "pass", summary: "jumping the gun", taskId: "T-20260905-510" },
-	undefined,
-	undefined,
-	ctx,
+await assert.rejects(
+	verdictTool.execute(
+		"v-2",
+		{ verdict: "pass", summary: "jumping the gun", taskId: "T-20260905-510" },
+		undefined,
+		undefined,
+		ctx,
+	),
+	/still pending/,
 );
-assert.equal(pendingVerdict.isError, true);
-assert.match(pendingVerdict.content[0].text, /still pending/);
 
 // the reviewer requests changes; Root's pass is then accepted as an override
 const v11Outcome = await handlers.get("tool_result")(
@@ -1898,19 +1908,23 @@ assert.match(notices.at(-1).message, /Reviews: pass \(operator\)/);
 notices.length = 0;
 await commands.get("planner-only").handler("review T-20260905-513 pass again", ctx);
 assert.match(notices.at(-1).message, /already completed/);
-const terminalVerdict = await verdictTool.execute(
-	"v-5",
-	{ verdict: "pass", summary: "again", taskId: "T-20260905-513" },
-	undefined,
-	undefined,
-	ctx,
-);
-assert.equal(terminalVerdict.isError, true);
-assert.match(terminalVerdict.content[0].text, /already completed/);
-assert.doesNotMatch(terminalVerdict.content[0].text, /\/planner-only/);
-assert.match(
-	terminalVerdict.content[0].text,
-	/verdicts are final\. Start a new Task with a new TaskSpec for further work\./,
+await assert.rejects(
+	verdictTool.execute(
+		"v-5",
+		{ verdict: "pass", summary: "again", taskId: "T-20260905-513" },
+		undefined,
+		undefined,
+		ctx,
+	),
+	(error) => {
+		assert.match(error.message, /already completed/);
+		assert.doesNotMatch(error.message, /\/planner-only/);
+		assert.match(
+			error.message,
+			/verdicts are final\. Start a new Task with a new TaskSpec for further work\./,
+		);
+		return true;
+	},
 );
 
 // L-4: Task blocked with one report and fresh evidence: planner_verdict(pass) → completed, one usage line with completed
@@ -4530,12 +4544,15 @@ await abandonActiveTasks();
 	const twinId = /task (T-\d{8}-\d{3})/.exec(launchedA.content[0].text)?.[1]
 		?? /taskId: (T-\d{8}-\d{3})/.exec(launchedA.content[0].text)?.[1];
 	assert.ok(twinId, `completed Explorer names a canonical Task: ${launchedA.content[0].text}`);
-	await tools.get("planner_verdict").execute(
-		"v-r02-twin",
-		{ verdict: "pass", summary: "A done", taskId: twinId },
-		undefined,
-		undefined,
-		twinCtx,
+	await assert.rejects(
+		tools.get("planner_verdict").execute(
+			"v-r02-twin",
+			{ verdict: "pass", summary: "A done", taskId: twinId },
+			undefined,
+			undefined,
+			twinCtx,
+		),
+		/planner_verdict refused/,
 	);
 	const stillLive = await handlers.get("tool_call")(
 		{ toolName: "read", input: { path: "docs/a.md" } },
@@ -4615,18 +4632,26 @@ await abandonActiveTasks();
 		// Test 2: staged-outside-truth => refused
 		interceptedStatus = "? file.txt\n";
 		interceptedDiffCached = "staged_outside.txt\n";
-		const res2 = await tools.get("git_commit").execute("c-2", { taskId, message: "feat: add file" }, undefined, undefined, repoCtx);
-		assert.equal(res2.isError, true);
-		assert.ok(res2.content[0].text.includes("git_commit refused: staged changes outside Task"));
-		assert.ok(res2.content[0].text.includes("staged_outside.txt"));
+		await assert.rejects(
+			tools.get("git_commit").execute("c-2", { taskId, message: "feat: add file" }, undefined, undefined, repoCtx),
+			(error) => {
+				assert.ok(error.message.includes("git_commit refused: staged changes outside Task"));
+				assert.ok(error.message.includes("staged_outside.txt"));
+				return true;
+			},
+		);
 
 		// Test 3: tracked-outside-truth => refused
 		interceptedStatus = "1 .M N... 100644 100644 100644 1111 2222 base.txt\n";
 		interceptedDiffCached = "";
-		const res3 = await tools.get("git_commit").execute("c-3", { taskId, message: "feat: add file" }, undefined, undefined, repoCtx);
-		assert.equal(res3.isError, true);
-		assert.ok(res3.content[0].text.includes("git_commit refused: dirty paths outside Task"));
-		assert.ok(res3.content[0].text.includes("base.txt"));
+		await assert.rejects(
+			tools.get("git_commit").execute("c-3", { taskId, message: "feat: add file" }, undefined, undefined, repoCtx),
+			(error) => {
+				assert.ok(error.message.includes("git_commit refused: dirty paths outside Task"));
+				assert.ok(error.message.includes("base.txt"));
+				return true;
+			},
+		);
 
 		pi.exec = originalExec;
 	} finally {

@@ -1035,21 +1035,21 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		}),
 		async execute(_toolCallId, params: { taskId: string; message?: string; push?: boolean }, _signal, _onUpdate, ctx) {
 			if (params.push === true) {
-				return { content: [{ type: "text", text: "git_commit refused: push is unsupported; provide an explicit authorized push operation." }], details: { unsupported: "push" }, isError: true };
+				throw new Error("git_commit refused: push is unsupported; provide an explicit authorized push operation.");
 			}
 			const task = orchestrator.store.get(params.taskId);
 			if (!task) {
-				return { content: [{ type: "text", text: `git_commit refused: unknown Task ${params.taskId}.` }], details: {}, isError: true };
+				throw new Error(`git_commit refused: unknown Task ${params.taskId}.`);
 			}
 			if (task.state !== "completed") {
-				return { content: [{ type: "text", text: `git_commit refused: Task ${task.taskId} is ${task.state}; only completed Tasks may be committed.` }], details: {}, isError: true };
+				throw new Error(`git_commit refused: Task ${task.taskId} is ${task.state}; only completed Tasks may be committed.`);
 			}
 			const repoProbe = await gitRunner(["rev-parse", "--show-toplevel"], task.cwd || ctx.cwd || process.cwd());
 			if (repoProbe.code !== 0) {
-				return { content: [{ type: "text", text: `git_commit refused: cannot resolve repository root (${repoProbe.stderr || repoProbe.stdout || "git unavailable"}).` }], details: {}, isError: true };
+				throw new Error(`git_commit refused: cannot resolve repository root (${repoProbe.stderr || repoProbe.stdout || "git unavailable"}).`);
 			}
 			const repoRoot = repoProbe.stdout.trim();
-			if (!repoRoot) return { content: [{ type: "text", text: "git_commit refused: repository root is empty." }], details: {}, isError: true };
+			if (!repoRoot) throw new Error("git_commit refused: repository root is empty.");
 			const rawTruth = new Set<string>();
 			for (const execution of task.executions) {
 				for (const path of [...(execution.truthPaths ?? []), ...(execution.committedPaths ?? [])]) rawTruth.add(path);
@@ -1060,9 +1060,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				return rel;
 			}).filter((path) => path && path !== "." && !path.startsWith("../") && !path.startsWith("/"));
 			const plan = resolveGitCommit({ taskId: task.taskId, cwd: repoRoot, truthPaths, message: params.message });
-			if (!plan.ok) return { content: [{ type: "text", text: `git_commit refused: ${plan.error}` }], details: {}, isError: true };
+			if (!plan.ok) throw new Error(`git_commit refused: ${plan.error}`);
 			const status = await gitRunner(["status", "--porcelain=v2", "--branch"], repoRoot);
-			if (status.code !== 0) return { content: [{ type: "text", text: `git_commit refused: cannot inspect dirty paths (${status.stderr || status.stdout}).` }], details: {}, isError: true };
+			if (status.code !== 0) throw new Error(`git_commit refused: cannot inspect dirty paths (${status.stderr || status.stdout}).`);
 			const statusKinds = parseGitStatusKinds(status.stdout);
 			const classification = classifyCommitDirtyPaths({
 				trackedDirty: statusKinds.tracked,
@@ -1072,14 +1072,14 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				scopeAllowedPaths: task.spec?.scope?.allowedPaths ?? [],
 			});
 			if (classification.blocking.length > 0) {
-				return { content: [{ type: "text", text: `git_commit refused: dirty paths outside Task ${task.taskId} truth paths: ${classification.blocking.join(", ")}` }], details: {}, isError: true };
+				throw new Error(`git_commit refused: dirty paths outside Task ${task.taskId} truth paths: ${classification.blocking.join(", ")}`);
 			}
 			const stagedDiff = await gitRunner(["diff", "--cached", "--name-only", "--no-ext-diff", "--no-textconv"], repoRoot);
-			if (stagedDiff.code !== 0) return { content: [{ type: "text", text: `git_commit refused: cannot inspect staged paths (${stagedDiff.stderr || stagedDiff.stdout}).` }], details: {}, isError: true };
+			if (stagedDiff.code !== 0) throw new Error(`git_commit refused: cannot inspect staged paths (${stagedDiff.stderr || stagedDiff.stdout}).`);
 			const stagedPaths = stagedDiff.stdout.split(/\r?\n/).map((p) => p.trim()).filter(Boolean);
 			const stagedOutside = dirtyPathsOutsideTruth(stagedPaths, plan.paths);
 			if (stagedOutside.length > 0) {
-				return { content: [{ type: "text", text: `git_commit refused: staged changes outside Task ${task.taskId} truth paths: ${stagedOutside.join(", ")}` }], details: {}, isError: true };
+				throw new Error(`git_commit refused: staged changes outside Task ${task.taskId} truth paths: ${stagedOutside.join(", ")}`);
 			}
 			const beforeHead = await gitRunner(["rev-parse", "HEAD"], repoRoot);
 			const missingGates = [
@@ -1089,13 +1089,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			for (const [name, command] of missingGates) {
 				const gate = await pi.exec("npm", [...command], { cwd: repoRoot, timeout: VALIDATION_TIMEOUT_MS });
 				if (gate.code !== 0) {
-					return { content: [{ type: "text", text: `git_commit refused: validation gate ${name} failed (exit ${gate.code}).` }], details: { gate: name, verified: false }, isError: true };
+					throw new Error(`git_commit refused: validation gate ${name} failed (exit ${gate.code}).`);
 				}
 			}
 			const add = await gitRunner(plan.addArgv, repoRoot);
-			if (add.code !== 0) return { content: [{ type: "text", text: `git_commit refused: staging failed (${add.stderr || add.stdout}).` }], details: {}, isError: true };
+			if (add.code !== 0) throw new Error(`git_commit refused: staging failed (${add.stderr || add.stdout}).`);
 			const commit = await gitRunner(plan.commitArgv, repoRoot);
-			if (commit.code !== 0) return { content: [{ type: "text", text: `git_commit refused: commit failed (${commit.stderr || commit.stdout}).` }], details: {}, isError: true };
+			if (commit.code !== 0) throw new Error(`git_commit refused: commit failed (${commit.stderr || commit.stdout}).`);
 			const afterHead = await gitRunner(["rev-parse", "HEAD"], repoRoot);
 			let successText = `git_commit: committed Task ${task.taskId} truth paths (${plan.paths.join(", ")} ).\n${commit.stdout.trim()}`;
 			if (classification.external.length > 0) {
@@ -1204,10 +1204,12 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			const text = result.message ?? (result.status === "recorded"
 				? `planner_recover: re-ingested task ${params.taskId}, run ${params.runId}.`
 				: `planner_recover: ${result.code ?? result.status} for task ${params.taskId}, run ${params.runId}.`);
+			if (result.status === "unbound" || result.status === "identity-conflict" || result.status === "duplicate") {
+				throw new Error(nextAction ? `${text} Next action: ${JSON.stringify(nextAction)}.` : text);
+			}
 			return {
 				content: [{ type: "text", text }],
 				details,
-				isError: result.status === "unbound" || result.status === "identity-conflict" || result.status === "duplicate",
 			};
 		},
 	});
@@ -1284,19 +1286,14 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			const task = params.taskId ? verdictResolution?.task : orchestrator.store.active();
 			const missNote = verdictResolution?.note;
 			if (!task) {
-				return {
-					content: [{
-						type: "text",
-						text: [
-							params.taskId
-								? `planner_verdict: unknown task ${params.taskId}.${missNote ? ` ${missNote}.` : ""}`
-								: "planner_verdict: no active planner-only task.",
-							'Usage: planner_verdict({ verdict: "pass" | "request_changes" | "blocked", summary, taskId?, findings? }).',
-						].join(" "),
-					}],
-					details: { refused: "unknown-task" },
-					isError: true,
-				};
+				throw new Error(
+					[
+						params.taskId
+							? `planner_verdict: unknown task ${params.taskId}.${missNote ? ` ${missNote}.` : ""}`
+							: "planner_verdict: no active planner-only task.",
+						'Usage: planner_verdict({ verdict: "pass" | "request_changes" | "blocked", summary, taskId?, findings? }).',
+					].join(" "),
+				);
 			}
 			latestCtx = _ctx;
 			// A child run that already finished must be consumed before the
@@ -1305,11 +1302,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			const refusal = orchestrator.rootVerdictRefusal(task, params.verdict);
 			if (refusal) {
 				orchestrator.recordRootVerdictRefusal(task, params.verdict, refusal);
-				return {
-					content: [{ type: "text", text: `planner_verdict refused: ${refusal.reason}` }],
-					details: { refused: "lifecycle", refusalKind: refusal.kind, taskId: task.taskId, verdict: params.verdict },
-					isError: true,
-				};
+				throw new Error(`planner_verdict refused (${refusal.kind}, task=${task.taskId}, verdict=${params.verdict}): ${refusal.reason}`);
 			}
 			try {
 				const before = task.state;
@@ -1337,14 +1330,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					},
 				};
 			} catch (error) {
-				return {
-					content: [{
-						type: "text",
-						text: `planner_verdict refused: ${error instanceof Error ? error.message : String(error)}`,
-					}],
-					details: { refused: "store-error", taskId: task.taskId, verdict: params.verdict },
-					isError: true,
-				};
+				throw new Error(
+					`planner_verdict refused (store-error, task=${task.taskId}, verdict=${params.verdict}): ${error instanceof Error ? error.message : String(error)}`,
+				);
 			}
 		},
 	});
@@ -1521,14 +1509,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		if (event.toolName !== "subagent") return;
 		const delegation = orchestrator.getDelegation(event.toolCallId);
 		const before = delegation ? orchestrator.store.get(accountingTaskId(delegation))?.state : undefined;
-		const result = await orchestrator.handleSubagentResult({
-			toolCallId: event.toolCallId,
-			toolName: event.toolName,
-			input: event.input,
-			content: event.content,
-			details: event.details,
-			isError: event.isError,
-		});
+		const result = await orchestrator.handleSubagentResult({ ...event });
 		if (delegation) {
 			const usageTaskId = accountingTaskId(delegation);
 			recordSyncChildren(event, delegation);
