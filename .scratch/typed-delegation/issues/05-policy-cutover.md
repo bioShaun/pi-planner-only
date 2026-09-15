@@ -1,7 +1,7 @@
 # 05: Policy 切换 —— Root 只走 `planner_delegate`，旧拦截链不可达
 
-Status: A 段 verified（10eeb20，A′ 10d8509）；B 段 in progress，06 待验收
-Blocked by: 04（A 段）；06（仅 B 段宿主验证，见「依赖修正」与 2026-09-15 备注）
+Status: A 段 verified（10eeb20，A′ 10d8509）；B 段 verified（90a1975，宿主检查 1–5 通过，3b 一拒一过，拒因记回 06）
+Blocked by: 无
 Type: task
 
 **What to build：** 把 Root 的委派面从 `subagent` 切到 `planner_delegate`。分两段、两个 commit：
@@ -317,3 +317,49 @@ $ git show --stat 90a1975
 5. **检查 1 的 `getDelegation` 断言。** orchestrator 在扩展闭包内不可达，用两个可观测代理代替：同 toolCallId 的迟到 `tool_result` 穿透为 undefined、`ledger/*.json` 计数为 0。
 
 未做的承接项：`planner_recover` 拒绝→throw 的 `assert.rejects` 覆盖（承接项说「顺手可加」）未加，留 08 注销工具时一并处理。`PLANNER_PROMPT` 未再改（A 段措辞对 B 段仍成立；06 票面同注）。
+
+**2026-09-15 B 段宿主验证（Claude，审核方）。判定：检查 1、2、3、4、5 全部通过；3b 两跑一拒一过，拒的那次暴露 06 的 launcher schema 松于 `validateReviewResult`（已记回 06 Comments）。采集物全部在 `.scratch/typed-delegation/host-05/`（文件名前缀即检查号）。**
+
+环境与驱动方式（三处偏差，先说清）：
+- 三元组：`pi --version` 0.85.1；pi-subagents 0.67.0；status 全文见 `22-status-after-check2.txt`——`Planner-only mode is on (source: default)`，`loaded=acd9f8623380`，与本地 `computeLoadedFingerprint()` 全等（`acd9f862…eccda`），`source=/public/pi/pi-planner-only/index.ts`。环境里无 `PI_PLANNER_ONLY=0`、无 off marker。
+- **加载方式偏差**：`~/.pi/agent/settings.json` 的 packages pin 指向 `fix/ticket-52-refusal-attribution`，而 `feat/typed-delegation` 没推远端，pin 路线走不通；改用 `pi -ne -e ~/.pi/agent/npm/node_modules/pi-subagents -e /public/pi/pi-planner-only/index.ts` 显式加载本地树（fingerprint 因此天然一致；`-ne` 只挡掉 web-access 与主题）。
+- **驱动方式偏差**：非交互 `--mode json -p`，同一 `--session-id host05-b6` 续 10 个回合（会话 jsonl：`~/.pi/agent/sessions/--public-pi-pi-planner-only-.scratch-typed-delegation-host-05-probe-repo--/2026-09-15T06-42-39-293Z_host05-b6.jsonl`，摘录 `70-root-session-calls.txt`，逐回合工具名 `70-root-toolcall-counts.txt`）。`/planner-only status` 在 print 模式不执行（只出启动 notice），改用 `render-status.mjs` 直接调用同一 `index.ts` 注册的 `planner-only` 命令 handler（ctx 指向真实 jsonl，`--session-start` 先 rehydrate），并验证过渲染前后账本 md5 不变。
+- 探针仓 `host-05/probe-repo`（空 init commit `cad41f0`）；基线 `02-ledger-md5-before.txt`（ledger 122 文件 + usage.jsonl）。
+
+**检查 1（subagent）**
+- [x] 会话 jsonl：`toolCall name="subagent"`（06:42:52.833Z），3 ms 后 `toolResult` 文本以 `Planner-only guard: the parent process may not call 'subagent'.` 开头，第二行含 `planner_delegate`；**`isError` 持久化为 `true`**，`details: {}`（票 03 的「0.85.x 无 isError」只适用于 execute 返回值；hook block 路径宿主自己置 true）。
+- [x] 无新子进程 session：`71-session-files-timeline.txt` 里基线后第一个子会话文件是 14:46:48（检查 3 的 worker run）。`/tmp/pi-subagents-uid-1000/` 全程恒为 9——本次任何检查都没往那里写，该计数不是有效信号，子会话落在会话目录下 `<session>/<runId>/run-0/session.jsonl` 与 `subagent-artifacts/`。
+- [x] 账本 md5 不变（`11` vs `02` diff 空）；status 报「无活跃 Task」；`hello.txt` 不存在。
+- Root 被拒后的自发行为（记录不判定）：没有重试，也没有自行改用 `planner_delegate`，只解释了拒绝并问用户「如果你想继续，我可以改用 planner_delegate 以 role=worker 下发」（`10-check1-calls.txt` #4）。
+
+**检查 2（bg_wait）**：[x] `toolResult` 文本 `Planner-only guard: the parent process may not call 'bg_wait'.` + 同两行指引，`isError: true`；账本 md5 不变（`21` vs `02` diff 空）。
+
+**检查 3（worker 走新链）** → `T-20260915-001`，run `dd82efff`，工具回合 91 s，worker 22 turns。
+- [x] `details.report` 存在、`report.status === "completed"`、`details.taskId` 有值。**票面写的 `details.status` 字段在 `index.ts` 的 details 形状里不存在**，顶层是 `state: "reviewing"` / `decision: "review_pending"`；按 `report.status` 判。
+- [x] 账本（`31-ledger-T001-after-check3.txt`）：恰一条 execution，`kind: "worker"`、无 `auxiliary`，aRef/cRef 都是 `cad41f0`；子 usage 不在 `usage.jsonl` 而在 `task.usage.children`，`ownerRootSessionId = "host05-b6"`（即 `--session-id`；10 对账用）。
+- [x] Root 会话中无 `subagent` 调用（检查 1 那次被拒的除外，见 `70-root-toolcall-counts.txt`）。
+- 附：`task.snapshot` 缺席（06 G1 的宿主实证）。
+
+**检查 3b（reviewer 走新链）——两跑**
+- 第一跑（14:48，run `5e6cb0d6`）：reviewer 子进程确实跑了（read + ls + structured_output，包 4857 字节，`40-check3b-reviewer-child-session.jsonl`），launcher schema 放行，回程被 `REVIEW_INVALID` 拒：`acknowledgeDrift.successorTaskId must be a non-empty string when present`。子进程原物 `40-check3b-reviewer-child-output.json`：`"acknowledgeDrift":{"commit":false,"successorTaskId":""}`；launcher 侧 schema `40-check3b-launcher-schema.json` 里 `successorTaskId: {type:"string"}` 无 minLength。R6 的语义被宿主证实：`reviews` 不落（`[]`）、Task 不动（reviewing）、usage 已落（`children` 出现 `kind: "reviewer"`、无 `executionId`、`toolCallId` 有）；`toolResult isError: true`，`details: {}`。
+- 第二跑（14:50，run `19196103`，`42-check3b-retry-reviewer-child-output.json`）：
+  - [x] `details.review.verdict === "pass"`（合法枚举）、`details.review.source === "reviewer"`。
+  - [x] 账本 `reviews` 一条 `source: "reviewer"`、`reportRevision: 1`（reviewer 省略、由 packetBinding 补）、`appliedDecision: "accept"`；不铸新 Task（当天只有 T-001）、`executions` 仍 1（`43-ledger-T001-after-check3b-retry.txt`）。
+  - [x] 无 `subagent` 调用。
+- 连带：accept 让 Task 直接 `completed`，所以检查 4 在 T-001 上被 `TASK_CLOSED` 拒（`Task T-20260915-001 is completed; start a new Task instead`，`51-ledger-after-check4-on-T001.txt`）——行为正确；票面把 3b 插在 3 与 4 之间时没料到 reviewer pass 会把 Task 收掉。
+
+**检查 4（validator auxiliary，在第二个 Task 上）**：删掉 `hello.txt` 后用检查 3 原话再派 → `T-20260915-002`（run `b81c8d7c`，115 s，worker 39 turns）；worker 报告 completed 但 `advanceReview` 判 revalidate → `changes_requested`（`working tree changed since the report`；与 05 无关，记给 10：worker 过度验证 + 证据基线滞后）。再派 validator（run `c7695f2b`，oracle `gpt-5.6-luna`）：
+- [x] 第二条 execution `kind: "validator"`、`auxiliary: true`；`validatorReports` 1；worker 那条不变（`55-ledger-T002-after-check4.txt`）。
+- [x] status（`56-status-after-check4.txt`）：`Executions: 2 (1 attribution windows)`，Delegations 列 worker 与 validator，Evidence 行仍是 worker 窗口的比对。本构建的 status 没有单独的「最近 execution」行，`1 attribution windows` 就是 `!auxiliary` 过滤后的结果。
+
+**检查 5（Idle 下 git_audit）**：`planner_verdict` BLOCKED 收掉 T-002（state `blocked`，final → Idle）；随后 `git_audit operation=status` 放行，返回 `git status` 文本（branch master，HEAD `cad41f0`，`? hello.txt`）。对照检查 1/2 的拒绝，Idle 允许集确是「三工具」不是「什么都拒」。
+
+三点说明：
+1. hook block 的 `toolResult` 持久化形态：`isError: true`，`content` 一条 text，`details: {}`；文本三行（guard 句、`planner_delegate` 指引句、「There is no asynchronous wait」句）。
+2. Root 被拒后：不重试、不自行换工具、把选择交回用户。
+3. 检查 4 的 status 文本：见上与 `56-status-after-check4.txt`。
+
+额外观察（不阻塞，记给 10）：
+- 账本 md5 终态 diff（`72` vs `02`）：除 T-001 / T-002 / usage.jsonl 外，**`T-20260913-046.json`（外层仓 workspace、changes_requested）也被重写**——`task.updatedAt` 未变、envelope `writtenAt` 刷新；检查 1–3 的四个快照里未变，终态变了；补跑一个无工具的「OK」回合又改一次。来源是 `session_shutdown` 的 `flushOpenUsageOnShutdown`（`index.ts:1366-1374`），非 B 段改动；10 看 shutdown 是否该重写别的 workspace 的非终态 Task。
+- Root 每次 reviewer 调用都照 06 D2 填了 `objective` / `scope` 等被忽略字段，没有困惑；06 承接项的 prompt 提示暂不需要。
+- 费用：status Budget 行报 T-001 会话 $0.1777、T-002 $0.2842。

@@ -1,6 +1,6 @@
 # 06: Reviewer 走结构化返回 —— `planner_delegate` 加 `role=reviewer`，ReviewResult 由 launcher 校验直进 `advanceReview`
 
-Status: verified（48a5fc5，审核 2026-09-15）
+Status: verified（48a5fc5，审核 2026-09-15）；宿主 3b 保留意见 1 条（launcher schema 松于 validateReviewResult，见 Comments 末）
 Blocked by: 无（04、05 A 段均已落地；05 B 段的宿主检查 3b 在 05 票内跟进）
 Type: task
 
@@ -234,3 +234,9 @@ node --experimental-strip-types --input-type=module -e 'const {REVIEW_RESULT_SCH
 - R7 的 `scopePaths` 读 launch 前的 `task.executions`，`latest` 读 launch 后的 `fresh.executions`；reviewer 不加 execution，并发 worker 落新 report 会被 `REVIEW_BINDING` 拦，无实际差异，记一笔即可。
 
 宿主侧的 reviewer 正例按承接项走 05 B6 检查 3b，采集物进 `.scratch/typed-delegation/host-05/`。
+
+**2026-09-15 宿主 3b 回填（Claude，审核方；采集物 `.scratch/typed-delegation/host-05/40-*` / `42-*`）。** 05 B6 检查 3b 两跑：第二跑 PASS（verdict pass → accept → completed，`reviews` 一条 `source: "reviewer"`、`reportRevision` 由 packetBinding 补成 1，executions 不变，不铸 Task）；**第一跑被 R6.1 `REVIEW_INVALID` 拒**：reviewer（deepseek-v4.1-flash:high）返回 `"acknowledgeDrift":{"commit":false,"successorTaskId":""}`，launcher schema 放行（`successorTaskId: {type:"string"}` 无 minLength），`validateReviewResult` 拒「successorTaskId must be a non-empty string when present」。R6 语义在宿主上按票面成立：usage 已落（`children` 出现 `kind: "reviewer"`、无 `executionId`）、review 不落、Task 不动。
+
+保留意见（不阻塞 verified，建议 08 之前修，一行）：`REVIEW_RESULT_SCHEMA` 比 `validateReviewResult` 松——`acknowledgeDrift.successorTaskId` 应为 `Type.String({ minLength: 1 })`，`workspaceDigest` / `taskId` 同理可加 minLength；validator 的「name successorTaskId 或 commit=true」在 JSON schema 里表达不了，所以 R6.1 仍要留。另可在 schema 或 `REVIEWER_PROMPT` 里说明「无 drift 就省略 `acknowledgeDrift`」，避免模型把可选对象填成空值白跑一次 reviewer。
+
+宿主数据补两条：reviewer 包（`buildFreshReviewerTask` 文本）在真实 Task 上 4857 字节（fixture 3804）；Root 照 D2 填了被忽略字段，没有困惑。

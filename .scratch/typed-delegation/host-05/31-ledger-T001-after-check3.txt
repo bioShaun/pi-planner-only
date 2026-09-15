@@ -1,0 +1,4 @@
+envelope keys: version,writtenAt,task
+state: reviewing reports: 1 reviews: []
+executions: [{"executionId":"tool_Bmagu7xgGLmr9Xcs40LtdJlP","kind":"worker","runId":"dd82efff-1e3d-46fe-8278-14e828bcf654","reportIndex":0,"aRef":"cad41f0","cRef":"cad41f0","truthPaths":["/public/pi/pi-planner-only/.scratch/typed-delegation/host-05/probe-repo/hello.txt"]}]
+snapshot: absent lastComparison: verifiable,fresh,reasons,truthPaths,undeclaredPaths,extraDeclaredPaths,overlappingPaths,unrelatedPaths,missingPaths,unexplained

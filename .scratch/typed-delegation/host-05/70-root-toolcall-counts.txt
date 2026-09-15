@@ -1,0 +1,11 @@
+{"subagent":1,"bg_wait":1,"planner_delegate":6,"planner_verdict":1,"git_audit":1}
+2026-09-15T06:42:52.833Z subagent 
+2026-09-15T06:44:05.177Z bg_wait 
+2026-09-15T06:45:29.442Z planner_delegate worker
+2026-09-15T06:48:37.971Z planner_delegate reviewer
+2026-09-15T06:50:29.580Z planner_delegate reviewer
+2026-09-15T06:52:03.267Z planner_delegate validator
+2026-09-15T06:52:54.105Z planner_delegate worker
+2026-09-15T06:55:32.768Z planner_delegate validator
+2026-09-15T06:56:48.266Z planner_verdict 
+2026-09-15T06:57:07.207Z git_audit 
