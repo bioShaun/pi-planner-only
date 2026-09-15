@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { ROLE_AGENTS, buildTaskPacket, lastWorkerValidationPassed, missingTaskSpecValidationCommands, oracleSuiteMode } from "./roles.ts";
 import { createTaskSpec } from "./task.ts";
-import { validateWorkerReport, workerReportShapeReminder } from "./report.ts";
 import { reviewerPrompt } from "./review.ts";
 
 
@@ -12,20 +11,6 @@ assert.deepEqual(
 	),
 	["npm test"],
 );
-
-// A copied reminder must remain a valid shape while conservatively proving no validation ran.
-{
-	const reminderReport = JSON.parse(workerReportShapeReminder("T-copy"));
-	const spec = createTaskSpec({
-		objective: "copy detection",
-		cwd: process.cwd(),
-		validation: { commands: ["npm test"] },
-	});
-	assert.deepEqual(validateWorkerReport(reminderReport), []);
-	assert.equal(lastWorkerValidationPassed(reminderReport), false);
-	assert.deepEqual(missingTaskSpecValidationCommands(spec, reminderReport), ["npm test"]);
-}
-
 
 // Explicit worker-declared passes retain both gates.
 {

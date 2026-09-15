@@ -37,7 +37,7 @@ pi -e .
 
 `typebox` 和 `@earendil-works/pi-coding-agent` 是 peerDependencies：由 Pi 运行时提供，不要放进 `dependencies`。
 
-支持的主机范围：`@earendil-works/pi-coding-agent` `>=0.84 <1`、`pi-subagents` `>=0.65 <0.70`（声明见 `package.json`）。发布必须运行 `npm run test:release`：类型检查、单元测试与真实契约测试全部通过才允许发布——在发布环境下契约测试若被跳过（对端缺失或版本不符）会直接判失败，而不是以 0 退出。
+支持的主机范围：`@earendil-works/pi-coding-agent` `>=0.84 <1`、`pi-subagents` `>=0.65 <0.70`（声明见 `package.json`）。发布必须运行 `npm run test:release`（typecheck + 单元测试）。
 
 ## 命令
 
@@ -56,7 +56,7 @@ pi -e .
 
 ## 父进程可用工具
 
-存在则保留：`read`、`grep`、`find`、`ls`、`git_audit`、`planner_verdict`、`subagent`、`bg_wait`、`subagent_wait`、`subagent_supervisor`、`contact_supervisor`、`question`、`questionnaire`。
+存在则保留：`read`、`grep`、`find`、`ls`、`git_audit`、`planner_verdict`、`planner_delegate`、`git_commit`、`question`、`questionnaire`。
 
 拦截：`edit`、`write`、通用 `bash`、未知 mutator，以及 `subagent` 的宿主机命令路径（如 `workflow: "run-ci"`、`gate`）。
 
@@ -64,7 +64,7 @@ pi -e .
 
 ## v0.2 编排
 
-父进程把 `TaskSpec` JSON 嵌进 subagent 任务：
+Root 把 `TaskSpec` 作为 `planner_delegate` 的参数传入：
 
 ```json
 {
@@ -81,9 +81,9 @@ pi -e .
 }
 ```
 
-拦截 `subagent`：登记任务、采样工作区；同一 cwd 上第二个声明为 `worker` 的委托会被拦住（one writer per cwd）。taskId 若缺失、格式不对或日期不是当天，扩展会替换为生成的 id，原 id 作为 alias 保留，委派结果里会告知。生成 id 会在共享 ledger 命名空间中以跨进程原子 claim 保留；恢复过、终态、超恢复上限或快照损坏的 id 都不会再次分配。显式继续只能解析 canonical id 或已登记 alias，并校验 workspace；id 冲突不会被当作继续。受限角色会 remap 到工具面匹配的 builtin agent：
+`planner_delegate` 登记任务、采样工作区；同一 cwd 上第二个 `worker` 委派会被拒绝（每个 cwd 至多一个 worker）；`subagent` 与 `bg_wait` 调用一律拒绝。taskId 若缺失、格式不对或日期不是当天，扩展会替换为生成的 id，原 id 作为 alias 保留，委派结果里会告知。生成 id 会在共享 ledger 命名空间中以跨进程原子 claim 保留；恢复过、终态、超恢复上限或快照损坏的 id 都不会再次分配。显式继续只能解析 canonical id 或已登记 alias，并校验 workspace；id 冲突不会被当作继续。受限角色会 remap 到工具面匹配的 builtin agent：
 
-非法 TaskSpec 拒绝会展示修复摘要，保留可信角色和验证意图。命令列表简写会转换成明确的必需验证；无法无损转换的 validation 会继续拒绝并要求补充，不会静默变成 `required: false`。report-only 修正必须指向一个已存在且可继续的 Task；多个或未知 id 会在启动 child 前拒绝，也不会创建 placeholder。模型预检的 host-default 结果只用于归因，不会反写下游 model 字段，让宿主继续应用自身 settings fallback；显式模型选择仍作为启动参数保留。
+非法 TaskSpec 拒绝会展示修复摘要，保留可信角色和验证意图。命令列表简写会转换成明确的必需验证；无法无损转换的 validation 会继续拒绝并要求补充，不会静默变成 `required: false`。多个或未知的继续 id 会在启动 child 前拒绝，也不会创建 placeholder。
 
 | 角色 | Builtin agent | 子进程工具 |
 |---|---|---|
@@ -91,9 +91,13 @@ pi -e .
 | `explorer` / `reviewer` | `reviewer` | read, grep, find, ls |
 | `validator` | `oracle` | read, grep, find, ls, bash |
 
-`reviewer` 子进程一律 `context: "fresh"`，任务包只有 TaskSpec + WorkerReport + evidence，不会 fork 父会话。任务包是 `ReviewRequest`：对 Task 的一次调用，绝不是新的 TaskSpec。Task 的原始 role、objective、spec 在 worker / reviewer / validation 各轮中保持不变。validator 委派是对被审 Task 的调用，不会新建 Task，其报告记录在该 Task 的 validatorReports。
+验证运行由 Root 显式委派（`planner_delegate` + role=validator）；没有任何自动派发。
 
-Worker 必须返回带 version 的 `WorkerReport`。父进程抽取、超过 12k 字符则压缩、检查 evidence 新鲜度，并附上下一步 review 动作。常见偏差会被自动规范化，修补项以 `Report normalised:` 行回显。畸形输出只允许一次 report-only 修正，第二次直接 blocked。若第一次结果完全是 prose、没有 report JSON，这次修正还会附上一行紧凑 JSON 形状提醒。每个 worker 任务也会预先附上同一份紧凑 JSON 形状，并禁止自行 `/code-review`——审核交给插件的 Reviewer。已接受的结果不再重复 Fresh Reviewer prompt；只有真正委派 reviewer 时才生成完整任务包。Reviewer 只读该任务包（spec、报告、digest、有界补丁），不得 `git log`、跑 `npm test` 或重探整棵树。
+`planner_delegate` 不在委派请求里设置 `model`、`thinking`、`toolBudget`、`timeoutMs`，子进程按宿主默认值运行；usage 行里的 `model` / `thinking` 是从子进程响应读回、只用于归因。
+
+`reviewer` 子进程一律 `context: "fresh"`，携带 `ReviewRequest`——Task 的 spec、最新 WorkerReport、Root 采集的 Git 证据、有界补丁——不会 fork 父会话。ReviewRequest 是对 Task 的一次调用，绝不是新的 TaskSpec。Task 的原始 role、objective、spec 在 worker / reviewer / validation 各轮中保持不变。validator 委派是对被审 Task 的调用，不会新建 Task，其报告记录在该 Task 的 validatorReports。
+
+Worker 返回带 version 的 `WorkerReport`；launcher 按 schema 校验后落在 `details.report`，不会从子代理文本里再解析。非 completed 的 launcher 状态是工具错误（抛出），不是解析失败。Reviewer 只读它的调用载荷，只能用 read、grep、find、ls：不得 `git log`、跑 `npm test` 或重探整棵树。
 
 Validator（`oracle`）在 Worker 校验已 exit 0 时默认做有界复核：`git rev-parse HEAD`、`git status --porcelain`，以及确认报告里点名的测试存在。设 `PI_PLANNER_ONLY_ORACLE=full` 才重跑全量。Worker 校验失败时仍会重跑列出的命令。
 
@@ -101,18 +105,14 @@ Validator（`oracle`）在 Worker 校验已 exit 0 时默认做有界复核：`g
 
 两份子契约都要与所属委派对账：
 
-- `WorkerReport` 只有在 `taskId`、`evidence.taskId` 以及（存在时的）`evidence.workerRunId` 与被委派任务和 subagent 调用一致时才被接受。结构合法但属于别的任务的报告按畸形处理：不存储，只给一次 report-only 修正。
+- `WorkerReport` 只有在 `taskId`、`evidence.taskId` 以及（存在时的）`evidence.workerRunId` 与被委派任务和 subagent 调用一致时才被接受。结构合法但属于别的任务的报告会带着身份错误落到复核判定上，不会被静默接受。
 - `ReviewResult` 只有在 `taskId` 与被评审任务一致时才被记录；不匹配的裁决不落库、任何状态都不变。
 
 证据按执行记录归属，全部由 Root 采集。每次实际子进程执行都有独立证据记录：Root 在执行真正开始前采样（`A_run`），在该执行的最终结果到达时再采一次（`C_report`）——即使报告无法解析也会保存。Truth/scope 是纯函数 `diff(A_run, C_report)` 与报告声明的交叉核对——`A_run` 之前的一切（包括分支上早已存在的无关提交）天然不在窗口内。Freshness 是独立的 `diff(C_report, C_now)`：Root 在复核和验收边界重新采样，报告之后的工作区漂移强制 `revalidate` 而非完成；fresh reviewer 的 `evidenceFresh: true` 永远绕不过这道 Root 侧检查。findings（漏报、越界、漂移）跨纠正轮次保留并阻止 PASS，直到复核确认修复；早于每次执行证据的旧账本记录被标记为不可验证，无法自动完成。写锁按 worktree 的真实路径生效：同一 worktree 的别名（相对路径、符号链接）共享同一把锁，独立 worktree 互不影响。
 
-### 严格委派（可选）
-
-默认允许没有内嵌 `TaskSpec` 的 worker 委派，但会告警。设 `PI_PLANNER_ONLY_STRUCTURED_DELEGATION=strict` 则直接阻断。explorer 始终宽松；validator 两种模式都只告警。
-
 ### Idle gather 策略
 
-Root 的 gather 阶段由适配器工作区的 Task store 推导。当该 cwd 存在未终结的 Task 时，适用常规允许清单（inspect 工具、`git_audit`、Verdict、一次委派）。当没有任何存活 Task（Idle for gather）时，Root 只能发起一次 Delegation、提问、记录 Verdict（`planner_verdict` 对 blocked/failed 同样可用），或通过精确 id 的 `bg_wait`（阻塞超时 ≤ 60 秒；前缀、全量请求、未知字段、其他工作区一律拒绝）恢复一个已登记的 pending run。每条 Idle 拒绝都附带可校验的 TaskSpec JSON（按被拒调用填充），修复只需一次粘贴。带独立 TaskSpec 的 standalone Explorer Task 与 Worker Task 一样闭环：校验过的 WorkerReport → reviewing → Root `planner_verdict`；零变更的只读结果是合法交付，畸形的终局报告会以修复指引 block 该 Task。blocked/failed 不会让 gather 保持存活；要再查看代码树，请重新委派。
+Root 的 gather 阶段由适配器工作区的 Task store 推导。当该 cwd 存在未终结的 Task 时，适用常规允许清单（inspect 工具、`git_audit`、Verdict、一次委派）。当没有任何存活 Task（Idle for gather）时，Root 只能发起一次 Delegation、提问、记录 Verdict（`planner_verdict` 对 blocked/failed 同样可用）、用 `git_commit` 提交已 completed 的 Task，或用 `git_audit` 检查 Git；`subagent` 与 `bg_wait` 一律拒绝。每条 Idle 拒绝都附带可校验的 TaskSpec JSON（按被拒调用填充），修复只需一次粘贴。带独立 TaskSpec 的 standalone Explorer Task 与 Worker Task 一样闭环：校验过的 WorkerReport → reviewing → Root `planner_verdict`；零变更的只读结果是合法交付，畸形的终局报告会以修复指引 block 该 Task。blocked/failed 不会让 gather 保持存活；要再查看代码树，请重新委派。
 
 Reviewer 没有 `git_audit`（前台子进程不加载 ambient 扩展，该工具属于父扩展）。Root 自己采样 Git，把有界证据包——HEAD、status、当前变更文件、A-to-C 归因/漏报/多报路径、diff stat、diff check——放进 `ReviewRequest`；reviewer 只用 `read`/`grep`/`find`/`ls`。针对 Task 起始基线的有界补丁会随 `ReviewRequest` 传给 reviewer（已提交的 Task 变更仍可评审）；若补丁被截断（`patchTruncated` 或省略路径），reviewer 的 PASS 会被拒收，只能记录 `request_changes` 或 `blocked`。
 
@@ -163,13 +163,13 @@ Token 数为准，美元/人民币金额是推导值。扩展跟踪 Root 各生�
 - 以 `_` 开头的键会被忽略（可用于注释）。
 - 可在会话内通过 `/planner-only usage reload` 重新加载费率表。
 
-会话级 root 累计预算**默认关闭**。`/planner-only budget on` 打开（标记文件 `~/.pi/agent/planner-only/session-root-budget.on`），`/planner-only budget off` 关闭。开启后按 worker 初始 floor 的 ×3 软顶警告、×5 硬顶拒绝新的受控付费委派。`PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` 或 `=0` 会覆盖标记。单次委派的 `usageBudget` floor（worker / explorer / validator）不受影响。
+会话级 root 累计预算**默认关闭**。`/planner-only budget on` 打开（标记文件 `~/.pi/agent/planner-only/session-root-budget.on`），`/planner-only budget off` 关闭。开启后按 worker 初始 floor 的 ×3 软顶警告；×5 硬顶目前只披露、不拦截委派。`PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` 或 `=0` 会覆盖标记。单次委派的 `usageBudget` floor（worker / explorer / validator）不受影响。会话证据导出只携带 `statuses`（task / workerReport / reviewResult / rootVerdict / refusalKind）、`findings`、`usage`、`breakdown`、`unattributed`；linkage / requirements / evidenceMatrix / analysis 块已移除。
 
 **替代方案：** 推荐直接在 `~/.pi/agent/models.json` 里配置 `cost`。这样 Pi 和 `pi-subagents` 的原生命令（如 `/subagent-cost`）都能直接计价。插件自带的定价表仅作为不需要改动 `models.json` 时的备用与覆盖机制。
 
 ### 取消与孤儿子进程
 
-TUI 下按 Esc 中止 `planner_delegate` 会向子进程发 CANCEL，Task 进入 `blocked`，已消耗的 usage 落账。`-p`（print）模式没有工具级中止入口：SIGINT 直接结束 Root，进程内运行的子代理随之结束，不会落 `cancelled` 终态或 usage 行；但子代理已启动的 shell 命令可能残留为孤儿进程（票 03 观察到一次），需自行检查并清理。取消宽限期为 5 s（默认）；超时后 Task 同样进入 `blocked`，但子进程 usage 未知。
+TUI 下按 Esc 中止 `planner_delegate` 会向子进程发 CANCEL，Task 进入 `blocked`，已消耗的 usage 落账。`-p`（print）模式没有工具级中止入口：SIGINT 直接结束 Root，进程内运行的子代理随之结束，不会落 `cancelled` 终态或 usage 行；但子代理已启动的 shell 命令可能残留为孤儿进程（宿主试跑时观察到一次），需自行检查并清理。取消宽限期为 5 s（默认）；超时后 Task 同样进入 `blocked`，但子进程 usage 未知。委派在飞时键入 `/exit` 会被当作 steering 输入而不是退出；请用 Ctrl-D。
 
 ## 设计规范
 
@@ -182,16 +182,12 @@ TUI 下按 Esc 中止 `planner_delegate` 会向子进程发 CANCEL，Task 进入
 ## 测试
 
 ```bash
-npm test          # 单元 + 进程内集成（不包含 E2E）
+npm test          # 单元 + 进程内集成
 npm run typecheck # tsc --noEmit（Pi 直接加载 .ts；这是本地类型检查）
-npm run test:e2e  # 真实 pi-subagents 契约（需要已安装，否则会明确跳过）
-npm run test:release  # 发布门禁：typecheck + 单元 + e2e；契约测试被跳过即判失败
+npm run test:release  # 发布门禁：typecheck + 单元测试
 ```
 
-`npm test` 不验证运行时角色降权映射。该覆盖仅由 `test:e2e` 执行；未安装
-`pi-subagents` 时，角色降权仍未验证。
-
-E2E 套件针对已安装的 `pi-subagents` 包运行——builtin agent 工具面、公开子路径 `child-tool-plan` 的启动映射（工具上限、前台子进程与 ambient 扩展隔离）、以及 planner 改写的负载字段——不发起任何模型调用。缺包或版本不在声明范围内会打印 SKIP 行并以 0 退出。
+`test:release` = typecheck + 单元测试；宿主层覆盖以 typed-delegation 验收运行的采证产物记录，不作为发布门禁套件。
 
 ## 模块
 
@@ -199,8 +195,8 @@ E2E 套件针对已安装的 `pi-subagents` 包运行——builtin agent 工具�
 |---|---|
 | `types.ts` | `TaskSpec`、`WorkerReport`、`EvidenceRef`、`ReviewResult`、`ReviewRequest` |
 | `policy.ts` | 父进程工具白名单与 `tool_call` 决策 |
-| `task.ts` | 校验、压缩、状态机 |
-| `report.ts` | `WorkerReport` 抽取、压缩、身份校验 |
+| `task.ts` | 校验、状态机 |
+| `report.ts` | `WorkerReport` schema 校验与身份校验 |
 | `review.ts` | 裁决、review 循环、fresh-review 任务包 |
 | `roles.ts` | TaskRole 画像与 agent remap |
 | `evidence.ts` | Git 探测、A-to-C 归因、review 证据包 |

@@ -43,7 +43,7 @@ Root's own Git samples, never the Worker's word. Each execution record carries a
 _Avoid_: artifact, snapshot (unless talking about the Git working tree sample itself), the old single Task-level A sample
 
 **ReviewRequest**:
-The transient packet a reviewer invocation carries: the Task's original spec (read-only), the latest WorkerReport, and Root's Git evidence. It names the Task; it never rebinds one.
+The transient invocation payload a reviewer invocation carries: the Task's original spec (read-only), the latest WorkerReport, and Root's Git evidence. It names the Task; it never rebinds one.
 _Avoid_: reviewer TaskSpec, review prompt
 
 **Git-read**:
@@ -55,15 +55,15 @@ The parent tool guard: which tools Root may call. While a Task is live for the w
 _Avoid_: permissions, ACL
 
 **Delegation**:
-Launching a child with a role, a bounded packet, and at most one writer per cwd.
-_Avoid_: spawn, dispatch (the host mechanism)
+Launching a child with a role and a TaskSpec through `planner_delegate`; the child's WorkerReport returns launcher-validated, never parsed from text; at most one worker per cwd.
+_Avoid_: spawn, dispatch (the host mechanism), packet
 
 **Review loop**:
 Decide the next lifecycle step from a report, evidence comparison, and optional ReviewResult, then apply it to the Task.
 _Avoid_: review pipeline, arbitration service
 
 **Verdict**:
-Root's recorded judgment over a Task through `planner_verdict`; the operator's `/planner-only review` is an override, not a second verdict.
+Root's recorded judgment over a Task through `planner_verdict`; the operator's `/planner-only review` is an override, not a second verdict. Flow: worker report → Root evidence comparison → optional reviewer → `planner_verdict` (pass / request_changes / blocked) → `git_commit` once the Task is completed.
 
 **Usage**:
 Token and derived-cost accounting attributed to a Task; Root turns by phase, children by run. Injected text and review leak are tracked separately.

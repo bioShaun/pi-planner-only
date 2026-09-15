@@ -199,13 +199,7 @@ After checking acceptance criteria, changed paths, and verification evidence, st
 If this packet lacks enough scope or evidence to locate the change, return verdict blocked.
 Do not compensate with a repository-wide scan.
 
-Return only a ReviewResult JSON object:
-
-  {"taskId":"{TASK_ID}","verdict":"pass|request_changes|blocked",
-   "summary":"...","evidenceFresh":true,
-   "findings":[{"severity":"blocker|major|minor|info",
-   "category":"correctness|scope|test|safety|regression|maintainability|other",
-   "description":"...","requestedChange":"..."}]}
+Respond with a ReviewResult JSON object; the launcher validates its shape.
 
 Verdict rules: any blocker or major finding means request_changes.
 Minor or info findings alone may still pass. Do not modify files.`;

@@ -19,7 +19,7 @@ process.env.PI_PLANNER_ONLY_SEED_PRICING = "0";
 // ticket 05 → 08: this file drives the pre-cutover subagent chain through the hook; deleted with it.
 
 delete process.env.PI_SUBAGENT_CHILD;
-const { default: plannerOnly, filterPlannerTools, restorePlannerTools, PLANNER_PROMPT } = await import("./index.ts");
+const { default: plannerOnly, filterPlannerTools, restorePlannerTools, PLANNER_PROMPT, createLoadedPluginFingerprint } = await import("./index.ts");
 
 const handlers = new Map();
 const commands = new Map();
@@ -1175,4 +1175,29 @@ try {
 	const snapshot = JSON.parse(readFileSync(ledgerPath, "utf8"));
 	assert.equal(snapshot.task.usage.children.length, 1, "ledger file carries the cancelled child's usage row");
 	assert.equal(snapshot.task.usage.children[0].outcome, "failed", "non-completed terminal lands as outcome=failed in the file");
+}
+
+// --------------------------------------------------------------------------
+// FP-1: createLoadedPluginFingerprint prefers sessionManager.getSessionId()
+//       over the session-file stem, so provenance session= matches the
+//       ownerRootSessionId that planner_delegate records in usage rows.
+//       With only getSessionFile it falls back to the file-name stem.
+// --------------------------------------------------------------------------
+{
+	const cwd = "/tmp/fp-probe";
+	const fpWithManager = createLoadedPluginFingerprint({
+		cwd,
+		sessionManager: {
+			getSessionId: () => "host10-x",
+			getSessionFile: () => "/x/2026-09-15T00-00-00-000Z_host10-x.jsonl",
+		},
+	});
+	assert.equal(fpWithManager.sessionId, "host10-x", "sessionId prefers sessionManager.getSessionId()");
+	const fpFileOnly = createLoadedPluginFingerprint({
+		cwd,
+		sessionManager: {
+			getSessionFile: () => "/x/2026-09-15T00-00-00-000Z_host10-x.jsonl",
+		},
+	});
+	assert.equal(fpFileOnly.sessionId, "2026-09-15T00-00-00-000Z_host10-x", "sessionId falls back to the file-name stem");
 }

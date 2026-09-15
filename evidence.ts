@@ -1407,14 +1407,7 @@ export function compareEvidence(
 		);
 	}
 
-	if (verifiable && reported.gitStatusHash && current.gitStatusHash) {
-		if (reported.gitStatusHash !== current.gitStatusHash) {
-			reasons.push("working tree changed since the report");
-			if (!(unrelatedPaths.length > 0 && overlappingPaths.length === 0 && missingPaths.length === 0)) {
-				unexplained = true;
-			}
-		}
-	}
+	// Worker-declared gitStatusHash is not compared: the worker cannot compute Root's status hash, and compareFreshness already compares Root's own cReport/cNow samples (ticket 10 host run N1).
 
 	if (unrelatedPaths.length > 0 && overlappingPaths.length === 0) {
 		reasons.push(`out-of-scope paths changed: ${unrelatedPaths.join(", ")}`);

@@ -175,7 +175,7 @@ function reportFor(taskId, toolCallId) {
 
 // Ticket 49: an id two Tasks claim as an alias is ambiguous, and the note names them.
 {
-	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
 	const first = orch.store.create(specFor("T-20260914-942", "worker", BASE));
 	const second = orch.store.create(specFor("T-20260914-943", "worker", BASE));
 	first.aliases.push("T-20260914-944");

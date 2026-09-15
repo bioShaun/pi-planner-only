@@ -47,7 +47,6 @@ import {
 } from "./task.ts";
 import type { TaskRecord } from "./task.ts";
 import {
-	DEFAULT_STRUCTURED_DELEGATION_MODE,
 	MAX_LEDGER_RESTORE_PER_SESSION,
 	MAX_RECOVERY_ATTEMPTS,
 	MAX_REVIEW_ROUNDS,
@@ -61,7 +60,6 @@ import type {
 	ReviewResult,
 	ReviewVerdict,
 	RootVerdictRefusal,
-	StructuredDelegationMode,
 	TaskExecutionRecord,
 	TaskCompletionKind,
 	WorkerReport,
@@ -198,7 +196,6 @@ export interface OrchestratorDeps {
 	/** Directory that becomes `<ledgerDir>/planner-only/ledger/<taskId>.json`. */
 	ledgerDir?: string;
 	gitRunner: GitRunner;
-	structuredDelegationMode?: StructuredDelegationMode;
 	/**
 	 * Ticket 40 — session-level root cumulative spend for the soft/hard gate.
 	 * Supplied by the Pi adapter from the session root spend snapshot; absent in
@@ -259,7 +256,6 @@ function untrustedPlaceholder(taskId: string): TaskRecord {
 
 export class PlannerOrchestrator {
 	readonly store: TaskStore;
-	readonly structuredDelegationMode: StructuredDelegationMode;
 	private readonly gitRunner: GitRunner;
 	private readonly getSessionRootUsage?: () => SessionRootSpend;
 	private sessionRootBudgetConfig?: SessionRootBudgetConfig;
@@ -303,8 +299,6 @@ export class PlannerOrchestrator {
 			?? (deps.getSessionRootUsage ? loadSessionRootBudgetConfig() : undefined);
 		this.concurrency = deps.concurrency ?? new ConcurrencyController();
 		this.getUsageEntries = deps.getUsageEntries;
-		this.structuredDelegationMode =
-			deps.structuredDelegationMode ?? readStructuredDelegationMode();
 	}
 
 	setLoadedProvenance(provenance: LoadedPluginFingerprint): void {
@@ -845,7 +839,6 @@ export class PlannerOrchestrator {
 			`Worker round: ${task.reviewRound}/${MAX_REVIEW_ROUNDS}`,
 			`Review mode: ${task.reviewMode}`,
 			provenanceLine,
-			...(task.recoveryBinding ? [`Recovery binding: ${task.recoveryBinding.status}; ${task.recoveryBinding.reason}`] : []),
 			...(isExecutingStale(task) ? [`Lock: stale (executing for over ${executingStaleMinutes()} minutes; the child has not been confirmed exited — reconcile or abandon before writing)`] : []),
 			`Evidence: ${report ? (task.lastComparison ? describeComparison(task.lastComparison) : "not compared") : task.rawReport ? "raw report retained; Root verdict is available" : "no report yet"}`,
 			...(task.rawReport ? [`Raw report: retained from execution ${task.rawReport.executionId}; ${task.rawReport.error}`] : []),
@@ -1286,12 +1279,4 @@ export class PlannerOrchestrator {
 	}
 
 
-}
-
-function readStructuredDelegationMode(): StructuredDelegationMode {
-	return (process.env.PI_PLANNER_ONLY_STRUCTURED_DELEGATION ?? "")
-		.trim()
-		.toLowerCase() === "strict"
-		? "strict"
-		: DEFAULT_STRUCTURED_DELEGATION_MODE;
 }

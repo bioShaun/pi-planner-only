@@ -20,9 +20,10 @@ export const QUESTION_TOOLS = new Set(["question", "questionnaire"]);
 
 /**
  * Ticket 05 B — the Idle-for-gather allowlist: Root may start a Delegation,
- * record a Verdict, or inspect Git.
+ * record a Verdict, or inspect Git. `git_commit` gates itself on a completed
+ * Task, and a completed Task is never live, so it must be admitted while Idle.
  */
-export const IDLE_TOOLS = new Set(["planner_delegate", "planner_verdict", "git_audit"]);
+export const IDLE_TOOLS = new Set(["planner_delegate", "planner_verdict", "git_audit", "git_commit"]);
 
 /**
  * First-class tools this extension registers for Root itself.

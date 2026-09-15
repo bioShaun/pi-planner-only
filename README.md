@@ -53,9 +53,7 @@ already bundles them. Do not add them to `dependencies`.
 
 Supported host range: `@earendil-works/pi-coding-agent` `>=0.84 <1` and
 `pi-subagents` `>=0.65 <0.70` (declared in `package.json`). Releases must run
-`npm run test:release`, which requires typecheck, the unit suite, and real
-contract coverage — a contract suite that would skip (peer missing or
-out of range) fails the release gate instead of exiting 0.
+`npm run test:release` (typecheck plus the unit suite).
 
 ## Commands
 
@@ -76,9 +74,8 @@ tools a previous build had stripped, so reload can recapture the full list.
 
 ## What the parent may use
 
-Kept when present: `read`, `grep`, `find`, `ls`, `git_audit`, `planner_verdict`, `subagent`,
-`bg_wait`, `subagent_wait`, `subagent_supervisor`, `contact_supervisor`,
-`question`, `questionnaire`.
+Kept when present: `read`, `grep`, `find`, `ls`, `git_audit`, `planner_verdict`,
+`planner_delegate`, `git_commit`, `question`, `questionnaire`.
 
 Blocked: `edit`, `write`, generic `bash`, unknown mutators, and host-command
 `subagent` paths such as `workflow: "run-ci"` or `gate`.
@@ -89,7 +86,7 @@ names remain active for the child ceiling.
 
 ## v0.2 orchestration
 
-The parent embeds a `TaskSpec` JSON object in the subagent task:
+Root passes a `TaskSpec` as the `planner_delegate` parameters:
 
 ```json
 {
@@ -106,9 +103,9 @@ The parent embeds a `TaskSpec` JSON object in the subagent task:
 }
 ```
 
-`subagent` calls are intercepted: the task is registered, the workspace is
-sampled, and a second declared `worker` for the same cwd is blocked (one writer
-per cwd). If `taskId` is missing, malformed, or not today's date, the extension
+`planner_delegate` registers the task, samples the workspace, and refuses a
+second `worker` for the same cwd (at most one worker per cwd); `subagent` and
+`bg_wait` calls are refused outright. If `taskId` is missing, malformed, or not today's date, the extension
 replaces it with a generated id, keeps the original id as an alias, and notifies
 Root in the delegation result. The generated id is reserved in the shared ledger
 namespace with an atomic cross-process claim: restored, terminal, over-cap, and
@@ -119,12 +116,9 @@ never treated as continuation. Restricted roles remap onto builtin agents:
 Invalid TaskSpec refusals show a repair summary that preserves the trusted
 role and validation intent. A command-list shorthand becomes explicit mandatory
 validation; an unconvertible validation shape remains refused and asks for
-input, rather than silently becoming `required: false`. Report-only corrections
-must identify one existing non-terminal Task. Multiple or unknown ids are
-refused before child launch and never create a placeholder. Host-default model
-preflight is recorded for attribution but is not written into downstream model
-fields, allowing host settings fallbacks to apply; explicit model selections
-remain launch parameters.
+input, rather than silently becoming `required: false`. Multiple or unknown
+continuation ids are refused before child launch and never create a
+placeholder.
 
 | Role | Builtin agent | Child tools |
 |---|---|---|
@@ -132,26 +126,26 @@ remain launch parameters.
 | `explorer` / `reviewer` | `reviewer` | read, grep, find, ls |
 | `validator` | `oracle` | read, grep, find, ls, bash |
 
-A `reviewer` child always launches with `context: "fresh"` and a packet of
-TaskSpec + WorkerReport + evidence refs — not a fork of the parent session.
-The packet is a `ReviewRequest`: an invocation over the Task, never a new
-TaskSpec. The Task's original role, objective, and spec stay unchanged through
-worker, reviewer, and validation runs. A `validator` delegation is an invocation
-over the task under review rather than creating a new Task; its report is recorded
-in that Task's `validatorReports`.
+Validation runs are delegated by Root explicitly (`planner_delegate` with
+role=validator); nothing is auto-dispatched.
 
-Workers must return a versioned `WorkerReport`. The parent extracts it,
-compacts anything over 12k characters, checks evidence freshness, and appends
-the next review action. Common deviations are automatically normalised, with
-applied repairs echoed in a `Report normalised:` line. Malformed output gets
-one report-only correction, then blocks. If the first result is prose with no
-report JSON at all, that correction also includes one compact JSON shape
-reminder. Every worker task also receives that same compact JSON shape up
-front, plus an instruction not to run `/code-review` — review is the plugin
-Reviewer's job. Accepted results do not repeat the fresh-reviewer prompt; the
-full packet is generated only when a reviewer is actually delegated. A
-reviewer works only from that packet (spec, report, digest, bounded patch):
-it must not `git log`, run `npm test`, or re-probe the tree.
+`planner_delegate` does not set `model`, `thinking`, `toolBudget`, or `timeoutMs` on the delegation request; the child runs with the host's defaults for all four. The `model` and `thinking` values in usage rows are read back from the child's response for attribution only.
+
+A `reviewer` child always launches with `context: "fresh"` carrying a
+`ReviewRequest` — the Task's spec, the latest WorkerReport, Root's Git
+evidence, and a bounded patch — not a fork of the parent session. The
+ReviewRequest is an invocation over the Task, never a new TaskSpec. The Task's
+original role, objective, and spec stay unchanged through worker, reviewer,
+and validation runs. A `validator` delegation is an invocation over the task
+under review rather than creating a new Task; its report is recorded in that
+Task's `validatorReports`.
+
+Workers return a versioned `WorkerReport`; the launcher validates it against
+the schema and it lands in `details.report` — never re-read from the child's
+text. A non-completed launcher status is a tool error (thrown), not a parse
+failure. A reviewer works only from its invocation payload and may use read,
+grep, find, and ls: it must not `git log`, run `npm test`, or re-probe the
+tree.
 
 Validators (`oracle`) default to a bounded check when the worker's validation
 already exited 0: `git rev-parse HEAD`, `git status --porcelain`, and that
@@ -164,8 +158,8 @@ Both child contracts are checked against the delegation they answer:
 
 - A `WorkerReport` is accepted only when `taskId`, `evidence.taskId`, and (when
   present) `evidence.workerRunId` match the delegated task and subagent call.
-  A structurally valid report for the wrong task is rejected like a malformed
-  one: never stored, one report-only correction.
+  A structurally valid report for the wrong task lands flagged with identity
+  errors on the review decision rather than being silently accepted.
 - A `ReviewResult` is accepted only when its `taskId` matches the reviewed
   task; mismatched verdicts are never recorded and no state changes.
 
@@ -186,20 +180,15 @@ complete automatically. The writer lock follows the worktree's real path:
 aliases of one worktree (relative path, symlink) share the lock, while
 independent worktrees stay independent.
 
-### Strict delegation (optional)
-
-By default a worker delegation without an embedded `TaskSpec` is allowed with a
-warning. Set `PI_PLANNER_ONLY_STRUCTURED_DELEGATION=strict` to block it
-instead. Explorers stay permissive; validators are warned in both modes.
-
 ### Idle gather policy
 
 Root's gather phase is derived from the Task store for the adapter workspace.
 While a non-final Task is live for this cwd, the ordinary allowlist applies
 (inspect tools, `git_audit`, Verdict, one Delegation at a time). When no Task
 is live (Idle for gather), Root may only start a Delegation with
-`planner_delegate`, ask a question, or record a Verdict (`planner_verdict`
-works on blocked/failed Tasks too). `git_audit` is allowed while Idle. Every
+`planner_delegate`, ask a question, record a Verdict (`planner_verdict`
+works on blocked/failed Tasks too), or commit a completed Task with
+`git_commit`. `git_audit` is allowed while Idle. Every
 Idle refusal of an inspect, shell, or mutation tool carries a fenced TaskSpec
 JSON that passes validation, filled from the refused call, so the repair is
 one paste; `subagent` and `bg_wait` are refused outright. A standalone
@@ -278,13 +267,13 @@ The pricing table format:
 - Keys starting with `_` are ignored (useful for comments).
 - Reload rates in-session with `/planner-only usage reload`.
 
-Session-level root spend gating is **off by default**. `/planner-only budget on` turns it on for this machine (marker: `~/.pi/agent/planner-only/session-root-budget.on`); `/planner-only budget off` turns it off. Soft cap warns at 3× the worker-initial floor; hard refuses new paid delegations at 5×. `PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` or `=0` overrides the marker. Per-delegation `usageBudget` floors on workers, explorers, and validators stay on.
+Session-level root spend gating is **off by default**. `/planner-only budget on` turns it on for this machine (marker: `~/.pi/agent/planner-only/session-root-budget.on`); `/planner-only budget off` turns it off. Soft cap warns at 3× the worker-initial floor; the 5× hard threshold is reported only — it does not refuse delegations yet. `PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` or `=0` overrides the marker. Per-delegation `usageBudget` floors on workers, explorers, and validators stay on. The session evidence export carries `statuses` (task / workerReport / reviewResult / rootVerdict / refusalKind), `findings`, `usage`, `breakdown`, and `unattributed`; the linkage / requirements / evidenceMatrix / analysis blocks are gone.
 
 **Alternative:** The preferred approach is to specify `cost` directly in `~/.pi/agent/models.json`. This enables native cost calculation across both Pi and `pi-subagents` (e.g. `/subagent-cost`). The plugin table serves as a fallback or override when you prefer not to modify `models.json`.
 
 ### Cancellation and orphaned children
 
-In the TUI, pressing Esc during a `planner_delegate` call sends CANCEL to the child; the Task transitions to `blocked` and the usage already consumed is recorded. Print mode (`-p`) has no tool-level abort entry: SIGINT ends Root outright, the delegated agent (which runs in-process) dies with it, no `cancelled` terminal or usage row is written, and any shell command the child had started may survive as an orphan (observed once in ticket 03) — check and clean up by hand. The cancel grace window is 5 s (default); once it elapses the Task still goes `blocked`, but the child's usage is unknown.
+In the TUI, pressing Esc during a `planner_delegate` call sends CANCEL to the child; the Task transitions to `blocked` and the usage already consumed is recorded. Print mode (`-p`) has no tool-level abort entry: SIGINT ends Root outright, the delegated agent (which runs in-process) dies with it, no `cancelled` terminal or usage row is written, and any shell command the child had started may survive as an orphan (observed once during the host spike) — check and clean up by hand. The cancel grace window is 5 s (default); once it elapses the Task still goes `blocked`, but the child's usage is unknown. `/exit` typed while a delegation is in flight is treated as steering input, not exit; use Ctrl-D.
 
 ## Design specs
 
@@ -297,24 +286,18 @@ In the TUI, pressing Esc during a `planner_delegate` call sends CANCEL to the ch
 ## Tests
 
 ```bash
-npm test          # unit + in-process integration (excludes the E2E suite)
+npm test          # unit + in-process integration
 npm run typecheck # tsc --noEmit (Pi loads .ts directly; this is for local checking)
-npm run test:e2e  # real pi-subagents contracts (requires pi-subagents; otherwise loudly skips)
-npm run test:release  # release gate: typecheck + unit + e2e; a skipped contract suite fails here
+npm run test:release  # release gate: typecheck + unit tests
 ```
 
 The PASS-boundary workspace snapshot covers the task's exact scope paths plus
 the paths Git reports changed; dependency, config, or lockfile inputs outside
 those sets are not freshness-bound unless you list them in the TaskSpec scope.
 
-`npm test` does not verify the runtime role downgrade mapping. That coverage is
-only exercised by `test:e2e`, and is unverified when `pi-subagents` is absent.
-
-The E2E suite runs against the installed `pi-subagents` package — its builtin
-agent allowlists, the public `child-tool-plan` mapping (tool ceiling,
-foreground isolation from ambient extensions), and the payload fields the
-planner mutates — without any model calls. A missing package or a version
-outside the declared range prints a SKIP line and exits 0.
+`test:release` is `typecheck` + the unit suite. Host-level coverage is
+recorded as evidence captures in the repository's typed-delegation acceptance
+runs, not as a release-gate suite.
 
 ## Layout
 
@@ -323,7 +306,7 @@ outside the declared range prints a SKIP line and exits 0.
 | `types.ts` | `TaskSpec`, `WorkerReport`, `EvidenceRef`, `ReviewResult`, `ReviewRequest` |
 | `policy.ts` | parent tool allowlist and `tool_call` decisions |
 | `task.ts` | validation, compaction, state machine |
-| `report.ts` | `WorkerReport` extraction, compaction, identity |
+| `report.ts` | `WorkerReport` schema validation and identity |
 | `review.ts` | verdicts, review loop, fresh-review packet |
 | `roles.ts` | TaskRole profiles and agent remapping |
 | `evidence.ts` | Git probe, A-to-C attribution, review evidence packets |

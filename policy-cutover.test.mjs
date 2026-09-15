@@ -184,6 +184,32 @@ const pendingCwd = "/fixture/cutover-05b";
 }
 
 // --------------------------------------------------------------------------
+// 5b. git_commit passes the Idle-for-gather hook (it gates itself on a
+//     completed Task, and a completed Task is never live); bash does not.
+// --------------------------------------------------------------------------
+{
+	const idleCwd = { ...ctx, cwd: "/fixture/cutover-05b-idle" };
+	const commitCall = await handlers.get("tool_call")(
+		{
+			toolCallId: "call-05b-gc-idle",
+			toolName: "git_commit",
+			input: { taskId: "T-20260101-001" },
+		},
+		idleCwd,
+	);
+	assert.equal(commitCall, undefined, "git_commit passes while Idle");
+	const bashCall = await handlers.get("tool_call")(
+		{
+			toolCallId: "call-05b-bash-idle",
+			toolName: "bash",
+			input: { command: "git commit -am x" },
+		},
+		idleCwd,
+	);
+	assert.equal(bashCall?.block, true, "bash is still blocked while Idle");
+}
+
+// --------------------------------------------------------------------------
 // 6. A child instance (PI_SUBAGENT_CHILD=1) never blocks subagent: the
 //    extension no-ops there, so no tool_call handler exists to refuse it.
 //    The isChild short-circuit itself is covered in policy.test.mjs.

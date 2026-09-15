@@ -206,15 +206,29 @@ assert.equal(headMoved.fresh, false);
 assert.equal(evidenceAction(headMoved), "revalidate");
 assert.ok(headMoved.reasons.some((reason) => /HEAD changed/.test(reason)));
 
-// 3. working tree changed with no explainable path delta -> stale, revalidate
+// 3. a worker-declared gitStatusHash that differs from Root's sample is not a staleness reason (ticket 10 N1)
 const statusChanged = compareEvidence(
 	makeBase(),
 	makeCurrent({ gitStatusHash: "hash-two" }),
 	declaredA,
 );
-assert.equal(statusChanged.fresh, false);
-assert.equal(evidenceAction(statusChanged), "revalidate");
-assert.ok(statusChanged.reasons.some((reason) => /working tree changed/.test(reason)));
+assert.equal(statusChanged.fresh, true);
+assert.equal(evidenceAction(statusChanged), "review");
+assert.ok(!statusChanged.reasons.some((reason) => /working tree changed/.test(reason)));
+
+// 3b. a non-hash gitStatusHash string the worker pasted (raw porcelain) is likewise not a staleness reason
+const porcelainHash = compareEvidence(
+	makeBase(),
+	makeCurrent(),
+	makeReport({
+		finalGitRef: "abc1234",
+		gitStatusHash: " M src/greet.js\n?? src/greet.test.js",
+		changedPaths: ["src/a.ts"],
+	}),
+);
+assert.equal(porcelainHash.fresh, true);
+assert.equal(evidenceAction(porcelainHash), "review");
+assert.ok(!porcelainHash.reasons.some((reason) => /working tree changed/.test(reason)));
 
 // 4. undeclared out-of-scope path is unrelated; review may continue
 const unrelated = compareEvidence(

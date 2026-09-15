@@ -4,8 +4,8 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtempSync, mkdirSync, symlinkSync, rmSync, writeFileSync } from "node:fs";
 import { TaskStore, TaskIdAllocator, createTaskId, createTaskSpec, isExplicitlyNoValidation, isExecutingStale, validateTaskSpec, VALIDATION_COMMANDS_REQUIRED_ERROR, canTransition, TASKSPEC_CHARACTERISTIC_FIELDS, TASKSPEC_FORBIDDEN_EXECUTION_CONTROLS, buildTaskSpecExample, buildTaskSpecRepair, appendTaskSpecRepair } from "./task.ts";
-import { compactWorkerReport, isWorkerReport, renderWorkerReport, stableStringify, validateWorkerReport } from "./report.ts";
-import { EXECUTING_STALE_MS, MAX_WORKER_REPORT_CHARS, WORKER_REPORT_VERSION } from "./types.ts";
+import { validateWorkerReport } from "./report.ts";
+import { EXECUTING_STALE_MS, WORKER_REPORT_VERSION } from "./types.ts";
 
 const cwd = process.cwd();
 
@@ -242,7 +242,6 @@ assert.match(explorerConstraints, /final message must contain only the WorkerRep
 // --------------------------------------------------------------------------
 const report = makeReport();
 assert.deepEqual(validateWorkerReport(report), []);
-assert.equal(isWorkerReport(report), true);
 
 assert.ok(validateWorkerReport({ ...report, taskId: "" }).length > 0);
 assert.ok(validateWorkerReport({ ...report, status: "done" }).length > 0);
@@ -258,50 +257,6 @@ assert.ok(
 );
 // missing taskId is rejected, not silently accepted
 assert.ok(validateWorkerReport({ ...report, taskId: undefined }).length > 0);
-
-// --------------------------------------------------------------------------
-// Compaction
-// --------------------------------------------------------------------------
-
-const small = compactWorkerReport(report);
-assert.equal(small.compacted, false);
-
-const huge = makeReport({
-	summary: "x".repeat(40000),
-	changedFiles: Array.from({ length: 900 }, (_, index) => `src/file-${index}.ts`),
-	validation: Array.from({ length: 300 }, () => ({
-		command: "npm test",
-		type: "test",
-		status: "failed",
-		exitCode: 1,
-		summary: "y".repeat(400),
-	})),
-	risks: Array.from({ length: 200 }, () => "z".repeat(200)),
-	unresolved: Array.from({ length: 200 }, () => "w".repeat(200)),
-	notes: Array.from({ length: 50 }, () => "n".repeat(300)),
-});
-const compacted = compactWorkerReport(huge);
-assert.equal(compacted.compacted, true);
-assert.ok(stableStringify(compacted.report).length <= MAX_WORKER_REPORT_CHARS);
-// validation identity survives compaction: the parent reviews on these
-assert.ok(compacted.report.validation.length > 0);
-assert.equal(compacted.report.validation[0].exitCode, 1);
-assert.equal(compacted.report.validation[0].status, "failed");
-assert.equal(compacted.report.taskId, huge.taskId);
-assert.equal(compacted.report.status, huge.status);
-
-// --------------------------------------------------------------------------
-// Rendering
-// --------------------------------------------------------------------------
-
-const rendered = renderWorkerReport(report, { round: 1, state: "reviewing", evidence: "fresh" });
-assert.match(rendered, /\[PLANNER-ONLY WORKER REPORT\]/);
-assert.match(rendered, /taskId: T-20260831-001/);
-assert.match(rendered, /status: completed/);
-assert.match(rendered, /round: 1\/3/);
-assert.match(rendered, /evidence: fresh/);
-assert.match(rendered, /- \[passed\] test: npm test exit 0/);
-assert.match(rendered, /src\/parser\.ts/);
 
 // --------------------------------------------------------------------------
 // State machine

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compactWorkerReport, isExtractedOk, isToolCallId, renderWorkerReport, validateWorkerReport, validateWorkerReportIdentity, workerReportShapeReminder } from "./report.ts";
+import { validateWorkerReport, validateWorkerReportIdentity } from "./report.ts";
 
 const RUN5_ARTIFACTS = join(
 	dirname(fileURLToPath(import.meta.url)),
@@ -140,108 +140,6 @@ assert.equal(
 		"WorkerReport evidence.taskId mismatch: expected T-20260905-001, got T-20260831-999",
 	]);
 }
-
-// --------------------------------------------------------------------------
-// Compaction keeps validation evidence
-// --------------------------------------------------------------------------
-
-{
-	const { report, compacted } = compactWorkerReport(
-		makeReport({
-			summary: "x".repeat(40000),
-			notes: ["n".repeat(2000)],
-			risks: Array.from({ length: 50 }, (_, index) => `risk ${index}`),
-		}),
-		2000,
-	);
-	assert.equal(compacted, true);
-	assert.equal(report.validation.length, 1);
-	assert.equal(report.validation[0].exitCode, 0);
-}
-
-// gitStatusHash / finalGitRef are optional declaration fields, not required
-{
-	const report = makeReport();
-	delete report.evidence.gitStatusHash;
-	delete report.evidence.finalGitRef;
-	assert.deepEqual(validateWorkerReport(report), []);
-	const rendered = renderWorkerReport(report);
-	assert.match(rendered, /Worker declaration/);
-	assert.match(rendered, /head: \(none\)/);
-	assert.match(rendered, /statusHash: \(none\)/);
-}
-
-function validShape(overrides = {}) {
-	return {
-		version: 1,
-		taskId: "T-20260831-100",
-		status: "completed",
-		summary: "Implemented the parser.",
-		changedFiles: ["src/parser.ts"],
-		validation: [{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "42 passed" }],
-		evidence: { taskId: "T-20260831-100" },
-		risks: [],
-		unresolved: [],
-		...overrides,
-	};
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-{
-	const reminder = workerReportShapeReminder("T-20260831-100");
-	const parsed = JSON.parse(reminder);
-	assert.deepEqual(validateWorkerReport(parsed), []);
-	assert.equal(parsed.status, "completed");
-	assert.equal(typeof parsed.summary, "string");
-	assert.notEqual(parsed.summary, "...");
-	const item = parsed.validation[0];
-	assert.equal(typeof item, "object");
-	assert.equal(item.type, "test");
-	assert.equal(item.status, "not-run");
-	assert.equal("exitCode" in item, false);
-	assert.equal(typeof item.summary, "string");
-	assert.ok(item.summary.length > 0);
-	assert.equal(typeof item.command, "string");
-	assert.equal("exitCode" in item, false);
-}
-
-
-
-
-
-
-
-
-
-
-// --------------------------------------------------------------------------
-// ExtractedReport discriminant (behavior-preserving type tightening)
-// --------------------------------------------------------------------------
 
 
 

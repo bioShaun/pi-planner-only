@@ -1178,8 +1178,6 @@ export interface TaskRecord {
 	usage: TaskUsage;
 	createdAt: string;
 	updatedAt: string;
-	/** Most recent auditable restore/recovery identity check for this Task. */
-	recoveryBinding?: import("./types.ts").RecoveryBindingCheck;
 	/** Whether this Task was created as a placeholder without parent TaskSpec. */
 	isPlaceholder?: boolean;
 	/** Whether the embedded TaskSpec used 'title' as an alias for 'objective'. */

@@ -74,23 +74,6 @@ export const MAX_BASELINE_HASH_PATHS = 200;
 /** Ticket 09 — cap on directory entries expanded during scope pre-expansion. */
 export const MAX_SCOPE_EXPAND_ENTRIES = 2000;
 
-export type RecoveryBindingStatus = "bound" | "identity-conflict" | "unbound";
-
-/** Auditable result of reconciling one persisted run-state record. */
-export interface RecoveryBindingCheck {
-	status: RecoveryBindingStatus;
-	reason: string;
-	runId?: string;
-	taskId?: string;
-	executionId?: string;
-	workspaceId?: string;
-	canonical?: {
-		taskId: string;
-		executionId: string;
-		workspaceId: string;
-	};
-}
-
 export type TaskRole = "worker" | "explorer" | "validator" | "reviewer";
 
 /** What a delegation *is*: the role of the child invocation, not the Task's role. */
@@ -164,7 +147,7 @@ export interface ExpectedEvidence {
  *
  * Git fields are optional: a Worker may omit `gitStatusHash` and `finalGitRef`.
  * Root computes authoritative attribution from its own A and C samples; Worker
- * Git fingerprints are declaration data for cross-checking only.
+ * Git fingerprints are declaration data only: `gitStatusHash` is recorded but never compared (the worker cannot compute Root's hash); freshness is decided from Root's own samples.
  */
 
 /** Ticket 11: explicit gap recorded when content snapshotting is incomplete. */
@@ -522,22 +505,12 @@ export interface ReviewRequest {
 }
 
 /**
- * Whether a delegation without an embedded TaskSpec is tolerated.
- * `strict` blocks worker delegations that carry no TaskSpec; `warn` only
- * reports them. Default stays `warn` so existing sessions do not break.
- */
-export type StructuredDelegationMode = "warn" | "strict";
-
-export const DEFAULT_STRUCTURED_DELEGATION_MODE: StructuredDelegationMode = "warn";
-
-/**
  * Why a Root verdict request was refused. Classified at the decision point
  * (issue 04) so audits never re-derive the kind by matching prose text.
  */
 export type RootVerdictRefusalKind =
 	| "terminal-state"       // Task is already completed/closed-superseded
 	| "no-report"            // no WorkerReport exists to judge
-	| "child-pending"        // a delegated run is still pending (transient, never recorded)
 	| "fresh-review-pending" // fresh mode has no reviewer ReviewResult yet
 	| "strict-zero-paths"
 	| "attribution-gap-unlock-refused";   // strict fresh mode has 0 evidence attribution paths

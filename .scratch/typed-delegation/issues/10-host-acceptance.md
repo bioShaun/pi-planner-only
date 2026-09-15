@@ -1,6 +1,6 @@
 # 10: 宿主端到端验收 —— 新链跑完一个 Task 的完整生命周期，收 06/07/08 的承接项，更新 README / CONTEXT
 
-Status: ready-for-agent（2026-09-15 由 needs-triage 展开；行号基于 b485831 + 票 07 工作树；07/08 承接项在此裁定）
+Status: done（2026-09-16；六轮 herdr-pair，三处宿主暴露缺陷已修并复验；交回 ../10-handback.md；工作树未提交）
 Blocked by: 07（done，工作树未提交——本票开工前须先提交 07）、08（done，ce1cea1）
 Type: task
 
@@ -103,3 +103,7 @@ git diff -- '*.ts' | grep -E '^\+.*(JSON\.parse|\.match\(|new RegExp|\.split\()'
 ## Comments
 
 **2026-09-15 展开（规划方）。** 由 stub 展开。核过：README:135-153 整段描述的提取/压缩/修复路径在 08 已删，是现存文档里最大的失真；`git_commit` 的门要求探针仓库自带可过的 npm 脚本，否则正例走不到最后一步；三处 08 孤儿无生产读者；REVIEWER_PROMPT 尾段样例与 launcher schema 重复。K/G 承接项在此一次裁定，避免再往后传。
+
+**2026-09-15 D3 修正（规划方，第 3 轮 handoff 前核对代码）。** 两处票面判定与代码不符，按代码改：(a) P1「reviewer 返回后用 planner_verdict 记 pass」——fresh 模式下 reviewer 的 pass 经 `advanceReview`（review.ts `case "pass"` → `action: "accept"`）直接把 Task 置为 completed；随后的 `planner_verdict pass` 会被 `rootVerdictRefusal` 以 `terminal-state` 拒（orchestrate.ts，`isTerminalTaskState`）。05 宿主 3b 已观察到同一现象（检查 4 被 TASK_CLOSED 拒）。P1 判定改为：reviewer pass 后 `state === "completed"` 且 `reviews[0].appliedDecision === "accept"`；planner_verdict 一步预期被 terminal-state 拒，贴原文；git_commit 直接在 completed 上执行。(b) N1「`reviewRound` = 2」——`reviewRound` 只在 request_changes 消耗一轮时 +1（task.ts `record.reviewRound += 1`），一次 request_changes 后终值为 1；判定改为记录原值、预期 1。N1 的 request_changes 由 Root `planner_verdict` 显式记录（fresh 模式允许 Root 先记 request_changes，只有 pass 要求 reviewer 在前），不依赖 reviewer 恰好给出 major finding。
+
+**2026-09-16 D3 修正二（规划方，宿主第二跑 N1 之后）。** 第二跑（host-10/ b 前缀，fresh 模式）P1 与 3b 通过，`git_commit` 在 completed Task 上成功（第 4 轮 Idle 允许 `git_commit` 的修复验证）；`usage.children[*].ownerRootSessionId` 与会话 id 相等（第 4 轮 provenance 同源修复验证）。N1 卡死根因：evidence.ts `compareExecutionTruth` 把 worker 自填的 `evidence.gitStatusHash` 与 launcher 的 sha256-16 采样比，不等即「working tree changed since the report」→ revalidate；worker 无法算出 launcher 的哈希，填了就死循环（P1/3b 的 worker 恰好没填）。裁定：删该比较块（launcher 自身 cReport/cNow 比较保留），types.ts 注释改为「recorded but never compared」，evidence.test.mjs 第 3 用例改为新语义；用 N1 第三跑验收（第 6 轮）。另记：修正轮 worker 若把 changedFiles 报成任务累计集合会触发「over-reported」→ revalidate；本轮用 packet constraint 绕过，语义（累计 vs 本轮窗口）留新票候选 E。
