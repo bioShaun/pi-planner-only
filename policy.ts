@@ -24,7 +24,7 @@ export const ORCHESTRATION_TOOLS = new Set([
  * Unlike the leftover `bash` allowlist, these are present in the parent's
  * schema, not just tolerated on a stale call.
  */
-export const ROOT_TOOLS = new Set(["git_audit", "planner_verdict", "planner_recover"]);
+export const ROOT_TOOLS = new Set(["git_audit", "planner_verdict", "planner_recover", "planner_delegate"]);
 
 /** @deprecated Alias for ROOT_TOOLS, kept for one release. */
 export const AUDIT_TOOLS = ROOT_TOOLS;
@@ -158,7 +158,7 @@ export function decidePolicy(policy: PolicyInput): PolicyDecision {
 	// Idle allowlist: child-delegating subagent, questions, planner_verdict,
 	// planner_recover, and the bounded exact-id bg_wait recovery. Everything else is refused
 	// with the pasteable TaskSpec example (R01).
-	if (toolName === "planner_verdict" || toolName === "planner_recover" || toolName === "question" || toolName === "questionnaire") {
+	if (toolName === "planner_delegate" || toolName === "planner_verdict" || toolName === "planner_recover" || toolName === "question" || toolName === "questionnaire") {
 		return { block: false };
 	}
 	if (toolName === "bg_wait") {

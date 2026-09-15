@@ -22,6 +22,8 @@ assert.equal(blocked("git_audit", { operation: "diff-stat", staged: true }), fal
 assert.ok(ROOT_TOOLS.has("git_audit"));
 assert.ok(ROOT_TOOLS.has("planner_verdict"));
 assert.ok(ROOT_TOOLS.has("planner_recover"));
+assert.ok(ROOT_TOOLS.has("planner_delegate"));
+assert.equal(blocked("planner_delegate", { role: "worker", objective: "x" }), false);
 assert.equal(AUDIT_TOOLS, ROOT_TOOLS, "AUDIT_TOOLS stays as an alias export for one release");
 assert.equal(blocked("planner_verdict", { verdict: "pass", summary: "looks good" }), false);
 assert.equal(
@@ -52,6 +54,10 @@ assert.equal(isSafeAuditCommand("pwd $(touch /tmp/x)"), false);
 
 assert.equal(
 	decidePolicy({ toolName: "write", isChild: true, disabled: false }).block,
+	false,
+);
+assert.equal(
+	decidePolicy({ toolName: "planner_delegate", isChild: true, disabled: false }).block,
 	false,
 );
 assert.equal(
@@ -213,6 +219,7 @@ assert.equal(
 	assert.equal(idle("questionnaire", {}).block, false);
 	assert.equal(idle("planner_verdict", { verdict: "blocked", summary: "x" }).block, false);
 	assert.equal(idle("planner_recover", { taskId: "T-20260911-001", runId: "run-001" }).block, false);
+	assert.equal(idle("planner_delegate", { role: "worker", objective: "x" }).block, false);
 
 	// Everything else is refused with the pasteable TaskSpec example.
 	for (const toolName of ["read", "grep", "find", "ls", "git_audit", "bash", "write", "edit", "subagent_wait", "subagent_supervisor", "custom_tool"]) {

@@ -251,10 +251,10 @@ assert.match(prompt.systemPrompt, /validation status must be exactly passed\/fai
 assert.match(prompt.systemPrompt, /git_audit/);
 assert.match(prompt.systemPrompt, /Never fix rejected work/);
 // R02 — the workflowScript ban merged into the role line (authorized cut).
-assert.match(prompt.systemPrompt, /never pre-compose worker→reviewer as a workflowScript, tasks array, or chain/);
-assert.match(prompt.systemPrompt, /canonical id returned by the extension/);
-assert.match(prompt.systemPrompt, /direct \{agent, task\}/);
-assert.match(prompt.systemPrompt, /call the reviewer only after the worker returns, in a separate direct call/);
+assert.match(prompt.systemPrompt, /never pre-compose worker→reviewer as a workflowScript or chain/);
+assert.match(prompt.systemPrompt, /canonical taskId in details/);
+assert.match(prompt.systemPrompt, /One bounded TaskSpec per planner_delegate call/);
+assert.match(prompt.systemPrompt, /delegate the reviewer only after the worker returns, in a separate call/);
 assert.doesNotMatch(prompt.systemPrompt, /diffStat/);
 assert.doesNotMatch(prompt.systemPrompt, /\/planner-only/);
 
@@ -1692,8 +1692,8 @@ assert.ok(
 );
 assert.match(PLANNER_PROMPT, /plan, delegate, inspect read-only, review, and arbitrate/);
 assert.match(PLANNER_PROMPT, /Do not edit or write files, run a general shell, or implement fixes/);
-assert.match(PLANNER_PROMPT, /One bounded TaskSpec embedded in one direct \{agent, task\}/);
-assert.match(PLANNER_PROMPT, /canonical id returned by the extension/);
+assert.match(PLANNER_PROMPT, /One bounded TaskSpec per planner_delegate call/);
+assert.match(PLANNER_PROMPT, /canonical taskId in details/);
 assert.match(PLANNER_PROMPT, /WorkerReport version 1/);
 assert.match(PLANNER_PROMPT, /changedFiles, validation plus exit codes, evidence, risks, and unresolved items/);
 assert.match(PLANNER_PROMPT, /record PASS, REQUEST_CHANGES, or BLOCKED with planner_verdict/);
@@ -4657,6 +4657,47 @@ await abandonActiveTasks();
 	} finally {
 		rmSync(repoDir, { recursive: true, force: true });
 	}
+}
+
+// --------------------------------------------------------------------------
+// Ticket 05 A: a planner_delegate tool_call enters Root-turn attribution —
+// its toolCallId lands on the root-turn usage entry like subagent's does, and
+// a string input.taskId is attributed through the canonical id.
+// --------------------------------------------------------------------------
+{
+	sessionEntries.length = 0;
+	const decision = await handlers.get("tool_call")(
+		{
+			toolCallId: "call-pd-attr",
+			toolName: "planner_delegate",
+			input: {
+				taskId: "T-20260915-900",
+				role: "worker",
+				objective: "typed delegation attribution probe",
+				scope: { allowedPaths: ["x.txt"] },
+				constraints: [],
+				acceptanceCriteria: ["x"],
+				validation: { required: false },
+			},
+		},
+		ctx,
+	);
+	assert.equal(decision, undefined, "planner_delegate passes the tool_call policy gate");
+	await handlers.get("message_end")({
+		message: { role: "assistant", id: "msg-pd-attr", content: "delegating" },
+	}, ctx);
+	const rootTurnEntry = sessionEntries.find(
+		(entry) => entry.customType === "planner-only-usage" && entry.data.kind === "root-turn",
+	);
+	assert.ok(rootTurnEntry, "message_end persists a root-turn entry");
+	assert.ok(
+		rootTurnEntry.data.toolCallIds?.includes("call-pd-attr"),
+		"root-turn entry carries the planner_delegate toolCallId",
+	);
+	assert.ok(
+		rootTurnEntry.data.taskIds?.includes("T-20260915-900"),
+		"root-turn entry attributes the input taskId",
+	);
 }
 
 rmSync(isolatedAgentDir, { recursive: true, force: true });

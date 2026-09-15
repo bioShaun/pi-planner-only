@@ -73,6 +73,7 @@ const PLANNER_SAFE_TOOLS = new Set([
 	...ORCHESTRATION_TOOLS,
 	...ROOT_TOOLS,
 	"subagent",
+	"planner_delegate",
 	"git_commit",
 ]);
 
@@ -195,16 +196,16 @@ export const PLANNER_PROMPT = `[PLANNER-ONLY MODE]
 Root: plan, delegate, inspect read-only, review, and arbitrate.
 Do not edit or write files, run a general shell, or implement fixes.
 
-Gather: no live Task starts one Delegation; TaskSpec names Worker skills. Exact-id bg_wait and planner_verdict stay allowed; live Tasks allow inspect/Git-read.
+Gather: no live Task starts one planner_delegate; TaskSpec names Worker skills. planner_verdict and git_audit stay allowed; live Tasks allow inspect/Git-read.
 
-One bounded TaskSpec embedded in one direct {agent, task} subagent call; one ticket per TaskSpec. Do not instruct workers to /code-review; the plugin reviewer is the only review.
-Embed the TaskSpec JSON so the worker can echo taskId; the extension may replace the id; use the canonical id returned by the extension afterwards.
+One bounded TaskSpec per planner_delegate call (role, objective, scope, constraints, acceptanceCriteria, validation); one ticket per TaskSpec. Do not instruct workers to /code-review; the plugin reviewer is the only review.
+The tool returns the canonical taskId in details; pass it as taskId on every later call for that Task.
 
 Every worker returns WorkerReport version ${WORKER_REPORT_VERSION} with taskId, status, summary, changedFiles, validation plus exit codes, evidence, risks, and unresolved items. Top-level status must be exactly completed/partial/blocked/failed; validation status must be exactly passed/failed/not-run.
 
 Verify identity, evidence freshness, inspect relevant files and git with read/grep/git_audit, then record PASS, REQUEST_CHANGES, or BLOCKED with planner_verdict.
 
-Roles: explorer/reviewer → builtin reviewer (read/grep/find/ls; context=fresh; bounded packet), validator → oracle (bash, no edits), worker keeps its agent; never pre-compose worker→reviewer as a workflowScript, tasks array, or chain; call the reviewer only after the worker returns, in a separate direct call.
+Roles: explorer → scout, reviewer → builtin reviewer (read/grep/find/ls; context=fresh; bounded packet), validator → oracle (bash, no edits), worker keeps its agent; never pre-compose worker→reviewer as a workflowScript or chain; delegate the reviewer only after the worker returns, in a separate call.
 
 Never trust a worker PASS. Never accept stale evidence; re-delegate validation (bounded oracle: HEAD/status + named tests; full suite only if PI_PLANNER_ONLY_ORACLE=full). Never fix rejected work; delegate a bounded correction. Stop after ${MAX_REVIEW_ROUNDS} review rounds (blocked).
 Lifecycle state arrives in delegation results; the operator may override a verdict, you record yours with planner_verdict.`;
@@ -1150,6 +1151,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				ctx.cwd || process.cwd(),
 				{ signal, executionId: toolCallId },
 			);
+			rootTurnTaskIds.add(outcome.task.taskId);
 			return {
 				content: [{ type: "text", text: renderDelegationOutcome(outcome) }],
 				details: {
@@ -1391,10 +1393,10 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				return { block: true, reason: readNotice };
 			}
 		}
-		if (!IS_SUBAGENT && ["subagent", "bg_wait", "planner_verdict", "git_audit"].includes(event.toolName)) {
+		if (!IS_SUBAGENT && ["subagent", "bg_wait", "planner_verdict", "git_audit", "planner_delegate"].includes(event.toolName)) {
 			rootTurnToolCallIds.add(event.toolCallId);
 			const input = asRecord(event.input);
-			if (event.toolName === "planner_verdict" && typeof input?.taskId === "string") {
+			if ((event.toolName === "planner_verdict" || event.toolName === "planner_delegate") && typeof input?.taskId === "string") {
 				rootTurnTaskIds.add(canonicalTaskId(input.taskId));
 			} else if (event.toolName === "bg_wait") {
 				const runId = typeof input?.runId === "string" ? input.runId : typeof input?.id === "string" ? input.id : undefined;

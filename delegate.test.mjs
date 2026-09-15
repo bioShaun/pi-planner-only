@@ -137,6 +137,7 @@ async function expectRefusal(promise, code) {
 	assert.ok(execution?.aRun, "A_run recorded");
 	assert.ok(execution?.cReport, "C_report recorded");
 	assert.equal(execution.kind, "worker");
+	assert.equal(execution.auxiliary, undefined, "worker execution is not auxiliary");
 	assert.equal(record.reports.length, 1, "report recorded verbatim");
 	assert.deepEqual(record.reports[0], outcome.report);
 	assert.equal(record.reports[0].evidence.cwd, dir);
@@ -337,6 +338,7 @@ for (const [index, [status, expectedState]] of [
 	const execution = outcome.task.executions.at(-1);
 	assert.equal(execution.kind, "explorer");
 	assert.equal(execution.readOnly, true, "explorer execution is read-only");
+	assert.equal(execution.auxiliary, undefined, "standalone explorer execution is not auxiliary");
 }
 
 // ---------------------------------------------------------------------------
@@ -352,6 +354,7 @@ for (const [index, [status, expectedState]] of [
 		{ executionId: "call-v" },
 	);
 	assert.equal(launches[0].agent, "oracle", "validator -> oracle");
+	assert.equal(outcome.task.executions.at(-1).auxiliary, true, "validator execution is auxiliary");
 	assert.equal(outcome.task.validatorReports.length, 1, "validator report recorded");
 	assert.equal(outcome.task.reports.length, 0, "not a worker report");
 }

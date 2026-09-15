@@ -301,6 +301,7 @@ export async function runDelegation(
 			worktreeRoots,
 			aRun,
 			...(role !== "worker" ? { readOnly: true } : {}),
+			...(role === "validator" ? { auxiliary: true } : {}),
 		});
 
 		// 4. Structured delegation: the packet is rendered once, downward only.
