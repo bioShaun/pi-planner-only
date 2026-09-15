@@ -21,10 +21,12 @@ import {
 	SUBAGENT_DELEGATION_CANCEL_EVENT,
 	SUBAGENT_DELEGATION_REQUEST_EVENT,
 	SUBAGENT_DELEGATION_RESPONSE_EVENT,
+	SUBAGENT_DELEGATION_UPDATE_EVENT,
 	type SubagentDelegationCancel,
 	type SubagentDelegationJsonSchemaObject,
 	type SubagentDelegationRequest,
 	type SubagentDelegationResponse,
+	type SubagentDelegationUpdate,
 	type SubagentDelegationUsage,
 } from "./subagent-delegation-contract.ts";
 import type { GitRunner } from "./git-audit.ts";
@@ -198,12 +200,17 @@ export const REVIEW_RESULT_SCHEMA = structuredClone(Type.Object(
 	{ additionalProperties: false },
 )) as unknown as SubagentDelegationJsonSchemaObject;
 
+export interface DelegationLaunchHooks {
+	/** 每条按身份三元组过滤后的 UPDATE。调用方不得阻塞。 */
+	onUpdate?: (update: SubagentDelegationUpdate) => void;
+}
+
 export interface DelegationDeps {
 	store: TaskStore;
 	gitRunner: GitRunner;
 	concurrency: ConcurrencyController;
 	usage: UsageLedger;
-	launch: (request: SubagentDelegationRequest, signal?: AbortSignal) => Promise<SubagentDelegationResponse>;
+	launch: (request: SubagentDelegationRequest, signal?: AbortSignal, hooks?: DelegationLaunchHooks) => Promise<SubagentDelegationResponse>;
 	ownerRunId: string;
 	now?: () => Date;
 }
@@ -220,6 +227,18 @@ export interface DelegationOutcome {
 	warnings: string[];
 }
 
+/** details payload of a progress partial result; `progress: true` marks it non-terminal. */
+export interface DelegationProgressDetails {
+	taskId: string;
+	role: DelegationKind;
+	runId?: string;
+	currentTool?: string;
+	toolCount?: number;
+	durationMs?: number;
+	tokens?: number;
+	progress: true;
+}
+
 /** Per-call inputs that are not part of the TypeBox parameters. */
 export interface DelegationOptions {
 	signal?: AbortSignal;
@@ -228,15 +247,34 @@ export interface DelegationOptions {
 	 * Falls back to the delegation requestId when absent (unit tests).
 	 */
 	executionId?: string;
+	/** 宿主 execute 的 onUpdate；runDelegation 把 SubagentDelegationUpdate 渲染成 AgentToolResult 局部结果后转发。 */
+	onUpdate?: (partial: { content: { type: "text"; text: string }[]; details: DelegationProgressDetails }) => void;
 }
 
 export class DelegationRefused extends Error {
 	readonly code: string;
+	readonly taskId?: string;
 
-	constructor(code: string, message: string) {
+	constructor(code: string, message: string, taskId?: string) {
 		super(message);
 		this.name = "DelegationRefused";
 		this.code = code;
+		this.taskId = taskId;
+	}
+}
+
+/**
+ * Thrown when the abort grace period elapses without the cancelled terminal
+ * response the bridge is expected to send. Distinct from DelegationRefused:
+ * the launch was accepted, then cancelled by the operator.
+ */
+export class DelegationAborted extends Error {
+	/** Set by runDelegation's launch catch before rethrow — the Task that was cancelled. */
+	taskId?: string;
+
+	constructor(nodeId: string) {
+		super(`planner_delegate aborted: ${nodeId}`);
+		this.name = "DelegationAborted";
 	}
 }
 
@@ -298,7 +336,7 @@ export async function runDelegation(
 		// The reviewer fork: binding is identical, but the call mints no spec
 		// of its own — the stored spec is the reviewer's read-only context.
 		if (role === "reviewer") {
-			return runReviewInvocation(deps, task, { requestId, executionId }, options.signal);
+			return runReviewInvocation(deps, task, { requestId, executionId }, options);
 		}
 		thisSpec = specFromParams(params, record.taskId, record.cwd || effectiveCwd);
 	} else {
@@ -384,11 +422,21 @@ export async function runDelegation(
 		};
 		let response: SubagentDelegationResponse;
 		try {
-			response = await deps.launch(request, options.signal);
+			response = await deps.launch(request, options.signal, {
+				onUpdate: (update) => options.onUpdate?.(renderDelegationProgress(role as DelegationKind, task.taskId, update)),
+			});
 		} catch (error) {
-			const reason = `delegation launch failed: ${error instanceof Error ? error.message : String(error)}`;
-			try { deps.store.transition(task.taskId, "failed"); } catch { /* already final */ }
-			deps.store.setStateReason(task.taskId, reason);
+			// Abort is an operator cancel, not a launch failure: the Task parks
+			// in blocked, same as the `cancelled` terminal path below.
+			if (error instanceof DelegationAborted || options.signal?.aborted) {
+				if (error instanceof DelegationAborted) error.taskId = task.taskId;
+				try { deps.store.transition(task.taskId, "blocked"); } catch { /* already final */ }
+				deps.store.setStateReason(task.taskId, "delegation cancelled by operator; no terminal response within grace");
+			} else {
+				const reason = `delegation launch failed: ${error instanceof Error ? error.message : String(error)}`;
+				try { deps.store.transition(task.taskId, "failed"); } catch { /* already final */ }
+				deps.store.setStateReason(task.taskId, reason);
+			}
 			throw error;
 		}
 
@@ -400,10 +448,29 @@ export async function runDelegation(
 				task.taskId,
 				`delegation ${response.status}${response.error ? `: ${response.error}` : ""}`,
 			);
+			// G4: a non-completed terminal can still carry usage — it lands on
+			// the same ledger path as completed, before the refusal throws.
+			if ("usage" in response && response.usage) {
+				const runId = "runId" in response ? response.runId : undefined;
+				const child = childUsageFromValue(response.usage, role as DelegationKind, {
+					...(runId ? { runId } : {}),
+					toolCallId: executionId,
+					...(response.agent ? { agent: response.agent } : {}),
+					...(response.model ? { model: response.model } : {}),
+					...(response.thinking ? { thinking: response.thinking } : {}),
+					source: "sync-details",
+					pending: false,
+					taskId: task.taskId,
+					executionId,
+					ownerRootSessionId: deps.ownerRunId,
+				});
+				if (child) deps.usage.recordChild(task.taskId, { ...child, outcome: "failed" });
+			}
 			const runLabel = "runId" in response ? response.runId : undefined;
 			throw new DelegationRefused(
 				response.status.toUpperCase(),
 				`planner_delegate ${task.taskId} ${response.status}: ${response.error ?? "no error text"} (run=${runLabel ?? "none"})`,
+				task.taskId,
 			);
 		}
 
@@ -543,7 +610,7 @@ async function runReviewInvocation(
 	deps: DelegationDeps,
 	task: TaskRecord,
 	ids: { requestId: string; executionId: string },
-	signal: AbortSignal | undefined,
+	options: DelegationOptions,
 ): Promise<DelegationOutcome> {
 	const warnings: string[] = [];
 
@@ -602,15 +669,34 @@ async function runReviewInvocation(
 		cwd: task.cwd,
 		result: { kind: "structured", schema: REVIEW_RESULT_SCHEMA },
 	};
-	// A launch throw propagates as-is: a reviewer failure never moves the Task.
-	const response = await deps.launch(request, signal);
+	// A launch throw propagates as-is (DelegationAborted included): a
+	// reviewer failure never moves the Task.
+	const response = await deps.launch(request, options.signal, {
+		onUpdate: (update) => options.onUpdate?.(renderDelegationProgress("reviewer", task.taskId, update)),
+	});
 
 	// R5 — non-completed statuses are refusals, not outcomes; nothing is
-	//    transitioned and (G4) no usage is recorded.
+	//    transitioned. G4: a terminal that still carries usage is recorded
+	//    (outcome failed) before the refusal throws.
 	if (response.status !== "completed") {
+		if ("usage" in response && response.usage) {
+			const child = childUsageFromValue(response.usage, "reviewer", {
+				...(response.runId ? { runId: response.runId } : {}),
+				toolCallId: ids.executionId,
+				...(response.agent ? { agent: response.agent } : {}),
+				...(response.model ? { model: response.model } : {}),
+				...(response.thinking ? { thinking: response.thinking } : {}),
+				source: "sync-details",
+				pending: false,
+				taskId: task.taskId,
+				ownerRootSessionId: deps.ownerRunId,
+			});
+			if (child) deps.usage.recordChild(task.taskId, { ...child, outcome: "failed" });
+		}
 		throw new DelegationRefused(
 			response.status.toUpperCase(),
 			`planner_delegate ${task.taskId} review ${response.status}: ${response.error ?? "no error text"} (run=${"runId" in response ? response.runId : "none"})`,
+			task.taskId,
 		);
 	}
 	const runId = response.runId;
@@ -733,6 +819,39 @@ async function runReviewInvocation(
 	};
 }
 
+/**
+ * A SubagentDelegationUpdate rendered as a partial AgentToolResult for the
+ * host's onUpdate channel. This is display, not parsing: recentOutputLines
+ * are truncated verbatim (slice only — no split/match/JSON), and the child's
+ * tool arguments are deliberately never shown — they can carry paths and
+ * commands the Root must not read out of the child's shell.
+ */
+export function renderDelegationProgress(
+	role: DelegationKind,
+	taskId: string,
+	update: SubagentDelegationUpdate,
+): { content: { type: "text"; text: string }[]; details: DelegationProgressDetails } {
+	const lines = [
+		`planner_delegate ${role} ${taskId}: ${Math.round((update.durationMs ?? 0) / 1000)}s · ${update.toolCount ?? 0} tools · ${update.currentTool ?? "…"}`,
+	];
+	for (const line of (update.recentOutputLines ?? []).slice(0, 3)) {
+		lines.push(line.slice(0, 200));
+	}
+	return {
+		content: [{ type: "text", text: lines.join("\n") }],
+		details: {
+			taskId,
+			role,
+			...(update.runId ? { runId: update.runId } : {}),
+			...(update.currentTool ? { currentTool: update.currentTool } : {}),
+			...(update.toolCount !== undefined ? { toolCount: update.toolCount } : {}),
+			...(update.durationMs !== undefined ? { durationMs: update.durationMs } : {}),
+			...(update.tokens !== undefined ? { tokens: update.tokens } : {}),
+			progress: true,
+		},
+	};
+}
+
 /** Text the Root reads; all contract fields stay in `details`. */
 export function renderDelegationOutcome(outcome: DelegationOutcome): string {
 	const lines = [
@@ -751,46 +870,101 @@ export function renderDelegationOutcome(outcome: DelegationOutcome): string {
 	return lines.join("\n");
 }
 
+export interface HostLauncherOptions {
+	/**
+	 * Grace period after an abort to still accept the terminal response: the
+	 * bridge answers CANCEL with a `cancelled` terminal (usage included)
+	 * once the child is down. When it elapses the wait rejects with
+	 * DelegationAborted.
+	 */
+	cancelGraceMs?: number;
+}
+
 /**
- * The real launcher: spike `waitForDelegation` lifted unchanged. Emits the
- * request on the shared delegation transport and resolves with the first
- * response that matches the request's identity triple. Abort emits CANCEL
- * (the host can then terminate the leaf) and rejects the wait.
+ * Process-local registry of delegations whose REQUEST was emitted but whose
+ * wait has not settled — keyed by requestId so `cancelInFlightDelegations`
+ * can reach them on shutdown.
  */
-export function createHostLauncher(pi: ExtensionAPI): DelegationDeps["launch"] {
-	return (request, signal) => new Promise((resolve, reject) => {
+const inFlight = new Map<string, SubagentDelegationCancel>();
+
+/**
+ * Best-effort CANCEL for every in-flight delegation (session_shutdown use).
+ * Returns the number of CANCELs emitted; entries whose bridge is unloaded
+ * simply reach no listener.
+ */
+export function cancelInFlightDelegations(pi: ExtensionAPI): number {
+	for (const payload of inFlight.values()) {
+		pi.events.emit(SUBAGENT_DELEGATION_CANCEL_EVENT, payload);
+	}
+	return inFlight.size;
+}
+
+/**
+ * The real launcher: spike `waitForDelegation` extended with UPDATE
+ * forwarding and a bounded cancel grace. Emits the request on the shared
+ * delegation transport, forwards identity-matched UPDATE payloads to
+ * `hooks.onUpdate`, and resolves with the first matching terminal response.
+ * Abort emits CANCEL (strict three-key payload — the bridge ignores extras)
+ * and then keeps the RESPONSE subscription for `cancelGraceMs` so the
+ * `cancelled` terminal — which carries usage — is not dropped; only a
+ * grace overrun rejects with DelegationAborted.
+ */
+export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOptions = {}): DelegationDeps["launch"] {
+	const cancelGraceMs = options.cancelGraceMs ?? 5000;
+	return (request, signal, hooks) => new Promise((resolve, reject) => {
 		if (signal?.aborted) {
-			reject(new Error(`planner_delegate aborted: ${request.nodeId}`));
+			reject(new DelegationAborted(request.nodeId));
 			return;
 		}
 		let settled = false;
+		let aborting = false;
+		let graceTimer: ReturnType<typeof setTimeout> | undefined;
 		const cancelPayload: SubagentDelegationCancel = {
 			requestId: request.requestId,
 			ownerRunId: request.ownerRunId,
 			nodeId: request.nodeId,
 		};
+		const matches = (payload: { requestId: string; ownerRunId?: string; nodeId?: string }) =>
+			payload.requestId === request.requestId
+			&& (payload.ownerRunId === undefined || payload.ownerRunId === request.ownerRunId)
+			&& (payload.nodeId === undefined || payload.nodeId === request.nodeId);
 		const cleanup = () => {
-			unsubscribe();
+			unsubscribeResponse();
+			unsubscribeUpdate();
 			signal?.removeEventListener("abort", onAbort);
+			if (graceTimer !== undefined) clearTimeout(graceTimer);
+			inFlight.delete(request.requestId);
 		};
-		const unsubscribe = pi.events.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) => {
+		const unsubscribeResponse = pi.events.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) => {
 			const response = payload as SubagentDelegationResponse;
-			if (response.requestId !== request.requestId) return;
-			if (response.ownerRunId !== undefined && response.ownerRunId !== request.ownerRunId) return;
-			if (response.nodeId !== undefined && response.nodeId !== request.nodeId) return;
+			if (!matches(response)) return;
 			if (settled) return;
 			settled = true;
 			cleanup();
 			resolve(response);
 		});
-		const onAbort = () => {
+		const unsubscribeUpdate = pi.events.on(SUBAGENT_DELEGATION_UPDATE_EVENT, (payload) => {
 			if (settled) return;
-			settled = true;
+			const update = payload as SubagentDelegationUpdate;
+			if (!matches(update)) return;
+			hooks?.onUpdate?.(update);
+		});
+		const onAbort = () => {
+			if (settled || aborting) return;
+			aborting = true;
 			pi.events.emit(SUBAGENT_DELEGATION_CANCEL_EVENT, cancelPayload);
-			cleanup();
-			reject(new Error(`planner_delegate aborted: ${request.nodeId}`));
+			graceTimer = setTimeout(() => {
+				if (settled) return;
+				settled = true;
+				cleanup();
+				reject(new DelegationAborted(request.nodeId));
+			}, cancelGraceMs);
 		};
 		signal?.addEventListener("abort", onAbort, { once: true });
+		inFlight.set(request.requestId, cancelPayload);
 		pi.events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, request);
+		// An abort landing between the early check and addEventListener never
+		// fires the listener — catch it here so the grace path still runs.
+		if (signal?.aborted) onAbort();
 	});
 }

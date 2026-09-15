@@ -167,6 +167,10 @@ Token 数为准，美元/人民币金额是推导值。扩展跟踪 Root 各生�
 
 **替代方案：** 推荐直接在 `~/.pi/agent/models.json` 里配置 `cost`。这样 Pi 和 `pi-subagents` 的原生命令（如 `/subagent-cost`）都能直接计价。插件自带的定价表仅作为不需要改动 `models.json` 时的备用与覆盖机制。
 
+### 取消与孤儿子进程
+
+TUI 下按 Esc 中止 `planner_delegate` 会向子进程发 CANCEL，Task 进入 `blocked`，已消耗的 usage 落账。`-p`（print）模式没有工具级中止入口：SIGINT 直接结束 Root，进程内运行的子代理随之结束，不会落 `cancelled` 终态或 usage 行；但子代理已启动的 shell 命令可能残留为孤儿进程（票 03 观察到一次），需自行检查并清理。取消宽限期为 5 s（默认）；超时后 Task 同样进入 `blocked`，但子进程 usage 未知。
+
 ## 设计规范
 
 - [v0.2 规范](docs/pi-planner-only-v0.2-spec.md)：核心协议与架构。

@@ -1,13 +1,23 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import {
+	DelegationAborted,
 	DelegationRefused,
 	REVIEW_RESULT_SCHEMA,
+	cancelInFlightDelegations,
+	createHostLauncher,
+	renderDelegationProgress,
 	runDelegation,
 } from "./delegate.ts";
+import {
+	SUBAGENT_DELEGATION_CANCEL_EVENT,
+	SUBAGENT_DELEGATION_REQUEST_EVENT,
+	SUBAGENT_DELEGATION_RESPONSE_EVENT,
+	SUBAGENT_DELEGATION_UPDATE_EVENT,
+} from "./subagent-delegation-contract.ts";
 import { FINDING_CATEGORIES, FINDING_SEVERITIES, REVIEW_VERDICTS } from "./review.ts";
 import { ConcurrencyController } from "./concurrency.ts";
 import { TaskStore, createTaskSpec } from "./task.ts";
@@ -397,7 +407,7 @@ function headRef(dir) {
 // the current HEAD so the report is verifiable) and reviewer calls with
 // `reviewFor(request, reviewerCallIndex)`; `reviewStatus` fakes a non-completed
 // terminal response.
-function makeReviewDeps(dir, { store, concurrency, reviewFor, reviewStatus = "completed", reviewError } = {}) {
+function makeReviewDeps(dir, { store, concurrency, reviewFor, reviewStatus = "completed", reviewError, reviewUsage } = {}) {
 	const launches = [];
 	let reviewerCalls = 0;
 	const deps = {
@@ -421,7 +431,7 @@ function makeReviewDeps(dir, { store, concurrency, reviewFor, reviewStatus = "co
 				};
 				if (reviewStatus !== "completed") {
 					reviewerCalls += 1;
-					return { ...base, status: reviewStatus, error: reviewError };
+					return { ...base, status: reviewStatus, error: reviewError, ...(reviewUsage ? { usage: reviewUsage } : {}) };
 				}
 				return {
 					...base,
@@ -684,7 +694,8 @@ function reviewerParams(taskId, overrides = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// launcher 非 completed: thrown refusal, Task untouched, no usage (G4).
+// launcher 非 completed: thrown refusal, Task untouched; this terminal carried
+// no usage field, so G4 has nothing to record (children = worker's only).
 // ---------------------------------------------------------------------------
 {
 	const dir = initCommittedRepo();
@@ -703,7 +714,7 @@ function reviewerParams(taskId, overrides = {}) {
 	const record = deps.store.require(taskId);
 	assert.equal(record.state, "reviewing", "a failed reviewer never moves the Task");
 	assert.equal(record.reviews.length, 0);
-	assert.equal(deps.usage.taskUsage(taskId).children.length, 1, "non-completed reviewer usage is not recorded (G4)");
+	assert.equal(deps.usage.taskUsage(taskId).children.length, 1, "terminal without usage records nothing new (G4)");
 }
 
 // ---------------------------------------------------------------------------
@@ -747,6 +758,469 @@ function reviewerParams(taskId, overrides = {}) {
 	const record = deps.store.require(taskId);
 	assert.equal(record.reviews.length, 0, "unverifiable pass not recorded");
 	assert.equal(record.state, "reviewing");
+}
+
+// ============================================================================
+// Ticket 07 — D1 contract parity, D2 launcher over a fake events bus, D3
+// progress forwarding / unified abort semantics / G4 usage on non-completed
+// terminals.
+// ============================================================================
+
+const repoDir = new URL(".", import.meta.url).pathname;
+const UPSTREAM_DELEGATION_TS = join(
+	homedir(), ".pi", "agent", "npm", "node_modules", "pi-subagents", "src", "api", "delegation.ts",
+);
+
+// Minimal on/emit bus standing in for pi.events.
+function tinyEmitter() {
+	const listeners = new Map();
+	const emitted = [];
+	return {
+		emitted,
+		on(event, fn) {
+			let set = listeners.get(event);
+			if (!set) {
+				set = new Set();
+				listeners.set(event, set);
+			}
+			set.add(fn);
+			return () => set.delete(fn);
+		},
+		emit(event, payload) {
+			emitted.push({ event, payload });
+			for (const fn of [...(listeners.get(event) ?? [])]) fn(payload);
+		},
+	};
+}
+
+function launcherRequest(overrides = {}) {
+	return {
+		requestId: "req-1",
+		ownerRunId: "owner-1",
+		nodeId: "T-20260915-500",
+		agent: "worker",
+		task: "packet",
+		context: "fresh",
+		cwd: "/tmp",
+		result: { kind: "text" },
+		...overrides,
+	};
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// ---------------------------------------------------------------------------
+// D1: the contract copy matches the installed pi-subagents source — the five
+// event-name constants and the SubagentDelegationUpdate field list, compared
+// as text, not by eye. Absent package → skip with a printed reason.
+// ---------------------------------------------------------------------------
+{
+	if (!existsSync(UPSTREAM_DELEGATION_TS)) {
+		console.log(`delegate.test.mjs: pi-subagents not installed at ${UPSTREAM_DELEGATION_TS}; contract-parity check skipped`);
+	} else {
+		const upstream = readFileSync(UPSTREAM_DELEGATION_TS, "utf8");
+		const local = readFileSync(join(repoDir, "subagent-delegation-contract.ts"), "utf8");
+		const eventConstants = (text) => Object.fromEntries(
+			[...text.matchAll(/export const (SUBAGENT_DELEGATION_\w+_EVENT) = "([^"]+)"/g)].map((m) => [m[1], m[2]]),
+		);
+		assert.deepEqual(eventConstants(local), eventConstants(upstream), "event-name constants diverge from the installed package");
+		const updateFields = (text) => {
+			const block = text.match(/export interface SubagentDelegationUpdate extends SubagentDelegationStarted \{([\s\S]*?)\n\}/);
+			assert.ok(block, "SubagentDelegationUpdate declaration not found");
+			return [...block[1].matchAll(/(\w+)\?:/g)].map((m) => m[1]);
+		};
+		assert.deepEqual(updateFields(local), updateFields(upstream), "SubagentDelegationUpdate fields diverge from the installed package");
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 1. renderDelegationProgress: full fields / bare identity triple / line caps;
+//    currentToolArgs appears in neither text nor details.
+// ---------------------------------------------------------------------------
+{
+	const full = renderDelegationProgress("worker", "T-20260915-500", {
+		requestId: "req-1",
+		ownerRunId: "owner-1",
+		nodeId: "T-20260915-500",
+		runId: "run-9",
+		currentTool: "bash",
+		currentToolArgs: "cat /secret/path | shred",
+		recentOutput: "raw chunk",
+		recentOutputLines: ["first", "second", "third", "fourth"],
+		recentTools: [{ tool: "bash", args: "ls" }],
+		model: "test/model",
+		toolCount: 7,
+		durationMs: 61500,
+		tokens: 1234,
+	});
+	const text = full.content[0].text;
+	assert.equal(full.content[0].type, "text");
+	assert.ok(text.startsWith("planner_delegate worker T-20260915-500: 62s · 7 tools · bash"), `summary line: ${text}`);
+	assert.ok(text.includes("first") && text.includes("second") && text.includes("third"), "recentOutputLines shown");
+	assert.ok(!text.includes("fourth"), "at most 3 output lines");
+	assert.ok(!text.includes("secret") && !text.includes("shred"), "currentToolArgs never rendered into text");
+	assert.deepEqual(full.details, {
+		taskId: "T-20260915-500",
+		role: "worker",
+		runId: "run-9",
+		currentTool: "bash",
+		toolCount: 7,
+		durationMs: 61500,
+		tokens: 1234,
+		progress: true,
+	});
+	assert.ok(!("currentToolArgs" in full.details), "currentToolArgs never reaches details");
+
+	const minimal = renderDelegationProgress("explorer", "T-20260915-501", {
+		requestId: "req-2",
+		ownerRunId: "owner-1",
+		nodeId: "T-20260915-501",
+	});
+	assert.equal(minimal.content[0].text, "planner_delegate explorer T-20260915-501: 0s · 0 tools · …");
+	assert.deepEqual(minimal.details, { taskId: "T-20260915-501", role: "explorer", progress: true });
+
+	const longLine = "x".repeat(250);
+	const truncated = renderDelegationProgress("worker", "T-1", {
+		requestId: "r",
+		ownerRunId: "o",
+		nodeId: "T-1",
+		recentOutputLines: [longLine],
+	});
+	assert.ok(!truncated.content[0].text.includes(longLine), "output line truncated");
+	assert.equal(
+		truncated.content[0].text.split("\n")[1].length,
+		200,
+		"each output line capped at 200 chars",
+	);
+}
+
+// ---------------------------------------------------------------------------
+// 2. Progress pass-through: the fake launcher's third arg receives hooks; two
+//    onUpdate calls land on options.onUpdate as rendered partials; the
+//    terminal outcome is unaffected.
+// ---------------------------------------------------------------------------
+{
+	const dir = initRealRepo();
+	const partials = [];
+	const { deps } = makeDeps({
+		gitRunner: async (args, cwd) => realGit(dir, ...args),
+		launch: async (request, signal, hooks) => {
+			assert.ok(hooks && typeof hooks.onUpdate === "function", "launcher receives hooks as third arg");
+			hooks.onUpdate({
+				requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId,
+				currentTool: "read", toolCount: 2, durationMs: 1200,
+			});
+			hooks.onUpdate({
+				requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId,
+				currentTool: "bash", toolCount: 5, durationMs: 3400,
+			});
+			return {
+				requestId: request.requestId,
+				ownerRunId: request.ownerRunId,
+				nodeId: request.nodeId,
+				status: "completed",
+				runId: "run-p",
+				agent: "worker",
+				usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 3, toolCalls: 3, durationMs: 10 },
+				result: { kind: "structured", value: makeReport(request.nodeId, "run-p", request.cwd) },
+			};
+		},
+	});
+	const outcome = await runDelegation(deps, makeParams(), dir, {
+		executionId: "call-p",
+		onUpdate: (partial) => partials.push(partial),
+	});
+	assert.equal(partials.length, 2, "both updates forwarded");
+	assert.equal(partials[0].details.progress, true, "partial marked non-terminal");
+	assert.equal(partials[0].details.taskId, outcome.task.taskId);
+	assert.equal(partials[0].details.currentTool, "read");
+	assert.equal(partials[0].content[0].type, "text");
+	assert.equal(partials[1].details.toolCount, 5);
+	assert.ok(outcome.report, "terminal outcome unaffected");
+	assert.equal(outcome.task.reports.length, 1);
+}
+
+// ---------------------------------------------------------------------------
+// 3. Launcher filtering: UPDATE and RESPONSE both pass the identity triple —
+//    requestId must equal; ownerRunId / nodeId must equal when present.
+// ---------------------------------------------------------------------------
+{
+	const bus = tinyEmitter();
+	const launcher = createHostLauncher({ events: bus });
+	const updates = [];
+	const promise = launcher(launcherRequest(), undefined, { onUpdate: (update) => updates.push(update) });
+	const request = bus.emitted.find((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT).payload;
+	const triple = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
+	bus.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, { ...triple, currentTool: "read" });
+	bus.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, { ...triple, requestId: "req-other", currentTool: "x" });
+	bus.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, { ...triple, nodeId: "T-other", currentTool: "y" });
+	assert.equal(updates.length, 1, "only the identity-matched UPDATE reaches hooks");
+	assert.equal(updates[0].currentTool, "read");
+	bus.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, { ...triple, requestId: "req-other", status: "completed" });
+	bus.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, { ...triple, status: "completed" });
+	const response = await promise;
+	assert.equal(response.status, "completed", "matching RESPONSE resolves the wait");
+}
+
+// ---------------------------------------------------------------------------
+// 4. abort → exactly one strict three-key CANCEL → cancelled terminal inside
+//    the grace window resolves the wait.
+// ---------------------------------------------------------------------------
+{
+	const bus = tinyEmitter();
+	const launcher = createHostLauncher({ events: bus }, { cancelGraceMs: 50 });
+	const controller = new AbortController();
+	const promise = launcher(launcherRequest({ requestId: "req-abort" }), controller.signal, {});
+	const request = bus.emitted.find((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT).payload;
+	controller.abort();
+	const cancels = bus.emitted.filter((entry) => entry.event === SUBAGENT_DELEGATION_CANCEL_EVENT);
+	assert.equal(cancels.length, 1, "exactly one CANCEL emitted");
+	assert.deepEqual(Object.keys(cancels[0].payload).sort(), ["nodeId", "ownerRunId", "requestId"], "CANCEL payload is strictly three keys");
+	assert.deepEqual(cancels[0].payload, {
+		requestId: request.requestId,
+		ownerRunId: request.ownerRunId,
+		nodeId: request.nodeId,
+	});
+	bus.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: request.requestId,
+		ownerRunId: request.ownerRunId,
+		nodeId: request.nodeId,
+		status: "cancelled",
+		usage: { input: 5, output: 6, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1, toolCalls: 1, durationMs: 40 },
+	});
+	const response = await promise;
+	assert.equal(response.status, "cancelled", "terminal inside grace resolves the wait");
+	assert.ok(response.usage, "the cancelled terminal keeps its usage");
+}
+
+// ---------------------------------------------------------------------------
+// 5. abort → grace expires → DelegationAborted; a terminal arriving after the
+//    deadline is ignored (no second settle, no throw).
+// ---------------------------------------------------------------------------
+{
+	const bus = tinyEmitter();
+	const launcher = createHostLauncher({ events: bus }, { cancelGraceMs: 20 });
+	const controller = new AbortController();
+	const promise = launcher(launcherRequest({ requestId: "req-expiry", nodeId: "T-20260915-501" }), controller.signal, {});
+	const request = bus.emitted.find((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT).payload;
+	let settledWith;
+	promise.then((value) => { settledWith = value; }, (error) => { settledWith = error; });
+	controller.abort();
+	await sleep(60);
+	assert.ok(settledWith instanceof DelegationAborted, `expected DelegationAborted, got ${settledWith}`);
+	assert.equal(settledWith.name, "DelegationAborted");
+	bus.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: request.requestId,
+		ownerRunId: request.ownerRunId,
+		nodeId: request.nodeId,
+		status: "cancelled",
+	});
+	await sleep(10);
+	assert.ok(settledWith instanceof DelegationAborted, "late terminal ignored after the grace deadline");
+}
+
+// ---------------------------------------------------------------------------
+// 5b. Abort fired synchronously inside the REQUEST listener hits onAbort
+//     twice (signal listener + post-emit re-check) — the `aborting` guard
+//     keeps it to exactly one CANCEL and one grace timer.
+// ---------------------------------------------------------------------------
+{
+	const bus = tinyEmitter();
+	const launcher = createHostLauncher({ events: bus }, { cancelGraceMs: 30 });
+	const controller = new AbortController();
+	bus.on(SUBAGENT_DELEGATION_REQUEST_EVENT, () => controller.abort());
+	const promise = launcher(launcherRequest({ requestId: "req-guard", nodeId: "T-20260915-502" }), controller.signal, {});
+	let settledWith;
+	promise.then((value) => { settledWith = value; }, (error) => { settledWith = error; });
+	await sleep(60);
+	const cancels = bus.emitted.filter((entry) => entry.event === SUBAGENT_DELEGATION_CANCEL_EVENT);
+	assert.equal(cancels.length, 1, "abort inside the REQUEST emit still produces exactly one CANCEL");
+	assert.ok(settledWith instanceof DelegationAborted, `grace expiry rejects, got ${settledWith}`);
+}
+
+// ---------------------------------------------------------------------------
+// 6. runDelegation cancellation, both paths: (a) cancelled terminal → blocked
+//    + usage landed (G4) + CANCELLED refusal + lock released; (b) launcher
+//    rejects DelegationAborted → blocked + "no terminal response" + no usage.
+// ---------------------------------------------------------------------------
+{
+	// (a) terminal path
+	const dir = initRealRepo();
+	const store = new TaskStore();
+	const taskId = "T-20260915-600";
+	store.create(createTaskSpec({
+		taskId,
+		objective: "cancel me",
+		cwd: dir,
+		role: "worker",
+		validation: { required: false },
+	}));
+	const concurrency = new ConcurrencyController();
+	const usage = new UsageLedger({ pricing: { version: 1, currency: "USD", rates: {} } });
+	const { deps } = makeDeps({
+		store,
+		concurrency,
+		usage,
+		launch: async (request) => ({
+			requestId: request.requestId,
+			ownerRunId: request.ownerRunId,
+			nodeId: request.nodeId,
+			status: "cancelled",
+			error: "operator cancel",
+			runId: "run-c",
+			agent: "worker",
+			model: "test/model",
+			usage: { input: 5, output: 6, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1, toolCalls: 1, durationMs: 40 },
+		}),
+	});
+	const error = await expectRefusal(
+		runDelegation(deps, makeParams({ taskId }), dir, { executionId: "call-ca" }),
+		"CANCELLED",
+	);
+	assert.equal(error.taskId, taskId, "refusal carries the Task id for the caller's snapshot sync");
+	const record = store.get(taskId);
+	assert.equal(record.state, "blocked", "cancelled terminal parks the Task");
+	assert.match(record.stateReason ?? "", /cancelled/);
+	const children = usage.taskUsage(taskId)?.children ?? [];
+	assert.equal(children.length, 1, "G4: cancelled terminal usage recorded");
+	assert.equal(children[0].outcome, "failed", "non-completed terminal lands as outcome=failed");
+	assert.equal(children[0].kind, "worker");
+	assert.equal(concurrency.status().reservations.length, 0, "write lock released");
+}
+
+{
+	// (b) grace-expiry path
+	const dir = initRealRepo();
+	const store = new TaskStore();
+	const taskId = "T-20260915-601";
+	store.create(createTaskSpec({
+		taskId,
+		objective: "cancel me without a terminal",
+		cwd: dir,
+		role: "worker",
+		validation: { required: false },
+	}));
+	const concurrency = new ConcurrencyController();
+	const usage = new UsageLedger({ pricing: { version: 1, currency: "USD", rates: {} } });
+	const { deps } = makeDeps({
+		store,
+		concurrency,
+		usage,
+		launch: async () => { throw new DelegationAborted(taskId); },
+	});
+	const error = await runDelegation(deps, makeParams({ taskId }), dir, { executionId: "call-cb" })
+		.then(() => undefined, (e) => e);
+	assert.ok(error instanceof DelegationAborted, `abort propagates as-is, got ${error}`);
+	assert.equal(error.taskId, taskId, "DelegationAborted carries the Task id for the caller's snapshot sync");
+	const record = store.get(taskId);
+	assert.equal(record.state, "blocked", "grace-expired abort parks the Task");
+	assert.match(record.stateReason ?? "", /no terminal response within grace/);
+	assert.equal((usage.taskUsage(taskId)?.children ?? []).length, 0, "no usage row without a terminal");
+	assert.equal(concurrency.status().reservations.length, 0, "write lock released");
+}
+
+// ---------------------------------------------------------------------------
+// 7. G4 on the other terminals: timed_out / tool_budget_exhausted / failed
+//    with usage → recorded, Task state per the existing table; without usage
+//    → nothing recorded. Reviewer cancelled with usage → recorded, Task
+//    untouched.
+// ---------------------------------------------------------------------------
+for (const [index, [status, expectedState]] of [
+	["timed_out", "blocked"],
+	["tool_budget_exhausted", "blocked"],
+	["failed", "failed"],
+].entries()) {
+	for (const withUsage of [true, false]) {
+		const dir = initRealRepo();
+		const store = new TaskStore();
+		const taskId = `T-20260915-7${index}${withUsage ? 5 : 0}`;
+		store.create(createTaskSpec({
+			taskId,
+			objective: "terminal with usage",
+			cwd: dir,
+			role: "worker",
+			validation: { required: false },
+		}));
+		const usage = new UsageLedger({ pricing: { version: 1, currency: "USD", rates: {} } });
+		const { deps } = makeDeps({
+			store,
+			usage,
+			launch: async (request) => ({
+				requestId: request.requestId,
+				ownerRunId: request.ownerRunId,
+				nodeId: request.nodeId,
+				status,
+				error: `${status} happened`,
+				runId: `run-${status}`,
+				agent: "worker",
+				...(withUsage
+					? { usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1, toolCalls: 1, durationMs: 10 } }
+					: {}),
+			}),
+		});
+		await expectRefusal(
+			runDelegation(deps, makeParams({ taskId }), dir, { executionId: `call-g4-${status}-${withUsage}` }),
+			status.toUpperCase(),
+		);
+		assert.equal(store.get(taskId).state, expectedState, `${status} -> ${expectedState}`);
+		const children = usage.taskUsage(taskId)?.children ?? [];
+		assert.equal(children.length, withUsage ? 1 : 0, `${status} usage ${withUsage ? "recorded" : "absent"} (G4)`);
+		if (withUsage) assert.equal(children[0].outcome, "failed");
+	}
+}
+
+{
+	const dir = initCommittedRepo();
+	const { deps } = makeReviewDeps(dir, {
+		reviewStatus: "cancelled",
+		reviewError: "operator cancel",
+		reviewUsage: { input: 7, output: 8, cacheRead: 0, cacheWrite: 0, cost: 0.005, turns: 2, toolCalls: 1, durationMs: 30 },
+		reviewFor: () => ({}),
+	});
+	const worker = await runDelegation(deps, makeParams(), dir, { executionId: "call-w" });
+	const taskId = worker.task.taskId;
+	const error = await expectRefusal(
+		runDelegation(deps, reviewerParams(taskId), dir, { executionId: "call-r" }),
+		"CANCELLED",
+	);
+	assert.equal(error.taskId, taskId, "reviewer refusal carries the Task id");
+	const record = deps.store.require(taskId);
+	assert.equal(record.state, "reviewing", "a cancelled reviewer never moves the Task");
+	assert.equal(record.reviews.length, 0);
+	const children = deps.usage.taskUsage(taskId)?.children ?? [];
+	assert.equal(children.length, 2, "worker + cancelled reviewer usage both recorded");
+	assert.equal(children.at(-1).kind, "reviewer");
+	assert.equal(children.at(-1).outcome, "failed", "reviewer terminal lands as outcome=failed");
+}
+
+// ---------------------------------------------------------------------------
+// 8. cancelInFlightDelegations: two in-flight + one settled → 2 CANCELs.
+// ---------------------------------------------------------------------------
+{
+	const bus = tinyEmitter();
+	const launcher = createHostLauncher({ events: bus }, { cancelGraceMs: 1000 });
+	const pending = [
+		launcher(launcherRequest({ requestId: "req-a", nodeId: "T-20260915-510" }), undefined, {}),
+		launcher(launcherRequest({ requestId: "req-b", nodeId: "T-20260915-511" }), undefined, {}),
+		launcher(launcherRequest({ requestId: "req-c", nodeId: "T-20260915-512" }), undefined, {}),
+	];
+	bus.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: "req-c", ownerRunId: "owner-1", nodeId: "T-20260915-512", status: "completed",
+	});
+	await pending[2];
+	const cancelled = cancelInFlightDelegations({ events: bus });
+	assert.equal(cancelled, 2, "settled request left the in-flight table");
+	const cancels = bus.emitted.filter((entry) => entry.event === SUBAGENT_DELEGATION_CANCEL_EVENT);
+	assert.equal(cancels.length, 2);
+	assert.deepEqual(cancels.map((entry) => entry.payload.requestId).sort(), ["req-a", "req-b"]);
+	// Settle the two stragglers so the module-level table is empty again.
+	bus.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: "req-a", ownerRunId: "owner-1", nodeId: "T-20260915-510", status: "cancelled",
+	});
+	bus.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: "req-b", ownerRunId: "owner-1", nodeId: "T-20260915-511", status: "cancelled",
+	});
+	await Promise.all(pending.slice(0, 2));
 }
 
 console.log("delegate.test.mjs: all cases passed");

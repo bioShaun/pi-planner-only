@@ -282,6 +282,10 @@ Session-level root spend gating is **off by default**. `/planner-only budget on`
 
 **Alternative:** The preferred approach is to specify `cost` directly in `~/.pi/agent/models.json`. This enables native cost calculation across both Pi and `pi-subagents` (e.g. `/subagent-cost`). The plugin table serves as a fallback or override when you prefer not to modify `models.json`.
 
+### Cancellation and orphaned children
+
+In the TUI, pressing Esc during a `planner_delegate` call sends CANCEL to the child; the Task transitions to `blocked` and the usage already consumed is recorded. Print mode (`-p`) has no tool-level abort entry: SIGINT ends Root outright, the delegated agent (which runs in-process) dies with it, no `cancelled` terminal or usage row is written, and any shell command the child had started may survive as an orphan (observed once in ticket 03) — check and clean up by hand. The cancel grace window is 5 s (default); once it elapses the Task still goes `blocked`, but the child's usage is unknown.
+
 ## Design specs
 
 - [v0.2 specification](docs/pi-planner-only-v0.2-spec.md) covers the core protocol and architecture.

@@ -1,6 +1,6 @@
 # 07: 进度与取消 —— UPDATE 事件进 `onUpdate`，abort 走 CANCEL 并落 `cancelled` 终态，孤儿子进程处置
 
-Status: ready-for-agent（2026-09-15 由 needs-triage 展开；行号基于 ce1cea1，即 08 落地后的树）
+Status: done（2026-09-15 落地，herdr-pair 四轮；宿主验证 1/2/3 PASS，4 部分观测，5 未复现并改 README 措辞；交回见 ../07-handback.md；工作树未提交）
 Blocked by: 04（verified）、08（done，ce1cea1——本票只碰 `delegate.ts` / `subagent-delegation-contract.ts` / `index.ts` 的 `planner_delegate` 注册，08 之后 `delegate.ts` 是唯一委派入口）
 Type: task
 

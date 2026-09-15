@@ -49,11 +49,12 @@ import { configuredRoleModelSummaries, loadRoleModelPolicy } from "./role-models
 import { ConcurrencyController, loadConcurrencyDefault, saveConcurrencyDefault, parseConcurrencyLimit } from "./concurrency.ts";
 import {
 	PLANNER_DELEGATE_PARAMETERS,
+	cancelInFlightDelegations,
 	createHostLauncher,
 	renderDelegationOutcome,
 	runDelegation,
 } from "./delegate.ts";
-import type { PlannerDelegateParams } from "./delegate.ts";
+import type { DelegationOutcome, PlannerDelegateParams } from "./delegate.ts";
 
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
 	? resolve(process.env.PI_CODING_AGENT_DIR)
@@ -765,21 +766,37 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			"role=reviewer takes taskId and reviews the Task's latest WorkerReport; the launcher-validated ReviewResult arrives in details.review.",
 		],
 		parameters: PLANNER_DELEGATE_PARAMETERS,
-		async execute(toolCallId, params: PlannerDelegateParams, signal, _onUpdate, ctx) {
+		async execute(toolCallId, params: PlannerDelegateParams, signal, onUpdate, ctx) {
 			latestCtx = ctx;
-			const outcome = await runDelegation(
-				{
-					store: orchestrator.store,
-					gitRunner,
-					concurrency,
-					usage: ledger,
-					launch: delegationLaunch,
-					ownerRunId: ctx.sessionManager?.getSessionId?.() || PROCESS_OWNER_RUN_ID,
-				},
-				params,
-				ctx.cwd || process.cwd(),
-				{ signal, executionId: toolCallId },
-			);
+			let outcome: DelegationOutcome;
+			try {
+				outcome = await runDelegation(
+					{
+						store: orchestrator.store,
+						gitRunner,
+						concurrency,
+						usage: ledger,
+						launch: delegationLaunch,
+						ownerRunId: ctx.sessionManager?.getSessionId?.() || PROCESS_OWNER_RUN_ID,
+					},
+					params,
+					ctx.cwd || process.cwd(),
+					{ signal, executionId: toolCallId, onUpdate },
+				);
+			} catch (error) {
+				// Refused/aborted delegations carry the Task id on the error — sync
+				// the usage snapshot now so the ledger file sees the G4 row too
+				// (message_end attribution never sees this toolCallId).
+				const failedTaskId = typeof (error as { taskId?: unknown })?.taskId === "string"
+					? (error as { taskId: string }).taskId
+					: undefined;
+				if (failedTaskId) {
+					rootTurnTaskIds.add(canonicalTaskId(failedTaskId));
+					syncUsage(failedTaskId);
+					persistSessionEntries();
+				}
+				throw error;
+			}
 			rootTurnTaskIds.add(outcome.task.taskId);
 			return {
 				content: [{ type: "text", text: renderDelegationOutcome(outcome) }],
@@ -945,10 +962,16 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		// Restore tools for reload/replace. Usage snapshot is separate: only
 		// reasons that tear this session down without a same-file successor.
 		restoreSuppressedTools();
+		// Best-effort CANCEL for in-flight delegations — not bound to the flush
+		// condition below; a dying Root must not leave orphaned children.
+		const shutdownHost = ctx ?? latestCtx;
+		const cancelled = cancelInFlightDelegations(pi);
+		if (cancelled > 0 && shutdownHost) {
+			notify(shutdownHost, `Planner-only: cancelled ${cancelled} in-flight delegation(s) on shutdown`, "warning");
+		}
 		if (!shouldFlushUsageOnShutdown(event?.reason)) return;
-		const host = ctx ?? latestCtx;
-		if (!host) return;
-		await flushOpenUsageOnShutdown(host);
+		if (!shutdownHost) return;
+		await flushOpenUsageOnShutdown(shutdownHost);
 	});
 
 	pi.on("before_agent_start", async (event) => {

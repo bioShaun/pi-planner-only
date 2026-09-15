@@ -6,6 +6,12 @@ import { join } from "node:path";
 import { LedgerSnapshotStore } from "./ledger-store.ts";
 import { TaskStore, validateTaskSpec } from "./task.ts";
 import { emptyTaskUsage } from "./usage.ts";
+import {
+	SUBAGENT_DELEGATION_CANCEL_EVENT,
+	SUBAGENT_DELEGATION_REQUEST_EVENT,
+	SUBAGENT_DELEGATION_RESPONSE_EVENT,
+	SUBAGENT_DELEGATION_UPDATE_EVENT,
+} from "./subagent-delegation-contract.ts";
 
 const isolatedAgentDir = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
@@ -39,6 +45,31 @@ const setActiveCalls = [];
 const notices = [];
 const execCalls = [];
 const sessionEntries = [];
+
+// Minimal on/emit bus standing in for pi.events (same shape as the one in
+// delegate.test.mjs — deliberately not shared across files).
+function tinyEmitter() {
+	const listeners = new Map();
+	const emitted = [];
+	return {
+		emitted,
+		on(event, fn) {
+			let set = listeners.get(event);
+			if (!set) {
+				set = new Set();
+				listeners.set(event, set);
+			}
+			set.add(fn);
+			return () => set.delete(fn);
+		},
+		emit(event, payload) {
+			emitted.push({ event, payload });
+			for (const fn of [...(listeners.get(event) ?? [])]) fn(payload);
+		},
+	};
+}
+const piEvents = tinyEmitter();
+
 const pi = {
 	on(name, handler) {
 		handlers.set(name, handler);
@@ -62,6 +93,7 @@ const pi = {
 	appendEntry(customType, data) {
 		sessionEntries.push({ type: "custom", customType, data });
 	},
+	events: piEvents,
 	async exec(command, args) {
 		execCalls.push([command, [...args]]);
 		if (command !== "git") return { stdout: "", stderr: "", code: 1 };
@@ -1025,4 +1057,122 @@ try {
 			if (value === undefined) delete process.env[key]; else process.env[key] = value;
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// ticket 07 test 9: index.ts wiring over the real host launcher, driven by
+// the fake pi's event bus. (a) an identity-matched UPDATE reaches execute's
+// onUpdate as a progress partial; (b) session_shutdown CANCELS an in-flight
+// delegation. Both reachable in Idle — planner_delegate mints its own Task.
+// ---------------------------------------------------------------------------
+{
+	assert.equal(tools.has("planner_delegate"), true);
+
+	// The launcher emits REQUEST only after runDelegation's async setup —
+	// poll the bus until it lands (bounded so an early throw cannot hang).
+	// `excludeRequestId` skips an earlier delegation's REQUEST.
+	const requestSeen = async (excludeRequestId) => {
+		const deadline = Date.now() + 2000;
+		let found;
+		while (!found && Date.now() < deadline) {
+			found = piEvents.emitted.find((entry) =>
+				entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT && entry.payload.requestId !== excludeRequestId,
+			)?.payload;
+			if (!found) await new Promise((r) => setTimeout(r, 2));
+		}
+		assert.ok(found, "REQUEST emitted on the delegation bus");
+		return found;
+	};
+
+	// (a) UPDATE -> onUpdate once, marked as progress; completed RESPONSE
+	//     settles the call with the structured WorkerReport in details.report.
+	const updates = [];
+	const execPromise = tools.get("planner_delegate").execute(
+		"call-progress-1",
+		{
+			role: "worker",
+			objective: "emit progress then complete",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: false },
+		},
+		undefined,
+		(partial) => updates.push(partial),
+		ctx,
+	);
+	const request = await requestSeen();
+	const triple = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
+	piEvents.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, { ...triple, currentTool: "bash", toolCount: 3, durationMs: 2100 });
+	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		...triple,
+		status: "completed",
+		runId: "run-ix1",
+		agent: "worker",
+		model: "test/model",
+		usage: { input: 2, output: 3, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1, toolCalls: 1, durationMs: 15 },
+		result: {
+			kind: "structured",
+			value: {
+				version: 1,
+				taskId: triple.nodeId,
+				status: "completed",
+				summary: "done",
+				changedFiles: [],
+				validation: [],
+				evidence: { cwd: request.cwd, taskId: triple.nodeId, workerRunId: "run-ix1" },
+				risks: [],
+				unresolved: [],
+			},
+		},
+	});
+	const toolResult = await execPromise;
+	assert.equal(updates.length, 1, "one UPDATE forwarded to the execute onUpdate");
+	assert.equal(updates[0].details.progress, true, "partial marked as progress");
+	assert.equal(updates[0].details.taskId, triple.nodeId);
+	assert.equal(updates[0].details.currentTool, "bash");
+	assert.equal(toolResult.details.report.taskId, triple.nodeId, "terminal carries the structured report");
+
+	// (b) a second delegation left in flight: session_shutdown emits CANCEL,
+	//     then the cancelled terminal settles the wait (no dangling promise).
+	const pendingExec = tools.get("planner_delegate").execute(
+		"call-shutdown-1",
+		{
+			role: "worker",
+			objective: "stay in flight until shutdown",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: false },
+		},
+		undefined,
+		() => {},
+		ctx,
+	);
+	const pendingRequest = await requestSeen(request.requestId);
+	assert.notEqual(pendingRequest.requestId, request.requestId, "a second delegation is in flight");
+	const cancelsBefore = piEvents.emitted.filter((entry) => entry.event === SUBAGENT_DELEGATION_CANCEL_EVENT).length;
+	await handlers.get("session_shutdown")({}, ctx);
+	const cancels = piEvents.emitted.filter((entry) => entry.event === SUBAGENT_DELEGATION_CANCEL_EVENT);
+	assert.ok(cancels.length > cancelsBefore, "session_shutdown emits CANCEL for the in-flight delegation");
+	assert.ok(
+		cancels.some((entry) => entry.payload.requestId === pendingRequest.requestId),
+		"the CANCEL names the in-flight requestId",
+	);
+	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: pendingRequest.requestId,
+		ownerRunId: pendingRequest.ownerRunId,
+		nodeId: pendingRequest.nodeId,
+		status: "cancelled",
+		usage: { input: 2, output: 3, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1, toolCalls: 1, durationMs: 15 },
+	});
+	await assert.rejects(
+		pendingExec,
+		(error) => error?.name === "DelegationRefused" && error?.code === "CANCELLED",
+		"cancelled delegation refuses with CANCELLED",
+	);
+	const ledgerPath = join(isolatedAgentDir, "planner-only", "ledger", `${pendingRequest.nodeId}.json`);
+	const snapshot = JSON.parse(readFileSync(ledgerPath, "utf8"));
+	assert.equal(snapshot.task.usage.children.length, 1, "ledger file carries the cancelled child's usage row");
+	assert.equal(snapshot.task.usage.children[0].outcome, "failed", "non-completed terminal lands as outcome=failed in the file");
 }

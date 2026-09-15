@@ -4,8 +4,10 @@
  * Copied from pi-subagents@0.67.0 `src/api/delegation.ts`. The five event
  * names are the established extension-to-extension transport described in
  * that package's docs; the request/response shapes mirror the launcher
- * contract exactly. `IntercomBridgeConfig` is deliberately not copied — the
- * `intercomBridge` field below is typed `unknown` instead.
+ * contract exactly, and `SubagentDelegationUpdate` (the progress payload
+ * re-emitted from the child's onUpdate) is likewise verbatim.
+ * `IntercomBridgeConfig` is deliberately not copied — the `intercomBridge`
+ * field below is typed `unknown` instead.
  *
  * We do not `import "pi-subagents/delegation"`: that package's exports map to
  * raw `.ts` sources, which cannot be type-checked under our flags and cannot
@@ -59,6 +61,19 @@ export interface SubagentDelegationStarted {
 	requestId: string;
 	ownerRunId: string;
 	nodeId: string;
+}
+
+export interface SubagentDelegationUpdate extends SubagentDelegationStarted {
+	runId?: string;
+	currentTool?: string;
+	currentToolArgs?: string;
+	recentOutput?: string;
+	recentOutputLines?: string[];
+	recentTools?: Array<{ tool: string; args: string }>;
+	model?: string;
+	toolCount?: number;
+	durationMs?: number;
+	tokens?: number;
 }
 
 export type SubagentDelegationStatus =
