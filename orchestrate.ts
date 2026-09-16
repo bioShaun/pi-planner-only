@@ -69,6 +69,7 @@ import type {
 	ReviewVerdict,
 	RootVerdictRefusal,
 	TaskExecutionRecord,
+	TaskState,
 	TaskCompletionKind,
 	TaskRole,
 	TaskSpec,
@@ -344,6 +345,20 @@ function untrustedPlaceholder(taskId: string): TaskRecord {
 	};
 }
 
+/** Ticket 18 — one row of the read-only `planner_tasks` listing. */
+export interface PlannerTaskSummary {
+	taskId: string;
+	state: TaskState;
+	role: TaskRole;
+	/** spec.objective, first line, truncated to 120 chars. */
+	objective?: string;
+	updatedAt: string;
+	/** blocked + recovery.required — the next rebind must carry a RecoveryDecision. */
+	recoveryRequired: boolean;
+	/** memory = session store; ledger = snapshot-only record the restore cap left out. */
+	source: "memory" | "ledger";
+}
+
 export class PlannerOrchestrator {
 	readonly store: TaskStore;
 	private readonly gitRunner: GitRunner;
@@ -520,6 +535,55 @@ export class PlannerOrchestrator {
 			}
 		}
 		return { restored, corrupt };
+	}
+
+	/**
+	 * Ticket 18 — live (non-final) Tasks of one workspace, from the session
+	 * store *and* the ledger: the restore cap keeps only the freshest records
+	 * in memory, so a live-but-aged Task may exist only on disk. An in-memory
+	 * record always wins over its snapshot (memory is newer). Listing is pure
+	 * — nothing is restored into the store; a later bind lazily restores by id
+	 * (ticket 47). Records with an empty cwd — quarantine placeholders — are
+	 * never listed (ticket 47's rule: an on-demand read is never a
+	 * cross-workspace or untrusted entry point).
+	 */
+	listLiveTasks(cwd: string): PlannerTaskSummary[] {
+		const workspace = normalizeWorkspaceIdentity(cwd);
+		// "Live" here means *operable*: non-final states, plus a blocked Task
+		// flagged recovery.required — final for gather, but still rebindable
+		// through planner_redelegate with a RecoveryDecision. A plain blocked
+		// Task (no pending recovery) is dead and stays unlisted.
+		const isLiveHere = (record: TaskRecord) =>
+			record.cwd !== ""
+			&& (!isFinalTaskState(record.state) || (record.state === "blocked" && record.recovery?.required === true))
+			&& normalizeWorkspaceIdentity(record.cwd) === workspace;
+		const inMemory = this.store.list().filter(isLiveHere);
+		const memoryIds = new Set(this.store.list().map((task) => task.taskId));
+		const ledgerOnly: TaskRecord[] = [];
+		if (this.snapshots) {
+			try {
+				for (const record of this.snapshots.readAll().records) {
+					if (!memoryIds.has(record.taskId) && isLiveHere(record)) ledgerOnly.push(record);
+				}
+			} catch {
+				// An unreadable ledger narrows the listing to memory; corrupt
+				// snapshots are already reported through the restore path.
+			}
+		}
+		const summarize = (source: PlannerTaskSummary["source"]) => (record: TaskRecord): PlannerTaskSummary => {
+			const objective = record.spec?.objective?.split(/\r?\n/, 1)[0]?.slice(0, 120);
+			return {
+				taskId: record.taskId,
+				state: record.state,
+				role: record.role,
+				...(objective ? { objective } : {}),
+				updatedAt: record.updatedAt,
+				recoveryRequired: record.state === "blocked" && record.recovery?.required === true,
+				source,
+			};
+		};
+		return [...inMemory.map(summarize("memory")), ...ledgerOnly.map(summarize("ledger"))]
+			.sort((left, right) => (left.updatedAt < right.updatedAt ? 1 : -1));
 	}
 
 	/**
@@ -1745,7 +1809,7 @@ export class PlannerOrchestrator {
 		}
 		if (task.recovery?.required) {
 			lines.push(
-				`Recovery required: ${task.recovery.reason} — execution ${task.recovery.executionId}; decide via planner_delegate.recovery or planner_verdict blocked+abort`,
+				`Recovery required: ${task.recovery.reason} — execution ${task.recovery.executionId}; decide via planner_redelegate.recovery or planner_verdict blocked+abort`,
 			);
 		} else if (task.recovery?.nextAction === "abort") {
 			lines.push(`Recovery: aborted — Task left for operator handling (decision by ${task.recovery.consumedBy ?? "planner_verdict"})`);

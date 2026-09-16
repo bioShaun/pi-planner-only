@@ -255,7 +255,7 @@ export interface ExecutionEnvelope {
 
 /**
  * P0-B — a Root recovery decision (spec §5). P0 wires retry_same_plan /
- * fix_environment through planner_delegate and abort through
+ * fix_environment through planner_redelegate and abort through
  * planner_verdict; the remaining actions are refused until P1.
  */
 export interface RecoveryDecision {

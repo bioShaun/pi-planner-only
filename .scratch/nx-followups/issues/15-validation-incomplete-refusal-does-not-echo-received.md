@@ -42,3 +42,6 @@ to false when no validation is mandatory.
 ## Comments
 
 - 2026-09-16（落档）：证据取自该 session JSONL 的实发 toolCall arguments（三次 `{"required":true}` 无 commands 的调用 id：`3d068803` / `9f45605d` / `d93d9a9c`；正例 `e7ef42d7`），非模型自述。定性为可用性/防幻觉加固。
+- 2026-09-16（实现）：`createTaskSpec` 的 `TASKSPEC_VALIDATION_INCOMPLETE` 消息现回显实收 validation JSON；`planner_delegate` schema 同时注明 `required: true` 时 `commands` 必须含非空命令。`delegate.test.mjs` 在真实 `runDelegation` 边界断言消息、零 launcher 调用和零 Task 铸造，`task.test.mjs` 覆盖缺失、空数组和全空白数组。
+- 2026-09-16（复发辨析）：session `01a0a9cc-7abb-7362-b5d6-d309ab6212a6` 的两次原始 toolCall arguments 均仍含 `"taskId":"T-20260918-015"` 且逐字相同，第二次并未按模型叙述省略。票 13/14 已加载（新恢复指引出现在拒绝中），宿主也未补回字段；这是 `TASK_UNKNOWN` 的同参数重发，且该拒绝本来已回显实收 taskId，不属于本票 validation 回显修复可消除的路径。若要在工具侧继续加固，需另做“相同 code + 相同参数重复拒绝”检测。
+- 2026-09-16（立项）：上述检测已正式立项为票 16（通用重复拒绝熔断）；创建路径上 `taskId` 幻觉的结构性根治立项为票 17（拆分 `planner_delegate` / `planner_redelegate`）；票 13 方向 2 的枚举工具立项为票 18；同一守卫的相邻缺口"commands 存在但是散文"立项为票 19。本票范围不变，仍只负责 validation 回显。

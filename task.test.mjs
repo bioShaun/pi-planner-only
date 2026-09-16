@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtempSync, mkdirSync, symlinkSync, rmSync, writeFileSync } from "node:fs";
-import { TaskStore, TaskIdAllocator, createTaskId, createTaskSpec, isExplicitlyNoValidation, isExecutingStale, validateTaskSpec, VALIDATION_COMMANDS_REQUIRED_ERROR, canTransition, TASKSPEC_CHARACTERISTIC_FIELDS, TASKSPEC_FORBIDDEN_EXECUTION_CONTROLS, buildTaskSpecExample, buildTaskSpecRepair, appendTaskSpecRepair } from "./task.ts";
+import { TaskStore, TaskIdAllocator, createTaskId, createTaskSpec, isExecutableCommandShape, isExplicitlyNoValidation, isExecutingStale, validateTaskSpec, VALIDATION_COMMANDS_REQUIRED_ERROR, canTransition, TASKSPEC_CHARACTERISTIC_FIELDS, TASKSPEC_FORBIDDEN_EXECUTION_CONTROLS, buildTaskSpecExample, buildTaskSpecRepair, appendTaskSpecRepair } from "./task.ts";
 import { validateWorkerReport } from "./report.ts";
 import { EXECUTING_STALE_MS, WORKER_REPORT_VERSION } from "./types.ts";
 
@@ -87,7 +87,11 @@ for (const incomplete of [
 	);
 	assert.throws(
 		() => createTaskSpec({ objective: "incomplete validation", cwd, validation: incomplete }),
-		(error) => error?.code === "TASKSPEC_VALIDATION_INCOMPLETE",
+		(error) => {
+			assert.equal(error?.code, "TASKSPEC_VALIDATION_INCOMPLETE");
+			assert.match(error?.message, new RegExp(`received validation: ${JSON.stringify(incomplete).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+			return true;
+		},
 		`the constructor must refuse ${JSON.stringify(incomplete)}`,
 	);
 }
@@ -125,6 +129,96 @@ for (const incomplete of [
 	const renderedIncompleteRepair = appendTaskSpecRepair("refused", incompleteRepair);
 	assert.match(renderedIncompleteRepair, /validation\.commands/);
 	assert.doesNotMatch(renderedIncompleteRepair, /resubmitted as-is/);
+}
+
+// Ticket 19 — validation.commands is the one TaskSpec field a machine consumes
+// verbatim; an entry that is not executable-shaped is prose, not a command.
+// The predicate is deliberately shallow: program/path-shaped first token
+// (after leading env assignments), single line, arguments unrestricted.
+for (const ok of [
+	"node --experimental-strip-types delegate.test.mjs",
+	"npx tsc --noEmit",
+	"./scripts/run.sh --flag",
+	"FOO=1 npm test",
+	"FOO=1 BAR=2 npm test",
+	"cd sub && npm test",
+	"grep -r \"中文\" src/",
+	"npm run test:release 2>&1 | tail -5",
+	"~/bin/tool --verbose",
+	"MSBuild /t:Build",
+]) {
+	assert.equal(isExecutableCommandShape(ok), true, `executable-shaped: ${ok}`);
+}
+for (const prose of [
+	"按工单和 package.json 选择相关回归测试及必要检查，并在报告中记录准确命令和退出码",
+	"Run the test suite and record exit codes",
+	"\"quoted first token\"",
+	"npm test\nnpm run build",
+	"npm test\r\nnpm run build",
+	"   ",
+	"FOO=1",
+]) {
+	assert.equal(isExecutableCommandShape(prose), false, `not executable-shaped: ${JSON.stringify(prose)}`);
+}
+
+// createTaskSpec refuses prose commands at any `required` value — the
+// validator may read the list even when validation is not mandatory.
+for (const required of [true, false]) {
+	assert.throws(
+		() => createTaskSpec({
+			objective: "prose commands",
+			cwd,
+			validation: { required, commands: ["按工单和 package.json 选择相关回归测试及必要检查，并在报告中记录准确命令和退出码"] },
+		}),
+		(error) => {
+			assert.equal(error?.code, "TASKSPEC_VALIDATION_COMMAND_NOT_EXECUTABLE");
+			assert.match(error?.message, /received: "按工单/);
+			assert.match(error?.message, /acceptanceCriteria/);
+			assert.match(error?.message, /required to false/);
+			return true;
+		},
+		`prose commands must be refused at required: ${required}`,
+	);
+}
+// A mixed list names only the prose entries by index; blank entries keep the
+// ticket-45 normalisation (dropped, not refused) — covered above by
+// "blank plus real".
+assert.throws(
+	() => createTaskSpec({
+		objective: "mixed commands",
+		cwd,
+		validation: { required: true, commands: ["npm test", "然后运行全部测试", "npx tsc --noEmit"] },
+	}),
+	(error) => {
+		assert.equal(error?.code, "TASKSPEC_VALIDATION_COMMAND_NOT_EXECUTABLE");
+		assert.match(error?.message, /validation\.commands\[1\]/);
+		assert.doesNotMatch(error?.message, /commands\[0\]/);
+		assert.doesNotMatch(error?.message, /commands\[2\]/);
+		return true;
+	},
+	"a mixed command list refuses and names only the prose entries",
+);
+// The schema asks the same question with the same predicate.
+{
+	const errors = validateTaskSpec({ ...spec, validation: { required: true, commands: ["npm test", "Verify the output and report the result"] } });
+	assert.deepEqual(errors, ["validation.commands[1] is not an executable command shape"]);
+}
+// The repair renderer reports prose commands as needs-input — never kept
+// verbatim, never silently dropped into a satisfiable-looking definition.
+for (const submittedValidation of [
+	["按工单选择相关回归测试"],
+	{ required: true, commands: ["npm test", "然后运行全部测试"] },
+	{ required: false, commands: ["Describe what to verify"] },
+]) {
+	const repair = buildTaskSpecRepair({
+		toolName: "bash",
+		input: { command: "npm test" },
+		cwd,
+		submitted: { validation: submittedValidation },
+	});
+	assert.equal(repair.status, "needs-input", `prose commands must be needs-input: ${JSON.stringify(submittedValidation)}`);
+	assert.deepEqual(repair.unresolvedFields, ["validation"]);
+	assert.equal(repair.example, undefined);
 }
 
 

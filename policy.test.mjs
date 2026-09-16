@@ -47,6 +47,8 @@ assert.equal(cutover("read", { path: "x" }).block, false);
 assert.equal(cutover("question", {}).block, false);
 assert.equal(cutover("questionnaire", {}).block, false);
 assert.equal(cutover("planner_delegate", { role: "worker", objective: "x" }).block, false);
+assert.equal(cutover("planner_redelegate", { taskId: "T-20260916-001", role: "worker", objective: "x" }).block, false);
+assert.equal(cutover("planner_tasks", {}).block, false);
 assert.equal(cutover("planner_verdict", { verdict: "pass", summary: "x" }).block, false);
 assert.equal(cutover("git_audit", { operation: "status" }).block, false);
 assert.equal(cutover("bash", { command: "git status --short" }).block, false);
@@ -60,7 +62,7 @@ assert.ok(liveRefusal.reason.includes("```json"), "non-delegation refusals keep 
 assert.ok(liveRefusal.reason.includes("planner_delegate"), "the repair text names planner_delegate");
 
 // Idle allowlist is IDLE_TOOLS + questions; the legacy recovery tool is gone.
-for (const name of ["planner_delegate", "planner_verdict", "git_audit", "question", "questionnaire"]) {
+for (const name of ["planner_delegate", "planner_redelegate", "planner_tasks", "planner_verdict", "git_audit", "question", "questionnaire"]) {
 	assert.equal(cutover(name, {}, false).block, false, `${name} is allowed while Idle`);
 }
 const idleRead = cutover("read", { path: "x" }, false);
@@ -83,7 +85,10 @@ assert.equal(blocked("git_audit", { operation: "diff-stat", staged: true }), fal
 assert.ok(ROOT_TOOLS.has("git_audit"));
 assert.ok(ROOT_TOOLS.has("planner_verdict"));
 assert.ok(ROOT_TOOLS.has("planner_delegate"));
+assert.ok(ROOT_TOOLS.has("planner_redelegate"));
+assert.ok(ROOT_TOOLS.has("planner_tasks"));
 assert.equal(blocked("planner_delegate", { role: "worker", objective: "x" }), false);
+assert.equal(blocked("planner_redelegate", { taskId: "T-20260916-001", role: "reviewer", objective: "x" }), false);
 assert.equal(blocked("planner_verdict", { verdict: "pass", summary: "looks good" }), false);
 assert.equal(blocked("functions.grep", { pattern: "x" }), true);
 assert.equal(blocked("subagent", { agent: "worker" }), true, "subagent is refused regardless of shape");

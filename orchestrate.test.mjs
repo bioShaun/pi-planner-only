@@ -627,6 +627,63 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 		rmSync(dir, { recursive: true, force: true });
 	}
 }
+// Ticket 19 — a ledger record written before the executable-command check
+// (prose in validation.commands) must restore verbatim: the guard lives in
+// createTaskSpec, which the restore path never calls. Status rendering stays
+// intact on the legacy shape.
+{
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-19-restore-"));
+	try {
+		const legacy = spentTaskRecord("T-20260908-prose");
+		legacy.spec = { ...legacy.spec, validation: { required: true, commands: ["按工单选择相关回归测试并记录退出码"] } };
+		new LedgerSnapshotStore(dir).write(legacy);
+		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
+		const result = orch.restoreFromLedger();
+		assert.equal(result.restored, 1, "a pre-check record with prose commands restores");
+		const restored = orch.store.require("T-20260908-prose");
+		assert.deepEqual(restored.spec.validation.commands, ["按工单选择相关回归测试并记录退出码"], "stored spec is restored verbatim");
+		assert.doesNotThrow(() => orch.renderTaskStatus(restored), "status render does not crash on the legacy shape");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+// Ticket 18 — listLiveTasks merges ledger-only live records without adopting
+// them: the restore cap may leave a live Task on disk only, and listing must
+// still surface it (source: "ledger") while store.get stays undefined.
+{
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-18-"));
+	try {
+		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
+		orch.store.create({ ...specFor("T-20260908-mem18"), cwd: "/live/workspace" });
+		const completed = orch.store.create({ ...specFor("T-20260908-done18"), cwd: "/live/workspace" });
+		completed.state = "completed";
+		const legacy = spentTaskRecord("T-20260908-live18");
+		legacy.state = "blocked";
+		legacy.cwd = "/live/workspace";
+		legacy.recovery = { required: true, executionId: "e18", reason: "worker_runaway" };
+		legacy.spec = { ...legacy.spec, objective: "blocked ledger-only task" };
+		legacy.updatedAt = "2020-01-01T00:00:00.000Z";
+		new LedgerSnapshotStore(dir).write(legacy);
+		const foreign = spentTaskRecord("T-20260908-far18");
+		foreign.state = "executing";
+		foreign.cwd = "/other/workspace";
+		new LedgerSnapshotStore(dir).write(foreign);
+
+		const listed = orch.listLiveTasks("/live/workspace");
+		const byId = new Map(listed.map((task) => [task.taskId, task]));
+		assert.equal(byId.get("T-20260908-mem18")?.source, "memory", "in-memory live Task listed");
+		assert.equal(byId.has("T-20260908-done18"), false, "completed Tasks are not live");
+		const ledgerTask = byId.get("T-20260908-live18");
+		assert.equal(ledgerTask?.source, "ledger", "the cap-orphaned live Task lists from the ledger");
+		assert.equal(ledgerTask?.recoveryRequired, true, "blocked + recovery.required is flagged");
+		assert.equal(ledgerTask?.objective, "blocked ledger-only task");
+		assert.equal(byId.has("T-20260908-far18"), false, "another workspace's live Task is not listed");
+		assert.equal(orch.store.get("T-20260908-live18"), undefined, "listing never restores into the store");
+		assert.deepEqual(orch.listLiveTasks("/nowhere"), [], "empty workspace lists nothing");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
 // B1-B10 pin the unchanged post-stop lifecycle surface.
 {
 	const { store, task } = budgetTaskFixture("T-20260908-16c-b1", { tokens: 100, costUsd: 0.5 }, boundedBudgetUsage(0, 0));

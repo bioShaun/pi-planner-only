@@ -204,7 +204,7 @@ assert.match(prompt.systemPrompt, /Never fix rejected work/);
 assert.match(prompt.systemPrompt, /never pre-compose worker→reviewer as a workflowScript or chain/);
 assert.match(prompt.systemPrompt, /canonical taskId in details/);
 assert.match(prompt.systemPrompt, /One bounded TaskSpec per planner_delegate call/);
-assert.match(prompt.systemPrompt, /delegate the reviewer only after the worker returns, in a separate call/);
+assert.match(prompt.systemPrompt, /the reviewer runs via planner_redelegate only after the worker returns, in a separate call/);
 assert.doesNotMatch(prompt.systemPrompt, /diffStat/);
 assert.doesNotMatch(prompt.systemPrompt, /\/planner-only/);
 
@@ -1211,7 +1211,7 @@ try {
 // --------------------------------------------------------------------------
 // P0-B e2e (tool wiring): envelope breach -> CANCEL -> worker_runaway ->
 // recovery.required -> planner_verdict blocked + recovery{abort} consumes it;
-// a retry path via planner_delegate.recovery re-executes the same Task.
+// a retry path via planner_redelegate.recovery re-executes the same Task.
 // --------------------------------------------------------------------------
 {
 	// (a) runaway + verdict-level abort.
@@ -1317,12 +1317,12 @@ try {
 
 	// Missing recovery on a required Task refuses.
 	await assert.rejects(
-		tools.get("planner_delegate").execute("call-wrc-3", { taskId: retryRequest.nodeId, role: "worker", objective: "x", scope: {}, constraints: [], acceptanceCriteria: [], validation: { required: false } }, undefined, () => {}, ctx),
+		tools.get("planner_redelegate").execute("call-wrc-3", { taskId: retryRequest.nodeId, role: "worker", objective: "x", scope: {}, constraints: [], acceptanceCriteria: [], validation: { required: false } }, undefined, () => {}, ctx),
 		/requires a RecoveryDecision/,
 	);
 
 	// Valid retry_same_plan → new execution on the same Task.
-	const retryExec = tools.get("planner_delegate").execute(
+	const retryExec = tools.get("planner_redelegate").execute(
 		"call-wrc-4",
 		{
 			taskId: retryRequest.nodeId,
@@ -1377,4 +1377,305 @@ try {
 	assert.equal(retryLedger.task.executions.length, 2, "the recovery produced a second execution on the same Task");
 	assert.equal(retryLedger.task.recoveryHistory[0].consumedBy, "call-wrc-4");
 	assert.equal(retryLedger.task.recovery.required, false);
+}
+
+// ---------------------------------------------------------------------------
+// ticket 16: the repeated-refusal breaker. Three byte-identical
+// planner_redelegate calls with an invented taskId refuse TASK_UNKNOWN each
+// time; the 2nd carries a Repeat notice naming the previous toolCallId, the
+// 3rd prepends STOP and notifies the UI, and the 4th is intercepted by the
+// tool_call hook before execute. The launcher never runs and no Task mints.
+// (Ticket 17: the binding surface is planner_redelegate — planner_delegate
+//  has no taskId key and would mint instead of refusing.)
+// ---------------------------------------------------------------------------
+{
+	const redelegateTool = tools.get("planner_redelegate");
+	const ledgerDir = join(isolatedAgentDir, "planner-only", "ledger");
+	const ledgerCount = () => (existsSync(ledgerDir) ? readdirSync(ledgerDir).filter((name) => name.endsWith(".json")).length : 0);
+	const requestCount = () => piEvents.emitted.filter((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT).length;
+	const breakerParams = {
+		taskId: "T-20200101-001",
+		role: "worker",
+		objective: "breaker probe — invented taskId replayed verbatim",
+		scope: {},
+		constraints: [],
+		acceptanceCriteria: [],
+		validation: { required: false },
+	};
+	const ledgerBefore = ledgerCount();
+	const requestsBefore = requestCount();
+	notices.length = 0;
+
+	// The host runs the tool_call hook, then execute: drive the same pair.
+	const refused = async (toolCallId, params = breakerParams) => {
+		const gate = await handlers.get("tool_call")(
+			{ toolName: "planner_redelegate", input: params, toolCallId },
+			ctx,
+		);
+		assert.equal(gate, undefined, `${toolCallId} still reaches execute`);
+		try {
+			await redelegateTool.execute(toolCallId, params, undefined, () => {}, ctx);
+		} catch (error) {
+			return error;
+		}
+		assert.fail("expected planner_redelegate to refuse");
+	};
+
+	const e1 = await refused("call-rb-1");
+	assert.equal(e1.name, "DelegationRefused");
+	assert.equal(e1.code, "TASK_UNKNOWN");
+	assert.doesNotMatch(e1.message, /Repeat notice|STOP:/, "the first refusal is verbatim");
+
+	const e2 = await refused("call-rb-2");
+	assert.equal(e2.code, "TASK_UNKNOWN", "the breaker appends text without losing the refusal code");
+	assert.match(e2.message, /Repeat notice: these arguments are byte-identical to refused call call-rb-1 \(same refusal TASK_UNKNOWN\)/);
+	assert.match(e2.message, /read back the arguments you actually sent/);
+	assert.match(e2.message, /planner_redelegate refused: unknown Task T-20200101-001/, "the original refusal text is kept, appended not replaced");
+
+	const e3 = await refused("call-rb-3");
+	assert.equal(e3.code, "TASK_UNKNOWN");
+	assert.match(e3.message, /STOP: this exact call has now been refused 3 times with TASK_UNKNOWN\./);
+	assert.match(e3.message, /Do not call planner_redelegate again with these arguments\./);
+	assert.ok(
+		notices.some((n) => n.type === "warning" && /planner_redelegate refused 3 times with identical arguments/.test(n.message)),
+		"the third refusal also notifies the UI",
+	);
+
+	// Call 4 never reaches execute: the tool_call hook blocks it.
+	const blocked = await handlers.get("tool_call")(
+		{ toolName: "planner_redelegate", input: breakerParams, toolCallId: "call-rb-4" },
+		ctx,
+	);
+	assert.equal(blocked.block, true);
+	assert.equal(
+		blocked.reason,
+		"planner-only: identical call refused 3 times with TASK_UNKNOWN; blocked. Change the arguments or ask the user.",
+	);
+	assert.ok(
+		notices.some((n) => n.type === "warning" && /Blocked parent tool: planner_redelegate/.test(n.message)),
+		"the block is surfaced to the UI",
+	);
+
+	assert.equal(requestCount(), requestsBefore, "refused calls never reached the launcher");
+	assert.equal(ledgerCount(), ledgerBefore, "no Task was minted");
+
+	// A different argument set is a different key: still refused, count 1.
+	const eOther = await refused("call-rb-5", { ...breakerParams, taskId: "T-20200101-002" });
+	assert.equal(eOther.code, "TASK_UNKNOWN");
+	assert.doesNotMatch(eOther.message, /Repeat notice/, "different params start a fresh streak");
+}
+
+// ---------------------------------------------------------------------------
+// ticket 17: the delegation surface is split. planner_delegate always mints
+// — a passthrough taskId/recovery is ignored with a disclosed warning, never
+// refused; planner_redelegate requires the canonical taskId (TASK_REQUIRED)
+// and an unknown one refuses TASK_UNKNOWN with the ticket-13/14 text.
+// ---------------------------------------------------------------------------
+let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
+{
+	const delegateTool = tools.get("planner_delegate");
+	const redelegateTool = tools.get("planner_redelegate");
+	assert.ok(redelegateTool, "planner_redelegate is registered");
+	assert.equal(redelegateTool.label, "Planner Redelegate");
+
+	const seenRequestIds = new Set(
+		piEvents.emitted
+			.filter((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT)
+			.map((entry) => entry.payload.requestId),
+	);
+	const requestSeen17 = async () => {
+		const deadline = Date.now() + 2000;
+		let found;
+		while (!found && Date.now() < deadline) {
+			found = piEvents.emitted.find(
+				(entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT && !seenRequestIds.has(entry.payload.requestId),
+			)?.payload;
+			if (!found) await new Promise((r) => setTimeout(r, 2));
+		}
+		assert.ok(found, "REQUEST emitted on the delegation bus");
+		seenRequestIds.add(found.requestId);
+		return found;
+	};
+	const requestCount17 = () => piEvents.emitted.filter((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT).length;
+
+	// (a) a passthrough taskId + recovery on planner_delegate: ignored, a new
+	//     Task mints, and the result discloses both.
+	const mintExec = delegateTool.execute("call-split-1", {
+		taskId: "T-20200101-009",
+		recovery: { executionId: "call-x", action: "retry_same_plan", reason: "x", worktreeDecision: "keep" },
+		role: "worker",
+		objective: "split-surface probe — passthrough keys must be ignored",
+		scope: {},
+		constraints: [],
+		acceptanceCriteria: [],
+		validation: { required: false },
+	}, undefined, () => {}, ctx);
+	const mintRequest = await requestSeen17();
+	const mintTriple = { requestId: mintRequest.requestId, ownerRunId: mintRequest.ownerRunId, nodeId: mintRequest.nodeId };
+	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		...mintTriple,
+		status: "completed",
+		runId: "run-split",
+		agent: "worker",
+		model: "test/model",
+		usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1, toolCalls: 1, durationMs: 5 },
+		result: {
+			kind: "structured",
+			value: {
+				version: 1,
+				taskId: mintTriple.nodeId,
+				status: "completed",
+				summary: "minted",
+				changedFiles: [],
+				validation: [],
+				evidence: { cwd: mintRequest.cwd, taskId: mintTriple.nodeId, workerRunId: "run-split" },
+				risks: [],
+				unresolved: [],
+			},
+		},
+	});
+	const mintResult = await mintExec;
+	assert.notEqual(mintResult.details.taskId, "T-20200101-009", "a new Task minted — the supplied id never reached binding");
+	assert.match(mintResult.details.taskId, /^T-\d{8}-\d{3}$/, "details.taskId is the canonical minted id");
+	assert.ok(
+		mintResult.details.warnings.some((w) => w === "supplied taskId T-20200101-009 was ignored: planner_delegate always mints a new Task; use planner_redelegate to bind an existing one"),
+		"the ignored taskId is disclosed in details.warnings",
+	);
+	assert.ok(
+		mintResult.details.warnings.some((w) => /supplied recovery was ignored/.test(w)),
+		"the ignored recovery is disclosed too",
+	);
+	assert.match(mintResult.content[0].text, /warning: supplied taskId T-20200101-009 was ignored/, "the warning is in the text the model reads");
+	assert.match(mintResult.content[0].text, new RegExp(`^planner_delegate: ${mintResult.details.taskId} `), "the outcome line names the minting surface");
+	mintedTaskIdForListing = mintResult.details.taskId;
+
+	// (b) planner_redelegate without taskId never mints — TASK_REQUIRED, no launch.
+	const requestsBefore17 = requestCount17();
+	await assert.rejects(
+		redelegateTool.execute("call-split-2", {
+			role: "worker",
+			objective: "rebind without id",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: false },
+		}, undefined, () => {}, ctx),
+		(error) => {
+			assert.equal(error.name, "DelegationRefused");
+			assert.equal(error.code, "TASK_REQUIRED");
+			assert.match(error.message, /planner_redelegate refused: taskId is required/);
+			assert.match(error.message, /never construct one/);
+			return true;
+		},
+	);
+	assert.equal(requestCount17(), requestsBefore17, "no launch, no Task minted");
+
+	// (c) an unknown taskId on planner_redelegate refuses TASK_UNKNOWN — the
+	//     ticket-13/14 guidance, surface-corrected (no "omit taskId" advice on
+	//     a bind-only tool).
+	await assert.rejects(
+		redelegateTool.execute("call-split-3", {
+			taskId: "T-20200101-777",
+			role: "worker",
+			objective: "x",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: false },
+		}, undefined, () => {}, ctx),
+		(error) => {
+			assert.equal(error.code, "TASK_UNKNOWN");
+			assert.equal(
+				error.message,
+				"planner_redelegate refused: unknown Task T-20200101-777; call planner_tasks to list live Tasks, or use planner_delegate to create a new one",
+			);
+			return true;
+		},
+	);
+	// reviewer-role unknown binding keeps its own ticket-14 guidance.
+	await assert.rejects(
+		redelegateTool.execute("call-split-4", {
+			taskId: "T-20200101-778",
+			role: "reviewer",
+			objective: "x",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: false },
+		}, undefined, () => {}, ctx),
+		(error) => {
+			assert.equal(error.code, "TASK_UNKNOWN");
+			assert.match(error.message, /planner_redelegate refused: unknown Task T-20200101-778; role=reviewer can only bind an existing Task — call planner_tasks to find its canonical taskId/);
+			return true;
+		},
+	);
+	assert.equal(requestCount17(), requestsBefore17, "no launch, no Task minted");
+}
+
+// ---------------------------------------------------------------------------
+// ticket 18: planner_tasks — read-only live-Task lookup over memory ∪ ledger.
+// The minted Task above is live (reviewing); a blocked+recovery ledger record
+// the restore cap never adopted still lists with source "ledger". Listing
+// never launches, mints, or restores.
+// ---------------------------------------------------------------------------
+{
+	const tasksTool = tools.get("planner_tasks");
+	assert.ok(tasksTool, "planner_tasks is registered");
+	assert.equal(tasksTool.label, "Planner Tasks");
+
+	const ledger18 = join(isolatedAgentDir, "planner-only", "ledger");
+	const ledgerCount18 = () => (existsSync(ledger18) ? readdirSync(ledger18).filter((name) => name.endsWith(".json")).length : 0);
+	const requestCount18 = () => piEvents.emitted.filter((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT).length;
+
+	// Aged blocked Task that exists only on disk (restore cap / missed restore).
+	new LedgerSnapshotStore(isolatedAgentDir).write({
+		taskId: "T-20200101-500",
+		state: "blocked",
+		role: "worker",
+		cwd: ctx.cwd,
+		spec: { objective: "aged blocked Task the restore cap left out" },
+		recovery: { required: true, executionId: "exec-18", reason: "worker_runaway" },
+		updatedAt: "2020-01-01T00:00:00.000Z",
+	});
+	// A live Task bound to another workspace's ledger — never listed here.
+	new LedgerSnapshotStore(isolatedAgentDir).write({
+		taskId: "T-20200101-501",
+		state: "executing",
+		role: "worker",
+		cwd: "/some/other/workspace",
+		spec: { objective: "foreign workspace task" },
+		updatedAt: "2020-01-01T00:00:01.000Z",
+	});
+
+	const ledgerBefore18 = ledgerCount18();
+	const requestsBefore18 = requestCount18();
+	const listed = await tasksTool.execute("call-tasks-1", {}, undefined, () => {}, ctx);
+
+	const byId18 = new Map(listed.details.tasks.map((task) => [task.taskId, task]));
+	assert.ok(
+		byId18.has(mintedTaskIdForListing),
+		"the live in-memory Task is listed",
+	);
+	assert.equal(byId18.get(mintedTaskIdForListing).source, "memory");
+	const ledgerOnly = byId18.get("T-20200101-500");
+	assert.ok(ledgerOnly, "the ledger-only live Task is listed");
+	assert.equal(ledgerOnly.source, "ledger");
+	assert.equal(ledgerOnly.state, "blocked");
+	assert.equal(ledgerOnly.recoveryRequired, true, "blocked + recovery.required surfaces for the caller");
+	assert.equal(ledgerOnly.objective, "aged blocked Task the restore cap left out");
+	assert.equal(byId18.has("T-20200101-501"), false, "another workspace's live Task is not listed");
+	for (const task of listed.details.tasks) {
+		assert.ok(!("cwd" in task), "the summary shape carries no cwd");
+		assert.ok(!["completed", "closed-superseded", "failed"].includes(task.state), "final Tasks are not listed");
+		assert.ok(["memory", "ledger"].includes(task.source));
+	}
+	assert.match(listed.content[0].text, /planner_tasks: \d+ live Task\(s\) in /);
+	assert.match(listed.content[0].text, /T-20200101-500 \| blocked \| worker \| recovery required \|/);
+	assert.equal(requestCount18(), requestsBefore18, "listing never reaches the launcher");
+	assert.equal(ledgerCount18(), ledgerBefore18, "listing writes nothing to the ledger");
+
+	// A workspace with no live Tasks gets the mint-hint text.
+	const emptyListed = await tasksTool.execute("call-tasks-2", {}, undefined, () => {}, { ...ctx, cwd: join(tmpdir(), "planner-only-no-live-cwd") });
+	assert.deepEqual(emptyListed.details.tasks, []);
+	assert.match(emptyListed.content[0].text, /No live Tasks in .+\. planner_delegate mints a new one\./);
 }

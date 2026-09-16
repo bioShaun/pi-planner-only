@@ -56,7 +56,7 @@ pi -e .
 
 ## 父进程可用工具
 
-存在则保留：`read`、`grep`、`find`、`ls`、`git_audit`、`planner_verdict`、`planner_delegate`、`git_commit`、`question`、`questionnaire`。
+存在则保留：`read`、`grep`、`find`、`ls`、`git_audit`、`planner_verdict`、`planner_delegate`、`planner_redelegate`、`planner_tasks`、`git_commit`、`question`、`questionnaire`。
 
 拦截：`edit`、`write`、通用 `bash`、未知 mutator，以及 `subagent` 的宿主机命令路径（如 `workflow: "run-ci"`、`gate`）。
 
@@ -64,11 +64,10 @@ pi -e .
 
 ## v0.2 编排
 
-Root 把 `TaskSpec` 作为 `planner_delegate` 的参数传入：
+Root 把 `TaskSpec` 作为 `planner_delegate` 的参数传入——该工具没有 `taskId` 键，永远铸出新 Task 并在 `details.taskId` 返回 canonical id：
 
 ```json
 {
-  "taskId": "T-20260831-001",
   "objective": "Add a CSV parser",
   "cwd": "/repo",
   "role": "worker",
@@ -81,9 +80,25 @@ Root 把 `TaskSpec` 作为 `planner_delegate` 的参数传入：
 }
 ```
 
-`planner_delegate` 登记任务、采样工作区；同一 cwd 上第二个 `worker` 委派会被拒绝（每个 cwd 至多一个 worker）；`subagent` 与 `bg_wait` 调用一律拒绝。taskId 若缺失、格式不对或日期不是当天，扩展会替换为生成的 id，原 id 作为 alias 保留，委派结果里会告知。生成 id 会在共享 ledger 命名空间中以跨进程原子 claim 保留；恢复过、终态、超恢复上限或快照损坏的 id 都不会再次分配。显式继续只能解析 canonical id 或已登记 alias，并校验 workspace；id 冲突不会被当作继续。受限角色会 remap 到工具面匹配的 builtin agent：
+重进一个已有 Task——`request_changes` 后的修正轮、对其最新 WorkerReport 的 reviewer 调用、或一次 recovery 重执行——走 `planner_redelegate`：`taskId` 必填，逐字取自上一次结果的 `details.taskId`（绝不自行构造），role 含 `reviewer`，并可携带 `recovery` 决策：
 
-非法 TaskSpec 拒绝会展示修复摘要，保留可信角色和验证意图。命令列表简写会转换成明确的必需验证；无法无损转换的 validation 会继续拒绝并要求补充，不会静默变成 `required: false`。多个或未知的继续 id 会在启动 child 前拒绝，也不会创建 placeholder。
+```json
+{
+  "taskId": "T-20260831-001",
+  "role": "reviewer",
+  "objective": "review the latest WorkerReport",
+  "scope": {},
+  "constraints": [],
+  "acceptanceCriteria": [],
+  "validation": { "required": false }
+}
+```
+
+当 canonical id 不在上下文里（压缩或 session 恢复后），`planner_tasks` 会列出本 workspace 的 live Task——非终态，以及挂着 recovery 决策的 blocked——含 `taskId`、`state`、`role`、`recoveryRequired` 与来源（`memory` 或 `ledger`；restore cap 可能让 live Task 只留在磁盘上）。它只读：不铸新、不绑定、不恢复、不启动。
+
+`planner_delegate` 登记任务、采样工作区；同一 cwd 上第二个 `worker` 委派会被拒绝（每个 cwd 至多一个 worker）；`subagent` 与 `bg_wait` 调用一律拒绝。铸出的 id 会在共享 ledger 命名空间中以跨进程原子 claim 保留；恢复过、终态、超恢复上限或快照损坏的 id 都不会再次分配。`planner_redelegate` 逐字绑定既有记录——其存下的 spec 绝不重写——并校验 workspace；id 冲突不会被当作继续。受限角色会 remap 到工具面匹配的 builtin agent：
+
+非法 TaskSpec 拒绝会展示修复摘要，保留可信角色和验证意图。命令列表简写会转换成明确的必需验证；无法无损转换的 validation 会继续拒绝并要求补充，不会静默变成 `required: false`。`validation.commands` 的每一项必须是可执行命令形状——以程序名或路径开头的 shell 命令；指令性散文会被拒绝（`TASKSPEC_VALIDATION_COMMAND_NOT_EXECUTABLE`），因为 worker 会逐字执行这些项、校验器也逐字比对。`planner_redelegate` 上未知或其他 workspace 的 `taskId` 会在启动 child 前拒绝，也不会创建 placeholder。
 
 | 角色 | Builtin agent | 子进程工具 |
 |---|---|---|
@@ -91,11 +106,11 @@ Root 把 `TaskSpec` 作为 `planner_delegate` 的参数传入：
 | `explorer` / `reviewer` | `reviewer` | read, grep, find, ls |
 | `validator` | `oracle` | read, grep, find, ls, bash |
 
-验证运行由 Root 显式委派（`planner_delegate` + role=validator）；没有任何自动派发。
+验证运行由 Root 显式委派（`planner_delegate` + role=validator 新建验证 Task，`planner_redelegate` 复验既有 Task）；没有任何自动派发。
 
-`planner_delegate` 不在委派请求里设置 `model`、`thinking`、`toolBudget`、`timeoutMs`，子进程按宿主默认值运行；usage 行里的 `model` / `thinking` 是从子进程响应读回、只用于归因。
+`planner_delegate` 与 `planner_redelegate` 不在委派请求里设置 `model`、`thinking`、`toolBudget`、`timeoutMs`，子进程按宿主默认值运行；usage 行里的 `model` / `thinking` 是从子进程响应读回、只用于归因。
 
-`reviewer` 子进程一律 `context: "fresh"`，携带 `ReviewRequest`——Task 的 spec、最新 WorkerReport、Root 采集的 Git 证据、有界补丁——不会 fork 父会话。ReviewRequest 是对 Task 的一次调用，绝不是新的 TaskSpec。Task 的原始 role、objective、spec 在 worker / reviewer / validation 各轮中保持不变。validator 委派是对被审 Task 的调用，不会新建 Task，其报告记录在该 Task 的 validatorReports。
+`reviewer` 子进程一律 `context: "fresh"`，携带 `ReviewRequest`——Task 的 spec、最新 WorkerReport、Root 采集的 Git 证据、有界补丁——不会 fork 父会话。ReviewRequest 是对 Task 的一次调用，绝不是新的 TaskSpec；reviewer 调用只能经 `planner_redelegate`（新铸的 Task 上没有东西可审）。Task 的原始 role、objective、spec 在 worker / reviewer / validation 各轮中保持不变。经 `planner_redelegate` 的 validator 调用是对被审 Task 的调用，其报告记录在该 Task 的 validatorReports。
 
 Worker 返回带 version 的 `WorkerReport`；launcher 按 schema 校验后落在 `details.report`，不会从子代理文本里再解析。非 completed 的 launcher 状态是工具错误（抛出），不是解析失败。Reviewer 只读它的调用载荷，只能用 read、grep、find、ls：不得 `git log`、跑 `npm test` 或重探整棵树。
 
@@ -112,7 +127,7 @@ Validator（`oracle`）在 Worker 校验已 exit 0 时默认做有界复核：`g
 
 ### Idle gather 策略
 
-Root 的 gather 阶段由适配器工作区的 Task store 推导。当该 cwd 存在未终结的 Task 时，适用常规允许清单（inspect 工具、`git_audit`、Verdict、一次委派）。当没有任何存活 Task（Idle for gather）时，Root 只能发起一次 Delegation、提问、记录 Verdict（`planner_verdict` 对 blocked/failed 同样可用）、用 `git_commit` 提交已 completed 的 Task，或用 `git_audit` 检查 Git；`subagent` 与 `bg_wait` 一律拒绝。每条 Idle 拒绝都附带可校验的 TaskSpec JSON（按被拒调用填充），修复只需一次粘贴。带独立 TaskSpec 的 standalone Explorer Task 与 Worker Task 一样闭环：校验过的 WorkerReport → reviewing → Root `planner_verdict`；零变更的只读结果是合法交付，畸形的终局报告会以修复指引 block 该 Task。blocked/failed 不会让 gather 保持存活；要再查看代码树，请重新委派。
+Root 的 gather 阶段由适配器工作区的 Task store 推导。当该 cwd 存在未终结的 Task 时，适用常规允许清单（inspect 工具、`git_audit`、Verdict、一次委派）。当没有任何存活 Task（Idle for gather）时，Root 只能用 `planner_delegate` 发起一次 Delegation、用 `planner_redelegate` 重进既有 Task、用 `planner_tasks` 查 live Task、提问、记录 Verdict（`planner_verdict` 对 blocked/failed 同样可用）、用 `git_commit` 提交已 completed 的 Task，或用 `git_audit` 检查 Git；`subagent` 与 `bg_wait` 一律拒绝。每条 Idle 拒绝都附带可校验的 TaskSpec JSON（按被拒调用填充），修复只需一次粘贴。带独立 TaskSpec 的 standalone Explorer Task 与 Worker Task 一样闭环：校验过的 WorkerReport → reviewing → Root `planner_verdict`；零变更的只读结果是合法交付，畸形的终局报告会以修复指引 block 该 Task。blocked/failed 不会让 gather 保持存活；要再查看代码树，请重新委派。
 
 Reviewer 没有 `git_audit`（前台子进程不加载 ambient 扩展，该工具属于父扩展）。Root 自己采样 Git，把有界证据包——HEAD、status、当前变更文件、A-to-C 归因/漏报/多报路径、diff stat、diff check——放进 `ReviewRequest`；reviewer 只用 `read`/`grep`/`find`/`ls`。针对 Task 起始基线的有界补丁会随 `ReviewRequest` 传给 reviewer（已提交的 Task 变更仍可评审）；若补丁被截断（`patchTruncated` 或省略路径），reviewer 的 PASS 会被拒收，只能记录 `request_changes` 或 `blocked`。
 
@@ -163,17 +178,17 @@ Token 数为准，美元/人民币金额是推导值。扩展跟踪 Root 各生�
 - 以 `_` 开头的键会被忽略（可用于注释）。
 - 可在会话内通过 `/planner-only usage reload` 重新加载费率表。
 
-会话级 root 累计预算**默认关闭**。`/planner-only budget on` 打开（标记文件 `~/.pi/agent/planner-only/session-root-budget.on`），`/planner-only budget off` 关闭。开启后按 worker 初始 floor 的 ×3 软顶警告；×5 硬顶目前只披露、不拦截委派。`PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` 或 `=0` 会覆盖标记。单次执行的异常上限走显式 `envelope` 参数（`planner_delegate`），无默认线——未配置时只观测不取消。会话证据导出只携带 `statuses`（task / workerReport / reviewResult / rootVerdict / refusalKind）、`findings`、`usage`、`breakdown`、`unattributed`；linkage / requirements / evidenceMatrix / analysis 块已移除。
+会话级 root 累计预算**默认关闭**。`/planner-only budget on` 打开（标记文件 `~/.pi/agent/planner-only/session-root-budget.on`），`/planner-only budget off` 关闭。开启后按 worker 初始 floor 的 ×3 软顶警告；×5 硬顶目前只披露、不拦截委派。`PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` 或 `=0` 会覆盖标记。单次执行的异常上限走显式 `envelope` 参数（`planner_delegate` 与 `planner_redelegate`），无默认线——未配置时只观测不取消。会话证据导出只携带 `statuses`（task / workerReport / reviewResult / rootVerdict / refusalKind）、`findings`、`usage`、`breakdown`、`unattributed`；linkage / requirements / evidenceMatrix / analysis 块已移除。
 
 **替代方案：** 推荐直接在 `~/.pi/agent/models.json` 里配置 `cost`。这样 Pi 和 `pi-subagents` 的原生命令（如 `/subagent-cost`）都能直接计价。插件自带的定价表仅作为不需要改动 `models.json` 时的备用与覆盖机制。
 
 ### 取消与孤儿子进程
 
-TUI 下按 Esc 中止 `planner_delegate` 会向子代理发 CANCEL，Task 进入 `blocked`，已消耗的 usage 落账。`-p`（print）模式没有工具级中止入口：SIGINT 直接结束 Root，进程内运行的子代理随之结束，不会落 `cancelled` 终态或 usage 行；但子代理已启动的 shell 命令可能残留为孤儿进程（宿主试跑时观察到一次），需自行检查并清理。委派在飞时键入 `/exit` 会被当作 steering 输入而不是退出；请用 Ctrl-D。
+TUI 下按 Esc 中止 `planner_delegate`/`planner_redelegate` 会向子代理发 CANCEL，Task 进入 `blocked`，已消耗的 usage 落账。`-p`（print）模式没有工具级中止入口：SIGINT 直接结束 Root，进程内运行的子代理随之结束，不会落 `cancelled` 终态或 usage 行；但子代理已启动的 shell 命令可能残留为孤儿进程（宿主试跑时观察到一次），需自行检查并清理。委派在飞时键入 `/exit` 会被当作 steering 输入而不是退出；请用 Ctrl-D。
 
-**停止确认（P0-A）。** 仅收到终态并不证明 writer 已静止。在身份匹配的终态到达后，委派会等待 `quiescenceWaitMs`（默认 10 s；`PI_PLANNER_ONLY_QUIESCENCE_MS` 覆盖），再要求两次连续一致的工作树采样——满足后停止才记为 `confirmed`（`confirmationBasis: terminal+quiet-worktree`）、释放 writer 预留，并把残留样本记为 `cTerminal`。普通 `completed` writer 也受同一谓词约束；若静止未确认，其报告不入账，Task 保持 `blocked` 与 writer hold。若 5 s 宽限期到期仍无终态，执行置为 `stop_unconfirmed`：Task 进 `blocked`，writer 预留转为持久化 `writerHold`，跨重启且不受普通账本恢复条数上限影响地继续拒绝第二写入者；launcher 保留 RESPONSE 订阅，迟到终态仍会把执行恰一次收尾（usage、`cTerminal`、释放）。采样失败记 `evidenceIncomplete`，同样保持 hold。非 completed 委派（cancelled、timed_out、failed 等）不再抛错：`planner_delegate` 返回结构化 `details.termination`（宿主终态、ended reason、确认依据、执行生命周期状态、`usageComplete`）并附文本摘要。取消请求之后到达的 `completed` 报告只收入 `executions[].lateReport` 作证据，不再推进 review。
+**停止确认（P0-A）。** 仅收到终态并不证明 writer 已静止。在身份匹配的终态到达后，委派会等待 `quiescenceWaitMs`（默认 10 s；`PI_PLANNER_ONLY_QUIESCENCE_MS` 覆盖），再要求两次连续一致的工作树采样——满足后停止才记为 `confirmed`（`confirmationBasis: terminal+quiet-worktree`）、释放 writer 预留，并把残留样本记为 `cTerminal`。普通 `completed` writer 也受同一谓词约束；若静止未确认，其报告不入账，Task 保持 `blocked` 与 writer hold。若 5 s 宽限期到期仍无终态，执行置为 `stop_unconfirmed`：Task 进 `blocked`，writer 预留转为持久化 `writerHold`，跨重启且不受普通账本恢复条数上限影响地继续拒绝第二写入者；launcher 保留 RESPONSE 订阅，迟到终态仍会把执行恰一次收尾（usage、`cTerminal`、释放）。采样失败记 `evidenceIncomplete`，同样保持 hold。非 completed 委派（cancelled、timed_out、failed 等）不再抛错：委派调用返回结构化 `details.termination`（宿主终态、ended reason、确认依据、执行生命周期状态、`usageComplete`）并附文本摘要。取消请求之后到达的 `completed` 报告只收入 `executions[].lateReport` 作证据，不再推进 review。
 
-**跑飞 envelope 与恢复（P0-B）。** `planner_delegate` 接受显式 `envelope: { maxTokens?, maxWallMs? }`——UPDATE 累计 tokens（input+output 快照，不含 cache）与只覆盖实际 launcher 等待、不包含启动前 Evidence 采样的独立墙钟。越线即走与 Esc 相同的 CANCEL 路径，只触发一次；即使终态在取消宽限后迟到，执行原因仍保留为 `worker_runaway`。确认停止与未确认停止都会置 `task.recovery.required`。此后重新执行该 Task 必须在 `planner_delegate` 携带结构化 `recovery` 决策（`retry_same_plan` / `fix_environment`，指明异常 `executionId`、理由与 `worktreeDecision`），或用 `planner_verdict`（`verdict: "blocked"` + `recovery: { action: "abort" }`）交人工。决策只消费一次；action、规范化 evidenceRefs 与 worktreeDecision 等价时，即使改写理由或调换证据顺序也会拒绝。`worktreeDecision: "manual"` 是操作者确认残留 writer 已处理后的显式断言，可解除持久 hold。未接线的 P1 动作明确拒绝。
+**跑飞 envelope 与恢复（P0-B）。** 两个委派工具都接受显式 `envelope: { maxTokens?, maxWallMs? }`——UPDATE 累计 tokens（input+output 快照，不含 cache）与只覆盖实际 launcher 等待、不包含启动前 Evidence 采样的独立墙钟。越线即走与 Esc 相同的 CANCEL 路径，只触发一次；即使终态在取消宽限后迟到，执行原因仍保留为 `worker_runaway`。确认停止与未确认停止都会置 `task.recovery.required`。此后重新执行该 Task 必须在 `planner_redelegate` 携带结构化 `recovery` 决策（`retry_same_plan` / `fix_environment`，指明异常 `executionId`、理由与 `worktreeDecision`），或用 `planner_verdict`（`verdict: "blocked"` + `recovery: { action: "abort" }`）交人工。决策只消费一次；action、规范化 evidenceRefs 与 worktreeDecision 等价时，即使改写理由或调换证据顺序也会拒绝。`worktreeDecision: "manual"` 是操作者确认残留 writer 已处理后的显式断言，可解除持久 hold。未接线的 P1 动作明确拒绝。
 
 ## 设计规范
 

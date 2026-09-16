@@ -1,5 +1,5 @@
 /**
- * `planner_delegate` — the typed Root/child delegation path (ADR-0001,
+ * `planner_delegate` / `planner_redelegate` — the typed Root/child delegation path (ADR-0001,
  * .scratch/typed-delegation/spec.md round 3, ticket 04).
  *
  * `runDelegation` is the pure orchestration seam: TypeBox-checked params in,
@@ -116,32 +116,32 @@ function worktreeSamplesQuiet(a: EvidenceRef, b: EvidenceRef): boolean {
 }
 
 /** P0-B — validate the explicit envelope before launch (spec §4: no defaults). */
-function validateEnvelope(raw: PlannerDelegateParams["envelope"]): ExecutionEnvelope | undefined {
+function validateEnvelope(raw: PlannerDelegationParams["envelope"], toolName = "planner_delegate"): ExecutionEnvelope | undefined {
 	if (raw === undefined) return undefined;
 	const check = (name: string, value: number | undefined): number | undefined => {
 		if (value === undefined) return undefined;
 		const normalized = Math.floor(value);
 		if (!Number.isFinite(value) || normalized <= 0) {
-			throw new DelegationRefused("ENVELOPE_INVALID", `planner_delegate refused: envelope.${name} must normalize to a positive finite integer, got ${value}`);
+			throw new DelegationRefused("ENVELOPE_INVALID", `${toolName} refused: envelope.${name} must normalize to a positive finite integer, got ${value}`);
 		}
 		return normalized;
 	};
 	const maxTokens = check("maxTokens", raw.maxTokens);
 	const maxWallMs = check("maxWallMs", raw.maxWallMs);
 	if (maxTokens === undefined && maxWallMs === undefined) {
-		throw new DelegationRefused("ENVELOPE_INVALID", "planner_delegate refused: envelope requires at least one of maxTokens / maxWallMs");
+		throw new DelegationRefused("ENVELOPE_INVALID", `${toolName} refused: envelope requires at least one of maxTokens / maxWallMs`);
 	}
 	return { ...(maxTokens !== undefined ? { maxTokens } : {}), ...(maxWallMs !== undefined ? { maxWallMs } : {}), source: "delegation-param" };
 }
 
-/** P0-B — actions wired for planner_delegate re-execution. */
+/** P0-B — actions wired for planner_redelegate re-execution. */
 const DELEGATE_RECOVERY_ACTIONS = new Set(["retry_same_plan", "fix_environment"]);
 /** P0-B — actions that need P1 machinery and are refused until then. */
 const P1_RECOVERY_ACTIONS = new Set(["narrow_task", "add_information", "repair_protocol", "change_model", "change_tool_strategy"]);
 
 /**
  * P0-B — validate a RecoveryDecision against a Task's recovery requirement
- * (spec §5). Shared by planner_delegate (re-execution actions) and
+ * (spec §5). Shared by planner_redelegate (re-execution actions) and
  * planner_verdict (abort). Returns a refusal message, or undefined when the
  * decision is admissible.
  */
@@ -166,7 +166,7 @@ export function validateRecoveryDecision(
 		return `recovery for execution ${required.executionId} was already consumed by ${required.consumedBy}`;
 	}
 	if (decision.action === "abort" && !allowedActions.has("abort")) {
-		return "recovery action abort goes through planner_verdict (verdict=blocked), not planner_delegate";
+		return "recovery action abort goes through planner_verdict (verdict=blocked), not planner_redelegate";
 	}
 	if (!allowedActions.has(decision.action)) {
 		return P1_RECOVERY_ACTIONS.has(decision.action)
@@ -189,16 +189,14 @@ export function validateRecoveryDecision(
 	return undefined;
 }
 
-export const PLANNER_DELEGATE_PARAMETERS = Type.Object({
-	taskId: Type.Optional(
-		Type.String({
-			pattern: TASK_ID_PATTERN,
-			description: "Existing Task id (T-YYYYMMDD-NNN) to re-delegate. A new Task is minted when omitted.",
-		}),
-	),
-	role: Type.Union([Type.Literal("worker"), Type.Literal("explorer"), Type.Literal("validator"), Type.Literal("reviewer")], {
-		description: "Delegation role. worker implements; explorer does read-only recon (scout agent); validator runs an oracle verdict; reviewer reviews an existing Task's latest WorkerReport — taskId is required and objective / scope / constraints / acceptanceCriteria / validation / instructions are ignored, the Task's stored spec is the reviewer's context.",
-	}),
+/**
+ * ADR-0002 — the delegation surface is split in two. `planner_delegate` only
+ * mints: its schema has no taskId/recovery keys, so a hallucinated id cannot
+ * reach the binding path. `planner_redelegate` only binds: taskId is
+ * required, verbatim, never constructed. Both derive from these shared field
+ * definitions so the TaskSpec shape stays identical.
+ */
+const DELEGATION_SPEC_PARAMETERS = {
 	objective: Type.String({ minLength: 1, description: "What the child must accomplish." }),
 	cwd: Type.Optional(
 		Type.String({ description: "Working directory for the child. Defaults to the session cwd." }),
@@ -211,7 +209,9 @@ export const PLANNER_DELEGATE_PARAMETERS = Type.Object({
 	acceptanceCriteria: Type.Array(Type.String()),
 	validation: Type.Object({
 		required: Type.Boolean(),
-		commands: Type.Optional(Type.Array(Type.String())),
+		commands: Type.Optional(Type.Array(Type.String(), {
+			description: "Required and must contain at least one non-empty command when validation.required is true. Each entry is a shell command starting with a program name or path, not an instruction sentence.",
+		})),
 	}),
 	instructions: Type.Optional(
 		Type.String({
@@ -226,20 +226,58 @@ export const PLANNER_DELEGATE_PARAMETERS = Type.Object({
 			description: "P0-B runaway envelope. Explicit only — when omitted the monitor observes but never cancels.",
 		}),
 	),
-	recovery: Type.Optional(
-		Type.Object({
-			executionId: Type.String({ minLength: 1 }),
-			action: Type.String({ minLength: 1, description: "P0 wired: retry_same_plan | fix_environment. abort goes through planner_verdict; the rest need P1." }),
-			reason: Type.String({ minLength: 1 }),
-			evidenceRefs: Type.Optional(Type.Array(Type.String())),
-			worktreeDecision: Type.Union([Type.Literal("keep"), Type.Literal("manual")]),
-		}, {
-			description: "RecoveryDecision (spec §5): required to re-execute a Task whose recovery.required is set.",
-		}),
-	),
+};
+
+const DELEGATION_RECOVERY_PARAMETER = Type.Optional(
+	Type.Object({
+		executionId: Type.String({ minLength: 1 }),
+		action: Type.String({ minLength: 1, description: "P0 wired: retry_same_plan | fix_environment. abort goes through planner_verdict; the rest need P1." }),
+		reason: Type.String({ minLength: 1 }),
+		evidenceRefs: Type.Optional(Type.Array(Type.String())),
+		worktreeDecision: Type.Union([Type.Literal("keep"), Type.Literal("manual")]),
+	}, {
+		description: "RecoveryDecision (spec §5): required to re-execute a Task whose recovery.required is set.",
+	}),
+);
+
+/**
+ * planner_delegate — mint-only surface. No taskId, no recovery, no reviewer
+ * role: a reviewer invocation only exists over an existing Task, and recovery
+ * only makes sense on a bound Task. Anything else is a new Task.
+ */
+export const PLANNER_DELEGATE_PARAMETERS = Type.Object({
+	role: Type.Union([Type.Literal("worker"), Type.Literal("explorer"), Type.Literal("validator")], {
+		description: "Delegation role. worker implements; explorer does read-only recon (scout agent); validator runs an oracle verdict. Reviews of an existing Task go through planner_redelegate with role=reviewer.",
+	}),
+	...DELEGATION_SPEC_PARAMETERS,
+});
+
+/**
+ * planner_redelegate — bind-only surface over an existing Task: correction
+ * rounds, reviewer invocations, and recovery re-executions. taskId is
+ * required and must name a real record; the explicit id binds verbatim
+ * (delegate.ts binding contract, ticket 53).
+ */
+export const PLANNER_REDELEGATE_PARAMETERS = Type.Object({
+	taskId: Type.String({
+		pattern: TASK_ID_PATTERN,
+		description: "Canonical id of an existing Task, verbatim from a prior planner_delegate result's details.taskId. Never construct one.",
+	}),
+	role: Type.Union([Type.Literal("worker"), Type.Literal("explorer"), Type.Literal("validator"), Type.Literal("reviewer")], {
+		description: "Delegation role. worker implements a correction round; explorer does read-only recon (scout agent); validator runs an oracle verdict; reviewer reviews the bound Task's latest WorkerReport — objective / scope / constraints / acceptanceCriteria / validation / instructions are ignored, the Task's stored spec is the reviewer's context.",
+	}),
+	...DELEGATION_SPEC_PARAMETERS,
+	recovery: DELEGATION_RECOVERY_PARAMETER,
 });
 
 export type PlannerDelegateParams = Static<typeof PLANNER_DELEGATE_PARAMETERS>;
+export type PlannerRedelegateParams = Static<typeof PLANNER_REDELEGATE_PARAMETERS>;
+/**
+ * The shape `runDelegation` consumes: both tool surfaces converge here. The
+ * adapter strips any taskId/recovery a non-validating host passed through
+ * planner_delegate, so reaching this type with a taskId means a rebind call.
+ */
+export type PlannerDelegationParams = Omit<PlannerRedelegateParams, "taskId"> & { taskId?: string };
 
 /**
  * WorkerReport JSON schema (types.ts) as plain JSON data.
@@ -423,6 +461,13 @@ export interface DelegationOptions {
 	executionId?: string;
 	/** 宿主 execute 的 onUpdate；runDelegation 把 SubagentDelegationUpdate 渲染成 AgentToolResult 局部结果后转发。 */
 	onUpdate?: (partial: { content: { type: "text"; text: string }[]; details: DelegationProgressDetails }) => void;
+	/**
+	 * Display name of the invoking tool surface (planner_delegate /
+	 * planner_redelegate); progress, outcome, and refusal text name it. The
+	 * refusal codes and the ticket-13/14/15 guidance stay byte-stable — only
+	 * the surface name and the mint-vs-bind clause adapt.
+	 */
+	toolName?: string;
 }
 
 export class DelegationRefused extends Error {
@@ -455,7 +500,7 @@ export class DelegationAborted extends Error {
 	}
 }
 
-function specFromParams(params: PlannerDelegateParams, taskId: string, cwd: string): TaskSpec {
+function specFromParams(params: PlannerDelegationParams, taskId: string, cwd: string): TaskSpec {
 	return createTaskSpec({
 		taskId,
 		objective: params.objective,
@@ -476,7 +521,7 @@ function specFromParams(params: PlannerDelegateParams, taskId: string, cwd: stri
 
 export async function runDelegation(
 	deps: DelegationDeps,
-	params: PlannerDelegateParams,
+	params: PlannerDelegationParams,
 	cwd: string,
 	options: DelegationOptions = {},
 ): Promise<DelegationOutcome> {
@@ -485,12 +530,16 @@ export async function runDelegation(
 	const requestId = randomUUID();
 	const executionId = options.executionId ?? requestId;
 	const warnings: string[] = [];
+	// ADR-0002 — refusal text names the surface that was actually called.
+	// Ticket 18 — the lookup tool exists now, so unknown-id guidance points at
+	// planner_tasks instead of asking the caller to guess or construct.
+	const toolName = options.toolName ?? "planner_delegate";
 
 	// A reviewer call only exists over an existing Task — minting one would
 	// leave nothing to review. Checked before binding so the refusal never
 	// consumes an id.
 	if (role === "reviewer" && !params.taskId) {
-		throw new DelegationRefused("TASK_REQUIRED", "planner_delegate refused: role=reviewer requires taskId of the Task under review");
+		throw new DelegationRefused("TASK_REQUIRED", `${toolName} refused: role=reviewer requires taskId of the Task under review`);
 	}
 
 	// 1. Task binding: an explicit id binds the existing record verbatim —
@@ -502,20 +551,20 @@ export async function runDelegation(
 		const record = deps.store.get(params.taskId);
 		if (!record) {
 			const guidance = role === "reviewer"
-				? "role=reviewer can only bind an existing Task; pass the canonical taskId from a prior worker delegation's details.taskId"
-				: "omit taskId to create a new Task, or pass the id of an existing Task";
+				? "role=reviewer can only bind an existing Task — call planner_tasks to find its canonical taskId"
+				: "call planner_tasks to list live Tasks, or use planner_delegate to create a new one";
 			throw new DelegationRefused(
 				"TASK_UNKNOWN",
-				`planner_delegate refused: unknown Task ${params.taskId}; ${guidance}`,
+				`${toolName} refused: unknown Task ${params.taskId}; ${guidance}`,
 			);
 		}
 		if (record.cwd && normalizeWorkspaceIdentity(record.cwd) !== normalizeWorkspaceIdentity(effectiveCwd)) {
 			const guidance = role === "reviewer"
-				? "re-run from that workspace's cwd, or pass an existing reviewable Task id in this workspace"
-				: "re-run from that workspace's cwd, or omit taskId to create a new Task in this workspace";
+				? "re-run from that workspace's cwd — call planner_tasks there to list its live Tasks — or pass an existing reviewable Task id in this workspace"
+				: "re-run from that workspace's cwd — call planner_tasks there to list its live Tasks — or call planner_delegate to mint a new Task in this workspace";
 			throw new DelegationRefused(
 				"TASK_FOREIGN_WORKSPACE",
-				`planner_delegate refused: Task ${record.taskId} belongs to workspace ${record.cwd}, not ${effectiveCwd}; the id belongs to a different workspace's ledger; ${guidance}`,
+				`${toolName} refused: Task ${record.taskId} belongs to workspace ${record.cwd}, not ${effectiveCwd}; the id belongs to a different workspace's ledger; ${guidance}`,
 			);
 		}
 		task = record;
@@ -540,19 +589,19 @@ export async function runDelegation(
 	if (isFinalTaskState(task.state)) {
 		if (task.state === "blocked" && task.recovery?.required === true) {
 			const refusal = validateRecoveryDecision(task, params.recovery as RecoveryDecision | undefined, DELEGATE_RECOVERY_ACTIONS);
-			if (refusal) throw new DelegationRefused("RECOVERY_REQUIRED", `planner_delegate refused: ${refusal}`, task.taskId);
+			if (refusal) throw new DelegationRefused("RECOVERY_REQUIRED", `${toolName} refused: ${refusal}`, task.taskId);
 			recoveryDecision = params.recovery as RecoveryDecision;
 		} else {
 			throw new DelegationRefused(
 				"TASK_CLOSED",
-				`planner_delegate refused: Task ${task.taskId} is ${task.state}; start a new Task instead`,
+				`${toolName} refused: Task ${task.taskId} is ${task.state}; start a new Task instead`,
 				task.taskId,
 			);
 		}
 	}
 
 	// P0-B — the explicit anomaly envelope; validated before launch, never defaulted.
-	const envelope = validateEnvelope(params.envelope);
+	const envelope = validateEnvelope(params.envelope, toolName);
 
 	// 2. Write lock: workers and validators claim the workspace; readers/explorers
 	//    run beside an active writer by design. A persisted writerHold outlives
@@ -568,7 +617,7 @@ export async function runDelegation(
 		if (task.writerHold) {
 			throw new DelegationRefused(
 				"WRITER_HOLD",
-				`planner_delegate refused: Task ${task.taskId} writer execution ${task.writerHold.executionId} was never confirmed stopped (${task.writerHold.reason}); submit a matching recovery with worktreeDecision=manual only after operator resolution`,
+				`${toolName} refused: Task ${task.taskId} writer execution ${task.writerHold.executionId} was never confirmed stopped (${task.writerHold.reason}); submit a matching recovery with worktreeDecision=manual only after operator resolution`,
 				task.taskId,
 			);
 		}
@@ -582,7 +631,7 @@ export async function runDelegation(
 			workspaces: [task.cwd || effectiveCwd, ...(thisSpec.additionalWorktreeRoots ?? [])],
 		});
 		if (admission.refusal) {
-			throw new DelegationRefused("WRITER_CONFLICT", `planner_delegate refused: ${admission.refusal.reason}`);
+			throw new DelegationRefused("WRITER_CONFLICT", `${toolName} refused: ${admission.refusal.reason}`);
 		}
 		reservation = admission.reservation;
 	}
@@ -780,7 +829,7 @@ export async function runDelegation(
 							if (maxTokensSeen > envelope.maxTokens) breach("tokens", maxTokensSeen, envelope.maxTokens);
 						}
 					}
-					options.onUpdate?.(renderDelegationProgress(role as DelegationKind, task.taskId, update));
+					options.onUpdate?.(renderDelegationProgress(role as DelegationKind, task.taskId, update, options.toolName));
 				},
 				onLateTerminal: settleLateTerminal,
 			});
@@ -1200,6 +1249,7 @@ async function runReviewInvocation(
 	options: DelegationOptions,
 ): Promise<DelegationOutcome> {
 	const warnings: string[] = [];
+	const toolName = options.toolName ?? "planner_delegate";
 
 	// R1 — only a non-terminal Task with a WorkerReport is reviewable. The
 	//    no-report refusal moved forward from the legacy return path: with no
@@ -1207,13 +1257,13 @@ async function runReviewInvocation(
 	if (isTerminalTaskState(task.state)) {
 		throw new DelegationRefused(
 			"REVIEW_TERMINAL",
-			`planner_delegate refused: Task ${task.taskId} is ${task.state}; there is nothing left to review`,
+			`${toolName} refused: Task ${task.taskId} is ${task.state}; there is nothing left to review`,
 		);
 	}
 	if (task.reports.length === 0) {
 		throw new DelegationRefused(
 			"REVIEW_NO_REPORT",
-			`planner_delegate refused: Task ${task.taskId} has no WorkerReport to review`,
+			`${toolName} refused: Task ${task.taskId} has no WorkerReport to review`,
 		);
 	}
 
@@ -1259,7 +1309,7 @@ async function runReviewInvocation(
 	// A launch throw propagates as-is (DelegationAborted included): a
 	// reviewer failure never moves the Task.
 	const response = await deps.launch(request, options.signal, {
-		onUpdate: (update) => options.onUpdate?.(renderDelegationProgress("reviewer", task.taskId, update)),
+		onUpdate: (update) => options.onUpdate?.(renderDelegationProgress("reviewer", task.taskId, update, options.toolName)),
 	});
 
 	// R5 — non-completed statuses are structured outcomes, not throws; nothing
@@ -1324,13 +1374,13 @@ async function runReviewInvocation(
 	if (response.result?.kind !== "structured" || shapeErrors.length > 0) {
 		throw new DelegationRefused(
 			"REVIEW_INVALID",
-			`planner_delegate refused: reviewer result for ${task.taskId} failed ReviewResult validation: ${shapeErrors.join("; ") || "not a structured value"}`,
+			`${toolName} refused: reviewer result for ${task.taskId} failed ReviewResult validation: ${shapeErrors.join("; ") || "not a structured value"}`,
 		);
 	}
 	const review: ReviewResult = { ...(value as ReviewResult), source: "reviewer" };
 	const identityErrors = validateReviewResultIdentity(review, task.taskId);
 	if (identityErrors.length > 0) {
-		throw new DelegationRefused("REVIEW_IDENTITY", `planner_delegate refused: ${identityErrors.join("; ")}`);
+		throw new DelegationRefused("REVIEW_IDENTITY", `${toolName} refused: ${identityErrors.join("; ")}`);
 	}
 	// Re-read after the launch: the verdict binds against the Task as it is
 	// now; omitted bindings are filled from the packet the reviewer saw.
@@ -1342,12 +1392,12 @@ async function runReviewInvocation(
 	const bound = bindReviewResultFromRequest(review, packetBinding);
 	const bindingErrors = validateReviewResultBinding(bound, currentBinding);
 	if (bindingErrors.length > 0) {
-		throw new DelegationRefused("REVIEW_BINDING", `planner_delegate refused: ${bindingErrors.join("; ")}`);
+		throw new DelegationRefused("REVIEW_BINDING", `${toolName} refused: ${bindingErrors.join("; ")}`);
 	}
 	if (bound.verdict === "pass" && packetTruncated) {
 		throw new DelegationRefused(
 			"REVIEW_PACKET_TRUNCATED",
-			`planner_delegate refused: the review packet for ${task.taskId} was truncated (patchTruncated or omitted patch paths); a pass over a partial packet is not eligible`,
+			`${toolName} refused: the review packet for ${task.taskId} was truncated (patchTruncated or omitted patch paths); a pass over a partial packet is not eligible`,
 		);
 	}
 
@@ -1390,7 +1440,7 @@ async function runReviewInvocation(
 		if (bound.verdict === "pass") {
 			throw new DelegationRefused(
 				"REVIEW_NO_EXECUTION_EVIDENCE",
-				`planner_delegate refused: report revision ${fresh.reports.length} of ${task.taskId} has no per-execution A_run/C_report binding; a pass cannot be judged fresh`,
+				`${toolName} refused: report revision ${fresh.reports.length} of ${task.taskId} has no per-execution A_run/C_report binding; a pass cannot be judged fresh`,
 			);
 		}
 	}
@@ -1432,9 +1482,10 @@ export function renderDelegationProgress(
 	role: DelegationKind,
 	taskId: string,
 	update: SubagentDelegationUpdate,
+	toolName = "planner_delegate",
 ): { content: { type: "text"; text: string }[]; details: DelegationProgressDetails } {
 	const lines = [
-		`planner_delegate ${role} ${taskId}: ${Math.round((update.durationMs ?? 0) / 1000)}s · ${update.toolCount ?? 0} tools · ${update.currentTool ?? "…"}`,
+		`${toolName} ${role} ${taskId}: ${Math.round((update.durationMs ?? 0) / 1000)}s · ${update.toolCount ?? 0} tools · ${update.currentTool ?? "…"}`,
 	];
 	for (const line of (update.recentOutputLines ?? []).slice(0, 3)) {
 		lines.push(line.slice(0, 200));
@@ -1455,9 +1506,9 @@ export function renderDelegationProgress(
 }
 
 /** Text the Root reads; all contract fields stay in `details`. */
-export function renderDelegationOutcome(outcome: DelegationOutcome): string {
+export function renderDelegationOutcome(outcome: DelegationOutcome, toolName = "planner_delegate"): string {
 	const lines = [
-		`planner_delegate: ${outcome.task.taskId} ${outcome.task.state} run=${outcome.runId ?? "none"}`,
+		`${toolName}: ${outcome.task.taskId} ${outcome.task.state} run=${outcome.runId ?? "none"}`,
 	];
 	if (outcome.report?.summary) lines.push(`summary: ${outcome.report.summary}`);
 	if (outcome.decision) {
@@ -1483,7 +1534,7 @@ export function renderDelegationOutcome(outcome: DelegationOutcome): string {
 	}
 	if (outcome.task.recovery?.required) {
 		const r = outcome.task.recovery;
-		lines.push(`recovery.required: ${r.reason} — submit planner_delegate.recovery{executionId=${r.executionId}, action, reason, worktreeDecision} or planner_verdict blocked + recovery{action:"abort"}`);
+		lines.push(`recovery.required: ${r.reason} — submit planner_redelegate.recovery{executionId=${r.executionId}, action, reason, worktreeDecision} or planner_verdict blocked + recovery{action:"abort"}`);
 	}
 	for (const warning of outcome.warnings) lines.push(`warning: ${warning}`);
 	return lines.join("\n");

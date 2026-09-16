@@ -6,6 +6,8 @@ import { homedir, tmpdir } from "node:os";
 import {
 	DelegationAborted,
 	DelegationRefused,
+	PLANNER_DELEGATE_PARAMETERS,
+	PLANNER_REDELEGATE_PARAMETERS,
 	REVIEW_RESULT_SCHEMA,
 	cancelInFlightDelegations,
 	createHostLauncher,
@@ -219,6 +221,54 @@ async function expectRefusal(promise, code) {
 {
 	const dir = initRealRepo();
 
+	// TASKSPEC_VALIDATION_INCOMPLETE: echo the validation shape received at
+	// the public delegation boundary so a caller can distinguish an omitted
+	// commands field from a field lost later in the pipeline.
+	{
+		const { deps, launches } = makeDeps();
+		await assert.rejects(
+			runDelegation(
+				deps,
+				makeParams({ validation: { required: true } }),
+				dir,
+				{ executionId: "call-validation-incomplete" },
+			),
+			(error) => {
+				assert.equal(error?.code, "TASKSPEC_VALIDATION_INCOMPLETE");
+				assert.equal(
+					error?.message,
+					'createTaskSpec refused: validation.commands must be a non-empty array of strings when validation.required is true (received validation: {"required":true}). Supply the commands, or set validation.required to false when no validation is mandatory.',
+				);
+				return true;
+			},
+		);
+		assert.equal(launches.length, 0, "launch not called");
+		assert.equal(deps.store.list().length, 0, "no Task was minted");
+	}
+
+	// Ticket 19 — TASKSPEC_VALIDATION_COMMAND_NOT_EXECUTABLE: prose in
+	// validation.commands is refused at the boundary before a Task is minted
+	// or a child launched; the refusal names the offending entry verbatim.
+	{
+		const { deps, launches } = makeDeps();
+		await assert.rejects(
+			runDelegation(
+				deps,
+				makeParams({ validation: { required: true, commands: ["按工单和 package.json 选择相关回归测试及必要检查，并在报告中记录准确命令和退出码"] } }),
+				dir,
+				{ executionId: "call-validation-prose" },
+			),
+			(error) => {
+				assert.equal(error?.code, "TASKSPEC_VALIDATION_COMMAND_NOT_EXECUTABLE");
+				assert.match(error?.message, /validation\.commands\[0\]/);
+				assert.match(error?.message, /received: "按工单/);
+				return true;
+			},
+		);
+		assert.equal(launches.length, 0, "launch not called");
+		assert.equal(deps.store.list().length, 0, "no Task was minted");
+	}
+
 	// TASK_UNKNOWN
 	for (const role of ["worker", "explorer", "validator"]) {
 		const { deps, launches } = makeDeps();
@@ -231,7 +281,7 @@ async function expectRefusal(promise, code) {
 		assert.equal(deps.store.list().length, 0, "no Task was minted");
 		assert.equal(
 			refusal.message,
-			"planner_delegate refused: unknown Task T-20200101-001; omit taskId to create a new Task, or pass the id of an existing Task",
+			"planner_delegate refused: unknown Task T-20200101-001; call planner_tasks to list live Tasks, or use planner_delegate to create a new one",
 		);
 	}
 
@@ -255,7 +305,7 @@ async function expectRefusal(promise, code) {
 		assert.equal(store.list().length, 1, "no Task was minted");
 		assert.equal(
 			refusal.message,
-			`planner_delegate refused: Task T-20260915-101 belongs to workspace ${dir}, not ${foreign}; the id belongs to a different workspace's ledger; re-run from that workspace's cwd, or omit taskId to create a new Task in this workspace`,
+			`planner_delegate refused: Task T-20260915-101 belongs to workspace ${dir}, not ${foreign}; the id belongs to a different workspace's ledger; re-run from that workspace's cwd — call planner_tasks there to list its live Tasks — or call planner_delegate to mint a new Task in this workspace`,
 		);
 	}
 
@@ -278,6 +328,37 @@ async function expectRefusal(promise, code) {
 		);
 		assert.equal(launches.length, 0, "launch not called");
 	}
+}
+
+assert.equal(
+	PLANNER_DELEGATE_PARAMETERS.properties.validation.properties.commands.description,
+	"Required and must contain at least one non-empty command when validation.required is true. Each entry is a shell command starting with a program name or path, not an instruction sentence.",
+);
+
+// ---------------------------------------------------------------------------
+// Ticket 17 — the delegation surface is split: planner_delegate mints only
+// (no taskId/recovery keys exist to hallucinate into), planner_redelegate
+// binds an existing Task (taskId required, all four roles, recovery kept).
+// ---------------------------------------------------------------------------
+{
+	const create = PLANNER_DELEGATE_PARAMETERS;
+	assert.equal("taskId" in create.properties, false, "planner_delegate mints only — no taskId key exists to invent");
+	assert.equal("recovery" in create.properties, false, "recovery re-execution is a rebind concern");
+	assert.deepEqual(
+		create.properties.role.anyOf.map((entry) => entry.const),
+		["worker", "explorer", "validator"],
+		"a reviewer invocation only exists over an existing Task",
+	);
+
+	const rebind = PLANNER_REDELEGATE_PARAMETERS;
+	assert.ok(rebind.required.includes("taskId"), "planner_redelegate binds — taskId is required");
+	assert.equal("recovery" in rebind.properties, true, "the recovery decision stays on the binding surface");
+	assert.deepEqual(
+		rebind.properties.role.anyOf.map((entry) => entry.const),
+		["worker", "explorer", "validator", "reviewer"],
+	);
+	assert.match(rebind.properties.taskId.description, /Never construct one/);
+	assert.match(rebind.properties.taskId.description, /details\.taskId/);
 }
 
 // ---------------------------------------------------------------------------
@@ -627,6 +708,8 @@ function reviewerParams(taskId, overrides = {}) {
 
 // ---------------------------------------------------------------------------
 // 前置拒绝: TASK_REQUIRED / REVIEW_NO_REPORT / REVIEW_TERMINAL — launch 0 次。
+// (Ticket 17: 这些都是 planner_redelegate 路径的 runDelegation 用例 —
+//  planner_delegate 的 schema 已经没有 taskId/recovery 键。)
 // ---------------------------------------------------------------------------
 {
 	const dir = initCommittedRepo();
@@ -654,10 +737,10 @@ function reviewerParams(taskId, overrides = {}) {
 		assert.equal(deps.store.list().length, 0, "no Task was minted");
 		assert.equal(refusal.message.includes("omit taskId"), false, "reviewer guidance must not suggest omitting taskId");
 		assert.ok(refusal.message.includes("role=reviewer can only bind an existing Task"));
-		assert.ok(refusal.message.includes("pass the canonical taskId from a prior worker delegation's details.taskId"));
+		assert.ok(refusal.message.includes("call planner_tasks to find its canonical taskId"));
 		assert.equal(
 			refusal.message,
-			"planner_delegate refused: unknown Task T-20200101-001; role=reviewer can only bind an existing Task; pass the canonical taskId from a prior worker delegation's details.taskId",
+			"planner_delegate refused: unknown Task T-20200101-001; role=reviewer can only bind an existing Task — call planner_tasks to find its canonical taskId",
 		);
 	}
 
@@ -684,7 +767,7 @@ function reviewerParams(taskId, overrides = {}) {
 		assert.ok(refusal.message.includes("pass an existing reviewable Task id in this workspace"));
 		assert.equal(
 			refusal.message,
-			`planner_delegate refused: Task T-20260915-399 belongs to workspace ${dir}, not ${foreign}; the id belongs to a different workspace's ledger; re-run from that workspace's cwd, or pass an existing reviewable Task id in this workspace`,
+			`planner_delegate refused: Task T-20260915-399 belongs to workspace ${dir}, not ${foreign}; the id belongs to a different workspace's ledger; re-run from that workspace's cwd — call planner_tasks there to list its live Tasks — or pass an existing reviewable Task id in this workspace`,
 		);
 	}
 

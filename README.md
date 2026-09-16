@@ -75,7 +75,8 @@ tools a previous build had stripped, so reload can recapture the full list.
 ## What the parent may use
 
 Kept when present: `read`, `grep`, `find`, `ls`, `git_audit`, `planner_verdict`,
-`planner_delegate`, `git_commit`, `question`, `questionnaire`.
+`planner_delegate`, `planner_redelegate`, `planner_tasks`, `git_commit`, `question`,
+`questionnaire`.
 
 Blocked: `edit`, `write`, generic `bash`, unknown mutators, and host-command
 `subagent` paths such as `workflow: "run-ci"` or `gate`.
@@ -86,11 +87,12 @@ names remain active for the child ceiling.
 
 ## v0.2 orchestration
 
-Root passes a `TaskSpec` as the `planner_delegate` parameters:
+Root passes a `TaskSpec` as the `planner_delegate` parameters — no `taskId`
+key exists on this tool; it always mints a new Task and returns the canonical
+id in `details.taskId`:
 
 ```json
 {
-  "taskId": "T-20260831-001",
   "objective": "Add a CSV parser",
   "cwd": "/repo",
   "role": "worker",
@@ -103,21 +105,48 @@ Root passes a `TaskSpec` as the `planner_delegate` parameters:
 }
 ```
 
+Re-entering an existing Task — a correction round after `request_changes`, a
+reviewer invocation over its latest WorkerReport, or a recovery re-execution —
+goes through `planner_redelegate`, which requires the canonical `taskId`
+verbatim from a prior result's `details.taskId` (never construct one) and
+accepts `role` including `reviewer` plus an optional `recovery` decision:
+
+```json
+{
+  "taskId": "T-20260831-001",
+  "role": "reviewer",
+  "objective": "review the latest WorkerReport",
+  "scope": {},
+  "constraints": [],
+  "acceptanceCriteria": [],
+  "validation": { "required": false }
+}
+```
+
+If the canonical id is not in context (after compaction or a session resume),
+`planner_tasks` lists the workspace's live Tasks — non-final states plus
+blocked Tasks awaiting a recovery decision — with `taskId`, `state`, `role`,
+`recoveryRequired`, and where the record came from (`memory` or `ledger`,
+since the restore cap can leave a live Task on disk only). It is read-only:
+it never mints, binds, restores, or launches.
+
 `planner_delegate` registers the task, samples the workspace, and refuses a
 second `worker` for the same cwd (at most one worker per cwd); `subagent` and
-`bg_wait` calls are refused outright. If `taskId` is missing, malformed, or not today's date, the extension
-replaces it with a generated id, keeps the original id as an alias, and notifies
-Root in the delegation result. The generated id is reserved in the shared ledger
+`bg_wait` calls are refused outright. The minted id is reserved in the shared ledger
 namespace with an atomic cross-process claim: restored, terminal, over-cap, and
-unreadable snapshot ids remain occupied. Explicit continuation resolves a
-canonical id or registered alias and checks the workspace; an id collision is
-never treated as continuation. Restricted roles remap onto builtin agents:
+unreadable snapshot ids remain occupied. `planner_redelegate` binds the
+existing record verbatim — its stored spec is never rewritten — and checks the
+workspace; an id collision is never treated as continuation. Restricted roles remap onto builtin agents:
 
 Invalid TaskSpec refusals show a repair summary that preserves the trusted
 role and validation intent. A command-list shorthand becomes explicit mandatory
 validation; an unconvertible validation shape remains refused and asks for
-input, rather than silently becoming `required: false`. Multiple or unknown
-continuation ids are refused before child launch and never create a
+input, rather than silently becoming `required: false`. Every
+`validation.commands` entry must be executable-shaped — a shell command
+starting with a program name or path; instruction prose is refused
+(`TASKSPEC_VALIDATION_COMMAND_NOT_EXECUTABLE`), since the worker runs the
+entries and the verifier compares them verbatim. Unknown or foreign-workspace
+`taskId`s on `planner_redelegate` are refused before child launch and never create a
 placeholder.
 
 | Role | Builtin agent | Child tools |
@@ -127,17 +156,20 @@ placeholder.
 | `validator` | `oracle` | read, grep, find, ls, bash |
 
 Validation runs are delegated by Root explicitly (`planner_delegate` with
-role=validator); nothing is auto-dispatched.
+role=validator for a fresh validation Task, `planner_redelegate` to re-validate
+an existing Task); nothing is auto-dispatched.
 
-`planner_delegate` does not set `model`, `thinking`, `toolBudget`, or `timeoutMs` on the delegation request; the child runs with the host's defaults for all four. The `model` and `thinking` values in usage rows are read back from the child's response for attribution only.
+`planner_delegate` and `planner_redelegate` do not set `model`, `thinking`, `toolBudget`, or `timeoutMs` on the delegation request; the child runs with the host's defaults for all four. The `model` and `thinking` values in usage rows are read back from the child's response for attribution only.
 
 A `reviewer` child always launches with `context: "fresh"` carrying a
 `ReviewRequest` — the Task's spec, the latest WorkerReport, Root's Git
 evidence, and a bounded patch — not a fork of the parent session. The
-ReviewRequest is an invocation over the Task, never a new TaskSpec. The Task's
+ReviewRequest is an invocation over the Task, never a new TaskSpec; reviewer
+invocations only exist through `planner_redelegate` (there is nothing to
+review on a fresh mint). The Task's
 original role, objective, and spec stay unchanged through worker, reviewer,
-and validation runs. A `validator` delegation is an invocation over the task
-under review rather than creating a new Task; its report is recorded in that
+and validation runs. A `validator` run via `planner_redelegate` is an
+invocation over the task under review; its report is recorded in that
 Task's `validatorReports`.
 
 Workers return a versioned `WorkerReport`; the launcher validates it against
@@ -188,7 +220,8 @@ Root's gather phase is derived from the Task store for the adapter workspace.
 While a non-final Task is live for this cwd, the ordinary allowlist applies
 (inspect tools, `git_audit`, Verdict, one Delegation at a time). When no Task
 is live (Idle for gather), Root may only start a Delegation with
-`planner_delegate`, ask a question, record a Verdict (`planner_verdict`
+`planner_delegate`, re-enter an existing Task with `planner_redelegate`, look up live Tasks with `planner_tasks`, ask a
+question, record a Verdict (`planner_verdict`
 works on blocked/failed Tasks too), or commit a completed Task with
 `git_commit`. `git_audit` is allowed while Idle. Every
 Idle refusal of an inspect, shell, or mutation tool carries a fenced TaskSpec
@@ -269,17 +302,17 @@ The pricing table format:
 - Keys starting with `_` are ignored (useful for comments).
 - Reload rates in-session with `/planner-only usage reload`.
 
-Session-level root spend gating is **off by default**. `/planner-only budget on` turns it on for this machine (marker: `~/.pi/agent/planner-only/session-root-budget.on`); `/planner-only budget off` turns it off. Soft cap warns at 3× the worker-initial floor; the 5× hard threshold is reported only — it does not refuse delegations yet. `PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` or `=0` overrides the marker. Per-execution anomaly bounds are explicit-only: `planner_delegate` accepts `envelope: { maxTokens?, maxWallMs? }` and cancels the child (via the same CANCEL path as Esc) when a bound trips; with no envelope the monitor only observes. The session evidence export carries `statuses` (task / workerReport / reviewResult / rootVerdict / refusalKind), `findings`, `usage`, `breakdown`, and `unattributed`; the linkage / requirements / evidenceMatrix / analysis blocks are gone.
+Session-level root spend gating is **off by default**. `/planner-only budget on` turns it on for this machine (marker: `~/.pi/agent/planner-only/session-root-budget.on`); `/planner-only budget off` turns it off. Soft cap warns at 3× the worker-initial floor; the 5× hard threshold is reported only — it does not refuse delegations yet. `PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` or `=0` overrides the marker. Per-execution anomaly bounds are explicit-only: `planner_delegate` and `planner_redelegate` accept `envelope: { maxTokens?, maxWallMs? }` and cancel the child (via the same CANCEL path as Esc) when a bound trips; with no envelope the monitor only observes. The session evidence export carries `statuses` (task / workerReport / reviewResult / rootVerdict / refusalKind), `findings`, `usage`, `breakdown`, and `unattributed`; the linkage / requirements / evidenceMatrix / analysis blocks are gone.
 
 **Alternative:** The preferred approach is to specify `cost` directly in `~/.pi/agent/models.json`. This enables native cost calculation across both Pi and `pi-subagents` (e.g. `/subagent-cost`). The plugin table serves as a fallback or override when you prefer not to modify `models.json`.
 
 ### Cancellation and orphaned children
 
-In the TUI, pressing Esc during a `planner_delegate` call sends CANCEL to the child; the Task transitions to `blocked` and the usage already consumed is recorded. Print mode (`-p`) has no tool-level abort entry: SIGINT ends Root outright, the delegated agent (which runs in-process) dies with it, no `cancelled` terminal or usage row is written, and any shell command the child had started may survive as an orphan (observed once during the host spike) — check and clean up by hand. `/exit` typed while a delegation is in flight is treated as steering input, not exit; use Ctrl-D.
+In the TUI, pressing Esc during a `planner_delegate`/`planner_redelegate` call sends CANCEL to the child; the Task transitions to `blocked` and the usage already consumed is recorded. Print mode (`-p`) has no tool-level abort entry: SIGINT ends Root outright, the delegated agent (which runs in-process) dies with it, no `cancelled` terminal or usage row is written, and any shell command the child had started may survive as an orphan (observed once during the host spike) — check and clean up by hand. `/exit` typed while a delegation is in flight is treated as steering input, not exit; use Ctrl-D.
 
-**Stop confirmation (P0-A).** A terminal status alone does not prove the writer went quiet. After an identity-matched terminal, the delegation waits `quiescenceWaitMs` (default 10 s; `PI_PLANNER_ONLY_QUIESCENCE_MS` overrides) and then requires two consecutive identical worktree samples — only then is the stop `confirmed` (`confirmationBasis: terminal+quiet-worktree`) and the writer reservation released, with the residual sample recorded as `cTerminal`. This predicate also gates an ordinary `completed` writer result: if quiescence is not confirmed, its report is not admitted and the Task remains `blocked` with a hold. If the 5 s cancel grace expires with no terminal, the execution is `stop_unconfirmed`: the Task goes `blocked`, the writer reservation converts to a persisted `writerHold` that keeps refusing a second writer — across restarts and beyond the normal ledger restore cap — and the launcher keeps its RESPONSE subscription so a late terminal still finalizes the execution exactly once (usage, `cTerminal`, release). Sampling failure records `evidenceIncomplete` and also holds. Non-completed delegations (cancelled, timed_out, failed, …) no longer throw: `planner_delegate` returns structured `details.termination` — host status, ended reason, confirmation basis, execution lifecycle state, `usageComplete` — plus a text summary for display. A `completed` report arriving after the cancel request is collected as `executions[].lateReport` for evidence only; it never advances review.
+**Stop confirmation (P0-A).** A terminal status alone does not prove the writer went quiet. After an identity-matched terminal, the delegation waits `quiescenceWaitMs` (default 10 s; `PI_PLANNER_ONLY_QUIESCENCE_MS` overrides) and then requires two consecutive identical worktree samples — only then is the stop `confirmed` (`confirmationBasis: terminal+quiet-worktree`) and the writer reservation released, with the residual sample recorded as `cTerminal`. This predicate also gates an ordinary `completed` writer result: if quiescence is not confirmed, its report is not admitted and the Task remains `blocked` with a hold. If the 5 s cancel grace expires with no terminal, the execution is `stop_unconfirmed`: the Task goes `blocked`, the writer reservation converts to a persisted `writerHold` that keeps refusing a second writer — across restarts and beyond the normal ledger restore cap — and the launcher keeps its RESPONSE subscription so a late terminal still finalizes the execution exactly once (usage, `cTerminal`, release). Sampling failure records `evidenceIncomplete` and also holds. Non-completed delegations (cancelled, timed_out, failed, …) no longer throw: the delegation call returns structured `details.termination` — host status, ended reason, confirmation basis, execution lifecycle state, `usageComplete` — plus a text summary for display. A `completed` report arriving after the cancel request is collected as `executions[].lateReport` for evidence only; it never advances review.
 
-**Runaway envelope and recovery (P0-B).** `planner_delegate` accepts an explicit `envelope: { maxTokens?, maxWallMs? }` — cumulative UPDATE tokens (snapshot input+output, no cache) and an independent wall clock covering the actual launcher wait, not pre-launch evidence sampling. A breach fires the same CANCEL path as Esc, once; the execution ends `worker_runaway`, including when its terminal arrives after the cancel grace, and a confirmed stop plus an unconfirmed one both flag `task.recovery.required`. Re-executing the Task then requires a structured `recovery` decision on `planner_delegate` (`retry_same_plan` / `fix_environment`, naming the abnormal `executionId`, a reason, and a `worktreeDecision`), or `planner_verdict` with `verdict: "blocked"` + `recovery: { action: "abort" }` to hand it to the operator. A decision is consumed once; equivalent action/evidence/worktree decisions are refused even if the reason is reworded or evidence references are reordered. `worktreeDecision: "manual"` clears a persisted hold only as the operator's explicit assertion that residual writers were resolved. Unwired P1 actions refuse explicitly.
+**Runaway envelope and recovery (P0-B).** Both delegation tools accept an explicit `envelope: { maxTokens?, maxWallMs? }` — cumulative UPDATE tokens (snapshot input+output, no cache) and an independent wall clock covering the actual launcher wait, not pre-launch evidence sampling. A breach fires the same CANCEL path as Esc, once; the execution ends `worker_runaway`, including when its terminal arrives after the cancel grace, and a confirmed stop plus an unconfirmed one both flag `task.recovery.required`. Re-executing the Task then requires a structured `recovery` decision on `planner_redelegate` (`retry_same_plan` / `fix_environment`, naming the abnormal `executionId`, a reason, and a `worktreeDecision`), or `planner_verdict` with `verdict: "blocked"` + `recovery: { action: "abort" }` to hand it to the operator. A decision is consumed once; equivalent action/evidence/worktree decisions are refused even if the reason is reworded or evidence references are reordered. `worktreeDecision: "manual"` clears a persisted hold only as the operator's explicit assertion that residual writers were resolved. Unwired P1 actions refuse explicitly.
 
 ## Design specs
 

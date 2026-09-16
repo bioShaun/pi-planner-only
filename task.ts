@@ -397,7 +397,30 @@ export class TaskIdAllocator {
 }
 
 
-export type TaskSpecContractErrorCode = "TASKSPEC_VALIDATION_INCOMPLETE";
+export type TaskSpecContractErrorCode =
+	| "TASKSPEC_VALIDATION_INCOMPLETE"
+	| "TASKSPEC_VALIDATION_COMMAND_NOT_EXECUTABLE";
+
+/**
+ * Ticket 19 — is this string shaped like an executable shell command? The
+ * check is deliberately shallow and conservative: trim, reject newlines,
+ * strip leading `VAR=value` env assignments, then require the first
+ * whitespace-separated token to look like a program name or path
+ * (`node`, `npx`, `./scripts/x.sh`, `~/bin/x`, `git-lfs`). A first token that
+ * is a single Capitalized English word (`Run`, `Check`, `Verify`) is the
+ * observed prose-imperative family and is refused; `MSBuild`-style names
+ * still pass. Everything after the first token is unrestricted — arguments
+ * may carry CJK, quotes, `&&`, `|`. We never resolve the program, parse
+ * shell syntax, or cap length.
+ */
+export function isExecutableCommandShape(command: string): boolean {
+	const trimmed = command.trim();
+	if (trimmed === "" || /[\r\n]/.test(trimmed)) return false;
+	const stripped = trimmed.replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+/, "");
+	const firstToken = stripped.split(/\s/, 1)[0];
+	if (!/^[A-Za-z0-9_./~-]+$/.test(firstToken)) return false;
+	return !/^[A-Z][a-z]+$/.test(firstToken);
+}
 
 /**
  * Ticket 45 — a TaskSpec constructor was handed a contradictory validation
@@ -428,8 +451,32 @@ export function createTaskSpec(input: CreateTaskSpecInput, taskId?: string): Tas
 	if (isValidationDefinitionIncomplete(input.validation)) {
 		throw new TaskSpecContractError(
 			"TASKSPEC_VALIDATION_INCOMPLETE",
-			`createTaskSpec refused: ${VALIDATION_COMMANDS_REQUIRED_ERROR}. Supply the commands, or set validation.required to false when no validation is mandatory.`,
+			`createTaskSpec refused: ${VALIDATION_COMMANDS_REQUIRED_ERROR} (received validation: ${JSON.stringify(input.validation)}). Supply the commands, or set validation.required to false when no validation is mandatory.`,
 		);
+	}
+	// Ticket 19 — commands is the only TaskSpec field a machine consumes
+	// verbatim: the worker runs it, the validator replays it, and
+	// missingTaskSpecValidationCommands matches WorkerReport entries against
+	// it literally. A prose entry would be echoed back as a passed "command"
+	// that never executed. Checked after the incomplete gate so a missing
+	// list keeps its own code; refused at required: false too — a validator
+	// may still read the list.
+	const submittedCommands = input.validation?.commands;
+	if (Array.isArray(submittedCommands)) {
+		// Blank entries keep ticket 45's semantics: uniqueNonEmpty drops them
+		// during normalisation. Only non-blank entries can be prose.
+		const violations = submittedCommands
+			.map((command, index) => ({ command, index }))
+			.filter(({ command }) => typeof command === "string" && command.trim() !== "" && !isExecutableCommandShape(command));
+		if (violations.length > 0) {
+			const listed = violations
+				.map(({ command, index }) => `validation.commands[${index}] does not look like an executable command (received: ${JSON.stringify(String(command).slice(0, 120))})`)
+				.join("; ");
+			throw new TaskSpecContractError(
+				"TASKSPEC_VALIDATION_COMMAND_NOT_EXECUTABLE",
+				`createTaskSpec refused: ${listed}. Each entry must start with a program name or path (e.g. "node --experimental-strip-types delegate.test.mjs", "npx tsc --noEmit"). Move instructions into acceptanceCriteria or constraints, and either supply real commands or set validation.required to false.`,
+			);
+		}
 	}
 	const suppliedTaskId = input.taskId?.trim();
 	const effectiveTaskId = taskId ?? createTaskId();
@@ -586,6 +633,15 @@ export function validateTaskSpec(value: unknown): string[] {
 			}
 			if (value.validation.commands !== undefined && !isStringArray(value.validation.commands)) {
 				errors.push("validation.commands must be an array of strings");
+			}
+			// Ticket 19 — the same predicate the constructor enforces: a prose
+			// entry is not a command, at any `required` value.
+			if (isStringArray(value.validation.commands)) {
+				value.validation.commands.forEach((command, index) => {
+					if (command.trim() !== "" && !isExecutableCommandShape(command)) {
+						errors.push(`validation.commands[${index}] is not an executable command shape`);
+					}
+				});
 			}
 			// Ticket 45 — the validator guard refuses this shape, so the schema
 			// must refuse it too: one judgment, decided here and named after the
@@ -770,6 +826,9 @@ function validValidation(value: unknown): boolean {
 	const validation = value as Record<string, unknown>;
 	if (typeof validation.required !== "boolean") return false;
 	if (validation.commands !== undefined && !isStringArray(validation.commands)) return false;
+	// Ticket 19 — a kept-verbatim definition must be one createTaskSpec would
+	// also accept: every non-blank command entry executable-shaped.
+	if (isStringArray(validation.commands) && !validation.commands.every((command) => command.trim() === "" || isExecutableCommandShape(command))) return false;
 	return !isValidationDefinitionIncomplete(value);
 }
 
@@ -849,7 +908,7 @@ function repairSubmittedValidation(raw: unknown): SubmittedValidationRepair {
 			changes: [{ field: "validation", reason: "dropped the empty validation list; it carries no validation intent" }],
 		};
 	}
-	if (Array.isArray(raw) && raw.every((item) => typeof item === "string" && item.trim())) {
+	if (Array.isArray(raw) && raw.every((item) => typeof item === "string" && item.trim() && isExecutableCommandShape(item))) {
 		return {
 			validation: { required: true, commands: uniqueNonEmpty(raw as string[]) },
 			changes: [{
@@ -860,7 +919,7 @@ function repairSubmittedValidation(raw: unknown): SubmittedValidationRepair {
 	}
 	if (isPlainObject(raw) && Array.isArray(raw.commands)
 		&& raw.commands.length > 0
-		&& raw.commands.every((item) => typeof item === "string" && item.trim())
+		&& raw.commands.every((item) => typeof item === "string" && item.trim() && isExecutableCommandShape(item))
 		&& (raw.required === undefined || raw.required === true)) {
 		return {
 			validation: { required: true, commands: uniqueNonEmpty(raw.commands as string[]) },
@@ -868,6 +927,27 @@ function repairSubmittedValidation(raw: unknown): SubmittedValidationRepair {
 				field: "validation",
 				reason: "repaired validation.required to the boolean true (intent: the listed commands are mandatory)",
 			}],
+		};
+	}
+	// Ticket 19 — a command list that exists but carries non-executable
+	// entries is prose, not a definition. Never silently drop the offending
+	// entries (that would turn required: true into an empty obligation — the
+	// gap ticket 45 closed); report them as needing input instead.
+	const submittedCommandList = Array.isArray(raw)
+		? raw
+		: isPlainObject(raw) && Array.isArray(raw.commands)
+			? raw.commands
+			: undefined;
+	if (submittedCommandList
+		&& submittedCommandList.length > 0
+		&& submittedCommandList.every((item) => typeof item === "string" && item.trim())
+		&& submittedCommandList.some((item) => !isExecutableCommandShape(item))) {
+		return {
+			changes: [{
+				field: "validation",
+				reason: "validation.commands contains entries that are not executable commands",
+			}],
+			unresolved: "validation.commands entries must be shell commands starting with a program name or path, not instruction sentences (e.g. \"npm test\"). Move instruction text into acceptanceCriteria or constraints and supply real commands, or set validation.required to false.",
 		};
 	}
 	if (isPlainObject(raw) && (raw as Record<string, unknown>).required === true) {
@@ -1067,7 +1147,7 @@ export function appendTaskSpecExample(reason: string, example: Record<string, un
 	return [
 		reason,
 		"",
-		"Pass this TaskSpec to planner_delegate:",
+		"Pass this TaskSpec to planner_delegate to mint a new Task (any taskId key is ignored); to re-enter an existing Task call planner_redelegate with its canonical taskId instead:",
 		"```json",
 		JSON.stringify(example, null, 2),
 		"```",

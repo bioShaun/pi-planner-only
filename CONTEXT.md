@@ -51,11 +51,11 @@ Root's only Git access: fixed, read-only argv. Never a shell.
 _Avoid_: git shell, audit API
 
 **Policy**:
-The parent tool guard: which tools Root may call. While a Task is live for the workspace, the live allowlist applies; when none is (Idle for gather), Root may only start a Delegation with `planner_delegate`, ask a question, record a Verdict, or inspect Git with `git_audit`. Idle is derived from the Task store per workspace, never from prompt wording.
+The parent tool guard: which tools Root may call. While a Task is live for the workspace, the live allowlist applies; when none is (Idle for gather), Root may only start a Delegation with `planner_delegate`, re-enter an existing Task with `planner_redelegate`, list live Tasks with `planner_tasks`, ask a question, record a Verdict, or inspect Git with `git_audit`. Idle is derived from the Task store per workspace, never from prompt wording.
 _Avoid_: permissions, ACL
 
 **Delegation**:
-Launching a child with a role and a TaskSpec through `planner_delegate`; the child's WorkerReport returns launcher-validated, never parsed from text; at most one worker per cwd. An explicit `envelope` (maxTokens / maxWallMs) bounds a runaway execution; a breach fires CANCEL and records `worker_runaway` on the TaskExecutionRecord.
+Launching a child with a role and a TaskSpec. Two entry points: `planner_delegate` always mints a new Task (it takes no `taskId`) and returns the canonical `taskId`; `planner_redelegate` binds an existing Task by that verbatim id for a correction round, a review, or a recovery re-execution; `planner_tasks` is the read-only lookup that lists this workspace's live Tasks (memory plus ledger records the restore cap left out) when the canonical id is not in context. The child's WorkerReport returns launcher-validated, never parsed from text; at most one worker per cwd. An explicit `envelope` (maxTokens / maxWallMs) bounds a runaway execution; a breach fires CANCEL and records `worker_runaway` on the TaskExecutionRecord.
 _Avoid_: spawn, dispatch (the host mechanism), packet
 
 **Writer hold**:
@@ -63,7 +63,7 @@ The persisted `task.writerHold` left when an execution's stop was never confirme
 _Avoid_: lock, mutex
 
 **RecoveryDecision**:
-Root's structured decision (`planner_delegate.recovery`, or `planner_verdict` blocked + `action:"abort"`) that authorizes one new bounded execution on a Task flagged `recovery.required`; consumed once, never reworded-retried.
+Root's structured decision (`planner_redelegate.recovery`, or `planner_verdict` blocked + `action:"abort"`) that authorizes one new bounded execution on a Task flagged `recovery.required`; consumed once, never reworded-retried.
 _Avoid_: replan, retry policy
 
 **Review loop**:

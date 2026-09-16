@@ -110,5 +110,13 @@ assert.match(ledgerStore, /isQuarantined\(taskId/, "C16-7: LedgerSnapshotStore e
 assert.match(orchestrate, /this\.snapshots\.quarantine\(/, "C16-8: restoreFromLedger registers corrupt taskIds in the snapshot quarantine");
 assert.match(ledgerStore, /isQuarantined\(record\.taskId\)/, "C16-9: write refuses quarantined taskIds");
 
+// Ticket 16: refusal-breaker.ts is a pure session state machine — shipped in
+// the package, imported by the adapter, and free of adapter/host imports.
+const refusalBreaker = src("refusal-breaker.ts");
+assert.equal(pkg.files.includes("refusal-breaker.ts"), true, "refusal-breaker.ts must ship in the package files list");
+assert.match(pkg.scripts?.test ?? "", /refusal-breaker\.test\.mjs/, "the unit test script must run refusal-breaker.test.mjs");
+assert.match(index, /from "\.\/refusal-breaker\.ts"/, "the adapter wires the refusal breaker");
+assert.doesNotMatch(refusalBreaker, /from "\.\/index\.ts"|@earendil-works/, "refusal-breaker.ts must not import the adapter or the Pi host");
+
 
 console.log("planner-only architecture: PASS");

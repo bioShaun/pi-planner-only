@@ -22,15 +22,19 @@ export const QUESTION_TOOLS = new Set(["question", "questionnaire"]);
  * Ticket 05 B — the Idle-for-gather allowlist: Root may start a Delegation,
  * record a Verdict, or inspect Git. `git_commit` gates itself on a completed
  * Task, and a completed Task is never live, so it must be admitted while Idle.
+ * `planner_redelegate` is admitted for the same reason: a blocked Task flagged
+ * recovery.required is final, so its workspace reads Idle when its recovery
+ * re-execution arrives. `planner_tasks` is read-only lookup — the answer to
+ * "which taskId" must be reachable before any delegation.
  */
-export const IDLE_TOOLS = new Set(["planner_delegate", "planner_verdict", "git_audit", "git_commit"]);
+export const IDLE_TOOLS = new Set(["planner_delegate", "planner_redelegate", "planner_tasks", "planner_verdict", "git_audit", "git_commit"]);
 
 /**
  * First-class tools this extension registers for Root itself.
  * Unlike the leftover `bash` allowlist, these are present in the parent's
  * schema, not just tolerated on a stale call.
  */
-export const ROOT_TOOLS = new Set(["git_audit", "planner_verdict", "planner_delegate"]);
+export const ROOT_TOOLS = new Set(["git_audit", "planner_verdict", "planner_delegate", "planner_redelegate", "planner_tasks"]);
 
 export interface PolicyInput {
 	toolName: string;
@@ -63,8 +67,8 @@ function blockedReason(toolName: string): string {
 	return [
 		`Planner-only guard: the parent process may not call '${toolName}' directly.`,
 		"The parent owns planning, delegation, arbitration, and review only.",
-		"Delegate execution with planner_delegate. Include the objective, cwd, edit boundary, constraints, acceptance criteria, validation, and required evidence in the call.",
-		"When the worker returns, review its evidence with read/grep/find/ls. Delegate any fixes instead of editing or running commands in the parent.",
+		"Delegate execution with planner_delegate — it always mints a new Task. Include the objective, cwd, edit boundary, constraints, acceptance criteria, validation, and required evidence in the call.",
+		"When the worker returns, review its evidence with read/grep/find/ls. A correction round, a review, or a recovery re-execution of an existing Task goes through planner_redelegate with that Task's canonical taskId — never a constructed one. Delegate any fixes instead of editing or running commands in the parent.",
 		"Use '/planner-only off' for an explicit temporary override.",
 	].join("\n");
 }
@@ -91,8 +95,8 @@ function idleBlockReason(toolName: string): string {
 function delegationCutoverReason(toolName: string): string {
 	return [
 		`Planner-only guard: the parent process may not call '${toolName}'.`,
-		"Delegation goes through planner_delegate (role, objective, scope, constraints, acceptanceCriteria, validation); its result carries the WorkerReport in details.",
-		"There is no asynchronous wait: planner_delegate returns when the child finishes.",
+		"New delegation goes through planner_delegate (role, objective, scope, constraints, acceptanceCriteria, validation) — it always mints a new Task; its result carries the WorkerReport in details. Re-entering an existing Task (correction, review, recovery) goes through planner_redelegate with its canonical taskId.",
+		"There is no asynchronous wait: planner_delegate and planner_redelegate return when the child finishes.",
 	].join("\n");
 }
 

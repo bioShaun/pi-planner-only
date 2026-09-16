@@ -47,14 +47,17 @@ import {
 import { configuredRoleModelSummaries, loadRoleModelPolicy } from "./role-models.ts";
 import { ConcurrencyController, loadConcurrencyDefault, saveConcurrencyDefault, parseConcurrencyLimit } from "./concurrency.ts";
 import {
+	DelegationRefused,
 	PLANNER_DELEGATE_PARAMETERS,
+	PLANNER_REDELEGATE_PARAMETERS,
 	cancelInFlightDelegations,
 	createHostLauncher,
 	renderDelegationOutcome,
 	runDelegation,
 	validateRecoveryDecision,
 } from "./delegate.ts";
-import type { DelegationOutcome, PlannerDelegateParams } from "./delegate.ts";
+import type { DelegationOutcome, PlannerDelegationParams } from "./delegate.ts";
+import { RefusalBreaker, isRefusal } from "./refusal-breaker.ts";
 import type { RecoveryDecision } from "./types.ts";
 
 /** P0-B — the only recovery action wired through planner_verdict (spec §5). */
@@ -99,6 +102,7 @@ export function computeLoadedFingerprint(dir = PLUGIN_DIR): string {
 		"package.json",
 		"policy.ts",
 		"pricing.defaults.json",
+		"refusal-breaker.ts",
 		"report.ts",
 		"review.ts",
 		"role-models.ts",
@@ -193,18 +197,18 @@ export const PLANNER_PROMPT = `[PLANNER-ONLY MODE]
 Root: plan, delegate, inspect read-only, review, and arbitrate.
 Do not edit or write files, run a general shell, or implement fixes.
 
-Gather: no live Task starts one planner_delegate; TaskSpec names Worker skills. planner_verdict and git_audit stay allowed; live Tasks allow inspect/Git-read.
+Gather: no live Task → start one planner_delegate; planner_verdict and git_audit stay allowed; live Tasks allow inspect/Git-read.
 
-One bounded TaskSpec per planner_delegate call (role, objective, scope, constraints, acceptanceCriteria, validation); one ticket per TaskSpec. Do not instruct workers to /code-review; the plugin reviewer is the only review.
-The tool returns the canonical taskId in details; pass it as taskId on every later call for that Task.
+One bounded TaskSpec per planner_delegate call (full TaskSpec fields); one ticket per TaskSpec. Do not instruct workers to /code-review.
+planner_delegate always mints a new Task and returns its canonical taskId in details.taskId. Corrections, reviews, and recovery for that Task go through planner_redelegate with that exact taskId — unsure of it, call planner_tasks; never construct one.
 
-Every worker returns WorkerReport version ${WORKER_REPORT_VERSION} with taskId, status, summary, changedFiles, validation plus exit codes, evidence, risks, and unresolved items. Top-level status must be exactly completed/partial/blocked/failed; validation status must be exactly passed/failed/not-run.
+Every worker returns WorkerReport version ${WORKER_REPORT_VERSION} — summary, changedFiles, validation plus exit codes, evidence, risks, and unresolved items. Top-level status must be exactly completed/partial/blocked/failed; validation status must be exactly passed/failed/not-run.
 
-Verify identity, evidence freshness, inspect relevant files and git with read/grep/git_audit, then record PASS, REQUEST_CHANGES, or BLOCKED with planner_verdict.
+Verify identity and evidence freshness (read/grep/git_audit), then record PASS, REQUEST_CHANGES, or BLOCKED with planner_verdict.
 
-Roles: explorer → scout, reviewer → builtin reviewer (read/grep/find/ls; context=fresh; bounded packet), validator → oracle (bash, no edits), worker keeps its agent; never pre-compose worker→reviewer as a workflowScript or chain; delegate the reviewer only after the worker returns, in a separate call.
+Roles: explorer → scout, reviewer → builtin reviewer (read/grep/find/ls, context=fresh), validator → oracle (bash, no edits), worker keeps its agent; never pre-compose worker→reviewer as a workflowScript or chain; the reviewer runs via planner_redelegate only after the worker returns, in a separate call.
 
-Never trust a worker PASS. Never accept stale evidence; re-delegate validation (bounded oracle: HEAD/status + named tests; full suite only if PI_PLANNER_ONLY_ORACLE=full). Never fix rejected work; delegate a bounded correction. Stop after ${MAX_REVIEW_ROUNDS} review rounds (blocked).
+Never trust a worker PASS. Never accept stale evidence; validation re-runs and corrections re-enter via planner_redelegate (bounded oracle: HEAD/status + named tests; full suite only if PI_PLANNER_ONLY_ORACLE=full). Never fix rejected work. Stop after ${MAX_REVIEW_ROUNDS} review rounds (blocked).
 Lifecycle state arrives in delegation results; the operator may override a verdict, you record yours with planner_verdict.`;
 
 function envForcesGuard(): boolean {
@@ -371,6 +375,44 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	let usageLogWriteFailed = false;
 	const terminalUsageLogged = new Set<string>();
 	const openUsageLogged = new Set<string>();
+	// Ticket 16 — session-scoped repeat-refusal breaker. Only pre-launch
+	// refusals count (isRefusal); aborts, terminations, and store errors do not.
+	const refusalBreaker = new RefusalBreaker();
+
+	/**
+	 * Every Root tool execute runs through this wrapper: a thrown refusal is
+	 * counted against (toolName, canonicalJson(params)); from the second
+	 * identical refusal the Repeat/STOP notice is appended onto the same error
+	 * (message mutation keeps code/taskId/stack intact); a success clears the
+	 * streak. The BLOCK_AT-th identical call never reaches here — the
+	 * tool_call hook intercepts it via shouldBlock.
+	 */
+	async function withRefusalBreaker<T>(
+		toolName: string,
+		toolCallId: string,
+		params: unknown,
+		ctx: ExtensionContext | undefined,
+		fn: () => Promise<T>,
+	): Promise<T> {
+		try {
+			const result = await fn();
+			refusalBreaker.observeSuccess(toolName, params);
+			return result;
+		} catch (error) {
+			if (!isRefusal(error)) throw error;
+			const observation = refusalBreaker.observeRefusal(toolName, toolCallId, params, error);
+			if (observation.hardStop && ctx?.hasUI) {
+				ctx.ui.notify(
+					`Planner-only: ${toolName} refused ${observation.count} times with identical arguments; identical repeats are now blocked before execution.`,
+					"warning",
+				);
+			}
+			if (observation.notice && error instanceof Error) {
+				error.message = `${error.message}\n\n${observation.notice}`;
+			}
+			throw error;
+		}
+	}
 
 	// Latest model reported by the public `model_select` event. The status
 	// command prefers the handler-time ctx.model and falls back to this so a
@@ -681,7 +723,8 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			message: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: "Optional commit summary." })),
 			push: Type.Optional(Type.Boolean({ description: "Unsupported unless an explicit push authorization is added." })),
 		}),
-		async execute(_toolCallId, params: { taskId: string; message?: string; push?: boolean }, _signal, _onUpdate, ctx) {
+		async execute(toolCallId, params: { taskId: string; message?: string; push?: boolean }, _signal, _onUpdate, ctx) {
+			return withRefusalBreaker("git_commit", toolCallId, params, ctx, async () => {
 			if (params.push === true) {
 				throw new Error("git_commit refused: push is unsupported; provide an explicit authorized push operation.");
 			}
@@ -762,83 +805,187 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					workerCommitRuns: 0,
 				},
 			};
+			});
 		},
 	});
 
-	// ADR-0001 — typed Root/child delegation. execute only composes deps,
-	// calls the shared runDelegation seam, and renders the outcome; the
-	// WorkerReport arrives launcher-validated in details.report. Failure is
-	// signalled by throwing (the host marks the tool result accordingly).
-	pi.registerTool({
+	// ADR-0001/ADR-0002 — typed Root/child delegation, split into two tool
+	// surfaces over one execute body: planner_delegate only mints a new Task
+	// (its schema has no taskId/recovery keys at all), planner_redelegate only
+	// binds an existing Task (taskId required) for correction rounds, reviews,
+	// and recovery re-executions. execute composes deps, calls the shared
+	// runDelegation seam, and renders the outcome; the WorkerReport arrives
+	// launcher-validated in details.report. Failure is signalled by throwing
+	// (the host marks the tool result accordingly).
+	const registerDelegationTool = (surface: {
+		name: "planner_delegate" | "planner_redelegate";
+		description: string;
+		promptSnippet: string;
+		promptGuidelines: string[];
+		parameters: typeof PLANNER_DELEGATE_PARAMETERS | typeof PLANNER_REDELEGATE_PARAMETERS;
+		/** planner_delegate strips a passthrough taskId/recovery instead of binding; planner_redelegate requires a real taskId. */
+		mintOnly: boolean;
+	}): void => {
+		pi.registerTool({
+			name: surface.name,
+			label: surface.mintOnly ? "Planner Delegate" : "Planner Redelegate",
+			description: surface.description,
+			promptSnippet: surface.promptSnippet,
+			promptGuidelines: surface.promptGuidelines,
+			parameters: surface.parameters,
+			async execute(toolCallId, params: PlannerDelegationParams, signal, onUpdate, ctx) {
+				latestCtx = ctx;
+				return withRefusalBreaker(surface.name, toolCallId, params, ctx, async () => {
+					const ignoredWarnings: string[] = [];
+					let effectiveParams: PlannerDelegationParams = params;
+					if (surface.mintOnly) {
+						// A non-validating host may still pass taskId/recovery through:
+						// ignore them with a success warning — refusing would recreate
+						// the replay loop this split exists to end.
+						const { taskId, recovery, ...rest } = params;
+						if (taskId !== undefined) {
+							ignoredWarnings.push(`supplied taskId ${taskId} was ignored: planner_delegate always mints a new Task; use planner_redelegate to bind an existing one`);
+						}
+						if (recovery !== undefined) {
+							ignoredWarnings.push("supplied recovery was ignored: planner_delegate always mints a new Task; recovery re-execution goes through planner_redelegate");
+						}
+						effectiveParams = rest;
+					} else if (typeof params.taskId !== "string" || params.taskId.trim() === "") {
+						// Bind-only surface on a non-validating host: never silently
+						// mint — that is exactly the failure mode ADR-0002 closes.
+						throw new DelegationRefused(
+							"TASK_REQUIRED",
+							"planner_redelegate refused: taskId is required — pass the canonical id verbatim from a prior planner_delegate result's details.taskId; never construct one",
+						);
+					}
+					let outcome: DelegationOutcome;
+					try {
+						outcome = await runDelegation(
+							{
+								store: orchestrator.store,
+								gitRunner,
+								concurrency,
+								usage: ledger,
+								launch: delegationLaunch,
+								...(quiescenceWaitMs !== undefined ? { quiescenceWaitMs } : {}),
+								ownerRunId: ctx.sessionManager?.getSessionId?.() || PROCESS_OWNER_RUN_ID,
+							},
+							effectiveParams,
+							ctx.cwd || process.cwd(),
+							{ signal, executionId: toolCallId, onUpdate, toolName: surface.name },
+						);
+					} catch (error) {
+						// Refused/aborted delegations carry the Task id on the error — sync
+						// the usage snapshot now so the ledger file sees the G4 row too
+						// (message_end attribution never sees this toolCallId).
+						const failedTaskId = typeof (error as { taskId?: unknown })?.taskId === "string"
+							? (error as { taskId: string }).taskId
+							: undefined;
+						if (failedTaskId) {
+							rootTurnTaskIds.add(canonicalTaskId(failedTaskId));
+							syncUsage(failedTaskId);
+							persistSessionEntries();
+						}
+						throw error;
+					}
+					rootTurnTaskIds.add(outcome.task.taskId);
+					// P0-A — abnormal terminations return instead of throwing; sync the
+					// usage snapshot here so the ledger file sees the child's row, same
+					// as the former throw path did.
+					if (outcome.termination) {
+						syncUsage(outcome.task.taskId);
+						persistSessionEntries();
+					}
+					const warnings = [...ignoredWarnings, ...outcome.warnings];
+					return {
+						content: [{ type: "text", text: renderDelegationOutcome({ ...outcome, warnings }, surface.name) }],
+						details: {
+							taskId: outcome.task.taskId,
+							executionId: outcome.executionId,
+							runId: outcome.runId,
+							state: outcome.task.state,
+							decision: outcome.decision?.action,
+							report: outcome.report,
+							review: outcome.review,
+							usage: outcome.usage,
+							...(outcome.termination ? { termination: outcome.termination } : {}),
+							warnings,
+						},
+					};
+				});
+			},
+		});
+	};
+
+	registerDelegationTool({
 		name: "planner_delegate",
-		label: "Planner Delegate",
+		mintOnly: true,
 		description: [
 			"Delegate one TaskSpec to a leaf agent through the structured delegation API.",
+			"Always mints a new Task and returns its canonical taskId in details.taskId; taskId and recovery are not accepted (use planner_redelegate to re-enter an existing Task).",
 			"Returns the launcher-validated WorkerReport in details.report; prose output is never parsed.",
-			"Root should prefer this tool over subagent for worker, explorer, validator, and reviewer tasks.",
+			"Root should prefer this tool over subagent for new worker, explorer, and validator tasks.",
 		].join(" "),
-		promptSnippet: "planner_delegate: typed TaskSpec delegation with a structured WorkerReport result",
+		promptSnippet: "planner_delegate: mint a Task — typed TaskSpec delegation with a structured WorkerReport result",
 		promptGuidelines: [
 			"Prefer planner_delegate over subagent: supply the full TaskSpec fields, not a prose brief.",
 			"The child's WorkerReport arrives schema-validated in details.report; a non-completed status returns structured details.termination, not a parse failure.",
-			"role=reviewer takes taskId and reviews the Task's latest WorkerReport; the launcher-validated ReviewResult arrives in details.review.",
-			"Optional envelope{maxTokens,maxWallMs} bounds a runaway execution; a Task flagged recovery.required re-executes only with a matching recovery decision (retry_same_plan / fix_environment) or planner_verdict blocked + abort.",
+			"planner_delegate always mints a new Task and returns its canonical taskId in details.taskId; a correction round, a review, or a recovery re-execution of that Task goes through planner_redelegate with that exact taskId.",
+			"Optional envelope{maxTokens,maxWallMs} bounds a runaway execution.",
 		],
 		parameters: PLANNER_DELEGATE_PARAMETERS,
-		async execute(toolCallId, params: PlannerDelegateParams, signal, onUpdate, ctx) {
-			latestCtx = ctx;
-			let outcome: DelegationOutcome;
-			try {
-				outcome = await runDelegation(
-					{
-						store: orchestrator.store,
-						gitRunner,
-						concurrency,
-						usage: ledger,
-						launch: delegationLaunch,
-						...(quiescenceWaitMs !== undefined ? { quiescenceWaitMs } : {}),
-						ownerRunId: ctx.sessionManager?.getSessionId?.() || PROCESS_OWNER_RUN_ID,
-					},
-					params,
-					ctx.cwd || process.cwd(),
-					{ signal, executionId: toolCallId, onUpdate },
-				);
-			} catch (error) {
-				// Refused/aborted delegations carry the Task id on the error — sync
-				// the usage snapshot now so the ledger file sees the G4 row too
-				// (message_end attribution never sees this toolCallId).
-				const failedTaskId = typeof (error as { taskId?: unknown })?.taskId === "string"
-					? (error as { taskId: string }).taskId
-					: undefined;
-				if (failedTaskId) {
-					rootTurnTaskIds.add(canonicalTaskId(failedTaskId));
-					syncUsage(failedTaskId);
-					persistSessionEntries();
-				}
-				throw error;
-			}
-			rootTurnTaskIds.add(outcome.task.taskId);
-			// P0-A — abnormal terminations return instead of throwing; sync the
-			// usage snapshot here so the ledger file sees the child's row, same
-			// as the former throw path did.
-			if (outcome.termination) {
-				syncUsage(outcome.task.taskId);
-				persistSessionEntries();
-			}
+	});
+
+	registerDelegationTool({
+		name: "planner_redelegate",
+		mintOnly: false,
+		description: [
+			"Re-enter an existing Task through the structured delegation API: a correction round after request_changes (worker/explorer/validator), a review of its latest WorkerReport (reviewer), or a recovery re-execution of a blocked Task.",
+			"taskId is required — the canonical id verbatim from a prior planner_delegate result's details.taskId; never construct one.",
+			"The launcher-validated ReviewResult arrives in details.review; a WorkerReport arrives in details.report.",
+		].join(" "),
+		promptSnippet: "planner_redelegate: re-enter an existing Task by canonical taskId — correction, review, recovery",
+		promptGuidelines: [
+			"planner_redelegate binds an existing Task: pass the canonical taskId from a prior planner_delegate result's details.taskId verbatim. Never construct a taskId.",
+			"role=reviewer reviews the bound Task's latest WorkerReport; the launcher-validated ReviewResult arrives in details.review.",
+			"Optional envelope{maxTokens,maxWallMs} bounds a runaway execution; a Task flagged recovery.required re-executes only with a matching recovery decision (retry_same_plan / fix_environment) or planner_verdict blocked + abort.",
+		],
+		parameters: PLANNER_REDELEGATE_PARAMETERS,
+	});
+
+	// Ticket 18 — read-only Task lookup: the answer to "which taskId" exists
+	// on the tool surface, so a Root that lost the canonical id (compaction,
+	// session resume) can query instead of constructing one. Listing merges
+	// the session store with ledger snapshots the restore cap left out —
+	// never restoring them, never minting, never launching.
+	pi.registerTool({
+		name: "planner_tasks",
+		label: "Planner Tasks",
+		description: [
+			"List live (non-final) Tasks of the current workspace with their canonical taskId.",
+			"Call this whenever you need a taskId for planner_redelegate or planner_verdict and do not have it verbatim from a prior result.",
+			"Never construct a taskId.",
+		].join(" "),
+		promptSnippet: "planner_tasks: list live Tasks — look up a canonical taskId instead of guessing one",
+		promptGuidelines: [
+			"If you need a taskId and do not have it verbatim, call planner_tasks; never construct one.",
+			"planner_tasks is read-only: it never mints, binds, restores, or mutates a Task.",
+			"recoveryRequired: true marks a blocked Task whose next planner_redelegate must carry a recovery decision.",
+		],
+		parameters: Type.Object({}),
+		async execute(_toolCallId, _params: Record<string, never>, _signal, _onUpdate, ctx) {
+			const cwd = ctx.cwd || process.cwd();
+			const tasks = orchestrator.listLiveTasks(cwd);
+			const text = tasks.length === 0
+				? `planner_tasks: No live Tasks in ${cwd}. planner_delegate mints a new one.`
+				: [
+					`planner_tasks: ${tasks.length} live Task(s) in ${cwd}:`,
+					...tasks.map((task) =>
+						`${task.taskId} | ${task.state} | ${task.role}${task.recoveryRequired ? " | recovery required" : ""} | ${task.objective ?? "(no spec)"}`),
+				].join("\n");
 			return {
-				content: [{ type: "text", text: renderDelegationOutcome(outcome) }],
-				details: {
-					taskId: outcome.task.taskId,
-					executionId: outcome.executionId,
-					runId: outcome.runId,
-					state: outcome.task.state,
-					decision: outcome.decision?.action,
-					report: outcome.report,
-					review: outcome.review,
-					usage: outcome.usage,
-					...(outcome.termination ? { termination: outcome.termination } : {}),
-					warnings: outcome.warnings,
-				},
+				content: [{ type: "text", text }],
+				details: { tasks },
 			};
 		},
 	});
@@ -908,19 +1055,20 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				}, { description: "RecoveryDecision for a Task flagged recovery.required; verdict must be blocked." }),
 			),
 		}),
-		async execute(_toolCallId, params: {
+		async execute(toolCallId, params: {
 			verdict: ReviewVerdict;
 			summary: string;
 			taskId?: string;
 			findings?: ReviewFinding[];
 			acknowledgeDrift?: DriftAcknowledgement;
 			recovery?: RecoveryDecision;
-		}, _signal, _onUpdate, _ctx: ExtensionContext) {
+		}, _signal, _onUpdate, ctx: ExtensionContext) {
+			return withRefusalBreaker("planner_verdict", toolCallId, params, ctx, async () => {
 			// Ticket 49 — the target resolves through the same ledger-aware lookup the
 			// delegation path uses, so a Task beyond the session restore cap can still be
 			// addressed by id. An explicit id never falls back to another Task.
 			const verdictResolution = params.taskId
-				? orchestrator.resolveVerdictTask(params.taskId, _ctx.cwd || process.cwd())
+				? orchestrator.resolveVerdictTask(params.taskId, ctx.cwd || process.cwd())
 				: undefined;
 			const task = params.taskId ? verdictResolution?.task : orchestrator.store.active();
 			const missNote = verdictResolution?.note;
@@ -934,7 +1082,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					].join(" "),
 				);
 			}
-			latestCtx = _ctx;
+			latestCtx = ctx;
 			const refusal = orchestrator.rootVerdictRefusal(task, params.verdict);
 			if (refusal) {
 				orchestrator.recordRootVerdictRefusal(task, params.verdict, refusal);
@@ -966,7 +1114,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				text = enrichDecisionText(text, outcome.task.taskId);
 				recordInjectedText(outcome.task.taskId, text);
 				persistSessionEntries();
-				await flushIfTerminal(outcome.task.taskId, before, _ctx);
+				await flushIfTerminal(outcome.task.taskId, before, ctx);
 				return {
 					content: [{
 						type: "text",
@@ -985,11 +1133,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					`planner_verdict refused (store-error, task=${task.taskId}, verdict=${params.verdict}): ${error instanceof Error ? error.message : String(error)}`,
 				);
 			}
+			});
 		},
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
 		latestCtx = ctx;
+		refusalBreaker.reset();
 		loadedFingerprintInfo = createLoadedPluginFingerprint(ctx);
 		orchestrator.setLoadedFingerprint(loadedFingerprintInfo);
 		if (typeof pi.appendEntry === "function") {
@@ -1047,10 +1197,21 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				return { block: true, reason: readNotice };
 			}
 		}
-		if (!IS_SUBAGENT && ["subagent", "bg_wait", "planner_verdict", "git_audit", "planner_delegate"].includes(event.toolName)) {
+		// Ticket 16 — an identical call already refused HARD_STOP_AT times is
+		// intercepted before it can execute again; attribution never sees it.
+		if (!IS_SUBAGENT && ROOT_TOOLS.has(event.toolName)) {
+			const breakerBlock = refusalBreaker.shouldBlock(event.toolName, event.input);
+			if (breakerBlock.block) {
+				if (ctx.hasUI) ctx.ui.notify(`Blocked parent tool: ${event.toolName} (repeated identical refusal)`, "warning");
+				return breakerBlock;
+			}
+		}
+		if (!IS_SUBAGENT && ["subagent", "bg_wait", "planner_verdict", "git_audit", "planner_delegate", "planner_redelegate", "planner_tasks"].includes(event.toolName)) {
 			rootTurnToolCallIds.add(event.toolCallId);
 			const input = asRecord(event.input);
-			if ((event.toolName === "planner_verdict" || event.toolName === "planner_delegate") && typeof input?.taskId === "string") {
+			// Only binding surfaces carry a meaningful taskId — planner_delegate
+			// ignores a passthrough taskId entirely, so it must not attribute.
+			if ((event.toolName === "planner_verdict" || event.toolName === "planner_redelegate") && typeof input?.taskId === "string") {
 				rootTurnTaskIds.add(canonicalTaskId(input.taskId));
 			} else if (event.toolName === "planner_verdict" || event.toolName === "git_audit") {
 				const active = orchestrator.store.activeForCwd(policyCwd);
