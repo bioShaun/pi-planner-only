@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { PlannerOrchestrator } from "./orchestrate.ts";
 import { ConcurrencyController } from "./concurrency.ts";
 import { LedgerSnapshotStore } from "./ledger-store.ts";
-import { createTaskSpec, TaskStore } from "./task.ts";
+import { createTaskSpec, TaskStore, isExecutingStale } from "./task.ts";
 import { hashStatus, describeComparison } from "./evidence.ts";
 import { emptyTaskUsage } from "./usage.ts";
 
@@ -87,6 +87,67 @@ function reportFor(taskId, toolCallId) {
 		risks: [],
 		unresolved: [],
 	};
+}
+
+function workerResult(toolCallId, report, wrapped = false) {
+	const text = wrapped
+		? `Working on it...\n\`\`\`json\n${JSON.stringify(report, null, 2)}\n\`\`\`\nDone.`
+		: JSON.stringify(report);
+	return { toolCallId, toolName: "subagent", input: {}, content: [{ type: "text", text }], isError: false };
+}
+
+function reviewerResult(toolCallId, taskId, verdict = "pass", overrides = {}) {
+	return {
+		toolCallId,
+		toolName: "subagent",
+		input: {},
+		content: [{
+			type: "text",
+			text: JSON.stringify({
+				taskId,
+				verdict,
+				summary: `${verdict} from reviewer`,
+				evidenceFresh: true,
+				findings: [],
+				reportRevision: 1,
+				...overrides,
+			}),
+		}],
+		isError: false,
+	};
+}
+
+function asyncNotify(_runId, preview) {
+	return `Background task completed: **worker**\n\n${preview}`;
+}
+
+function artifactLayout(runId, agent, exitCode, report) {
+	const tmp = mkdtempSync(join(tmpdir(), "planner-only-reconcile-"));
+	const asyncDir = join(tmp, "async-subagent-runs", runId);
+	mkdirSync(asyncDir, { recursive: true });
+	mkdirSync(join(tmp, "artifacts", "outputs", runId), { recursive: true });
+	if (report) writeFileSync(join(tmp, "artifacts", "outputs", runId, "result.json"), JSON.stringify(report));
+	writeFileSync(join(tmp, "artifacts", `${runId}_${agent}_meta.json`), JSON.stringify({ runId, agent, exitCode }));
+	return { tmp, asyncDir };
+}
+
+function receiptFor(toolCallId, runId, asyncDir) {
+	return {
+		toolCallId,
+		toolName: "subagent",
+		details: { asyncId: runId, runId, asyncDir },
+		content: [{ type: "text", text: `Async: worker [${runId}]\nThe async run is detached and running in the background.` }],
+	};
+}
+
+async function delegateWorker(orch, toolCallId, taskId) {
+	setCleanTree();
+	const outcome = await orch.beginDelegation(
+		{ toolCallId, input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	setDirtyTree();
+	return outcome;
 }
 
 // Ticket 22 round p10-r046 — strict fresh review requires reviewer evidence.
@@ -901,6 +962,294 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
+}
+
+// --------------------------------------------------------------------------
+// Issue 01 Acceptance Tests: Live writable Delegations hold the worktree lock
+// --------------------------------------------------------------------------
+
+// 1. Two Validators (or a Validator beside a Worker) on one worktree: the second
+// begin is refused before launch; no second child is registered.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const spec1 = specFor("T-20260905-v01", "validator", "/fixture/wt-val");
+	const first = await orch.beginDelegation({ toolCallId: "call-v1", input: { agent: "oracle", task: JSON.stringify(spec1) } }, "/fixture/wt-val");
+	assert.equal(first.conflict, undefined);
+	assert.equal(orch.pendingDelegationCount(), 1);
+
+	// Second validator on same worktree: refused before launch; no second child registered
+	const spec2 = specFor("T-20260905-v02", "validator", "/fixture/wt-val");
+	const second = await orch.beginDelegation({ toolCallId: "call-v2", input: { agent: "oracle", task: JSON.stringify(spec2) } }, "/fixture/wt-val");
+	assert.equal(second.conflict?.conflict, true, "two validators on one worktree must conflict");
+	assert.equal(orch.pendingDelegationCount(), 1, "no second child registered");
+
+	// Validator beside a Worker on another worktree: second begin refused
+	const specW = specFor("T-20260905-w01", "worker", "/fixture/wt-mixed");
+	const worker = await orch.beginDelegation({ toolCallId: "call-w1", input: { task: JSON.stringify(specW) } }, "/fixture/wt-mixed");
+	assert.equal(worker.conflict, undefined);
+	assert.equal(orch.pendingDelegationCount(), 2);
+
+	const specV3 = specFor("T-20260905-v03", "validator", "/fixture/wt-mixed");
+	const validatorMixed = await orch.beginDelegation({ toolCallId: "call-v3", input: { agent: "oracle", task: JSON.stringify(specV3) } }, "/fixture/wt-mixed");
+	assert.equal(validatorMixed.conflict?.conflict, true, "validator beside worker must conflict");
+	assert.equal(orch.pendingDelegationCount(), 2, "no second child registered");
+}
+
+// 2. A Worker begin while the Task is reviewing and a writable Delegation is still
+// pending is refused; a Worker begin while reviewing and only a Reviewer is live is allowed.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-rw01";
+	await delegateWorker(orch, "call-rw-1", taskId);
+	await orch.handleSubagentResult(workerResult("call-rw-1", reportFor(taskId, "call-rw-1")));
+	assert.equal(orch.store.require(taskId).state, "reviewing");
+
+	// Start a second worker delegation that goes async and stays pending (waiter)
+	await orch.beginDelegation(
+		{ toolCallId: "call-rw-2", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	await orch.handleSubagentResult(receiptFor("call-rw-2", "run-rw-2", "/no-such-async-dir"));
+	assert.equal(orch.pendingDelegationCount(), 1);
+
+	// While Task is reviewing and writable Delegation is still pending, Worker begin is refused
+	const refusedWorker = await orch.beginDelegation(
+		{ toolCallId: "call-rw-3", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	assert.equal(refusedWorker.conflict?.conflict, true, "Worker begin while reviewing with writable pending must be refused");
+	assert.equal(orch.pendingDelegationCount(), 1);
+
+	// Now for another task: Task is reviewing and ONLY a Reviewer is live
+	const taskId2 = "T-20260905-rw02";
+	await delegateWorker(orch, "call-rw-4", taskId2);
+	await orch.handleSubagentResult(workerResult("call-rw-4", reportFor(taskId2, "call-rw-4")));
+	assert.equal(orch.store.require(taskId2).state, "reviewing");
+
+	// Start a Reviewer delegation
+	const revBegin = await orch.beginDelegation(
+		{ toolCallId: "call-rw-rev", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId2, "reviewer")) } },
+		BASE,
+	);
+	assert.equal(revBegin.conflict, undefined);
+	assert.equal(orch.pendingDelegationCount(), 2); // call-rw-2 (on taskId) + call-rw-rev (on taskId2)
+
+	// Worker begin on taskId2 while only Reviewer is live is allowed!
+	const allowedWorker = await orch.beginDelegation(
+		{ toolCallId: "call-rw-5", input: { task: JSON.stringify(specFor(taskId2)) } },
+		BASE,
+	);
+	assert.equal(allowedWorker.conflict, undefined, "Worker begin while reviewing with only Reviewer live must be allowed");
+}
+
+// 3. Warn-mode unstructured Worker and same-Task second writable call contend for
+// the same lock; relative-path and symlink aliases of one worktree share it.
+{
+	const real = mkdtempSync(join(process.cwd(), ".planner-only-wlock-"));
+	const aliasParent = mkdtempSync(join(process.cwd(), ".planner-only-wlock-"));
+	const alias = join(aliasParent, "wt");
+	symlinkSync(real, alias);
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore(), structuredDelegationMode: "warn" });
+	try {
+		setCleanTree();
+		// Warn-mode unstructured worker takes the write lock
+		const first = await orch.beginDelegation(
+			{ toolCallId: "call-wl-1", input: { agent: "worker", task: "unstructured prompt", cwd: real } },
+			real,
+		);
+		assert.ok(first.task);
+		assert.equal(first.task.state, "executing");
+		assert.equal(first.conflict, undefined);
+
+		// Second writable call on symlink alias of the same worktree contends and is refused
+		const second = await orch.beginDelegation(
+			{ toolCallId: "call-wl-2", input: { task: JSON.stringify(specFor("T-20260905-971", "worker", alias)) } },
+			alias,
+		);
+		assert.equal(second.conflict?.conflict, true, "symlink alias of locked worktree must conflict");
+		assert.match(second.conflict.reason, new RegExp(first.task.taskId));
+		assert.equal(orch.pendingDelegationCount(), 1, "loser registers no delegation");
+
+		// Second writable call on same Task also contends
+		const sameTaskSecond = await orch.beginDelegation(
+			{ toolCallId: "call-wl-3", input: { task: JSON.stringify(specFor(first.task.taskId, "worker", real)) } },
+			real,
+		);
+		assert.equal(sameTaskSecond.conflict?.conflict, true, "same-Task second writable call contends for the lock");
+		assert.equal(orch.pendingDelegationCount(), 1);
+	} finally {
+		rmSync(real, { recursive: true, force: true });
+		rmSync(aliasParent, { recursive: true, force: true });
+	}
+}
+
+// 4. Lost-notify Worker still executing with terminal artifacts: next same-Task begin
+// consumes the finished run, then starts. Without terminal artifacts, the next
+// writable begin is refused; blocked remains allowed.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-rec1";
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-rec-1", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	const runId = "run-rec-1";
+	const layout = artifactLayout(runId, "worker", 0, reportFor(taskId, "call-rec-1"));
+	await orch.handleSubagentResult(receiptFor("call-rec-1", runId, layout.asyncDir));
+	assert.equal(orch.pendingDelegationCount(), 1);
+
+	// Next same-Task begin consumes the finished run from artifacts, then starts
+	setCleanTree();
+	const nextBegin = await orch.beginDelegation(
+		{ toolCallId: "call-rec-2", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	assert.equal(nextBegin.conflict, undefined, "finished run was consumed; lock was freed for next begin");
+	assert.ok(orch.store.require(taskId).reports.length >= 1, "report from finished run was recorded");
+	assert.equal(orch.pendingDelegationCount(), 1, "new waiter registered");
+	rmSync(layout.tmp, { recursive: true, force: true });
+
+	// Without terminal artifacts: next writable begin is refused, blocked remains allowed
+	const taskId2 = "T-20260905-rec2";
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-rec-3", input: { task: JSON.stringify(specFor(taskId2)) } },
+		BASE,
+	);
+	await orch.handleSubagentResult(receiptFor("call-rec-3", "run-no-art", "/no-such-async-dir"));
+	assert.equal(orch.pendingDelegationCount(), 2);
+
+	const refusedBegin = await orch.beginDelegation(
+		{ toolCallId: "call-rec-4", input: { task: JSON.stringify(specFor(taskId2)) } },
+		BASE,
+	);
+	assert.equal(refusedBegin.conflict?.conflict, true, "without terminal artifacts next writable begin is refused");
+	// user story 23: pass and request_changes keep waiting on a truly live pending child
+	assert.equal(orch.rootVerdictRefusal(orch.store.require(taskId2), "pass")?.kind, "child-pending");
+	assert.equal(orch.rootVerdictRefusal(orch.store.require(taskId2), "request_changes")?.kind, "child-pending");
+	// user story 22: blocked remains allowed as escape hatch
+	assert.equal(orch.rootVerdictRefusal(orch.store.require(taskId2), "blocked"), undefined, "blocked remains allowed");
+	const blockedOutcome = await orch.recordRootVerdict(orch.store.require(taskId2), "blocked", "escape hatch while child pending");
+	assert.ok(blockedOutcome.decision);
+	assert.equal(orch.store.require(taskId2).state, "blocked");
+}
+
+// 5. A leftover waiter with no live child is superseded so a later notice matches
+// one waiter; a late notice for the superseded run records nothing. A leftover
+// whose child is not known stopped is not superseded into a second live writer.
+{
+	const orch = new PlannerOrchestrator({ gitRunner, store: pinnedStore() });
+	const taskId = "T-20260905-sup1";
+	await delegateWorker(orch, "call-s1", taskId);
+	await orch.handleSubagentResult(workerResult("call-s1", reportFor(taskId, "call-s1")));
+
+	// First re-delegation goes async; notice lost, child not known stopped
+	setCleanTree();
+	await orch.beginDelegation(
+		{ toolCallId: "call-s2", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	await orch.handleSubagentResult(receiptFor("call-s2", "run-s2-zombie", "/no-such-async-dir"));
+	assert.equal(orch.pendingDelegationCount(), 1);
+
+	// Child is NOT known stopped: next re-delegation is refused, NOT superseded into a second live writer
+	const redoBlocked = await orch.beginDelegation(
+		{ toolCallId: "call-s3", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	assert.equal(redoBlocked.conflict?.conflict, true, "waiter whose child is not known stopped keeps lock and refuses");
+	assert.equal(orch.pendingDelegationCount(), 1, "no second waiter registered");
+	assert.ok(orch.getDelegation("call-s2"), "leftover waiter kept");
+
+	// Operator abandons task: known stop
+	orch.store.abandon(taskId, "operator abandon");
+
+	// Now re-delegation supersedes leftover waiter with no live child
+	const redo = await orch.beginDelegation(
+		{ toolCallId: "call-s4", input: { task: JSON.stringify(specFor(taskId)) } },
+		BASE,
+	);
+	assert.equal(redo.conflict, undefined);
+	assert.ok((redo.warnings ?? []).some((w) => /supersedes the pending child run/.test(w)));
+	assert.equal(orch.pendingDelegationCount(), 1, "one waiter remains");
+	assert.equal(orch.getDelegation("call-s2"), undefined, "s2 superseded");
+
+	// Late notice for superseded run records nothing
+	const beforeReports = orch.store.require(taskId).reports.length;
+	const beforeState = orch.store.require(taskId).state;
+	const late = await orch.handleAsyncNotify(asyncNotify("run-s2-zombie", JSON.stringify(reportFor(taskId, "call-s2"))));
+	assert.equal(late, undefined);
+	assert.equal(orch.store.require(taskId).reports.length, beforeReports);
+	assert.equal(orch.store.require(taskId).state, beforeState);
+
+	// Single-run completion notice for s4 matches remaining waiter
+	setDirtyTree();
+	await orch.handleSubagentResult(receiptFor("call-s4", "run-s4", "/no-such-async-dir"));
+	const outcome = await orch.handleAsyncNotify(asyncNotify(undefined, JSON.stringify(reportFor(taskId, "call-s4"))));
+	assert.match(outcome.content[0].text, /\[PLANNER-ONLY REVIEW STATE\]/);
+	assert.equal(orch.store.require(taskId).reports.length, beforeReports + 1);
+	assert.equal(orch.pendingDelegationCount(), 0);
+}
+
+// 6. Confirmed never-started unlocks; timeout, cancel, and unreadable output do not.
+// Unlock after confirmed exit is idempotent. Stale-holder needs-reconcile text goes
+// through the Task store, not an in-place field write.
+{
+	let clock = new Date(2026, 8, 5, 12, 0, 0);
+	const store = new TaskStore({ now: () => clock });
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+
+	// Confirmed never-started unlocks
+	const taskId0 = "T-20260905-unl0";
+	setCleanTree();
+	await orch.beginDelegation({ toolCallId: "call-unl-fail", input: { task: JSON.stringify(specFor(taskId0)) } }, BASE);
+	assert.equal(orch.pendingDelegationCount(), 1);
+	// Error with no runId/receipt: confirmed start failure -> unlocks
+	await orch.handleSubagentResult({
+		toolCallId: "call-unl-fail",
+		toolName: "subagent",
+		isError: true,
+		content: [{ type: "text", text: "launch failed before start" }],
+	});
+	assert.equal(orch.pendingDelegationCount(), 0, "confirmed never-started unlocks");
+
+	// Timeout does NOT unlock; stale-holder needs-reconcile recorded through store
+	const taskId = "T-20260905-unl1";
+	setCleanTree();
+	await orch.beginDelegation({ toolCallId: "call-unl-1", input: { task: JSON.stringify(specFor(taskId)) } }, BASE);
+	clock = new Date(2026, 8, 5, 13, 0, 0); // 1 hour later
+	assert.equal(isExecutingStale(orch.store.require(taskId), clock.getTime()), true);
+
+	const second = await orch.beginDelegation({ toolCallId: "call-unl-2", input: { task: JSON.stringify(specFor("T-20260905-unl2", "worker", "/fixture/T-20260905-unl1")) } }, BASE);
+	assert.equal(second.conflict?.conflict, true, "timeout does not unlock");
+	assert.match(second.conflict.reason, /not been confirmed exited/);
+	assert.match(orch.store.require(taskId).stateReason ?? "", /needs reconcile.*past the stale duration/, "stale holder needs-reconcile recorded through Task store");
+
+	// Cancel/error on live async child does NOT unlock
+	const taskId3 = "T-20260905-unl3";
+	await delegateWorker(orch, "call-unl-3", taskId3);
+	await orch.handleSubagentResult(receiptFor("call-unl-3", "run-unl-3", "/no-async-dir"));
+	const cancelRes = await orch.handleSubagentResult({
+		toolCallId: "call-unl-3",
+		toolName: "subagent",
+		isError: true,
+		content: [{ type: "text", text: "cancel signal received" }],
+	});
+	assert.match(cancelRes.content[0].text, /not been confirmed stopped/);
+	assert.equal(orch.pendingDelegationCount(), 2, "cancel on async child does not unlock");
+
+	// Idempotent unlock: completion then late error/cancel is a no-op
+	const taskId4 = "T-20260905-unl4";
+	await delegateWorker(orch, "call-unl-4", taskId4);
+	await orch.handleSubagentResult(workerResult("call-unl-4", reportFor(taskId4, "call-unl-4")));
+	const lateErr = await orch.handleSubagentResult({
+		toolCallId: "call-unl-4",
+		toolName: "subagent",
+		isError: true,
+		content: [{ type: "text", text: "late error after completion" }],
+	});
+	assert.equal(lateErr, undefined, "late event on consumed delegation is no-op");
 }
 
 console.log("planner-only orchestration: PASS");

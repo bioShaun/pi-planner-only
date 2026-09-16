@@ -4,14 +4,14 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done (implemented, pending Root commit)
 
-- [ ] Two Validators (or a Validator beside a Worker) on one worktree: the second begin is refused before launch; no second child is registered.
-- [ ] A Worker begin while the Task is reviewing and a writable Delegation is still pending is refused; a Worker begin while reviewing and only a Reviewer is live is allowed.
-- [ ] Warn-mode unstructured Worker and same-Task second writable call contend for the same lock; relative-path and symlink aliases of one worktree share it.
-- [ ] Lost-notify Worker still executing with terminal artifacts: next same-Task begin consumes the finished run, then starts. Without terminal artifacts, the next writable begin is refused; `blocked` remains allowed.
-- [ ] A leftover waiter with no live child is superseded so a later notice matches one waiter; a late notice for the superseded run records nothing. A leftover whose child is not known stopped is not superseded into a second live writer.
-- [ ] Confirmed never-started unlocks; timeout, cancel, and unreadable output do not. Unlock after confirmed exit is idempotent. Stale-holder needs-reconcile text goes through the Task store, not an in-place field write.
+- [x] Two Validators (or a Validator beside a Worker) on one worktree: the second begin is refused before launch; no second child is registered.
+- [x] A Worker begin while the Task is reviewing and a writable Delegation is still pending is refused; a Worker begin while reviewing and only a Reviewer is live is allowed.
+- [x] Warn-mode unstructured Worker and same-Task second writable call contend for the same lock; relative-path and symlink aliases of one worktree share it.
+- [x] Lost-notify Worker still executing with terminal artifacts: next same-Task begin consumes the finished run, then starts. Without terminal artifacts, the next writable begin is refused; `blocked` remains allowed.
+- [x] A leftover waiter with no live child is superseded so a later notice matches one waiter; a late notice for the superseded run records nothing. A leftover whose child is not known stopped is not superseded into a second live writer.
+- [x] Confirmed never-started unlocks; timeout, cancel, and unreadable output do not. Unlock after confirmed exit is idempotent. Stale-holder needs-reconcile text goes through the Task store, not an in-place field write.
 
 ## Comments
 

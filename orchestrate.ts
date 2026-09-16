@@ -4,6 +4,8 @@
  * delegate.ts (ADR-0001).
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import {
 	captureEvidence,
 	compareEvidence,
@@ -40,16 +42,20 @@ import type { LedgerCorrupt } from "./ledger-store.ts";
 import {
 	TaskIdAllocator,
 	TaskStore,
+	createTaskSpec,
 	executingStaleMinutes,
 	isExplicitlyNoValidation,
 	isExecutingStale,
+	isWriterRole,
 	normalizeWorkspaceIdentity,
 } from "./task.ts";
-import type { TaskRecord } from "./task.ts";
+import type { TaskRecord, WriterConflict } from "./task.ts";
 import {
+	EXECUTING_STALE_MS,
 	MAX_LEDGER_RESTORE_PER_SESSION,
 	MAX_RECOVERY_ATTEMPTS,
 	MAX_REVIEW_ROUNDS,
+	isFinalTaskState,
 	isTerminalTaskState,
 } from "./types.ts";
 import type {
@@ -62,6 +68,8 @@ import type {
 	RootVerdictRefusal,
 	TaskExecutionRecord,
 	TaskCompletionKind,
+	TaskRole,
+	TaskSpec,
 	WorkerReport,
 } from "./types.ts";
 import { emptyTaskUsage, exportSessionEvidence, summarizeTaskBudget } from "./usage.ts";
@@ -215,9 +223,74 @@ export interface OrchestratorDeps {
 	concurrency?: ConcurrencyController;
 	/** Live usage events owned by the adapter; exported alongside restored snapshots. */
 	getUsageEntries?: () => readonly unknown[];
+	/** Structured delegation enforcement mode ("warn" creates placeholder tasks without spec). */
+	structuredDelegationMode?: "warn" | "strict" | "enforce";
 }
 
 export type { DelegationKind };
+
+export interface DelegationRecord {
+	taskId: string;
+	kind: DelegationKind;
+	worktrees?: readonly string[];
+	lockedAt?: string;
+	runId?: string;
+	asyncDir?: string;
+	agent?: string;
+	launchCwd?: string;
+	spec?: TaskSpec;
+	toolCallId: string;
+}
+
+export interface DelegationOutcome {
+	task?: TaskRecord;
+	conflict?: WriterConflict;
+	block?: { code?: string; reason: string };
+	warnings?: string[];
+	content?: { type: string; text: string }[];
+}
+
+const RUN_ROOT_DIR_NAMES = new Set(["async-subagent-runs", "nested-subagent-runs"]);
+
+export function tempRootFromAsyncDir(asyncDir: string): string | undefined {
+	let current = resolve(asyncDir);
+	for (let depth = 0; depth < 6; depth++) {
+		const parent = dirname(current);
+		if (parent === current) return undefined;
+		if (RUN_ROOT_DIR_NAMES.has(basename(current))) return parent;
+		current = parent;
+	}
+	return undefined;
+}
+
+export function extractWorkerReport(text: string): WorkerReport | undefined {
+	if (!text || typeof text !== "string") return undefined;
+	try {
+		const parsed = JSON.parse(text);
+		if (parsed && typeof parsed === "object" && parsed.version === 1 && typeof parsed.taskId === "string") {
+			return parsed as WorkerReport;
+		}
+	} catch {}
+	const matches = text.matchAll(/```(?:json)?\s*([\s\S]*?)\s*```/g);
+	for (const match of matches) {
+		try {
+			const parsed = JSON.parse(match[1]);
+			if (parsed && typeof parsed === "object" && parsed.version === 1 && typeof parsed.taskId === "string") {
+				return parsed as WorkerReport;
+			}
+		} catch {}
+	}
+	const objMatch = text.match(/\{[\s\S]*"version"\s*:\s*1[\s\S]*"taskId"\s*:\s*"[^"]+"[\s\S]*\}/);
+	if (objMatch) {
+		try {
+			const parsed = JSON.parse(objMatch[0]);
+			if (parsed && typeof parsed === "object" && parsed.version === 1 && typeof parsed.taskId === "string") {
+				return parsed as WorkerReport;
+			}
+		} catch {}
+	}
+	return undefined;
+}
 
 
 export interface RootVerdictOutcome {
@@ -265,6 +338,10 @@ export class PlannerOrchestrator {
 	private readonly snapshots?: LedgerSnapshotStore;
 	private runSessionId: string;
 	private loadedProvenance?: LoadedPluginFingerprint;
+	private readonly delegations = new Map<string, DelegationRecord>();
+	private readonly processedRunIds = new Set<string>();
+	private readonly supersededIds = new Set<string>();
+	private readonly structuredDelegationMode?: "warn" | "strict" | "enforce";
 	/**
 	 * E01 — Tasks whose record came from the ledger. A restored record missing
 	 * per-execution A_run/C_report material cannot be verified and must not
@@ -299,6 +376,7 @@ export class PlannerOrchestrator {
 			?? (deps.getSessionRootUsage ? loadSessionRootBudgetConfig() : undefined);
 		this.concurrency = deps.concurrency ?? new ConcurrencyController();
 		this.getUsageEntries = deps.getUsageEntries;
+		this.structuredDelegationMode = deps.structuredDelegationMode;
 	}
 
 	setLoadedProvenance(provenance: LoadedPluginFingerprint): void {
@@ -531,6 +609,571 @@ export class PlannerOrchestrator {
 	setConcurrencySavedLimit(limit: number): { ok: true } | { ok: false; error: string } { return this.concurrency.setSavedLimit(limit); }
 	resetConcurrencyLimit(): void { this.concurrency.resetSessionLimit(); }
 	getConcurrencyStatus() { return this.concurrency.status(); }
+
+	pendingDelegationCount(): number {
+		return this.delegations.size;
+	}
+
+	getDelegation(toolCallId: string): DelegationRecord | undefined {
+		return this.delegations.get(toolCallId);
+	}
+
+	listDelegations(): { toolCallId: string; record: DelegationRecord }[] {
+		return [...this.delegations.entries()].map(([toolCallId, record]) => ({ toolCallId, record }));
+	}
+
+	hasPendingDelegation(taskId: string): boolean {
+		const canonical = this.store.get(taskId)?.taskId ?? taskId;
+		for (const record of this.delegations.values()) {
+			if (record.taskId === canonical) return true;
+		}
+		return false;
+	}
+
+	private isLiveWriterStale(taskId: string, now = this.store.now().getTime()): boolean {
+		for (const record of this.delegations.values()) {
+			if (record.taskId === taskId && isWriterRole(record.kind) && record.lockedAt) {
+				const held = Date.parse(record.lockedAt);
+				if (Number.isFinite(held) && now - held >= EXECUTING_STALE_MS) return true;
+			}
+		}
+		const holder = this.store.get(taskId);
+		return Boolean(holder && isExecutingStale(holder, now));
+	}
+
+	private writerConflict(cwd: string, role: DelegationKind): WriterConflict {
+		if (!isWriterRole(role)) return { conflict: false };
+		const target = normalizeWorkspaceIdentity(cwd);
+		for (const record of this.delegations.values()) {
+			if (!isWriterRole(record.kind)) continue;
+			if (!record.worktrees?.includes(target)) continue;
+			const holder = this.store.get(record.taskId);
+			if (holder && isFinalTaskState(holder.state)) continue;
+			const stale = holder && this.isLiveWriterStale(record.taskId);
+			return {
+				conflict: true,
+				taskId: record.taskId,
+				reason: [
+					`Planner-only guard: task ${record.taskId} already holds the write lock for ${target}.`,
+					stale
+						? `That lock has been held for over ${executingStaleMinutes()} minutes and its child run has not been confirmed exited; reconcile the run (or abandon the task) before starting another writer.`
+						: "Keep one writable invocation per worktree; even a second call on the same Task must wait.",
+					"Wait for that run's result to release the lock, or delegate this one into a separate worktree.",
+				].join("\n"),
+			};
+		}
+		return { conflict: false };
+	}
+
+	private noteStaleHolder(conflict: WriterConflict, againstTaskId?: string): void {
+		if (!conflict.conflict || !conflict.taskId) return;
+		const holder = this.store.get(conflict.taskId);
+		if (!holder) return;
+		if (holder.stateReason && holder.stateReason.includes("needs reconcile")) return;
+		if (!this.isLiveWriterStale(conflict.taskId)) return;
+		this.store.setStateReason(
+			holder.taskId,
+			`needs reconcile: write lock held past the stale duration without a confirmed child exit (lock held against ${againstTaskId ? `task ${againstTaskId}` : "a new writer"})`,
+		);
+	}
+
+	private async refuseOrClearWriteLock(
+		cwd: string,
+		role: DelegationKind,
+		warnings: string[],
+		againstTaskId?: string,
+	): Promise<WriterConflict> {
+		let conflict = this.writerConflict(cwd, role);
+		if (conflict.conflict && conflict.taskId) {
+			await this.reconcileBeforeLock(conflict.taskId, warnings);
+			conflict = this.writerConflict(cwd, role);
+		}
+		if (conflict.conflict) this.noteStaleHolder(conflict, againstTaskId);
+		return conflict;
+	}
+
+	private async refuseOrClearWriteLocks(
+		worktrees: readonly string[],
+		role: DelegationKind,
+		warnings: string[],
+		againstTaskId?: string,
+	): Promise<WriterConflict> {
+		for (const worktree of worktrees) {
+			const conflict = await this.refuseOrClearWriteLock(worktree, role, warnings, againstTaskId);
+			if (conflict.conflict) return conflict;
+		}
+		return { conflict: false };
+	}
+
+	private async reconcileBeforeLock(taskId: string, warnings: string[]): Promise<void> {
+		const canonical = this.store.get(taskId)?.taskId ?? taskId;
+		for (const [toolCallId, record] of [...this.delegations]) {
+			if (record.taskId !== canonical) continue;
+			if (await this.reconcileDelegation(toolCallId, record)) {
+				warnings.push(
+					`Planner-only: the previous pending child for task ${taskId} had already finished; its saved result was consumed before this delegation started.`,
+				);
+			}
+		}
+	}
+
+	private async supersedePendingDelegations(
+		taskId: string,
+		keepToolCallId: string,
+		warnings: string[],
+		options?: { protectWriters?: boolean },
+	): Promise<void> {
+		for (const [toolCallId, record] of [...this.delegations]) {
+			if (toolCallId === keepToolCallId || record.taskId !== taskId) continue;
+			if (await this.reconcileDelegation(toolCallId, record)) {
+				warnings.push(
+					`Planner-only: the previous pending child for task ${taskId} had already finished; its saved result was consumed before this delegation started.`,
+				);
+				continue;
+			}
+			if (options?.protectWriters && isWriterRole(record.kind)) {
+				warnings.push(
+					`Planner-only: the pending writable child run ${record.runId ?? toolCallId} for task ${taskId} is not known stopped; review will run in parallel without superseding the writer.`,
+				);
+				continue;
+			}
+			this.delegations.delete(toolCallId);
+			this.supersededIds.add(toolCallId);
+			if (record.runId) this.supersededIds.add(record.runId);
+			warnings.push(
+				`Planner-only: this re-delegation supersedes the pending child run ${record.runId ?? toolCallId} for task ${taskId}; a late notice for it will be ignored.`,
+			);
+		}
+	}
+
+	private async reconcileDelegation(toolCallId: string, record: DelegationRecord): Promise<boolean> {
+		if (!record.runId || this.processedRunIds.has(record.runId)) return false;
+		const dirs: string[] = [];
+		if (record.asyncDir) {
+			const root = tempRootFromAsyncDir(record.asyncDir);
+			if (root) dirs.push(join(root, "artifacts"));
+		}
+		if (record.launchCwd) {
+			dirs.push(join(record.launchCwd, ".pi", "subagents", "artifacts"));
+		}
+		dirs.push(join(process.cwd(), ".pi", "subagents", "artifacts"));
+
+		const agents = [...new Set([record.agent, "worker", "oracle", "validator", "reviewer", "explorer"].filter(Boolean))] as string[];
+		let meta: { runId: string; agent: string; exitCode?: number } | undefined;
+		let metaDir: string | undefined;
+
+		for (const dir of dirs) {
+			if (!existsSync(dir)) continue;
+			for (const agent of agents) {
+				const names = [`${record.runId}_${agent}_meta.json`, `${record.runId}_${agent}_0_meta.json`];
+				for (const name of names) {
+					const p = join(dir, name);
+					if (existsSync(p)) {
+						try {
+							const parsed = JSON.parse(readFileSync(p, "utf8"));
+							if (parsed && parsed.exitCode !== undefined) {
+								meta = parsed;
+								metaDir = dir;
+								break;
+							}
+						} catch {}
+					}
+				}
+				if (meta) break;
+			}
+			if (meta) break;
+		}
+
+		if (!meta || meta.exitCode === undefined) return false;
+
+		let report: WorkerReport | undefined;
+		const candidates = ["result.json", "output.json", `${record.runId}.json`];
+		if (metaDir) {
+			const outputDir = join(metaDir, "outputs", record.runId);
+			if (existsSync(outputDir)) {
+				for (const cand of candidates) {
+					const cp = join(outputDir, cand);
+					if (existsSync(cp)) {
+						try {
+							const content = readFileSync(cp, "utf8");
+							report = extractWorkerReport(content);
+							if (report) break;
+						} catch {}
+					}
+				}
+			}
+		}
+
+		if (report) {
+			this.store.recordReport(record.taskId, report);
+			const task = this.store.get(record.taskId);
+			if (task && task.state === "executing") {
+				this.store.transition(record.taskId, "reviewing");
+			}
+			this.processedRunIds.add(record.runId);
+			this.delegations.delete(toolCallId);
+			return true;
+		}
+
+		if (meta.exitCode !== 0) {
+			this.processedRunIds.add(record.runId);
+			this.delegations.delete(toolCallId);
+			const task = this.store.get(record.taskId);
+			if (task && !isFinalTaskState(task.state)) {
+				this.store.transition(record.taskId, "failed");
+			}
+			return true;
+		}
+
+		return false;
+	}
+
+	async reconcilePendingDelegations(taskId?: string): Promise<number> {
+		let count = 0;
+		for (const [toolCallId, record] of [...this.delegations]) {
+			if (taskId && record.taskId !== taskId) continue;
+			if (await this.reconcileDelegation(toolCallId, record)) {
+				count += 1;
+			}
+		}
+		return count;
+	}
+
+	async beginDelegation(
+		event: { toolCallId: string; input?: unknown },
+		baseCwd: string = process.cwd(),
+	): Promise<DelegationOutcome> {
+		const rawInput = event.input ?? {};
+		const inputRecord = (typeof rawInput === "object" && rawInput !== null)
+			? (rawInput as Record<string, unknown>)
+			: { task: String(rawInput) };
+
+		let parsedTask: Record<string, unknown> | undefined;
+		if (typeof inputRecord.task === "object" && inputRecord.task !== null) {
+			parsedTask = inputRecord.task as Record<string, unknown>;
+		} else if (typeof inputRecord.task === "string") {
+			try {
+				const candidate = JSON.parse(inputRecord.task.trim());
+				if (candidate && typeof candidate === "object") parsedTask = candidate;
+			} catch {}
+		}
+
+		const agent = typeof inputRecord.agent === "string" ? inputRecord.agent.trim().toLowerCase() : undefined;
+		let role: DelegationKind = "worker";
+		if (agent === "oracle" || agent === "validator") {
+			role = "validator";
+		} else if (agent === "reviewer") {
+			role = "reviewer";
+		} else if (agent === "scout" || agent === "explorer") {
+			role = "explorer";
+		} else if (typeof inputRecord.role === "string") {
+			role = inputRecord.role as DelegationKind;
+		} else if (typeof parsedTask?.role === "string") {
+			role = parsedTask.role as DelegationKind;
+		}
+
+		const rawCwd = (parsedTask && typeof parsedTask.cwd === "string" && parsedTask.cwd.trim())
+			? parsedTask.cwd.trim()
+			: (typeof inputRecord.cwd === "string" && inputRecord.cwd.trim())
+				? inputRecord.cwd.trim()
+				: baseCwd;
+		const cwd = resolve(baseCwd, rawCwd);
+
+		const explicitTaskId = (parsedTask && typeof parsedTask.taskId === "string")
+			? parsedTask.taskId.trim()
+			: (typeof inputRecord.taskId === "string")
+				? inputRecord.taskId.trim()
+				: undefined;
+
+		let task: TaskRecord | undefined = explicitTaskId ? this.store.get(explicitTaskId) : undefined;
+
+		if (role === "validator") {
+			if (!task) {
+				const placeholderId = explicitTaskId ?? `unbound-validator-${event.toolCallId}`;
+				task = this.store.get(placeholderId) ?? this.store.create(createTaskSpec({
+					objective: typeof parsedTask?.objective === "string" ? parsedTask.objective : "validation",
+					cwd,
+					role: "validator",
+				}, placeholderId));
+			}
+		} else if (!task) {
+			if (explicitTaskId && parsedTask) {
+				task = this.store.create(createTaskSpec(parsedTask as unknown as any, explicitTaskId));
+			} else if (this.structuredDelegationMode === "warn" || !parsedTask) {
+				const nextId = this.store.nextTaskId();
+				const objective = typeof inputRecord.task === "string"
+					? inputRecord.task
+					: typeof parsedTask?.objective === "string"
+						? parsedTask.objective
+						: "unstructured task";
+				task = this.store.createAllocated(nextId, createTaskSpec({ objective, cwd, role }, nextId));
+			} else {
+				const nextId = this.store.nextTaskId();
+				task = this.store.createAllocated(nextId, createTaskSpec(parsedTask as unknown as any, nextId));
+			}
+		}
+
+		const warnings: string[] = [];
+
+		if (isWriterRole(role)) {
+			const wts = [task.cwd || cwd];
+			if (role === "validator" && cwd && normalizeWorkspaceIdentity(cwd) !== normalizeWorkspaceIdentity(task.cwd || cwd)) {
+				wts.push(cwd);
+			}
+			if (task.spec?.additionalWorktreeRoots) {
+				wts.push(...task.spec.additionalWorktreeRoots);
+			}
+			const worktrees = [...new Set(wts.map(normalizeWorkspaceIdentity))];
+
+			// Step 1: Reconcile same-Task pending children from child-run artifacts
+			await this.reconcileBeforeLock(task.taskId, warnings);
+
+			// Step 2: Refuse before launch if live writable Delegation still holds worktree and child is not known stopped
+			const conflict = await this.refuseOrClearWriteLocks(worktrees, role, warnings, task.taskId);
+			if (conflict.conflict) {
+				return { task, conflict, ...(warnings.length ? { warnings } : {}) };
+			}
+
+			// Step 3: Supersede leftover same-Task waiters
+			await this.supersedePendingDelegations(task.taskId, event.toolCallId, warnings);
+
+			// Step 4: Register new Delegation as lock holder
+			this.delegations.set(event.toolCallId, {
+				taskId: task.taskId,
+				kind: role,
+				worktrees,
+				lockedAt: this.store.now().toISOString(),
+				agent,
+				launchCwd: cwd,
+				spec: task.spec,
+				toolCallId: event.toolCallId,
+			});
+
+			// Step 5: Transition Task to executing only when lifecycle requires it
+			if (role === "worker" && (task.state === "planning" || task.state === "changes_requested")) {
+				this.store.transition(task.taskId, "executing");
+			}
+
+			return { task: this.store.require(task.taskId), ...(warnings.length ? { warnings } : {}) };
+		}
+
+		// Non-writable: reviewer or explorer
+		if (role === "reviewer") {
+			await this.supersedePendingDelegations(task.taskId, event.toolCallId, warnings, { protectWriters: true });
+			this.delegations.set(event.toolCallId, {
+				taskId: task.taskId,
+				kind: "reviewer",
+				agent: "reviewer",
+				launchCwd: cwd,
+				toolCallId: event.toolCallId,
+			});
+			return { task: this.store.require(task.taskId), ...(warnings.length ? { warnings } : {}) };
+		}
+
+		// explorer
+		this.delegations.set(event.toolCallId, {
+			taskId: task?.taskId ?? "unbound-explorer",
+			kind: "explorer",
+			agent: agent ?? "explorer",
+			launchCwd: cwd,
+			toolCallId: event.toolCallId,
+		});
+		return { task: task ? this.store.require(task.taskId) : undefined, ...(warnings.length ? { warnings } : {}) };
+	}
+
+	async handleSubagentResult(
+		event: {
+			toolCallId: string;
+			toolName?: string;
+			input?: unknown;
+			content?: { type?: string; text?: string }[];
+			isError?: boolean;
+			details?: Record<string, unknown>;
+		},
+	): Promise<{ content: { type: "text"; text: string }[] } | undefined> {
+		const delegation = this.delegations.get(event.toolCallId);
+		if (!delegation) return undefined;
+
+		const text = Array.isArray(event.content)
+			? event.content.map((c) => c.text ?? "").join("\n")
+			: "";
+
+		if (event.isError) {
+			const extracted = extractWorkerReport(text);
+			if (!extracted) {
+				if (delegation.runId) {
+					if (await this.reconcileDelegation(event.toolCallId, delegation)) {
+						return {
+							content: [{
+								type: "text",
+								text: `[PLANNER-ONLY] Run ${delegation.runId} for task ${delegation.taskId} errored after launch, but its artifacts show a terminal exit; the saved output was consumed.`,
+							}],
+						};
+					}
+					return {
+						content: [{
+							type: "text",
+							text: [
+								`[PLANNER-ONLY] Error for the async run ${delegation.runId} of task ${delegation.taskId}:`,
+								text,
+								"The run has not been confirmed stopped, so the write lock stays held and the task stays executing.",
+								"Wait for the completion notice or the run artifacts; until then Root may record a blocked verdict.",
+							].join("\n"),
+						}],
+					};
+				}
+
+				this.delegations.delete(event.toolCallId);
+				const task = this.store.get(delegation.taskId);
+				if (task && !isFinalTaskState(task.state)) {
+					this.store.transition(task.taskId, "failed");
+				}
+				return {
+					content: [{
+						type: "text",
+						text: `[PLANNER-ONLY] Delegation for task ${delegation.taskId} failed to launch.\n${text}`,
+					}],
+				};
+			}
+		}
+
+		const details = event.details;
+		const runId = typeof details?.runId === "string" ? details.runId : typeof details?.asyncId === "string" ? details.asyncId : undefined;
+		const isAsyncReceipt = Boolean(runId || details?.asyncDir);
+		if (isAsyncReceipt && !extractWorkerReport(text)) {
+			if (runId) delegation.runId = runId;
+			if (typeof details?.asyncDir === "string") delegation.asyncDir = details.asyncDir;
+			return {
+				content: [{
+					type: "text",
+					text: `[PLANNER-ONLY] Async delegation for task ${delegation.taskId} has started (runId: ${runId ?? "unknown"}).`,
+				}],
+			};
+		}
+
+		this.delegations.delete(event.toolCallId);
+		if (delegation.runId) this.processedRunIds.add(delegation.runId);
+
+		const report = extractWorkerReport(text);
+		if (report) {
+			if (delegation.kind === "validator") {
+				this.store.recordValidatorReport(delegation.taskId, report);
+			} else {
+				this.store.recordReport(delegation.taskId, report);
+				const task = this.store.get(delegation.taskId);
+				if (task && task.state === "executing") {
+					this.store.transition(task.taskId, "reviewing");
+				}
+			}
+			return {
+				content: [{
+					type: "text",
+					text: `[PLANNER-ONLY REVIEW STATE] Report recorded for task ${delegation.taskId}.`,
+				}],
+			};
+		}
+
+		try {
+			const parsed = JSON.parse(text);
+			if (parsed && typeof parsed.verdict === "string") {
+				return {
+					content: [{
+						type: "text",
+						text: `[PLANNER-ONLY] Reviewer verdict for task ${delegation.taskId}: ${parsed.verdict}.`,
+					}],
+				};
+			}
+		} catch {}
+
+		return {
+			content: [{
+				type: "text",
+				text: `[PLANNER-ONLY] Delegation finished for task ${delegation.taskId}.`,
+			}],
+		};
+	}
+
+	async handleAsyncNotify(
+		content: string,
+	): Promise<{ content: { type: "text"; text: string }[] } | undefined> {
+		if (typeof content !== "string" || !content.trim()) return undefined;
+		const lines = content.split("\n");
+		const first = lines[0] ?? "";
+		const single = first.match(
+			/^(Background task|Detached foreground task) (completed|failed|paused|stopped): \*\*(.+?)\*\*/,
+		);
+		const grouped = first.match(/^Background tasks completed \((\d+)\): (.+)$/);
+		if (!single && !grouped) return undefined;
+
+		const runIds: string[] = [];
+		for (const line of lines) {
+			if (line.startsWith("Child runs: ")) {
+				const parts = line.slice("Child runs: ".length).split(", ");
+				for (const part of parts) {
+					const trimmed = part.trim();
+					const statusMatch = trimmed.match(/^(.*?)(?: \(([^)]*)\))?$/);
+					const raw = statusMatch?.[1] ?? trimmed;
+					const separator = raw.indexOf("=");
+					const id = (separator >= 0 ? raw.slice(separator + 1) : raw).trim();
+					if (id) runIds.push(id);
+				}
+			}
+		}
+
+		const body = lines.slice(2).join("\n");
+		const report = extractWorkerReport(body);
+		if (report?.evidence?.workerRunId && this.supersededIds.has(report.evidence.workerRunId)) {
+			return undefined;
+		}
+		for (const id of runIds) {
+			if (this.supersededIds.has(id)) return undefined;
+		}
+
+		const taskIdMatch = body.match(/"taskId"\s*:\s*"([^"\\]{1,200})"/);
+		const taskIdHint = taskIdMatch?.[1];
+
+		const pending = [...this.delegations.entries()]
+			.map(([toolCallId, record]) => ({ toolCallId, record }))
+			.filter(({ record }) => !record.runId || !this.processedRunIds.has(record.runId));
+
+		let matched: { toolCallId: string; record: DelegationRecord } | undefined;
+		if (runIds.length > 0) {
+			matched = pending.find(({ record }) => record.runId && runIds.includes(record.runId));
+		} else if (taskIdHint) {
+			const hintId = this.store.get(taskIdHint)?.taskId ?? taskIdHint;
+			const byTask = pending.filter(({ record }) => record.taskId === hintId);
+			if (byTask.length === 1) {
+				matched = byTask[0];
+			} else {
+				return undefined;
+			}
+		} else {
+			const agentName = single?.[3]?.trim().toLowerCase() ?? "worker";
+			const byAgent = pending.filter(({ record }) => (record.agent ?? record.kind).toLowerCase() === agentName);
+			if (byAgent.length === 1) matched = byAgent[0];
+		}
+
+		if (!matched) return undefined;
+
+		const { toolCallId, record } = matched;
+		if (record.runId) this.processedRunIds.add(record.runId);
+		this.delegations.delete(toolCallId);
+
+		if (report) {
+			this.store.recordReport(record.taskId, report);
+			const task = this.store.get(record.taskId);
+			if (task && task.state === "executing") {
+				this.store.transition(record.taskId, "reviewing");
+			}
+		}
+
+		return {
+			content: [{
+				type: "text",
+				text: `[PLANNER-ONLY REVIEW STATE] Task ${record.taskId} notification consumed.`,
+			}],
+		};
+	}
 
 
 	/** E01 — the execution that produced report revision `task.reports.length`. */
@@ -1082,6 +1725,12 @@ export class PlannerOrchestrator {
 				};
 			}
 		}
+		if (verdict !== "blocked" && this.hasPendingDelegation(task.taskId)) {
+			return {
+				kind: "child-pending",
+				reason: `Task ${task.taskId} still has an active child delegation; wait for its result before recording a ${verdict} verdict, or record blocked to halt the loop.`,
+			};
+		}
 		if (task.state === "completed" || (task.state !== "report-invalid" && verdict !== "blocked" && task.reports.length === 0)) {
 			return {
 				kind: "no-report",
@@ -1161,6 +1810,8 @@ export class PlannerOrchestrator {
 		summary: string,
 		options: { findings?: ReviewFinding[]; source?: ReviewResult["source"]; acknowledgeDrift?: ReviewResult["acknowledgeDrift"] } = {},
 	): Promise<RootVerdictOutcome> {
+		await this.reconcilePendingDelegations(task.taskId);
+		task = this.store.require(task.taskId);
 		// §12 — an override is Root disagreeing with a *reviewer*; Root revising
 		// its own earlier verdict (or the operator's) is not one.
 		const previous = task.reviews.at(-1);

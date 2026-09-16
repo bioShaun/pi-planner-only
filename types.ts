@@ -635,6 +635,7 @@ export type RootVerdictRefusalKind =
 	| "no-report"            // no WorkerReport exists to judge
 	| "fresh-review-pending" // fresh mode has no reviewer ReviewResult yet
 	| "strict-zero-paths"
+	| "child-pending"
 	| "attribution-gap-unlock-refused";   // strict fresh mode has 0 evidence attribution paths
 
 /** Structured refusal of a Root verdict request: typed kind plus prose for display. */

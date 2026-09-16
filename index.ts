@@ -172,7 +172,7 @@ export function createLoadedPluginFingerprint(
 		const v = (ctx as any)?.sessionManager?.getSessionId?.();
 		return typeof v === "string" && v.trim() ? v.trim() : undefined;
 	})();
-	const sessionId = managerSessionId ?? contextSessionId ?? process.env.PI_SESSION_ID?.trim() ?? sessionFileHint ?? "unknown";
+	const sessionId = managerSessionId ?? contextSessionId ?? sessionFileHint ?? process.env.PI_SESSION_ID?.trim() ?? "unknown";
 	return {
 		version: 1,
 		loadedFingerprint: getLoadedPluginFingerprint(),

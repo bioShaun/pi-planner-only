@@ -2004,3 +2004,43 @@ export function normalizeWorkspaceIdentity(cwd: string): string {
 		return absolute;
 	}
 }
+
+export interface WriterConflict {
+	conflict: boolean;
+	taskId?: string;
+	reason?: string;
+}
+
+export function isWriterRole(role: string): boolean {
+	return role === "worker" || role === "validator";
+}
+
+export function findWriterConflict(
+	tasks: readonly TaskRecord[],
+	cwd: string,
+	role: string,
+	now: number = Date.now(),
+): WriterConflict {
+	if (!isWriterRole(role)) return { conflict: false };
+	const target = normalizeWorkspaceIdentity(cwd);
+	const holder = tasks.find(
+		(task) =>
+			isWriterRole(task.role) &&
+			task.state === "executing" &&
+			task.cwd !== "" &&
+			normalizeWorkspaceIdentity(task.cwd) === target,
+	);
+	if (!holder) return { conflict: false };
+	const stale = isExecutingStale(holder, now);
+	return {
+		conflict: true,
+		taskId: holder.taskId,
+		reason: [
+			`Planner-only guard: task ${holder.taskId} already holds the write lock for ${target}.`,
+			stale
+				? `That task has been executing for over ${executingStaleMinutes()} minutes and its child run has not been confirmed exited; reconcile the run (or abandon the task) before starting another writer.`
+				: "Keep one writable invocation per worktree; even a second call on the same Task must wait.",
+			"Wait for that run's result to release the lock, or delegate this one into a separate worktree.",
+		].join("\n"),
+	};
+}

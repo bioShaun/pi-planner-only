@@ -5,7 +5,7 @@
  * is held from accepted launch through the trusted terminal result, while
  * workspace access is checked separately from capacity.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 export const DEFAULT_CONCURRENCY_LIMIT = 3;
@@ -99,7 +99,12 @@ export function saveConcurrencyDefault(path: string, limit: number): { ok: true 
 }
 
 function normalizedWorkspace(path: string): string {
-	return resolve(path);
+	const absolute = resolve(path);
+	try {
+		return realpathSync(absolute);
+	} catch {
+		return absolute;
+	}
 }
 
 export class ConcurrencyController {
@@ -145,11 +150,8 @@ export class ConcurrencyController {
 		}
 		const workspaces = [...new Set((request.workspaces ?? []).filter(Boolean).map(normalizedWorkspace))];
 		const conflicts = this.enforceWorkspace ? [...this.reservations.values()].filter((active) => {
-			// A blocked/failed Task may be retried against its own stale claim, but
-			// that exception never suppresses checks against another execution.
-			if (request.taskId && active.taskId === request.taskId && request.state !== "executing") return false;
 			// Reader/reader overlap is safe. Any overlapping writer or reviewer must
-			// wait, including structured retries and same-task aliases while active.
+			// wait, including same-task aliases while active.
 			const bothReaders = request.capability === "reader" && active.capability === "reader";
 			return !bothReaders && workspaces.some((workspace) => active.workspaces.includes(workspace));
 		}) : [];

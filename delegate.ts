@@ -545,12 +545,12 @@ export async function runDelegation(
 	// P0-B — the explicit anomaly envelope; validated before launch, never defaulted.
 	const envelope = validateEnvelope(params.envelope);
 
-	// 2. Write lock: only workers claim the workspace; readers/validators run
-	//    beside an active writer by design. A persisted writerHold outlives
+	// 2. Write lock: workers and validators claim the workspace; readers/explorers
+	//    run beside an active writer by design. A persisted writerHold outlives
 	//    both the session and the reservation map: a stop-unconfirmed
 	//    workspace admits no second writer (A4).
 	let reservation: ConcurrencyReservation | undefined;
-	if (role === "worker") {
+	if (role === "worker" || role === "validator") {
 		if (task.writerHold && recoveryDecision?.worktreeDecision === "manual") {
 			deps.concurrency.release(task.writerHold.executionId);
 			deps.concurrency.release(`writerhold:${task.writerHold.executionId}`);
