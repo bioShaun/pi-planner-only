@@ -1,6 +1,6 @@
 # Worker Runaway Controller 与 Correction Contract
 
-Status: ready-for-agent
+Status: delivered (P0)
 Type: spec
 Date: 2026-09-16
 Revision: 3 — 补停止确认谓词、迟到 terminal 保留、RecoveryDecision 入口；P0 收窄为 tokens + 墙钟、显式 envelope、retry_same_plan/abort
@@ -186,3 +186,4 @@ Worker 的单次执行可能在极小任务上消耗异常，Root 缺少可靠�
 - 架构依据：[领域词汇](../../CONTEXT.md)、[typed delegation ADR](../../docs/adr/0001-typed-delegation-contract.md)。其中历史 child process／取消说明与当前安装宿主的 in-process 实现存在差异；实现阶段应更新相应领域文档与 ADR 的运行时事实，保留 typed contract 决策。
 - 尚需实现阶段验证的契约：宿主最坏清理上界的实测值（决定 quiescenceWaitMs 下限）、未确认执行跨重启的隔离恢复、`tokens` 口径的安装版本一致性及精确 schema/API 形状。缺少支持时显式阻塞相关自动恢复能力，不能以推测填补。
 - P0-A 宿主复验（host-01，pi 0.85.1 / pi-subagents 0.67.0 / index.ts @066685b）：RPC abort 与 TUI Esc 走同一 AbortSignal。观测到：(a) `cancelled` 终态在 5 s 宽限内到达，10 s 静滞窗 + 两次一致采样后确认 `stopped`（`terminal+quiet-worktree`），writer 预留释放，usage 恰一行；(b) 宿主在 quiescence 窗口内被 SIGKILL，执行卡在 `stopping` 且无 writerHold——新会话 restore 时合成持久化 hold 并重新占用工作区，第二 writer 被 `WORKSPACE_CONFLICT` 拒绝；(c) 正常完成路径不受影响（`completed`/`normal`/`normal-completion`）。结论：in-process 子代理死亡即停止，宽限内终态总是很快到达；`stop_unconfirmed` 在宿主上更常见的成因是宿主自身死亡而非子代理不应答 CANCEL。restore 时以「停止在飞」合成 hold 覆盖了这一残留路径。
+- P0-B 宿主复验（host-02，同环境 @f63784a）：(a) `envelope{maxTokens:3000}` 的写文件任务在 UPDATE tokens=4024 越线 → 内部 abort → 宿主 CANCEL → `cancelled` 终态 → 静滞确认 `stopped`/`worker_runaway`，Task `blocked` + `recovery.required`（reason 含 anomaly 明细）；(b) 同 taskId + `recovery{retry_same_plan}` 的 planner_delegate 通过门控，决策恰一次消费（consumedBy=新 executionId），第二执行无 envelope 正常 `completed`，Task 回 `reviewing`，usage children 每执行恰一行；(c) 重试仍带 envelope 时二次跑飞（tokens=201230>200000）同样被收掉，required 以新 executionId 重新置位、已消费决策留在 recoveryHistory——恢复门不是一次性免检；(d) 参数缺字段的恢复调用被 schema 层拒绝，不建执行、不消费决策。驱动：host-02/drive-rpc-12b.mjs（分段 RPC prompt）。

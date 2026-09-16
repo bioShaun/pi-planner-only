@@ -1,6 +1,6 @@
 # 12: Worker Runaway Controller 与 Correction Contract — 新阶段入口
 
-Status: ready-for-agent
+Status: done（2026-09-16；P0-A/P0-B/ soak 全过，handback .scratch/worker-runaway-controller/handback.md）
 Type: spec
 Blocked by: 11
 Date: 2026-09-16

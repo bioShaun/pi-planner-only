@@ -1,6 +1,6 @@
 # 03: soak — P0 全链宿主证据轮（零源码改动）
 
-Status: ready-for-agent
+Status: done（2026-09-16；五条关闭标准全过，证据 host-03-soak/99-soak-report.md）
 
 来源：.scratch/typed-delegation/handoff/12-PLAN.md §5；本票只采证，不改源码。
 
