@@ -960,8 +960,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				});
 				if (params.recovery !== undefined) {
 					orchestrator.store.consumeRecovery(task.taskId, params.recovery, "planner_verdict", "abort");
+					if (params.recovery.worktreeDecision === "manual") orchestrator.resolveWriterHold(task.taskId);
 				}
-				let text = orchestrator.renderDecisionBlock(outcome.task, outcome.decision, outcome.evidence);
+				let text = orchestrator.renderDecisionBlock(orchestrator.store.require(task.taskId), outcome.decision, outcome.evidence);
 				text = enrichDecisionText(text, outcome.task.taskId);
 				recordInjectedText(outcome.task.taskId, text);
 				persistSessionEntries();

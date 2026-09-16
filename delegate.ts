@@ -120,10 +120,11 @@ function validateEnvelope(raw: PlannerDelegateParams["envelope"]): ExecutionEnve
 	if (raw === undefined) return undefined;
 	const check = (name: string, value: number | undefined): number | undefined => {
 		if (value === undefined) return undefined;
-		if (!Number.isFinite(value) || value <= 0) {
-			throw new DelegationRefused("ENVELOPE_INVALID", `planner_delegate refused: envelope.${name} must be a positive finite number, got ${value}`);
+		const normalized = Math.floor(value);
+		if (!Number.isFinite(value) || normalized <= 0) {
+			throw new DelegationRefused("ENVELOPE_INVALID", `planner_delegate refused: envelope.${name} must normalize to a positive finite integer, got ${value}`);
 		}
-		return Math.floor(value);
+		return normalized;
 	};
 	const maxTokens = check("maxTokens", raw.maxTokens);
 	const maxWallMs = check("maxWallMs", raw.maxWallMs);
@@ -175,14 +176,15 @@ export function validateRecoveryDecision(
 	if (typeof decision.reason !== "string" || decision.reason.trim() === "") {
 		return "recovery.reason must name a concrete basis for the retry";
 	}
+	const evidenceKey = (refs: string[] | undefined) => [...new Set(refs ?? [])].sort().join("\u0000");
 	const duplicate = (task.recoveryHistory ?? []).find(
 		(entry) =>
 			entry.action === decision.action
-			&& entry.reason === decision.reason
-			&& JSON.stringify(entry.evidenceRefs ?? []) === JSON.stringify(decision.evidenceRefs ?? []),
+			&& entry.worktreeDecision === decision.worktreeDecision
+			&& evidenceKey(entry.evidenceRefs) === evidenceKey(decision.evidenceRefs),
 	);
 	if (duplicate) {
-		return `an identical recovery decision (${decision.action} / same reason and evidence) was already consumed by ${duplicate.consumedBy}; a reworded retry without new basis is refused`;
+		return `an equivalent recovery decision (${decision.action} / same evidence and worktree decision) was already consumed by ${duplicate.consumedBy}; rewording the reason is not a new basis`;
 	}
 	return undefined;
 }
@@ -549,10 +551,15 @@ export async function runDelegation(
 	//    workspace admits no second writer (A4).
 	let reservation: ConcurrencyReservation | undefined;
 	if (role === "worker") {
+		if (task.writerHold && recoveryDecision?.worktreeDecision === "manual") {
+			deps.concurrency.release(task.writerHold.executionId);
+			deps.concurrency.release(`writerhold:${task.writerHold.executionId}`);
+			task = deps.store.clearWriterHold(task.taskId);
+		}
 		if (task.writerHold) {
 			throw new DelegationRefused(
 				"WRITER_HOLD",
-				`planner_delegate refused: Task ${task.taskId} writer execution ${task.writerHold.executionId} was never confirmed stopped (${task.writerHold.reason}); resolve the hold before dispatching another writer`,
+				`planner_delegate refused: Task ${task.taskId} writer execution ${task.writerHold.executionId} was never confirmed stopped (${task.writerHold.reason}); submit a matching recovery with worktreeDecision=manual only after operator resolution`,
 				task.taskId,
 			);
 		}
@@ -586,9 +593,14 @@ export async function runDelegation(
 	const runController = new AbortController();
 	let runaway: RunawayObservation | undefined;
 	let maxTokensSeen = -1;
-	const launchStartedAt = Date.now();
+	let launchStartedAt = 0;
+	let wallTimer: ReturnType<typeof setTimeout> | undefined;
+	const stopWallTimer = () => {
+		if (wallTimer) clearTimeout(wallTimer);
+		wallTimer = undefined;
+	};
 	const breach = (signal: RunawaySignal, observed: number, limit: number) => {
-		if (runaway) return;
+		if (runaway || runController.signal.aborted) return;
 		runaway = { signal, observed, limit };
 		try {
 			deps.store.finalizeExecution(task.taskId, executionId, { runawayObservation: runaway });
@@ -609,11 +621,6 @@ export async function runDelegation(
 	options.signal?.addEventListener("abort", forwardAbort, { once: true });
 	if (options.signal?.aborted) runController.abort();
 	if (runController.signal.aborted) onSignalAbort();
-	// P0-B — wall clock is independent of UPDATE heartbeats; a silent child
-	//    still trips maxWallMs. Cleared in the finally.
-	const wallTimer = envelope?.maxWallMs !== undefined
-		? setTimeout(() => breach("wall", Date.now() - launchStartedAt, envelope.maxWallMs!), envelope.maxWallMs)
-		: undefined;
 
 	try {
 		// A running (or re-runnable) Task is executing for the duration of the
@@ -720,9 +727,14 @@ export async function runDelegation(
 						usageComplete = true;
 					}
 				}
+				const endedReason: ExecutionEndedReason = runaway
+					? "worker_runaway"
+					: cancelRequestedAt
+						? "operator_cancel"
+						: (TERMINAL_ENDED_REASON[late.status] ?? "provider_failure");
 				deps.store.finalizeExecution(task.taskId, executionId, {
 					status: q.confirmed ? "stopped" : "stop_unconfirmed",
-					endedReason: TERMINAL_ENDED_REASON[late.status] ?? "provider_failure",
+					endedReason,
 					endedAt: nowIso(),
 					terminationConfirmed: q.confirmed,
 					...(q.confirmed ? { confirmationBasis: "terminal+quiet-worktree", cTerminal: q.cTerminal } : { interimSample: q.interim }),
@@ -742,6 +754,12 @@ export async function runDelegation(
 
 		let response: SubagentDelegationResponse;
 		try {
+			// P0-B — wall clock is independent of UPDATE heartbeats; a silent child
+			//    still trips maxWallMs. Cleared as soon as the launcher returns.
+			launchStartedAt = Date.now();
+			wallTimer = envelope?.maxWallMs !== undefined
+				? setTimeout(() => breach("wall", Date.now() - launchStartedAt, envelope.maxWallMs!), envelope.maxWallMs)
+				: undefined;
 			response = await deps.launch(request, runController.signal, {
 				onUpdate: (update) => {
 					// P0-B monitor — cumulative token snapshot, max not sum;
@@ -757,7 +775,9 @@ export async function runDelegation(
 				},
 				onLateTerminal: settleLateTerminal,
 			});
+			stopWallTimer();
 		} catch (error) {
+			stopWallTimer();
 			const aborted = error instanceof DelegationAborted || runController.signal.aborted === true;
 			if (aborted) {
 				const emitted = !(error instanceof DelegationAborted) || error.requestEmitted;
@@ -963,6 +983,68 @@ export async function runDelegation(
 		//    execution record; `compareEvidence` produces the EvidenceComparison
 		//    the store and review loop consume.
 		const cReport = await captureEvidence(deps.gitRunner, sampleOptions(runId ?? executionId));
+		const completionQuiescence = await evaluateQuiescence(runId);
+		if (!completionQuiescence.confirmed) {
+			let usageComplete = false;
+			if (response.usage) {
+				const child = childUsageFromValue(response.usage, role as DelegationKind, {
+					...(runId ? { runId } : {}),
+					toolCallId: executionId,
+					...(response.agent ? { agent: response.agent } : {}),
+					...(response.model ? { model: response.model } : {}),
+					...(response.thinking ? { thinking: response.thinking } : {}),
+					source: "sync-details",
+					pending: false,
+					taskId: task.taskId,
+					executionId,
+					ownerRootSessionId: deps.ownerRunId,
+				});
+				if (child) {
+					deps.usage.recordChild(task.taskId, { ...child, outcome: "failed" });
+					usageComplete = true;
+				}
+			}
+			deps.store.finalizeExecution(task.taskId, executionId, {
+				status: "stop_unconfirmed",
+				endedReason: "normal",
+				endedAt: nowIso(),
+				terminationConfirmed: false,
+				cReport,
+				interimSample: completionQuiescence.interim,
+				...(completionQuiescence.evidenceIncomplete ? { evidenceIncomplete: true } : {}),
+				usageComplete,
+				...(runId ? { runId } : {}),
+			});
+			try { deps.store.transition(task.taskId, "blocked"); } catch { /* already final */ }
+			deps.store.setStateReason(task.taskId, "completed terminal arrived but worktree quiescence was not confirmed; report not admitted");
+			if (reservation) {
+				deps.store.setWriterHold(task.taskId, {
+					executionId,
+					reason: `stop unconfirmed after completed${completionQuiescence.evidenceIncomplete ? "; stop-evidence sampling failed" : ""}`,
+					since: nowIso(),
+				});
+			}
+			deps.store.setRecoveryRequired(task.taskId, {
+				reason: "completed terminal without confirmed worktree quiescence — await confirmation or operator resolution",
+				executionId,
+			});
+			return {
+				task: deps.store.require(task.taskId),
+				executionId,
+				...(runId ? { runId } : {}),
+				termination: {
+					status: "completed",
+					reason: "normal",
+					executionStatus: "stop_unconfirmed",
+					terminationConfirmed: false,
+					quiescenceWaitMs,
+					quiescenceWaitSource,
+					...(completionQuiescence.evidenceIncomplete ? { evidenceIncomplete: true } : {}),
+					usageComplete,
+				},
+				warnings,
+			};
+		}
 		const priorTruthPaths = task.executions
 			.filter((item) => item.executionId !== executionId && !item.auxiliary && !item.reportOnly && item.truthPaths?.length)
 			.flatMap((item) => item.truthPaths ?? []);
@@ -1028,9 +1110,10 @@ export async function runDelegation(
 			endedReason: "normal",
 			endedAt: nowIso(),
 			terminationConfirmed: true,
-			confirmationBasis: "normal-completion",
+			confirmationBasis: "terminal+quiet-worktree",
 			usageComplete: response.usage !== undefined,
 			cReport,
+			cTerminal: completionQuiescence.cTerminal,
 			...(runId ? { runId } : {}),
 			truthPaths: truth.truthPaths,
 			executionChangedPaths: truth.executionChangedPaths,
@@ -1082,7 +1165,7 @@ export async function runDelegation(
 			warnings,
 		};
 	} finally {
-		if (wallTimer) clearTimeout(wallTimer);
+		stopWallTimer();
 		options.signal?.removeEventListener("abort", forwardAbort);
 		runController.signal.removeEventListener("abort", onSignalAbort);
 		// A4 — release only when a path proved the execution stopped; an

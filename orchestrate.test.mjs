@@ -655,6 +655,42 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	}
 }
 
+{
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-wrc-cap-hold-"));
+	try {
+		const ledger = new LedgerSnapshotStore(dir);
+		const { MAX_LEDGER_RESTORE_PER_SESSION } = await import("./types.ts");
+		const held = spentTaskRecord("T-20260908-hcap", 0.01, 0.05);
+		held.state = "blocked";
+		held.updatedAt = "2026-09-01T00:00:00.000Z";
+		held.writerHold = { executionId: "call-cap-held", reason: "stop unconfirmed", since: "2026-09-01T00:00:00.000Z" };
+		held.executions.push({
+			executionId: "call-cap-held",
+			taskId: held.taskId,
+			kind: "worker",
+			cwd: held.cwd,
+			worktreeRoots: [held.cwd],
+			aRun: { cwd: held.cwd, taskId: held.taskId, workerRunId: "call-cap-held" },
+			status: "stop_unconfirmed",
+			endedReason: "operator_cancel",
+		});
+		ledger.write(held);
+		for (let i = 0; i < MAX_LEDGER_RESTORE_PER_SESSION + 3; i += 1) {
+			const task = spentTaskRecord(`T-20260908-hc${String(i).padStart(3, "0")}`, 0.01, 0.05);
+			task.updatedAt = new Date(Date.UTC(2026, 8, 8, 0, 0, i)).toISOString();
+			ledger.write(task);
+		}
+		const concurrency = new ConcurrencyController();
+		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir, concurrency });
+		const result = orch.restoreFromLedger();
+		assert.equal(result.restored, MAX_LEDGER_RESTORE_PER_SESSION + 1);
+		assert.ok(orch.store.get(held.taskId));
+		assert.ok(concurrency.status().reservations.some((reservation) => reservation.id === "writerhold:call-cap-held"));
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
 // --------------------------------------------------------------------------
 // Ticket 41 — blocked lifecycle: abandon, receipt parking, verdict, status
 // --------------------------------------------------------------------------
@@ -811,6 +847,8 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 		const status = orch.renderTaskStatus(orch.store.require(held.taskId));
 		assert.match(status, /Writer hold: kept/);
 		assert.match(status, /call-held: stop_unconfirmed \(operator_cancel\)/);
+		assert.equal(orch.resolveWriterHold(held.taskId).writerHold, undefined);
+		assert.equal(concurrency.status().reservations.length, 0);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

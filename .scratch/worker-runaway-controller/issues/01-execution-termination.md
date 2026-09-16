@@ -104,3 +104,10 @@ Esc 取消一个正在写文件的 worker（配方同 typed-delegation host-10/1
 5. 宿主证据 `host-01/`：cancel→宽限内 cancelled→quiescence→confirmed→release（T-20260916-006）；SIGKILL mid-stop → restore 合成 writerHold → 第二 writer WORKSPACE_CONFLICT（T-20260916-008）；正常完成不受影响（T-20260916-007）。CANCEL→terminal 实测间隔 <5 s（in-process，票 07 的 0.12 s 量级一致）。
 6. CONTEXT.md / ADR 0001 / README 双语已更新 in-process 运行时事实与停止确认语义。
 7. 偏差记录：票面 §「宿主轮」写 host-01/ 目录名（实际即本目录）；谓词对 `gitAvailable:false` 样本同样记 evidence-incomplete（探针不可用≠静止）；restore 时对 `cancel_requested`/`stopping`/`stop_unconfirmed` 未确认执行合成 writerHold（修复宿主实测的 mid-stop 死亡空洞）。
+
+## 独立审核收尾（2026-09-16）
+
+- 修正普通 `completed` writer 绕过 §3 谓词的问题：现在同样等待静滞并记录 `cTerminal`；静滞未确认则报告不入账、Task blocked、writerHold 保留。
+- 所有需隔离记录先于普通 64 条恢复上限载入；按需恢复复用同一 writer isolation 路径。
+- `worktreeDecision: manual` 作为操作者已处置残留 writer 的显式断言，可解除持久 hold；`keep` 仍拒绝新 writer。
+- 新增 completed 静滞成功／失败、恢复上限外 hold、人工解除 hold 回归；完整 typecheck/test 通过。

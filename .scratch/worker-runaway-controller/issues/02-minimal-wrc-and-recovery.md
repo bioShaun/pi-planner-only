@@ -93,3 +93,10 @@ probe 从 host-10/probe-template cp。极低 envelope（`maxTokens` 几千）派
 - nx-followups 02/03 → wontfix（理由写入票面）。
 - 宿主证据：host-02/（probe-t 成功恢复链、probe-r 二次跑飞链、
   probe-s schema 拒观察），详见 host-02/99-notes.md。
+
+## 独立审核收尾（2026-09-16）
+
+- `maxWallMs` 从实际 launcher 等待开始计时并在 terminal 返回即停止，不再把启动前 Evidence 或终态后静滞采样算入 envelope；小于 1 的数值归一后拒绝。
+- 迟到 terminal 收尾保留既有 `worker_runaway`／取消原因，不再由 `cancelled` 错写为 operator_cancel。
+- 恢复判重改为 action + 规范化 evidenceRefs + worktreeDecision；理由改写和证据顺序变化不构成新依据。
+- 新增对应生产路径回归；完整 typecheck/test 通过。

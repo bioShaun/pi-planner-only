@@ -342,13 +342,58 @@ export class PlannerOrchestrator {
 	}
 
 
+	private needsWriterIsolation(record: TaskRecord): boolean {
+		return record.writerHold !== undefined || (record.executions ?? []).some((execution) =>
+			["cancel_requested", "stopping", "stop_unconfirmed"].includes(execution.status ?? "")
+			&& execution.terminationConfirmed !== true,
+		);
+	}
+
+	private restoreRecord(record: TaskRecord): TaskRecord {
+		this.store.restore(record);
+		this.restoredTaskIds.add(record.taskId);
+		const restored = this.store.require(record.taskId);
+		// WRC P0-A — an execution whose stop was in flight when the host
+		//    ended never got its confirmation; hold the workspace
+		//    conservatively, same as a persisted hold.
+		for (const execution of restored.executions) {
+			const status = execution.status ?? "";
+			if (status === "cancel_requested" || status === "stopping" || status === "stop_unconfirmed") {
+				if (execution.terminationConfirmed !== true && !restored.writerHold) {
+					this.store.setWriterHold(restored.taskId, {
+						executionId: execution.executionId,
+						reason: `stop was in flight (${status}) when the host ended; residual state unsampled`,
+						since: new Date().toISOString(),
+					});
+				}
+				break;
+			}
+		}
+		// WRC P0-A — a persisted writer hold survives restart: re-register
+		// it so workspace admission keeps refusing a second writer instead
+		// of trusting a lost in-memory reservation.
+		const hold = restored.writerHold;
+		if (hold) {
+			this.concurrency.hold({
+				id: `writerhold:${hold.executionId}`,
+				taskId: restored.taskId,
+				role: "worker",
+				capability: "writer",
+				workspaces: [restored.cwd, ...(restored.spec?.additionalWorktreeRoots ?? [])],
+				reservedAt: hold.since,
+			});
+		}
+		return restored;
+	}
+
 	restoreFromLedger(): { restored: number; corrupt: LedgerCorrupt[] } {
 		if (!this.snapshots) return { restored: 0, corrupt: [] };
 		const { records, corrupt } = this.snapshots.readAll();
 		// Cap + filter (ticket 38 / F6): empty-cwd snapshots without a TaskSpec are
 		// ghost placeholders; restoring every historical Task unbounded floods the
-		// session store. Prefer the freshest eligible records up to the soft cap.
-		const eligible = records
+		// session store. Restore every isolation-bearing record, then the freshest
+		// ordinary records up to the soft cap.
+		const sorted = records
 			.filter((record) => {
 				if (record.cwd && record.cwd.trim() !== "") return true;
 				if (record.spec) return true;
@@ -359,42 +404,16 @@ export class PlannerOrchestrator {
 				return Number.isFinite(delta) && delta !== 0
 					? delta
 					: left.taskId.localeCompare(right.taskId);
-			})
-			.slice(0, MAX_LEDGER_RESTORE_PER_SESSION);
+			});
+		const isolated = sorted.filter((record) => this.needsWriterIsolation(record));
+		const eligible = [
+			...isolated,
+			...sorted.filter((record) => !this.needsWriterIsolation(record)).slice(0, MAX_LEDGER_RESTORE_PER_SESSION),
+		];
 		let restored = 0;
 		for (const record of eligible) {
 			if (this.store.get(record.taskId)) continue;
-			this.store.restore(record);
-			this.restoredTaskIds.add(record.taskId);
-			// WRC P0-A — an execution whose stop was in flight when the host
-			//    ended never got its confirmation; hold the workspace
-			//    conservatively, same as a persisted hold.
-			for (const execution of record.executions) {
-				const status = execution.status ?? "";
-				if (status === "cancel_requested" || status === "stopping" || status === "stop_unconfirmed") {
-					if (execution.terminationConfirmed !== true && !record.writerHold) {
-						this.store.setWriterHold(record.taskId, {
-							executionId: execution.executionId,
-							reason: `stop was in flight (${status}) when the host ended; residual state unsampled`,
-							since: new Date().toISOString(),
-						});
-					}
-					break;
-				}
-			}
-			// WRC P0-A — a persisted writer hold survives restart: re-register
-			// it so workspace admission keeps refusing a second writer instead
-			// of trusting a lost in-memory reservation.
-			if (record.writerHold) {
-				this.concurrency.hold({
-					id: `writerhold:${record.writerHold.executionId}`,
-					taskId: record.taskId,
-					role: "worker",
-					capability: "writer",
-					workspaces: [record.cwd, ...(record.spec?.additionalWorktreeRoots ?? [])],
-					reservedAt: record.writerHold.since,
-				});
-			}
+			this.restoreRecord(record);
 			restored += 1;
 		}
 		for (const item of corrupt) {
@@ -486,11 +505,17 @@ export class PlannerOrchestrator {
 				note: `belongs to workspace ${record.cwd}, while this delegation runs in ${cwd}; cross-workspace binding is refused`,
 			};
 		}
-		this.store.restore(record);
-		this.restoredTaskIds.add(record.taskId);
-		return { record: this.store.get(record.taskId) ?? record };
+		return { record: this.restoreRecord(record) };
 	}
 
+
+	resolveWriterHold(taskId: string): TaskRecord {
+		const task = this.store.require(taskId);
+		if (!task.writerHold) return task;
+		this.concurrency.release(task.writerHold.executionId);
+		this.concurrency.release(`writerhold:${task.writerHold.executionId}`);
+		return this.store.clearWriterHold(taskId);
+	}
 
 	/** Current child capacity and workspace reservations for /planner-only status. */
 	renderConcurrencyStatus(): string {

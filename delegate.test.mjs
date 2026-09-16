@@ -151,6 +151,9 @@ async function expectRefusal(promise, code) {
 	const execution = record.executions.find((item) => item.executionId === "call-1");
 	assert.ok(execution?.aRun, "A_run recorded");
 	assert.ok(execution?.cReport, "C_report recorded");
+	assert.ok(execution?.cTerminal, "normal completion records the confirmed residual sample");
+	assert.equal(execution?.terminationConfirmed, true);
+	assert.equal(execution?.confirmationBasis, "terminal+quiet-worktree");
 	assert.equal(execution.kind, "worker");
 	assert.equal(execution.auxiliary, undefined, "worker execution is not auxiliary");
 	assert.equal(record.reports.length, 1, "report recorded verbatim");
@@ -366,7 +369,7 @@ for (const [index, [status, expectedState]] of [
 // ---------------------------------------------------------------------------
 {
 	const dir = initRealRepo();
-	const { deps, launches } = makeDeps();
+	const { deps, launches } = makeDeps({ gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args) });
 	const outcome = await runDelegation(
 		deps,
 		makeParams({ role: "explorer", objective: "survey the module" }),
@@ -385,7 +388,7 @@ for (const [index, [status, expectedState]] of [
 // ---------------------------------------------------------------------------
 {
 	const dir = initRealRepo();
-	const { deps, launches } = makeDeps();
+	const { deps, launches } = makeDeps({ gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args) });
 	const outcome = await runDelegation(
 		deps,
 		makeParams({ role: "validator", objective: "validate the work" }),
@@ -1432,6 +1435,45 @@ for (const [index, [status, expectedState]] of [
 	assert.ok(refused instanceof DelegationRefused && refused.code === "WRITER_HOLD", `WRITER_HOLD expected, got ${refused}`);
 }
 
+{
+	const dir = initRealRepo();
+	const store = new TaskStore();
+	const taskId = "T-20260916-703";
+	store.create(createTaskSpec({ taskId, objective: "complete while the tree is moving", cwd: dir, role: "worker", validation: { required: false } }));
+	const concurrency = new ConcurrencyController();
+	let statusCallsAfterLaunch = 0;
+	let launched = false;
+	const { deps } = makeDeps({
+		store,
+		concurrency,
+		gitRunner: async (args, cwd) => {
+			const result = realGit(cwd ?? dir, ...args);
+			if (launched && args[0] === "status" && args.includes("--porcelain=v2") && !args.includes("--untracked-files=all")) {
+				statusCallsAfterLaunch += 1;
+				if (statusCallsAfterLaunch === 2) return { ...result, stdout: `${result.stdout}? completed-flip.txt\n` };
+			}
+			return result;
+		},
+		launch: async (request) => {
+			launched = true;
+			return {
+				requestId: request.requestId,
+				ownerRunId: request.ownerRunId,
+				nodeId: request.nodeId,
+				status: "completed",
+				runId: "run-completed-flip",
+				agent: "worker",
+				result: { kind: "structured", value: makeReport(taskId, "run-completed-flip", dir) },
+			};
+		},
+	});
+	const outcome = await runDelegation(deps, makeParams({ taskId }), dir, { executionId: "call-completed-flip" });
+	assert.equal(outcome.termination?.executionStatus, "stop_unconfirmed");
+	assert.equal(store.require(taskId).reports.length, 0);
+	assert.ok(store.require(taskId).writerHold);
+	assert.equal(concurrency.status().reservations.length, 1);
+}
+
 // ---------------------------------------------------------------------------
 // P0-A.2 — evidence-incomplete: a failing status probe makes the residual
 // state unknown (never clean). stop_unconfirmed + evidenceIncomplete + hold.
@@ -1562,7 +1604,7 @@ for (const [index, [status, expectedState]] of [
 	assert.equal(execution.status, "completed");
 	assert.equal(execution.endedReason, "normal");
 	assert.equal(execution.terminationConfirmed, true);
-	assert.equal(execution.confirmationBasis, "normal-completion");
+	assert.equal(execution.confirmationBasis, "terminal+quiet-worktree");
 	assert.equal(execution.usageComplete, true);
 	assert.equal(record.writerHold, undefined);
 }
@@ -1576,6 +1618,7 @@ for (const [index, [status, expectedState]] of [
 	await expectRefusal(runDelegation(deps, makeParams({ envelope: {} }), dir, { executionId: "e-inv1" }), "ENVELOPE_INVALID");
 	await expectRefusal(runDelegation(deps, makeParams({ envelope: { maxTokens: 0 } }), dir, { executionId: "e-inv2" }), "ENVELOPE_INVALID");
 	await expectRefusal(runDelegation(deps, makeParams({ envelope: { maxWallMs: Number.NaN } }), dir, { executionId: "e-inv3" }), "ENVELOPE_INVALID");
+	await expectRefusal(runDelegation(deps, makeParams({ envelope: { maxTokens: 0.5 } }), dir, { executionId: "e-inv4" }), "ENVELOPE_INVALID");
 	assert.equal(launches.length, 0, "invalid envelope never reaches the launcher");
 }
 
@@ -1758,7 +1801,27 @@ for (const [index, [status, expectedState]] of [
 		}), dir, { executionId: "call-g7" }),
 		"RECOVERY_REQUIRED",
 	);
-	assert.match(dup.message, /identical recovery decision|new basis/);
+	assert.match(dup.message, /equivalent recovery decision|new basis/);
+	for (const decision of [
+		{
+			executionId: "call-g6",
+			action: "retry_same_plan",
+			reason: "same claim, different wording",
+			evidenceRefs: ["a", "b"],
+			worktreeDecision: "keep",
+		},
+		{
+			executionId: "call-g6",
+			action: "retry_same_plan",
+			reason: "transient provider stall; same plan with a wider envelope",
+			evidenceRefs: ["b", "a"],
+			worktreeDecision: "keep",
+		},
+	]) {
+		retry.task.recoveryHistory[0].evidenceRefs = ["a", "b"];
+		const refusal = validateRecoveryDecision(retry.task, decision, new Set(["retry_same_plan", "fix_environment"]));
+		assert.match(refusal ?? "", /equivalent recovery decision|new basis/);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1795,6 +1858,78 @@ for (const [index, [status, expectedState]] of [
 	assert.equal(settled.recovery.nextAction, "abort");
 	assert.equal(settled.recovery.consumedBy, "planner_verdict");
 	assert.equal(settled.state, "blocked", "abort leaves the Task blocked for operator handling");
+}
+
+{
+	const dir = initRealRepo();
+	const store = new TaskStore();
+	const taskId = "T-20260916-801";
+	store.create(createTaskSpec({ taskId, objective: "resume after manual cleanup", cwd: dir, role: "worker", validation: { required: false } }));
+	store.transition(taskId, "executing");
+	store.transition(taskId, "blocked");
+	store.setRecoveryRequired(taskId, { executionId: "call-held", reason: "stop unconfirmed" });
+	store.setWriterHold(taskId, { executionId: "call-held", reason: "stop unconfirmed", since: "2026-09-16T00:00:00.000Z" });
+	const concurrency = new ConcurrencyController();
+	concurrency.hold({ id: "writerhold:call-held", taskId, role: "worker", capability: "writer", workspaces: [dir], reservedAt: "2026-09-16T00:00:00.000Z" });
+	const { deps } = makeDeps({ store, concurrency, gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args) });
+	const outcome = await runDelegation(deps, makeParams({
+		taskId,
+		recovery: { executionId: "call-held", action: "fix_environment", reason: "operator verified all child processes exited", worktreeDecision: "manual" },
+	}), dir, { executionId: "call-manual" });
+	assert.ok(outcome.report);
+	assert.equal(store.require(taskId).writerHold, undefined);
+	assert.equal(concurrency.status().reservations.length, 0);
+}
+
+{
+	const dir = initRealRepo();
+	let firstProbe = true;
+	const { deps } = makeDeps({
+		gitRunner: async (args, cwd) => {
+			if (firstProbe) {
+				firstProbe = false;
+				await sleep(20);
+			}
+			return realGit(cwd ?? dir, ...args);
+		},
+		launch: async (request, signal) => {
+			assert.equal(signal.aborted, false, "pre-launch evidence time is outside the wall envelope");
+			return {
+				requestId: request.requestId,
+				ownerRunId: request.ownerRunId,
+				nodeId: request.nodeId,
+				status: "completed",
+				runId: "run-fast",
+				agent: "worker",
+				result: { kind: "structured", value: makeReport(request.nodeId, "run-fast", request.cwd) },
+			};
+		},
+	});
+	const outcome = await runDelegation(deps, makeParams({ envelope: { maxWallMs: 5 } }), dir, { executionId: "call-fast" });
+	assert.ok(outcome.report);
+	assert.equal(outcome.termination, undefined);
+}
+
+{
+	const dir = initRealRepo();
+	const store = new TaskStore();
+	const taskId = "T-20260916-802";
+	store.create(createTaskSpec({ taskId, objective: "late runaway terminal", cwd: dir, role: "worker", validation: { required: false } }));
+	let hooks;
+	const { deps } = makeDeps({
+		store,
+		gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args),
+		launch: async (request, _signal, captured) => {
+			hooks = captured;
+			captured.onUpdate({ requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId, tokens: 200 });
+			throw new DelegationAborted(taskId);
+		},
+	});
+	const outcome = await runDelegation(deps, makeParams({ taskId, envelope: { maxTokens: 100 } }), dir, { executionId: "call-late-runaway" });
+	assert.equal(outcome.termination?.reason, "worker_runaway");
+	hooks.onLateTerminal({ requestId: "late-runaway", ownerRunId: "owner-run-1", nodeId: taskId, status: "cancelled", runId: "run-late-runaway", agent: "worker" });
+	await sleep(200);
+	assert.equal(store.require(taskId).executions[0].endedReason, "worker_runaway");
 }
 
 console.log("delegate.test.mjs: all cases passed");

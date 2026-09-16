@@ -26,6 +26,14 @@
 - UPDATE `tokens` 为 input+output 累计快照，涨速可观（写 10 文件
   ~200k）——envelope 取值需按任务规模设定；无 envelope 时纯观测。
 
+## 独立审核收尾
+
+- 普通 `completed` writer 现在也必须通过 terminal + 静滞谓词才接纳报告和释放 writer；失败则 blocked + hold，成功记录 `cTerminal`。
+- 迟到终态保留 `worker_runaway`；wall envelope 只覆盖实际 launcher；小于 1 的 envelope 值拒绝。
+- RecoveryDecision 按 action／规范化 evidenceRefs／worktreeDecision 判重，改写理由或调换证据顺序不能绕过；`manual` 可在操作者确认残留 writer 已处置后解除 hold。
+- writer isolation 记录不受普通账本恢复 64 条上限影响，按需恢复同样重新注册 hold。
+- 生产路径回归覆盖以上分支；`npm run typecheck`、完整 `npm test`、`git diff --check` 通过。原 host-01/02/03 证据仍用于宿主 CANCEL、UPDATE 与静滞采样事实；本轮不重写其历史账本。
+
 ## 已知边界 / 下一阶段
 
 - recovery.required 的 Task 仅能被结构化决策解锁；`abort` 后 Task 保持
@@ -41,6 +49,5 @@
 
 - 票 11 收口：5158453 ｜ 12-A 票面：d3ffef0 ｜ P0-A 实现：066685b ｜
   restore 修复：dd1713d ｜ 12-A 收口：3d33694 ｜ 12-B 票面：e4ae360 ｜
-  P0-B 实现：f63784a ｜ 12-B 收口：0049218 ｜ 票 03 开票：cf28cae
-- 最终 stage commit 包含票 12、票 03、spec 与本 handback；host-01/02/03-soak 证据目录与
-  handoff/ 工件不入库。
+  P0-B 实现：f63784a ｜ 12-B 收口：0049218 ｜ 票 03 开票：cf28cae ｜ 初次阶段关闭：c06d439
+- 本次独立审核收尾提交只包含源码、回归、README 双语、票 01/02/12、spec 与本 handback；host-01/02/03-soak 证据目录与 handoff/ 工件不入库。
