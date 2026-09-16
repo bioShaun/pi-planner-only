@@ -1,6 +1,6 @@
 # 01: P0-A — execution termination correctness（停止确认、迟到 terminal、受控释放、结构化异常返回、finalizeExecution）
 
-Status: open（2026-09-16；来源：../spec.md Revision 3 §2、§3、§8；typed-delegation 票 11 已 done）
+Status: done（2026-09-16；实现 066685b + dd1713d；宿主证据 ../host-01/；spec Further Notes 已记实测结论）
 Blocked by: typed-delegation 11（done）；12-A 是 12-B 的前置
 Type: bug / correctness
 
@@ -94,3 +94,13 @@ Esc 取消一个正在写文件的 worker（配方同 typed-delegation host-10/1
 5. `git diff --check` 空。
 6. 宿主证据落 `host-01/`：stop_unconfirmed → confirmed 的账本序列、C_terminal 采样、CANCEL→terminal 实测间隔。
 7. CONTEXT.md 与 ADR 0001 的运行时事实已更新（child processes → in-process）。
+
+## 验收结果（2026-09-16）
+
+1. `npm run typecheck && npm test` exit 0（提交 066685b / dd1713d 时全绿）。
+2. `git grep 'concurrency.release' -- delegate.ts` 仅两处：`finally` 内 `releaseReservation` 守卫（:911）与 `settleLateTerminal` 确认分支（:596）——无条件 finally 释放已删。
+3. `git grep 'throw new DelegationRefused' -- delegate.ts` 剩余全部为准入/参数拒（TASK_*/WRITER_*/REVIEW_*），无非 completed 终态路径。
+4. parse-grep 0；`git diff --check` 空。
+5. 宿主证据 `host-01/`：cancel→宽限内 cancelled→quiescence→confirmed→release（T-20260916-006）；SIGKILL mid-stop → restore 合成 writerHold → 第二 writer WORKSPACE_CONFLICT（T-20260916-008）；正常完成不受影响（T-20260916-007）。CANCEL→terminal 实测间隔 <5 s（in-process，票 07 的 0.12 s 量级一致）。
+6. CONTEXT.md / ADR 0001 / README 双语已更新 in-process 运行时事实与停止确认语义。
+7. 偏差记录：票面 §「宿主轮」写 host-01/ 目录名（实际即本目录）；谓词对 `gitAvailable:false` 样本同样记 evidence-incomplete（探针不可用≠静止）；restore 时对 `cancel_requested`/`stopping`/`stop_unconfirmed` 未确认执行合成 writerHold（修复宿主实测的 mid-stop 死亡空洞）。
