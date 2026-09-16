@@ -220,13 +220,19 @@ async function expectRefusal(promise, code) {
 	const dir = initRealRepo();
 
 	// TASK_UNKNOWN
-	{
+	for (const role of ["worker", "explorer", "validator"]) {
 		const { deps, launches } = makeDeps();
-		await expectRefusal(
-			runDelegation(deps, makeParams({ taskId: "T-20200101-001" }), dir, { executionId: "call-u" }),
+		const refusal = await expectRefusal(
+			runDelegation(deps, makeParams({ role, taskId: "T-20200101-001" }), dir, { executionId: `call-u-${role}` }),
 			"TASK_UNKNOWN",
 		);
 		assert.equal(launches.length, 0, "launch not called");
+		assert.equal(deps.store.active(), undefined, "no Task was minted");
+		assert.equal(deps.store.list().length, 0, "no Task was minted");
+		assert.equal(
+			refusal.message,
+			"planner_delegate refused: unknown Task T-20200101-001; omit taskId to create a new Task, or pass the id of an existing Task",
+		);
 	}
 
 	// TASK_FOREIGN_WORKSPACE
@@ -241,11 +247,16 @@ async function expectRefusal(promise, code) {
 		}));
 		const foreign = initRealRepo();
 		const { deps, launches } = makeDeps({ store });
-		await expectRefusal(
+		const refusal = await expectRefusal(
 			runDelegation(deps, makeParams({ taskId: "T-20260915-101" }), foreign, { executionId: "call-f" }),
 			"TASK_FOREIGN_WORKSPACE",
 		);
 		assert.equal(launches.length, 0, "launch not called");
+		assert.equal(store.list().length, 1, "no Task was minted");
+		assert.equal(
+			refusal.message,
+			`planner_delegate refused: Task T-20260915-101 belongs to workspace ${dir}, not ${foreign}; the id belongs to a different workspace's ledger; re-run from that workspace's cwd, or omit taskId to create a new Task in this workspace`,
+		);
 	}
 
 	// WRITER_CONFLICT: an active writer already holds this workspace.
@@ -629,6 +640,52 @@ function reviewerParams(taskId, overrides = {}) {
 		);
 		assert.equal(launches.length, 0, "launch not called");
 		assert.equal(deps.store.active(), undefined, "no Task was minted");
+	}
+
+	// TASK_UNKNOWN: reviewer binding unknown Task — points to canonical details.taskId, never suggests omitting taskId.
+	{
+		const { deps, launches } = makeReviewDeps(dir, { reviewFor: () => ({}) });
+		const refusal = await expectRefusal(
+			runDelegation(deps, reviewerParams("T-20200101-001"), dir, { executionId: "call-r-u" }),
+			"TASK_UNKNOWN",
+		);
+		assert.equal(launches.length, 0, "launch not called");
+		assert.equal(deps.store.active(), undefined, "no Task was minted");
+		assert.equal(deps.store.list().length, 0, "no Task was minted");
+		assert.equal(refusal.message.includes("omit taskId"), false, "reviewer guidance must not suggest omitting taskId");
+		assert.ok(refusal.message.includes("role=reviewer can only bind an existing Task"));
+		assert.ok(refusal.message.includes("pass the canonical taskId from a prior worker delegation's details.taskId"));
+		assert.equal(
+			refusal.message,
+			"planner_delegate refused: unknown Task T-20200101-001; role=reviewer can only bind an existing Task; pass the canonical taskId from a prior worker delegation's details.taskId",
+		);
+	}
+
+	// TASK_FOREIGN_WORKSPACE: reviewer binding Task from different workspace — directs to Task's cwd or existing reviewable Task id in this workspace, never suggests omitting taskId.
+	{
+		const store = new TaskStore();
+		store.create(createTaskSpec({
+			taskId: "T-20260915-399",
+			objective: "other workspace task",
+			cwd: dir,
+			role: "worker",
+			validation: { required: false },
+		}));
+		const foreign = initCommittedRepo();
+		const { deps, launches } = makeReviewDeps(foreign, { store, reviewFor: () => ({}) });
+		const refusal = await expectRefusal(
+			runDelegation(deps, reviewerParams("T-20260915-399"), foreign, { executionId: "call-r-f" }),
+			"TASK_FOREIGN_WORKSPACE",
+		);
+		assert.equal(launches.length, 0, "launch not called");
+		assert.equal(store.list().length, 1, "no Task was minted");
+		assert.equal(refusal.message.includes("omit taskId"), false, "reviewer guidance must not suggest omitting taskId");
+		assert.ok(refusal.message.includes("re-run from that workspace's cwd"));
+		assert.ok(refusal.message.includes("pass an existing reviewable Task id in this workspace"));
+		assert.equal(
+			refusal.message,
+			`planner_delegate refused: Task T-20260915-399 belongs to workspace ${dir}, not ${foreign}; the id belongs to a different workspace's ledger; re-run from that workspace's cwd, or pass an existing reviewable Task id in this workspace`,
+		);
 	}
 
 	// REVIEW_NO_REPORT: a live Task without a WorkerReport has nothing to judge.

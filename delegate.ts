@@ -501,12 +501,21 @@ export async function runDelegation(
 	if (params.taskId) {
 		const record = deps.store.get(params.taskId);
 		if (!record) {
-			throw new DelegationRefused("TASK_UNKNOWN", `planner_delegate refused: unknown Task ${params.taskId}`);
+			const guidance = role === "reviewer"
+				? "role=reviewer can only bind an existing Task; pass the canonical taskId from a prior worker delegation's details.taskId"
+				: "omit taskId to create a new Task, or pass the id of an existing Task";
+			throw new DelegationRefused(
+				"TASK_UNKNOWN",
+				`planner_delegate refused: unknown Task ${params.taskId}; ${guidance}`,
+			);
 		}
 		if (record.cwd && normalizeWorkspaceIdentity(record.cwd) !== normalizeWorkspaceIdentity(effectiveCwd)) {
+			const guidance = role === "reviewer"
+				? "re-run from that workspace's cwd, or pass an existing reviewable Task id in this workspace"
+				: "re-run from that workspace's cwd, or omit taskId to create a new Task in this workspace";
 			throw new DelegationRefused(
 				"TASK_FOREIGN_WORKSPACE",
-				`planner_delegate refused: Task ${record.taskId} belongs to workspace ${record.cwd}, not ${effectiveCwd}`,
+				`planner_delegate refused: Task ${record.taskId} belongs to workspace ${record.cwd}, not ${effectiveCwd}; the id belongs to a different workspace's ledger; ${guidance}`,
 			);
 		}
 		task = record;
