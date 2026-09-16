@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { PlannerOrchestrator } from "./orchestrate.ts";
 import { ConcurrencyController } from "./concurrency.ts";
 import { LedgerSnapshotStore } from "./ledger-store.ts";
 import { createTaskSpec, TaskStore, isExecutingStale } from "./task.ts";
-import { hashStatus, describeComparison } from "./evidence.ts";
+import { hashStatus, describeComparison, captureEvidence } from "./evidence.ts";
 import { emptyTaskUsage } from "./usage.ts";
 
 // Fixture ids are stamped 2026-09-05; pin the store clock so id replacement
@@ -65,7 +66,7 @@ function specFor(taskId, role = "worker", cwd = `/fixture/${taskId}`) {
 	};
 }
 
-function reportFor(taskId, toolCallId) {
+function reportFor(taskId, toolCallId, cwd = `/fixture/${taskId}`) {
 	return {
 		version: 1,
 		taskId,
@@ -74,7 +75,7 @@ function reportFor(taskId, toolCallId) {
 		changedFiles: ["src/parser.ts"],
 		validation: [{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "1 passed" }],
 		evidence: {
-			cwd: `/fixture/${taskId}`,
+			cwd,
 			taskId,
 			workerRunId: toolCallId,
 			baseGitRef: "abc1234",
@@ -1250,6 +1251,304 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 		content: [{ type: "text", text: "late error after completion" }],
 	});
 	assert.equal(lateErr, undefined, "late event on consumed delegation is no-op");
+}
+
+// --------------------------------------------------------------------------
+// Hardening-gaps Ticket 02 — Reviewer PASS is snapshot-bound; truncated packets cannot complete
+// --------------------------------------------------------------------------
+
+{
+	const scratchBase = join(process.cwd(), ".scratch");
+	mkdirSync(scratchBase, { recursive: true });
+
+	function setupRealGitRepo(prefix) {
+		const dir = mkdtempSync(join(scratchBase, `test-git-02-${prefix}-`));
+		const run = (args) => execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+		run(["init", "-q"]);
+		run(["config", "user.name", "Test Runner"]);
+		run(["config", "user.email", "test@example.com"]);
+		run(["config", "commit.gpgSign", "false"]);
+		mkdirSync(join(dir, "src"), { recursive: true });
+		writeFileSync(join(dir, "src", "parser.ts"), "export const x = 1;\n");
+		run(["add", "."]);
+		run(["commit", "-m", "init", "-q"]);
+		const head = run(["rev-parse", "HEAD"]).trim();
+		const runner = async (args) => {
+			try {
+				const stdout = execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+				return { stdout, stderr: "", code: 0 };
+			} catch (err) {
+				return { stdout: err.stdout?.toString() ?? "", stderr: err.stderr?.toString() ?? "", code: err.status ?? 1 };
+			}
+		};
+		return { dir, runner, head };
+	}
+
+	function realWorkerReport(taskId, toolCallId, dir, head) {
+		return {
+			version: 1,
+			taskId,
+			status: "completed",
+			summary: "Implemented parser change.",
+			changedFiles: ["src/parser.ts"],
+			validation: [{ command: "npm test", type: "test", status: "passed", exitCode: 0, summary: "tests passed" }],
+			evidence: {
+				cwd: dir,
+				taskId,
+				workerRunId: toolCallId,
+				baseGitRef: head,
+				finalGitRef: head,
+				gitStatusHash: cleanHash,
+				changedPaths: ["src/parser.ts"],
+				gitAvailable: true,
+				generatedAt: new Date().toISOString(),
+			},
+			risks: [],
+			unresolved: [],
+		};
+	}
+
+	// 1. Reviewer PASS omitting reportRevision or workspaceDigest, or with HEAD/status fallback digest, does NOT complete Task
+	{
+		const { dir, runner, head } = setupRealGitRepo("r01");
+		try {
+			const store = pinnedStore();
+			const orch = new PlannerOrchestrator({ gitRunner: runner, store });
+			const taskId = "T-20260905-r01";
+
+			// Worker delegates and completes, binding snapshot
+			await orch.beginDelegation(
+				{ toolCallId: "call-w1", input: { task: JSON.stringify(specFor(taskId, "worker", dir)) } },
+				dir,
+			);
+			await orch.handleSubagentResult(workerResult("call-w1", realWorkerReport(taskId, "call-w1", dir, head)));
+			const taskAfterWorker = orch.store.require(taskId);
+			assert.equal(taskAfterWorker.state, "reviewing");
+			assert.ok(taskAfterWorker.snapshot?.digest, "snapshot must be bound after worker report");
+			const boundDigest = taskAfterWorker.snapshot.digest;
+
+			// (a) Reviewer PASS omits reportRevision -> refused, Task state unchanged
+			await orch.beginDelegation({ toolCallId: "call-r1", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer", dir)) } }, dir);
+			const res1 = await orch.handleSubagentResult(reviewerResult("call-r1", taskId, "pass", { reportRevision: undefined, workspaceDigest: boundDigest }));
+			assert.match(res1.content[0].text, /rejected/i, "PASS without reportRevision must be rejected");
+			assert.equal(orch.store.require(taskId).state, "reviewing");
+			assert.equal(orch.store.require(taskId).reviews.length, 0);
+
+			// (b) Reviewer PASS omits workspaceDigest -> refused, Task state unchanged
+			await orch.beginDelegation({ toolCallId: "call-r2", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer", dir)) } }, dir);
+			const res2 = await orch.handleSubagentResult(reviewerResult("call-r2", taskId, "pass", { reportRevision: 1, workspaceDigest: undefined }));
+			assert.match(res2.content[0].text, /rejected/i, "PASS without workspaceDigest must be rejected");
+			assert.equal(orch.store.require(taskId).state, "reviewing");
+			assert.equal(orch.store.require(taskId).reviews.length, 0);
+
+			// (c) Reviewer PASS with HEAD/status fallback digest (e.g. cleanHash or head) -> refused, Task state unchanged
+			await orch.beginDelegation({ toolCallId: "call-r3", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer", dir)) } }, dir);
+			const res3 = await orch.handleSubagentResult(reviewerResult("call-r3", taskId, "pass", { reportRevision: 1, workspaceDigest: cleanHash }));
+			assert.match(res3.content[0].text, /rejected/i, "PASS with HEAD/status fallback digest must be rejected");
+			assert.equal(orch.store.require(taskId).state, "reviewing");
+			assert.equal(orch.store.require(taskId).reviews.length, 0);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	}
+
+	// 2. Pre-snapshot report cannot complete via Reviewer PASS or via Root planner_verdict
+	{
+		const { dir, runner, head } = setupRealGitRepo("r02");
+		try {
+			const store = pinnedStore();
+			const orch = new PlannerOrchestrator({ gitRunner: runner, store });
+			const taskId = "T-20260905-r02";
+			const task = store.create(createTaskSpec(specFor(taskId, "worker", dir), taskId));
+			store.transition(taskId, "executing");
+			// Record report manually without binding snapshot (pre-snapshot report)
+			store.recordReport(taskId, realWorkerReport(taskId, "call-w-presnap", dir, head));
+			store.transition(taskId, "reviewing");
+			assert.equal(store.require(taskId).snapshot, undefined, "no snapshot bound");
+
+			// Reviewer PASS cannot complete pre-snapshot report
+			await orch.beginDelegation({ toolCallId: "call-r-presnap", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer", dir)) } }, dir);
+			const res = await orch.handleSubagentResult(reviewerResult("call-r-presnap", taskId, "pass", { reportRevision: 1, workspaceDigest: "any-digest" }));
+			assert.match(res.content[0].text, /rejected.*pre-snapshot/i, "reviewer PASS on pre-snapshot report must be rejected");
+			assert.equal(orch.store.require(taskId).state, "reviewing");
+			assert.equal(orch.store.require(taskId).reviews.length, 0);
+
+			// Root planner_verdict cannot complete pre-snapshot report
+			const rootOutcome = await orch.recordRootVerdict(orch.store.require(taskId), "pass", "Root accept");
+			assert.notEqual(rootOutcome.task.state, "completed", "Root planner_verdict must not complete pre-snapshot report");
+			assert.notEqual(rootOutcome.decision.action, "accept");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	}
+
+	// 3. Reviewer PASS with packetTruncated or omitted patch paths is refused; request_changes and blocked still record
+	{
+		const { dir, runner, head } = setupRealGitRepo("r03");
+		try {
+			const store = pinnedStore();
+			const orch = new PlannerOrchestrator({ gitRunner: runner, store });
+			const taskId = "T-20260905-r03";
+
+			// Worker completes, snapshot bound
+			await orch.beginDelegation({ toolCallId: "call-w3", input: { task: JSON.stringify(specFor(taskId, "worker", dir)) } }, dir);
+			await orch.handleSubagentResult(workerResult("call-w3", realWorkerReport(taskId, "call-w3", dir, head)));
+			const boundDigest = orch.store.require(taskId).snapshot.digest;
+
+			// (a) Truncated packet PASS is refused; Task state unchanged
+			await orch.beginDelegation({
+				toolCallId: "call-r-trunc-pass",
+				input: { agent: "reviewer", packetTruncated: true, task: JSON.stringify(specFor(taskId, "reviewer", dir)) },
+			}, dir);
+			const passRes = await orch.handleSubagentResult(reviewerResult("call-r-trunc-pass", taskId, "pass", { reportRevision: 1, workspaceDigest: boundDigest }));
+			assert.match(passRes.content[0].text, /rejected.*truncated/i, "truncated packet PASS must be rejected");
+			assert.equal(orch.store.require(taskId).state, "reviewing");
+			assert.equal(orch.store.require(taskId).reviews.length, 0);
+
+			// (b) Truncated packet with request_changes still records and transitions state
+			await orch.beginDelegation({
+				toolCallId: "call-r-trunc-rc",
+				input: { agent: "reviewer", packetTruncated: true, task: JSON.stringify(specFor(taskId, "reviewer", dir)) },
+			}, dir);
+			const rcRes = await orch.handleSubagentResult(reviewerResult("call-r-trunc-rc", taskId, "request_changes", { reportRevision: 1, workspaceDigest: boundDigest }));
+			assert.match(rcRes.content[0].text, /request_changes/, "request_changes still recorded");
+			assert.equal(orch.store.require(taskId).state, "changes_requested");
+			assert.equal(orch.store.require(taskId).reviews.length, 1);
+
+			// Transition back to reviewing to test blocked
+			orch.store.transition(taskId, "executing");
+			orch.store.transition(taskId, "reviewing");
+
+			// (c) Truncated packet with blocked still records and transitions state
+			await orch.beginDelegation({
+				toolCallId: "call-r-trunc-blk",
+				input: { agent: "reviewer", packetTruncated: true, task: JSON.stringify(specFor(taskId, "reviewer", dir)) },
+			}, dir);
+			const blkRes = await orch.handleSubagentResult(reviewerResult("call-r-trunc-blk", taskId, "blocked", { reportRevision: 1, workspaceDigest: boundDigest }));
+			assert.match(blkRes.content[0].text, /blocked/, "blocked still recorded");
+			assert.equal(orch.store.require(taskId).state, "blocked");
+			assert.equal(orch.store.require(taskId).reviews.length, 2);
+
+			// (d) ReviewRequest with patchOmittedPaths in evidencePacket -> PASS refused
+			orch.store.transition(taskId, "reviewing");
+			await orch.beginDelegation({
+				toolCallId: "call-r-trunc-omitted",
+				input: {
+					agent: "reviewer",
+					task: JSON.stringify({
+						...specFor(taskId, "reviewer", dir),
+						evidencePacket: { patchOmittedPaths: ["src/big.ts"] },
+					}),
+				},
+			}, dir);
+			const omittedRes = await orch.handleSubagentResult(reviewerResult("call-r-trunc-omitted", taskId, "pass", { reportRevision: 1, workspaceDigest: boundDigest }));
+			assert.match(omittedRes.content[0].text, /rejected.*truncated/i, "packet with patchOmittedPaths must reject PASS");
+			assert.equal(orch.store.require(taskId).state, "reviewing");
+			assert.equal(orch.store.require(taskId).reviews.length, 2);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	}
+
+	// 4. Reviewer evidenceFresh flag cannot override snapshot comparison; workspace drift refuses PASS
+	{
+		const { dir, runner, head } = setupRealGitRepo("r04");
+		try {
+			const store = pinnedStore();
+			const orch = new PlannerOrchestrator({ gitRunner: runner, store });
+			const taskId = "T-20260905-r04";
+
+			await orch.beginDelegation({ toolCallId: "call-w4", input: { task: JSON.stringify(specFor(taskId, "worker", dir)) } }, dir);
+			await orch.handleSubagentResult(workerResult("call-w4", realWorkerReport(taskId, "call-w4", dir, head)));
+			const boundDigest = orch.store.require(taskId).snapshot.digest;
+
+			// Drift the workspace by modifying a file in scope
+			writeFileSync(join(dir, "src", "parser.ts"), "export const x = 999; // drift\n");
+
+			// (b) Reviewer returns PASS when snapshot sampling is unknown at accept time -> refused!
+			// Chmod 000 on in-scope file makes samplingPass fail with unreadable path
+			chmodSync(join(dir, "src", "parser.ts"), 0);
+			await orch.beginDelegation({ toolCallId: "call-r-unknown", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer", dir)) } }, dir);
+			const unknownRes = await orch.handleSubagentResult(reviewerResult("call-r-unknown", taskId, "pass", {
+				reportRevision: 1,
+				workspaceDigest: boundDigest,
+				evidenceFresh: true,
+			}));
+			assert.match(unknownRes.content[0].text, /rejected.*workspace snapshot/i, "unknown snapshot must reject PASS");
+			assert.equal(orch.store.require(taskId).state, "reviewing");
+			assert.equal(orch.store.require(taskId).reviews.length, 0);
+			chmodSync(join(dir, "src", "parser.ts"), 0o644);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	}
+
+	// 5. Matching snapshot digest plus matching report revision completes via Reviewer PASS (happy path)
+	{
+		const { dir, runner, head } = setupRealGitRepo("r05");
+		try {
+			const store = pinnedStore();
+			const orch = new PlannerOrchestrator({ gitRunner: runner, store });
+			const taskId = "T-20260905-r05";
+
+			await orch.beginDelegation({ toolCallId: "call-w5", input: { task: JSON.stringify(specFor(taskId, "worker", dir)) } }, dir);
+			writeFileSync(join(dir, "src", "parser.ts"), "export const x = 2;\n");
+			await orch.handleSubagentResult(workerResult("call-w5", realWorkerReport(taskId, "call-w5", dir, head)));
+			const boundDigest = orch.store.require(taskId).snapshot.digest;
+
+			// Workspace unchanged; Reviewer returns matching PASS
+			await orch.beginDelegation({ toolCallId: "call-r-happy", input: { agent: "reviewer", task: JSON.stringify(specFor(taskId, "reviewer", dir)) } }, dir);
+			const passRes = await orch.handleSubagentResult(reviewerResult("call-r-happy", taskId, "pass", {
+				reportRevision: 1,
+				workspaceDigest: boundDigest,
+				evidenceFresh: true,
+			}));
+			assert.match(passRes.content[0].text, /verdict for task T-20260905-r05: pass.*Action: accept/i);
+			assert.equal(orch.store.require(taskId).state, "completed");
+			assert.equal(orch.store.require(taskId).reviews.length, 1);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	}
+
+	// 6. Root planner_verdict with matching snapshot still completes (no regression of ticket 10)
+	{
+		const { dir, runner, head } = setupRealGitRepo("r06");
+		try {
+			const store = pinnedStore();
+			const orch = new PlannerOrchestrator({ gitRunner: runner, store });
+			const taskId = "T-20260905-r06";
+
+			await orch.beginDelegation({ toolCallId: "call-w6", input: { task: JSON.stringify(specFor(taskId, "worker", dir)) } }, dir);
+			const aSample = await captureEvidence(runner, { cwd: dir, taskId, workerRunId: "call-w6" });
+			orch.store.beginExecution(taskId, {
+				executionId: "call-w6",
+				kind: "worker",
+				cwd: dir,
+				worktreeRoots: [dir],
+				aRun: aSample,
+			});
+			writeFileSync(join(dir, "src", "parser.ts"), "export const x = 2;\n");
+			const cSample = await captureEvidence(runner, { cwd: dir, taskId, workerRunId: "call-w6", baseGitRef: head });
+			await orch.handleSubagentResult(workerResult("call-w6", realWorkerReport(taskId, "call-w6", dir, head)));
+			orch.store.completeExecution(taskId, "call-w6", {
+				status: "completed",
+				endedReason: "normal",
+				endedAt: new Date().toISOString(),
+				cReport: cSample,
+				reportIndex: 0,
+				truthPaths: ["src/parser.ts"],
+			});
+			assert.equal(orch.store.require(taskId).state, "reviewing");
+
+			// Root verdict with matching snapshot
+			const outcome = await orch.recordRootVerdict(orch.store.require(taskId), "pass", "Root acceptance check passed");
+			assert.equal(outcome.decision.action, "accept");
+			assert.equal(outcome.task.state, "completed");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	}
 }
 
 console.log("planner-only orchestration: PASS");

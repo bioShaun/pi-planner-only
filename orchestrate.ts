@@ -35,6 +35,8 @@ import {
 import type { SessionRootBudgetConfig, SessionRootSpend } from "./floors.ts";
 import {
 	advanceReview,
+	validateReviewResultBinding,
+	validateReviewResultIdentity,
 } from "./review.ts";
 import type { ReviewDecision } from "./review.ts";
 import { LedgerSnapshotStore, SAFE_TASK_ID } from "./ledger-store.ts";
@@ -179,8 +181,22 @@ function compareWithRootSamples(
 	options: { reportOnly?: boolean; readOnly?: boolean } = {},
 ) {
 	const roots = additionalWorktreeRootsOf(task);
+	const effectiveBase: EvidenceRef = task.baseEvidence ?? (
+		report.evidence.baseGitRef && report.evidence.gitAvailable !== false
+			? {
+				cwd: report.evidence.cwd,
+				taskId: report.evidence.taskId,
+				workerRunId: "inferred-base",
+				baseGitRef: report.evidence.baseGitRef,
+				finalGitRef: report.evidence.baseGitRef,
+				changedPaths: [],
+				gitAvailable: true,
+				generatedAt: report.evidence.generatedAt,
+			}
+			: missingBaseEvidence(task, current.workerRunId)
+	);
 	return compareEvidence(
-		task.baseEvidence ?? missingBaseEvidence(task, current.workerRunId),
+		effectiveBase,
 		current,
 		report,
 		{
@@ -240,6 +256,7 @@ export interface DelegationRecord {
 	launchCwd?: string;
 	spec?: TaskSpec;
 	toolCallId: string;
+	packetTruncated?: boolean;
 }
 
 export interface DelegationOutcome {
@@ -806,6 +823,7 @@ export class PlannerOrchestrator {
 
 		if (report) {
 			this.store.recordReport(record.taskId, report);
+			await this.bindSnapshotForLatestReport(this.store.require(record.taskId), record.runId ?? toolCallId);
 			const task = this.store.get(record.taskId);
 			if (task && task.state === "executing") {
 				this.store.transition(record.taskId, "reviewing");
@@ -960,12 +978,22 @@ export class PlannerOrchestrator {
 		// Non-writable: reviewer or explorer
 		if (role === "reviewer") {
 			await this.supersedePendingDelegations(task.taskId, event.toolCallId, warnings, { protectWriters: true });
+			const rawPacket = (parsedTask && typeof parsedTask === "object") ? parsedTask : inputRecord;
+			const isTruncated = Boolean(
+				inputRecord.packetTruncated === true ||
+				rawPacket?.packetTruncated === true ||
+				(rawPacket?.evidencePacket && typeof rawPacket.evidencePacket === "object" && (
+					(rawPacket.evidencePacket as any).patchTruncated === true ||
+					(Array.isArray((rawPacket.evidencePacket as any).patchOmittedPaths) && (rawPacket.evidencePacket as any).patchOmittedPaths.length > 0)
+				))
+			);
 			this.delegations.set(event.toolCallId, {
 				taskId: task.taskId,
 				kind: "reviewer",
 				agent: "reviewer",
 				launchCwd: cwd,
 				toolCallId: event.toolCallId,
+				packetTruncated: isTruncated,
 			});
 			return { task: this.store.require(task.taskId), ...(warnings.length ? { warnings } : {}) };
 		}
@@ -1060,6 +1088,7 @@ export class PlannerOrchestrator {
 				this.store.recordValidatorReport(delegation.taskId, report);
 			} else {
 				this.store.recordReport(delegation.taskId, report);
+				await this.bindSnapshotForLatestReport(this.store.require(delegation.taskId), delegation.toolCallId);
 				const task = this.store.get(delegation.taskId);
 				if (task && task.state === "executing") {
 					this.store.transition(task.taskId, "reviewing");
@@ -1073,17 +1102,142 @@ export class PlannerOrchestrator {
 			};
 		}
 
-		try {
-			const parsed = JSON.parse(text);
-			if (parsed && typeof parsed.verdict === "string") {
+		if (delegation.kind === "reviewer") {
+			const task = this.store.require(delegation.taskId);
+			let review: ReviewResult | undefined;
+			try {
+				const parsed = JSON.parse(text);
+				if (parsed && typeof parsed === "object" && typeof parsed.verdict === "string") {
+					review = parsed as ReviewResult;
+				}
+			} catch {}
+
+			if (!review) {
 				return {
 					content: [{
 						type: "text",
-						text: `[PLANNER-ONLY] Reviewer verdict for task ${delegation.taskId}: ${parsed.verdict}.`,
+						text: `[PLANNER-ONLY] Reviewer delegation finished for task ${delegation.taskId}: invalid review output.`,
 					}],
 				};
 			}
-		} catch {}
+
+			const identityErrors = validateReviewResultIdentity(review, task.taskId);
+			if (identityErrors.length > 0) {
+				return {
+					content: [{
+						type: "text",
+						text: `[PLANNER-ONLY] Reviewer verdict rejected: ${identityErrors.join("; ")}. Task state unchanged.`,
+					}],
+				};
+			}
+
+			if (review.verdict === "pass" && delegation.packetTruncated) {
+				return {
+					content: [{
+						type: "text",
+						text: `[PLANNER-ONLY] Reviewer verdict was rejected: the review packet for task ${task.taskId} was truncated (patchTruncated or omitted patch paths); a pass over a partial packet is not eligible. The verdict was not recorded and no task state changed.`,
+					}],
+				};
+			}
+
+			const report = task.reports.at(-1);
+			if (review.verdict === "pass") {
+				if (!report) {
+					return {
+						content: [{
+							type: "text",
+							text: `[PLANNER-ONLY] Reviewer verdict rejected: Task ${task.taskId} has no recorded WorkerReport. The verdict was not recorded and no task state changed.`,
+						}],
+					};
+				}
+				if (!task.snapshot || task.snapshot.reportRevision !== task.reports.length) {
+					return {
+						content: [{
+							type: "text",
+							text: `[PLANNER-ONLY] Reviewer verdict rejected: pre-snapshot report: no workspace snapshot binds the validated report revision ${task.reports.length}. The verdict was not recorded and no task state changed.`,
+						}],
+					};
+				}
+				const bindingErrors = validateReviewResultBinding(review, {
+					reportRevision: task.reports.length,
+					workspaceDigest: task.snapshot.digest,
+				});
+				if (bindingErrors.length > 0) {
+					return {
+						content: [{
+							type: "text",
+							text: `[PLANNER-ONLY] Reviewer verdict rejected: ${bindingErrors.join("; ")}. The verdict was not recorded and no task state changed.`,
+						}],
+					};
+				}
+			}
+
+			let currentSample: EvidenceRef | undefined;
+			if (report) {
+				currentSample = await captureEvidence(
+					this.gitRunner,
+					captureEvidenceOptionsFor(task, delegation.toolCallId, {
+						...(task.baseEvidence?.finalGitRef ? { baseGitRef: task.baseEvidence.finalGitRef } : {}),
+					}),
+				);
+			}
+
+			if (review.verdict === "pass" && currentSample) {
+				const currentSnapshot = captureWorkspaceSnapshot({
+					cwd: task.cwd,
+					taskId: task.taskId,
+					invocationId: `review-${delegation.toolCallId}`,
+					paths: snapshotPathsFor(task, currentSample),
+				});
+				const binding = compareSnapshotBinding(task.snapshot, currentSnapshot, task.reports.length);
+				if (binding.state !== "fresh") {
+					return {
+						content: [{
+							type: "text",
+							text: `[PLANNER-ONLY] Reviewer verdict was rejected: ${binding.reason ?? "the workspace snapshot at accept time is not fresh"}. The verdict was not recorded and no task state changed.`,
+						}],
+					};
+				}
+			}
+
+			let comparison: EvidenceComparison | undefined;
+			if (report && currentSample) {
+				comparison = compareWithRootSamples(task, currentSample, report);
+				const latestExec = this.executionForLatestReport(task);
+				if (latestExec) {
+					comparison = await this.augmentExecutionEvidence(task, currentSample, comparison);
+				}
+				comparison = { ...comparison, environmentFailure: environmentFailureOf(currentSample) };
+				if (review.verdict === "pass") {
+					comparison = this.preparePassFindings(task, comparison) ?? comparison;
+				}
+				this.store.setLastComparison(task.taskId, comparison);
+			}
+
+			const recordedReview: ReviewResult = {
+				...review,
+				source: "reviewer",
+			};
+			this.store.recordReview(task.taskId, recordedReview);
+			const { decision } = advanceReview({
+				store: this.store,
+				taskId: task.taskId,
+				...(report ? { report } : {}),
+				...(comparison ? { comparison } : {}),
+				review: recordedReview,
+			});
+			this.store.annotateReviewDecision(task.taskId, decision.action);
+			if (decision.action === "revalidate" && decision.evidenceKey) {
+				this.store.markRevalidationGranted(task.taskId, decision.evidenceKey);
+			}
+
+			return {
+				content: [{
+					type: "text",
+					text: `[PLANNER-ONLY] Reviewer verdict for task ${task.taskId}: ${review.verdict}. Action: ${decision.action}.`,
+				}],
+			};
+		}
 
 		return {
 			content: [{
@@ -1161,6 +1315,7 @@ export class PlannerOrchestrator {
 
 		if (report) {
 			this.store.recordReport(record.taskId, report);
+			await this.bindSnapshotForLatestReport(this.store.require(record.taskId), record.runId ?? toolCallId);
 			const task = this.store.get(record.taskId);
 			if (task && task.state === "executing") {
 				this.store.transition(record.taskId, "reviewing");
@@ -1761,6 +1916,36 @@ export class PlannerOrchestrator {
 		return undefined;
 	}
 
+
+	/**
+	 * FR-01 / Ticket 10 / hardening-gaps Ticket 02:
+	 * Bind the workspace snapshot that validated the latest report revision.
+	 */
+	private async bindSnapshotForLatestReport(task: TaskRecord, invocationId: string): Promise<void> {
+		const current = this.store.require(task.taskId);
+		const reportRevision = current.reports.length;
+		if (reportRevision === 0) return;
+		const currentSample = await captureEvidence(
+			this.gitRunner,
+			captureEvidenceOptionsFor(current, invocationId, {
+				...(current.baseEvidence?.finalGitRef ? { baseGitRef: current.baseEvidence.finalGitRef } : {}),
+			}),
+		);
+		const snapshot = captureWorkspaceSnapshot({
+			cwd: current.cwd,
+			taskId: current.taskId,
+			invocationId,
+			paths: snapshotPathsFor(current, currentSample),
+		});
+		if (snapshot.state === "fresh" && snapshot.digest) {
+			this.store.setSnapshot(current.taskId, {
+				version: 1,
+				digest: snapshot.digest,
+				reportRevision,
+				capturedAt: snapshot.capturedAt,
+			});
+		}
+	}
 
 	/**
 	 * The acceptance-boundary snapshot gate, shared by the Root verdict path

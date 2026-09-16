@@ -4,14 +4,14 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done (implemented, pending Root commit)
 
-- [ ] Reviewer PASS that omits report revision or workspace digest, or that names a HEAD/status fallback digest, does not complete the Task.
-- [ ] Reviewer PASS whose digest does not match a newly sampled WorkspaceSnapshot (including unknown/over-budget samples) does not complete; a matching digest plus matching revision still does.
-- [ ] A pre-snapshot WorkerReport cannot complete via Reviewer PASS or via Root `planner_verdict`.
-- [ ] Reviewer PASS with `patchTruncated` or omitted patch paths is refused; `request_changes` and `blocked` still record.
-- [ ] A Reviewer’s `evidenceFresh` flag does not override the snapshot comparison.
-- [ ] README and the Chinese README state that a bounded patch is in the ReviewRequest and that PASS is snapshot-digest-bound.
+- [x] Reviewer PASS that omits report revision or workspace digest, or that names a HEAD/status fallback digest, does not complete the Task.
+- [x] Reviewer PASS whose digest does not match a newly sampled WorkspaceSnapshot (including unknown/over-budget samples) does not complete; a matching digest plus matching revision still does.
+- [x] A pre-snapshot WorkerReport cannot complete via Reviewer PASS or via Root `planner_verdict`.
+- [x] Reviewer PASS with `patchTruncated` or omitted patch paths is refused; `request_changes` and `blocked` still record.
+- [x] A Reviewer’s `evidenceFresh` flag does not override the snapshot comparison.
+- [x] README and the Chinese README state that a bounded patch is in the ReviewRequest and that PASS is snapshot-digest-bound.
 
 ## Comments
 
