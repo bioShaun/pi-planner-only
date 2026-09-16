@@ -1,6 +1,6 @@
 # Planner-only orchestration
 
-The parent process stays a planner and reviewer. Execution happens in child processes. This glossary names the contracts that cross the parent/child seam.
+The parent process stays a planner and reviewer. Execution happens in delegated agent sessions that run **in-process** (pi-subagents structured delegation over the event transport), not child OS processes — a cancelled or crashed Root ends the delegation with it, though shell commands the delegate had already spawned may still orphan. This glossary names the contracts that cross the Root/child seam.
 
 ## Language
 

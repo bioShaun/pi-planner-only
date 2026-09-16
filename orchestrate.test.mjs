@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { PlannerOrchestrator } from "./orchestrate.ts";
+import { ConcurrencyController } from "./concurrency.ts";
 import { LedgerSnapshotStore } from "./ledger-store.ts";
 import { createTaskSpec, TaskStore } from "./task.ts";
 import { hashStatus, describeComparison } from "./evidence.ts";
@@ -765,6 +766,71 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	assert.match(verdict.decision.reason, /evidence material missing/);
 	assert.notEqual(verdict.task.state, "completed", "an in-session record without A_run/C_report never auto-completes");
 	setCleanTree();
+}
+
+// --------------------------------------------------------------------------
+// WRC P0-A — a persisted writerHold survives restore: the workspace keeps
+// refusing a second writer (the lost in-memory reservation is never trusted).
+// --------------------------------------------------------------------------
+{
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-wrc-hold-"));
+	try {
+		const held = spentTaskRecord("T-20260916-h01", 0.01, 0.05);
+		held.state = "blocked";
+		held.writerHold = {
+			executionId: "call-held",
+			reason: "cancel grace expired without a terminal; writer stop unconfirmed",
+			since: "2026-09-16T00:00:00.000Z",
+		};
+		held.executions.push({
+			executionId: "call-held",
+			taskId: held.taskId,
+			kind: "worker",
+			cwd: held.cwd,
+			worktreeRoots: [held.cwd],
+			aRun: { cwd: held.cwd, taskId: held.taskId, workerRunId: "call-held" },
+			status: "stop_unconfirmed",
+			endedReason: "operator_cancel",
+		});
+		new LedgerSnapshotStore(dir).write(held);
+		const concurrency = new ConcurrencyController();
+		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir, concurrency });
+		const result = orch.restoreFromLedger();
+		assert.equal(result.restored, 1);
+		assert.ok(
+			concurrency.status().reservations.some((r) => r.id === "writerhold:call-held"),
+			"the persisted hold is re-registered on restore",
+		);
+		const admission = concurrency.reserve({
+			id: "call-second",
+			role: "worker",
+			capability: "writer",
+			workspaces: [held.cwd],
+		});
+		assert.equal(admission.refusal?.code, "WORKSPACE_CONFLICT", "a second writer is refused after restart");
+		const status = orch.renderTaskStatus(orch.store.require(held.taskId));
+		assert.match(status, /Writer hold: kept/);
+		assert.match(status, /call-held: stop_unconfirmed \(operator_cancel\)/);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// P0-A — a pre-P0-A ledger record (no execution status fields) restores and
+// renders untouched: absent status is unknown, never "stopped".
+{
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-wrc-legacy-"));
+	try {
+		const legacy = spentTaskRecord("T-20260916-h02", 0.01, 0.05);
+		new LedgerSnapshotStore(dir).write(legacy);
+		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
+		assert.equal(orch.restoreFromLedger().restored, 1);
+		const status = orch.renderTaskStatus(orch.store.require(legacy.taskId));
+		assert.equal(status.includes("Writer hold"), false, "no hold line without a hold");
+		assert.equal(status.includes("stop_unconfirmed"), false, "legacy executions are not upgraded to a stop state");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 }
 
 console.log("planner-only orchestration: PASS");

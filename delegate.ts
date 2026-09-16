@@ -26,6 +26,7 @@ import {
 	type SubagentDelegationJsonSchemaObject,
 	type SubagentDelegationRequest,
 	type SubagentDelegationResponse,
+	type SubagentDelegationTerminalResponse,
 	type SubagentDelegationUpdate,
 	type SubagentDelegationUsage,
 } from "./subagent-delegation-contract.ts";
@@ -56,6 +57,9 @@ import type { UsageLedger } from "./usage.ts";
 import { isFinalTaskState, isTerminalTaskState } from "./types.ts";
 import type {
 	DelegationKind,
+	EvidenceRef,
+	ExecutionEndedReason,
+	ExecutionLifecycleStatus,
 	FindingCategory,
 	FindingSeverity,
 	ReviewResult,
@@ -69,6 +73,43 @@ const TASK_ID_PATTERN = "^T-\\d{8}-\\d{3}$";
 
 /** Launcher statuses that park the Task instead of failing it. */
 const BLOCKING_STATUSES = new Set(["cancelled", "timed_out", "tool_budget_exhausted"]);
+
+/**
+ * WRC P0-A — host terminal status → execution endedReason (spec §2).
+ * `worker_runaway` is never produced here: only the monitor marks that.
+ */
+const TERMINAL_ENDED_REASON: Record<string, ExecutionEndedReason> = {
+	cancelled: "operator_cancel",
+	interrupted: "operator_cancel",
+	timed_out: "timeout",
+	tool_budget_exhausted: "tool_budget",
+	failed: "provider_failure",
+	structured_output_failed: "tool_error",
+	acceptance_failed: "tool_error",
+	invalid_request: "launch_failure",
+	unavailable_context: "provider_failure",
+	duplicate_node: "launch_failure",
+};
+
+/** P0-A default quiescence wait after an identity-matched terminal (spec §3). */
+export const DEFAULT_QUIESCENCE_WAIT_MS = 10_000;
+const DEFAULT_QUIESCENCE_SAMPLE_GAP_MS = 250;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Two worktree samples prove quiescence when the status hash and every
+ * dirty-path content hash agree (spec §3 predicate (c)).
+ */
+function worktreeSamplesQuiet(a: EvidenceRef, b: EvidenceRef): boolean {
+	if (a.gitStatusHash !== b.gitStatusHash) return false;
+	const aHashes = a.dirtyPathHashes ?? {};
+	const bHashes = b.dirtyPathHashes ?? {};
+	const aKeys = Object.keys(aHashes);
+	const bKeys = Object.keys(bHashes);
+	if (aKeys.length !== bKeys.length) return false;
+	return aKeys.every((key) => aHashes[key] === bHashes[key]);
+}
 
 export const PLANNER_DELEGATE_PARAMETERS = Type.Object({
 	taskId: Type.Optional(
@@ -203,6 +244,13 @@ export const REVIEW_RESULT_SCHEMA = structuredClone(Type.Object(
 export interface DelegationLaunchHooks {
 	/** 每条按身份三元组过滤后的 UPDATE。调用方不得阻塞。 */
 	onUpdate?: (update: SubagentDelegationUpdate) => void;
+	/**
+	 * WRC P0-A — an identity-matched terminal that arrived after the cancel
+	 * grace already rejected the wait. The launcher keeps its RESPONSE
+	 * subscription alive for exactly this; the callback finalizes the
+	 * execution once (usage, C_terminal, release). Must not throw.
+	 */
+	onLateTerminal?: (response: SubagentDelegationTerminalResponse) => void;
 }
 
 export interface DelegationDeps {
@@ -213,6 +261,31 @@ export interface DelegationDeps {
 	launch: (request: SubagentDelegationRequest, signal?: AbortSignal, hooks?: DelegationLaunchHooks) => Promise<SubagentDelegationResponse>;
 	ownerRunId: string;
 	now?: () => Date;
+	/** P0-A stop-confirmation wait after an identity-matched terminal (spec §3). */
+	quiescenceWaitMs?: number;
+	/** Gap between the two confirmatory worktree samples. */
+	quiescenceSampleGapMs?: number;
+}
+
+/** WRC P0-A — structured abnormal-termination details returned instead of a thrown refusal (spec §3). */
+export interface DelegationTermination {
+	/** Host terminal status, when one arrived; absent on grace-expiry or pre-launch abort. */
+	status?: string;
+	/** Why the execution ended (mapped from the terminal status; never "normal" here). */
+	reason: ExecutionEndedReason;
+	/** Lifecycle state at return; absent for reviewer invocations, which hold no execution. */
+	executionStatus?: ExecutionLifecycleStatus;
+	terminationConfirmed: boolean;
+	confirmationBasis?: string;
+	quiescenceWaitMs?: number;
+	quiescenceWaitSource?: "default" | "config";
+	/** Stop-evidence sampling failed — the writer hold stays until resolved or manually handled. */
+	evidenceIncomplete?: boolean;
+	/** Residual worktree sample after confirmed quiescence. */
+	cTerminal?: EvidenceRef;
+	/** Whether the terminal's usage was accounted; false means only the observed lower bound stands. */
+	usageComplete: boolean;
+	error?: string;
 }
 
 export interface DelegationOutcome {
@@ -224,6 +297,8 @@ export interface DelegationOutcome {
 	comparison?: ExecutionTruthComparison;
 	decision?: ReviewDecision;        // advanceReview 的结果
 	usage?: SubagentDelegationUsage;
+	/** P0-A — present when the execution ended abnormally (cancel, timeout, failure, stop unconfirmed). */
+	termination?: DelegationTermination;
 	warnings: string[];
 }
 
@@ -271,10 +346,13 @@ export class DelegationRefused extends Error {
 export class DelegationAborted extends Error {
 	/** Set by runDelegation's launch catch before rethrow — the Task that was cancelled. */
 	taskId?: string;
+	/** False when the signal aborted before the REQUEST was emitted — nothing ever ran. */
+	readonly requestEmitted: boolean;
 
-	constructor(nodeId: string) {
+	constructor(nodeId: string, requestEmitted = true) {
 		super(`planner_delegate aborted: ${nodeId}`);
 		this.name = "DelegationAborted";
+		this.requestEmitted = requestEmitted;
 	}
 }
 
@@ -356,9 +434,18 @@ export async function runDelegation(
 	}
 
 	// 2. Write lock: only workers claim the workspace; readers/validators run
-	//    beside an active writer by design.
+	//    beside an active writer by design. A persisted writerHold outlives
+	//    both the session and the reservation map: a stop-unconfirmed
+	//    workspace admits no second writer (A4).
 	let reservation: ConcurrencyReservation | undefined;
 	if (role === "worker") {
+		if (task.writerHold) {
+			throw new DelegationRefused(
+				"WRITER_HOLD",
+				`planner_delegate refused: Task ${task.taskId} writer execution ${task.writerHold.executionId} was never confirmed stopped (${task.writerHold.reason}); resolve the hold before dispatching another writer`,
+				task.taskId,
+			);
+		}
 		const admission = deps.concurrency.reserve({
 			id: executionId,
 			taskId: task.taskId,
@@ -373,6 +460,27 @@ export async function runDelegation(
 		}
 		reservation = admission.reservation;
 	}
+
+	const nowIso = () => (deps.now ? deps.now() : new Date()).toISOString();
+	const quiescenceWaitMs = deps.quiescenceWaitMs ?? DEFAULT_QUIESCENCE_WAIT_MS;
+	const quiescenceWaitSource: "default" | "config" = deps.quiescenceWaitMs === undefined ? "default" : "config";
+	const quiescenceSampleGapMs = deps.quiescenceSampleGapMs ?? DEFAULT_QUIESCENCE_SAMPLE_GAP_MS;
+	// Set true only by a path that proved the execution stopped (or never
+	// launched); an unconfirmed stop keeps the reservation held via
+	// task.writerHold instead of releasing it in the finally (A4).
+	let releaseReservation = false;
+	let cancelRequestedAt: string | undefined;
+	// P0-A — stamp the cancel request on the execution the moment the signal
+	// fires; the launcher emits CANCEL on the same signal.
+	const onSignalAbort = () => {
+		if (cancelRequestedAt) return;
+		cancelRequestedAt = nowIso();
+		try {
+			deps.store.finalizeExecution(task.taskId, executionId, { status: "cancel_requested", cancelRequestedAt });
+		} catch { /* the abort path must not fail on a ledger write */ }
+	};
+	options.signal?.addEventListener("abort", onSignalAbort, { once: true });
+	if (options.signal?.aborted) onSignalAbort();
 
 	try {
 		// A running (or re-runnable) Task is executing for the duration of the
@@ -420,58 +528,255 @@ export async function runDelegation(
 			cwd: task.cwd || effectiveCwd,
 			result: { kind: "structured", schema: WORKER_REPORT_SCHEMA },
 		};
+		// A2 — spec §3 predicate: an identity-matched terminal plus a quiet
+		//    worktree, sampled twice after quiescenceWaitMs. A sampling failure
+		//    is evidence-incomplete, never clean.
+		const evaluateQuiescence = async (
+			terminalRunId?: string,
+		): Promise<
+			| { confirmed: true; cTerminal: EvidenceRef }
+			| { confirmed: false; interim: EvidenceRef; evidenceIncomplete?: boolean }
+		> => {
+			await sleep(quiescenceWaitMs);
+			const first = await captureEvidence(deps.gitRunner, sampleOptions(terminalRunId ?? executionId));
+			await sleep(quiescenceSampleGapMs);
+			const second = await captureEvidence(deps.gitRunner, sampleOptions(terminalRunId ?? executionId));
+			if (
+				first.statusProbeFailed || second.statusProbeFailed
+				|| first.gitAvailable === false || second.gitAvailable === false
+			) {
+				return { confirmed: false, interim: second, evidenceIncomplete: true };
+			}
+			return worktreeSamplesQuiet(first, second)
+				? { confirmed: true, cTerminal: second }
+				: { confirmed: false, interim: second };
+		};
+
+		// A3 — a terminal arriving after the grace reject still finalizes the
+		//    execution exactly once: quiescence, usage, C_terminal, release.
+		//    It must never advance review or release twice.
+		const settleLateTerminal = (late: SubagentDelegationTerminalResponse): void => {
+			void (async () => {
+				const execution = deps.store.executionById(task.taskId, executionId);
+				if (!execution) return;
+				if (execution.status === "stopped" || execution.status === "completed" || execution.status === "failed") return;
+				const lateSuccess = late.status === "completed";
+				const q = await evaluateQuiescence(late.runId);
+				let usageComplete = execution.usageComplete === true;
+				if (late.usage && !usageComplete) {
+					const child = childUsageFromValue(late.usage, role as DelegationKind, {
+						...(late.runId ? { runId: late.runId } : {}),
+						toolCallId: executionId,
+						...(late.agent ? { agent: late.agent } : {}),
+						...(late.model ? { model: late.model } : {}),
+						...(late.thinking ? { thinking: late.thinking } : {}),
+						source: "sync-details",
+						pending: false,
+						taskId: task.taskId,
+						executionId,
+						ownerRootSessionId: deps.ownerRunId,
+					});
+					if (child) {
+						deps.usage.recordChild(task.taskId, { ...child, outcome: "failed" });
+						usageComplete = true;
+					}
+				}
+				deps.store.finalizeExecution(task.taskId, executionId, {
+					status: q.confirmed ? "stopped" : "stop_unconfirmed",
+					endedReason: TERMINAL_ENDED_REASON[late.status] ?? "provider_failure",
+					endedAt: nowIso(),
+					terminationConfirmed: q.confirmed,
+					...(q.confirmed ? { confirmationBasis: "terminal+quiet-worktree", cTerminal: q.cTerminal } : { interimSample: q.interim }),
+					...(q.confirmed === false && q.evidenceIncomplete ? { evidenceIncomplete: true } : {}),
+					usageComplete,
+					...(late.runId ? { runId: late.runId } : {}),
+					...(lateSuccess && late.result?.kind === "structured" ? { lateReport: late.result.value as WorkerReport } : {}),
+				});
+				if (q.confirmed) {
+					if (reservation) deps.concurrency.release(reservation.id);
+					deps.store.clearWriterHold(task.taskId);
+				}
+			})().catch(() => {
+				/* late finalization is best-effort: the record stays stop_unconfirmed */
+			});
+		};
+
 		let response: SubagentDelegationResponse;
 		try {
 			response = await deps.launch(request, options.signal, {
 				onUpdate: (update) => options.onUpdate?.(renderDelegationProgress(role as DelegationKind, task.taskId, update)),
+				onLateTerminal: settleLateTerminal,
 			});
 		} catch (error) {
-			// Abort is an operator cancel, not a launch failure: the Task parks
-			// in blocked, same as the `cancelled` terminal path below.
-			if (error instanceof DelegationAborted || options.signal?.aborted) {
-				if (error instanceof DelegationAborted) error.taskId = task.taskId;
+			const aborted = error instanceof DelegationAborted || options.signal?.aborted === true;
+			if (aborted) {
+				const emitted = !(error instanceof DelegationAborted) || error.requestEmitted;
+				if (emitted) {
+					// Grace expired with no terminal: the stop is unconfirmed. The
+					// reservation becomes a persisted hold — released only when a
+					// late terminal confirms quiescence (A3/A4).
+					deps.store.finalizeExecution(task.taskId, executionId, {
+						status: "stop_unconfirmed",
+						endedReason: "operator_cancel",
+						...(cancelRequestedAt ? { cancelRequestedAt } : {}),
+						usageComplete: false,
+					});
+					if (reservation) {
+						deps.store.setWriterHold(task.taskId, {
+							executionId,
+							reason: "cancel grace expired without a terminal; writer stop unconfirmed",
+							since: nowIso(),
+						});
+					}
+				} else {
+					// Aborted before the REQUEST was emitted: nothing ever ran,
+					// so there is nothing to confirm.
+					deps.store.finalizeExecution(task.taskId, executionId, {
+						status: "stopped",
+						endedReason: "operator_cancel",
+						endedAt: nowIso(),
+						terminationConfirmed: true,
+						confirmationBasis: "no-launch",
+						usageComplete: false,
+					});
+					releaseReservation = true;
+				}
 				try { deps.store.transition(task.taskId, "blocked"); } catch { /* already final */ }
-				deps.store.setStateReason(task.taskId, "delegation cancelled by operator; no terminal response within grace");
-			} else {
-				const reason = `delegation launch failed: ${error instanceof Error ? error.message : String(error)}`;
-				try { deps.store.transition(task.taskId, "failed"); } catch { /* already final */ }
-				deps.store.setStateReason(task.taskId, reason);
+				deps.store.setStateReason(
+					task.taskId,
+					emitted
+						? "delegation cancelled by operator; no terminal response within grace — stop unconfirmed, writer hold kept"
+						: "delegation cancelled by operator before launch",
+				);
+				return {
+					task: deps.store.require(task.taskId),
+					executionId,
+					termination: {
+						reason: "operator_cancel",
+						executionStatus: emitted ? "stop_unconfirmed" : "stopped",
+						terminationConfirmed: !emitted,
+						...(emitted ? {} : { confirmationBasis: "no-launch" }),
+						quiescenceWaitMs,
+						quiescenceWaitSource,
+						usageComplete: false,
+						error: error instanceof Error ? error.message : String(error),
+					},
+					warnings,
+				};
 			}
-			throw error;
+			const reason = `delegation launch failed: ${error instanceof Error ? error.message : String(error)}`;
+			// A5 — a launch failure records its provable facts only: no child
+			//    ever ran, so no child termination evidence is fabricated.
+			deps.store.finalizeExecution(task.taskId, executionId, {
+				status: "failed",
+				endedReason: "launch_failure",
+				endedAt: nowIso(),
+				terminationConfirmed: true,
+				confirmationBasis: "no-launch",
+				usageComplete: false,
+			});
+			releaseReservation = true;
+			try { deps.store.transition(task.taskId, "failed"); } catch { /* already final */ }
+			deps.store.setStateReason(task.taskId, reason);
+			return {
+				task: deps.store.require(task.taskId),
+				executionId,
+				termination: {
+					reason: "launch_failure",
+					executionStatus: "failed",
+					terminationConfirmed: true,
+					confirmationBasis: "no-launch",
+					quiescenceWaitMs,
+					quiescenceWaitSource,
+					usageComplete: false,
+					error: reason,
+				},
+				warnings,
+			};
 		}
 
-		// 5. Non-completed terminal states are structured failures, not outcomes.
-		if (response.status !== "completed") {
-			const target = BLOCKING_STATUSES.has(response.status) ? "blocked" : "failed";
+		// 5. Non-completed terminals — and a completed terminal arriving after
+		//    the cancel request (A7 race) — are structured outcomes, not
+		//    throws. A terminal alone never proves the writer went quiet: the
+		//    §3 quiescence predicate decides whether the reservation releases.
+		const responseRunId = "runId" in response ? response.runId : undefined;
+		const lateSuccess = response.status === "completed" && cancelRequestedAt !== undefined;
+		if (response.status !== "completed" || lateSuccess) {
+			const terminal = response as SubagentDelegationTerminalResponse;
+			const target = lateSuccess || BLOCKING_STATUSES.has(terminal.status) ? "blocked" : "failed";
 			try { deps.store.transition(task.taskId, target); } catch { /* already final */ }
 			deps.store.setStateReason(
 				task.taskId,
-				`delegation ${response.status}${response.error ? `: ${response.error}` : ""}`,
+				lateSuccess
+					? "completed terminal arrived after the cancel request; report collected, review not advanced"
+					: `delegation ${terminal.status}${terminal.error ? `: ${terminal.error}` : ""}`,
 			);
 			// G4: a non-completed terminal can still carry usage — it lands on
-			// the same ledger path as completed, before the refusal throws.
+			// the same ledger path as completed.
+			let usageComplete = false;
 			if ("usage" in response && response.usage) {
-				const runId = "runId" in response ? response.runId : undefined;
 				const child = childUsageFromValue(response.usage, role as DelegationKind, {
-					...(runId ? { runId } : {}),
+					...(responseRunId ? { runId: responseRunId } : {}),
 					toolCallId: executionId,
-					...(response.agent ? { agent: response.agent } : {}),
-					...(response.model ? { model: response.model } : {}),
-					...(response.thinking ? { thinking: response.thinking } : {}),
+					...(terminal.agent ? { agent: terminal.agent } : {}),
+					...(terminal.model ? { model: terminal.model } : {}),
+					...(terminal.thinking ? { thinking: terminal.thinking } : {}),
 					source: "sync-details",
 					pending: false,
 					taskId: task.taskId,
 					executionId,
 					ownerRootSessionId: deps.ownerRunId,
 				});
-				if (child) deps.usage.recordChild(task.taskId, { ...child, outcome: "failed" });
+				if (child) {
+					deps.usage.recordChild(task.taskId, { ...child, outcome: "failed" });
+					usageComplete = true;
+				}
 			}
-			const runLabel = "runId" in response ? response.runId : undefined;
-			throw new DelegationRefused(
-				response.status.toUpperCase(),
-				`planner_delegate ${task.taskId} ${response.status}: ${response.error ?? "no error text"} (run=${runLabel ?? "none"})`,
-				task.taskId,
-			);
+			deps.store.finalizeExecution(task.taskId, executionId, { status: "stopping" });
+			const q = await evaluateQuiescence(responseRunId);
+			const endedReason: ExecutionEndedReason = lateSuccess
+				? "operator_cancel"
+				: (TERMINAL_ENDED_REASON[terminal.status] ?? "provider_failure");
+			deps.store.finalizeExecution(task.taskId, executionId, {
+				status: q.confirmed ? "stopped" : "stop_unconfirmed",
+				endedReason,
+				endedAt: nowIso(),
+				terminationConfirmed: q.confirmed,
+				...(q.confirmed ? { confirmationBasis: "terminal+quiet-worktree", cTerminal: q.cTerminal } : { interimSample: q.interim }),
+				...(q.confirmed === false && q.evidenceIncomplete ? { evidenceIncomplete: true } : {}),
+				usageComplete,
+				...(responseRunId ? { runId: responseRunId } : {}),
+				...(lateSuccess && terminal.result?.kind === "structured" ? { lateReport: terminal.result.value as WorkerReport } : {}),
+			});
+			if (reservation) {
+				if (q.confirmed) {
+					releaseReservation = true;
+				} else {
+					deps.store.setWriterHold(task.taskId, {
+						executionId,
+						reason: `stop unconfirmed after ${terminal.status}${q.confirmed === false && q.evidenceIncomplete ? "; stop-evidence sampling failed" : ""}`,
+						since: nowIso(),
+					});
+				}
+			}
+			return {
+				task: deps.store.require(task.taskId),
+				executionId,
+				...(responseRunId ? { runId: responseRunId } : {}),
+				termination: {
+					status: terminal.status,
+					reason: endedReason,
+					executionStatus: q.confirmed ? "stopped" : "stop_unconfirmed",
+					terminationConfirmed: q.confirmed,
+					...(q.confirmed ? { confirmationBasis: "terminal+quiet-worktree", cTerminal: q.cTerminal } : {}),
+					quiescenceWaitMs,
+					quiescenceWaitSource,
+					...(q.confirmed === false && q.evidenceIncomplete ? { evidenceIncomplete: true } : {}),
+					usageComplete,
+					...(terminal.error ? { error: terminal.error } : {}),
+				},
+				warnings,
+			};
 		}
 
 		const runId = response.runId;
@@ -542,6 +847,12 @@ export async function runDelegation(
 			? recorded.validatorReports.length - 1
 			: recorded.reports.length - 1;
 		deps.store.completeExecution(task.taskId, executionId, {
+			status: "completed",
+			endedReason: "normal",
+			endedAt: nowIso(),
+			terminationConfirmed: true,
+			confirmationBasis: "normal-completion",
+			usageComplete: response.usage !== undefined,
 			cReport,
 			...(runId ? { runId } : {}),
 			truthPaths: truth.truthPaths,
@@ -582,6 +893,7 @@ export async function runDelegation(
 		});
 
 		// 10. Outcome.
+		releaseReservation = true;
 		return {
 			task: reviewed,
 			executionId,
@@ -593,7 +905,10 @@ export async function runDelegation(
 			warnings,
 		};
 	} finally {
-		if (reservation) deps.concurrency.release(reservation.id);
+		options.signal?.removeEventListener("abort", onSignalAbort);
+		// A4 — release only when a path proved the execution stopped; an
+		//    unconfirmed stop holds the workspace via task.writerHold instead.
+		if (reservation && releaseReservation) deps.concurrency.release(reservation.id);
 	}
 }
 
@@ -676,9 +991,10 @@ async function runReviewInvocation(
 		onUpdate: (update) => options.onUpdate?.(renderDelegationProgress("reviewer", task.taskId, update)),
 	});
 
-	// R5 — non-completed statuses are refusals, not outcomes; nothing is
-	//    transitioned. G4: a terminal that still carries usage is recorded
-	//    (outcome failed) before the refusal throws.
+	// R5 — non-completed statuses are structured outcomes, not throws; nothing
+	//    is transitioned. G4: a terminal that still carries usage is recorded
+	//    (outcome failed). The reviewer holds no writer, so there is no stop
+	//    to confirm.
 	if (response.status !== "completed") {
 		if ("usage" in response && response.usage) {
 			const child = childUsageFromValue(response.usage, "reviewer", {
@@ -694,11 +1010,19 @@ async function runReviewInvocation(
 			});
 			if (child) deps.usage.recordChild(task.taskId, { ...child, outcome: "failed" });
 		}
-		throw new DelegationRefused(
-			response.status.toUpperCase(),
-			`planner_delegate ${task.taskId} review ${response.status}: ${response.error ?? "no error text"} (run=${"runId" in response ? response.runId : "none"})`,
-			task.taskId,
-		);
+		return {
+			task: deps.store.get(task.taskId) ?? task,
+			executionId: ids.executionId,
+			...("runId" in response && response.runId ? { runId: response.runId } : {}),
+			termination: {
+				status: response.status,
+				reason: TERMINAL_ENDED_REASON[response.status] ?? "provider_failure",
+				terminationConfirmed: true,
+				usageComplete: "usage" in response && response.usage !== undefined,
+				...("error" in response && response.error ? { error: response.error } : {}),
+			},
+			warnings,
+		};
 	}
 	const runId = response.runId;
 
@@ -873,6 +1197,16 @@ export function renderDelegationOutcome(outcome: DelegationOutcome): string {
 		lines.push(`review: ${outcome.review.verdict} (evidenceFresh: ${outcome.review.evidenceFresh}) — ${outcome.review.summary}`);
 		lines.push(...summarizeFindings(outcome.review.findings));
 	}
+	if (outcome.termination) {
+		const t = outcome.termination;
+		lines.push(
+			`termination: ${t.status ?? "no-terminal"} — reason=${t.reason}, confirmed=${t.terminationConfirmed}${t.confirmationBasis ? ` (${t.confirmationBasis})` : ""}${t.executionStatus ? `, execution=${t.executionStatus}` : ""}`,
+		);
+		if (t.executionStatus === "stop_unconfirmed") {
+			lines.push("writer hold: kept — the workspace stays reserved until a late terminal confirms quiescence or the operator resolves it");
+		}
+		if (t.evidenceIncomplete) lines.push("warning: stop-evidence sampling failed; residual workspace state is unknown");
+	}
 	for (const warning of outcome.warnings) lines.push(`warning: ${warning}`);
 	return lines.join("\n");
 }
@@ -920,7 +1254,7 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
 	const cancelGraceMs = options.cancelGraceMs ?? 5000;
 	return (request, signal, hooks) => new Promise((resolve, reject) => {
 		if (signal?.aborted) {
-			reject(new DelegationAborted(request.nodeId));
+			reject(new DelegationAborted(request.nodeId, false));
 			return;
 		}
 		let settled = false;
@@ -945,7 +1279,14 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
 		const unsubscribeResponse = pi.events.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) => {
 			const response = payload as SubagentDelegationResponse;
 			if (!matches(response)) return;
-			if (settled) return;
+			if (settled) {
+				// A3 — grace already rejected, but the subscription stays live for
+				//    exactly this: hand the late terminal to the caller's
+				//    finalization once, then unsubscribe. Never resolve twice.
+				cleanup();
+				if (response.status !== "invalid_request") hooks?.onLateTerminal?.(response);
+				return;
+			}
 			settled = true;
 			cleanup();
 			resolve(response);
@@ -963,7 +1304,12 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
 			graceTimer = setTimeout(() => {
 				if (settled) return;
 				settled = true;
-				cleanup();
+				// A3 — do NOT unsubscribe RESPONSE: the late terminal must still
+				//    reach onLateTerminal so the execution can be finalized and
+				//    the writer hold released. Drop only what serves no purpose.
+				unsubscribeUpdate();
+				signal?.removeEventListener("abort", onAbort);
+				inFlight.delete(request.requestId);
 				reject(new DelegationAborted(request.nodeId));
 			}, cancelGraceMs);
 		};

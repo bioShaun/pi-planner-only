@@ -206,10 +206,73 @@ export interface EvidenceRef {
  * separate `diff(C_report, C_now)` window. Validator and Explorer executions
  * are recorded as auxiliary and never reset the attribution chain.
  */
+/**
+ * WRC P0-A (spec §2) — execution lifecycle status. `stop_unconfirmed` means a
+ * cancel was requested or a terminal arrived but worktree quiescence was never
+ * proven: the writer reservation must stay held. Absent on pre-P0-A ledgers;
+ * readers treat a missing status as unknown, never as safely stopped.
+ */
+export type ExecutionLifecycleStatus =
+	| "running"
+	| "cancel_requested"
+	| "stopping"
+	| "stop_unconfirmed"
+	| "stopped"
+	| "completed"
+	| "failed";
+
+/** WRC P0-A (spec §2) — why an execution ended. An observed reason, not a diagnosis. */
+export type ExecutionEndedReason =
+	| "normal"
+	| "worker_runaway"
+	| "operator_cancel"
+	| "timeout"
+	| "tool_budget"
+	| "provider_failure"
+	| "tool_error"
+	| "launch_failure";
+
 export interface TaskExecutionRecord {
 	/** Host subagent tool-call id for this invocation. */
 	executionId: string;
 	taskId: string;
+	/** P0-A lifecycle status; `beginExecution` writes `running`. */
+	status?: ExecutionLifecycleStatus;
+	/** Why this execution ended; absent while running or on old ledgers. */
+	endedReason?: ExecutionEndedReason;
+	/** When a CANCEL was requested (signal abort or WRC). Never used as endedAt. */
+	cancelRequestedAt?: string;
+	/** When the execution's terminal state was finalized. */
+	endedAt?: string;
+	/** Set only when the spec §3 quiescence predicate passed. */
+	terminationConfirmed?: boolean;
+	/**
+	 * P0 basis is only `"terminal+quiet-worktree"`: an identity-matched
+	 * terminal plus two identical worktree samples after `quiescenceWaitMs`.
+	 * Proves the worktree went quiet in the observation window — nothing more.
+	 */
+	confirmationBasis?: string;
+	/**
+	 * Residual worktree sample captured after confirmed quiescence (spec §3
+	 * C_terminal). Distinct from cReport: it is evidence of what the aborted
+	 * window left behind, not a report boundary.
+	 */
+	cTerminal?: EvidenceRef;
+	/**
+	 * A worktree sample taken while quiescence was still unproven. Marked
+	 * interim by location: it must never stand in for the final residual
+	 * window (cTerminal).
+	 */
+	interimSample?: EvidenceRef;
+	/** Stop-evidence sampling failed; blocks automatic write recovery until resolved or manually handled. */
+	evidenceIncomplete?: boolean;
+	/** True when the terminal's usage was accounted; false keeps the known lower bound instead of inventing a cost. */
+	usageComplete?: boolean;
+	/**
+	 * A `completed` report that arrived after a cancel was already requested
+	 * (spec §3 race): collected as evidence, never advances review.
+	 */
+	lateReport?: WorkerReport;
 	kind: DelegationKind;
 	/** Host async run id when the invocation went async. */
 	runId?: string;

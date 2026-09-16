@@ -46,6 +46,16 @@ looks like JSON" and "Reviewer prose is never parsed."
   orphans the child (the CLI `-p` mode has no soft cancel); progress needs an
   explicit UPDATE-event subscription.
 
+  *Runtime fact (worker-runaway-controller P0-A, 2026-09-16):* the delegation
+  now runs **in-process** inside Root's AgentSession, so a killed parent takes
+  the delegate down with it — no orphan child process (child-spawned shell
+  commands may still orphan). Cancel is `planner_delegate`'s Esc → CANCEL →
+  `cancelled` terminal within a 5 s grace; the grace overrun keeps the
+  RESPONSE subscription for a late terminal and marks the execution
+  `stop_unconfirmed` with a persisted writer hold instead of releasing the
+  workspace unconditionally. The decision above stays as the record of why
+  the async spawn design was rejected.
+
 ## Consequences
 
 - `task.ts` `extractTaskSpec*` / `topLevelJsonCandidates`, `report.ts`

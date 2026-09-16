@@ -61,6 +61,8 @@ function makeDeps(overrides = {}) {
 		concurrency: overrides.concurrency ?? new ConcurrencyController(),
 		usage: overrides.usage ?? new UsageLedger({ pricing: { version: 1, currency: "USD", rates: {} } }),
 		ownerRunId: overrides.ownerRunId ?? "owner-run-1",
+		quiescenceWaitMs: overrides.quiescenceWaitMs ?? 0,
+		quiescenceSampleGapMs: overrides.quiescenceSampleGapMs ?? 0,
 		launch: overrides.launch ?? (async (request) => {
 			launches.push(request);
 			return {
@@ -264,9 +266,24 @@ async function expectRefusal(promise, code) {
 }
 
 // ---------------------------------------------------------------------------
-// Non-completed launcher statuses: Task transitions, stateReason recorded,
-// DelegationRefused thrown, write lock released, no report recorded.
+// Non-completed launcher statuses (P0-A): Task transitions, stateReason
+// recorded, structured termination returned (no throw), quiet worktree
+// confirms the stop → C_terminal recorded and the write lock released.
 // ---------------------------------------------------------------------------
+// The status table below asserts this P0-A mapping verbatim (spec §2).
+const TERMINAL_REASON_TABLE = {
+	cancelled: "operator_cancel",
+	interrupted: "operator_cancel",
+	timed_out: "timeout",
+	tool_budget_exhausted: "tool_budget",
+	failed: "provider_failure",
+	structured_output_failed: "tool_error",
+	acceptance_failed: "tool_error",
+	invalid_request: "launch_failure",
+	unavailable_context: "provider_failure",
+	duplicate_node: "launch_failure",
+};
+
 for (const [index, [status, expectedState]] of [
 	["structured_output_failed", "failed"],
 	["cancelled", "blocked"],
@@ -286,17 +303,26 @@ for (const [index, [status, expectedState]] of [
 		validation: { required: false },
 	}));
 	const concurrency = new ConcurrencyController();
-	const { deps } = makeDeps({ store, concurrency, launch: failureResponse(status, `${status} happened`) });
-	const error = await expectRefusal(
-		runDelegation(deps, makeParams({ taskId }), dir, { executionId: `call-${status}` }),
-		status.toUpperCase(),
-	);
-	assert.match(error.message, new RegExp(status));
+	const { deps } = makeDeps({
+		store,
+		concurrency,
+		gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args),
+		launch: failureResponse(status, `${status} happened`),
+	});
+	const outcome = await runDelegation(deps, makeParams({ taskId }), dir, { executionId: `call-${status}` });
+	assert.equal(outcome.termination?.status, status, `${status} returns structured termination details, not a thrown refusal`);
+	assert.equal(outcome.termination?.terminationConfirmed, true, "quiet worktree confirms the stop");
+	assert.equal(outcome.termination?.confirmationBasis, "terminal+quiet-worktree");
 	const record = store.get(taskId);
 	assert.equal(record.state, expectedState, `${status} -> ${expectedState}`);
 	assert.match(record.stateReason ?? "", new RegExp(status));
 	assert.equal(record.reports.length, 0, "no report recorded");
-	assert.equal(concurrency.status().reservations.length, 0, "write lock released");
+	assert.equal(concurrency.status().reservations.length, 0, "confirmed stop releases the write lock");
+	const execution = record.executions[0];
+	assert.equal(execution.status, "stopped");
+	assert.equal(execution.endedReason, TERMINAL_REASON_TABLE[status]);
+	assert.ok(execution.cTerminal, "confirmed stop records the residual sample");
+	assert.equal(record.writerHold, undefined, "no hold after a confirmed stop");
 }
 
 // ---------------------------------------------------------------------------
@@ -418,6 +444,8 @@ function makeReviewDeps(dir, { store, concurrency, reviewFor, reviewStatus = "co
 		concurrency: concurrency ?? new ConcurrencyController(),
 		usage: new UsageLedger({ pricing: { version: 1, currency: "USD", rates: {} } }),
 		ownerRunId: "owner-run-1",
+		quiescenceWaitMs: 0,
+		quiescenceSampleGapMs: 0,
 		launch: async (request) => {
 			launches.push(request);
 			if (request.agent === "reviewer") {
@@ -739,8 +767,9 @@ function reviewerParams(taskId, overrides = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// launcher 非 completed: thrown refusal, Task untouched; this terminal carried
-// no usage field, so G4 has nothing to record (children = worker's only).
+// launcher 非 completed (P0-A): structured termination outcome, Task
+// untouched; this terminal carried no usage field, so G4 has nothing to
+// record (children = worker's only).
 // ---------------------------------------------------------------------------
 {
 	const dir = initCommittedRepo();
@@ -751,11 +780,10 @@ function reviewerParams(taskId, overrides = {}) {
 	});
 	const worker = await runDelegation(deps, makeParams(), dir, { executionId: "call-w" });
 	const taskId = worker.task.taskId;
-	const error = await expectRefusal(
-		runDelegation(deps, reviewerParams(taskId), dir, { executionId: "call-r" }),
-		"STRUCTURED_OUTPUT_FAILED",
-	);
-	assert.match(error.message, /structured_output_failed/);
+	const reviewOutcome = await runDelegation(deps, reviewerParams(taskId), dir, { executionId: "call-r" });
+	assert.equal(reviewOutcome.termination?.status, "structured_output_failed", "structured termination, not a thrown refusal");
+	assert.equal(reviewOutcome.termination?.reason, "tool_error");
+	assert.equal(reviewOutcome.termination?.error, "child returned unparseable output");
 	const record = deps.store.require(taskId);
 	assert.equal(record.state, "reviewing", "a failed reviewer never moves the Task");
 	assert.equal(record.reviews.length, 0);
@@ -1039,14 +1067,18 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // ---------------------------------------------------------------------------
-// 5. abort → grace expires → DelegationAborted; a terminal arriving after the
-//    deadline is ignored (no second settle, no throw).
+// 5. abort → grace expires → DelegationAborted; the RESPONSE subscription is
+//    NOT dropped (P0-A A3): a terminal arriving after the deadline reaches
+//    onLateTerminal exactly once, without a second settle.
 // ---------------------------------------------------------------------------
 {
 	const bus = tinyEmitter();
 	const launcher = createHostLauncher({ events: bus }, { cancelGraceMs: 20 });
 	const controller = new AbortController();
-	const promise = launcher(launcherRequest({ requestId: "req-expiry", nodeId: "T-20260915-501" }), controller.signal, {});
+	let lateTerminal;
+	const promise = launcher(launcherRequest({ requestId: "req-expiry", nodeId: "T-20260915-501" }), controller.signal, {
+		onLateTerminal: (response) => { lateTerminal = response; },
+	});
 	const request = bus.emitted.find((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT).payload;
 	let settledWith;
 	promise.then((value) => { settledWith = value; }, (error) => { settledWith = error; });
@@ -1061,7 +1093,18 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 		status: "cancelled",
 	});
 	await sleep(10);
-	assert.ok(settledWith instanceof DelegationAborted, "late terminal ignored after the grace deadline");
+	assert.ok(settledWith instanceof DelegationAborted, "the wait itself still settled once with DelegationAborted");
+	assert.equal(lateTerminal?.status, "cancelled", "late terminal reaches onLateTerminal after the grace deadline");
+	// A second late terminal must not double-finalize: the subscription is gone.
+	lateTerminal = undefined;
+	bus.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: request.requestId,
+		ownerRunId: request.ownerRunId,
+		nodeId: request.nodeId,
+		status: "cancelled",
+	});
+	await sleep(10);
+	assert.equal(lateTerminal, undefined, "no second late-terminal delivery");
 }
 
 // ---------------------------------------------------------------------------
@@ -1084,9 +1127,11 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // ---------------------------------------------------------------------------
-// 6. runDelegation cancellation, both paths: (a) cancelled terminal → blocked
-//    + usage landed (G4) + CANCELLED refusal + lock released; (b) launcher
-//    rejects DelegationAborted → blocked + "no terminal response" + no usage.
+// 6. runDelegation cancellation, both paths (P0-A): (a) cancelled terminal →
+//    blocked + usage landed (G4) + quiescence-confirmed stop → structured
+//    termination outcome + lock released + C_terminal; (b) grace-expired
+//    DelegationAborted → blocked + stop_unconfirmed + persisted writerHold +
+//    lock KEPT, then a late terminal finalizes exactly once.
 // ---------------------------------------------------------------------------
 {
 	// (a) terminal path
@@ -1106,6 +1151,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 		store,
 		concurrency,
 		usage,
+		gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args),
 		launch: async (request) => ({
 			requestId: request.requestId,
 			ownerRunId: request.ownerRunId,
@@ -1118,11 +1164,13 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 			usage: { input: 5, output: 6, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1, toolCalls: 1, durationMs: 40 },
 		}),
 	});
-	const error = await expectRefusal(
-		runDelegation(deps, makeParams({ taskId }), dir, { executionId: "call-ca" }),
-		"CANCELLED",
-	);
-	assert.equal(error.taskId, taskId, "refusal carries the Task id for the caller's snapshot sync");
+	const outcome = await runDelegation(deps, makeParams({ taskId }), dir, { executionId: "call-ca" });
+	assert.equal(outcome.termination?.status, "cancelled", "structured termination, not a thrown refusal");
+	assert.equal(outcome.termination?.reason, "operator_cancel");
+	assert.equal(outcome.termination?.executionStatus, "stopped");
+	assert.equal(outcome.termination?.terminationConfirmed, true);
+	assert.equal(outcome.termination?.confirmationBasis, "terminal+quiet-worktree");
+	assert.equal(outcome.task.taskId, taskId);
 	const record = store.get(taskId);
 	assert.equal(record.state, "blocked", "cancelled terminal parks the Task");
 	assert.match(record.stateReason ?? "", /cancelled/);
@@ -1130,11 +1178,19 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 	assert.equal(children.length, 1, "G4: cancelled terminal usage recorded");
 	assert.equal(children[0].outcome, "failed", "non-completed terminal lands as outcome=failed");
 	assert.equal(children[0].kind, "worker");
-	assert.equal(concurrency.status().reservations.length, 0, "write lock released");
+	assert.equal(concurrency.status().reservations.length, 0, "confirmed stop releases the write lock");
+	const execution = record.executions[0];
+	assert.equal(execution.status, "stopped");
+	assert.equal(execution.endedReason, "operator_cancel");
+	assert.equal(execution.usageComplete, true);
+	assert.ok(execution.cTerminal?.gitStatusHash, "residual C_terminal recorded");
+	assert.equal(record.writerHold, undefined);
 }
 
 {
-	// (b) grace-expiry path
+	// (b) grace-expiry path: stop_unconfirmed + writerHold + no release; the
+	//     late terminal then finalizes once (quiescence → confirmed → hold
+	//     cleared, reservation released, usage recorded exactly once).
 	const dir = initRealRepo();
 	const store = new TaskStore();
 	const taskId = "T-20260915-601";
@@ -1147,21 +1203,62 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 	}));
 	const concurrency = new ConcurrencyController();
 	const usage = new UsageLedger({ pricing: { version: 1, currency: "USD", rates: {} } });
+	let capturedHooks;
 	const { deps } = makeDeps({
 		store,
 		concurrency,
 		usage,
-		launch: async () => { throw new DelegationAborted(taskId); },
+		gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args),
+		launch: async (_request, _signal, hooks) => {
+			capturedHooks = hooks;
+			throw new DelegationAborted(taskId);
+		},
 	});
-	const error = await runDelegation(deps, makeParams({ taskId }), dir, { executionId: "call-cb" })
-		.then(() => undefined, (e) => e);
-	assert.ok(error instanceof DelegationAborted, `abort propagates as-is, got ${error}`);
-	assert.equal(error.taskId, taskId, "DelegationAborted carries the Task id for the caller's snapshot sync");
+	const outcome = await runDelegation(deps, makeParams({ taskId }), dir, { executionId: "call-cb" });
+	assert.equal(outcome.termination?.executionStatus, "stop_unconfirmed", "grace expiry without a terminal is an unconfirmed stop");
+	assert.equal(outcome.termination?.reason, "operator_cancel");
+	assert.equal(outcome.termination?.terminationConfirmed, false);
 	const record = store.get(taskId);
 	assert.equal(record.state, "blocked", "grace-expired abort parks the Task");
 	assert.match(record.stateReason ?? "", /no terminal response within grace/);
 	assert.equal((usage.taskUsage(taskId)?.children ?? []).length, 0, "no usage row without a terminal");
-	assert.equal(concurrency.status().reservations.length, 0, "write lock released");
+	assert.equal(concurrency.status().reservations.length, 1, "unconfirmed stop keeps the write lock");
+	assert.equal(record.writerHold?.executionId, "call-cb", "persisted writer hold names the execution");
+	assert.equal(record.executions[0].status, "stop_unconfirmed");
+	// Admission: the held workspace refuses a second writer even for the same
+	// Task — lift the terminal state so the WRITER_HOLD guard is what fires.
+	record.state = "changes_requested";
+	const second = await runDelegation(deps, makeParams({ taskId }), dir, { executionId: "call-cb2" })
+		.then(() => undefined, (e) => e);
+	assert.ok(second instanceof DelegationRefused && second.code === "WRITER_HOLD", `writer hold refuses a second writer, got ${second}`);
+	record.state = "blocked"; // restore the parked state before the late-terminal part
+	// A3 — the late terminal finalizes the execution exactly once.
+	capturedHooks.onLateTerminal({
+		requestId: "req-late",
+		ownerRunId: "owner-run-1",
+		nodeId: taskId,
+		status: "cancelled",
+		runId: "run-late",
+		agent: "worker",
+		usage: { input: 9, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 2, toolCalls: 2, durationMs: 20 },
+	});
+	await sleep(200);
+	const after = store.get(taskId);
+	const execAfter = after.executions[0];
+	assert.equal(execAfter.status, "stopped", "late terminal lifts stop_unconfirmed after quiescence");
+	assert.equal(execAfter.terminationConfirmed, true);
+	assert.equal(execAfter.confirmationBasis, "terminal+quiet-worktree");
+	assert.equal(execAfter.endedReason, "operator_cancel");
+	assert.ok(execAfter.cTerminal?.gitStatusHash, "C_terminal recorded from the late terminal");
+	assert.equal(execAfter.runId, "run-late");
+	assert.equal(execAfter.usageComplete, true);
+	assert.equal(after.writerHold, undefined, "confirmed late stop clears the hold");
+	assert.equal(concurrency.status().reservations.length, 0, "reservation released exactly once");
+	const children = usage.taskUsage(taskId)?.children ?? [];
+	assert.equal(children.length, 1, "late terminal usage recorded exactly once");
+	assert.equal(children[0].outcome, "failed");
+	assert.equal(after.reports.length, 0, "no report is ever admitted from a late terminal");
+	assert.equal(after.state, "blocked", "Task stays parked for the operator");
 }
 
 // ---------------------------------------------------------------------------
@@ -1190,6 +1287,7 @@ for (const [index, [status, expectedState]] of [
 		const { deps } = makeDeps({
 			store,
 			usage,
+			gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args),
 			launch: async (request) => ({
 				requestId: request.requestId,
 				ownerRunId: request.ownerRunId,
@@ -1203,14 +1301,16 @@ for (const [index, [status, expectedState]] of [
 					: {}),
 			}),
 		});
-		await expectRefusal(
-			runDelegation(deps, makeParams({ taskId }), dir, { executionId: `call-g4-${status}-${withUsage}` }),
-			status.toUpperCase(),
-		);
+		const outcome = await runDelegation(deps, makeParams({ taskId }), dir, { executionId: `call-g4-${status}-${withUsage}` });
+		assert.equal(outcome.termination?.status, status, `${status} returns structured termination`);
 		assert.equal(store.get(taskId).state, expectedState, `${status} -> ${expectedState}`);
 		const children = usage.taskUsage(taskId)?.children ?? [];
 		assert.equal(children.length, withUsage ? 1 : 0, `${status} usage ${withUsage ? "recorded" : "absent"} (G4)`);
 		if (withUsage) assert.equal(children[0].outcome, "failed");
+		const execution = store.get(taskId).executions[0];
+		assert.equal(execution.status, "stopped", `${status} terminal + quiet worktree confirms the stop`);
+		assert.equal(execution.usageComplete, withUsage, "usageComplete reflects whether terminal usage landed");
+		assert.equal(execution.endedReason, TERMINAL_REASON_TABLE[status]);
 	}
 }
 
@@ -1224,11 +1324,10 @@ for (const [index, [status, expectedState]] of [
 	});
 	const worker = await runDelegation(deps, makeParams(), dir, { executionId: "call-w" });
 	const taskId = worker.task.taskId;
-	const error = await expectRefusal(
-		runDelegation(deps, reviewerParams(taskId), dir, { executionId: "call-r" }),
-		"CANCELLED",
-	);
-	assert.equal(error.taskId, taskId, "reviewer refusal carries the Task id");
+	const reviewOutcome = await runDelegation(deps, reviewerParams(taskId), dir, { executionId: "call-r" });
+	assert.equal(reviewOutcome.termination?.status, "cancelled", "reviewer cancel returns structured termination");
+	assert.equal(reviewOutcome.termination?.reason, "operator_cancel");
+	assert.equal(reviewOutcome.task.taskId, taskId);
 	const record = deps.store.require(taskId);
 	assert.equal(record.state, "reviewing", "a cancelled reviewer never moves the Task");
 	assert.equal(record.reviews.length, 0);
@@ -1266,6 +1365,205 @@ for (const [index, [status, expectedState]] of [
 		requestId: "req-b", ownerRunId: "owner-1", nodeId: "T-20260915-511", status: "cancelled",
 	});
 	await Promise.all(pending.slice(0, 2));
+}
+
+// ---------------------------------------------------------------------------
+// P0-A.1 — stop unconfirmed: the worktree still changes between the two
+// quiescence samples (a cancelled terminal alone proves nothing). Result:
+// stop_unconfirmed + interimSample + writerHold + lock kept; a second writer
+// is refused. The flip lands on the first status probe after the terminal,
+// so sample 1 sees a file that sample 2 does not.
+// ---------------------------------------------------------------------------
+{
+	const dir = initRealRepo();
+	const store = new TaskStore();
+	const taskId = "T-20260916-701";
+	store.create(createTaskSpec({
+		taskId,
+		objective: "cancel while the tree is still moving",
+		cwd: dir,
+		role: "worker",
+		validation: { required: false },
+	}));
+	const concurrency = new ConcurrencyController();
+	// Armed by the launch (after A_run); the flip lands on the first
+	// `status --porcelain=v2 --branch` of quiescence sample 1 — sample 2 sees
+	// the file gone, so the tree "was still moving".
+	let flipArmed = false;
+	const { deps } = makeDeps({
+		store,
+		concurrency,
+		gitRunner: async (args, cwd) => {
+			const result = realGit(cwd ?? dir, ...args);
+			if (flipArmed && args[0] === "status" && args.includes("--porcelain=v2") && !args.includes("--untracked-files=all")) {
+				flipArmed = false;
+				return { ...result, stdout: `${result.stdout}? wrc-flip.txt\n` };
+			}
+			return result;
+		},
+		launch: async (request) => {
+			flipArmed = true;
+			return {
+				requestId: request.requestId,
+				ownerRunId: request.ownerRunId,
+				nodeId: request.nodeId,
+				status: "cancelled",
+				error: "operator cancel",
+				runId: "run-flip",
+				agent: "worker",
+			};
+		},
+	});
+	const outcome = await runDelegation(deps, makeParams({ taskId }), dir, { executionId: "call-flip" });
+	assert.equal(outcome.termination?.executionStatus, "stop_unconfirmed", "differing samples keep the stop unconfirmed");
+	assert.equal(outcome.termination?.terminationConfirmed, false);
+	const record = store.get(taskId);
+	assert.equal(record.state, "blocked");
+	assert.equal(record.executions[0].status, "stop_unconfirmed");
+	assert.ok(record.executions[0].interimSample, "the still-moving sample is recorded as interim, never as C_terminal");
+	assert.equal(record.executions[0].cTerminal, undefined);
+	assert.ok(record.writerHold, "persisted writer hold");
+	assert.equal(concurrency.status().reservations.length, 1, "the write lock is NOT released on an unconfirmed stop");
+	// Lift the terminal state so the WRITER_HOLD guard — not TASK_CLOSED — fires.
+	record.state = "changes_requested";
+	const refused = await runDelegation(deps, makeParams({ taskId }), dir, { executionId: "call-flip-2" })
+		.then(() => undefined, (e) => e);
+	assert.ok(refused instanceof DelegationRefused && refused.code === "WRITER_HOLD", `WRITER_HOLD expected, got ${refused}`);
+}
+
+// ---------------------------------------------------------------------------
+// P0-A.2 — evidence-incomplete: a failing status probe makes the residual
+// state unknown (never clean). stop_unconfirmed + evidenceIncomplete + hold.
+// ---------------------------------------------------------------------------
+{
+	const dir = initRealRepo();
+	const store = new TaskStore();
+	const taskId = "T-20260916-702";
+	store.create(createTaskSpec({
+		taskId,
+		objective: "cancel with a dead git probe",
+		cwd: dir,
+		role: "worker",
+		validation: { required: false },
+	}));
+	const concurrency = new ConcurrencyController();
+	const { deps } = makeDeps({
+		store,
+		concurrency,
+		// No gitRunner override: the default fake answers code 128 → probe unavailable.
+		launch: async (request) => ({
+			requestId: request.requestId,
+			ownerRunId: request.ownerRunId,
+			nodeId: request.nodeId,
+			status: "cancelled",
+			error: "operator cancel",
+			runId: "run-nogit",
+			agent: "worker",
+		}),
+	});
+	const outcome = await runDelegation(deps, makeParams({ taskId }), dir, { executionId: "call-nogit" });
+	assert.equal(outcome.termination?.executionStatus, "stop_unconfirmed");
+	assert.equal(outcome.termination?.evidenceIncomplete, true, "probe failure is evidence-incomplete, not clean");
+	const record = store.get(taskId);
+	assert.equal(record.executions[0].evidenceIncomplete, true);
+	assert.equal(record.executions[0].status, "stop_unconfirmed");
+	assert.ok(record.writerHold);
+	assert.equal(concurrency.status().reservations.length, 1);
+}
+
+// ---------------------------------------------------------------------------
+// P0-A.3 — A7 race: a completed terminal arriving after the cancel request is
+// collected as lateReport — never admitted to reports, never advanced.
+// ---------------------------------------------------------------------------
+{
+	const dir = initCommittedRepo();
+	const store = new TaskStore();
+	const taskId = "T-20260916-703";
+	store.create(createTaskSpec({
+		taskId,
+		objective: "finish exactly as the cancel lands",
+		cwd: dir,
+		role: "worker",
+		validation: { required: false },
+	}));
+	const controller = new AbortController();
+	const { deps } = makeDeps({
+		store,
+		gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args),
+		launch: async (request) => {
+			controller.abort();
+			return {
+				requestId: request.requestId,
+				ownerRunId: request.ownerRunId,
+				nodeId: request.nodeId,
+				status: "completed",
+				runId: "run-race",
+				agent: "worker",
+				usage: { input: 3, output: 4, cacheRead: 0, cacheWrite: 0, cost: 0.002, turns: 2, toolCalls: 1, durationMs: 5 },
+				result: { kind: "structured", value: makeReport(taskId, "run-race", request.cwd) },
+			};
+		},
+	});
+	const outcome = await runDelegation(deps, makeParams({ taskId }), dir, { executionId: "call-race", signal: controller.signal });
+	assert.equal(outcome.termination?.status, "completed", "the late success terminal is still reported as its status");
+	assert.equal(outcome.termination?.reason, "operator_cancel", "cancel-first wins the race verdict");
+	const record = store.get(taskId);
+	assert.equal(record.state, "blocked", "cancel-first parks the Task");
+	assert.equal(record.reports.length, 0, "the late report is collected, not admitted");
+	assert.equal(record.executions[0].lateReport?.evidence?.workerRunId, "run-race");
+	assert.equal(record.reviews.length, 0, "no review advanced");
+	assert.equal(record.executions[0].cancelRequestedAt !== undefined, true, "cancel request stamped");
+	assert.equal(record.executions[0].status, "stopped", "quiet worktree confirms the stop");
+}
+
+// ---------------------------------------------------------------------------
+// P0-A.4 — pre-launch abort: the REQUEST was never emitted, nothing ran; the
+// stop is trivially confirmed (basis no-launch) and the lock releases.
+// ---------------------------------------------------------------------------
+{
+	const dir = initRealRepo();
+	const store = new TaskStore();
+	const taskId = "T-20260916-704";
+	store.create(createTaskSpec({
+		taskId,
+		objective: "abort before anything ran",
+		cwd: dir,
+		role: "worker",
+		validation: { required: false },
+	}));
+	const concurrency = new ConcurrencyController();
+	const { deps } = makeDeps({
+		store,
+		concurrency,
+		gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args),
+		launch: async () => { throw new DelegationAborted(taskId, false); },
+	});
+	const outcome = await runDelegation(deps, makeParams({ taskId }), dir, { executionId: "call-prelaunch" });
+	assert.equal(outcome.termination?.executionStatus, "stopped");
+	assert.equal(outcome.termination?.confirmationBasis, "no-launch");
+	const record = store.get(taskId);
+	assert.equal(record.state, "blocked");
+	assert.equal(record.executions[0].endedReason, "operator_cancel");
+	assert.equal(concurrency.status().reservations.length, 0, "nothing ran — the lock releases");
+	assert.equal(record.writerHold, undefined);
+}
+
+// ---------------------------------------------------------------------------
+// P0-A.5 — healthy completion still records the lifecycle fields: status
+// completed, endedReason normal, terminationConfirmed, usageComplete.
+// ---------------------------------------------------------------------------
+{
+	const dir = initCommittedRepo();
+	const { deps } = makeReviewDeps(dir, { reviewFor: (request) => makeReview(request.nodeId) });
+	const worker = await runDelegation(deps, makeParams(), dir, { executionId: "call-healthy" });
+	const record = deps.store.require(worker.task.taskId);
+	const execution = record.executions[0];
+	assert.equal(execution.status, "completed");
+	assert.equal(execution.endedReason, "normal");
+	assert.equal(execution.terminationConfirmed, true);
+	assert.equal(execution.confirmationBasis, "normal-completion");
+	assert.equal(execution.usageComplete, true);
+	assert.equal(record.writerHold, undefined);
 }
 
 console.log("delegate.test.mjs: all cases passed");

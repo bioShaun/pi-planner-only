@@ -1177,6 +1177,17 @@ export interface TaskRecord {
 	 * history only. Cleared when leaving `blocked` (e.g. Root verdict reopen).
 	 */
 	sealedAt?: string;
+	/**
+	 * WRC P0-A — a writer reservation that could not be released because the
+	 * execution's stop was never confirmed. Persisted so a restarted Root
+	 * keeps denying a second writer for this workspace instead of trusting a
+	 * lost in-memory reservation.
+	 */
+	writerHold?: {
+		executionId: string;
+		reason: string;
+		since: string;
+	};
 	/** Per-task usage snapshot; live totals live in UsageLedger. Initialised empty. */
 	usage: TaskUsage;
 	createdAt: string;
@@ -1587,7 +1598,7 @@ export class TaskStore {
 	/** E01 — start a per-execution evidence record with this execution's A_run. */
 	beginExecution(taskId: string, execution: Omit<TaskExecutionRecord, "taskId">): TaskRecord {
 		const record = this.require(taskId);
-		record.executions.push({ ...execution, taskId });
+		record.executions.push({ status: "running", ...execution, taskId });
 		return this.touch(record);
 	}
 
@@ -1601,6 +1612,38 @@ export class TaskStore {
 		const execution = record.executions.find((item) => item.executionId === executionId);
 		if (!execution) return record;
 		Object.assign(execution, patch);
+		return this.touch(record);
+	}
+
+	/**
+	 * WRC P0-A — close out (or stamp mid-flight lifecycle fields on) an
+	 * execution without success assumptions: ended reason, termination
+	 * confirmation, residual C_terminal, usage completeness. Never writes
+	 * report indices; the successful path keeps using completeExecution.
+	 */
+	finalizeExecution(
+		taskId: string,
+		executionId: string,
+		patch: Partial<Omit<TaskExecutionRecord, "taskId" | "executionId" | "reportIndex" | "validatorReportIndex">>,
+	): TaskRecord {
+		const record = this.require(taskId);
+		const execution = record.executions.find((item) => item.executionId === executionId);
+		if (!execution) return record;
+		Object.assign(execution, patch);
+		return this.touch(record);
+	}
+
+	/** WRC P0-A — persist an unreleased writer reservation so restarts keep denying a second writer. */
+	setWriterHold(taskId: string, hold: NonNullable<TaskRecord["writerHold"]>): TaskRecord {
+		const record = this.require(taskId);
+		record.writerHold = hold;
+		return this.touch(record);
+	}
+
+	/** WRC P0-A — the held writer's stop was confirmed; the workspace may be written again. */
+	clearWriterHold(taskId: string): TaskRecord {
+		const record = this.require(taskId);
+		delete record.writerHold;
 		return this.touch(record);
 	}
 

@@ -169,7 +169,9 @@ Token 数为准，美元/人民币金额是推导值。扩展跟踪 Root 各生�
 
 ### 取消与孤儿子进程
 
-TUI 下按 Esc 中止 `planner_delegate` 会向子进程发 CANCEL，Task 进入 `blocked`，已消耗的 usage 落账。`-p`（print）模式没有工具级中止入口：SIGINT 直接结束 Root，进程内运行的子代理随之结束，不会落 `cancelled` 终态或 usage 行；但子代理已启动的 shell 命令可能残留为孤儿进程（宿主试跑时观察到一次），需自行检查并清理。取消宽限期为 5 s（默认）；超时后 Task 同样进入 `blocked`，但子进程 usage 未知。委派在飞时键入 `/exit` 会被当作 steering 输入而不是退出；请用 Ctrl-D。
+TUI 下按 Esc 中止 `planner_delegate` 会向子代理发 CANCEL，Task 进入 `blocked`，已消耗的 usage 落账。`-p`（print）模式没有工具级中止入口：SIGINT 直接结束 Root，进程内运行的子代理随之结束，不会落 `cancelled` 终态或 usage 行；但子代理已启动的 shell 命令可能残留为孤儿进程（宿主试跑时观察到一次），需自行检查并清理。委派在飞时键入 `/exit` 会被当作 steering 输入而不是退出；请用 Ctrl-D。
+
+**停止确认（P0-A）。** 仅收到终态并不证明 writer 已静止。在身份匹配的终态到达后，委派会等待 `quiescenceWaitMs`（默认 10 s；`PI_PLANNER_ONLY_QUIESCENCE_MS` 覆盖），再要求两次连续一致的工作树采样——满足后停止才记为 `confirmed`（`confirmationBasis: terminal+quiet-worktree`）、释放 writer 预留，并把残留样本记为 `cTerminal`。若 5 s 宽限期到期仍无终态，执行置为 `stop_unconfirmed`：Task 进 `blocked`，writer 预留转为持久化 `writerHold`，跨重启也继续拒绝第二写入者；launcher 保留 RESPONSE 订阅，迟到终态仍会把执行恰一次收尾（usage、`cTerminal`、释放）。采样失败记 `evidenceIncomplete`，同样保持 hold。非 completed 委派（cancelled、timed_out、failed 等）不再抛错：`planner_delegate` 返回结构化 `details.termination`（宿主终态、ended reason、确认依据、执行生命周期状态、`usageComplete`）并附文本摘要。取消请求之后到达的 `completed` 报告只收入 `executions[].lateReport` 作证据，不再推进 review。
 
 ## 设计规范
 

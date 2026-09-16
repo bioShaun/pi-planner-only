@@ -366,6 +366,19 @@ export class PlannerOrchestrator {
 			if (this.store.get(record.taskId)) continue;
 			this.store.restore(record);
 			this.restoredTaskIds.add(record.taskId);
+			// WRC P0-A — a persisted writer hold survives restart: re-register
+			// it so workspace admission keeps refusing a second writer instead
+			// of trusting a lost in-memory reservation.
+			if (record.writerHold) {
+				this.concurrency.hold({
+					id: `writerhold:${record.writerHold.executionId}`,
+					taskId: record.taskId,
+					role: "worker",
+					capability: "writer",
+					workspaces: [record.cwd, ...(record.spec?.additionalWorktreeRoots ?? [])],
+					reservedAt: record.writerHold.since,
+				});
+			}
 			restored += 1;
 		}
 		for (const item of corrupt) {
@@ -877,6 +890,19 @@ export class PlannerOrchestrator {
 		if (task.executions.length > 0) {
 			const attribution = task.executions.filter((execution) => !execution.auxiliary).length;
 			lines.push(`Executions: ${task.executions.length} (${attribution} attribution windows)`);
+			for (const execution of task.executions) {
+				if (execution.status === undefined || execution.status === "completed") continue;
+				lines.push(
+					`  - ${execution.executionId}: ${execution.status}${execution.endedReason ? ` (${execution.endedReason})` : ""}${
+						execution.terminationConfirmed === true ? ", stop confirmed" : ""
+					}${execution.evidenceIncomplete === true ? ", evidence-incomplete" : ""}`,
+				);
+			}
+		}
+		if (task.writerHold) {
+			lines.push(
+				`Writer hold: kept — execution ${task.writerHold.executionId} stop unconfirmed (${task.writerHold.reason}; since ${task.writerHold.since}); no second writer until resolved`,
+			);
 		}
 		if (task.recoveryAttempts > 0) {
 			lines.push(`Recoveries: ${task.recoveryAttempts}/${MAX_RECOVERY_ATTEMPTS} automatic attempts used`);

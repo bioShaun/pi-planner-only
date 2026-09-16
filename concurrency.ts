@@ -178,6 +178,22 @@ export class ConcurrencyController {
 	}
 
 	release(id: string): boolean { return this.reservations.delete(id); }
+	/**
+	 * WRC P0-A — re-register a persisted writer hold after a ledger restore.
+	 * Never refuses: the hold exists precisely because a stop was never
+	 * confirmed, so it must occupy the workspace unconditionally.
+	 */
+	hold(entry: { id: string; taskId?: string; role: string; capability: ConcurrencyCapability; workspaces: readonly string[]; reservedAt: string }): void {
+		if (this.reservations.has(entry.id)) return;
+		this.reservations.set(entry.id, {
+			id: entry.id,
+			...(entry.taskId ? { taskId: entry.taskId } : {}),
+			role: entry.role,
+			capability: entry.capability,
+			workspaces: [...new Set(entry.workspaces.filter(Boolean).map(normalizedWorkspace))],
+			reservedAt: entry.reservedAt,
+		});
+	}
 	setTaskId(id: string, taskId: string): void {
 		const reservation = this.reservations.get(id);
 		if (reservation) reservation.taskId = taskId;

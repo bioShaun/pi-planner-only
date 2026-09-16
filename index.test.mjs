@@ -16,6 +16,8 @@ import {
 const isolatedAgentDir = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
 process.env.PI_PLANNER_ONLY_SEED_PRICING = "0";
+// P0-A — keep the spec §3 quiescence wait instant in tests; the default is 10 s.
+process.env.PI_PLANNER_ONLY_QUIESCENCE_MS = "0";
 // ticket 05 → 08: this file drives the pre-cutover subagent chain through the hook; deleted with it.
 
 delete process.env.PI_SUBAGENT_CHILD;
@@ -1166,11 +1168,14 @@ try {
 		status: "cancelled",
 		usage: { input: 2, output: 3, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1, toolCalls: 1, durationMs: 15 },
 	});
-	await assert.rejects(
-		pendingExec,
-		(error) => error?.name === "DelegationRefused" && error?.code === "CANCELLED",
-		"cancelled delegation refuses with CANCELLED",
+	const cancelResult = await pendingExec;
+	assert.equal(
+		cancelResult.details.termination?.status,
+		"cancelled",
+		"P0-A: cancelled delegation returns structured termination details, not a thrown refusal",
 	);
+	assert.equal(cancelResult.details.termination?.reason, "operator_cancel");
+	assert.equal(cancelResult.details.state, "blocked");
 	const ledgerPath = join(isolatedAgentDir, "planner-only", "ledger", `${pendingRequest.nodeId}.json`);
 	const snapshot = JSON.parse(readFileSync(ledgerPath, "utf8"));
 	assert.equal(snapshot.task.usage.children.length, 1, "ledger file carries the cancelled child's usage row");

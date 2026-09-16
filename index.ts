@@ -230,6 +230,13 @@ function envForcingValue(): string | undefined {
 	return envForcesGuard() || envDisablesGuard() ? (process.env.PI_PLANNER_ONLY ?? "").trim() : undefined;
 }
 
+/** WRC P0-A — parse a non-negative millisecond env override; undefined keeps the spec default. */
+function parseNonNegativeMs(raw: string | undefined): number | undefined {
+	if (raw === undefined || raw.trim() === "") return undefined;
+	const value = Number(raw);
+	return Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined;
+}
+
 /**
  * Root read ceiling in lines (NX-05/C15): applied to Root `read` calls that
  * name no explicit line range. The single named constant is the ceiling
@@ -335,6 +342,10 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	// ADR-0001 — the structured-delegation launcher for planner_delegate.
 	// Fallback owner identity when the session id is not yet known.
 	const delegationLaunch = createHostLauncher(pi);
+	// WRC P0-A — spec §3 quiescenceWaitMs; env override exists for tests and
+	// calibrated hosts, the default stays 10 s (forced-settlement 3–4 s +
+	// session-close 5 s upper bound).
+	const quiescenceWaitMs = parseNonNegativeMs(process.env.PI_PLANNER_ONLY_QUIESCENCE_MS);
 	const PROCESS_OWNER_RUN_ID = randomUUID();
 	orchestrator = new PlannerOrchestrator({
 		concurrency,
@@ -781,6 +792,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 						concurrency,
 						usage: ledger,
 						launch: delegationLaunch,
+						...(quiescenceWaitMs !== undefined ? { quiescenceWaitMs } : {}),
 						ownerRunId: ctx.sessionManager?.getSessionId?.() || PROCESS_OWNER_RUN_ID,
 					},
 					params,
@@ -802,6 +814,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				throw error;
 			}
 			rootTurnTaskIds.add(outcome.task.taskId);
+			// P0-A — abnormal terminations return instead of throwing; sync the
+			// usage snapshot here so the ledger file sees the child's row, same
+			// as the former throw path did.
+			if (outcome.termination) {
+				syncUsage(outcome.task.taskId);
+				persistSessionEntries();
+			}
 			return {
 				content: [{ type: "text", text: renderDelegationOutcome(outcome) }],
 				details: {
@@ -813,6 +832,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					report: outcome.report,
 					review: outcome.review,
 					usage: outcome.usage,
+					...(outcome.termination ? { termination: outcome.termination } : {}),
 					warnings: outcome.warnings,
 				},
 			};
