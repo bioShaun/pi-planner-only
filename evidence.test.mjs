@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { execSync, spawnSync } from "node:child_process";
 import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import {
 	captureEvidence,
 	captureReviewEvidencePacket,
@@ -205,15 +206,29 @@ assert.equal(headMoved.fresh, false);
 assert.equal(evidenceAction(headMoved), "revalidate");
 assert.ok(headMoved.reasons.some((reason) => /HEAD changed/.test(reason)));
 
-// 3. working tree changed with no explainable path delta -> stale, revalidate
+// 3. a worker-declared gitStatusHash that differs from Root's sample is not a staleness reason (ticket 10 N1)
 const statusChanged = compareEvidence(
 	makeBase(),
 	makeCurrent({ gitStatusHash: "hash-two" }),
 	declaredA,
 );
-assert.equal(statusChanged.fresh, false);
-assert.equal(evidenceAction(statusChanged), "revalidate");
-assert.ok(statusChanged.reasons.some((reason) => /working tree changed/.test(reason)));
+assert.equal(statusChanged.fresh, true);
+assert.equal(evidenceAction(statusChanged), "review");
+assert.ok(!statusChanged.reasons.some((reason) => /working tree changed/.test(reason)));
+
+// 3b. a non-hash gitStatusHash string the worker pasted (raw porcelain) is likewise not a staleness reason
+const porcelainHash = compareEvidence(
+	makeBase(),
+	makeCurrent(),
+	makeReport({
+		finalGitRef: "abc1234",
+		gitStatusHash: " M src/greet.js\n?? src/greet.test.js",
+		changedPaths: ["src/a.ts"],
+	}),
+);
+assert.equal(porcelainHash.fresh, true);
+assert.equal(evidenceAction(porcelainHash), "review");
+assert.ok(!porcelainHash.reasons.some((reason) => /working tree changed/.test(reason)));
 
 // 4. undeclared out-of-scope path is unrelated; review may continue
 const unrelated = compareEvidence(
@@ -344,6 +359,33 @@ assert.equal(overReported.fresh, false);
 assert.equal(evidenceAction(overReported), "revalidate");
 assert.match(describeComparison(overReported), /over-reported|unreliable/);
 
+// Ticket 11 D2 — a correction run may restate paths attributed to earlier
+// executions of the same Task; they are neither over-reported nor missing.
+{
+	const cumulative = makeReport({
+		finalGitRef: "abc1234",
+		gitStatusHash: "hash-one",
+		changedPaths: ["src/greet.js", "src/greet.test.js"],
+	});
+	const currentOnlyTest = makeCurrent({
+		gitStatusHash: "hash-two",
+		changedPaths: ["src/greet.test.js"],
+		dirtyPathHashes: { "src/greet.test.js": "hash-test" },
+	});
+	// (a) without priorTruthPaths the restated path is over-reported (prior behaviour)
+	const noPrior = compareEvidence(makeBase(), currentOnlyTest, cumulative);
+	assert.equal(noPrior.fresh, false);
+	assert.match(describeComparison(noPrior), /over-reported/);
+	// (b) with priorTruthPaths the restated path is excused
+	const withPrior = compareEvidence(makeBase(), currentOnlyTest, cumulative, {
+		priorTruthPaths: [resolve("/repo", "src/greet.js")],
+	});
+	assert.equal(withPrior.fresh, true);
+	assert.doesNotMatch(describeComparison(withPrior), /over-reported/);
+	assert.doesNotMatch(describeComparison(withPrior), /no longer present/);
+	assert.equal(withPrior.extraDeclaredPaths.includes("/repo/src/greet.js"), false);
+}
+
 // --------------------------------------------------------------------------
 // RF-1 — committed delta (T2) and content-changed baseline (T3)
 // --------------------------------------------------------------------------
@@ -363,7 +405,7 @@ function callsInclude(aCalls, cCalls, key) {
 
 // A1. worker commits between A and C: the committed delta (T2) is attributed
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 	try {
 		const aCalls = [];
 		const base = await captureEvidence(rf1Runner({
@@ -416,7 +458,7 @@ function callsInclude(aCalls, cCalls, key) {
 // --untracked-files=all re-probe expands the directory so the declared file
 // is attributed and the stale verdict disappears.
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 	const featureDir = join(dir, ".scratch", "feature");
 	const absFile = join(featureDir, "c14.txt");
 	try {
@@ -462,7 +504,7 @@ function callsInclude(aCalls, cCalls, key) {
 
 // A2. baseline-dirty path whose blob hash differs at C is attributed (T3)
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 	try {
 		writeFileSync(join(dir, "legacy.ts"), "v1\n");
 		const porcelain = [
@@ -513,7 +555,7 @@ function callsInclude(aCalls, cCalls, key) {
 
 // T3 edge: a path deleted at A hashes to null and counts as changed when C has a hash
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 	try {
 		const base = await captureEvidence(rf1Runner({
 			"rev-parse --git-dir": { stdout: ".git\n", code: 0 },
@@ -632,7 +674,7 @@ function realGit(dir, ...args) {
 }
 
 function initRealRepo() {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-realgit-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-realgit-"));
 	realGit(dir, "init", "-q");
 	realGit(dir, "config", "user.email", "test@example.com");
 	realGit(dir, "config", "user.name", "Test");
@@ -1040,7 +1082,7 @@ assert.equal(
 // Real linked worktree: blind spot vs declared-roots fix end-to-end.
 {
 	const main = initRealRepo();
-	const wtParent = mkdtempSync(join(process.cwd(), ".planner-only-realwt-"));
+	const wtParent = mkdtempSync(join(tmpdir(), "planner-only-realwt-"));
 	const wt = join(wtParent, "linked");
 	try {
 		realGit(main, "worktree", "add", "-b", "variant-c-wt", wt);
@@ -1170,7 +1212,7 @@ assert.equal(
 // Review packet covers declared roots; an unsampled root truncates the packet.
 {
 	const main = initRealRepo();
-	const wtParent = mkdtempSync(join(process.cwd(), ".planner-only-reviewwt-"));
+	const wtParent = mkdtempSync(join(tmpdir(), "planner-only-reviewwt-"));
 	const wt = join(wtParent, "linked");
 	try {
 		realGit(main, "worktree", "add", "-b", "variant-c-review", wt);
@@ -1214,7 +1256,7 @@ assert.equal(
 // E01 — subdirectory cwd and quoted non-ASCII paths normalize against the
 // repository root, and the new truth/freshness functions consume them.
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-e01-paths-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-e01-paths-"));
 	const git = (...args) => spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
 	try {
 		git("init", "-q");

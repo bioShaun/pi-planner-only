@@ -74,23 +74,6 @@ export const MAX_BASELINE_HASH_PATHS = 200;
 /** Ticket 09 — cap on directory entries expanded during scope pre-expansion. */
 export const MAX_SCOPE_EXPAND_ENTRIES = 2000;
 
-export type RecoveryBindingStatus = "bound" | "identity-conflict" | "unbound";
-
-/** Auditable result of reconciling one persisted run-state record. */
-export interface RecoveryBindingCheck {
-	status: RecoveryBindingStatus;
-	reason: string;
-	runId?: string;
-	taskId?: string;
-	executionId?: string;
-	workspaceId?: string;
-	canonical?: {
-		taskId: string;
-		executionId: string;
-		workspaceId: string;
-	};
-}
-
 export type TaskRole = "worker" | "explorer" | "validator" | "reviewer";
 
 /** What a delegation *is*: the role of the child invocation, not the Task's role. */
@@ -164,7 +147,7 @@ export interface ExpectedEvidence {
  *
  * Git fields are optional: a Worker may omit `gitStatusHash` and `finalGitRef`.
  * Root computes authoritative attribution from its own A and C samples; Worker
- * Git fingerprints are declaration data for cross-checking only.
+ * Git fingerprints are declaration data only: `gitStatusHash` is recorded but never compared (the worker cannot compute Root's hash); freshness is decided from Root's own samples.
  */
 
 /** Ticket 11: explicit gap recorded when content snapshotting is incomplete. */
@@ -223,10 +206,132 @@ export interface EvidenceRef {
  * separate `diff(C_report, C_now)` window. Validator and Explorer executions
  * are recorded as auxiliary and never reset the attribution chain.
  */
+/**
+ * WRC P0-A (spec §2) — execution lifecycle status. `stop_unconfirmed` means a
+ * cancel was requested or a terminal arrived but worktree quiescence was never
+ * proven: the writer reservation must stay held. Absent on pre-P0-A ledgers;
+ * readers treat a missing status as unknown, never as safely stopped.
+ */
+export type ExecutionLifecycleStatus =
+	| "running"
+	| "cancel_requested"
+	| "stopping"
+	| "stop_unconfirmed"
+	| "stopped"
+	| "completed"
+	| "failed";
+
+/** WRC P0-A (spec §2) — why an execution ended. An observed reason, not a diagnosis. */
+export type ExecutionEndedReason =
+	| "normal"
+	| "worker_runaway"
+	| "operator_cancel"
+	| "timeout"
+	| "tool_budget"
+	| "provider_failure"
+	| "tool_error"
+	| "launch_failure";
+
+/** P0-B — the signal that tripped the runaway monitor. */
+export type RunawaySignal = "tokens" | "wall";
+
+/** P0-B — observed value and the envelope limit it crossed. */
+export interface RunawayObservation {
+	signal: RunawaySignal;
+	observed: number;
+	limit: number;
+}
+
+/**
+ * P0-B — explicit per-delegation anomaly envelope (spec §4: no production
+ * defaults; unconfigured means observe-only, never cancel). `source` is
+ * persisted so later readers know where the numbers came from.
+ */
+export interface ExecutionEnvelope {
+	maxTokens?: number;
+	maxWallMs?: number;
+	source: "delegation-param";
+}
+
+/**
+ * P0-B — a Root recovery decision (spec §5). P0 wires retry_same_plan /
+ * fix_environment through planner_delegate and abort through
+ * planner_verdict; the remaining actions are refused until P1.
+ */
+export interface RecoveryDecision {
+	/** The abnormal execution this decision addresses. */
+	executionId: string;
+	action: string;
+	/** Root's diagnosis — non-empty; identical consumed decisions are refused. */
+	reason: string;
+	evidenceRefs?: string[];
+	/** P0: keep residue for the next execution, or manual (operator resolved it). No automatic rollback. */
+	worktreeDecision: "keep" | "manual";
+}
+
+/** P0-B — needs_replan metadata on the Task (spec §2). */
+export interface TaskRecovery {
+	required: boolean;
+	reason: string;
+	/** The execution that triggered the requirement. */
+	executionId: string;
+	/** Set to "abort" once a verdict-level abort decision lands. */
+	nextAction?: string;
+	/** The execution (or "planner_verdict") that consumed the requirement. */
+	consumedBy?: string;
+}
+
+/** A consumed recovery decision, kept for dedupe of reworded retries. */
+export interface RecoveryHistoryEntry extends RecoveryDecision {
+	consumedBy: string;
+	at: string;
+}
+
 export interface TaskExecutionRecord {
 	/** Host subagent tool-call id for this invocation. */
 	executionId: string;
 	taskId: string;
+	/** P0-A lifecycle status; `beginExecution` writes `running`. */
+	status?: ExecutionLifecycleStatus;
+	/** Why this execution ended; absent while running or on old ledgers. */
+	endedReason?: ExecutionEndedReason;
+	/** When a CANCEL was requested (signal abort or WRC). Never used as endedAt. */
+	cancelRequestedAt?: string;
+	/** When the execution's terminal state was finalized. */
+	endedAt?: string;
+	/** Set only when the spec §3 quiescence predicate passed. */
+	terminationConfirmed?: boolean;
+	/**
+	 * P0 basis is only `"terminal+quiet-worktree"`: an identity-matched
+	 * terminal plus two identical worktree samples after `quiescenceWaitMs`.
+	 * Proves the worktree went quiet in the observation window — nothing more.
+	 */
+	confirmationBasis?: string;
+	/**
+	 * Residual worktree sample captured after confirmed quiescence (spec §3
+	 * C_terminal). Distinct from cReport: it is evidence of what the aborted
+	 * window left behind, not a report boundary.
+	 */
+	cTerminal?: EvidenceRef;
+	/**
+	 * A worktree sample taken while quiescence was still unproven. Marked
+	 * interim by location: it must never stand in for the final residual
+	 * window (cTerminal).
+	 */
+	interimSample?: EvidenceRef;
+	/** Stop-evidence sampling failed; blocks automatic write recovery until resolved or manually handled. */
+	evidenceIncomplete?: boolean;
+	/** True when the terminal's usage was accounted; false keeps the known lower bound instead of inventing a cost. */
+	usageComplete?: boolean;
+	/** P0-B — the explicit runaway envelope this execution ran under (absent = observe-only). */
+	envelope?: ExecutionEnvelope;
+	/** P0-B — which envelope bound tripped, with the observed value. */
+	runawayObservation?: RunawayObservation;
+	/**
+	 * A `completed` report that arrived after a cancel was already requested
+	 * (spec §3 race): collected as evidence, never advances review.
+	 */
+	lateReport?: WorkerReport;
 	kind: DelegationKind;
 	/** Host async run id when the invocation went async. */
 	runId?: string;
@@ -522,22 +627,12 @@ export interface ReviewRequest {
 }
 
 /**
- * Whether a delegation without an embedded TaskSpec is tolerated.
- * `strict` blocks worker delegations that carry no TaskSpec; `warn` only
- * reports them. Default stays `warn` so existing sessions do not break.
- */
-export type StructuredDelegationMode = "warn" | "strict";
-
-export const DEFAULT_STRUCTURED_DELEGATION_MODE: StructuredDelegationMode = "warn";
-
-/**
  * Why a Root verdict request was refused. Classified at the decision point
  * (issue 04) so audits never re-derive the kind by matching prose text.
  */
 export type RootVerdictRefusalKind =
 	| "terminal-state"       // Task is already completed/closed-superseded
 	| "no-report"            // no WorkerReport exists to judge
-	| "child-pending"        // a delegated run is still pending (transient, never recorded)
 	| "fresh-review-pending" // fresh mode has no reviewer ReviewResult yet
 	| "strict-zero-paths"
 	| "attribution-gap-unlock-refused";   // strict fresh mode has 0 evidence attribution paths
@@ -547,6 +642,16 @@ export interface RootVerdictRefusal {
 	kind: RootVerdictRefusalKind;
 	/** Human-readable reason. Display only — never re-classified by text matching. */
 	reason: string;
+}
+
+/** Refused Root verdicts are audit rows, not ReviewResults; they never enter `TaskRecord.reviews`. */
+export interface RootVerdictRefusalRecord {
+	taskId: string;
+	requestedVerdict: ReviewVerdict;
+	kind: RootVerdictRefusalKind;
+	reason: string;
+	executionId?: string;
+	at: string;
 }
 
 export interface ReviewFinding {
@@ -571,8 +676,6 @@ export interface ReviewResult {
 	/** Root audit fields: requested input, applied lifecycle decision, and refusal context. */
 	requestedVerdict?: ReviewVerdict;
 	appliedDecision?: string;
-	refusedReason?: string;
-	refusalKind?: RootVerdictRefusalKind;
 	executionId?: string;
 	reportSource?: "worker" | "raw-judged";
 	/** Who the Root explicitly acknowledges as the author of accepted drift. */

@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import * as fs from "node:fs";
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { LedgerSnapshotStore } from "./ledger-store.ts";
 import { PlannerOrchestrator } from "./orchestrate.ts";
 import { createTaskSpec, TaskStore } from "./task.ts";
@@ -13,7 +14,7 @@ const cwd = process.cwd();
 const gitRunner = async () => ({ stdout: "", stderr: "", code: 0 });
 
 function sandbox() {
-	return mkdtempSync(join(cwd, ".planner-only-ledger-"));
+	return mkdtempSync(join(tmpdir(), "planner-only-ledger-"));
 }
 
 function listFiles(root) {

@@ -1,6 +1,8 @@
 # 03: 宿主验证运行与发布矩阵回填（C04～C06/C13～C16 及关闭标准）
 
-Status: ready-for-human
+Status: wontfix
+
+裁定理由：本票的验收矩阵回填依赖的 acceptance.ts 门禁已在 typed cutover 中删除（现 acceptance-claims.ts 语义不同），矩阵框架不复存在；相关宿主级验证已由 typed-delegation host-10/11 与 worker-runaway-controller host-01/02 轮替代覆盖。
 
 ## 背景
 

@@ -1,6 +1,6 @@
 # 04: 拒绝原因改为类型化枚举，移除散文正则分类
 
-Status: ready-for-human
+Status: done（2026-09-12 落地，见 Comments；2026-09-16 状态补翻。后续 typed-delegation 票 11 D1 将拒绝记录迁至 `TaskRecord.verdictRefusals`（`RootVerdictRefusalRecord.kind`），`ReviewResult` 不再携带 `refusalKind`；`statuses.refusalKind` 导出键保留）
 
 ## 背景
 

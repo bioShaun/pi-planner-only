@@ -1,0 +1,1 @@
+{"subagent":1,"bg_wait":1,"planner_delegate":1}

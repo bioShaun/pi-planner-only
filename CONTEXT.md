@@ -1,6 +1,6 @@
 # Planner-only orchestration
 
-The parent process stays a planner and reviewer. Execution happens in child processes. This glossary names the contracts that cross the parent/child seam.
+The parent process stays a planner and reviewer. Execution happens in delegated agent sessions that run **in-process** (pi-subagents structured delegation over the event transport), not child OS processes — a cancelled or crashed Root ends the delegation with it, though shell commands the delegate had already spawned may still orphan. This glossary names the contracts that cross the Root/child seam.
 
 ## Language
 
@@ -43,7 +43,7 @@ Root's own Git samples, never the Worker's word. Each execution record carries a
 _Avoid_: artifact, snapshot (unless talking about the Git working tree sample itself), the old single Task-level A sample
 
 **ReviewRequest**:
-The transient packet a reviewer invocation carries: the Task's original spec (read-only), the latest WorkerReport, and Root's Git evidence. It names the Task; it never rebinds one.
+The transient invocation payload a reviewer invocation carries: the Task's original spec (read-only), the latest WorkerReport, and Root's Git evidence. It names the Task; it never rebinds one.
 _Avoid_: reviewer TaskSpec, review prompt
 
 **Git-read**:
@@ -51,19 +51,27 @@ Root's only Git access: fixed, read-only argv. Never a shell.
 _Avoid_: git shell, audit API
 
 **Policy**:
-The parent tool guard: which tools Root may call. While a Task is live for the workspace, the live allowlist applies; when none is (Idle for gather), Root may only start a Delegation, ask a question, record a Verdict, or recover one registered pending run through an exact-id `bg_wait`. Idle is derived from the Task store per workspace, never from prompt wording.
+The parent tool guard: which tools Root may call. While a Task is live for the workspace, the live allowlist applies; when none is (Idle for gather), Root may only start a Delegation with `planner_delegate`, ask a question, record a Verdict, or inspect Git with `git_audit`. Idle is derived from the Task store per workspace, never from prompt wording.
 _Avoid_: permissions, ACL
 
 **Delegation**:
-Launching a child with a role, a bounded packet, and at most one writer per cwd.
-_Avoid_: spawn, dispatch (the host mechanism)
+Launching a child with a role and a TaskSpec through `planner_delegate`; the child's WorkerReport returns launcher-validated, never parsed from text; at most one worker per cwd. An explicit `envelope` (maxTokens / maxWallMs) bounds a runaway execution; a breach fires CANCEL and records `worker_runaway` on the TaskExecutionRecord.
+_Avoid_: spawn, dispatch (the host mechanism), packet
+
+**Writer hold**:
+The persisted `task.writerHold` left when an execution's stop was never confirmed; it keeps the workspace refusing a second writer across restarts until a late terminal confirms quiescence or the operator resolves it.
+_Avoid_: lock, mutex
+
+**RecoveryDecision**:
+Root's structured decision (`planner_delegate.recovery`, or `planner_verdict` blocked + `action:"abort"`) that authorizes one new bounded execution on a Task flagged `recovery.required`; consumed once, never reworded-retried.
+_Avoid_: replan, retry policy
 
 **Review loop**:
 Decide the next lifecycle step from a report, evidence comparison, and optional ReviewResult, then apply it to the Task.
 _Avoid_: review pipeline, arbitration service
 
 **Verdict**:
-Root's recorded judgment over a Task through `planner_verdict`; the operator's `/planner-only review` is an override, not a second verdict.
+Root's recorded judgment over a Task through `planner_verdict`; the operator's `/planner-only review` is an override, not a second verdict. Flow: worker report → Root evidence comparison → optional reviewer → `planner_verdict` (pass / request_changes / blocked) → `git_commit` once the Task is completed.
 
 **Usage**:
 Token and derived-cost accounting attributed to a Task; Root turns by phase, children by run. Injected text and review leak are tracked separately.

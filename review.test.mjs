@@ -1,27 +1,6 @@
 import assert from "node:assert/strict";
-import {
-	TaskStore,
-	createTaskSpec,
-} from "./task.ts";
-import { extractWorkerReport } from "./report.ts";
-import {
-	decideReview,
-	buildUndeclaredCorrectionGuidance,
-	deriveVerdict,
-	extractReviewResult,
-	summarizeFindings,
-	validateReviewResult,
-	validateReviewResultBinding,
-	bindReviewResultFromRequest,
-	validateReviewResultIdentity,
-	buildFreshReviewerTask,
-	buildReviewRequest,
-	extractReviewRequest,
-	validateReviewRequest,
-	applyReviewDecision,
-	REVIEWER_PROMPT,
-	reviewerPrompt,
-} from "./review.ts";
+import { TaskStore, createTaskSpec } from "./task.ts";
+import { decideReview, buildUndeclaredCorrectionGuidance, deriveVerdict, summarizeFindings, validateReviewResult, validateReviewResultBinding, bindReviewResultFromRequest, validateReviewResultIdentity, buildFreshReviewerTask, buildReviewRequest, applyReviewDecision, REVIEWER_PROMPT, reviewerPrompt } from "./review.ts";
 import { compareEvidence } from "./evidence.ts";
 import { MAX_REVIEW_ROUNDS } from "./types.ts";
 
@@ -111,16 +90,6 @@ assert.ok(validateReviewResult({ ...makeReview("pass"), evidenceFresh: "yes" }).
 assert.ok(validateReviewResult({ ...makeReview("pass"), findings: [{}] }).length > 0);
 assert.ok(validateReviewResult({ ...makeReview("pass"), findings: [finding("critical")] }).length > 0);
 
-assert.deepEqual(extractReviewResult("no json here").error, "reviewer output did not contain a ReviewResult object");
-assert.deepEqual(extractReviewResult("").error, "reviewer returned no output");
-assert.deepEqual(extractReviewResult(JSON.stringify(makeReview("pass"))).review, makeReview("pass"));
-assert.deepEqual(
-	extractReviewResult(`Sure:\n\`\`\`json\n${JSON.stringify(makeReview("request_changes", [finding("major")]))}\n\`\`\``).review,
-	makeReview("request_changes", [finding("major")]),
-);
-assert.ok(extractReviewResult(JSON.stringify(makeReview("nope"))).error);
-// a WorkerReport is not a ReviewResult
-assert.ok(extractReviewResult(JSON.stringify(makeReport())).error);
 
 assert.deepEqual(summarizeFindings([]), ["Findings: (none)"]);
 assert.match(summarizeFindings([finding("major", "test")]).join("\n"), /\[major\] test: major finding → requested: fix it/);
@@ -286,31 +255,6 @@ assert.match(summarizeFindings([finding("major", "test")]).join("\n"), /\[major\
 // Malformed report (§19.3)
 // --------------------------------------------------------------------------
 
-{
-	const store = newTask();
-	const extracted = extractWorkerReport("I could not finish, sorry.");
-	assert.equal(extracted.ok, false);
-	assert.ok(extracted.error);
-
-	let decision = decideReview({
-		task: store.require("T-20260831-001"),
-		reportError: extracted.error,
-	});
-	assert.equal(decision.action, "report_correction");
-	// E02 — a contract failure burns no code-correction round; the
-	// report-correction counter bounds it instead.
-	assert.equal(decision.consumesRound, false);
-	assert.equal(decision.failureClass, "contract");
-	assert.match(decision.guidance.join("\n"), /Do not modify files/);
-	assert.match(decision.guidance.join("\n"), /status must be exactly completed, partial, blocked, or failed/);
-	assert.match(decision.guidance.join("\n"), /validation status must be exactly passed, failed, or not-run/);
-	apply(store, "T-20260831-001", decision);
-
-	store.transition("T-20260831-001", "executing");
-	decision = decideReview({ task: store.require("T-20260831-001"), reportError: "still broken" });
-	assert.equal(decision.action, "blocked");
-	assert.match(decision.reason, /could not be obtained/);
-}
 
 // Undeclared paths get an explicit target state and revert-first correction.
 {
@@ -415,42 +359,6 @@ assert.match(summarizeFindings([finding("major", "test")]).join("\n"), /\[major\
 // Fresh reviewer packet: a ReviewRequest, never the parent's transcript
 // --------------------------------------------------------------------------
 
-{
-	const spec = createTaskSpec({
-		objective: "review the parser",
-		cwd: CWD,
-		role: "worker",
-		acceptanceCriteria: ["empty input returns []"],
-	});
-	const git = { gitAvailable: true, head: "abc1234", diffCheck: "(no whitespace errors)" };
-	const packet = buildFreshReviewerTask({
-		taskId: spec.taskId,
-		spec,
-		report: makeReport(),
-		evidence: "fresh",
-		git,
-	});
-	assert.match(packet, /\[PLANNER-ONLY FRESH REVIEW\]/);
-	assert.match(packet, new RegExp(`isolated reviewer for task ${spec.taskId}`));
-	assert.match(packet, /empty input returns \[\]/);
-	assert.match(packet, /Implemented the parser/);
-	assert.doesNotMatch(packet, /rubber-stamp|I already decided/);
-
-	// the packet is a parseable ReviewRequest carrying the original spec
-	const embedded = extractReviewRequest(packet);
-	assert.deepEqual(embedded, {
-		version: 1,
-		taskId: spec.taskId,
-		reportTaskId: "T-20260831-001",
-		reviewMode: "fresh",
-		taskSpec: spec,
-		workerReport: makeReport(),
-		evidenceSummary: "fresh",
-		evidencePacket: git,
-	});
-	assert.equal(extractReviewRequest("no packet here"), undefined);
-	assert.deepEqual(validateReviewRequest({ ...embedded, reviewMode: "root" }).length, 1);
-}
 
 {
 	const request = buildReviewRequest({

@@ -1,0 +1,4 @@
+state: reviewing reports: 1 executions: 1 worker
+reviews: []
+usage.children: [{"kind":"worker","agent":"worker","model":"tcuni-agy/gemini-3.8-flash-high:high","executionId":"tool_Bmagu7xgGLmr9Xcs40LtdJlP","toolCallId":"tool_Bmagu7xgGLmr9Xcs40LtdJlP","ownerRootSessionId":"host05-b6"},{"kind":"reviewer","agent":"reviewer","model":"tcuni-ds/deepseek/deepseek-v4.1-flash:high","toolCallId":"tool_t18savS7VZ1xM96EQdcWYfC8","ownerRootSessionId":"host05-b6"}]
+tasks minted today: T-20260915-001.json

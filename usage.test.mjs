@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
-	delegationRateKind,
 	UsageLedger,
 	summarizeTaskBudget,
 	summarizeSessionUsage,
 	childUsageFromValue,
-	childOutcomeFromExitCode,
 	buildRunRecord,
 	summarizeRuns,
 	emptyTaskUsage,
@@ -20,6 +19,7 @@ import {
 	renderUsage,
 	renderUsageLine,
 	shouldFlushUsageOnShutdown,
+	exportSessionEvidence,
 } from "./usage.ts";
 
 const now = () => new Date("2026-09-05T12:00:00.000Z");
@@ -651,70 +651,8 @@ assert.equal(modelIdForPricing("volcengine/glm-5-3"), "volcengine/glm-5-3");
 	assert.equal(replay.taskUsage("T-load").root.turns, 1);
 }
 
-// --------------------------------------------------------------------------
-// run4 regression fixture: failed worker and unbound scout are the exact gap
-// --------------------------------------------------------------------------
-
 {
-	const fixtureRoot = join(process.cwd(), ".scratch/planner-only-cost-control/phase-a-08-run4/artifacts");
-	const logged = readFileSync(join(fixtureRoot, "usage.jsonl"), "utf8")
-		.trim().split("\n").map((line) => JSON.parse(line));
-	const finalRecord = logged.at(-1);
-	const loggedRunIds = new Set(finalRecord.children.map((child) => child.runId));
-	const metaFiles = [
-		"4e032aed-40ae-4e88-87b6-fcd6b1351d63_worker_0_meta.json",
-		"c22defe6-1944-4fe4-b992-5a50a94d9d88_delegate_0_meta.json",
-		"f1d2b014-f7b6-4591-adbd-32cd3d9e2582_worker_0_meta.json",
-		"2d9ca9b6-ba2d-4491-908f-307855167e7d_delegate_0_meta.json",
-		"73bd7b92-06a4-4c17-a5c8-e9936494f47f_worker_0_meta.json",
-		"eb50ca15-b655-40f5-85cf-c1b8a96062ce_scout_meta.json",
-	].map((name) => JSON.parse(readFileSync(join(fixtureRoot, "metas", name), "utf8")));
-	const missing = metaFiles.filter((meta) => !loggedRunIds.has(meta.runId));
-	assert.deepEqual(missing.map((meta) => meta.runId), [
-		"73bd7b92-06a4-4c17-a5c8-e9936494f47f",
-		"eb50ca15-b655-40f5-85cf-c1b8a96062ce",
-	]);
-	assert.equal(childOutcomeFromExitCode(1), "failed");
-	assert.equal(childOutcomeFromExitCode(0), "succeeded");
-	assert.equal(childOutcomeFromExitCode(undefined), "unknown");
-
-	const u = ledger();
-	for (const child of finalRecord.children) u.recordChild(finalRecord.taskId, child);
-	for (const meta of missing) {
-		u.recordChild(finalRecord.taskId, {
-			...childUsageFromValue(meta.usage, meta.agent === "scout" ? "explorer" : "worker", {
-				runId: meta.runId,
-				agent: meta.agent,
-				source: "meta-file",
-				pending: false,
-			}),
-			outcome: childOutcomeFromExitCode(meta.exitCode),
-		});
-	}
-	// Re-seeing an inner scout run must not create another child.
-	u.recordChild(finalRecord.taskId, {
-		...childUsageFromValue(metaFiles.at(-1).usage, "explorer", {
-			runId: metaFiles.at(-1).runId,
-			agent: "scout",
-			source: "meta-file",
-			pending: false,
-		}),
-		outcome: "succeeded",
-	});
-	const task = u.taskUsage(finalRecord.taskId);
-	const childTotal = task.children.reduce((sum, child) => sum + (child.costUsd ?? 0), 0);
-	const total = finalRecord.root.costUsd + childTotal;
-	assert.equal(task.children.length, 6);
-	assert.ok(Math.abs(childTotal - 0.24052828) < 1e-8, `children total ${childTotal}`);
-	assert.ok(Math.abs(total - 0.29581593) < 1e-8, `total ${total}`);
-	assert.equal(task.children.find((child) => child.runId === missing[0].runId).outcome, "failed");
-	assert.equal(task.children.find((child) => child.runId === missing[1].runId).outcome, "succeeded");
-	console.log(`run4 fixture: children ${childTotal.toFixed(8)} total ${total.toFixed(8)}`);
-}
-
-
-{
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 	try {
 		const path = join(dir, "pricing.json");
 		writeFileSync(path, JSON.stringify({
@@ -748,7 +686,7 @@ assert.equal(modelIdForPricing("volcengine/glm-5-3"), "volcengine/glm-5-3");
 }
 
 {
-	const dir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 	try {
 		const env = { PI_CODING_AGENT_DIR: dir };
 		const dest = pricingPath(env);
@@ -773,7 +711,7 @@ assert.equal(modelIdForPricing("volcengine/glm-5-3"), "volcengine/glm-5-3");
 		assert.equal(merged.rates["claude-opus-5"].input, 5, "missing default keys are filled in");
 		assert.equal(merged.rates["gpt-6-astra"].input, 10, "gpt-6-astra is filled from bundled defaults");
 
-		const overrideDir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+		const overrideDir = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 		try {
 			ensurePricingFile({
 				PI_CODING_AGENT_DIR: overrideDir,
@@ -784,7 +722,7 @@ assert.equal(modelIdForPricing("volcengine/glm-5-3"), "volcengine/glm-5-3");
 			rmSync(overrideDir, { recursive: true, force: true });
 		}
 
-		const skipDir = mkdtempSync(join(process.cwd(), ".planner-only-test-"));
+		const skipDir = mkdtempSync(join(tmpdir(), "planner-only-test-"));
 		try {
 			ensurePricingFile({ PI_CODING_AGENT_DIR: skipDir, PI_PLANNER_ONLY_SEED_PRICING: "0" });
 			assert.equal(
@@ -1089,22 +1027,23 @@ function ticket15ResolvedNoRate(overrides = {}) {
 }
 
 {
-	// delegationRateKind: zero-rate is free, positive is paid, missing/null is unknown.
-	const pricing = {
-		version: 1,
-		currency: "USD",
-		rates: {
-			"free/model": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			"paid/model": { input: 0, output: 1, cacheRead: 0, cacheWrite: 0 },
-			"partial/model": { input: 0, output: null, cacheRead: 0, cacheWrite: 0 },
-		},
-	};
-	assert.equal(delegationRateKind(pricing, undefined, "free/model"), "free");
-	assert.equal(delegationRateKind(pricing, undefined, "free/model:high"), "free", "thinking suffix stripped");
-	assert.equal(delegationRateKind(pricing, undefined, "paid/model"), "paid");
-	assert.equal(delegationRateKind(pricing, undefined, "partial/model"), "unknown");
-	assert.equal(delegationRateKind(pricing, undefined, "missing/model"), "unknown");
-	assert.equal(delegationRateKind(pricing, undefined, undefined), "unknown");
+	// Ticket 11 D1 — refused Root verdicts count under refusalKind, never under
+	// reviewResult, and a refused row is not a Root verdict.
+	const evidence = exportSessionEvidence({
+		rootSessionId: "session-refusal",
+		tasks: [{
+			taskId: "T-refusal",
+			rootSessionId: "session-refusal",
+			state: "completed",
+			reports: [],
+			reviews: [{ taskId: "T-refusal", verdict: "pass", summary: "s", findings: [], evidenceFresh: true, source: "reviewer" }],
+			verdictRefusals: [{ taskId: "T-refusal", requestedVerdict: "pass", kind: "terminal-state", reason: "r", at: "2026-09-16T00:00:00.000Z" }],
+			usage: { root: {}, children: [] },
+		}],
+	});
+	assert.equal(evidence.statuses.reviewResult.pass, 1);
+	assert.equal(evidence.statuses.refusalKind["terminal-state"], 1);
+	assert.equal(Object.keys(evidence.statuses.rootVerdict).length, 0);
 }
 
 console.log("planner-only usage: PASS");

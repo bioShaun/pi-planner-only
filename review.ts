@@ -15,6 +15,7 @@ import type {
 	ReviewFinding,
 	ReviewRequest,
 	ReviewResult,
+	ReviewRoundAttribution,
 	ReviewVerdict,
 	TaskCompletionKind,
 	TaskSpec,
@@ -23,11 +24,11 @@ import type {
 } from "./types.ts";
 import { evidenceAction } from "./evidence.ts";
 import type { EvidenceComparison } from "./evidence.ts";
-import { jsonCandidates, stableStringify } from "./report.ts";
+import { stableStringify } from "./report.ts";
 import { TASK_TRANSITIONS } from "./task.ts";
 import type { TaskRecord, TaskStore } from "./task.ts";
 
-const REVIEW_VERDICTS: readonly ReviewVerdict[] = ["pass", "request_changes", "blocked"];
+export const REVIEW_VERDICTS: readonly ReviewVerdict[] = ["pass", "request_changes", "blocked"];
 
 export type ReviewAction =
 	| "accept"
@@ -86,8 +87,8 @@ export function evidenceStateKey(comparison: EvidenceComparison, reportRevision:
 	});
 }
 
-const FINDING_SEVERITIES: readonly FindingSeverity[] = ["blocker", "major", "minor", "info"];
-const FINDING_CATEGORIES: readonly FindingCategory[] = [
+export const FINDING_SEVERITIES: readonly FindingSeverity[] = ["blocker", "major", "minor", "info"];
+export const FINDING_CATEGORIES: readonly FindingCategory[] = [
 	"correctness",
 	"scope",
 	"test",
@@ -198,13 +199,7 @@ After checking acceptance criteria, changed paths, and verification evidence, st
 If this packet lacks enough scope or evidence to locate the change, return verdict blocked.
 Do not compensate with a repository-wide scan.
 
-Return only a ReviewResult JSON object:
-
-  {"taskId":"{TASK_ID}","verdict":"pass|request_changes|blocked",
-   "summary":"...","evidenceFresh":true,
-   "findings":[{"severity":"blocker|major|minor|info",
-   "category":"correctness|scope|test|safety|regression|maintainability|other",
-   "description":"...","requestedChange":"..."}]}
+Respond with a ReviewResult JSON object; the launcher validates its shape.
 
 Verdict rules: any blocker or major finding means request_changes.
 Minor or info findings alone may still pass. Do not modify files.`;
@@ -291,6 +286,68 @@ export function bindReviewResultFromRequest(
 	};
 }
 
+/**
+ * E01 — the cumulative attribution a Fresh Reviewer must see: per-round
+ * windows, the earliest trustworthy baseline ref, and the findings that
+ * survived earlier rounds. A chain with missing material is truncated, so
+ * a PASS over it is ineligible.
+ *
+ * Ticket 06 — pure-function copy of the legacy orchestrate.ts private method
+ * (`reviewAttribution`); the original is deleted in ticket 08.
+ */
+export function reviewAttributionOf(task: TaskRecord): {
+	baselineRef?: string;
+	rounds: ReviewRoundAttribution[];
+	unresolvedFindings: string[];
+	attributionIncomplete?: string;
+} {
+	const executions = task.executions.filter((execution) => !execution.auxiliary && !execution.reportOnly);
+	const rounds: ReviewRoundAttribution[] = executions.map((execution) => ({
+		executionId: execution.executionId,
+		role: execution.kind,
+		...(execution.runId ? { runId: execution.runId } : {}),
+		...(execution.reportIndex !== undefined ? { reportRevision: execution.reportIndex + 1 } : {}),
+		...(execution.aRun.finalGitRef ? { aRef: execution.aRun.finalGitRef } : {}),
+		...(execution.cReport?.finalGitRef ? { cRef: execution.cReport.finalGitRef } : {}),
+		attributedFiles: execution.truthPaths ?? [],
+		...(execution.executionChangedPaths?.length ? { executionChangedFiles: execution.executionChangedPaths } : {}),
+		...(execution.committedPaths?.length ? { committedFiles: execution.committedPaths } : {}),
+		...(execution.observedExternalPaths?.length ? { observedExternalFiles: execution.observedExternalPaths } : {}),
+		undeclaredFiles: execution.undeclaredPaths ?? [],
+		outOfScopeFiles: execution.outOfScopePaths ?? [],
+		...(execution.freshness
+			? {
+				freshness: execution.freshness.fresh
+					? "fresh" as const
+					: execution.freshness.verifiable ? "stale" as const : "unknown" as const,
+			}
+			: {}),
+	}));
+	const incomplete: string[] = [];
+	if (executions.length === 0) {
+		incomplete.push("no per-execution attribution record exists for this Task");
+	}
+	for (const execution of executions) {
+		if (!execution.aRun.finalGitRef) incomplete.push(`execution ${execution.executionId} has no A_run ref`);
+		if (!execution.cReport) incomplete.push(`execution ${execution.executionId} has no C_report sample`);
+	}
+	const baselineRef = executions.find((execution) => execution.aRun.finalGitRef)?.aRun.finalGitRef
+		?? task.baseEvidence?.finalGitRef;
+	const unresolvedFindings = task.findings
+		.filter((finding) => finding.status === "open")
+		.map((finding) =>
+			`${finding.kind}: ${finding.paths.join(", ") || "revised workspace"}${
+				finding.evidenceResolvedBy ? " (restore proven; review confirmation pending)" : ""
+			}`,
+		);
+	return {
+		...(baselineRef ? { baselineRef } : {}),
+		rounds,
+		unresolvedFindings,
+		...(incomplete.length > 0 ? { attributionIncomplete: incomplete.join("; ") } : {}),
+	};
+}
+
 export interface FreshReviewerTaskInput {
 	taskId: string;
 	/** The Task's original spec, shown read-only. Never a reviewer spec. */
@@ -347,80 +404,6 @@ export function buildFreshReviewerTask(input: FreshReviewerTaskInput): string {
 	].join("\n");
 }
 
-export function validateReviewRequest(value: unknown): string[] {
-	if (!isPlainObject(value)) return ["ReviewRequest must be an object"];
-	const errors: string[] = [];
-	if (value.version !== 1) errors.push("version must be 1");
-	if (!isNonEmptyString(value.taskId)) errors.push("taskId must be a non-empty string");
-	if (!isNonEmptyString(value.reportTaskId)) {
-		errors.push("reportTaskId must be a non-empty string");
-	}
-	if (value.reviewMode !== "fresh") errors.push("reviewMode must be fresh");
-	return errors;
-}
-
-/**
- * Pull the ReviewRequest Root embedded in a reviewer delegation prompt. The
- * packet is the only place the reviewer's task identity is declared, so a
- * malformed one is ignored rather than guessed at.
- */
-export function extractReviewRequest(text: string): ReviewRequest | undefined {
-	if (typeof text !== "string" || !text.trim()) return undefined;
-	for (const candidate of jsonCandidates(text)) {
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(candidate);
-		} catch {
-			continue;
-		}
-		if (
-			!isPlainObject(parsed) ||
-			!("reviewMode" in parsed) ||
-			!("reportTaskId" in parsed)
-		) {
-			continue;
-		}
-		if (validateReviewRequest(parsed).length === 0) return parsed as unknown as ReviewRequest;
-	}
-	return undefined;
-}
-
-/**
- * Pull a ReviewResult out of a fresh reviewer's output. Reviewers return a
- * different shape than workers, so this is keyed on `verdict` + `findings`.
- */
-export function extractReviewResult(text: string): { review?: ReviewResult; error?: string } {
-	if (typeof text !== "string" || !text.trim()) return { error: "reviewer returned no output" };
-
-	let bestErrors: string[] | undefined;
-	let sawShape = false;
-
-	for (const candidate of jsonCandidates(text)) {
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(candidate);
-		} catch {
-			continue;
-		}
-		if (
-			typeof parsed !== "object" ||
-			parsed === null ||
-			Array.isArray(parsed) ||
-			!("verdict" in parsed) ||
-			!("findings" in parsed)
-		) {
-			continue;
-		}
-		sawShape = true;
-		const errors = validateReviewResult(parsed);
-		if (errors.length === 0) return { review: parsed as ReviewResult };
-		if (!bestErrors || errors.length < bestErrors.length) bestErrors = errors;
-	}
-
-	if (bestErrors) return { error: `invalid ReviewResult: ${bestErrors.join("; ")}` };
-	if (sawShape) return { error: "invalid ReviewResult" };
-	return { error: "reviewer output did not contain a ReviewResult object" };
-}
 
 export function summarizeFindings(findings: readonly ReviewFinding[]): string[] {
 	if (findings.length === 0) return ["Findings: (none)"];

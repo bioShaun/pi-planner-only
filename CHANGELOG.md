@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 - 2026-09-16
 
+- Replaced the legacy prompt-parsed `subagent` / `bg_wait` / notify path with the typed `planner_delegate` contract: Root sends a schema-checked TaskSpec, the launcher validates WorkerReport or ReviewResult, and Policy keeps Root on delegation, verdict, and Git-read tools.
+- Added execution termination correctness and the Worker Runaway Controller: identity-bound CANCEL, terminal-plus-worktree quiescence confirmation, persistent writer holds across restart, structured abnormal outcomes, explicit token/wall envelopes, and one-shot RecoveryDecision-gated retries.
+- Removed the unreachable asynchronous receipt/recovery stack and its fixtures after host acceptance; retained Task identity, Evidence attribution, review, Usage, ledger restore, and Git commit semantics on the new seam.
 - ExtractedReport is now a discriminated union (`ok: true` | `ok: false`) so WorkerReport parse failures cannot pretend success fields exist (same honesty bar as host invalid_request / SubagentDelegationInvalidResponse). Call sites narrow on `extracted.ok`; product outcomes unchanged.
 
 - Batch A identity and repair closure: ledger-backed Task ids use cross-process atomic claims and never reuse restored, terminal, over-cap, or unreadable ids; report-only corrections with ambiguous, unknown, or terminal targets are refused before launch instead of creating placeholders; TaskSpec repair preserves the trusted Worker role and never drops validation intent. See [batch A acceptance](docs/runtime-batch-a-2026-09-11-acceptance.md).

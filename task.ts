@@ -30,19 +30,22 @@ import type {
 	ReviewMode,
 	ReviewOverride,
 	ReviewResult,
+	RootVerdictRefusalRecord,
 	TaskExecutionRecord,
 	TaskFinding,
 	TaskRole,
 	TaskScope,
 	TaskSpec,
 	TaskState,
+	RecoveryDecision,
+	RecoveryHistoryEntry,
+	TaskRecovery,
 	TaskUsage,
 	TaskValidation,
 	WorkerReport,
 } from "./types.ts";
 import { normalizeRepoRelativePath, type EvidenceComparison } from "./evidence.ts";
 import type { WorkspaceSnapshotBinding } from "./workspace-snapshot.ts";
-import { jsonCandidates } from "./report.ts";
 import { emptyTaskUsage } from "./usage.ts";
 import { SAFE_TASK_ID } from "./ledger-store.ts";
 
@@ -50,28 +53,6 @@ const TASK_ROLES: readonly TaskRole[] = ["worker", "explorer", "validator", "rev
 const explicitlyNoValidation = new WeakSet<TaskSpec>();
 const generatedTaskIdSpecs = new WeakSet<TaskSpec>();
 
-/**
- * FR-04 — capability profiles per role. The write lock follows actual write
- * ability, not the role's name: a validator with a general shell can mutate
- * the tree, and an unbounded worker keeps its own tools. roles.ts re-exports
- * this table so agent remapping and write coordination cannot drift apart.
- */
-export const ROLE_TOOL_PROFILES: Record<TaskRole, readonly string[] | undefined> = {
-	explorer: ["read", "grep", "find", "ls"],
-	reviewer: ["read", "grep", "find", "ls"],
-	validator: ["read", "grep", "find", "ls", "bash"],
-	worker: undefined,
-};
-
-/** Tools that can mutate the working tree or execute arbitrary programs. */
-export const MUTATING_TOOLS = ["edit", "write", "bash"] as const;
-
-/** Whether the role's tool ceiling includes anything that can mutate the tree. */
-export function roleAllowsMutatingTools(role: TaskRole): boolean {
-	const tools = ROLE_TOOL_PROFILES[role];
-	if (tools === undefined) return true;
-	return tools.some((tool) => (MUTATING_TOOLS as readonly string[]).includes(tool));
-}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -415,25 +396,6 @@ export class TaskIdAllocator {
 	}
 }
 
-/**
- * Host agent names mapped to Task roles. roles.ts re-exports this table (as
- * `inferRoleFromAgent`) so agent remapping and the IS-02 repair renderer share
- * one source of truth; task.ts owns it because identity and the repair
- * contract live here.
- */
-export const AGENT_TASK_ROLES: Readonly<Record<string, TaskRole>> = Object.freeze({
-	explorer: "explorer",
-	scout: "explorer",
-	reviewer: "reviewer",
-	oracle: "validator",
-	validator: "validator",
-	worker: "worker",
-});
-
-export function inferTaskRoleFromAgent(agent: string | undefined): TaskRole | undefined {
-	if (!agent) return undefined;
-	return AGENT_TASK_ROLES[agent.trim().toLowerCase()];
-}
 
 export type TaskSpecContractErrorCode = "TASKSPEC_VALIDATION_INCOMPLETE";
 
@@ -942,30 +904,22 @@ export function buildTaskSpecRepair(options: TaskSpecExampleInput): TaskSpecRepa
 
 	const path = exampleStringField(options.input, ["path", "file", "filePath", "file_path", "pattern", "glob"]);
 	const command = exampleStringField(options.input, ["command", "cmd"]);
-	const agent = exampleStringField(options.input, ["agent"]);
 
 	const submittedRole = submitted && isNonEmptyString(submitted.role) && TASK_ROLES.includes(submitted.role as TaskRole)
 		? (submitted.role as TaskRole)
 		: undefined;
 	// IS-02 role source priority: the submitted role wins; otherwise the
-	// refused tool's intent (mutate → Worker, inspect/shell → Explorer);
-	// otherwise the host-resolved delegated role carried by the agent name.
-	// A subagent TaskSpec refusal never falls back to a blanket Explorer: with
-	// no trustworthy source the role is unresolved — never guessed from
-	// objective wording. Direct refusals of generic tools keep the historical
-	// minimal Explorer suggestion (the read-only ceiling, not a widening).
+	// refused tool's intent (mutate → Worker, inspect/shell → Explorer).
+	// Direct refusals of generic tools keep the historical minimal Explorer
+	// suggestion (the read-only ceiling, not a widening); the role is never
+	// guessed from objective wording.
 	const toolRole: TaskRole | undefined = isMutate
 		? "worker"
 		: isInspect || isShell
 			? "explorer"
 			: undefined;
-	const agentRole = submittedRole || toolRole ? undefined : inferTaskRoleFromAgent(agent);
-	const fallbackRole: TaskRole | undefined = submittedRole || toolRole || agentRole
-		? undefined
-		: toolName === "subagent"
-			? undefined
-			: "explorer";
-	const role = submittedRole ?? toolRole ?? agentRole ?? fallbackRole;
+	const fallbackRole: TaskRole | undefined = submittedRole || toolRole ? undefined : "explorer";
+	const role = submittedRole ?? toolRole ?? fallbackRole;
 
 	const changes: TaskSpecRepairChange[] = [];
 	const unresolvedFields: string[] = [];
@@ -981,13 +935,8 @@ export function buildTaskSpecRepair(options: TaskSpecExampleInput): TaskSpecRepa
 		});
 	} else if (toolRole) {
 		changes.push({ field: "role", reason: `derived role "${toolRole}" from the refused ${toolName} tool` });
-	} else if (agentRole) {
-		changes.push({ field: "role", reason: `kept the delegated role "${agentRole}" resolved from agent "${agent}"` });
 	} else if (fallbackRole) {
 		changes.push({ field: "role", reason: `suggested the minimal read-only role "explorer" for this generic tool refusal` });
-	} else if (agent) {
-		unresolvedFields.push("role");
-		changes.push({ field: "role", reason: `agent "${agent}" is unknown; its tool capability cannot be verified` });
 	} else {
 		unresolvedFields.push("role");
 	}
@@ -1118,207 +1067,13 @@ export function appendTaskSpecExample(reason: string, example: Record<string, un
 	return [
 		reason,
 		"",
-		"Embed this in the subagent task prompt as the TaskSpec JSON:",
+		"Pass this TaskSpec to planner_delegate:",
 		"```json",
 		JSON.stringify(example, null, 2),
 		"```",
 	].join("\n");
 }
 
-export interface ExtractedTaskSpecResult {
-	spec?: TaskSpec;
-	hasCharacteristics: boolean;
-	titleAliasUsed: boolean;
-	errors: string[];
-	candidate?: Record<string, unknown>;
-	/**
-	 * The submitted spec object itself: the nested `spec` when the candidate is
-	 * a TaskPacket (the host's prepare stage wraps every valid embedded spec in
-	 * one before admission), otherwise the candidate. Callers that ask "did the
-	 * submitter write field X" must read this, not `candidate` — a packet never
-	 * carries TaskSpec fields at its top level (ticket 48 host run).
-	 */
-	submitted?: Record<string, unknown>;
-	/** Exact source slice used for the embedded JSON candidate, when available. */
-	candidateText?: string;
-}
-
-function topLevelJsonCandidates(text: string): string[] {
-	const candidates: string[] = [];
-	const trimmed = text.trim();
-	if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-		candidates.push(trimmed);
-	}
-	for (const match of text.matchAll(/```(?:json|jsonc)?\s*([\s\S]*?)```/g)) {
-		if (match[1]?.trim()) candidates.push(match[1].trim());
-	}
-	for (let start = text.indexOf("{"); start !== -1; start = text.indexOf("{", start + 1)) {
-		let depth = 0;
-		let inString = false;
-		let escaped = false;
-		let matchedEnd = -1;
-		for (let index = start; index < text.length; index += 1) {
-			const char = text[index];
-			if (inString) {
-				if (escaped) escaped = false;
-				else if (char === "\\") escaped = true;
-				else if (char === '"') inString = false;
-				continue;
-			}
-			if (char === '"') inString = true;
-			else if (char === "{") depth += 1;
-			else if (char === "}") {
-				depth -= 1;
-				if (depth === 0) {
-					matchedEnd = index;
-					break;
-				}
-			}
-		}
-		if (matchedEnd !== -1) {
-			candidates.push(text.slice(start, matchedEnd + 1));
-			start = matchedEnd;
-		}
-	}
-	return [...new Set(candidates)];
-}
-
-export function extractTaskSpecDetails(
-	text: string,
-	defaultCwd?: string,
-	defaultRole: TaskRole = "worker",
-): ExtractedTaskSpecResult {
-	if (typeof text !== "string" || !text.trim()) {
-		return { hasCharacteristics: false, titleAliasUsed: false, errors: [] };
-	}
-
-	let firstErrorResult: ExtractedTaskSpecResult | undefined;
-
-	for (const candidate of topLevelJsonCandidates(text)) {
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(candidate);
-		} catch {
-			continue;
-		}
-
-		if (!isPlainObject(parsed)) continue;
-
-		// A TaskPacket wraps the same TaskSpec that older callers embedded at
-		// the top level. Read the nested spec so packetization is transparent to
-		// the lifecycle and identity checks.
-		const specValue = isPlainObject(parsed.spec) ? parsed.spec : parsed;
-
-		// Ignore ReviewRequest and WorkerReport payloads
-		if ("reviewMode" in parsed && "reportTaskId" in parsed) continue;
-		if ("status" in parsed && "changedFiles" in parsed && "evidence" in parsed) continue;
-
-		const matchingFields = TASKSPEC_CHARACTERISTIC_FIELDS.filter((field) => field in specValue);
-		const hasCharacteristics = matchingFields.length >= 2 || (matchingFields.length === 1 && matchingFields[0] !== "taskId");
-		if (!hasCharacteristics) continue;
-
-		let objective: unknown = specValue.objective;
-		let titleAliasUsed = false;
-		if (isNonEmptyString(specValue.objective)) {
-			objective = specValue.objective;
-		} else if (isNonEmptyString(specValue.title)) {
-			objective = specValue.title;
-			titleAliasUsed = true;
-		}
-
-		const effectiveCwd = isNonEmptyString(specValue.cwd)
-			? specValue.cwd
-			: defaultCwd ?? (typeof process !== "undefined" ? process.cwd() : "");
-		const effectiveRole = isNonEmptyString(specValue.role)
-			? (specValue.role as TaskRole)
-			: defaultRole;
-
-		const candidateToValidate: Record<string, unknown> = {
-			...specValue,
-			objective,
-			cwd: effectiveCwd,
-			role: effectiveRole,
-		};
-
-		const errors = validateTaskSpec(candidateToValidate);
-		if (errors.length === 0) {
-			const spec = createTaskSpec(
-				{
-					taskId: isNonEmptyString(specValue.taskId) ? specValue.taskId : undefined,
-					objective: objective as string,
-					cwd: effectiveCwd,
-					role: effectiveRole,
-					scope: isPlainObject(specValue.scope) ? (specValue.scope as TaskScope) : undefined,
-					constraints: isStringArray(specValue.constraints) ? specValue.constraints : undefined,
-					acceptanceCriteria: isStringArray(specValue.acceptanceCriteria) ? specValue.acceptanceCriteria : undefined,
-					validation: isPlainObject(specValue.validation) ? (specValue.validation as Partial<TaskValidation>) : undefined,
-					expectedEvidence: isPlainObject(specValue.expectedEvidence) ? (specValue.expectedEvidence as ExpectedEvidence) : undefined,
-					stopConditions: isStringArray(specValue.stopConditions) ? specValue.stopConditions : undefined,
-					contextPack: Array.isArray(specValue.contextPack) ? specValue.contextPack as TaskSpec["contextPack"] : undefined,
-					readFirst: isStringArray(specValue.readFirst) ? specValue.readFirst : undefined,
-					parentTaskId: isNonEmptyString(specValue.parentTaskId) ? specValue.parentTaskId : undefined,
-					commitOf: isNonEmptyString(specValue.commitOf) ? specValue.commitOf : undefined,
-					additionalWorktreeRoots: isStringArray(specValue.additionalWorktreeRoots)
-						? specValue.additionalWorktreeRoots
-						: undefined,
-				},
-				isNonEmptyString(specValue.taskId) ? specValue.taskId : undefined,
-			);
-			if (isPlainObject(specValue.budget)) {
-				(spec as { budget?: unknown }).budget = specValue.budget;
-			}
-			if (isPlainObject(specValue.cumulativeBudget)) {
-				(spec as { cumulativeBudget?: unknown }).cumulativeBudget = specValue.cumulativeBudget;
-			}
-			if (specValue.reportOnly === true) {
-				spec.reportOnly = true;
-			}
-			return {
-				spec,
-				hasCharacteristics: true,
-				titleAliasUsed,
-				errors: [],
-				candidate: parsed,
-				submitted: specValue as Record<string, unknown>,
-				candidateText: candidate,
-			};
-		}
-
-		if (!firstErrorResult) {
-			firstErrorResult = {
-				hasCharacteristics: true,
-				titleAliasUsed: false,
-				errors,
-				candidate: parsed,
-				submitted: specValue as Record<string, unknown>,
-				candidateText: candidate,
-			};
-		}
-	}
-
-	if (firstErrorResult) {
-		return firstErrorResult;
-	}
-
-	return { hasCharacteristics: false, titleAliasUsed: false, errors: [] };
-}
-
-/** Pull a TaskSpec the parent embedded in a delegation prompt. */
-export function extractTaskSpec(
-	text: string,
-	defaultCwd?: string,
-	defaultRole: TaskRole = "worker",
-): TaskSpec | undefined {
-	return extractTaskSpecDetails(text, defaultCwd, defaultRole).spec;
-}
-
-/**
- * Roles whose tool ceiling lets them mutate the working tree. Only these
- * contend for the write lock.
- */
-export function isWriterRole(role: TaskRole): boolean {
-	return roleAllowsMutatingTools(role);
-}
 
 export const TASK_TRANSITIONS: Record<TaskState, readonly TaskState[]> = {
 	planning: ["executing", "blocked", "failed", "report-invalid"],
@@ -1361,6 +1116,8 @@ export interface TaskRecord {
 	/** Validator (oracle) reports recorded against this Task; not Worker reports. */
 	validatorReports: WorkerReport[];
 	reviews: ReviewResult[];
+	/** optional: ledgers written before this field exist. */
+	verdictRefusals?: RootVerdictRefusalRecord[];
 	overrides: ReviewOverride[];
 	/** Model-chosen ids that still resolve to this Task. */
 	aliases: string[];
@@ -1423,12 +1180,29 @@ export interface TaskRecord {
 	 * history only. Cleared when leaving `blocked` (e.g. Root verdict reopen).
 	 */
 	sealedAt?: string;
+	/**
+	 * WRC P0-A — a writer reservation that could not be released because the
+	 * execution's stop was never confirmed. Persisted so a restarted Root
+	 * keeps denying a second writer for this workspace instead of trusting a
+	 * lost in-memory reservation.
+	 */
+	writerHold?: {
+		executionId: string;
+		reason: string;
+		since: string;
+	};
+	/**
+	 * WRC P0-B — needs_replan metadata (spec §2): set when an execution ends
+	 * via worker_runaway or an unconfirmed stop; a new bounded execution on
+	 * this Task is then refused without a valid RecoveryDecision.
+	 */
+	recovery?: TaskRecovery;
+	/** P0-B — consumed recovery decisions, for reworded-retry dedupe. */
+	recoveryHistory?: RecoveryHistoryEntry[];
 	/** Per-task usage snapshot; live totals live in UsageLedger. Initialised empty. */
 	usage: TaskUsage;
 	createdAt: string;
 	updatedAt: string;
-	/** Most recent auditable restore/recovery identity check for this Task. */
-	recoveryBinding?: import("./types.ts").RecoveryBindingCheck;
 	/** Whether this Task was created as a placeholder without parent TaskSpec. */
 	isPlaceholder?: boolean;
 	/** Whether the embedded TaskSpec used 'title' as an alias for 'objective'. */
@@ -1531,6 +1305,7 @@ export class TaskStore {
 			reports: [],
 			validatorReports: [],
 			reviews: [],
+			verdictRefusals: [],
 			overrides: [],
 			aliases,
 			reportCorrections: 0,
@@ -1834,7 +1609,7 @@ export class TaskStore {
 	/** E01 — start a per-execution evidence record with this execution's A_run. */
 	beginExecution(taskId: string, execution: Omit<TaskExecutionRecord, "taskId">): TaskRecord {
 		const record = this.require(taskId);
-		record.executions.push({ ...execution, taskId });
+		record.executions.push({ status: "running", ...execution, taskId });
 		return this.touch(record);
 	}
 
@@ -1848,6 +1623,63 @@ export class TaskStore {
 		const execution = record.executions.find((item) => item.executionId === executionId);
 		if (!execution) return record;
 		Object.assign(execution, patch);
+		return this.touch(record);
+	}
+
+	/**
+	 * WRC P0-A — close out (or stamp mid-flight lifecycle fields on) an
+	 * execution without success assumptions: ended reason, termination
+	 * confirmation, residual C_terminal, usage completeness. Never writes
+	 * report indices; the successful path keeps using completeExecution.
+	 */
+	finalizeExecution(
+		taskId: string,
+		executionId: string,
+		patch: Partial<Omit<TaskExecutionRecord, "taskId" | "executionId" | "reportIndex" | "validatorReportIndex">>,
+	): TaskRecord {
+		const record = this.require(taskId);
+		const execution = record.executions.find((item) => item.executionId === executionId);
+		if (!execution) return record;
+		Object.assign(execution, patch);
+		return this.touch(record);
+	}
+
+	/** WRC P0-A — persist an unreleased writer reservation so restarts keep denying a second writer. */
+	setWriterHold(taskId: string, hold: NonNullable<TaskRecord["writerHold"]>): TaskRecord {
+		const record = this.require(taskId);
+		record.writerHold = hold;
+		return this.touch(record);
+	}
+
+	/** WRC P0-A — the held writer's stop was confirmed; the workspace may be written again. */
+	clearWriterHold(taskId: string): TaskRecord {
+		const record = this.require(taskId);
+		delete record.writerHold;
+		return this.touch(record);
+	}
+
+	/** WRC P0-B — flag the Task as needing a Root recovery decision before any new execution. */
+	setRecoveryRequired(taskId: string, entry: { reason: string; executionId: string }): TaskRecord {
+		const record = this.require(taskId);
+		record.recovery = { required: true, reason: entry.reason, executionId: entry.executionId };
+		return this.touch(record);
+	}
+
+	/**
+	 * WRC P0-B — consume the recovery requirement: clears `required`, marks
+	 * who consumed it, and appends the decision to the dedupe history.
+	 */
+	consumeRecovery(taskId: string, decision: RecoveryDecision, consumedBy: string, nextAction?: string): TaskRecord {
+		const record = this.require(taskId);
+		if (record.recovery) {
+			record.recovery.required = false;
+			record.recovery.consumedBy = consumedBy;
+			if (nextAction !== undefined) record.recovery.nextAction = nextAction;
+		}
+		record.recoveryHistory = [
+			...(record.recoveryHistory ?? []),
+			{ ...decision, consumedBy, at: this.now().toISOString() },
+		];
 		return this.touch(record);
 	}
 
@@ -2058,6 +1890,12 @@ export class TaskStore {
 		return this.touch(record);
 	}
 
+	recordVerdictRefusal(taskId: string, refusal: Omit<RootVerdictRefusalRecord, "at">): TaskRecord {
+		const record = this.require(taskId);
+		(record.verdictRefusals ??= []).push({ ...refusal, at: this.now().toISOString() });
+		return this.touch(record);
+	}
+
 	/** §12 — the parent may override a reviewer, but the reason is recorded. */
 	recordOverride(taskId: string, override: Omit<ReviewOverride, "taskId" | "at">): TaskRecord {
 		const record = this.require(taskId);
@@ -2133,18 +1971,6 @@ export function isExecutingStale(task: TaskRecord, now = Date.now()): boolean {
 	return Number.isFinite(updated) && now - updated >= EXECUTING_STALE_MS;
 }
 
-/** A live lock holder is stale by age, independent of Task.state. */
-export function isHolderStale(task: TaskRecord, now = Date.now()): boolean {
-	if (isFinalTaskState(task.state)) return false;
-	const updated = Date.parse(task.updatedAt);
-	return Number.isFinite(updated) && now - updated >= EXECUTING_STALE_MS;
-}
-
-export interface WriterConflict {
-	conflict: boolean;
-	reason?: string;
-	taskId?: string;
-}
 
 /**
  * FR-04 / D07 — at most one writable invocation per worktree at a time.
@@ -2156,9 +1982,10 @@ export interface WriterConflict {
  * for unit tests of those pieces; do not treat `state === "executing"` here
  * as product behaviour.
  *
- * The lock follows actual write ability (`isWriterRole`), not the presence of
- * a TaskSpec or the worker role name: a warn-mode unstructured worker and a
- * shell-capable validator contend just the same, and a second call on the
+ * The lock follows actual write ability — decided in delegate.ts by
+ * `role === "worker"` — not the presence of a TaskSpec or the worker role
+ * name: a warn-mode unstructured worker and a shell-capable validator
+ * contend just the same, and a second call on the
  * *same* Task is not a free pass — re-entry goes through this check too.
  *
  * cwd identity is normalized through `realpath` so relative paths and symlink
@@ -2176,34 +2003,4 @@ export function normalizeWorkspaceIdentity(cwd: string): string {
 		// Unrenamed/uncreated paths still collide by resolved text.
 		return absolute;
 	}
-}
-
-export function findWriterConflict(
-	tasks: readonly TaskRecord[],
-	cwd: string,
-	role: TaskRole,
-	now: number = Date.now(),
-): WriterConflict {
-	if (!isWriterRole(role)) return { conflict: false };
-	const target = normalizeWorkspaceIdentity(cwd);
-	const holder = tasks.find(
-		(task) =>
-			isWriterRole(task.role) &&
-			task.state === "executing" &&
-			task.cwd !== "" &&
-			normalizeWorkspaceIdentity(task.cwd) === target,
-	);
-	if (!holder) return { conflict: false };
-	const stale = isExecutingStale(holder, now);
-	return {
-		conflict: true,
-		taskId: holder.taskId,
-		reason: [
-			`Planner-only guard: task ${holder.taskId} already holds the write lock for ${target}.`,
-			stale
-				? `That task has been executing for over ${Math.round(EXECUTING_STALE_MS / 60000)} minutes and its child run has not been confirmed exited; reconcile the run (or abandon the task) before starting another writer.`
-				: "Keep one writable invocation per worktree; even a second call on the same Task must wait.",
-			"Wait for that run's result to release the lock, or delegate this one into a separate worktree.",
-		].join("\n"),
-	};
 }

@@ -147,7 +147,6 @@ const verdictRequests = [];
 					...(details.action !== undefined ? { action: details.action } : {}),
 					...(details.state !== undefined ? { state: details.state } : {}),
 					...(details.refused !== undefined ? { refused: details.refused } : {}),
-					...(details.refusalKind !== undefined ? { refusalKind: details.refusalKind } : {}),
 				},
 			});
 		}

@@ -7,8 +7,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AcceptanceEvidenceMatrixOptions, EvidenceMatrixEntry } from "./acceptance.ts";
-import { buildAcceptanceEvidenceMatrix } from "./acceptance.ts";
 import type {
 	ChildProvenance,
 	ChildUsage,
@@ -45,12 +43,6 @@ export interface PricingTable {
 	currency: "USD" | "CNY";
 	rates: Record<string, PricingRates>;
 }
-
-export function childOutcomeFromExitCode(exitCode: number | undefined): "succeeded" | "failed" | "unknown" {
-	if (exitCode === undefined) return "unknown";
-	return exitCode === 0 ? "succeeded" : "failed";
-}
-
 
 export type UsageEntryKind = "root-turn" | "child" | "injected" | "leak";
 
@@ -401,19 +393,6 @@ function tableCost(rates: PricingRates | undefined, tokens: TokenCounts): number
  */
 export function hasUsableRate(pricing: PricingTable, provider: string | undefined, model: string | undefined): boolean {
 	return tableCost(lookupRates(pricing, provider, model), emptyTokenCounts()) !== undefined;
-}
-
-export type DelegationRateKind = "paid" | "free" | "unknown";
-
-/**
- * Classify a delegation model's price from the pricing table: "free" when all
- * four rates are finite and zero, "paid" when usable and any rate is positive,
- * "unknown" when the table has no usable entry (callers treat unknown as paid).
- */
-export function delegationRateKind(pricing: PricingTable, provider: string | undefined, model: string | undefined): DelegationRateKind {
-	const rates = lookupRates(pricing, provider, model);
-	if (!hasUsableRates(rates)) return "unknown";
-	return rates.input === 0 && rates.output === 0 && rates.cacheRead === 0 && rates.cacheWrite === 0 ? "free" : "paid";
 }
 
 function resolveCost(
@@ -1351,42 +1330,35 @@ export function renderRunSummary(summary: RunSummary): string {
 export interface SessionEvidenceExportOptions {
 	rootSessionId: string;
 	tasks?: readonly unknown[];
-	runRecords?: readonly unknown[];
-	delegations?: readonly unknown[];
 	usageEntries?: readonly unknown[];
-	/** Optional frozen event fixtures, accepted by the offline regression harness. */
-	fixtures?: unknown;
-	/** Optional explicit C/B evidence statuses; omitted entries remain unproven. */
-	acceptance?: AcceptanceEvidenceMatrixOptions;
-	sourceFingerprint?: string;
 }
 
 export interface SessionEvidenceBreakdown {
 	superseded: number;
 	committed: number;
 	envelopeRepairs: number;
-	budgetIntercepts: number;
 	foreignChildSpend: { count: number; tokens: number; costUsd: number; unknownCost: boolean };
 }
 
+/**
+ * Ticket 08 (K7) — the export carries Task-level and usage-level evidence
+ * only. Run-level material (linkage, interceptions, process-exit and
+ * ingestion statuses, the acceptance matrix, fixture-driven analysis) died
+ * with the legacy delegation chain and its RunRecord store.
+ */
 export interface SessionEvidenceExport {
 	version: 1;
 	rootSessionId: string;
 	generatedAt: string;
-	linkage: Array<Record<string, unknown>>;
 	statuses: {
-		processExit: Record<string, number>;
-		ingestion: Record<string, number>;
 		workerReport: Record<string, number>;
 		reviewResult: Record<string, number>;
 		task: Record<string, number>;
 		rootVerdict: Record<string, number>;
 		/** Typed refusal kinds of recorded verdict refusals (issue 04). */
 		refusalKind: Record<string, number>;
-		category: Record<string, number>;
 	};
-	findings: { items: Array<Record<string, unknown>>; total: number; duplicateNotifications: number; new: number; historical: number };
-	interceptions: { total: number; runs: number; processFailures: number; providerErrors: number };
+	findings: { items: Array<Record<string, unknown>>; total: number; duplicateNotifications: number };
 	usage: {
 		tokens: TokenCounts;
 		bySource: { root: TokenCounts; children: TokenCounts; unattributed: TokenCounts };
@@ -1397,7 +1369,6 @@ export interface SessionEvidenceExport {
 			unknownParts: number;
 			unattributedUsd: number;
 		};
-		modelRates: Record<string, PricingRates>;
 		breakdown: SessionEvidenceBreakdown;
 		/** Mutually exclusive accounting buckets for root/child event export. */
 		buckets: {
@@ -1408,14 +1379,11 @@ export interface SessionEvidenceExport {
 		};
 	};
 	breakdown: SessionEvidenceBreakdown;
-	requirements: Array<{ id: string; status: "implemented" | "unit-verified" | "handler-verified" | "host-verified" | "unproven"; evidence: string[]; downgradedFrom?: string }>;
-	evidenceMatrix: EvidenceMatrixEntry[];
-	analysis: string[];
 	unattributed: Array<Record<string, unknown>>;
 }
 
 function emptyExportBreakdown(): SessionEvidenceBreakdown {
-	return { superseded: 0, committed: 0, envelopeRepairs: 0, budgetIntercepts: 0, foreignChildSpend: { count: 0, tokens: 0, costUsd: 0, unknownCost: false } };
+	return { superseded: 0, committed: 0, envelopeRepairs: 0, foreignChildSpend: { count: 0, tokens: 0, costUsd: 0, unknownCost: false } };
 }
 
 function exportUsageTokens(value: unknown): number {
@@ -1424,11 +1392,6 @@ function exportUsageTokens(value: unknown): number {
 	return ["input", "output", "cacheRead", "cacheWrite"].reduce((sum, key) => sum + (exportNumber(record[key]) ?? 0), 0);
 }
 
-function isBudgetIntercept(value: Record<string, unknown>): boolean {
-	return value.budgetIntercepted === true
-		|| /budget|intercept/i.test(exportString(value.terminalErrorClass) ?? "")
-		|| /budget|intercept/i.test(exportString(exportRecord(value.lastError)?.code) ?? "");
-}
 
 function addForeignChildSpend(target: SessionEvidenceBreakdown["foreignChildSpend"], value: unknown): void {
 	const record = exportRecord(value);
@@ -1558,36 +1521,20 @@ function emptyExportTokens(): TokenCounts {
 /**
  * Produce a bounded, machine-readable evidence view for one Root session.
  * Inputs are deliberately structural so this exporter can consume restored
- * records from older plugin versions as well as live Task/RunRecord objects.
+ * records from older plugin versions as well as live Task objects.
  */
 export function exportSessionEvidence(options: SessionEvidenceExportOptions): SessionEvidenceExport {
 	const rootSessionId = options.rootSessionId.trim();
 	const tasks = (options.tasks ?? []).map(exportRecord).filter((task): task is Record<string, unknown> => Boolean(task));
-	const delegationRuns = (options.delegations ?? []).map(exportRecord).filter((entry): entry is Record<string, unknown> => Boolean(entry)).map((entry) => {
-		const record = exportRecord(entry.record) ?? entry;
-		return {
-			...record,
-			rootSessionId: exportString(record.rootSessionId) ?? rootSessionId,
-			...(entry.toolCallId && !record.toolCallId ? { toolCallId: entry.toolCallId } : {}),
-		};
-	});
-	const allRuns = [...(options.runRecords ?? []), ...delegationRuns].map(exportRecord).filter((run): run is Record<string, unknown> => Boolean(run));
-	const runs = allRuns.filter((run) => {
-		const session = exportString(run.rootSessionId) ?? exportString(run.sessionId) ?? exportString(exportRecord(run.loadedProvenance)?.sessionId);
-		return !rootSessionId || session === rootSessionId;
-	});
-	const runTaskIds = new Set(runs.map((run) => exportString(run.taskId)).filter((id): id is string => Boolean(id)));
 	const selectedTasks = tasks.filter((task) => {
 		const taskRoot = exportString(task.rootSessionId) ?? exportString(task.sessionId);
-		return taskRoot === rootSessionId || runTaskIds.has(exportString(task.taskId) ?? "");
+		return taskRoot === rootSessionId;
 	});
 	const selectedTaskIds = new Set(selectedTasks.map((task) => exportString(task.taskId)).filter((id): id is string => Boolean(id)));
-	const linkage: Array<Record<string, unknown>> = [];
-	const statusKinds = ["processExit", "ingestion", "workerReport", "reviewResult", "task", "rootVerdict", "refusalKind", "category"] as const;
+	const statusKinds = ["workerReport", "reviewResult", "task", "rootVerdict", "refusalKind"] as const;
 	const statuses = Object.fromEntries(statusKinds.map((kind) => [kind, {}])) as SessionEvidenceExport["statuses"];
 	const unattributed: Array<Record<string, unknown>> = [];
 	for (const task of selectedTasks) {
-		const taskId = exportString(task.taskId) ?? "unknown";
 		const reports = Array.isArray(task.reports) ? task.reports : [];
 		const reviews = Array.isArray(task.reviews) ? task.reviews : [];
 		incrementExport(statuses.task, task.state);
@@ -1595,8 +1542,10 @@ export function exportSessionEvidence(options: SessionEvidenceExportOptions): Se
 		for (const review of reviews) {
 			const reviewRecord = exportRecord(review);
 			incrementExport(statuses.reviewResult, reviewRecord?.verdict);
-			const refusalKind = exportString(reviewRecord?.refusalKind);
-			if (refusalKind) incrementExport(statuses.refusalKind, refusalKind);
+		}
+		for (const refusal of (Array.isArray(task.verdictRefusals) ? task.verdictRefusals : [])) {
+			const kind = exportString(exportRecord(refusal)?.kind);
+			if (kind) incrementExport(statuses.refusalKind, kind);
 		}
 		const rootReview = [...reviews].reverse().map(exportRecord).find((review) => review?.source === "root" || review?.source === "operator");
 		if (rootReview?.verdict !== undefined) incrementExport(statuses.rootVerdict, rootReview.verdict);
@@ -1621,80 +1570,10 @@ export function exportSessionEvidence(options: SessionEvidenceExportOptions): Se
 			findings.set(key, { ...finding, taskId, executionId, identity, duplicateNotifications: 0 });
 		}
 	}
-	for (const run of runs) {
-		const taskId = exportString(run.taskId);
-		if (taskId && !selectedTaskIds.has(taskId)) {
-			unattributed.push({ type: "run", reason: "task-not-in-root-session", runId: run.runId, taskId, workspaceId: run.workspaceId });
-			continue;
-		}
-		const executionId = exportString(run.executionId) ?? "unknown-execution";
-		const task = selectedTasks.find((candidate) => exportString(candidate.taskId) === taskId);
-		const executions = task && Array.isArray(task.executions) ? task.executions : [];
-		const execution = executions.map(exportRecord).find((candidate) => exportString(candidate?.executionId) === executionId);
-		const reportIndex = exportNumber(run.reportRevision) ?? (exportNumber(execution?.reportIndex) !== undefined ? (exportNumber(execution?.reportIndex) as number) + 1 : undefined);
-		const report = task ? (Array.isArray(task.reports) ? exportRecord(task.reports[reportIndex === undefined ? -1 : reportIndex - 1]) : undefined) : undefined;
-		const review = task && Array.isArray(task.reviews) ? exportRecord(task.reviews.at(-1)) : undefined;
-		const identity = Array.isArray(run.identityIndex) ? exportRecord(run.identityIndex.find((item) => exportString(exportRecord(item)?.executionId) === executionId)) : undefined;
-		const childSessionFile = exportString(identity?.childSessionFile) ?? exportString(run.childSessionFile) ?? exportString(execution?.childSessionFile);
-		const reviewResultVerdict = review?.verdict ?? "unknown";
-		const rootReview = task && Array.isArray(task.reviews)
-			? task.reviews.map(exportRecord).reverse().find((candidate) => candidate?.source === "root" || candidate?.source === "operator")
-			: undefined;
-		const statusCategory = run.executionState === "launch-failed"
-			? "host-error"
-			: run.terminalErrorClass === "provider-error" || run.terminalErrorClass === "process-error"
-				? "host-error"
-				: run.terminalErrorClass === "missing-report" || run.ingestionState === "report-invalid" || run.ingestionState === "unavailable"
-					? "ingestion-error"
-					: exportRecord(run.lastError)?.code === "CONCURRENCY_REFUSED" || exportRecord(run.lastError)?.code === "LIFECYCLE_REFUSAL"
-						? "lifecycle-refusal"
-						: rootReview?.verdict === "pass" && task?.state === "completed" ? "accepted" : "pending";
-		linkage.push({
-			rootSessionId,
-			...(exportString(identity?.toolCallId) || exportString(run.toolCallId) || executionId ? { toolCallId: exportString(identity?.toolCallId) ?? exportString(run.toolCallId) ?? executionId } : {}),
-			...(run.runId ? { hostRunId: run.runId } : {}),
-			...(childSessionFile ? { childSessionFile } : {}),
-			...(taskId ? { taskId } : {}),
-			executionId,
-			...(reportIndex !== undefined ? { reportRevision: reportIndex } : {}),
-			...(run.loadedProvenance ? { loadedFingerprint: exportRecord(run.loadedProvenance)?.loadedFingerprint } : {}),
-			...(options.sourceFingerprint ? { sourceFingerprint: options.sourceFingerprint } : {}),
-			workerReportStatus: report?.status ?? "unknown",
-			reviewResultVerdict,
-			taskState: task?.state ?? "unknown",
-			rootVerdict: rootReview?.verdict ?? "unknown",
-			statusCategory,
-			retryable: Boolean(run.nextAction && run.ingestionState !== "recorded"),
-			...(run.nextAction ? { nextAction: run.nextAction } : {}),
-			...(run.terminalReason ? { terminalReason: run.terminalReason } : {}),
-			processExitCode: run.exitCode ?? run.processExitCode ?? exportRecord(run.terminal)?.exitCode ?? "unknown",
-			ingestionState: run.ingestionState ?? "unknown",
-		});
-		incrementExport(statuses.category, statusCategory);
-		incrementExport(statuses.ingestion, run.ingestionState);
-		const exitCode = exportNumber(run.exitCode) ?? exportNumber(run.processExitCode) ?? exportNumber(exportRecord(run.terminal)?.exitCode);
-		incrementExport(statuses.processExit, exitCode === undefined ? "unknown" : String(exitCode));
-	}
-	const fixture = exportRecord(options.fixtures);
-	let interceptionTotal = 0;
-	let interceptionRuns = 0;
-	let processFailures = 0;
-	let providerErrors = 0;
-	if (fixture) {
-		const e02 = exportRecord(fixture.e02) ?? exportRecord(fixture.E02_FIXTURE);
-		const e02Runs = Array.isArray(e02?.runs) ? e02.runs.map(exportRecord).filter((run): run is Record<string, unknown> => Boolean(run)) : [];
-		interceptionRuns = e02Runs.length;
-		interceptionTotal = e02Runs.reduce((sum, run) => sum + (exportNumber(run.count) ?? (Array.isArray(run.interceptedLines) ? run.interceptedLines.length : 0)), 0);
-		const e03 = exportRecord(fixture.e03) ?? exportRecord(fixture.E03_FIXTURE);
-		const e03Runs = Array.isArray(e03?.runs) ? e03.runs.map(exportRecord).filter((run): run is Record<string, unknown> => Boolean(run)) : [];
-		processFailures = e03Runs.filter((run) => exportNumber(run.exitCode) !== undefined && exportNumber(run.exitCode) !== 0).length;
-		providerErrors = e03Runs.filter((run) => /403|permission_error|usage limit/i.test(exportString(run.error) ?? "")).length;
-		if (e03Runs.length > 0) statuses.processExit["1"] = (statuses.processExit["1"] ?? 0) + processFailures;
-	}
 	const usageBreakdown = emptyExportBreakdown();
 	const usageResult: SessionEvidenceExport["usage"] = {
 		tokens: emptyExportTokens(), bySource: { root: emptyExportTokens(), children: emptyExportTokens(), unattributed: emptyExportTokens() },
-		cost: { calculatedUsd: 0, reportedUsd: 0, unknownUsd: false, unknownParts: 0, unattributedUsd: 0 }, modelRates: {},
+		cost: { calculatedUsd: 0, reportedUsd: 0, unknownUsd: false, unknownParts: 0, unattributedUsd: 0 },
 		breakdown: usageBreakdown,
 		buckets: {
 			tasked: { tokens: 0, costUsd: 0, unknownCost: false, count: 0 },
@@ -1703,16 +1582,6 @@ export function exportSessionEvidence(options: SessionEvidenceExportOptions): Se
 			unknown: { tokens: 0, costUsd: 0, unknownCost: false, count: 0 },
 		},
 	};
-	for (const run of runs) {
-		const rates = exportRecord(exportRecord(run.pricing)?.rates);
-		if (!rates) continue;
-		for (const [model, value] of Object.entries(rates)) {
-			const rate = exportRecord(value);
-			if (rate && ["input", "output", "cacheRead", "cacheWrite"].every((key) => exportNumber(rate[key]) !== undefined)) {
-				usageResult.modelRates[model] = rate as unknown as PricingRates;
-			}
-		}
-	}
 	const seenUsage = new Set<string>();
 	for (const task of selectedTasks) {
 		exportTaskUsage(task.usage, usageResult, false);
@@ -1748,26 +1617,6 @@ export function exportSessionEvidence(options: SessionEvidenceExportOptions): Se
 			unattributed.push({ type: "usage", taskId: taskId ?? "unknown", runId: value.runId, reason: bucket === "unknown" ? "no trusted provenance" : "outside selected Task" });
 		}
 	}
-	for (const run of runs) {
-		if (isBudgetIntercept(run)) usageBreakdown.budgetIntercepts += 1;
-		const taskId = exportString(run.taskId);
-		if (!taskId || selectedTaskIds.has(taskId)) continue;
-		const identity = usageIdentity(run);
-		if (identity && seenUsage.has(identity)) continue;
-		if (identity) seenUsage.add(identity);
-		const bucket = childUsageBucket(run, rootSessionId, selectedTaskIds);
-		addBucketUsage(usageResult.buckets[bucket], run.usage ?? run);
-		if (run.usage !== undefined) addForeignChildSpend(usageBreakdown.foreignChildSpend, run.usage);
-		else {
-			const tokens = exportRecord(run.tokens);
-			const tokenCount = exportNumber(tokens?.total) ?? ["input", "output", "cacheRead", "cacheWrite"].reduce((sum, key) => sum + (exportNumber(tokens?.[key]) ?? 0), 0);
-			usageBreakdown.foreignChildSpend.count += 1;
-			usageBreakdown.foreignChildSpend.tokens += tokenCount;
-			const cost = exportNumber(exportRecord(run.cost)?.childrenUsd);
-			if (cost === undefined) usageBreakdown.foreignChildSpend.unknownCost = true;
-			else usageBreakdown.foreignChildSpend.costUsd += cost;
-		}
-	}
 	for (const task of selectedTasks) {
 		if (task.completionKind === "superseded" || task.state === "closed-superseded") usageBreakdown.superseded += 1;
 		if (task.completionKind === "committed") usageBreakdown.committed += 1;
@@ -1778,54 +1627,15 @@ export function exportSessionEvidence(options: SessionEvidenceExportOptions): Se
 		}
 	}
 	usageResult.breakdown = usageBreakdown;
-	const evidenceMatrix = buildAcceptanceEvidenceMatrix({
-		...options.acceptance,
-		rootSessionId,
-		...(options.acceptance?.runIds ? {} : {
-			runIds: runs.map((run) => exportString(run.runId)).filter((id): id is string => Boolean(id)),
-		}),
-	});
 	usageResult.cost.unknownUsd = usageResult.cost.unknownParts > 0;
-	const e01 = fixture && (exportRecord(fixture.e01) ?? exportRecord(fixture.E01_FIXTURE));
-	const e01New = Array.isArray(e01?.newFindings) ? e01.newFindings.length : 0;
-	const e01Historical = Array.isArray(e01?.historicalFindings) ? e01.historicalFindings.length : 0;
-	const e04 = fixture && (exportRecord(fixture.e04) ?? exportRecord(fixture.E04_FIXTURE));
-	const analysis: string[] = [];
-	if (e01) analysis.push(`E01: ${e01New} new finding(s); ${e01Historical} historical event(s) kept separate.`);
-	if (interceptionRuns > 0) analysis.push(`E02: ${interceptionTotal} tool interception(s) across ${interceptionRuns} run(s); process exits are reported separately.`);
-	if (e04) {
-		const cross = exportRecord(e04.crossWorkspace);
-		const premature = Array.isArray(e04.prematureLaunchReceipts) ? e04.prematureLaunchReceipts.length : 0;
-		if (cross) {
-			analysis.push(`E04: cross-workspace run ${exportString(cross.runId) ?? "unknown"} is unattributed (${exportString(cross.foreignWorkspace) ?? "foreign workspace"}); its ${exportString(cross.executionState) ?? "unknown"}/${exportString(cross.ingestionState) ?? "unknown"} state is not merged into Task statistics.`);
-			unattributed.push({ type: "cross-workspace-run", ...cross });
-		}
-		if (premature > 0) analysis.push(`E04: ${premature} launch receipt(s) precede final output; launch is not treated as a report-invalid terminal state.`);
-		const mixed = exportRecord(e04.mixedLedgerCounts);
-		if (mixed) {
-			analysis.push(`E04: mixed ledger snapshot (${exportNumber(mixed.totalTasks) ?? 0} tasks) is historical context, not this session's completion population.`);
-			unattributed.push({ type: "mixed-ledger-snapshot", reason: "outside root session scope", ...mixed });
-		}
-	}
 	return {
 		version: 1,
 		rootSessionId,
 		generatedAt: new Date().toISOString(),
-		linkage,
 		statuses,
-		findings: { items: [...findings.values()], total: findings.size, duplicateNotifications, new: e01New, historical: e01Historical },
-		interceptions: { total: interceptionTotal, runs: interceptionRuns, processFailures, providerErrors },
+		findings: { items: [...findings.values()], total: findings.size, duplicateNotifications },
 		usage: usageResult,
 		breakdown: usageBreakdown,
-		requirements: [
-			{ id: "RS-05", status: linkage.length > 0 ? "implemented" : "unproven", evidence: linkage.length > 0 ? ["root-scoped Task/RunRecord linkage"] : ["no persisted execution linkage supplied"] },
-			{ id: "A19", status: fixture ? "unit-verified" : "unproven", evidence: fixture ? [`${e01New} new findings`, `${interceptionTotal} interceptions/${interceptionRuns} runs`, `${processFailures} process failures`] : [] },
-			{ id: "A20", status: e04 ? "unit-verified" : "unproven", evidence: e04 ? ["cross-workspace and premature launch records retained as analysis/unattributed"] : [] },
-			{ id: "A21", status: "unproven", evidence: ["requires production host event and payload receipt"] },
-			...evidenceMatrix,
-		],
-		analysis,
 		unattributed,
-		evidenceMatrix,
 	};
 }
