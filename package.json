@@ -1,6 +1,6 @@
 {
   "name": "pi-planner-only",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Planner-only guard and lightweight Pi orchestration layer",
   "type": "module",
   "license": "MIT",
