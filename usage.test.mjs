@@ -19,6 +19,7 @@ import {
 	renderUsage,
 	renderUsageLine,
 	shouldFlushUsageOnShutdown,
+	exportSessionEvidence,
 } from "./usage.ts";
 
 const now = () => new Date("2026-09-05T12:00:00.000Z");
@@ -1023,6 +1024,26 @@ function ticket15ResolvedNoRate(overrides = {}) {
 	assert.equal(spend.currency, "CNY", "40-u5: CNY table currency carried");
 	assert.equal(spend.costUnknown, false);
 	assert.ok((spend.costUsd ?? 0) > 0, "40-u6: table-derived CNY cost is recorded");
+}
+
+{
+	// Ticket 11 D1 — refused Root verdicts count under refusalKind, never under
+	// reviewResult, and a refused row is not a Root verdict.
+	const evidence = exportSessionEvidence({
+		rootSessionId: "session-refusal",
+		tasks: [{
+			taskId: "T-refusal",
+			rootSessionId: "session-refusal",
+			state: "completed",
+			reports: [],
+			reviews: [{ taskId: "T-refusal", verdict: "pass", summary: "s", findings: [], evidenceFresh: true, source: "reviewer" }],
+			verdictRefusals: [{ taskId: "T-refusal", requestedVerdict: "pass", kind: "terminal-state", reason: "r", at: "2026-09-16T00:00:00.000Z" }],
+			usage: { root: {}, children: [] },
+		}],
+	});
+	assert.equal(evidence.statuses.reviewResult.pass, 1);
+	assert.equal(evidence.statuses.refusalKind["terminal-state"], 1);
+	assert.equal(Object.keys(evidence.statuses.rootVerdict).length, 0);
 }
 
 console.log("planner-only usage: PASS");

@@ -165,7 +165,7 @@ export const WORKER_REPORT_SCHEMA = structuredClone(Type.Object(
 /**
  * ReviewResult JSON schema (types.ts) as plain JSON data — only the fields a
  * reviewer child may write; Root-side audit stamps (appliedDecision,
- * refusalKind, source, …) are not in the contract. `Type.Unsafe({enum})`
+ * requestedVerdict, source, …) are not in the contract. `Type.Unsafe({enum})`
  * keeps the enum a flat array so tests can deepEqual it against the same
  * exported constants `validateReviewResult` checks. Same structuredClone
  * rationale as WORKER_REPORT_SCHEMA above.
@@ -498,6 +498,7 @@ export async function runDelegation(
 				...(thisSpec.additionalWorktreeRoots?.length
 					? { additionalWorktreeRoots: thisSpec.additionalWorktreeRoots }
 					: {}),
+				...(priorTruthPaths.length > 0 ? { priorTruthPaths } : {}),
 			})
 			: undefined;
 		if (comparison) deps.store.setLastComparison(task.taskId, comparison);
@@ -772,11 +773,17 @@ async function runReviewInvocation(
 	const latest = fresh.executions
 		.filter((item) => !item.auxiliary && !item.reportOnly && item.reportIndex === fresh.reports.length - 1)
 		.at(-1);
+	const priorTruthPaths = latest
+		? fresh.executions
+			.filter((item) => item.executionId !== latest.executionId && !item.auxiliary && !item.reportOnly && item.truthPaths?.length)
+			.flatMap((item) => item.truthPaths ?? [])
+		: [];
 	const comparison = latest
 		? compareEvidence(latest.aRun, current, report, {
 			...(fresh.spec?.scope ? { scope: fresh.spec.scope } : {}),
 			...(roots?.length ? { additionalWorktreeRoots: roots } : {}),
 			...(latest.readOnly ? { readOnly: true } : {}),
+			...(priorTruthPaths.length > 0 ? { priorTruthPaths } : {}),
 		})
 		: undefined;
 	if (comparison) deps.store.setLastComparison(task.taskId, comparison);

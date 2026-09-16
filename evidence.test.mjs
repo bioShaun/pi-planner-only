@@ -359,6 +359,33 @@ assert.equal(overReported.fresh, false);
 assert.equal(evidenceAction(overReported), "revalidate");
 assert.match(describeComparison(overReported), /over-reported|unreliable/);
 
+// Ticket 11 D2 — a correction run may restate paths attributed to earlier
+// executions of the same Task; they are neither over-reported nor missing.
+{
+	const cumulative = makeReport({
+		finalGitRef: "abc1234",
+		gitStatusHash: "hash-one",
+		changedPaths: ["src/greet.js", "src/greet.test.js"],
+	});
+	const currentOnlyTest = makeCurrent({
+		gitStatusHash: "hash-two",
+		changedPaths: ["src/greet.test.js"],
+		dirtyPathHashes: { "src/greet.test.js": "hash-test" },
+	});
+	// (a) without priorTruthPaths the restated path is over-reported (prior behaviour)
+	const noPrior = compareEvidence(makeBase(), currentOnlyTest, cumulative);
+	assert.equal(noPrior.fresh, false);
+	assert.match(describeComparison(noPrior), /over-reported/);
+	// (b) with priorTruthPaths the restated path is excused
+	const withPrior = compareEvidence(makeBase(), currentOnlyTest, cumulative, {
+		priorTruthPaths: [resolve("/repo", "src/greet.js")],
+	});
+	assert.equal(withPrior.fresh, true);
+	assert.doesNotMatch(describeComparison(withPrior), /over-reported/);
+	assert.doesNotMatch(describeComparison(withPrior), /no longer present/);
+	assert.equal(withPrior.extraDeclaredPaths.includes("/repo/src/greet.js"), false);
+}
+
 // --------------------------------------------------------------------------
 // RF-1 — committed delta (T2) and content-changed baseline (T3)
 // --------------------------------------------------------------------------

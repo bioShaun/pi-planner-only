@@ -1542,8 +1542,10 @@ export function exportSessionEvidence(options: SessionEvidenceExportOptions): Se
 		for (const review of reviews) {
 			const reviewRecord = exportRecord(review);
 			incrementExport(statuses.reviewResult, reviewRecord?.verdict);
-			const refusalKind = exportString(reviewRecord?.refusalKind);
-			if (refusalKind) incrementExport(statuses.refusalKind, refusalKind);
+		}
+		for (const refusal of (Array.isArray(task.verdictRefusals) ? task.verdictRefusals : [])) {
+			const kind = exportString(exportRecord(refusal)?.kind);
+			if (kind) incrementExport(statuses.refusalKind, kind);
 		}
 		const rootReview = [...reviews].reverse().map(exportRecord).find((review) => review?.source === "root" || review?.source === "operator");
 		if (rootReview?.verdict !== undefined) incrementExport(statuses.rootVerdict, rootReview.verdict);

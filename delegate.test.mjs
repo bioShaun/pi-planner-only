@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
@@ -535,6 +535,51 @@ function reviewerParams(taskId, overrides = {}) {
 	assert.equal(outcome.task.reviews.length, 1);
 	assert.equal(outcome.task.reviews[0].verdict, "request_changes");
 	assert.equal(outcome.task.reviewRound, 1, "a request_changes consumes a correction round");
+}
+
+// ---------------------------------------------------------------------------
+// Ticket 11 D2 — a correction worker may restate earlier-attributed paths in
+// changedFiles (cumulative declaration) without tripping the over-reported
+// gate: priorTruthPaths from earlier executions excuse them.
+// ---------------------------------------------------------------------------
+{
+	const dir = initCommittedRepo();
+	mkdirSync(join(dir, "src"), { recursive: true });
+	const { deps } = makeReviewDeps(dir, {
+		reviewFor: (request) => makeReview(request.nodeId, {
+			verdict: "request_changes",
+			summary: "the change is wrong",
+			findings: [{ severity: "major", category: "correctness", description: "it does the wrong thing", requestedChange: "redo it" }],
+		}),
+	});
+	const innerLaunch = deps.launch;
+	let workerCalls = 0;
+	deps.launch = async (request) => {
+		if (request.agent === "worker") {
+			workerCalls += 1;
+			// The write happens inside the delegation window (between A_run and
+			// C_report) so the execution's truthPaths see it.
+			if (workerCalls === 1) writeFileSync(join(dir, "src", "target.ts"), "round 1\n");
+			else writeFileSync(join(dir, "src", "other.ts"), "round 2\n");
+			const response = await innerLaunch(request);
+			// worker1 declares only its own file; worker2 declares the Task's
+			// cumulative set — the host-run N1 pattern that used to revalidate.
+			response.result.value.changedFiles = workerCalls === 1 ? ["src/target.ts"] : ["src/target.ts", "src/other.ts"];
+			return response;
+		}
+		return innerLaunch(request);
+	};
+	const worker = await runDelegation(deps, makeParams({ scope: { allowedPaths: ["src/target.ts", "src/other.ts"] } }), dir, { executionId: "call-w1" });
+	const taskId = worker.task.taskId;
+	assert.equal(deps.store.require(taskId).state, "reviewing");
+	const review = await runDelegation(deps, reviewerParams(taskId), dir, { executionId: "call-r" });
+	assert.equal(review.task.state, "changes_requested");
+
+	const correction = await runDelegation(deps, makeParams({ taskId, objective: "add other.ts", scope: { allowedPaths: ["src/target.ts", "src/other.ts"] } }), dir, { executionId: "call-w2" });
+	assert.equal(correction.task.state, "reviewing", "a cumulative declaration must not revalidate");
+	const last = deps.store.require(taskId).lastComparison;
+	assert.ok(last && !last.reasons.some((r) => /over-reported/.test(r)), `no over-reported in ${JSON.stringify(last?.reasons)}`);
+	assert.equal(last.extraDeclaredPaths.some((p) => p.endsWith("src/target.ts")), false, "restated prior-truth path excused");
 }
 
 // ---------------------------------------------------------------------------

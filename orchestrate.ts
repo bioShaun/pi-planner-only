@@ -861,6 +861,8 @@ export class PlannerOrchestrator {
 		if (task.reviews.length > 0) {
 			lines.push(`Reviews: ${task.reviews.map((review) => `${review.verdict} (${review.source ?? "reviewer"})`).join(", ")}`);
 		}
+		const refusals = task.verdictRefusals ?? [];
+		if (refusals.length > 0) lines.push(`Refused verdicts: ${refusals.length} (${refusals.map((r) => r.kind).join(", ")})`);
 		const openFindings = task.findings.filter((finding) => finding.status === "open");
 		if (openFindings.length > 0) {
 			lines.push(`Evidence findings: ${openFindings.length} open`);
@@ -967,19 +969,14 @@ export class PlannerOrchestrator {
 		return lines.join("\n");
 	}
 
-	/** Record a refused Root verdict as an auditable review event. */
+	/** Record a refused Root verdict as an audit row, never a ReviewResult. */
 	recordRootVerdictRefusal(task: TaskRecord, verdict: ReviewVerdict, refusal: RootVerdictRefusal): void {
-		this.store.recordReview(task.taskId, {
+		this.store.recordVerdictRefusal(task.taskId, {
 			taskId: task.taskId,
-			verdict,
-			summary: `refused: ${refusal.reason}`,
-			findings: [],
-			evidenceFresh: false,
 			requestedVerdict: verdict,
-			refusedReason: refusal.reason,
-			refusalKind: refusal.kind,
+			kind: refusal.kind,
+			reason: refusal.reason,
 			...(task.reports.at(-1)?.evidence?.workerRunId ? { executionId: task.reports.at(-1)?.evidence.workerRunId } : {}),
-			source: "root",
 		});
 	}
 

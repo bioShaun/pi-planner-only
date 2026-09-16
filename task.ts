@@ -30,6 +30,7 @@ import type {
 	ReviewMode,
 	ReviewOverride,
 	ReviewResult,
+	RootVerdictRefusalRecord,
 	TaskExecutionRecord,
 	TaskFinding,
 	TaskRole,
@@ -1112,6 +1113,8 @@ export interface TaskRecord {
 	/** Validator (oracle) reports recorded against this Task; not Worker reports. */
 	validatorReports: WorkerReport[];
 	reviews: ReviewResult[];
+	/** optional: ledgers written before this field exist. */
+	verdictRefusals?: RootVerdictRefusalRecord[];
 	overrides: ReviewOverride[];
 	/** Model-chosen ids that still resolve to this Task. */
 	aliases: string[];
@@ -1280,6 +1283,7 @@ export class TaskStore {
 			reports: [],
 			validatorReports: [],
 			reviews: [],
+			verdictRefusals: [],
 			overrides: [],
 			aliases,
 			reportCorrections: 0,
@@ -1804,6 +1808,12 @@ export class TaskStore {
 	recordReview(taskId: string, review: ReviewResult): TaskRecord {
 		const record = this.require(taskId);
 		record.reviews.push(review);
+		return this.touch(record);
+	}
+
+	recordVerdictRefusal(taskId: string, refusal: Omit<RootVerdictRefusalRecord, "at">): TaskRecord {
+		const record = this.require(taskId);
+		(record.verdictRefusals ??= []).push({ ...refusal, at: this.now().toISOString() });
 		return this.touch(record);
 	}
 

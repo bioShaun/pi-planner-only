@@ -176,7 +176,9 @@ report forces `revalidate` instead of completion. A fresh reviewer's
 (under-report, out-of-scope changes, drift) persist across correction rounds
 and block PASS until a review confirms the repair; ledger records written
 before per-execution evidence existed are marked unverifiable and cannot
-complete automatically. The writer lock follows the worktree's real path:
+complete automatically. A correction run may restate paths attributed to
+earlier executions of the same Task in `changedFiles`; only paths never
+attributed to the Task count as over-reported. The writer lock follows the worktree's real path:
 aliases of one worktree (relative path, symlink) share the lock, while
 independent worktrees stay independent.
 

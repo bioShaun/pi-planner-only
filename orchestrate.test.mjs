@@ -143,6 +143,62 @@ function reportFor(taskId, toolCallId) {
 	}
 }
 
+// Ticket 11 D1 — refused Root verdicts land on verdictRefusals, never reviews.
+{
+	const taskId = "T-20260916-301";
+	const store = new TaskStore({ now: FIXED_NOW });
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const task = store.create(createTaskSpec({ objective: "refusal audit", cwd: BASE }, taskId));
+	store.transition(task.taskId, "executing");
+	store.recordReport(taskId, reportFor(taskId, `${taskId}-worker`));
+	store.recordReview(taskId, {
+		taskId, verdict: "request_changes", summary: "needs more coverage", findings: [], evidenceFresh: true, source: "reviewer",
+	});
+	orch.recordRootVerdictRefusal(store.require(taskId), "pass", { kind: "fresh-review-pending", reason: "test refusal" });
+	const withRefusal = store.require(taskId);
+	assert.equal(withRefusal.reviews.length, 1);
+	assert.equal(withRefusal.verdictRefusals?.length, 1);
+	assert.equal(withRefusal.verdictRefusals?.[0].kind, "fresh-review-pending");
+	assert.equal(withRefusal.verdictRefusals?.[0].requestedVerdict, "pass");
+	assert.equal(typeof withRefusal.verdictRefusals?.[0].at, "string");
+	assert.match(orch.renderTaskStatus(withRefusal), /Refused verdicts: 1 \(fresh-review-pending\)/);
+
+	await orch.recordRootVerdict(store.require(taskId), "pass", "override after refusal");
+	const afterOverride = store.require(taskId);
+	assert.equal(afterOverride.overrides.length, 1);
+	assert.equal(afterOverride.overrides[0].reviewerVerdict, "request_changes");
+}
+
+// Ticket 11 D1 — a ledger record written before verdictRefusals existed restores and renders cleanly.
+{
+	const store = new TaskStore({ now: FIXED_NOW });
+	const legacy = {
+		taskId: "T-20260916-399",
+		role: "worker",
+		cwd: BASE,
+		state: "completed",
+		reviewRound: 1,
+		reviewMode: "root",
+		reports: [],
+		validatorReports: [],
+		reviews: [],
+		overrides: [],
+		aliases: [],
+		reportCorrections: 0,
+		executions: [],
+		findings: [],
+		recoveryAttempts: 0,
+		recoveryStates: [],
+		usage: emptyTaskUsage(),
+		createdAt: "2026-09-16T00:00:00.000Z",
+		updatedAt: "2026-09-16T00:00:00.000Z",
+	};
+	store.restore(legacy);
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const rendered = orch.renderTaskStatus(store.require("T-20260916-399"));
+	assert.equal(rendered.includes("Refused verdicts"), false);
+}
+
 // Ticket 49: the verdict target resolves through the ledger-aware lookup, so a
 // Task beyond the session restore cap can still be addressed by id — and a miss
 // that is not simply "unknown" says why.

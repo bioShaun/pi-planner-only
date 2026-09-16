@@ -522,6 +522,16 @@ export interface RootVerdictRefusal {
 	reason: string;
 }
 
+/** Refused Root verdicts are audit rows, not ReviewResults; they never enter `TaskRecord.reviews`. */
+export interface RootVerdictRefusalRecord {
+	taskId: string;
+	requestedVerdict: ReviewVerdict;
+	kind: RootVerdictRefusalKind;
+	reason: string;
+	executionId?: string;
+	at: string;
+}
+
 export interface ReviewFinding {
 	severity: FindingSeverity;
 	category: FindingCategory;
@@ -544,8 +554,6 @@ export interface ReviewResult {
 	/** Root audit fields: requested input, applied lifecycle decision, and refusal context. */
 	requestedVerdict?: ReviewVerdict;
 	appliedDecision?: string;
-	refusedReason?: string;
-	refusalKind?: RootVerdictRefusalKind;
 	executionId?: string;
 	reportSource?: "worker" | "raw-judged";
 	/** Who the Root explicitly acknowledges as the author of accepted drift. */

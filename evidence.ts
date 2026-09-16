@@ -1182,10 +1182,9 @@ function normalizedDirtyHashes(
  * whose working-tree blob hash changed between the samples (T3). Worker
  * `changedFiles` / evidence paths are declaration data only: mismatches are
  * findings and must not hide attributed paths from scope or PASS decisions.
- *
- * A Worker status-hash is only an optional freshness cross-check; when present,
- * a hash change is excused only when every undeclared attributed path falls
- * outside the task's scope (spec §10.2).
+ * Paths already attributed to earlier executions of the same Task
+ * (options.priorTruthPaths) may be restated by a correction run; they are
+ * neither over-reported nor missing.
  */
 export function compareEvidence(
 	base: EvidenceRef,
@@ -1361,10 +1360,15 @@ export function compareEvidence(
 	const gapAffectedPaths = new Set(
 		attributionGap ? normalizeEvidencePaths(attributionGap.paths, pathCwd) : [],
 	);
+	const priorTruth = new Set(
+		(options.priorTruthPaths ?? []).map((path) =>
+			normalizeEvidencePaths([path], pathCwd)[0],
+		),
+	);
 	const extraDeclaredPaths: string[] = [];
 	if (!options.readOnly) {
 		for (const path of inRepoDeclared) {
-			if (!truthSet.has(path) && !gapAffectedPaths.has(path)) extraDeclaredPaths.push(path);
+			if (!truthSet.has(path) && !gapAffectedPaths.has(path) && !priorTruth.has(path)) extraDeclaredPaths.push(path);
 		}
 	}
 
@@ -1381,6 +1385,7 @@ export function compareEvidence(
 			// RF-1 — paths committed (T2) or content-changed on a baseline-dirty
 			// path (T3) are still present as far as attribution is concerned.
 			if (committedPaths.has(path) || t3Set.has(path)) continue;
+			if (priorTruth.has(path)) continue;
 			missingPaths.push(path);
 		}
 	}
