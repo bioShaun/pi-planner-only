@@ -1,6 +1,6 @@
 # 02: P0-B — minimal WRC + RecoveryDecision + 恢复门 + floors 死码裁定
 
-Status: ready-for-agent（2026-09-16；来源：../spec.md Revision 3 §4、§5、§8；12-PLAN §4）
+Status: done（2026-09-16；来源：../spec.md Revision 3 §4、§5、§8；12-PLAN §4）
 Blocked by: 01-execution-termination（done，066685b + dd1713d）
 Type: feature
 
@@ -83,3 +83,13 @@ probe 从 host-10/probe-template cp。极低 envelope（`maxTokens` 几千）派
 2. parse-grep 规则同票 01（diff 新增行无 JSON.parse/.match/new RegExp/.split 例外项——`.match`/`split` 在既有工具函数复用除外，如实记录）。
 3. 宿主证据落 `host-02/`：跑飞→WRC 取消→确认→恢复→完成全链；未配置 envelope 的对照轮只观测不取消。
 4. nx-followups 02/03 标 wontfix；floors 死码删除且 session budget 行为不变。
+
+## 落地记录（2026-09-16）
+
+- 实现 commit：f63784a（envelope 校验、内部 AbortController monitor、
+  recovery 门、planner_verdict abort 路由、floors 死码删除、文档双语）。
+- B5 裁定执行：DEFAULT_FLOORS / resolveEffectiveLimits / 探索预算探测全部
+  删除；session-root 预算保留，worker-initial env 变量改为其 base 直读。
+- nx-followups 02/03 → wontfix（理由写入票面）。
+- 宿主证据：host-02/（probe-t 成功恢复链、probe-r 二次跑飞链、
+  probe-s schema 拒观察），详见 host-02/99-notes.md。
