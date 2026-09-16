@@ -920,6 +920,13 @@ export class PlannerOrchestrator {
 				`Writer hold: kept — execution ${task.writerHold.executionId} stop unconfirmed (${task.writerHold.reason}; since ${task.writerHold.since}); no second writer until resolved`,
 			);
 		}
+		if (task.recovery?.required) {
+			lines.push(
+				`Recovery required: ${task.recovery.reason} — execution ${task.recovery.executionId}; decide via planner_delegate.recovery or planner_verdict blocked+abort`,
+			);
+		} else if (task.recovery?.nextAction === "abort") {
+			lines.push(`Recovery: aborted — Task left for operator handling (decision by ${task.recovery.consumedBy ?? "planner_verdict"})`);
+		}
 		if (task.recoveryAttempts > 0) {
 			lines.push(`Recoveries: ${task.recoveryAttempts}/${MAX_RECOVERY_ATTEMPTS} automatic attempts used`);
 		}

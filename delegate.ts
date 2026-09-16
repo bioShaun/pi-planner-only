@@ -59,11 +59,15 @@ import type {
 	DelegationKind,
 	EvidenceRef,
 	ExecutionEndedReason,
+	ExecutionEnvelope,
 	ExecutionLifecycleStatus,
 	FindingCategory,
 	FindingSeverity,
+	RecoveryDecision,
 	ReviewResult,
 	ReviewVerdict,
+	RunawayObservation,
+	RunawaySignal,
 	TaskFinding,
 	TaskSpec,
 	WorkerReport,
@@ -111,6 +115,78 @@ function worktreeSamplesQuiet(a: EvidenceRef, b: EvidenceRef): boolean {
 	return aKeys.every((key) => aHashes[key] === bHashes[key]);
 }
 
+/** P0-B — validate the explicit envelope before launch (spec §4: no defaults). */
+function validateEnvelope(raw: PlannerDelegateParams["envelope"]): ExecutionEnvelope | undefined {
+	if (raw === undefined) return undefined;
+	const check = (name: string, value: number | undefined): number | undefined => {
+		if (value === undefined) return undefined;
+		if (!Number.isFinite(value) || value <= 0) {
+			throw new DelegationRefused("ENVELOPE_INVALID", `planner_delegate refused: envelope.${name} must be a positive finite number, got ${value}`);
+		}
+		return Math.floor(value);
+	};
+	const maxTokens = check("maxTokens", raw.maxTokens);
+	const maxWallMs = check("maxWallMs", raw.maxWallMs);
+	if (maxTokens === undefined && maxWallMs === undefined) {
+		throw new DelegationRefused("ENVELOPE_INVALID", "planner_delegate refused: envelope requires at least one of maxTokens / maxWallMs");
+	}
+	return { ...(maxTokens !== undefined ? { maxTokens } : {}), ...(maxWallMs !== undefined ? { maxWallMs } : {}), source: "delegation-param" };
+}
+
+/** P0-B — actions wired for planner_delegate re-execution. */
+const DELEGATE_RECOVERY_ACTIONS = new Set(["retry_same_plan", "fix_environment"]);
+/** P0-B — actions that need P1 machinery and are refused until then. */
+const P1_RECOVERY_ACTIONS = new Set(["narrow_task", "add_information", "repair_protocol", "change_model", "change_tool_strategy"]);
+
+/**
+ * P0-B — validate a RecoveryDecision against a Task's recovery requirement
+ * (spec §5). Shared by planner_delegate (re-execution actions) and
+ * planner_verdict (abort). Returns a refusal message, or undefined when the
+ * decision is admissible.
+ */
+export function validateRecoveryDecision(
+	task: TaskRecord,
+	decision: RecoveryDecision | undefined,
+	allowedActions: ReadonlySet<string>,
+): string | undefined {
+	const required = task.recovery;
+	if (!required?.required) {
+		return decision === undefined
+			? `planner_delegate refused: Task ${task.taskId} is ${task.state}; start a new Task instead`
+			: `recovery is only admissible while the Task flags recovery.required (Task ${task.taskId} does not)`;
+	}
+	if (decision === undefined) {
+		return `Task ${task.taskId} requires a RecoveryDecision: execution ${required.executionId} ended abnormally (${required.reason}); submit recovery{executionId, action, reason, worktreeDecision} or abort via planner_verdict`;
+	}
+	if (decision.executionId !== required.executionId) {
+		return `recovery.executionId ${decision.executionId} does not match the abnormal execution ${required.executionId}`;
+	}
+	if (required.consumedBy !== undefined) {
+		return `recovery for execution ${required.executionId} was already consumed by ${required.consumedBy}`;
+	}
+	if (decision.action === "abort" && !allowedActions.has("abort")) {
+		return "recovery action abort goes through planner_verdict (verdict=blocked), not planner_delegate";
+	}
+	if (!allowedActions.has(decision.action)) {
+		return P1_RECOVERY_ACTIONS.has(decision.action)
+			? `recovery action ${decision.action} is not wired in P0 — it needs P1 ExecutionContract/ExecutionControls`
+			: `unknown recovery action ${decision.action}; P0 wires ${[...allowedActions].join(", ")}`;
+	}
+	if (typeof decision.reason !== "string" || decision.reason.trim() === "") {
+		return "recovery.reason must name a concrete basis for the retry";
+	}
+	const duplicate = (task.recoveryHistory ?? []).find(
+		(entry) =>
+			entry.action === decision.action
+			&& entry.reason === decision.reason
+			&& JSON.stringify(entry.evidenceRefs ?? []) === JSON.stringify(decision.evidenceRefs ?? []),
+	);
+	if (duplicate) {
+		return `an identical recovery decision (${decision.action} / same reason and evidence) was already consumed by ${duplicate.consumedBy}; a reworded retry without new basis is refused`;
+	}
+	return undefined;
+}
+
 export const PLANNER_DELEGATE_PARAMETERS = Type.Object({
 	taskId: Type.Optional(
 		Type.String({
@@ -138,6 +214,25 @@ export const PLANNER_DELEGATE_PARAMETERS = Type.Object({
 	instructions: Type.Optional(
 		Type.String({
 			description: "Extra prose passed down to the child verbatim. Never read back.",
+		}),
+	),
+	envelope: Type.Optional(
+		Type.Object({
+			maxTokens: Type.Optional(Type.Number({ description: "Cancel the child when cumulative UPDATE tokens exceed this. Snapshot input+output, no cache." })),
+			maxWallMs: Type.Optional(Type.Number({ description: "Cancel the child when wall-clock since launch exceeds this many ms." })),
+		}, {
+			description: "P0-B runaway envelope. Explicit only — when omitted the monitor observes but never cancels.",
+		}),
+	),
+	recovery: Type.Optional(
+		Type.Object({
+			executionId: Type.String({ minLength: 1 }),
+			action: Type.String({ minLength: 1, description: "P0 wired: retry_same_plan | fix_environment. abort goes through planner_verdict; the rest need P1." }),
+			reason: Type.String({ minLength: 1 }),
+			evidenceRefs: Type.Optional(Type.Array(Type.String())),
+			worktreeDecision: Type.Union([Type.Literal("keep"), Type.Literal("manual")]),
+		}, {
+			description: "RecoveryDecision (spec §5): required to re-execute a Task whose recovery.required is set.",
 		}),
 	),
 });
@@ -285,6 +380,8 @@ export interface DelegationTermination {
 	cTerminal?: EvidenceRef;
 	/** Whether the terminal's usage was accounted; false means only the observed lower bound stands. */
 	usageComplete: boolean;
+	/** P0-B — which envelope bound tripped (signal/observed/limit) plus its config source. */
+	anomaly?: RunawayObservation & { source: string };
 	error?: string;
 }
 
@@ -426,12 +523,25 @@ export async function runDelegation(
 		task = deps.store.createAllocated(taskId, spec);
 		thisSpec = spec;
 	}
+	// P0-B — a blocked Task flagged recovery.required only re-executes under a
+	// valid RecoveryDecision (spec §5); other final states stay TASK_CLOSED.
+	let recoveryDecision: RecoveryDecision | undefined;
 	if (isFinalTaskState(task.state)) {
-		throw new DelegationRefused(
-			"TASK_CLOSED",
-			`planner_delegate refused: Task ${task.taskId} is ${task.state}; start a new Task instead`,
-		);
+		if (task.state === "blocked" && task.recovery?.required === true) {
+			const refusal = validateRecoveryDecision(task, params.recovery as RecoveryDecision | undefined, DELEGATE_RECOVERY_ACTIONS);
+			if (refusal) throw new DelegationRefused("RECOVERY_REQUIRED", `planner_delegate refused: ${refusal}`, task.taskId);
+			recoveryDecision = params.recovery as RecoveryDecision;
+		} else {
+			throw new DelegationRefused(
+				"TASK_CLOSED",
+				`planner_delegate refused: Task ${task.taskId} is ${task.state}; start a new Task instead`,
+				task.taskId,
+			);
+		}
 	}
+
+	// P0-B — the explicit anomaly envelope; validated before launch, never defaulted.
+	const envelope = validateEnvelope(params.envelope);
 
 	// 2. Write lock: only workers claim the workspace; readers/validators run
 	//    beside an active writer by design. A persisted writerHold outlives
@@ -470,8 +580,23 @@ export async function runDelegation(
 	// task.writerHold instead of releasing it in the finally (A4).
 	let releaseReservation = false;
 	let cancelRequestedAt: string | undefined;
+	// P0-B — the launcher listens on an internal controller so the runaway
+	//    monitor fires the same CANCEL path as the operator's signal; exactly
+	//    one control action per execution (spec §3).
+	const runController = new AbortController();
+	let runaway: RunawayObservation | undefined;
+	let maxTokensSeen = -1;
+	const launchStartedAt = Date.now();
+	const breach = (signal: RunawaySignal, observed: number, limit: number) => {
+		if (runaway) return;
+		runaway = { signal, observed, limit };
+		try {
+			deps.store.finalizeExecution(task.taskId, executionId, { runawayObservation: runaway });
+		} catch { /* monitoring must not fail the delegation */ }
+		runController.abort();
+	};
 	// P0-A — stamp the cancel request on the execution the moment the signal
-	// fires; the launcher emits CANCEL on the same signal.
+	// fires (operator or monitor); the launcher emits CANCEL on the same signal.
 	const onSignalAbort = () => {
 		if (cancelRequestedAt) return;
 		cancelRequestedAt = nowIso();
@@ -479,8 +604,16 @@ export async function runDelegation(
 			deps.store.finalizeExecution(task.taskId, executionId, { status: "cancel_requested", cancelRequestedAt });
 		} catch { /* the abort path must not fail on a ledger write */ }
 	};
-	options.signal?.addEventListener("abort", onSignalAbort, { once: true });
-	if (options.signal?.aborted) onSignalAbort();
+	runController.signal.addEventListener("abort", onSignalAbort, { once: true });
+	const forwardAbort = () => runController.abort();
+	options.signal?.addEventListener("abort", forwardAbort, { once: true });
+	if (options.signal?.aborted) runController.abort();
+	if (runController.signal.aborted) onSignalAbort();
+	// P0-B — wall clock is independent of UPDATE heartbeats; a silent child
+	//    still trips maxWallMs. Cleared in the finally.
+	const wallTimer = envelope?.maxWallMs !== undefined
+		? setTimeout(() => breach("wall", Date.now() - launchStartedAt, envelope.maxWallMs!), envelope.maxWallMs)
+		: undefined;
 
 	try {
 		// A running (or re-runnable) Task is executing for the duration of the
@@ -513,9 +646,15 @@ export async function runDelegation(
 			cwd: task.cwd || effectiveCwd,
 			worktreeRoots,
 			aRun,
+			...(envelope ? { envelope } : {}),
 			...(role !== "worker" ? { readOnly: true } : {}),
 			...(role === "validator" ? { auxiliary: true } : {}),
 		});
+		// P0-B — the recovery decision is consumed by the execution it
+		//    authorized; the same abnormal execution cannot be recovered twice.
+		if (recoveryDecision) {
+			deps.store.consumeRecovery(task.taskId, recoveryDecision, executionId);
+		}
 
 		// 4. Structured delegation: the packet is rendered once, downward only.
 		const request: SubagentDelegationRequest = {
@@ -603,21 +742,33 @@ export async function runDelegation(
 
 		let response: SubagentDelegationResponse;
 		try {
-			response = await deps.launch(request, options.signal, {
-				onUpdate: (update) => options.onUpdate?.(renderDelegationProgress(role as DelegationKind, task.taskId, update)),
+			response = await deps.launch(request, runController.signal, {
+				onUpdate: (update) => {
+					// P0-B monitor — cumulative token snapshot, max not sum;
+					// unknown/regressing counts never reset the observed level.
+					if (envelope?.maxTokens !== undefined) {
+						const tokens = update.tokens;
+						if (typeof tokens === "number" && Number.isFinite(tokens) && tokens >= 0) {
+							maxTokensSeen = Math.max(maxTokensSeen, tokens);
+							if (maxTokensSeen > envelope.maxTokens) breach("tokens", maxTokensSeen, envelope.maxTokens);
+						}
+					}
+					options.onUpdate?.(renderDelegationProgress(role as DelegationKind, task.taskId, update));
+				},
 				onLateTerminal: settleLateTerminal,
 			});
 		} catch (error) {
-			const aborted = error instanceof DelegationAborted || options.signal?.aborted === true;
+			const aborted = error instanceof DelegationAborted || runController.signal.aborted === true;
 			if (aborted) {
 				const emitted = !(error instanceof DelegationAborted) || error.requestEmitted;
+				const abortedReason: ExecutionEndedReason = runaway ? "worker_runaway" : "operator_cancel";
 				if (emitted) {
 					// Grace expired with no terminal: the stop is unconfirmed. The
 					// reservation becomes a persisted hold — released only when a
 					// late terminal confirms quiescence (A3/A4).
 					deps.store.finalizeExecution(task.taskId, executionId, {
 						status: "stop_unconfirmed",
-						endedReason: "operator_cancel",
+						endedReason: abortedReason,
 						...(cancelRequestedAt ? { cancelRequestedAt } : {}),
 						usageComplete: false,
 					});
@@ -628,12 +779,20 @@ export async function runDelegation(
 							since: nowIso(),
 						});
 					}
+					// P0-B — needs_replan: a runaway or unconfirmed stop needs a
+					//    RecoveryDecision before this Task may execute again.
+					deps.store.setRecoveryRequired(task.taskId, {
+						reason: runaway
+							? `worker runaway: ${runaway.signal} ${runaway.observed} exceeded envelope ${runaway.limit}; stop unconfirmed`
+							: "stop unconfirmed — await confirmation or operator resolution",
+						executionId,
+					});
 				} else {
 					// Aborted before the REQUEST was emitted: nothing ever ran,
 					// so there is nothing to confirm.
 					deps.store.finalizeExecution(task.taskId, executionId, {
 						status: "stopped",
-						endedReason: "operator_cancel",
+						endedReason: abortedReason,
 						endedAt: nowIso(),
 						terminationConfirmed: true,
 						confirmationBasis: "no-launch",
@@ -644,18 +803,21 @@ export async function runDelegation(
 				try { deps.store.transition(task.taskId, "blocked"); } catch { /* already final */ }
 				deps.store.setStateReason(
 					task.taskId,
-					emitted
-						? "delegation cancelled by operator; no terminal response within grace — stop unconfirmed, writer hold kept"
-						: "delegation cancelled by operator before launch",
+					runaway
+						? `worker runaway: ${runaway.signal} ${runaway.observed} exceeded envelope ${runaway.limit}; ${emitted ? "stop unconfirmed, writer hold kept" : "cancelled before launch"}`
+						: emitted
+							? "delegation cancelled by operator; no terminal response within grace — stop unconfirmed, writer hold kept"
+							: "delegation cancelled by operator before launch",
 				);
 				return {
 					task: deps.store.require(task.taskId),
 					executionId,
 					termination: {
-						reason: "operator_cancel",
+						reason: abortedReason,
 						executionStatus: emitted ? "stop_unconfirmed" : "stopped",
 						terminationConfirmed: !emitted,
 						...(emitted ? {} : { confirmationBasis: "no-launch" }),
+						...(runaway ? { anomaly: { ...runaway, source: "delegation-param" } } : {}),
 						quiescenceWaitMs,
 						quiescenceWaitSource,
 						usageComplete: false,
@@ -709,7 +871,9 @@ export async function runDelegation(
 				task.taskId,
 				lateSuccess
 					? "completed terminal arrived after the cancel request; report collected, review not advanced"
-					: `delegation ${terminal.status}${terminal.error ? `: ${terminal.error}` : ""}`,
+					: runaway
+						? `worker runaway: ${runaway.signal} ${runaway.observed} exceeded envelope ${runaway.limit}; delegation ${terminal.status}`
+						: `delegation ${terminal.status}${terminal.error ? `: ${terminal.error}` : ""}`,
 			);
 			// G4: a non-completed terminal can still carry usage — it lands on
 			// the same ledger path as completed.
@@ -736,7 +900,9 @@ export async function runDelegation(
 			const q = await evaluateQuiescence(responseRunId);
 			const endedReason: ExecutionEndedReason = lateSuccess
 				? "operator_cancel"
-				: (TERMINAL_ENDED_REASON[terminal.status] ?? "provider_failure");
+				: runaway
+					? "worker_runaway"
+					: (TERMINAL_ENDED_REASON[terminal.status] ?? "provider_failure");
 			deps.store.finalizeExecution(task.taskId, executionId, {
 				status: q.confirmed ? "stopped" : "stop_unconfirmed",
 				endedReason,
@@ -759,6 +925,16 @@ export async function runDelegation(
 					});
 				}
 			}
+			// P0-B — needs_replan: runaway or an unconfirmed stop requires a
+			//    RecoveryDecision before this Task may execute again.
+			if (runaway || !q.confirmed) {
+				deps.store.setRecoveryRequired(task.taskId, {
+					reason: runaway
+						? `worker runaway: ${runaway.signal} ${runaway.observed} exceeded envelope ${runaway.limit}${q.confirmed ? "" : "; stop unconfirmed"}`
+						: "stop unconfirmed — await confirmation or operator resolution",
+					executionId,
+				});
+			}
 			return {
 				task: deps.store.require(task.taskId),
 				executionId,
@@ -768,6 +944,7 @@ export async function runDelegation(
 					reason: endedReason,
 					executionStatus: q.confirmed ? "stopped" : "stop_unconfirmed",
 					terminationConfirmed: q.confirmed,
+					...(runaway ? { anomaly: { ...runaway, source: "delegation-param" } } : {}),
 					...(q.confirmed ? { confirmationBasis: "terminal+quiet-worktree", cTerminal: q.cTerminal } : {}),
 					quiescenceWaitMs,
 					quiescenceWaitSource,
@@ -905,7 +1082,9 @@ export async function runDelegation(
 			warnings,
 		};
 	} finally {
-		options.signal?.removeEventListener("abort", onSignalAbort);
+		if (wallTimer) clearTimeout(wallTimer);
+		options.signal?.removeEventListener("abort", forwardAbort);
+		runController.signal.removeEventListener("abort", onSignalAbort);
 		// A4 — release only when a path proved the execution stopped; an
 		//    unconfirmed stop holds the workspace via task.writerHold instead.
 		if (reservation && releaseReservation) deps.concurrency.release(reservation.id);
@@ -1202,10 +1381,17 @@ export function renderDelegationOutcome(outcome: DelegationOutcome): string {
 		lines.push(
 			`termination: ${t.status ?? "no-terminal"} — reason=${t.reason}, confirmed=${t.terminationConfirmed}${t.confirmationBasis ? ` (${t.confirmationBasis})` : ""}${t.executionStatus ? `, execution=${t.executionStatus}` : ""}`,
 		);
+		if (t.anomaly) {
+			lines.push(`anomaly: ${t.anomaly.signal} observed=${t.anomaly.observed} limit=${t.anomaly.limit} (source: ${t.anomaly.source})`);
+		}
 		if (t.executionStatus === "stop_unconfirmed") {
 			lines.push("writer hold: kept — the workspace stays reserved until a late terminal confirms quiescence or the operator resolves it");
 		}
 		if (t.evidenceIncomplete) lines.push("warning: stop-evidence sampling failed; residual workspace state is unknown");
+	}
+	if (outcome.task.recovery?.required) {
+		const r = outcome.task.recovery;
+		lines.push(`recovery.required: ${r.reason} — submit planner_delegate.recovery{executionId=${r.executionId}, action, reason, worktreeDecision} or planner_verdict blocked + recovery{action:"abort"}`);
 	}
 	for (const warning of outcome.warnings) lines.push(`warning: ${warning}`);
 	return lines.join("\n");

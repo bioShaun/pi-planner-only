@@ -232,6 +232,61 @@ export type ExecutionEndedReason =
 	| "tool_error"
 	| "launch_failure";
 
+/** P0-B — the signal that tripped the runaway monitor. */
+export type RunawaySignal = "tokens" | "wall";
+
+/** P0-B — observed value and the envelope limit it crossed. */
+export interface RunawayObservation {
+	signal: RunawaySignal;
+	observed: number;
+	limit: number;
+}
+
+/**
+ * P0-B — explicit per-delegation anomaly envelope (spec §4: no production
+ * defaults; unconfigured means observe-only, never cancel). `source` is
+ * persisted so later readers know where the numbers came from.
+ */
+export interface ExecutionEnvelope {
+	maxTokens?: number;
+	maxWallMs?: number;
+	source: "delegation-param";
+}
+
+/**
+ * P0-B — a Root recovery decision (spec §5). P0 wires retry_same_plan /
+ * fix_environment through planner_delegate and abort through
+ * planner_verdict; the remaining actions are refused until P1.
+ */
+export interface RecoveryDecision {
+	/** The abnormal execution this decision addresses. */
+	executionId: string;
+	action: string;
+	/** Root's diagnosis — non-empty; identical consumed decisions are refused. */
+	reason: string;
+	evidenceRefs?: string[];
+	/** P0: keep residue for the next execution, or manual (operator resolved it). No automatic rollback. */
+	worktreeDecision: "keep" | "manual";
+}
+
+/** P0-B — needs_replan metadata on the Task (spec §2). */
+export interface TaskRecovery {
+	required: boolean;
+	reason: string;
+	/** The execution that triggered the requirement. */
+	executionId: string;
+	/** Set to "abort" once a verdict-level abort decision lands. */
+	nextAction?: string;
+	/** The execution (or "planner_verdict") that consumed the requirement. */
+	consumedBy?: string;
+}
+
+/** A consumed recovery decision, kept for dedupe of reworded retries. */
+export interface RecoveryHistoryEntry extends RecoveryDecision {
+	consumedBy: string;
+	at: string;
+}
+
 export interface TaskExecutionRecord {
 	/** Host subagent tool-call id for this invocation. */
 	executionId: string;
@@ -268,6 +323,10 @@ export interface TaskExecutionRecord {
 	evidenceIncomplete?: boolean;
 	/** True when the terminal's usage was accounted; false keeps the known lower bound instead of inventing a cost. */
 	usageComplete?: boolean;
+	/** P0-B — the explicit runaway envelope this execution ran under (absent = observe-only). */
+	envelope?: ExecutionEnvelope;
+	/** P0-B — which envelope bound tripped, with the observed value. */
+	runawayObservation?: RunawayObservation;
 	/**
 	 * A `completed` report that arrived after a cancel was already requested
 	 * (spec §3 race): collected as evidence, never advances review.

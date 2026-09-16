@@ -56,6 +56,15 @@ looks like JSON" and "Reviewer prose is never parsed."
   workspace unconditionally. The decision above stays as the record of why
   the async spawn design was rejected.
 
+  *Runtime fact (P0-B, 2026-09-16):* an explicit per-delegation `envelope`
+  (cumulative UPDATE tokens and/or wall clock, configured via
+  `planner_delegate.envelope`, no defaults) drives the runaway monitor: a
+  breach fires the same CANCEL path, records `endedReason: worker_runaway`,
+  and flags `task.recovery.required`; re-execution then needs a structured
+  RecoveryDecision (`planner_delegate.recovery` for retry_same_plan /
+  fix_environment, `planner_verdict` blocked for abort) — each decision is
+  consumed once and reworded duplicates are refused.
+
 ## Consequences
 
 - `task.ts` `extractTaskSpec*` / `topLevelJsonCandidates`, `report.ts`

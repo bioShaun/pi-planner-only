@@ -782,10 +782,11 @@ await assert.rejects(
 // --------------------------------------------------------------------------
 
 {
-	// Issue 05: startup fails when floor env var is set to empty or invalid
-	const savedEnv = process.env.PI_PLANNER_ONLY_FLOOR_BOUNDED_TOOL_HARD;
+	// Issue 05: startup fails when the session-base env var (formerly the
+	// worker-initial floor var) is set to empty or invalid.
+	const savedEnv = process.env.PI_PLANNER_ONLY_FLOOR_WORKER_TOKENS_HARD;
 	try {
-		process.env.PI_PLANNER_ONLY_FLOOR_BOUNDED_TOOL_HARD = "";
+		process.env.PI_PLANNER_ONLY_FLOOR_WORKER_TOKENS_HARD = "";
 		assert.throws(() => {
 			plannerOnly({
 				on() {},
@@ -793,9 +794,9 @@ await assert.rejects(
 				registerTool() {},
 				exec: async () => ({ stdout: "", stderr: "", code: 0 }),
 			});
-		}, /PI_PLANNER_ONLY_FLOOR_BOUNDED_TOOL_HARD is set but empty/);
+		}, /PI_PLANNER_ONLY_FLOOR_WORKER_TOKENS_HARD is set but empty/);
 
-		process.env.PI_PLANNER_ONLY_FLOOR_BOUNDED_TOOL_HARD = "not-a-number";
+		process.env.PI_PLANNER_ONLY_FLOOR_WORKER_TOKENS_HARD = "not-a-number";
 		assert.throws(() => {
 			plannerOnly({
 				on() {},
@@ -806,9 +807,9 @@ await assert.rejects(
 		}, /is invalid; must be a positive finite number/);
 	} finally {
 		if (savedEnv !== undefined) {
-			process.env.PI_PLANNER_ONLY_FLOOR_BOUNDED_TOOL_HARD = savedEnv;
+			process.env.PI_PLANNER_ONLY_FLOOR_WORKER_TOKENS_HARD = savedEnv;
 		} else {
-			delete process.env.PI_PLANNER_ONLY_FLOOR_BOUNDED_TOOL_HARD;
+			delete process.env.PI_PLANNER_ONLY_FLOOR_WORKER_TOKENS_HARD;
 		}
 	}
 }
@@ -1205,4 +1206,175 @@ try {
 		},
 	});
 	assert.equal(fpFileOnly.sessionId, "2026-09-15T00-00-00-000Z_host10-x", "sessionId falls back to the file-name stem");
+}
+
+// --------------------------------------------------------------------------
+// P0-B e2e (tool wiring): envelope breach -> CANCEL -> worker_runaway ->
+// recovery.required -> planner_verdict blocked + recovery{abort} consumes it;
+// a retry path via planner_delegate.recovery re-executes the same Task.
+// --------------------------------------------------------------------------
+{
+	// (a) runaway + verdict-level abort.
+	const runawayExec = tools.get("planner_delegate").execute(
+		"call-wrc-1",
+		{
+			role: "worker",
+			objective: "breach the token envelope",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: false },
+			envelope: { maxTokens: 100 },
+		},
+		undefined,
+		() => {},
+		ctx,
+	);
+	const requestsBefore = piEvents.emitted.filter((e) => e.event === SUBAGENT_DELEGATION_REQUEST_EVENT).length;
+	const wrcRequest = await (async () => {
+		const deadline = Date.now() + 2000;
+		let found;
+		while (!found && Date.now() < deadline) {
+			const all = piEvents.emitted.filter((e) => e.event === SUBAGENT_DELEGATION_REQUEST_EVENT);
+			if (all.length > requestsBefore) found = all.at(-1).payload;
+			if (!found) await new Promise((r) => setTimeout(r, 2));
+		}
+		assert.ok(found, "a fresh REQUEST was emitted for the runaway delegation");
+		return found;
+	})();
+	const wrcTriple = { requestId: wrcRequest.requestId, ownerRunId: wrcRequest.ownerRunId, nodeId: wrcRequest.nodeId };
+	piEvents.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, { ...wrcTriple, tokens: 5000 });
+	const runawayResult = await (async () => {
+		// The monitor aborts on the UPDATE; answer the CANCEL with a cancelled terminal.
+		await new Promise((r) => setTimeout(r, 5));
+		piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+			...wrcTriple,
+			status: "cancelled",
+			runId: "run-wrc",
+			agent: "worker",
+			usage: { input: 5, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1, toolCalls: 1, durationMs: 10 },
+		});
+		return runawayExec;
+	})();
+	assert.equal(runawayResult.details.termination?.reason, "worker_runaway", "tool wiring carries the runaway reason");
+	assert.equal(runawayResult.details.termination?.anomaly?.signal, "tokens");
+	assert.match(runawayResult.content[0].text, /recovery\.required/);
+	const runawayLedger = JSON.parse(readFileSync(join(isolatedAgentDir, "planner-only", "ledger", `${wrcRequest.nodeId}.json`), "utf8"));
+	assert.equal(runawayLedger.task.recovery.required, true);
+	assert.equal(runawayLedger.task.recovery.executionId, "call-wrc-1");
+	assert.equal(runawayLedger.task.executions[0].endedReason, "worker_runaway");
+
+	// Recovery via verdict blocked + abort.
+	const verdictAbort = await verdictTool.execute(
+		"call-wrc-v1",
+		{
+			verdict: "blocked",
+			summary: "hand the runaway task to the operator",
+			taskId: wrcRequest.nodeId,
+			recovery: { executionId: "call-wrc-1", action: "abort", reason: "needs manual triage", worktreeDecision: "manual" },
+		},
+		undefined,
+		() => {},
+		ctx,
+	);
+	const afterAbort = JSON.parse(readFileSync(join(isolatedAgentDir, "planner-only", "ledger", `${wrcRequest.nodeId}.json`), "utf8"));
+	assert.equal(afterAbort.task.recovery.required, false);
+	assert.equal(afterAbort.task.recovery.nextAction, "abort");
+	assert.equal(afterAbort.task.recoveryHistory[0].consumedBy, "planner_verdict");
+
+	// (b) runaway + delegate retry_same_plan retry completing the Task.
+	const retryFirst = tools.get("planner_delegate").execute(
+		"call-wrc-2",
+		{
+			role: "worker",
+			objective: "breach, then retry",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: false },
+			envelope: { maxTokens: 10 },
+		},
+		undefined,
+		() => {},
+		ctx,
+	);
+	const retryRequest = await (async () => {
+		const deadline = Date.now() + 2000;
+		let found;
+		while (!found && Date.now() < deadline) {
+			const candidates = piEvents.emitted.filter((e) => e.event === SUBAGENT_DELEGATION_REQUEST_EVENT);
+			found = candidates.at(-1)?.payload.requestId !== wrcRequest.requestId ? candidates.at(-1)?.payload : undefined;
+			if (!found) await new Promise((r) => setTimeout(r, 2));
+		}
+		return found;
+	})();
+	const retryTriple = { requestId: retryRequest.requestId, ownerRunId: retryRequest.ownerRunId, nodeId: retryRequest.nodeId };
+	piEvents.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, { ...retryTriple, tokens: 500 });
+	await new Promise((r) => setTimeout(r, 5));
+	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, { ...retryTriple, status: "cancelled", runId: "run-wrc2", agent: "worker" });
+	const firstOutcome = await retryFirst;
+	assert.equal(firstOutcome.details.termination?.reason, "worker_runaway");
+
+	// Missing recovery on a required Task refuses.
+	await assert.rejects(
+		tools.get("planner_delegate").execute("call-wrc-3", { taskId: retryRequest.nodeId, role: "worker", objective: "x", scope: {}, constraints: [], acceptanceCriteria: [], validation: { required: false } }, undefined, () => {}, ctx),
+		/requires a RecoveryDecision/,
+	);
+
+	// Valid retry_same_plan → new execution on the same Task.
+	const retryExec = tools.get("planner_delegate").execute(
+		"call-wrc-4",
+		{
+			taskId: retryRequest.nodeId,
+			role: "worker",
+			objective: "breach, then retry",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: false },
+			recovery: { executionId: "call-wrc-2", action: "retry_same_plan", reason: "transient provider stall; retry with no envelope", worktreeDecision: "keep" },
+		},
+		undefined,
+		() => {},
+		ctx,
+	);
+	const retryRequest2 = await (async () => {
+		const deadline = Date.now() + 2000;
+		let found;
+		while (!found && Date.now() < deadline) {
+			const candidates = piEvents.emitted.filter((e) => e.event === SUBAGENT_DELEGATION_REQUEST_EVENT);
+			found = ![wrcRequest.requestId, retryRequest.requestId].includes(candidates.at(-1)?.payload.requestId) ? candidates.at(-1)?.payload : undefined;
+			if (!found) await new Promise((r) => setTimeout(r, 2));
+		}
+		return found;
+	})();
+	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: retryRequest2.requestId,
+		ownerRunId: retryRequest2.ownerRunId,
+		nodeId: retryRequest2.nodeId,
+		status: "completed",
+		runId: "run-wrc3",
+		agent: "worker",
+		usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1, toolCalls: 1, durationMs: 5 },
+		result: {
+			kind: "structured",
+			value: {
+				version: 1,
+				taskId: retryRequest2.nodeId,
+				status: "completed",
+				summary: "recovered",
+				changedFiles: [],
+				validation: [],
+				evidence: { cwd: retryRequest2.cwd, taskId: retryRequest2.nodeId, workerRunId: "run-wrc3" },
+				risks: [],
+				unresolved: [],
+			},
+		},
+	});
+	const retryOutcome = await retryExec;
+	assert.equal(retryOutcome.details.report?.summary, "recovered");
+	const retryLedger = JSON.parse(readFileSync(join(isolatedAgentDir, "planner-only", "ledger", `${retryRequest.nodeId}.json`), "utf8"));
+	assert.equal(retryLedger.task.executions.length, 2, "the recovery produced a second execution on the same Task");
+	assert.equal(retryLedger.task.recoveryHistory[0].consumedBy, "call-wrc-4");
+	assert.equal(retryLedger.task.recovery.required, false);
 }

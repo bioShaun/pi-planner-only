@@ -1,6 +1,8 @@
 # 02: 宿主探测探索预算接线，消除探测 fixture 循环自证（C10/C11/C12）
 
-Status: ready-for-human
+Status: wontfix
+
+裁定理由：探测对象 `createExplorationProbeFixture`/`explorationProbeDelta`/`ExplorationBudgetLedger` 已在 floors.ts 删除——该机械在 structured 委派路径上从未执行，C10 差异恒为 0 的问题随对象消失而消解。探索预算若复活应走 P1 ExecutionControls，不再走 floors。
 
 ## 背景
 

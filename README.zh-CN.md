@@ -163,7 +163,7 @@ Token 数为准，美元/人民币金额是推导值。扩展跟踪 Root 各生�
 - 以 `_` 开头的键会被忽略（可用于注释）。
 - 可在会话内通过 `/planner-only usage reload` 重新加载费率表。
 
-会话级 root 累计预算**默认关闭**。`/planner-only budget on` 打开（标记文件 `~/.pi/agent/planner-only/session-root-budget.on`），`/planner-only budget off` 关闭。开启后按 worker 初始 floor 的 ×3 软顶警告；×5 硬顶目前只披露、不拦截委派。`PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` 或 `=0` 会覆盖标记。单次委派的 `usageBudget` floor（worker / explorer / validator）不受影响。会话证据导出只携带 `statuses`（task / workerReport / reviewResult / rootVerdict / refusalKind）、`findings`、`usage`、`breakdown`、`unattributed`；linkage / requirements / evidenceMatrix / analysis 块已移除。
+会话级 root 累计预算**默认关闭**。`/planner-only budget on` 打开（标记文件 `~/.pi/agent/planner-only/session-root-budget.on`），`/planner-only budget off` 关闭。开启后按 worker 初始 floor 的 ×3 软顶警告；×5 硬顶目前只披露、不拦截委派。`PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` 或 `=0` 会覆盖标记。单次执行的异常上限走显式 `envelope` 参数（`planner_delegate`），无默认线——未配置时只观测不取消。会话证据导出只携带 `statuses`（task / workerReport / reviewResult / rootVerdict / refusalKind）、`findings`、`usage`、`breakdown`、`unattributed`；linkage / requirements / evidenceMatrix / analysis 块已移除。
 
 **替代方案：** 推荐直接在 `~/.pi/agent/models.json` 里配置 `cost`。这样 Pi 和 `pi-subagents` 的原生命令（如 `/subagent-cost`）都能直接计价。插件自带的定价表仅作为不需要改动 `models.json` 时的备用与覆盖机制。
 
@@ -172,6 +172,8 @@ Token 数为准，美元/人民币金额是推导值。扩展跟踪 Root 各生�
 TUI 下按 Esc 中止 `planner_delegate` 会向子代理发 CANCEL，Task 进入 `blocked`，已消耗的 usage 落账。`-p`（print）模式没有工具级中止入口：SIGINT 直接结束 Root，进程内运行的子代理随之结束，不会落 `cancelled` 终态或 usage 行；但子代理已启动的 shell 命令可能残留为孤儿进程（宿主试跑时观察到一次），需自行检查并清理。委派在飞时键入 `/exit` 会被当作 steering 输入而不是退出；请用 Ctrl-D。
 
 **停止确认（P0-A）。** 仅收到终态并不证明 writer 已静止。在身份匹配的终态到达后，委派会等待 `quiescenceWaitMs`（默认 10 s；`PI_PLANNER_ONLY_QUIESCENCE_MS` 覆盖），再要求两次连续一致的工作树采样——满足后停止才记为 `confirmed`（`confirmationBasis: terminal+quiet-worktree`）、释放 writer 预留，并把残留样本记为 `cTerminal`。若 5 s 宽限期到期仍无终态，执行置为 `stop_unconfirmed`：Task 进 `blocked`，writer 预留转为持久化 `writerHold`，跨重启也继续拒绝第二写入者；launcher 保留 RESPONSE 订阅，迟到终态仍会把执行恰一次收尾（usage、`cTerminal`、释放）。采样失败记 `evidenceIncomplete`，同样保持 hold。非 completed 委派（cancelled、timed_out、failed 等）不再抛错：`planner_delegate` 返回结构化 `details.termination`（宿主终态、ended reason、确认依据、执行生命周期状态、`usageComplete`）并附文本摘要。取消请求之后到达的 `completed` 报告只收入 `executions[].lateReport` 作证据，不再推进 review。
+
+**跑飞 envelope 与恢复（P0-B）。** `planner_delegate` 接受显式 `envelope: { maxTokens?, maxWallMs? }`——UPDATE 累计 tokens（input+output 快照，不含 cache）与独立墙钟。越线即走与 Esc 相同的 CANCEL 路径，只触发一次；执行记 `worker_runaway`，确认停止与未确认停止都会置 `task.recovery.required`。此后重新执行该 Task 必须在 `planner_delegate` 携带结构化 `recovery` 决策（`retry_same_plan` / `fix_environment`，指明异常 `executionId`、理由与 `worktreeDecision`），或用 `planner_verdict`（`verdict: "blocked"` + `recovery: { action: "abort" }`）交人工。决策只消费一次，完全相同的决策会被拒绝；未接线的 P1 动作明确拒绝。
 
 ## 设计规范
 

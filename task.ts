@@ -37,6 +37,9 @@ import type {
 	TaskScope,
 	TaskSpec,
 	TaskState,
+	RecoveryDecision,
+	RecoveryHistoryEntry,
+	TaskRecovery,
 	TaskUsage,
 	TaskValidation,
 	WorkerReport,
@@ -1188,6 +1191,14 @@ export interface TaskRecord {
 		reason: string;
 		since: string;
 	};
+	/**
+	 * WRC P0-B — needs_replan metadata (spec §2): set when an execution ends
+	 * via worker_runaway or an unconfirmed stop; a new bounded execution on
+	 * this Task is then refused without a valid RecoveryDecision.
+	 */
+	recovery?: TaskRecovery;
+	/** P0-B — consumed recovery decisions, for reworded-retry dedupe. */
+	recoveryHistory?: RecoveryHistoryEntry[];
 	/** Per-task usage snapshot; live totals live in UsageLedger. Initialised empty. */
 	usage: TaskUsage;
 	createdAt: string;
@@ -1644,6 +1655,31 @@ export class TaskStore {
 	clearWriterHold(taskId: string): TaskRecord {
 		const record = this.require(taskId);
 		delete record.writerHold;
+		return this.touch(record);
+	}
+
+	/** WRC P0-B — flag the Task as needing a Root recovery decision before any new execution. */
+	setRecoveryRequired(taskId: string, entry: { reason: string; executionId: string }): TaskRecord {
+		const record = this.require(taskId);
+		record.recovery = { required: true, reason: entry.reason, executionId: entry.executionId };
+		return this.touch(record);
+	}
+
+	/**
+	 * WRC P0-B — consume the recovery requirement: clears `required`, marks
+	 * who consumed it, and appends the decision to the dedupe history.
+	 */
+	consumeRecovery(taskId: string, decision: RecoveryDecision, consumedBy: string, nextAction?: string): TaskRecord {
+		const record = this.require(taskId);
+		if (record.recovery) {
+			record.recovery.required = false;
+			record.recovery.consumedBy = consumedBy;
+			if (nextAction !== undefined) record.recovery.nextAction = nextAction;
+		}
+		record.recoveryHistory = [
+			...(record.recoveryHistory ?? []),
+			{ ...decision, consumedBy, at: this.now().toISOString() },
+		];
 		return this.touch(record);
 	}
 

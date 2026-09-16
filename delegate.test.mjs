@@ -11,6 +11,7 @@ import {
 	createHostLauncher,
 	renderDelegationProgress,
 	runDelegation,
+	validateRecoveryDecision,
 } from "./delegate.ts";
 import {
 	SUBAGENT_DELEGATION_CANCEL_EVENT,
@@ -1564,6 +1565,236 @@ for (const [index, [status, expectedState]] of [
 	assert.equal(execution.confirmationBasis, "normal-completion");
 	assert.equal(execution.usageComplete, true);
 	assert.equal(record.writerHold, undefined);
+}
+
+// ---------------------------------------------------------------------------
+// P0-B.1 — envelope validation: invalid configs refuse before any launch.
+// ---------------------------------------------------------------------------
+{
+	const dir = initRealRepo();
+	const { deps, launches } = makeDeps({ gitRunner: async (args, cwd) => realGit(dir, ...args) });
+	await expectRefusal(runDelegation(deps, makeParams({ envelope: {} }), dir, { executionId: "e-inv1" }), "ENVELOPE_INVALID");
+	await expectRefusal(runDelegation(deps, makeParams({ envelope: { maxTokens: 0 } }), dir, { executionId: "e-inv2" }), "ENVELOPE_INVALID");
+	await expectRefusal(runDelegation(deps, makeParams({ envelope: { maxWallMs: Number.NaN } }), dir, { executionId: "e-inv3" }), "ENVELOPE_INVALID");
+	assert.equal(launches.length, 0, "invalid envelope never reaches the launcher");
+}
+
+// ---------------------------------------------------------------------------
+// P0-B.2 — tokens breach trips the monitor once: CANCEL → cancelled terminal →
+// worker_runaway + recovery.required; regression/duplicate UPDATEs don't
+// re-breach. Quiet worktree confirms the stop.
+// ---------------------------------------------------------------------------
+{
+	const dir = initRealRepo();
+	const { deps } = makeDeps({
+		gitRunner: async (args, cwd) => realGit(dir, ...args),
+		launch: async (request, signal, hooks) => {
+			const base = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
+			hooks.onUpdate({ ...base, tokens: 3000 });
+			hooks.onUpdate({ ...base, tokens: 2500 }); // regression must not reset the observed level
+			hooks.onUpdate({ ...base, tokens: 7000 }); // breach
+			hooks.onUpdate({ ...base, tokens: 8000 }); // already tripped — no second action
+			assert.equal(signal.aborted, true, "monitor abort reached the launcher signal");
+			return {
+				...base,
+				status: "cancelled",
+				runId: "run-r",
+				agent: "worker",
+				usage: { input: 5, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.002, turns: 4, toolCalls: 4, durationMs: 30 },
+			};
+		},
+	});
+	const outcome = await runDelegation(deps, makeParams({ envelope: { maxTokens: 5000 } }), dir, { executionId: "call-r1" });
+	assert.equal(outcome.termination.reason, "worker_runaway");
+	assert.equal(outcome.termination.anomaly.signal, "tokens");
+	assert.equal(outcome.termination.anomaly.observed, 7000, "observed is the first value over the line");
+	assert.equal(outcome.termination.anomaly.limit, 5000);
+	assert.equal(outcome.termination.terminationConfirmed, true, "quiet worktree confirms");
+	const record = outcome.task;
+	const exec = record.executions[0];
+	assert.equal(exec.status, "stopped");
+	assert.equal(exec.endedReason, "worker_runaway");
+	assert.equal(exec.runawayObservation.signal, "tokens");
+	assert.equal(exec.envelope.maxTokens, 5000);
+	assert.equal(record.recovery.required, true, "runaway flags needs_replan");
+	assert.equal(record.recovery.executionId, "call-r1");
+	assert.match(record.recovery.reason, /tokens 7000 exceeded envelope 5000/);
+}
+
+// ---------------------------------------------------------------------------
+// P0-B.3 — without an envelope the monitor never cancels, even at high tokens.
+// ---------------------------------------------------------------------------
+{
+	const dir = initRealRepo();
+	const { deps } = makeDeps({
+		gitRunner: async (args, cwd) => realGit(dir, ...args),
+		launch: async (request, signal, hooks) => {
+			const base = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
+			hooks.onUpdate({ ...base, tokens: 999_999 });
+			assert.equal(signal.aborted, false, "no envelope → observe-only, never abort");
+			return {
+				...base,
+				status: "completed",
+				runId: "run-ok",
+				agent: "worker",
+				usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1, toolCalls: 1, durationMs: 5 },
+				result: { kind: "structured", value: makeReport(request.nodeId, "run-ok", request.cwd) },
+			};
+		},
+	});
+	const outcome = await runDelegation(deps, makeParams(), dir, { executionId: "call-ok" });
+	assert.ok(outcome.report, "unconfigured delegation completes untouched");
+	assert.equal(outcome.termination, undefined);
+	assert.equal(outcome.task.recovery, undefined);
+}
+
+// ---------------------------------------------------------------------------
+// P0-B.4 — wall-clock breach fires without any UPDATE heartbeat.
+// ---------------------------------------------------------------------------
+{
+	const dir = initRealRepo();
+	const { deps } = makeDeps({
+		gitRunner: async (args, cwd) => realGit(dir, ...args),
+		launch: async (request, signal) => {
+			await sleep(40);
+			assert.equal(signal.aborted, true, "wall breach aborted the run signal");
+			return {
+				requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId,
+				status: "cancelled",
+				runId: "run-w",
+				agent: "worker",
+			};
+		},
+	});
+	const outcome = await runDelegation(deps, makeParams({ envelope: { maxWallMs: 10 } }), dir, { executionId: "call-w1" });
+	assert.equal(outcome.termination.reason, "worker_runaway");
+	assert.equal(outcome.termination.anomaly.signal, "wall");
+	assert.equal(outcome.termination.anomaly.limit, 10);
+	assert.equal(outcome.task.recovery.required, true);
+}
+
+// ---------------------------------------------------------------------------
+// P0-B.5 — recovery gate: missing/wrong/misrouted decisions refuse; a valid
+// retry_same_plan produces a new execution under the same Task and is consumed.
+// ---------------------------------------------------------------------------
+{
+	const dir = initRealRepo();
+	const { deps } = makeDeps({
+		gitRunner: async (args, cwd) => realGit(dir, ...args),
+		launch: async (request, signal, hooks) => {
+			const base = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
+			hooks.onUpdate({ ...base, tokens: 9999 });
+			return { ...base, status: "cancelled", runId: "run-g", agent: "worker" };
+		},
+	});
+	const runaway = await runDelegation(deps, makeParams({ envelope: { maxTokens: 100 } }), dir, { executionId: "call-g1" });
+	const taskId = runaway.task.taskId;
+	assert.equal(runaway.task.recovery.required, true);
+
+	// No recovery field on a required Task → refused.
+	await expectRefusal(
+		runDelegation(deps, makeParams({ taskId, envelope: { maxTokens: 200000 } }), dir, { executionId: "call-g2" }),
+		"RECOVERY_REQUIRED",
+	);
+	// Wrong executionId → refused.
+	const wrong = await expectRefusal(
+		runDelegation(deps, makeParams({
+			taskId,
+			recovery: { executionId: "call-other", action: "retry_same_plan", reason: "x", worktreeDecision: "keep" },
+		}), dir, { executionId: "call-g3" }),
+		"RECOVERY_REQUIRED",
+	);
+	assert.match(wrong.message, /does not match the abnormal execution/);
+	// abort via planner_delegate → rerouted refusal.
+	const abortViaDelegate = await expectRefusal(
+		runDelegation(deps, makeParams({
+			taskId,
+			recovery: { executionId: "call-g1", action: "abort", reason: "x", worktreeDecision: "keep" },
+		}), dir, { executionId: "call-g4" }),
+		"RECOVERY_REQUIRED",
+	);
+	assert.match(abortViaDelegate.message, /planner_verdict/);
+	// P1 action → unwired refusal.
+	const p1 = await expectRefusal(
+		runDelegation(deps, makeParams({
+			taskId,
+			recovery: { executionId: "call-g1", action: "change_model", reason: "x", worktreeDecision: "keep" },
+		}), dir, { executionId: "call-g5" }),
+		"RECOVERY_REQUIRED",
+	);
+	assert.match(p1.message, /P1/);
+
+	// Valid retry_same_plan: new execution on the same Task; decision consumed.
+	// The retry carries a tight envelope so it runaways again — re-arming the
+	// requirement under the new executionId for the dedupe check below.
+	const retry = await runDelegation(deps, makeParams({
+		taskId,
+		envelope: { maxTokens: 100 },
+		recovery: {
+			executionId: "call-g1",
+			action: "retry_same_plan",
+			reason: "transient provider stall; same plan with a wider envelope",
+			worktreeDecision: "keep",
+		},
+	}), dir, { executionId: "call-g6" });
+	assert.equal(retry.task.executions.length, 2, "recovery produced a new execution on the same Task");
+	assert.equal(retry.task.executions[1].executionId, "call-g6");
+	// The retry's own runaway re-armed the requirement under the new
+	// executionId; the consumed decision lives on in recoveryHistory.
+	assert.equal(retry.task.recoveryHistory.length, 1, "the consumed decision is kept for dedupe");
+	assert.equal(retry.task.recoveryHistory[0].action, "retry_same_plan");
+	assert.equal(retry.task.recoveryHistory[0].consumedBy, "call-g6");
+	assert.equal(retry.task.recovery.required, true, "second runaway re-arms the requirement");
+	assert.equal(retry.task.recovery.executionId, "call-g6");
+	const dup = await expectRefusal(
+		runDelegation(deps, makeParams({
+			taskId,
+			recovery: {
+				executionId: "call-g6",
+				action: "retry_same_plan",
+				reason: "transient provider stall; same plan with a wider envelope",
+				worktreeDecision: "keep",
+			},
+		}), dir, { executionId: "call-g7" }),
+		"RECOVERY_REQUIRED",
+	);
+	assert.match(dup.message, /identical recovery decision|new basis/);
+}
+
+// ---------------------------------------------------------------------------
+// P0-B.6 — verdict-level abort decision: validateRecoveryDecision under the
+// verdict action set + consumeRecovery lands nextAction="abort".
+// ---------------------------------------------------------------------------
+{
+	const dir = initRealRepo();
+	const { deps } = makeDeps({
+		gitRunner: async (args, cwd) => realGit(dir, ...args),
+		launch: async (request, signal, hooks) => {
+			hooks.onUpdate({ requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId, tokens: 9999 });
+			return { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId, status: "cancelled", runId: "run-a", agent: "worker" };
+		},
+	});
+	const outcome = await runDelegation(deps, makeParams({ envelope: { maxTokens: 10 } }), dir, { executionId: "call-a1" });
+	const task = outcome.task;
+	assert.equal(task.recovery.required, true);
+
+	const VERDICT_ACTIONS = new Set(["abort"]);
+	// A re-execution action is not admissible on the verdict side.
+	assert.match(
+		validateRecoveryDecision(task, { executionId: "call-a1", action: "retry_same_plan", reason: "x", worktreeDecision: "keep" }, VERDICT_ACTIONS),
+		/unknown recovery action|P0 wires abort/,
+	);
+	// Valid abort decision validates.
+	assert.equal(
+		validateRecoveryDecision(task, { executionId: "call-a1", action: "abort", reason: "workspace residue needs manual triage", worktreeDecision: "manual" }, VERDICT_ACTIONS),
+		undefined,
+	);
+	deps.store.consumeRecovery(task.taskId, { executionId: "call-a1", action: "abort", reason: "workspace residue needs manual triage", worktreeDecision: "manual" }, "planner_verdict", "abort");
+	const settled = deps.store.require(task.taskId);
+	assert.equal(settled.recovery.required, false);
+	assert.equal(settled.recovery.nextAction, "abort");
+	assert.equal(settled.recovery.consumedBy, "planner_verdict");
+	assert.equal(settled.state, "blocked", "abort leaves the Task blocked for operator handling");
 }
 
 console.log("delegate.test.mjs: all cases passed");

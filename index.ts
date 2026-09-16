@@ -40,7 +40,6 @@ import {
 	evaluateSessionRootBudget,
 	formatSessionRootBudgetSoftWarning,
 	formatSessionRootBudgetStatus,
-	loadFloorConfig,
 	loadSessionRootBudgetConfig,
 	SESSION_ROOT_BUDGET_ENV_VARS,
 	sessionRootBudgetWithEnabled,
@@ -53,8 +52,13 @@ import {
 	createHostLauncher,
 	renderDelegationOutcome,
 	runDelegation,
+	validateRecoveryDecision,
 } from "./delegate.ts";
 import type { DelegationOutcome, PlannerDelegateParams } from "./delegate.ts";
+import type { RecoveryDecision } from "./types.ts";
+
+/** P0-B — the only recovery action wired through planner_verdict (spec §5). */
+const VERDICT_RECOVERY_ACTIONS = new Set(["abort"]);
 
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
 	? resolve(process.env.PI_CODING_AGENT_DIR)
@@ -301,8 +305,7 @@ function sameToolOrder(left: readonly string[], right: readonly string[]): boole
 }
 
 export default function plannerOnly(pi: ExtensionAPI): void {
-	const floorConfig = loadFloorConfig();
-	const sessionRootBudgetBase = loadSessionRootBudgetConfig(process.env, floorConfig);
+	const sessionRootBudgetBase = loadSessionRootBudgetConfig(process.env);
 	function envSessionRootBudgetOverride(): boolean | undefined {
 		const raw = process.env[SESSION_ROOT_BUDGET_ENV_VARS.ENABLED];
 		if (raw === undefined) return undefined;
@@ -777,8 +780,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		promptSnippet: "planner_delegate: typed TaskSpec delegation with a structured WorkerReport result",
 		promptGuidelines: [
 			"Prefer planner_delegate over subagent: supply the full TaskSpec fields, not a prose brief.",
-			"The child's WorkerReport arrives schema-validated in details.report; a non-completed status is a tool error, not a parse failure.",
+			"The child's WorkerReport arrives schema-validated in details.report; a non-completed status returns structured details.termination, not a parse failure.",
 			"role=reviewer takes taskId and reviews the Task's latest WorkerReport; the launcher-validated ReviewResult arrives in details.review.",
+			"Optional envelope{maxTokens,maxWallMs} bounds a runaway execution; a Task flagged recovery.required re-executes only with a matching recovery decision (retry_same_plan / fix_environment) or planner_verdict blocked + abort.",
 		],
 		parameters: PLANNER_DELEGATE_PARAMETERS,
 		async execute(toolCallId, params: PlannerDelegateParams, signal, onUpdate, ctx) {
@@ -894,6 +898,15 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					commit: Type.Optional(Type.Boolean()),
 				}, { description: "Root acknowledgement of verified successor or commit drift." }),
 			),
+			recovery: Type.Optional(
+				Type.Object({
+					executionId: Type.String({ minLength: 1 }),
+					action: Type.String({ minLength: 1, description: "Only \"abort\" is wired here in P0: the Task stays blocked for operator handling." }),
+					reason: Type.String({ minLength: 1 }),
+					evidenceRefs: Type.Optional(Type.Array(Type.String())),
+					worktreeDecision: Type.Union([Type.Literal("keep"), Type.Literal("manual")]),
+				}, { description: "RecoveryDecision for a Task flagged recovery.required; verdict must be blocked." }),
+			),
 		}),
 		async execute(_toolCallId, params: {
 			verdict: ReviewVerdict;
@@ -901,6 +914,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			taskId?: string;
 			findings?: ReviewFinding[];
 			acknowledgeDrift?: DriftAcknowledgement;
+			recovery?: RecoveryDecision;
 		}, _signal, _onUpdate, _ctx: ExtensionContext) {
 			// Ticket 49 — the target resolves through the same ledger-aware lookup the
 			// delegation path uses, so a Task beyond the session restore cap can still be
@@ -926,6 +940,17 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				orchestrator.recordRootVerdictRefusal(task, params.verdict, refusal);
 				throw new Error(`planner_verdict refused (${refusal.kind}, task=${task.taskId}, verdict=${params.verdict}): ${refusal.reason}`);
 			}
+			// P0-B — a RecoveryDecision on planner_verdict is only the abort
+			//    action on a blocked verdict (spec §5); validated before the
+			//    verdict lands, consumed after it succeeds.
+			if (params.recovery !== undefined) {
+				const recoveryRefusal = params.verdict !== "blocked"
+					? "a recovery decision on planner_verdict requires verdict=blocked"
+					: validateRecoveryDecision(task, params.recovery, VERDICT_RECOVERY_ACTIONS);
+				if (recoveryRefusal) {
+					throw new Error(`planner_verdict refused (recovery, task=${task.taskId}): ${recoveryRefusal}`);
+				}
+			}
 			try {
 				const before = task.state;
 				const outcome = await orchestrator.recordRootVerdict(task, params.verdict, params.summary, {
@@ -933,6 +958,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					...(params.acknowledgeDrift ? { acknowledgeDrift: params.acknowledgeDrift } : {}),
 					source: "root",
 				});
+				if (params.recovery !== undefined) {
+					orchestrator.store.consumeRecovery(task.taskId, params.recovery, "planner_verdict", "abort");
+				}
 				let text = orchestrator.renderDecisionBlock(outcome.task, outcome.decision, outcome.evidence);
 				text = enrichDecisionText(text, outcome.task.taskId);
 				recordInjectedText(outcome.task.taskId, text);

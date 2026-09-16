@@ -1,30 +1,9 @@
 import assert from "node:assert/strict";
-import {
-  DEFAULT_EXPLORATION_BUDGET,
-  ExplorationBudgetLedger,
-  createExplorationProbeFixture,
-  explorationProbeDelta,
-  isExplorationToolCall,
-} from "./floors.ts";
-import { exportSessionEvidence } from "./usage.ts";
 import { rootReadLimitNotice, applyRootReadCeiling, ROOT_READ_CEILING_LINES } from "./index.ts";
 
-// C10: retain raw calls and expose configured-vs-observed interception delta.
-{
-  const calls = [
-    { toolName: "read", input: { path: "a.ts" }, result: "ok" },
-    { toolName: "grep", input: { pattern: "budget" }, result: "ok" },
-    { toolName: "find", input: { path: "." }, result: "ok" },
-    { toolName: "ls", input: { path: "." }, result: "ok" },
-    { toolName: "bash", input: { command: "cat a.ts" }, result: "ok" },
-    { toolName: "bash", input: { command: "sed -n '1,4p' a.ts" }, batchSize: 2, result: "ok" },
-  ];
-  const fixture = createExplorationProbeFixture("loaded-nx04", calls, { soft: 4, hard: 5 });
-  assert.equal(fixture.calls.length, 6);
-  assert.equal(fixture.observed.eligibleCalls, 7);
-  assert.equal(fixture.observed.batchCalls, 1);
-  assert.equal(explorationProbeDelta(fixture).interceptionDelta, 0);
-}
+// C10 removed with the WRC P0-B floors verdict: the exploration-probe
+// machinery was dead on the structured path and is deleted (nx-followups 02
+// is wontfix — its fixture objects no longer exist).
 
 
 

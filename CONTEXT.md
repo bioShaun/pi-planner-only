@@ -55,8 +55,16 @@ The parent tool guard: which tools Root may call. While a Task is live for the w
 _Avoid_: permissions, ACL
 
 **Delegation**:
-Launching a child with a role and a TaskSpec through `planner_delegate`; the child's WorkerReport returns launcher-validated, never parsed from text; at most one worker per cwd.
+Launching a child with a role and a TaskSpec through `planner_delegate`; the child's WorkerReport returns launcher-validated, never parsed from text; at most one worker per cwd. An explicit `envelope` (maxTokens / maxWallMs) bounds a runaway execution; a breach fires CANCEL and records `worker_runaway` on the TaskExecutionRecord.
 _Avoid_: spawn, dispatch (the host mechanism), packet
+
+**Writer hold**:
+The persisted `task.writerHold` left when an execution's stop was never confirmed; it keeps the workspace refusing a second writer across restarts until a late terminal confirms quiescence or the operator resolves it.
+_Avoid_: lock, mutex
+
+**RecoveryDecision**:
+Root's structured decision (`planner_delegate.recovery`, or `planner_verdict` blocked + `action:"abort"`) that authorizes one new bounded execution on a Task flagged `recovery.required`; consumed once, never reworded-retried.
+_Avoid_: replan, retry policy
 
 **Review loop**:
 Decide the next lifecycle step from a report, evidence comparison, and optional ReviewResult, then apply it to the Task.
