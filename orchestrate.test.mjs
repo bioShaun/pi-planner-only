@@ -816,6 +816,38 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	}
 }
 
+// P0-A — a host that died mid-stop (execution stuck in cancel_requested,
+// no confirmation) gets a synthesized hold on restore, same as a persisted one.
+{
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-wrc-inflight-"));
+	try {
+		const inflight = spentTaskRecord("T-20260916-h03", 0.01, 0.05);
+		inflight.state = "executing";
+		inflight.executions.push({
+			executionId: "call-inflight",
+			taskId: inflight.taskId,
+			kind: "worker",
+			cwd: inflight.cwd,
+			worktreeRoots: [inflight.cwd],
+			aRun: { cwd: inflight.cwd, taskId: inflight.taskId, workerRunId: "call-inflight" },
+			status: "cancel_requested",
+			cancelRequestedAt: "2026-09-16T00:00:01.000Z",
+		});
+		new LedgerSnapshotStore(dir).write(inflight);
+		const concurrency = new ConcurrencyController();
+		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir, concurrency });
+		assert.equal(orch.restoreFromLedger().restored, 1);
+		const record = orch.store.require(inflight.taskId);
+		assert.equal(record.writerHold?.executionId, "call-inflight", "in-flight stop synthesizes a persisted hold");
+		assert.ok(
+			concurrency.status().reservations.some((r) => r.id === "writerhold:call-inflight"),
+			"the synthesized hold is registered too",
+		);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
 // P0-A — a pre-P0-A ledger record (no execution status fields) restores and
 // renders untouched: absent status is unknown, never "stopped".
 {

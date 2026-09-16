@@ -366,6 +366,22 @@ export class PlannerOrchestrator {
 			if (this.store.get(record.taskId)) continue;
 			this.store.restore(record);
 			this.restoredTaskIds.add(record.taskId);
+			// WRC P0-A — an execution whose stop was in flight when the host
+			//    ended never got its confirmation; hold the workspace
+			//    conservatively, same as a persisted hold.
+			for (const execution of record.executions) {
+				const status = execution.status ?? "";
+				if (status === "cancel_requested" || status === "stopping" || status === "stop_unconfirmed") {
+					if (execution.terminationConfirmed !== true && !record.writerHold) {
+						this.store.setWriterHold(record.taskId, {
+							executionId: execution.executionId,
+							reason: `stop was in flight (${status}) when the host ended; residual state unsampled`,
+							since: new Date().toISOString(),
+						});
+					}
+					break;
+				}
+			}
 			// WRC P0-A — a persisted writer hold survives restart: re-register
 			// it so workspace admission keeps refusing a second writer instead
 			// of trusting a lost in-memory reservation.
