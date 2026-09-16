@@ -73,19 +73,19 @@ export const REVIEW_RESULT_SCHEMA = structuredClone(Type.Object(
   ```ts
   const attribution = reviewAttributionOf(task);                       // review.ts 新增纯函数，见 D4
   const git = await captureReviewEvidencePacket(deps.gitRunner, task.cwd, task.lastComparison, {
-  	...(attribution.baselineRef ? { baselineRef: attribution.baselineRef } : {}),
-  	...(task.spec?.additionalWorktreeRoots?.length ? { additionalWorktreeRoots: task.spec.additionalWorktreeRoots } : {}),
-  	...(attribution.rounds.length > 0 ? { rounds: attribution.rounds } : {}),
-  	...(attribution.unresolvedFindings.length > 0 ? { unresolvedFindings: attribution.unresolvedFindings } : {}),
-  	...(attribution.attributionIncomplete ? { attributionIncomplete: attribution.attributionIncomplete } : {}),
+    ...(attribution.baselineRef ? { baselineRef: attribution.baselineRef } : {}),
+    ...(task.spec?.additionalWorktreeRoots?.length ? { additionalWorktreeRoots: task.spec.additionalWorktreeRoots } : {}),
+    ...(attribution.rounds.length > 0 ? { rounds: attribution.rounds } : {}),
+    ...(attribution.unresolvedFindings.length > 0 ? { unresolvedFindings: attribution.unresolvedFindings } : {}),
+    ...(attribution.attributionIncomplete ? { attributionIncomplete: attribution.attributionIncomplete } : {}),
   });
   const report = task.reports.at(-1)!;
   const packetInput: FreshReviewerTaskInput = {
-  	taskId: task.taskId, spec: task.spec, report,
-  	reportRevision: task.reports.length,
-  	...(task.snapshot ? { workspaceDigest: task.snapshot.digest } : {}),
-  	...(task.lastComparison ? { evidence: describeComparison(task.lastComparison) } : {}),
-  	git,
+    taskId: task.taskId, spec: task.spec, report,
+    reportRevision: task.reports.length,
+    ...(task.snapshot ? { workspaceDigest: task.snapshot.digest } : {}),
+    ...(task.lastComparison ? { evidence: describeComparison(task.lastComparison) } : {}),
+    git,
   };
   const packetBinding = { reportRevision: task.reports.length, ...(task.snapshot ? { workspaceDigest: task.snapshot.digest } : {}) };
   const packetTruncated = git.patchTruncated === true || (git.patchOmittedPaths?.length ?? 0) > 0;
@@ -103,8 +103,8 @@ export const REVIEW_RESULT_SCHEMA = structuredClone(Type.Object(
   const latest = fresh.executions.filter((e) => !e.auxiliary && !e.reportOnly && e.reportIndex === fresh.reports.length - 1).at(-1);
   const current = await captureEvidence(deps.gitRunner, sampleOptions(`review-${executionId}`));   // sampleOptions 是 worker 分支的闭包（delegate.ts:285）；reviewer 分支照同一形状另写一份，cwd / additionalWorktreeRoots / scopePaths 全从 task.spec 取
   const comparison = latest
-  	? compareEvidence(latest.aRun, current, report, { ...(fresh.spec?.scope ? { scope: fresh.spec.scope } : {}), ...(roots ? { additionalWorktreeRoots: roots } : {}), ...(latest.readOnly ? { readOnly: true } : {}) })
-  	: undefined;
+    ? compareEvidence(latest.aRun, current, report, { ...(fresh.spec?.scope ? { scope: fresh.spec.scope } : {}), ...(roots ? { additionalWorktreeRoots: roots } : {}), ...(latest.readOnly ? { readOnly: true } : {}) })
+    : undefined;
   if (comparison) deps.store.setLastComparison(task.taskId, comparison);
   if (!latest) warnings.push(`report revision ${fresh.reports.length} has no per-execution evidence record; a pass cannot be judged fresh`);
   ```
