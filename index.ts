@@ -17,7 +17,7 @@ import { GIT_AUDIT_OPERATIONS, classifyCommitDirtyPaths, dirtyPathsOutsideTruth,
 import { describeProbeFailures } from "./evidence.ts";
 import type { GitAuditRequest, GitRunner } from "./git-audit.ts";
 import { PlannerOrchestrator } from "./orchestrate.ts";
-import { MAX_REVIEW_ROUNDS, WORKER_REPORT_VERSION, isFinalTaskState } from "./types.ts";
+import { MAX_REVIEW_ROUNDS, MAX_TASK_DIAGNOSTICS_TEXT_CHARS, WORKER_REPORT_VERSION, isFinalTaskState } from "./types.ts";
 import type { DriftAcknowledgement, LoadedPluginFingerprint, ReviewFinding, ReviewMode, ReviewVerdict, TaskState } from "./types.ts";
 import {
 	UsageLedger,
@@ -1025,7 +1025,10 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		async execute(_toolCallId, params: { taskId?: string; executionId?: string }, _signal, _onUpdate, ctx) {
 			const cwd = ctx.cwd || process.cwd();
 			if (params.taskId !== undefined) {
-				const result = orchestrator.describeTaskDiagnostics(cwd, params.taskId, params.executionId);
+				const sessionFile = sessionFileOf(ctx);
+				const result = orchestrator.describeTaskDiagnostics(cwd, params.taskId, params.executionId, {
+					...(sessionFile ? { sessionFile, sessionDir: dirname(sessionFile) } : { sessionDir: join(AGENT_DIR, "planner-only") }),
+				});
 				if ("error" in result) {
 					return {
 						content: [{ type: "text", text: result.reason }],
@@ -1036,20 +1039,31 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				const lines = [
 					`planner_tasks diagnostics for ${d.taskId} (${d.source}):`,
 					`state: ${d.state}${d.stateReason ? ` — ${d.stateReason}` : ""} | acceptanceMode: ${d.acceptanceMode} | reports: ${d.reports} | reviews: ${d.reviews}`,
+					`session log: ${d.sessionLog.status}${d.sessionLog.path ? ` — ${d.sessionLog.path}` : ""}${d.sessionLog.note ? ` (${d.sessionLog.note})` : ""}`,
 					...(d.writerHold ? [`writer hold: ${d.writerHold.active ? "active" : "recorded (no live reservation)"} for execution ${d.writerHold.executionId} — ${d.writerHold.reason}`] : []),
 					...(d.recovery ? [`recovery.required: ${d.recovery.reason} (execution ${d.recovery.executionId})`] : []),
 					...(d.executions.length === 0 ? ["executions: none recorded"] : []),
+					...(d.totalExecutions > d.executions.length
+						? [`executions: showing latest ${d.executions.length} of ${d.totalExecutions} — pass executionId to inspect a specific one`]
+						: []),
 					...d.executions.flatMap((execution) => [
 						`execution ${execution.executionId} [${execution.kind}] status=${execution.status ?? "unknown"} capability=${execution.capability} confirmed=${execution.terminationConfirmed}${execution.confirmationBasis ? ` via ${execution.confirmationBasis}` : ""}${execution.endedReason ? ` ended=${execution.endedReason}` : ""}${execution.runId ? ` runId=${execution.runId}` : ""}`,
 						`  report: received=${execution.reportReceived} accepted=${execution.reportAccepted}${execution.evidenceIncomplete ? " | stop evidence incomplete" : ""}`,
 						...(execution.unacceptedReport ? [`  unaccepted report: status=${execution.unacceptedReport.status} reason="${execution.unacceptedReport.reason}"`] : []),
-						...(execution.probeFailures?.length ? [`  probe failures: ${describeProbeFailures(execution.probeFailures)}`] : []),
+						...(execution.probeFailures?.length ? [`  probe failures: ${describeProbeFailures(execution.probeFailures)}${execution.probeFailuresTruncated ? ` …and ${execution.probeFailuresTruncated} more` : ""}`] : []),
 						...execution.guidance.map((item) => `  → ${item}`),
 					]),
 					...d.guidance.map((item) => `→ ${item}`),
 				];
+				// A fixed total cap bounds the rendered text; truncation is
+				// disclosed and a narrower query recovers the detail.
+				let text = lines.join("\n");
+				if (text.length > MAX_TASK_DIAGNOSTICS_TEXT_CHARS) {
+					text = `${text.slice(0, MAX_TASK_DIAGNOSTICS_TEXT_CHARS)}\n… diagnostics output truncated at ${MAX_TASK_DIAGNOSTICS_TEXT_CHARS} chars; pass executionId to narrow the query`;
+					d.truncated = true;
+				}
 				return {
-					content: [{ type: "text", text: lines.join("\n") }],
+					content: [{ type: "text", text }],
 					details: { diagnostics: d },
 				};
 			}

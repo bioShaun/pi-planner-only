@@ -14,6 +14,42 @@ let tmpSeq = 0;
 
 export type LedgerCorrupt = { taskId: string; reason: string };
 
+/**
+ * Result of a targeted single-record read: the distinction diagnostics need
+ * between "no record", "record exists but is damaged", and "cannot read".
+ */
+export type LedgerReadResult =
+	| { status: "ok"; record: TaskRecord }
+	| { status: "missing" }
+	| { status: "invalid" }
+	| { status: "unreadable"; reason: string }
+	| { status: "corrupt"; reason: string };
+
+/** Validate one ledger envelope body; shared by readAll() and read(). */
+function parseEnvelope(stem: string, raw: string): { record: TaskRecord } | { corrupt: string } {
+	let envelope: unknown;
+	try {
+		envelope = JSON.parse(raw);
+	} catch {
+		return { corrupt: "unparseable JSON" };
+	}
+	if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) {
+		return { corrupt: "unparseable JSON" };
+	}
+	const env = envelope as { version?: unknown; task?: unknown };
+	if (env.version !== 1) {
+		return { corrupt: `unsupported version: ${String(env.version)}` };
+	}
+	if (env.task === undefined || env.task === null || typeof env.task !== "object" || Array.isArray(env.task)) {
+		return { corrupt: "missing task" };
+	}
+	const task = env.task as TaskRecord;
+	if (task.taskId !== stem) {
+		return { corrupt: `task.taskId does not match filename` };
+	}
+	return { record: task };
+}
+
 export class LedgerSnapshotStore {
 	private readonly dir: string;
 	private _lastWriteError: unknown;
@@ -114,34 +150,39 @@ export class LedgerSnapshotStore {
 				corrupt.push({ taskId: stem, reason: `unreadable: ${message}` });
 				continue;
 			}
-			let envelope: unknown;
-			try {
-				envelope = JSON.parse(raw);
-			} catch {
-				corrupt.push({ taskId: stem, reason: "unparseable JSON" });
+			const parsed = parseEnvelope(stem, raw);
+			if ("corrupt" in parsed) {
+				corrupt.push({ taskId: stem, reason: parsed.corrupt });
 				continue;
 			}
-			if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) {
-				corrupt.push({ taskId: stem, reason: "unparseable JSON" });
-				continue;
-			}
-			const env = envelope as { version?: unknown; task?: unknown };
-			if (env.version !== 1) {
-				corrupt.push({ taskId: stem, reason: `unsupported version: ${String(env.version)}` });
-				continue;
-			}
-			if (env.task === undefined || env.task === null || typeof env.task !== "object" || Array.isArray(env.task)) {
-				corrupt.push({ taskId: stem, reason: "missing task" });
-				continue;
-			}
-			const task = env.task as TaskRecord;
-			if (task.taskId !== stem) {
-				corrupt.push({ taskId: stem, reason: `task.taskId does not match filename` });
-				continue;
-			}
-			records.push(task);
+			records.push(parsed.record);
 		}
 		return { records, corrupt };
+	}
+
+	/**
+	 * Ticket 06 — read exactly one ledger record by canonical id. Unlike
+	 * readAll() this distinguishes the failure modes a diagnostic query must
+	 * not collapse: missing, corrupt content, and unreadable are reported
+	 * separately instead of all surfacing as "unknown Task".
+	 */
+	read(taskId: string): LedgerReadResult {
+		if (!SAFE_TASK_ID.test(taskId)) return { status: "invalid" };
+		const path = join(this.dir, "planner-only", "ledger", `${taskId}.json`);
+		let raw: string;
+		try {
+			raw = fs.readFileSync(path, "utf8");
+		} catch (err) {
+			const code = (err as NodeJS.ErrnoException | undefined)?.code;
+			if (code === "ENOENT" || code === "ENOTDIR") return { status: "missing" };
+			return {
+				status: "unreadable",
+				reason: err instanceof Error ? err.message : String(err),
+			};
+		}
+		const parsed = parseEnvelope(taskId, raw);
+		if ("corrupt" in parsed) return { status: "corrupt", reason: parsed.corrupt };
+		return { status: "ok", record: parsed.record };
 	}
 
 	private warnIo(err: unknown): void {

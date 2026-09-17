@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 — 非 Git Explorer 的观察类任务完整收口；04 — writer 环境不可验证时提前阻塞，运行后故障保持隔离；06 — 无需委派即可查询失败 Task。
 
-**Status:** implemented
+**Status:** done
 
 **Parent:** [停止证据失败规格](../spec.md)，Testing Decisions 全部真实宿主与发布验收要求。
 
@@ -36,3 +36,20 @@ Host acceptance run on pi 0.85.1 + pi-subagents 0.68.0, repo `index.ts` loaded v
 - Fresh pi process: `planner_tasks` on T-20260917-008 restored the ledger record — `capability=restricted-reader`, `confirmationBasis=terminal+restricted-reader`, probe failures preserved, no synthesized hold.
 
 Artifacts: `evidence/pi-host-t07-*.{stdout.json,stderr.txt}` + `pi-host-t07-ledger-*.json` + `pi-host-t07-summary.json`. Regression evidence: `delegate.test.mjs`, `orchestrate.test.mjs`, `index.test.mjs`, `task.test.mjs`, `evidence.test.mjs`; `npm run test:release` clean.
+
+## Resolution notes (2026-09-17, second round — post-audit-fix host acceptance)
+
+Second host acceptance on the same pi 0.85.1 + pi-subagents 0.68.0, working tree with the P1/P2 fixes applied. Isolated agent dir (`PI_CODING_AGENT_DIR=/tmp/planner-only-t07c-agent`, auth copied), real Git workspace `/tmp/planner-only-t07c-git`. An external delayed `chmod 000 a.txt` (tracked, in-scope) injected a post-launch evidence failure mid-execution:
+
+- `pi-host-t07b-cancel-late-terminal` (T-20260917-007) — worker + `envelope.maxWallMs=30000`, fault fired during the run → wall breach cancel, no terminal inside grace → `stop_unconfirmed` + `writer hold: kept` + `recovery.required`; the child's LATE terminal then triggered a fresh quiescence check which confirmed (`terminal+quiet-worktree`), releasing the hold and admitting a second writer. Covers cancellation + late-terminal paths: the unconfirmed stop held first, the late terminal resolved it exactly once.
+- `pi-host-t07b-writer-stop-unconfirmed` (T-20260917-009) — same envelope with `a.txt` in scope → post-breach sampling hit `hash-object … Permission denied` and `diff HEAD --stat … Permission denied` on BOTH stop samples → `stop_unconfirmed`, `terminationConfirmed=false`, `evidenceIncomplete=true`, `writerHold` persisted (ledger artifact `pi-host-t07b-ledger-T-20260917-009.json`); second writer refused `WORKSPACE_CONFLICT: writer cannot run beside active worker T-20260917-009`; `planner_tasks` reported `writer hold: active` plus `session log: verified-file`.
+- `pi-host-t07b-restart-hold` — fresh pi process on the same agent dir: `restoreFromLedger` re-registered `writerhold:tool_0WxyVcbsXZzh1GU9IgnrRhEX`, diagnostics still report `writer hold: active`, and the second writer refused `WORKSPACE_CONFLICT` again. Session log status correctly degrades to `default-directory` for a foreign session.
+
+Duplicate-terminal delivery is transport dedupe (`processedRunIds` + the settle-once guard) covered by `delegate.test.mjs`; no host-visible duplicate channel exists. `npm run test:release` clean after the fixes.
+
+Artifacts: `evidence/pi-host-t07b-*.stdout.json` + `pi-host-t07b-ledger-T-20260917-009.json` + `pi-host-t07b-summary.json`.
+
+## Comments
+
+- 2026-09-17 审核结论（REQUEST_CHANGES）：现有宿主证据覆盖 008/009/010 与 reader 重启恢复；writer 启动后故障隔离、第二 writer 拒绝、重启保留隔离、取消／迟到／重复事件场景尚无宿主级证据。
+- 2026-09-17 复审补齐：第二轮宿主验收（见上方 Resolution notes）已覆盖全部缺口——启动后证据故障（hash-failed）下 `stop_unconfirmed` + `writerHold` 保留、第二 writer `WORKSPACE_CONFLICT` 拒绝、重启后隔离保持、取消与迟到终态；重复终态由传输层去重并以回归覆盖。本票 done，留待 Root 复审收口。

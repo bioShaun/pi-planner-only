@@ -1,0 +1,31 @@
+{
+ "host": {
+  "pi": "0.85.1",
+  "pi-subagents": "0.68.0",
+  "plugin": "pi-planner-only @ working tree (P1/P2 audit fixes applied; loaded via -e /public/pi/pi-planner-only/index.ts, extension discovery disabled)",
+  "invocation": "pi -p --mode json --no-extensions -e ~/.pi/agent/npm/node_modules/pi-subagents/index.ts -e /public/pi/pi-planner-only/index.ts <prompt>",
+  "agentDir": "PI_CODING_AGENT_DIR=/tmp/planner-only-t07c-agent (isolated; auth.json/models.json copied)",
+  "workspace": "/tmp/planner-only-t07c-git (real Git repo, HEAD=1cdac51)",
+  "faultInjection": "external delayed `chmod 000 a.txt` (a tracked, in-scope file) fired while the delegated child was running — post-launch evidence-failure scenario"
+ },
+ "runs": {
+  "pi-host-t07b-cancel-late-terminal": {
+   "flow": "planner_delegate worker (envelope.maxWallMs=30000) → wall breach cancel → no terminal in grace → stop_unconfirmed + writerHold kept → LATE terminal arrived → settleLateTerminal re-sampled quiescence → confirmed → hold released → second writer then admitted",
+   "result": "T-20260917-007 blocked; execution status=stopped via terminal+quiet-worktree after late terminal; reservation released; recovery.required retained; late terminal finalized exactly once",
+   "proves": "取消路径 + 迟到终态事件：未确认停止先持锁，迟到 terminal 重新采样确认后才释放"
+  },
+  "pi-host-t07b-writer-stop-unconfirmed": {
+   "flow": "planner_delegate worker (envelope.maxWallMs=30000, scope includes a.txt) → chmod fault at ~30s → wall breach cancel at 30s → no terminal → stop_unconfirmed",
+   "result": "T-20260917-009 blocked; execution status=stop_unconfirmed, terminationConfirmed=false, evidenceIncomplete=true; BOTH stopSamples carry snapshotGap.reason=hash-failed (hash-object/diff --stat Permission denied on a.txt); writerHold persisted; recovery.required set",
+   "proves": "writer 启动后证据故障隔离（P1/F1）：hash-failed 样本不再确认停止，hold 与 reservation 保留",
+   "secondWriter": "planner_delegate refused: WORKSPACE_CONFLICT: writer cannot run beside active worker T-20260917-009 — 第二 writer 拒绝",
+   "diagnostics": "planner_tasks 显示 writer hold: active（存活 reservation 判定，F4）；session log: verified-file（F5）；probe failures 含 hash-object Permission denied 明细"
+  },
+  "pi-host-t07b-restart-hold": {
+   "flow": "fresh pi process, same PI_CODING_AGENT_DIR + cwd → restoreFromLedger restores T-20260917-009 → writerhold:executionId re-registered",
+   "result": "planner_tasks reports writer hold: active (source memory after restore); second planner_delegate worker refused WORKSPACE_CONFLICT again; session log status correctly degrades to default-directory (this session does not own the Task)",
+   "proves": "重启保留隔离：账本 writerHold 在新进程重登记为存活占用并继续拒绝 writer"
+  }
+ },
+ "notes": "重复终态事件为传输层去重（processedRunIds / settleLateTerminal once-guard），由 delegate.test.mjs 回归覆盖（第二次迟到终态不重复 finalize）；宿主不可见重复事件。run4 迟到终态已提供宿主级迟到事件证据。"
+}

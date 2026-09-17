@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** implemented
+**Status:** done
 
 **Parent:** [停止证据失败规格](../spec.md)，实施决策 §2 报告保全，§6 报告可观测性。
 
@@ -19,3 +19,7 @@
 - [x] 正常已接纳报告行为不变；类型检查、受影响测试与报告状态说明通过/更新，并保留前后验证证据。
 
 **边界：** 本票可独立落地，不修改停止谓词、能力分类或 observation 验收。06 负责将这些材料的状态纳入按 Task 查询，不将其转换成验收证明。
+
+## Comments
+
+- 2026-09-17 审核修订：身份错配的报告现在同样走未接纳路径——保存在执行的 unacceptedReport / unacceptedReportReason，绝不进入 reports 序列或绑定 reportIndex。回归见 delegate.test.mjs 身份错配用例。

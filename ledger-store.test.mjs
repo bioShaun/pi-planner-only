@@ -394,4 +394,30 @@ function snapshotPath(dir, taskId) {
 	}
 }
 
+{
+	const dir = sandbox();
+	try {
+		const ledger = new LedgerSnapshotStore(dir);
+		ledger.write(makeRecord("T-20260908-rd1"));
+		const ledgerDir = join(dir, "planner-only", "ledger");
+		writeFileSync(join(ledgerDir, "T-20260908-rd2.json"), "this is not json", "utf8");
+		writeFileSync(join(ledgerDir, "T-20260908-rd3.json"), JSON.stringify({ version: 1, task: { taskId: "T-other" } }), "utf8");
+
+		const ok = ledger.read("T-20260908-rd1");
+		assert.equal(ok.status, "ok", "R1: a valid record reads as ok");
+		assert.equal(ok.record.taskId, "T-20260908-rd1", "R2: the record round-trips verbatim");
+		assert.equal(ledger.read("T-20260908-miss").status, "missing", "R3: an absent file is missing, not corrupt");
+		const parse = ledger.read("T-20260908-rd2");
+		assert.equal(parse.status, "corrupt", "R4: unparseable content is corrupt");
+		assert.match(parse.reason, /unparseable JSON/);
+		const mismatch = ledger.read("T-20260908-rd3");
+		assert.equal(mismatch.status, "corrupt", "R5: a taskId mismatch is corrupt");
+		assert.equal(ledger.read("bad/id").status, "invalid", "R6: an unsafe id is invalid, never a path lookup");
+		assert.equal(ledger.read("").status, "invalid", "R7: an empty id is invalid");
+		assert.equal(existsSync(join(ledgerDir, "T-20260908-rd2.json")), true, "R8: read() never repairs or deletes a corrupt file");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
 console.log("planner-only ledger-store: PASS");

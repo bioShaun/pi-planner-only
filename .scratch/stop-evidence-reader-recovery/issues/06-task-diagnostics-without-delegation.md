@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — Git 采样失败提供具体原因；02 — 受限 Explorer 正确停止，恢复时不生成写入占用；05 — 保存已收到但未验收的终态报告。
 
-**Status:** implemented
+**Status:** done
 
 **Parent:** [停止证据失败规格](../spec.md)，实施决策 §6、§4 人工恢复指引、§7 工具兼容。
 
@@ -23,3 +23,7 @@
 - [x] 通过注册到 Pi 的工具 execute 入口和实际账本验证上述场景、无参数兼容及零写入副作用；类型检查、受影响测试、工具说明和公开 schema 发布约定同步完成。
 
 **边界：** 本票是只读故障查询，不创建新恢复系统，不新增通用 shell/日志搜索权限。03 的观察模式和 04 的 writer 前置阻塞不决定查询本身是否可实现，故不添加相应阻塞边。
+
+## Comments
+
+- 2026-09-17 审核修订：writerHold.active 修复为按存活 reservation（含 writerhold:<id> 重启重登记）判定；新增 sessionLog 位置状态（verified-file / known-unavailable / default-directory / unknown）；损坏账本返回 TASK_LEDGER_CORRUPT / TASK_LEDGER_UNREADABLE / TASK_ID_INVALID 而非 TASK_UNKNOWN；executions、probeFailures、guidance 与渲染文本均有固定上限并披露 truncated。

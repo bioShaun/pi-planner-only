@@ -2307,6 +2307,9 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 	assert.equal(d.executions[0].reportReceived, true);
 	assert.equal(d.executions[0].reportAccepted, true);
 	assert.match(diag.content[0].text, /restricted-reader/);
+	// The session-log line reports a location status, never a guessed file.
+	assert.ok(d.sessionLog, "diagnostics carry the session log status");
+	assert.match(diag.content[0].text, /session log: (verified-file|known-unavailable|default-directory|unknown)/);
 	const miss = await tasksTool.execute("call-t06-miss", { taskId: "T-19990101-000" }, undefined, () => {}, ctx);
 	assert.equal(miss.details.error, "TASK_UNKNOWN");
 	assert.equal(requestCount(), beforeC, "diagnostics never launches a child");
@@ -2317,4 +2320,51 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 	assert.equal(ledgerOnly.details.diagnostics.source, "ledger");
 	assert.equal(ledgerOnly.details.diagnostics.state, "blocked");
 	assert.equal(ledgerOnly.details.diagnostics.recovery.required, true);
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics output cap: a ledger record with unbounded per-execution detail
+// renders within the fixed text cap, disclosing the truncation.
+// ---------------------------------------------------------------------------
+{
+	const tasksTool = tools.get("planner_tasks");
+	const fatTask = {
+		taskId: "T-20200101-900",
+		state: "blocked",
+		role: "worker",
+		cwd: ctx.cwd,
+		spec: { objective: "fat diagnostics" },
+		executions: Array.from({ length: 25 }, (_, i) => ({
+			executionId: `call-fat-${i}`,
+			kind: "worker",
+			status: "stop_unconfirmed",
+			capability: "writer",
+			aRun: {
+				cwd: ctx.cwd,
+				taskId: "T-20200101-900",
+				workerRunId: `call-fat-${i}`,
+				probeFailures: Array.from({ length: 12 }, (__, n) => ({
+					operation: `probe-${n}`,
+					kind: "probe-error",
+					cwd: ctx.cwd,
+					exitCode: 1,
+					error: "x".repeat(400),
+				})),
+			},
+		})),
+		reports: [],
+		reviews: [],
+		updatedAt: "2020-01-01T00:00:00.000Z",
+	};
+	new LedgerSnapshotStore(isolatedAgentDir).write(fatTask);
+	const fat = await tasksTool.execute("call-t06-fat", { taskId: "T-20200101-900" }, undefined, () => {}, ctx);
+	const fd = fat.details.diagnostics;
+	assert.equal(fd.totalExecutions, 25);
+	assert.equal(fd.executions.length, 20, "structured output is capped");
+	assert.equal(fd.truncated, true, "truncation is disclosed");
+	assert.ok(
+		fat.content[0].text.length <= 20500,
+		`rendered text stays bounded (got ${fat.content[0].text.length})`,
+	);
+	assert.match(fat.content[0].text, /truncated/, "the text discloses the cap");
 }

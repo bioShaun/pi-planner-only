@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** implemented
+**Status:** done
 
 **Parent:** [停止证据失败规格](../spec.md)，实施决策 §5，兼容要求 §7。
 
@@ -21,3 +21,7 @@
 **边界：** 本票交付错误可观测性，不改变能力分类、静止通过条件或 writer 启动策略；后两者分别由 02、04 负责。无需等待它们，也不等待 06 的查询工具即可通过委派结果演示本票。
 
 **实施提示：** 若需局部整理采样结果构造，先在本票内部统一再接通错误明细；不扩展为更换采样后端的重构。
+
+## Comments
+
+- 2026-09-17 审核修订：诊断补齐总输出上限（executions/probeFailures/guidance 列表上限 + 适配层文本字符上限）、sessionLog 位置状态、损坏账本与 TASK_UNKNOWN 的区分；writerHold.active 现在按匹配的存活 reservation 判定。回归见 orchestrate.test.mjs / index.test.mjs / ledger-store.test.mjs。

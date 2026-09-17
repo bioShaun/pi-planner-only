@@ -57,6 +57,7 @@ import { childUsageFromValue } from "./usage.ts";
 import type { UsageLedger } from "./usage.ts";
 import { acceptanceModeOf, isFinalTaskState, isTerminalTaskState } from "./types.ts";
 import type {
+	AcceptanceMode,
 	DelegationKind,
 	EvidenceRef,
 	ExecutionCapability,
@@ -123,8 +124,8 @@ export const RESTRICTED_READER_DEFINITION = {
 	inheritSkills: false,
 	tools: [...RESTRICTED_READER_TOOLS],
 	systemPrompt: [
-		"You are a read-only observation subagent running inside pi.",
-		"You may ONLY use read, grep, find, and ls. You have no shell, no edit, no write, and no sub-agent tool.",
+		"You are a read-only observation Explorer running inside pi.",
+		"You may ONLY use read, grep, find, and ls. You have no shell, no edit, no write, and no delegation tool.",
 		"Inspect the workspace, gather the requested information, and return your findings in the structured result.",
 		"Never modify, create, or delete anything. If the task requires changes, report that requirement instead of attempting it.",
 	].join("\n"),
@@ -315,6 +316,12 @@ const DELEGATION_SPEC_PARAMETERS = {
 	),
 };
 
+// Ticket 03 — acceptanceMode is a creation-time contract: it stays on the
+// mint schema but is deliberately absent from the rebind surface. The
+// runtime guard (ACCEPTANCE_MODE_IMMUTABLE) still refuses pass-through from
+// hosts that do not validate parameters.
+const { acceptanceMode: _creationOnlyAcceptanceMode, ...DELEGATION_REBIND_SPEC_PARAMETERS } = DELEGATION_SPEC_PARAMETERS;
+
 const DELEGATION_RECOVERY_PARAMETER = Type.Optional(
 	Type.Object({
 		executionId: Type.String({ minLength: 1 }),
@@ -353,7 +360,7 @@ export const PLANNER_REDELEGATE_PARAMETERS = Type.Object({
 	role: Type.Union([Type.Literal("worker"), Type.Literal("explorer"), Type.Literal("validator"), Type.Literal("reviewer")], {
 		description: "Delegation role. worker implements a correction round; explorer does read-only recon (restricted-reader agent, no shell/edit/write); validator runs an oracle verdict; reviewer reviews the bound Task's latest WorkerReport — objective / scope / constraints / acceptanceCriteria / validation / instructions are ignored, the Task's stored spec is the reviewer's context.",
 	}),
-	...DELEGATION_SPEC_PARAMETERS,
+	...DELEGATION_REBIND_SPEC_PARAMETERS,
 	recovery: DELEGATION_RECOVERY_PARAMETER,
 });
 
@@ -363,8 +370,13 @@ export type PlannerRedelegateParams = Static<typeof PLANNER_REDELEGATE_PARAMETER
  * The shape `runDelegation` consumes: both tool surfaces converge here. The
  * adapter strips any taskId/recovery a non-validating host passed through
  * planner_delegate, so reaching this type with a taskId means a rebind call.
+ * `acceptanceMode` is declared here (not on the rebind schema) so the runtime
+ * can still refuse a pass-through from a non-validating host.
  */
-export type PlannerDelegationParams = Omit<PlannerRedelegateParams, "taskId"> & { taskId?: string };
+export type PlannerDelegationParams = Omit<PlannerRedelegateParams, "taskId"> & {
+	taskId?: string;
+	acceptanceMode?: AcceptanceMode;
+};
 
 /**
  * WorkerReport JSON schema (types.ts) as plain JSON data.
@@ -962,6 +974,7 @@ export async function runDelegation(
 				|| first.gitAvailable === false || second.gitAvailable === false
 				|| (first.unavailableWorktreeRoots?.length ?? 0) > 0
 				|| (second.unavailableWorktreeRoots?.length ?? 0) > 0
+				|| first.snapshotGap !== undefined || second.snapshotGap !== undefined
 			) {
 				return { confirmed: false, interim: second, samples, evidenceIncomplete: true };
 			}
@@ -1439,13 +1452,18 @@ export async function runDelegation(
 		const reportError = report
 			? (identityErrors.length > 0 ? identityErrors.join("; ") : undefined)
 			: "completed delegation carried no structured WorkerReport";
+		// An identity-mismatched report is received-but-unaccepted material:
+		//    it stays bound to this execution for diagnostics but never enters
+		//    the report sequence and never binds a reportIndex — an accepted
+		//    revision must always name the Task and run that produced it.
+		const admittedReport = report && identityErrors.length === 0 ? report : undefined;
 
 		// 8. Ledger: report and child usage land on the Task as-is.
 		let recorded = task;
-		if (report) {
+		if (admittedReport) {
 			recorded = role === "validator"
-				? deps.store.recordValidatorReport(task.taskId, report)
-				: deps.store.recordReport(task.taskId, report);
+				? deps.store.recordValidatorReport(task.taskId, admittedReport)
+				: deps.store.recordReport(task.taskId, admittedReport);
 		}
 		if (response.usage) {
 			const child = childUsageFromValue(response.usage, role as DelegationKind, {
@@ -1463,9 +1481,11 @@ export async function runDelegation(
 			if (child) deps.usage.recordChild(task.taskId, child);
 		}
 
-		const reportIndex = role === "validator"
-			? recorded.validatorReports.length - 1
-			: recorded.reports.length - 1;
+		const reportIndex = admittedReport
+			? role === "validator"
+				? recorded.validatorReports.length - 1
+				: recorded.reports.length - 1
+			: -1;
 		deps.store.completeExecution(task.taskId, executionId, {
 			status: "completed",
 			endedReason: "normal",
@@ -1486,10 +1506,16 @@ export async function runDelegation(
 			outOfScopePaths: truth.outOfScopePaths,
 			extraDeclaredPaths: truth.extraDeclaredPaths,
 			externalPaths: truth.externalPaths,
-			...(report && reportIndex >= 0
+			...(admittedReport && reportIndex >= 0
 				? role === "validator"
 					? { validatorReportIndex: reportIndex }
 					: { reportIndex }
+				: {}),
+			...(report && !admittedReport
+				? {
+					unacceptedReport: report,
+					unacceptedReportReason: `report identity does not match this Task or execution: ${reportError}`,
+				}
 				: {}),
 		});
 		deps.store.recordExecutionFindings(
@@ -1504,13 +1530,13 @@ export async function runDelegation(
 			deps.store.now().toISOString(),
 			["undeclared", "scope", "over-declared", "missing"],
 		);
-		if (!report && reportError) warnings.push(reportError);
+		if (!admittedReport && reportError) warnings.push(reportError);
 
 		// 9. Review loop decides what this report means for the Task.
 		const { task: reviewed, decision } = advanceReview({
 			store: deps.store,
 			taskId: task.taskId,
-			...(report ? { report } : {}),
+			...(admittedReport ? { report: admittedReport } : {}),
 			...(reportError ? { reportError } : {}),
 			...(comparison ? { comparison } : {}),
 		});

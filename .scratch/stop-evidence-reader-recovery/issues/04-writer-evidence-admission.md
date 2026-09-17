@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — Git 采样失败提供具体原因；02 — 受限 Explorer 正确停止，恢复时不生成写入占用。
 
-**Status:** implemented
+**Status:** done
 
 **Parent:** [停止证据失败规格](../spec.md)，实施决策 §2 writer 启动前阻塞、§5 完整静止证据。
 
@@ -20,3 +20,7 @@
 - [x] 类型检查、受影响测试及环境修复说明通过/更新；保留修复前后回归证据，说明如何区分“未启动”和“已启动、停止未确认”。
 
 **边界：** 复用既有采样后端，依赖 01 的失败明细与 02 的可信分类，不依赖 03 的 observation 验收或 05 的报告保全。
+
+## Comments
+
+- 2026-09-17 审核修订：post-launch hash-object 失败（snapshotGap reason=hash-failed）现在使停止不确认，writer hold 与 reservation 持续有效，任务 blocked 且 recovery.required。回归见 delegate.test.mjs hash-gap 用例。

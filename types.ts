@@ -68,6 +68,12 @@ export const MAX_GIT_AUDIT_ENTRIES = 200;
 export const DEFAULT_GIT_AUDIT_ENTRIES = 20;
 export const MAX_GIT_AUDIT_OUTPUT_CHARS = 20000;
 
+/** Ticket 06 — bounds for `planner_tasks` diagnostics output. */
+export const MAX_TASK_DIAGNOSTIC_EXECUTIONS = 20;
+export const MAX_TASK_DIAGNOSTIC_PROBE_FAILURES = 10;
+export const MAX_TASK_DIAGNOSTIC_GUIDANCE = 12;
+export const MAX_TASK_DIAGNOSTICS_TEXT_CHARS = 20000;
+
 /** RF-1 — cap on dirty paths hashed per Evidence sample for the T3 baseline comparison. */
 export const MAX_BASELINE_HASH_PATHS = 200;
 
@@ -735,6 +741,7 @@ export type RootVerdictRefusalKind =
 	| "child-pending"
 	| "attribution-gap-unlock-refused"   // strict fresh mode has 0 evidence attribution paths
 	| "observation-inadmissible"       // an observation-acceptance gate failed (report/execution/declared-evidence)
+	| "report-identity"                // the bound report revision fails the Task/execution identity check at verdict time
 	| "recovery-invalid";              // the RecoveryDecision failed validateRecoveryDecision (planner_abort / redelegate gate)
 
 /** Structured refusal of a Root verdict request: typed kind plus prose for display. */

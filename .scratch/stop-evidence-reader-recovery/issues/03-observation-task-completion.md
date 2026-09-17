@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — 受限 Explorer 正确停止，恢复时不生成写入占用。
 
-**Status:** implemented
+**Status:** done
 
 **Parent:** [停止证据失败规格](../spec.md)，实施决策 §3、§7 结构化契约及兼容要求。
 
@@ -23,3 +23,7 @@
 - [x] 类型检查、受影响测试与用户说明通过/更新；公开 schema 变化遵循发布约定。既有 Worker 的 Evidence、Fresh Reviewer、快照绑定、Verdict 和 git_commit 门禁有不退化证据。
 
 **边界：** 本票不为非 Git writer 建立新的采样后端，不赋予 observation Task 提交或验证代码修改的能力；05 的报告保全和 06 的故障查询独立交付。
+
+## Comments
+
+- 2026-09-17 审核修订：报告身份在接纳处拒绝错配（保留为 unacceptedReport，不入序列、不绑定 reportIndex），并在 Verdict 边界复核 taskId / evidence.taskId / workerRunId（拒绝 kind: report-identity）；expectedEvidence.gitRef / diffStat 改为对照 Root 自行采样验证，非 Git 环境或 ref 不匹配一律拒绝（kind: observation-inadmissible）。回归见 delegate.test.mjs 与 orchestrate.test.mjs。

@@ -24,6 +24,8 @@ import {
 	compareSnapshotBinding,
 } from "./workspace-snapshot.ts";
 import type { GitRunner } from "./git-audit.ts";
+import { GIT_REF_PATTERN } from "./git-audit.ts";
+import { validateWorkerReportIdentity } from "./report.ts";
 import {
 	lastWorkerValidationPassed,
 	missingTaskSpecValidationCommands,
@@ -59,6 +61,9 @@ import {
 	MAX_LEDGER_RESTORE_PER_SESSION,
 	MAX_RECOVERY_ATTEMPTS,
 	MAX_REVIEW_ROUNDS,
+	MAX_TASK_DIAGNOSTIC_EXECUTIONS,
+	MAX_TASK_DIAGNOSTIC_GUIDANCE,
+	MAX_TASK_DIAGNOSTIC_PROBE_FAILURES,
 	acceptanceModeOf,
 	executionNeedsWriterIsolation,
 	isFinalTaskState,
@@ -336,7 +341,7 @@ function untrustedPlaceholder(taskId: string): TaskRecord {
 		usage: emptyTaskUsage(),
 		createdAt: "1970-01-01T00:00:00.000Z",
 		updatedAt: "1970-01-01T00:00:00.000Z",
-		stateReason: "ledger snapshot unreadable",
+		stateReason: "ledger record unreadable",
 	};
 }
 
@@ -354,6 +359,16 @@ export interface PlannerTaskSummary {
 	source: "memory" | "ledger";
 }
 
+/** Ticket 06 — where the session log for a Task is known to live. */
+export interface TaskSessionLogStatus {
+	status: "verified-file" | "known-unavailable" | "default-directory" | "unknown";
+	/** The file path (verified/known-unavailable) or directory hint. */
+	path?: string;
+	/** Where the location claim came from — never guessed. */
+	source?: "task-usage-record" | "host-session" | "host-default";
+	note?: string;
+}
+
 /** Ticket 06 — the read-only `planner_tasks` diagnostics view for one Task. */
 export interface PlannerTaskDiagnostics {
 	taskId: string;
@@ -366,6 +381,7 @@ export interface PlannerTaskDiagnostics {
 	source: "memory" | "ledger";
 	reports: number;
 	reviews: number;
+	sessionLog: TaskSessionLogStatus;
 	executions: {
 		executionId: string;
 		kind: DelegationKind;
@@ -384,8 +400,13 @@ export interface PlannerTaskDiagnostics {
 		reportAccepted: boolean;
 		unacceptedReport?: { taskId: string; status: string; summary: string; workerRunId: string; reason: string };
 		probeFailures?: GitProbeFailure[];
+		probeFailuresTruncated?: number;
 		guidance: string[];
 	}[];
+	/** Executions on the record before the display cap was applied. */
+	totalExecutions: number;
+	/** True when any list was capped; a narrower query (executionId) shows the rest. */
+	truncated: boolean;
 	guidance: string[];
 }
 
@@ -625,26 +646,59 @@ export class PlannerOrchestrator {
 	/**
 	 * Ticket 06 — read-only diagnostics for one Task, reachable without
 	 * delegating a child. Resolves from the session store first, then the
-	 * ledger snapshot read-only (no adoption, no restore side effects), and
+	 * ledger record read-only (no adoption, no restore side effects), and
 	 * keeps the same workspace boundary as the delegation lookup.
 	 */
 	describeTaskDiagnostics(
 		cwd: string,
 		taskId: string,
 		executionId?: string,
+		options: { sessionFile?: string; sessionDir?: string } = {},
 	): { diagnostics: PlannerTaskDiagnostics } | { error: string; reason: string } {
 		let record = this.store.get(taskId);
+		// A corrupt ledger record was quarantined into memory as a placeholder
+		// by restoreFromLedger — the classification stays "corrupt", not the
+		// placeholder's synthetic record.
+		if (record && record.cwd === "" && this.untrustedBalances.has(taskId)) {
+			return {
+				error: "TASK_LEDGER_CORRUPT",
+				reason: `planner_tasks: the ledger record for ${taskId} exists but is corrupt (${this.untrustedBalances.get(taskId)}); the record was quarantined, not restored — inspect the ledger file or repair it manually`,
+			};
+		}
 		let source: "memory" | "ledger" | undefined = record ? "memory" : undefined;
 		if (!record && this.snapshots) {
-			try {
-				const { records } = this.snapshots.readAll();
-				const found = records.find((candidate) => candidate.taskId === taskId);
-				if (found) {
-					record = found;
+			// A targeted read keeps the failure modes distinct: an absent record
+			// is TASK_UNKNOWN, but a damaged or unreadable record is neither
+			// absent nor unknown.
+			if (!SAFE_TASK_ID.test(taskId)) {
+				return {
+					error: "TASK_ID_INVALID",
+					reason: `planner_tasks: ${JSON.stringify(taskId)} is not a safe Task id; pass the canonical taskId verbatim from a prior planner_delegate result`,
+				};
+			}
+			const found = this.snapshots.read(taskId);
+			switch (found.status) {
+				case "ok":
+					record = found.record;
 					source = "ledger";
-				}
-			} catch {
-				// An unreadable ledger is reported as unknown below.
+					break;
+				case "corrupt":
+					return {
+						error: "TASK_LEDGER_CORRUPT",
+						reason: `planner_tasks: the ledger record for ${taskId} exists but is corrupt (${found.reason}); the record was not restored or modified — inspect the ledger file or repair it manually`,
+					};
+				case "unreadable":
+					return {
+						error: "TASK_LEDGER_UNREADABLE",
+						reason: `planner_tasks: the ledger record for ${taskId} could not be read (${found.reason}); fix the filesystem permission or remount, then retry`,
+					};
+				case "invalid":
+					return {
+						error: "TASK_ID_INVALID",
+						reason: `planner_tasks: ${JSON.stringify(taskId)} is not a safe Task id; pass the canonical taskId verbatim from a prior planner_delegate result`,
+					};
+				default:
+					break;
 			}
 		}
 		if (!record || !source) {
@@ -659,18 +713,30 @@ export class PlannerOrchestrator {
 				reason: `Task ${record.taskId} belongs to workspace ${record.cwd}, not ${cwd}; call planner_tasks from that workspace`,
 			};
 		}
+		const taskRef = record;
+		// A live reservation or a restored writerhold: re-registration both keep
+		// the workspace occupied; "active" means something is actually holding it.
 		const reservations = this.concurrency.status().reservations
-			.filter((item) => item.taskId === record!.taskId || item.id === record!.writerHold?.executionId || item.id === `writerhold:${record!.writerHold?.executionId}`);
-		const holdActive = record.writerHold !== undefined
-			&& reservations.some((item) => item.id === `writerhold:${record!.writerHold!.executionId}`);
-		const executions = (record.executions ?? [])
-			.filter((execution) => executionId === undefined || execution.executionId === executionId)
-			.map((execution) => {
-				const sampleFailures = [
+			.filter((item) => item.taskId === taskRef.taskId || item.id === taskRef.writerHold?.executionId || item.id === `writerhold:${taskRef.writerHold?.executionId}`);
+		const holdActive = taskRef.writerHold !== undefined && reservations.length > 0;
+		let truncated = false;
+		const filteredExecutions = (taskRef.executions ?? [])
+			.filter((execution) => executionId === undefined || execution.executionId === executionId);
+		const totalExecutions = filteredExecutions.length;
+		const shownExecutions = executionId === undefined && totalExecutions > MAX_TASK_DIAGNOSTIC_EXECUTIONS
+			? filteredExecutions.slice(totalExecutions - MAX_TASK_DIAGNOSTIC_EXECUTIONS)
+			: filteredExecutions.slice(0, MAX_TASK_DIAGNOSTIC_EXECUTIONS);
+		const omittedExecutions = totalExecutions - shownExecutions.length;
+		if (omittedExecutions > 0) truncated = true;
+		const executions = shownExecutions.map((execution) => {
+				const allFailures = [
 					...(execution.aRun.probeFailures ?? []),
 					...(execution.cReport?.probeFailures ?? []),
 					...(execution.stopSamples ?? []).flatMap((sample) => sample.probeFailures ?? []),
 				];
+				const sampleFailures = allFailures.slice(0, MAX_TASK_DIAGNOSTIC_PROBE_FAILURES);
+				const failuresTruncated = allFailures.length - sampleFailures.length;
+				if (failuresTruncated > 0) truncated = true;
 				const reportReceived = execution.reportIndex !== undefined
 					|| execution.validatorReportIndex !== undefined
 					|| execution.unacceptedReport !== undefined
@@ -723,15 +789,19 @@ export class PlannerOrchestrator {
 								status: execution.unacceptedReport.status,
 								summary: execution.unacceptedReport.summary.slice(0, 200),
 								workerRunId: execution.unacceptedReport.evidence?.workerRunId ?? "",
-								reason: execution.unacceptedReportReason ?? "not recorded",
+								reason: (execution.unacceptedReportReason ?? "not recorded").slice(0, 400),
 							},
 						}
 						: {}),
 					...(sampleFailures.length ? { probeFailures: sampleFailures } : {}),
-					guidance,
+					...(failuresTruncated > 0 ? { probeFailuresTruncated: failuresTruncated } : {}),
+					guidance: guidance.slice(0, MAX_TASK_DIAGNOSTIC_GUIDANCE),
 				};
 			});
 		const guidance: string[] = [];
+		if (omittedExecutions > 0) {
+			guidance.push(`showing the latest ${shownExecutions.length} of ${totalExecutions} executions; pass executionId to inspect a specific one`);
+		}
 		if (executions.length === 0) {
 			guidance.push(executionId === undefined
 				? "never launched — no execution records exist on this Task"
@@ -739,14 +809,19 @@ export class PlannerOrchestrator {
 		}
 		if (record.writerHold) {
 			guidance.push(holdActive
-				? `writer hold active for execution ${record.writerHold.executionId} (${record.writerHold.reason})`
+				? `writer hold active for execution ${record.writerHold.executionId} (${record.writerHold.reason.slice(0, 200)})`
 				: `writer hold recorded for execution ${record.writerHold.executionId} but no live reservation exists — restart state drift`);
 		}
 		if (record.recovery?.required === true) {
-			guidance.push(`recovery required: ${record.recovery.reason}; submit planner_redelegate recovery or planner_abort for execution ${record.recovery.executionId}`);
+			guidance.push(`recovery required: ${record.recovery.reason.slice(0, 400)}; submit planner_redelegate recovery or planner_abort for execution ${record.recovery.executionId}`);
 		}
 		if (source === "ledger") {
-			guidance.push("read from the ledger snapshot — the record was not restored into this session's store");
+			guidance.push("read from the ledger record — it was not restored into this session's store");
+		}
+		const cappedGuidance = guidance.slice(0, MAX_TASK_DIAGNOSTIC_GUIDANCE);
+		if (guidance.length > cappedGuidance.length) {
+			truncated = true;
+			cappedGuidance.push(`${guidance.length - cappedGuidance.length} more guidance line(s) omitted — narrow the query with executionId`);
 		}
 		return {
 			diagnostics: {
@@ -755,9 +830,11 @@ export class PlannerOrchestrator {
 				...(record.stateReason ? { stateReason: record.stateReason.slice(0, 400) } : {}),
 				acceptanceMode: acceptanceModeOf(record),
 				...(record.recovery?.required === true
-					? { recovery: { required: true, reason: record.recovery.reason, executionId: record.recovery.executionId } }
+					? { recovery: { required: true, reason: record.recovery.reason.slice(0, 400), executionId: record.recovery.executionId } }
 					: {}),
-				...(record.writerHold ? { writerHold: { ...record.writerHold, active: holdActive } } : {}),
+				...(record.writerHold
+					? { writerHold: { executionId: record.writerHold.executionId, reason: record.writerHold.reason.slice(0, 400), since: record.writerHold.since, active: holdActive } }
+					: {}),
 				reservations: reservations.map((item) => ({
 					id: item.id,
 					...(item.taskId ? { taskId: item.taskId } : {}),
@@ -767,10 +844,70 @@ export class PlannerOrchestrator {
 				source,
 				reports: record.reports?.length ?? 0,
 				reviews: record.reviews?.length ?? 0,
+				sessionLog: this.describeSessionLog(record, shownExecutions, options),
 				executions,
-				guidance,
+				totalExecutions,
+				truncated,
+				guidance: cappedGuidance,
 			},
 		};
+	}
+
+	/**
+	 * Ticket 06 — where the Task's session log is known to live. Only two
+	 * sources are trusted: a path persisted on the Task's own usage record
+	 * (the child transcript/session file), or host-provided metadata for the
+	 * *current* session when this session actually owns the Task. A known
+	 * path is verified with an existence check only — diagnostics never read
+	 * log contents and never scan a session directory for candidates.
+	 */
+	private describeSessionLog(
+		record: TaskRecord,
+		targetExecutions: readonly TaskExecutionRecord[],
+		options: { sessionFile?: string; sessionDir?: string },
+	): TaskSessionLogStatus {
+		const children = record.usage?.children ?? [];
+		for (const execution of targetExecutions) {
+			const child = children.find((entry) =>
+				entry.toolCallId === execution.executionId
+				|| (execution.runId !== undefined && entry.runId === execution.runId));
+			const loose = child === undefined ? undefined : (child as unknown as Record<string, unknown>);
+			const recordedPath = typeof child?.transcriptPath === "string" && child.transcriptPath.trim()
+				? child.transcriptPath
+				: typeof loose?.sessionFile === "string"
+					? loose.sessionFile
+					: undefined;
+			if (recordedPath) {
+				return existsSync(recordedPath)
+					? { status: "verified-file", path: recordedPath, source: "task-usage-record" }
+					: {
+						status: "known-unavailable",
+						path: recordedPath,
+						source: "task-usage-record",
+						note: "a location is recorded for this execution but it is not accessible from this host now",
+					};
+			}
+		}
+		const sessionIds = new Set(
+			[this.runSessionId, this.loadedProvenance?.sessionId]
+				.filter((value): value is string => typeof value === "string" && value.trim().length > 0 && !value.startsWith("unknown")),
+		);
+		const ownedHere = sessionIds.size > 0
+			&& children.some((entry) => entry.ownerRootSessionId !== undefined && sessionIds.has(entry.ownerRootSessionId));
+		if (options.sessionFile && ownedHere) {
+			return existsSync(options.sessionFile)
+				? { status: "verified-file", path: options.sessionFile, source: "host-session", note: "the current Root session log; this Task ran in this session" }
+				: { status: "known-unavailable", path: options.sessionFile, source: "host-session", note: "the host-reported session file is not accessible now" };
+		}
+		if (options.sessionDir) {
+			return {
+				status: "default-directory",
+				path: options.sessionDir,
+				source: "host-default",
+				note: "session logs live under this directory; no exact file is recorded for this Task — do not assume any file there belongs to it",
+			};
+		}
+		return { status: "unknown", note: "no session log location is recorded for this Task" };
 	}
 
 	/**
@@ -2111,6 +2248,130 @@ export class PlannerOrchestrator {
 	}
 
 	/**
+	 * The verdict-time identity gate: the latest report revision must still
+	 * name this Task and the execution that produced it. Admission checks
+	 * cannot cover restored ledger records or report sequences bound before
+	 * the admission fix, so the acceptance boundary re-derives the binding.
+	 * The bound run accepts either spelling: the launcher runId for admitted
+	 * reports, or the executionId the raw-judged synthesis binds.
+	 */
+	private reportIdentityRefusal(task: TaskRecord): RootVerdictRefusal | undefined {
+		const report = task.reports.at(-1);
+		if (!report) return undefined;
+		const revision = task.reports.length - 1;
+		const producer = [...task.executions].reverse().find((execution) => execution.reportIndex === revision);
+		const identityErrors = validateWorkerReportIdentity(report, {
+			taskId: task.taskId,
+			...((task.aliases?.length ?? 0) > 0 ? { aliases: task.aliases } : {}),
+		});
+		const declaredRun = report.evidence?.workerRunId;
+		if (producer && declaredRun !== undefined) {
+			const boundRuns = [producer.runId, producer.executionId]
+				.filter((value): value is string => typeof value === "string" && value.length > 0);
+			if (!boundRuns.includes(declaredRun)) {
+				identityErrors.push(
+					`WorkerReport evidence.workerRunId ${declaredRun} does not match the bound execution ${producer.executionId} (run ${producer.runId ?? "unrecorded"})`,
+				);
+			}
+		}
+		if (identityErrors.length === 0) return undefined;
+		return {
+			kind: "report-identity",
+			reason: `report revision ${task.reports.length} fails identity binding for Task ${task.taskId}: ${identityErrors.join("; ")}`,
+		};
+	}
+
+	/**
+	 * Record a refused verdict as an audit row and return the outcome without
+	 * mutating Task state — the verdict never lands as a ReviewResult.
+	 */
+	private refusedVerdictOutcome(task: TaskRecord, verdict: ReviewVerdict, refusal: RootVerdictRefusal): RootVerdictOutcome {
+		this.recordRootVerdictRefusal(task, verdict, refusal);
+		const current = this.store.require(task.taskId);
+		return {
+			task: current,
+			decision: {
+				action: "blocked",
+				nextState: current.state,
+				round: current.reviewRound,
+				consumesRound: false,
+				reason: `verdict refused (${refusal.kind}): ${refusal.reason}`,
+				guidance: [
+					"The verdict was not recorded and no Task state changed.",
+					refusal.reason,
+				],
+			},
+		};
+	}
+
+	/**
+	 * Ticket 03 — explicit declared-evidence requirements are never waived by
+	 * observation mode: a claimed Git ref or diffStat is checked against
+	 * Root's own fresh sample, not trusted as a non-empty field. When the
+	 * environment cannot supply the sample, the requirement is unverifiable
+	 * and the pass refuses.
+	 */
+	private async observationDeclaredEvidenceRefusal(task: TaskRecord, report: WorkerReport): Promise<RootVerdictRefusal | undefined> {
+		const expected = task.spec?.expectedEvidence;
+		if (expected?.gitRef !== true && expected?.diffStat !== true) return undefined;
+		const sample = await captureEvidence(
+			this.gitRunner,
+			captureEvidenceOptionsFor(task, report.evidence.workerRunId),
+		);
+		const gitOk = sample.gitAvailable !== false && sample.statusProbeFailed !== true;
+		const probeDetail = describeProbeFailures(sample.probeFailures);
+		if (expected?.gitRef === true) {
+			const declared = report.evidence.finalGitRef;
+			if (declared === undefined) {
+				return {
+					kind: "observation-inadmissible",
+					reason: "spec expectedEvidence.gitRef requires the report to bind a HEAD ref (evidence.finalGitRef); the report declares none",
+				};
+			}
+			if (!GIT_REF_PATTERN.test(declared)) {
+				return {
+					kind: "observation-inadmissible",
+					reason: `report evidence.finalGitRef ${JSON.stringify(declared)} is not a valid commit ref; expectedEvidence.gitRef cannot be verified`,
+				};
+			}
+			if (!gitOk || sample.finalGitRef === undefined) {
+				return {
+					kind: "observation-inadmissible",
+					reason: `spec expectedEvidence.gitRef requires a verifiable Git ref, but Root's sample of ${task.cwd} produced no HEAD (${probeDetail}); the declared ref cannot be verified in this environment`,
+				};
+			}
+			if (declared !== sample.finalGitRef) {
+				return {
+					kind: "observation-inadmissible",
+					reason: `report evidence.finalGitRef ${declared} does not match the current HEAD ${sample.finalGitRef} at ${task.cwd}; the report is stale or names a fabricated ref`,
+				};
+			}
+		}
+		if (expected?.diffStat === true) {
+			const declared = report.evidence.diffStat;
+			if (!declared) {
+				return {
+					kind: "observation-inadmissible",
+					reason: "spec expectedEvidence.diffStat requires a diffStat bound in the report evidence; none was recorded",
+				};
+			}
+			if (!gitOk) {
+				return {
+					kind: "observation-inadmissible",
+					reason: `spec expectedEvidence.diffStat requires Root's own diff sample, but Git is unavailable at ${task.cwd} (${probeDetail}); the declared diffStat cannot be verified`,
+				};
+			}
+			if (declared !== (sample.diffStat ?? "")) {
+				return {
+					kind: "observation-inadmissible",
+					reason: `report evidence.diffStat does not match Root's fresh sample at ${task.cwd}; the report is stale or declares a fabricated diff`,
+				};
+			}
+		}
+		return undefined;
+	}
+
+	/**
 	 * Ticket 03 — the observation acceptance gates for a pass verdict.
 	 * Worktree evidence is excluded, but the pass still binds the trusted
 	 * restricted-reader execution that produced the report, a modification-
@@ -2229,6 +2490,12 @@ export class PlannerOrchestrator {
 				kind: "no-report",
 				reason: `Task ${task.taskId} has no recorded WorkerReport; a pass or change request needs a report to judge.`,
 			};
+		}
+		// The accepted report revision must still identify this Task and the
+		//    execution that produced it — in every acceptance mode.
+		if (verdict === "pass") {
+			const identity = this.reportIdentityRefusal(task);
+			if (identity) return identity;
 		}
 		// Ticket 03 — observation acceptance gates. An observation Task can
 		//    never run a reviewer, so the fresh-review gates are exempt; the
@@ -2466,11 +2733,22 @@ export class PlannerOrchestrator {
 		let comparison = current.lastComparison;
 		let evidence: string | undefined;
 
+		// The report revision being accepted is re-checked for identity at the
+		// verdict boundary — admission checks cannot cover restored ledgers.
+		if (verdict === "pass" && report) {
+			const identity = this.reportIdentityRefusal(current);
+			if (identity) return this.refusedVerdictOutcome(current, verdict, identity);
+		}
+
 		if (verdict === "pass" && report && !rawJudged && acceptanceModeOf(current) === "observation") {
 			// Ticket 03 — observation acceptance never fabricates Git freshness:
 			// no snapshot binding, no comparison; the verdict binds the report
-			// revision and its restricted-reader execution instead.
+			// revision and its restricted-reader execution instead. Explicit
+			// declared-evidence requirements (gitRef, diffStat) are still
+			// verified against Root's own fresh sample.
 			comparison = undefined;
+			const declaredRefusal = await this.observationDeclaredEvidenceRefusal(current, report);
+			if (declaredRefusal) return this.refusedVerdictOutcome(current, verdict, declaredRefusal);
 			const revision = current.reports.length;
 			const producer = [...current.executions].reverse().find((execution) => execution.reportIndex === revision - 1);
 			evidence = `observation: report revision ${revision} bound to ${producer ? `${producer.executionId} (restricted-reader, confirmed)` : "no bound execution"}; worktree evidence excluded`;

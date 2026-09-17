@@ -1,6 +1,6 @@
 # 停止证据失败：只读交付、写入隔离与独立诊断
 
-Status: implemented (pending reviewer acceptance)
+Status: delivered (pending re-review)
 Date: 2026-09-17
 Type: spec
 Baseline: e30515866980caebca56df46f52493866b79b402

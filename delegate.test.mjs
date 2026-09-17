@@ -384,6 +384,14 @@ assert.equal(
 	assert.match(rebind.properties.taskId.description, /details\.taskId/);
 }
 
+// acceptanceMode is a creation-time contract: planner_delegate carries it,
+// planner_redelegate must not expose it (the runtime guard still refuses a
+// non-validating host's pass-through).
+{
+	assert.equal("acceptanceMode" in PLANNER_DELEGATE_PARAMETERS.properties, true, "mint keeps the acceptanceMode key");
+	assert.equal("acceptanceMode" in PLANNER_REDELEGATE_PARAMETERS.properties, false, "rebind never re-opens the acceptance contract");
+}
+
 // ---------------------------------------------------------------------------
 // Non-completed launcher statuses (P0-A): Task transitions, stateReason
 // recorded, structured termination returned (no throw), quiet worktree
@@ -445,8 +453,9 @@ for (const [index, [status, expectedState]] of [
 }
 
 // ---------------------------------------------------------------------------
-// Identity mismatch: reportError feeds advanceReview; the report is recorded
-// verbatim, never rewritten.
+// Identity mismatch: the report is received but never admitted — it stays on
+// the execution as unacceptedReport, never enters the report sequence, and
+// the review loop sees a report-invalid contract correction, not a report.
 // ---------------------------------------------------------------------------
 {
 	const dir = initRealRepo();
@@ -475,8 +484,70 @@ for (const [index, [status, expectedState]] of [
 	assert.notEqual(outcome.report.taskId, expectedReport, "fixture reports a foreign taskId");
 	assert.equal(outcome.report.taskId, "T-99999999-999", "report not rewritten");
 	assert.ok(outcome.decision, "decision present");
-	assert.equal(outcome.task.reports.at(-1).taskId, "T-99999999-999", "recorded verbatim");
+	assert.equal(outcome.task.reports.length, 0, "a mismatched report never enters the report sequence");
+	const execution = outcome.task.executions.at(-1);
+	assert.equal(execution.reportIndex, undefined, "no reportIndex binds a mismatched report");
+	assert.equal(execution.unacceptedReport?.taskId, "T-99999999-999", "kept verbatim as unaccepted material");
+	assert.match(execution.unacceptedReportReason ?? "", /identity does not match/, "the rejection is recorded with a reason");
+	assert.equal(outcome.decision.action, "report_correction", "identity failure routes to a bounded report correction");
 	assert.notEqual(outcome.task.state, "completed", "identity failure can never pass review");
+}
+
+// ---------------------------------------------------------------------------
+// A writer's stop is only confirmed on *complete* evidence: post-launch
+// hash-object failures leave both stop samples with snapshotGap, the stop is
+// unconfirmed, the writer hold is persisted, and the reservation stays held.
+// ---------------------------------------------------------------------------
+{
+	const dir = initRealRepo();
+	writeFileSync(join(dir, "tracked.txt"), "base\n");
+	realGit(dir, "add", "tracked.txt");
+	realGit(dir, "commit", "-qm", "base");
+	writeFileSync(join(dir, "tracked.txt"), "dirty before launch\n");
+
+	let launched = false;
+	const concurrency = new ConcurrencyController();
+	const { deps } = makeDeps({
+		concurrency,
+		gitRunner: async (args, cwd) => {
+			if (launched && args[0] === "hash-object") {
+				return { stdout: "", stderr: "controlled hash failure", code: 1 };
+			}
+			return realGit(cwd ?? dir, ...args);
+		},
+		launch: async (request) => {
+			launched = true;
+			return {
+				requestId: request.requestId,
+				ownerRunId: request.ownerRunId,
+				nodeId: request.nodeId,
+				status: "completed",
+				runId: "run-hash-gap",
+				agent: "worker",
+				result: {
+					kind: "structured",
+					value: makeReport(request.nodeId, "run-hash-gap", request.cwd),
+				},
+			};
+		},
+	});
+	const outcome = await runDelegation(deps, makeParams({ scope: { allowedPaths: ["tracked.txt"] } }), dir, { executionId: "call-hash-gap" });
+	const record = deps.store.require(outcome.task.taskId);
+	const execution = record.executions.at(-1);
+
+	assert.equal(execution.status, "stop_unconfirmed", "hash gaps can never confirm a writer stop");
+	assert.equal(execution.terminationConfirmed, false);
+	assert.equal(execution.evidenceIncomplete, true, "incomplete evidence is flagged, not smoothed over");
+	assert.equal(execution.cReport?.snapshotGap?.reason, "hash-failed");
+	assert.equal(execution.stopSamples?.length, 2, "both stop samples are kept");
+	assert.ok(execution.stopSamples.every((sample) => sample.snapshotGap?.reason === "hash-failed"));
+	assert.ok(record.writerHold, "the writer hold is persisted until a later confirmed stop");
+	assert.equal(record.writerHold.executionId, "call-hash-gap");
+	assert.equal(concurrency.status().reservations.length, 1, "the reservation stays held");
+	assert.equal(outcome.termination?.executionStatus, "stop_unconfirmed");
+	assert.equal(outcome.termination?.evidenceIncomplete, true);
+	assert.equal(record.reports.length, 0, "the report stays out of the accepted sequence while the stop is unconfirmed");
+	assert.equal(execution.unacceptedReport?.taskId, outcome.task.taskId, "the received report is kept as unaccepted material");
 }
 
 // ---------------------------------------------------------------------------

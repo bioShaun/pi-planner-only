@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** implemented
+**Status:** done
 
 **Parent:** [停止证据失败规格](../spec.md)，实施决策 §1、§2 停止协调、§4 恢复、§5 hold 展示、§7 契约说明。
 
@@ -22,3 +22,7 @@
 - [x] 类型检查、受影响测试和停止/恢复域契约说明同步更新，明确本票确认的是执行结束依据，不代表报告验收通过；真实宿主能力证据由 07 汇总验收。
 
 **边界：** 本票使停止与恢复行为正确，不承诺非 Git Task 已可最终 completed。默认 worktree 验收仍可因 Git 不可验证而阻塞；03 负责 observation 模式的完整交付。01 的丰富错误信息和 05 的未验收报告保全不是本票前置条件。
+
+## Comments
+
+- 2026-09-17 审核修订：停止确认谓词补充 snapshotGap 排除项——writer 的停止样本哈希缺口现在按证据不完整处理，停止不确认、writerHold 保留、reservation 不释放。回归见 delegate.test.mjs hash-gap 用例。
