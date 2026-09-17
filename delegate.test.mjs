@@ -56,14 +56,37 @@ function initRealRepo() {
 	return dir;
 }
 
+// A clean-repository GitRunner: every read op answers code 0, HEAD is a
+// fixed ref, status/diff output is empty. The common case for delegation
+// mechanics tests — a workspace whose evidence probes succeed. Tests that
+// need a non-Git or failing workspace pass their own runner (NO_GIT).
+function fakeCleanGit() {
+	return async (args, cwd) => {
+		const key = args.join(" ");
+		if (key === "rev-parse --git-dir") return { stdout: ".git\n", stderr: "", code: 0 };
+		if (key === "rev-parse --show-toplevel") return { stdout: `${cwd ?? process.cwd()}\n`, stderr: "", code: 0 };
+		if (key === "rev-parse HEAD") return { stdout: `${"0".repeat(40)}\n`, stderr: "", code: 0 };
+		return { stdout: "", stderr: "", code: 0 };
+	};
+}
+
+// The non-Git probe: rev-parse answers the real fatal line.
+const NO_GIT = async () => ({ stdout: "", stderr: "fatal: not a git repository (or any of the parent directories): .git", code: 128 });
+
 function makeDeps(overrides = {}) {
 	const launches = [];
 	const deps = {
 		store: overrides.store ?? new TaskStore(),
-		gitRunner: overrides.gitRunner ?? (async () => ({ stdout: "", stderr: "no git", code: 128 })),
+		gitRunner: overrides.gitRunner ?? fakeCleanGit(),
 		concurrency: overrides.concurrency ?? new ConcurrencyController(),
 		usage: overrides.usage ?? new UsageLedger({ pricing: { version: 1, currency: "USD", rates: {} } }),
 		ownerRunId: overrides.ownerRunId ?? "owner-run-1",
+		// Ticket 02 — the host normally has the restricted-reader binding
+		// registered; the unproven-capability tests pass restrictedReaderAgent:
+		// undefined explicitly.
+		...("restrictedReaderAgent" in overrides
+			? { restrictedReaderAgent: overrides.restrictedReaderAgent }
+			: { restrictedReaderAgent: "planner-scout" }),
 		quiescenceWaitMs: overrides.quiescenceWaitMs ?? 0,
 		quiescenceSampleGapMs: overrides.quiescenceSampleGapMs ?? 0,
 		launch: overrides.launch ?? (async (request) => {
@@ -468,7 +491,7 @@ for (const [index, [status, expectedState]] of [
 		dir,
 		{ executionId: "call-e" },
 	);
-	assert.equal(launches[0].agent, "scout", "explorer -> scout (no explorer agent exists)");
+	assert.equal(launches[0].agent, "planner-scout", "explorer -> trusted restricted reader (builtin scout has bash+write)");
 	const execution = outcome.task.executions.at(-1);
 	assert.equal(execution.kind, "explorer");
 	assert.equal(execution.readOnly, true, "explorer execution is read-only");
@@ -540,6 +563,7 @@ function makeReviewDeps(dir, { store, concurrency, reviewFor, reviewStatus = "co
 		concurrency: concurrency ?? new ConcurrencyController(),
 		usage: new UsageLedger({ pricing: { version: 1, currency: "USD", rates: {} } }),
 		ownerRunId: "owner-run-1",
+		restrictedReaderAgent: "planner-scout",
 		quiescenceWaitMs: 0,
 		quiescenceSampleGapMs: 0,
 		launch: async (request) => {
@@ -1630,26 +1654,35 @@ for (const [index, [status, expectedState]] of [
 		validation: { required: false },
 	}));
 	const concurrency = new ConcurrencyController();
+	// Ticket 04 — a dead probe at launch now refuses pre-launch, so this test
+	//    simulates git dying between the A_run sample and the stop samples.
+	let dead = false;
 	const { deps } = makeDeps({
 		store,
 		concurrency,
-		// No gitRunner override: the default fake answers code 128 → probe unavailable.
-		launch: async (request) => ({
-			requestId: request.requestId,
-			ownerRunId: request.ownerRunId,
-			nodeId: request.nodeId,
-			status: "cancelled",
-			error: "operator cancel",
-			runId: "run-nogit",
-			agent: "worker",
-		}),
+		gitRunner: async (args, cwd) => dead ? NO_GIT(args, cwd) : fakeCleanGit()(args, cwd),
+		launch: async (request) => {
+			dead = true;
+			return {
+				requestId: request.requestId,
+				ownerRunId: request.ownerRunId,
+				nodeId: request.nodeId,
+				status: "cancelled",
+				error: "operator cancel",
+				runId: "run-nogit",
+				agent: "worker",
+			};
+		},
 	});
 	const outcome = await runDelegation(deps, makeParams({ taskId }), dir, { executionId: "call-nogit" });
 	assert.equal(outcome.termination?.executionStatus, "stop_unconfirmed");
 	assert.equal(outcome.termination?.evidenceIncomplete, true, "probe failure is evidence-incomplete, not clean");
+	assert.ok(outcome.termination?.probeFailures?.length, "structured probe failures recorded on the termination");
 	const record = store.get(taskId);
 	assert.equal(record.executions[0].evidenceIncomplete, true);
 	assert.equal(record.executions[0].status, "stop_unconfirmed");
+	assert.equal(record.executions[0].stopSamples?.length, 2, "both stop samples retained");
+	assert.ok(record.executions[0].stopSamples?.some((sample) => sample.probeFailures?.length), "stop samples carry the probe failures");
 	assert.ok(record.writerHold);
 	assert.equal(concurrency.status().reservations.length, 1);
 }
@@ -2240,6 +2273,240 @@ function makeFakeWallClock() {
 	hooks.onLateTerminal({ requestId: "late-runaway", ownerRunId: "owner-run-1", nodeId: taskId, status: "cancelled", runId: "run-late-runaway", agent: "worker" });
 	await sleep(200);
 	assert.equal(store.require(taskId).executions[0].endedReason, "worker_runaway");
+}
+
+// ============================================================================
+// Ticket 02 — trusted capability: explorer runs the restricted reader, never
+// needs worktree quiescence, never holds the workspace; without the trusted
+// binding the launch is refused before minting.
+// ============================================================================
+{
+	// A restricted reader in a non-Git directory ends cleanly: matched
+	// terminal + trusted binding confirms the stop without worktree evidence.
+	const dir = makeTempDir("planner-only-delegate-reader-nongit-");
+	const { deps, launches } = makeDeps({ gitRunner: NO_GIT });
+	const outcome = await runDelegation(
+		deps,
+		makeParams({ role: "explorer", objective: "locate the log directories" }),
+		dir,
+		{ executionId: "call-reader" },
+	);
+	assert.equal(launches.length, 1);
+	assert.equal(launches[0].agent, "planner-scout");
+	const execution = outcome.task.executions.at(-1);
+	assert.equal(execution.capability, "restricted-reader");
+	assert.equal(execution.status, "completed");
+	assert.equal(execution.terminationConfirmed, true);
+	assert.equal(execution.confirmationBasis, "terminal+restricted-reader");
+	assert.ok(execution.capabilityBasis?.includes("planner-scout"));
+	assert.equal(outcome.task.writerHold, undefined, "no writer hold for a reader");
+	assert.equal(deps.concurrency.status().reservations.length, 0, "reader holds no reservation");
+	assert.equal(outcome.task.reports.length, 1, "the report is admitted — receipt is separate from stop evidence");
+	// The worktree-mode Task is honestly blocked on unverifiable evidence —
+	// never a fabricated stop_unconfirmed.
+	assert.equal(outcome.task.state, "blocked");
+	assert.equal(outcome.task.blockedReasonCode, "evidence-unverifiable");
+}
+
+{
+	// No trusted binding → explorer refuses before minting or launching.
+	const dir = initRealRepo();
+	const { deps, launches } = makeDeps({ restrictedReaderAgent: undefined });
+	const refusal = await expectRefusal(
+		runDelegation(deps, makeParams({ role: "explorer", objective: "look around" }), dir, { executionId: "call-nobind" }),
+		"READER_CAPABILITY_UNPROVEN",
+	);
+	assert.match(refusal.message, /restricted-reader/);
+	assert.equal(launches.length, 0);
+	assert.equal(deps.store.list().length, 0, "no Task was minted");
+}
+
+{
+	// A reader's cancelled terminal is confirmed by terminal+binding: stopped,
+	// no hold, and no stop samples were needed.
+	const dir = initRealRepo();
+	const { deps } = makeDeps({
+		gitRunner: NO_GIT,
+		launch: async (request) => ({
+			requestId: request.requestId,
+			ownerRunId: request.ownerRunId,
+			nodeId: request.nodeId,
+			status: "cancelled",
+			error: "operator cancel",
+			runId: "run-reader-cancel",
+			agent: "planner-scout",
+		}),
+	});
+	const outcome = await runDelegation(
+		deps,
+		makeParams({ role: "explorer", objective: "peek then cancel" }),
+		dir,
+		{ executionId: "call-reader-cancel" },
+	);
+	assert.equal(outcome.termination?.executionStatus, "stopped");
+	assert.equal(outcome.termination?.terminationConfirmed, true);
+	assert.equal(outcome.termination?.writerHold, undefined, "no writer hold claimed for a reader");
+	const execution = outcome.task.executions.at(-1);
+	assert.equal(execution.status, "stopped");
+	assert.equal(execution.terminationConfirmed, true);
+	assert.equal(execution.stopSamples, undefined, "reader stop needs no worktree sampling");
+	assert.equal(outcome.task.writerHold, undefined);
+}
+
+// ============================================================================
+// Ticket 04 — writer evidence admission: a writer cannot launch when the
+// evidence base is already unusable; post-launch failure keeps the hold.
+// ============================================================================
+{
+	// Non-Git directory + writer role → structured pre-launch refusal.
+	const dir = makeTempDir("planner-only-delegate-nowriter-");
+	const { deps, launches } = makeDeps({ gitRunner: NO_GIT });
+	const refusal = await expectRefusal(
+		runDelegation(deps, makeParams(), dir, { executionId: "call-prelaunch" }),
+		"ENVIRONMENT_UNVERIFIABLE",
+	);
+	assert.match(refusal.message, /not-a-git-repository/);
+	assert.match(refusal.message, /No child was launched/);
+	assert.equal(launches.length, 0, "launcher never called");
+	const task = deps.store.require(refusal.taskId);
+	const execution = task.executions.at(-1);
+	assert.equal(execution.status, "failed");
+	assert.equal(execution.endedReason, "launch_failure");
+	assert.equal(execution.terminationConfirmed, true);
+	assert.equal(execution.confirmationBasis, "no-launch");
+	assert.equal(task.state, "blocked");
+	assert.equal(task.recovery?.required, true, "the environment block is recoverable via a recovery decision");
+	assert.equal(task.recovery?.consumedBy, undefined, "no recovery was consumed — nothing launched");
+	assert.equal(task.writerHold, undefined, "no hold created");
+	assert.equal(deps.concurrency.status().reservations.length, 0, "temporary reservation released");
+}
+
+{
+	// A bound writer Task whose evidence base dies before launch also refuses.
+	const dir = initRealRepo();
+	const store = new TaskStore();
+	const taskId = "T-20260917-904";
+	store.create(createTaskSpec({ taskId, objective: "writer on a dying workspace", cwd: dir, role: "worker", validation: { required: false } }));
+	store.transition(taskId, "executing");
+	const { deps, launches } = makeDeps({ store, gitRunner: NO_GIT });
+	const refusal = await expectRefusal(
+		runDelegation(deps, makeParams({ taskId }), dir, { executionId: "call-prelaunch-bound" }),
+		"ENVIRONMENT_UNVERIFIABLE",
+	);
+	assert.equal(launches.length, 0);
+	assert.equal(store.require(taskId).executions.at(-1).status, "failed");
+	assert.equal(refusal.taskId, taskId);
+}
+
+// ============================================================================
+// Ticket 05 — a schema-valid report on a terminal that cannot be admitted is
+// kept on the execution record as unacceptedReport, never in Task.reports.
+// ============================================================================
+{
+	const dir = initRealRepo();
+	const { deps } = makeDeps({
+		gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args),
+		launch: async (request) => ({
+			requestId: request.requestId,
+			ownerRunId: request.ownerRunId,
+			nodeId: request.nodeId,
+			status: "killed",
+			error: "envelope exceeded",
+			runId: "run-killed",
+			agent: "worker",
+			result: { kind: "structured", value: makeReport(request.nodeId, "run-killed", request.cwd) },
+		}),
+	});
+	const outcome = await runDelegation(deps, makeParams(), dir, { executionId: "call-killed-report" });
+	assert.equal(outcome.termination?.status, "killed");
+	assert.equal(outcome.termination?.reportReceived, true);
+	assert.equal(outcome.termination?.reportAccepted, false);
+	const execution = outcome.task.executions.at(-1);
+	assert.ok(execution.unacceptedReport, "the terminal's report is preserved on the execution");
+	assert.equal(execution.unacceptedReport.taskId, outcome.task.taskId);
+	assert.equal(execution.unacceptedReport.evidence.workerRunId, "run-killed");
+	assert.match(execution.unacceptedReportReason, /not admitted/);
+	assert.equal(outcome.task.reports.length, 0, "no report revision was created");
+	assert.equal(outcome.task.reviews.length, 0, "review never advanced");
+}
+
+{
+	// Completed terminal + failed quiescence → unacceptedReport (T05) bound to
+	// the execution while the writer hold stays.
+	const dir = initCommittedRepo();
+	let dead = false;
+	const { deps } = makeDeps({
+		gitRunner: async (args, cwd) => dead ? NO_GIT(args, cwd) : realGit(cwd ?? dir, ...args),
+		launch: async (request) => {
+			const report = makeReport(request.nodeId, "run-unconfirmed", request.cwd);
+			report.evidence.finalGitRef = headRef(dir);
+			dead = true;
+			return {
+				requestId: request.requestId,
+				ownerRunId: request.ownerRunId,
+				nodeId: request.nodeId,
+				status: "completed",
+				runId: "run-unconfirmed",
+				agent: "worker",
+				result: { kind: "structured", value: report },
+			};
+		},
+	});
+	const outcome = await runDelegation(deps, makeParams(), dir, { executionId: "call-unconfirmed-report" });
+	assert.equal(outcome.termination?.executionStatus, "stop_unconfirmed");
+	assert.equal(outcome.termination?.reportReceived, true);
+	assert.equal(outcome.termination?.reportAccepted, false);
+	assert.equal(outcome.termination?.writerHold, true);
+	const execution = outcome.task.executions.at(-1);
+	assert.ok(execution.unacceptedReport, "the unconfirmed stop keeps the report as diagnostic evidence");
+	assert.match(execution.unacceptedReportReason, /quiescence/);
+	assert.equal(outcome.task.reports.length, 0);
+	assert.ok(outcome.task.writerHold);
+	assert.ok(outcome.task.recovery?.required, "the task is recoverable, not terminal");
+}
+
+// ============================================================================
+// Ticket 03 — acceptanceMode: creation-time contract, immutable on rebind,
+// explorer-only execution, observation acceptance binds the reader report.
+// ============================================================================
+{
+	// observation + non-explorer role is refused at spec creation.
+	const dir = initRealRepo();
+	const { deps, launches } = makeDeps();
+	await assert.rejects(
+		runDelegation(deps, makeParams({ role: "worker", acceptanceMode: "observation" }), dir, { executionId: "call-obs-worker" }),
+		(error) => {
+			assert.equal(error?.code, "TASKSPEC_ACCEPTANCE_MODE_INVALID");
+			return true;
+		},
+	);
+	assert.equal(launches.length, 0);
+	assert.equal(deps.store.list().length, 0);
+}
+
+{
+	// The mode persists on the spec; a rebind supplying it is refused.
+	const dir = initRealRepo();
+	const { deps, launches } = makeDeps({ gitRunner: NO_GIT });
+	const first = await runDelegation(
+		deps,
+		makeParams({ role: "explorer", objective: "read-only survey", acceptanceMode: "observation" }),
+		dir,
+		{ executionId: "call-obs-mint" },
+	);
+	assert.equal(first.task.spec.acceptanceMode, "observation");
+	const refusal = await expectRefusal(
+		runDelegation(deps, makeParams({ taskId: first.task.taskId, role: "explorer", acceptanceMode: "worktree" }), dir, { executionId: "call-obs-mode" }),
+		"ACCEPTANCE_MODE_IMMUTABLE",
+	);
+	assert.match(refusal.message, /creation|fixed/);
+	// A non-explorer execution on an observation Task is refused pre-launch.
+	const refusal2 = await expectRefusal(
+		runDelegation(deps, { ...makeParams({ taskId: first.task.taskId }), role: "worker" }, dir, { executionId: "call-obs-w2" }),
+		"OBSERVATION_EXPLORER_ONLY",
+	);
+	assert.equal(refusal2.taskId, first.task.taskId);
+	assert.equal(launches.length, 1, "only the mint launch ran");
 }
 
 console.log("delegate.test.mjs: all cases passed");

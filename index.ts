@@ -14,6 +14,7 @@ import {
 	decidePolicy,
 } from "./policy.ts";
 import { GIT_AUDIT_OPERATIONS, classifyCommitDirtyPaths, dirtyPathsOutsideTruth, parseGitStatusKinds, parseGitStatusPaths, resolveGitCommit, runGitAudit } from "./git-audit.ts";
+import { describeProbeFailures } from "./evidence.ts";
 import type { GitAuditRequest, GitRunner } from "./git-audit.ts";
 import { PlannerOrchestrator } from "./orchestrate.ts";
 import { MAX_REVIEW_ROUNDS, WORKER_REPORT_VERSION, isFinalTaskState } from "./types.ts";
@@ -50,6 +51,8 @@ import {
 	DelegationRefused,
 	PLANNER_DELEGATE_PARAMETERS,
 	PLANNER_REDELEGATE_PARAMETERS,
+	RESTRICTED_READER_AGENT,
+	RESTRICTED_READER_DEFINITION,
 	cancelInFlightDelegations,
 	createHostLauncher,
 	renderDelegationOutcome,
@@ -335,7 +338,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 
 	const gitRunner: GitRunner = async (args, cwd) => {
 		const result = await pi.exec("git", [...args], { cwd, timeout: GIT_TIMEOUT_MS });
-		return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", code: result.code };
+		return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", code: result.code, killed: result.killed === true };
 	};
 
 	// Most recent host context, kept for the verdict and shutdown paths.
@@ -352,6 +355,36 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	const delegationLaunch = createHostLauncher(pi, {
 		cancelGraceMs: parseNonNegativeMs(process.env.PI_PLANNER_ONLY_CANCEL_GRACE_MS),
 	});
+	// Ticket 02 — the trusted restricted reader. The name is only supplied to
+	// runDelegation once pi-subagents' runtime-agent registry accepted the
+	// plugin-owned definition: the declared tool list (read, grep, find, ls —
+	// no shell/edit/write) is the capability proof. Registration is retried
+	// at every delegation so a pi-subagents that finished loading late still
+	// unlocks explorer launches; while it stays unregistered, explorer
+	// delegations refuse with READER_CAPABILITY_UNPROVEN.
+	let restrictedReaderAgent: string | undefined;
+	const ensureRestrictedReaderAgent = (): void => {
+		if (restrictedReaderAgent !== undefined) return;
+		try {
+			const request: {
+				version: number;
+				name: string;
+				definition: unknown;
+				result?: { ok?: boolean; registration?: unknown };
+			} = {
+				version: 1,
+				name: RESTRICTED_READER_AGENT,
+				definition: RESTRICTED_READER_DEFINITION,
+			};
+			pi.events.emit("pi-subagents:runtime-agent-register:v1", request);
+			if (request.result?.ok === true && request.result.registration !== undefined) {
+				restrictedReaderAgent = RESTRICTED_READER_AGENT;
+			}
+		} catch {
+			// No registry listener (pi-subagents absent or older): explorer
+			// delegations refuse with READER_CAPABILITY_UNPROVEN.
+		}
+	};
 	// WRC P0-A — spec §3 quiescenceWaitMs; env override exists for tests and
 	// calibrated hosts, the default stays 10 s (forced-settlement 3–4 s +
 	// session-close 5 s upper bound).
@@ -863,6 +896,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					}
 					let outcome: DelegationOutcome;
 					try {
+						ensureRestrictedReaderAgent();
 						outcome = await runDelegation(
 							{
 								store: orchestrator.store,
@@ -870,6 +904,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 								concurrency,
 								usage: ledger,
 								launch: delegationLaunch,
+								...(restrictedReaderAgent !== undefined ? { restrictedReaderAgent } : {}),
 								...(quiescenceWaitMs !== undefined ? { quiescenceWaitMs } : {}),
 								ownerRunId: ctx.sessionManager?.getSessionId?.() || PROCESS_OWNER_RUN_ID,
 							},
@@ -934,6 +969,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			"Prefer planner_delegate over subagent: supply the full TaskSpec fields, not a prose brief.",
 			"The child's WorkerReport arrives schema-validated in details.report; a non-completed status returns structured details.termination, not a parse failure.",
 			"planner_delegate always mints a new Task and returns its canonical taskId in details.taskId; a correction round, a review, or a recovery re-execution of that Task goes through planner_redelegate with that exact taskId.",
+			"role=explorer pairs with acceptanceMode='observation' for read-only informational tasks — the intended path in non-Git directories; it never claims code-change verification. A worktree-mode Task in a non-Git directory refuses writer launches with structured diagnostics instead.",
 			"Optional envelope{maxTokens,maxWallMs} bounds a runaway execution.",
 		],
 		parameters: PLANNER_DELEGATE_PARAMETERS,
@@ -967,18 +1003,56 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		label: "Planner Tasks",
 		description: [
 			"List live (non-final) Tasks of the current workspace with their canonical taskId.",
+			"With taskId (and optionally executionId) it instead returns structured diagnostics for that Task: execution lifecycle, termination status, capability, evidence and report admission.",
 			"Call this whenever you need a taskId for planner_redelegate or planner_verdict and do not have it verbatim from a prior result.",
 			"Never construct a taskId.",
 		].join(" "),
-		promptSnippet: "planner_tasks: list live Tasks — look up a canonical taskId instead of guessing one",
+		promptSnippet: "planner_tasks: list live Tasks, or read diagnostics for one taskId — look up a canonical taskId instead of guessing one",
 		promptGuidelines: [
 			"If you need a taskId and do not have it verbatim, call planner_tasks; never construct one.",
-			"planner_tasks is read-only: it never mints, binds, restores, or mutates a Task.",
+			"planner_tasks is read-only: it never mints, binds, restores, or mutates a Task, and never launches a child — it answers what happened, why a Task is blocked, and what evidence exists.",
 			"recoveryRequired: true marks a blocked Task whose next planner_redelegate must carry a recovery decision — or whose execution is abandoned via planner_abort.",
+			"For one Task, pass taskId (verbatim, from a prior result or this listing) and optionally executionId to inspect lifecycle diagnostics without delegating anything.",
 		],
-		parameters: Type.Object({}),
-		async execute(_toolCallId, _params: Record<string, never>, _signal, _onUpdate, ctx) {
+		parameters: Type.Object({
+			taskId: Type.Optional(
+				Type.String({ minLength: 1, description: "Canonical Task id, verbatim from a prior result or this listing. When present, return diagnostics instead of the listing." }),
+			),
+			executionId: Type.Optional(
+				Type.String({ minLength: 1, description: "The execution's details.executionId (a toolCallId) to narrow diagnostics to one execution." }),
+			),
+		}),
+		async execute(_toolCallId, params: { taskId?: string; executionId?: string }, _signal, _onUpdate, ctx) {
 			const cwd = ctx.cwd || process.cwd();
+			if (params.taskId !== undefined) {
+				const result = orchestrator.describeTaskDiagnostics(cwd, params.taskId, params.executionId);
+				if ("error" in result) {
+					return {
+						content: [{ type: "text", text: result.reason }],
+						details: { error: result.error, taskId: params.taskId },
+					};
+				}
+				const d = result.diagnostics;
+				const lines = [
+					`planner_tasks diagnostics for ${d.taskId} (${d.source}):`,
+					`state: ${d.state}${d.stateReason ? ` — ${d.stateReason}` : ""} | acceptanceMode: ${d.acceptanceMode} | reports: ${d.reports} | reviews: ${d.reviews}`,
+					...(d.writerHold ? [`writer hold: ${d.writerHold.active ? "active" : "recorded (no live reservation)"} for execution ${d.writerHold.executionId} — ${d.writerHold.reason}`] : []),
+					...(d.recovery ? [`recovery.required: ${d.recovery.reason} (execution ${d.recovery.executionId})`] : []),
+					...(d.executions.length === 0 ? ["executions: none recorded"] : []),
+					...d.executions.flatMap((execution) => [
+						`execution ${execution.executionId} [${execution.kind}] status=${execution.status ?? "unknown"} capability=${execution.capability} confirmed=${execution.terminationConfirmed}${execution.confirmationBasis ? ` via ${execution.confirmationBasis}` : ""}${execution.endedReason ? ` ended=${execution.endedReason}` : ""}${execution.runId ? ` runId=${execution.runId}` : ""}`,
+						`  report: received=${execution.reportReceived} accepted=${execution.reportAccepted}${execution.evidenceIncomplete ? " | stop evidence incomplete" : ""}`,
+						...(execution.unacceptedReport ? [`  unaccepted report: status=${execution.unacceptedReport.status} reason="${execution.unacceptedReport.reason}"`] : []),
+						...(execution.probeFailures?.length ? [`  probe failures: ${describeProbeFailures(execution.probeFailures)}`] : []),
+						...execution.guidance.map((item) => `  → ${item}`),
+					]),
+					...d.guidance.map((item) => `→ ${item}`),
+				];
+				return {
+					content: [{ type: "text", text: lines.join("\n") }],
+					details: { diagnostics: d },
+				};
+			}
 			const tasks = orchestrator.listLiveTasks(cwd);
 			const text = tasks.length === 0
 				? `planner_tasks: No live Tasks in ${cwd}. planner_delegate mints a new one.`

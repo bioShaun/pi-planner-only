@@ -12,6 +12,8 @@ import {
 	compareExecutionTruth,
 	compareFreshness,
 	describeComparison,
+	describeProbeFailures,
+	environmentFailureOf,
 	isPathInDeclaredScope,
 	normalizeEvidencePaths,
 	untrackedPathsOf,
@@ -57,12 +59,18 @@ import {
 	MAX_LEDGER_RESTORE_PER_SESSION,
 	MAX_RECOVERY_ATTEMPTS,
 	MAX_REVIEW_ROUNDS,
+	acceptanceModeOf,
+	executionNeedsWriterIsolation,
 	isFinalTaskState,
 	isTerminalTaskState,
 } from "./types.ts";
 import type {
+	AcceptanceMode,
 	DelegationKind,
 	EvidenceRef,
+	ExecutionCapability,
+	ExecutionLifecycleStatus,
+	GitProbeFailure,
 	LoadedPluginFingerprint,
 	ReviewFinding,
 	ReviewResult,
@@ -146,19 +154,6 @@ function captureEvidenceOptionsFor(
 		...(roots ? { additionalWorktreeRoots: roots } : {}),
 		...(combinedScope.length > 0 ? { scopePaths: combinedScope } : {}),
 	};
-}
-
-/**
- * E02 — whether the environment itself made this sample unverifiable: Git
- * unavailable, status probe failed, or a declared root unreadable. Structured,
- * so the retry classification never matches on reason text.
- */
-function environmentFailureOf(...samples: readonly EvidenceRef[]): boolean {
-	return samples.some((sample) =>
-		sample.gitAvailable === false
-		|| sample.statusProbeFailed === true
-		|| (sample.unavailableWorktreeRoots?.length ?? 0) > 0,
-	);
 }
 
 function attributionExecutionForLatestReport(task: TaskRecord): TaskExecutionRecord | undefined {
@@ -359,6 +354,41 @@ export interface PlannerTaskSummary {
 	source: "memory" | "ledger";
 }
 
+/** Ticket 06 — the read-only `planner_tasks` diagnostics view for one Task. */
+export interface PlannerTaskDiagnostics {
+	taskId: string;
+	state: TaskState;
+	stateReason?: string;
+	acceptanceMode: AcceptanceMode;
+	recovery?: { required: true; reason: string; executionId: string };
+	writerHold?: { executionId: string; reason: string; since: string; active: boolean };
+	reservations: { id: string; taskId?: string; capability: string; workspaces: string[] }[];
+	source: "memory" | "ledger";
+	reports: number;
+	reviews: number;
+	executions: {
+		executionId: string;
+		kind: DelegationKind;
+		status?: ExecutionLifecycleStatus;
+		capability: ExecutionCapability | "unknown";
+		capabilityBasis?: string;
+		runId?: string;
+		cwd?: string;
+		worktreeRoots?: string[];
+		endedReason?: string;
+		endedAt?: string;
+		terminationConfirmed: boolean;
+		confirmationBasis?: string;
+		evidenceIncomplete?: boolean;
+		reportReceived: boolean;
+		reportAccepted: boolean;
+		unacceptedReport?: { taskId: string; status: string; summary: string; workerRunId: string; reason: string };
+		probeFailures?: GitProbeFailure[];
+		guidance: string[];
+	}[];
+	guidance: string[];
+}
+
 export class PlannerOrchestrator {
 	readonly store: TaskStore;
 	private readonly gitRunner: GitRunner;
@@ -455,7 +485,8 @@ export class PlannerOrchestrator {
 	private needsWriterIsolation(record: TaskRecord): boolean {
 		return record.writerHold !== undefined || (record.executions ?? []).some((execution) =>
 			["cancel_requested", "stopping", "stop_unconfirmed"].includes(execution.status ?? "")
-			&& execution.terminationConfirmed !== true,
+			&& execution.terminationConfirmed !== true
+			&& executionNeedsWriterIsolation(execution),
 		);
 	}
 
@@ -466,17 +497,22 @@ export class PlannerOrchestrator {
 		// WRC P0-A — an execution whose stop was in flight when the host
 		//    ended never got its confirmation; hold the workspace
 		//    conservatively, same as a persisted hold.
+		// Ticket 02 — the hold synthesis only applies to executions that could
+		//    have mutated the workspace. A recorded restricted reader is exempt
+		//    (it held no claim and could not write); an execution missing the
+		//    capability field stays conservative.
 		for (const execution of restored.executions) {
 			const status = execution.status ?? "";
 			if (status === "cancel_requested" || status === "stopping" || status === "stop_unconfirmed") {
-				if (execution.terminationConfirmed !== true && !restored.writerHold) {
+				if (execution.terminationConfirmed !== true && !restored.writerHold && executionNeedsWriterIsolation(execution)) {
 					this.store.setWriterHold(restored.taskId, {
 						executionId: execution.executionId,
 						reason: `stop was in flight (${status}) when the host ended; residual state unsampled`,
 						since: new Date().toISOString(),
 					});
+					break;
 				}
-				break;
+				if (executionNeedsWriterIsolation(execution)) break;
 			}
 		}
 		// WRC P0-A — a persisted writer hold survives restart: re-register
@@ -584,6 +620,157 @@ export class PlannerOrchestrator {
 		};
 		return [...inMemory.map(summarize("memory")), ...ledgerOnly.map(summarize("ledger"))]
 			.sort((left, right) => (left.updatedAt < right.updatedAt ? 1 : -1));
+	}
+
+	/**
+	 * Ticket 06 — read-only diagnostics for one Task, reachable without
+	 * delegating a child. Resolves from the session store first, then the
+	 * ledger snapshot read-only (no adoption, no restore side effects), and
+	 * keeps the same workspace boundary as the delegation lookup.
+	 */
+	describeTaskDiagnostics(
+		cwd: string,
+		taskId: string,
+		executionId?: string,
+	): { diagnostics: PlannerTaskDiagnostics } | { error: string; reason: string } {
+		let record = this.store.get(taskId);
+		let source: "memory" | "ledger" | undefined = record ? "memory" : undefined;
+		if (!record && this.snapshots) {
+			try {
+				const { records } = this.snapshots.readAll();
+				const found = records.find((candidate) => candidate.taskId === taskId);
+				if (found) {
+					record = found;
+					source = "ledger";
+				}
+			} catch {
+				// An unreadable ledger is reported as unknown below.
+			}
+		}
+		if (!record || !source) {
+			return {
+				error: "TASK_UNKNOWN",
+				reason: `planner_tasks: unknown Task ${taskId}; pass the canonical taskId verbatim from a prior planner_delegate result, or call planner_tasks without an id to list live Tasks`,
+			};
+		}
+		if (record.cwd && normalizeWorkspaceIdentity(record.cwd) !== normalizeWorkspaceIdentity(cwd)) {
+			return {
+				error: "TASK_FOREIGN_WORKSPACE",
+				reason: `Task ${record.taskId} belongs to workspace ${record.cwd}, not ${cwd}; call planner_tasks from that workspace`,
+			};
+		}
+		const reservations = this.concurrency.status().reservations
+			.filter((item) => item.taskId === record!.taskId || item.id === record!.writerHold?.executionId || item.id === `writerhold:${record!.writerHold?.executionId}`);
+		const holdActive = record.writerHold !== undefined
+			&& reservations.some((item) => item.id === `writerhold:${record!.writerHold!.executionId}`);
+		const executions = (record.executions ?? [])
+			.filter((execution) => executionId === undefined || execution.executionId === executionId)
+			.map((execution) => {
+				const sampleFailures = [
+					...(execution.aRun.probeFailures ?? []),
+					...(execution.cReport?.probeFailures ?? []),
+					...(execution.stopSamples ?? []).flatMap((sample) => sample.probeFailures ?? []),
+				];
+				const reportReceived = execution.reportIndex !== undefined
+					|| execution.validatorReportIndex !== undefined
+					|| execution.unacceptedReport !== undefined
+					|| execution.lateReport !== undefined;
+				const reportAccepted = execution.reportIndex !== undefined || execution.validatorReportIndex !== undefined;
+				const guidance: string[] = [];
+				if (execution.status === "running" || execution.status === "stopping" || execution.status === "cancel_requested") {
+					guidance.push("execution is still in flight or its stop was never confirmed; it did not end cleanly");
+				}
+				if (execution.status === "stop_unconfirmed") {
+					guidance.push(execution.capability === "restricted-reader"
+						? "stop unconfirmed — no matched terminal; the reader holds no workspace reservation"
+						: "launched and ended abnormally or stop evidence incomplete; the writer isolation stays held");
+				}
+				if (execution.evidenceIncomplete === true) {
+					guidance.push("stop-evidence sampling failed — residual workspace state is unknown");
+				}
+				if (execution.unacceptedReport) {
+					guidance.push(`a structured report was received but not admitted (${execution.unacceptedReportReason ?? "reason not recorded"})`);
+				}
+				if (execution.lateReport) {
+					guidance.push("a completed report arrived after a cancel request; it is kept as lateReport evidence only");
+				}
+				if (reportAccepted) {
+					guidance.push(`report admitted as ${execution.validatorReportIndex !== undefined ? "validator" : "worker"} revision ${(execution.validatorReportIndex ?? execution.reportIndex)! + 1}`);
+				}
+				if (execution.status === "failed" && execution.confirmationBasis === "no-launch") {
+					guidance.push("the execution never launched — a pre-launch check refused it");
+				}
+				return {
+					executionId: execution.executionId,
+					kind: execution.kind,
+					...(execution.status ? { status: execution.status } : {}),
+					capability: execution.capability ?? "unknown",
+					...(execution.capabilityBasis ? { capabilityBasis: execution.capabilityBasis } : {}),
+					...(execution.runId ? { runId: execution.runId } : {}),
+					...(execution.cwd ? { cwd: execution.cwd } : {}),
+					...(execution.worktreeRoots?.length ? { worktreeRoots: [...execution.worktreeRoots] } : {}),
+					...(execution.endedReason ? { endedReason: execution.endedReason } : {}),
+					...(execution.endedAt ? { endedAt: execution.endedAt } : {}),
+					terminationConfirmed: execution.terminationConfirmed === true,
+					...(execution.confirmationBasis ? { confirmationBasis: execution.confirmationBasis } : {}),
+					...(execution.evidenceIncomplete === true ? { evidenceIncomplete: true } : {}),
+					reportReceived,
+					reportAccepted,
+					...(execution.unacceptedReport
+						? {
+							unacceptedReport: {
+								taskId: execution.unacceptedReport.taskId,
+								status: execution.unacceptedReport.status,
+								summary: execution.unacceptedReport.summary.slice(0, 200),
+								workerRunId: execution.unacceptedReport.evidence?.workerRunId ?? "",
+								reason: execution.unacceptedReportReason ?? "not recorded",
+							},
+						}
+						: {}),
+					...(sampleFailures.length ? { probeFailures: sampleFailures } : {}),
+					guidance,
+				};
+			});
+		const guidance: string[] = [];
+		if (executions.length === 0) {
+			guidance.push(executionId === undefined
+				? "never launched — no execution records exist on this Task"
+				: `no execution ${executionId} on this Task`);
+		}
+		if (record.writerHold) {
+			guidance.push(holdActive
+				? `writer hold active for execution ${record.writerHold.executionId} (${record.writerHold.reason})`
+				: `writer hold recorded for execution ${record.writerHold.executionId} but no live reservation exists — restart state drift`);
+		}
+		if (record.recovery?.required === true) {
+			guidance.push(`recovery required: ${record.recovery.reason}; submit planner_redelegate recovery or planner_abort for execution ${record.recovery.executionId}`);
+		}
+		if (source === "ledger") {
+			guidance.push("read from the ledger snapshot — the record was not restored into this session's store");
+		}
+		return {
+			diagnostics: {
+				taskId: record.taskId,
+				state: record.state,
+				...(record.stateReason ? { stateReason: record.stateReason.slice(0, 400) } : {}),
+				acceptanceMode: acceptanceModeOf(record),
+				...(record.recovery?.required === true
+					? { recovery: { required: true, reason: record.recovery.reason, executionId: record.recovery.executionId } }
+					: {}),
+				...(record.writerHold ? { writerHold: { ...record.writerHold, active: holdActive } } : {}),
+				reservations: reservations.map((item) => ({
+					id: item.id,
+					...(item.taskId ? { taskId: item.taskId } : {}),
+					capability: item.capability,
+					workspaces: [...item.workspaces],
+				})),
+				source,
+				reports: record.reports?.length ?? 0,
+				reviews: record.reviews?.length ?? 0,
+				executions,
+				guidance,
+			},
+		};
 	}
 
 	/**
@@ -1798,8 +1985,15 @@ export class PlannerOrchestrator {
 				lines.push(
 					`  - ${execution.executionId}: ${execution.status}${execution.endedReason ? ` (${execution.endedReason})` : ""}${
 						execution.terminationConfirmed === true ? ", stop confirmed" : ""
-					}${execution.evidenceIncomplete === true ? ", evidence-incomplete" : ""}`,
+					}${execution.evidenceIncomplete === true ? ", evidence-incomplete" : ""}${
+						execution.capability !== undefined ? `, capability ${execution.capability}` : ""
+					}${execution.unacceptedReport !== undefined ? ", report received but not admitted" : ""}`,
 				);
+				const failures = [
+					...(execution.aRun.probeFailures ?? []),
+					...(execution.stopSamples ?? []).flatMap((sample) => sample.probeFailures ?? []),
+				];
+				if (failures.length > 0) lines.push(`    probe failures: ${describeProbeFailures(failures)}`);
 			}
 		}
 		if (task.writerHold) {
@@ -1917,6 +2111,86 @@ export class PlannerOrchestrator {
 	}
 
 	/**
+	 * Ticket 03 — the observation acceptance gates for a pass verdict.
+	 * Worktree evidence is excluded, but the pass still binds the trusted
+	 * restricted-reader execution that produced the report, a modification-
+	 * free declaration, and every evidence requirement the spec declared.
+	 * Returns the structured refusal, or undefined when the pass may proceed.
+	 */
+	private observationPassBlocker(task: TaskRecord): RootVerdictRefusal | undefined {
+		const report = task.reports.at(-1);
+		if (!report) return undefined;
+		const revision = task.reports.length - 1;
+		const producer = [...task.executions].reverse().find((execution) => execution.reportIndex === revision);
+		if (!producer) {
+			return {
+				kind: "observation-inadmissible",
+				reason: `report revision ${task.reports.length} has no bound execution record; an observation pass needs the restricted-reader execution that produced it`,
+			};
+		}
+		if (producer.capability !== "restricted-reader") {
+			return {
+				kind: "observation-inadmissible",
+				reason: `report revision ${task.reports.length} was produced by execution ${producer.executionId} with capability "${producer.capability ?? "unknown"}"; an observation pass requires a trusted restricted-reader execution`,
+			};
+		}
+		if (producer.status !== "completed" || producer.terminationConfirmed !== true) {
+			return {
+				kind: "observation-inadmissible",
+				reason: `execution ${producer.executionId} is ${producer.status ?? "unknown"} (terminationConfirmed=${producer.terminationConfirmed === true}); an observation pass needs a confirmed completed reader execution`,
+			};
+		}
+		if (report.changedFiles.length > 0) {
+			return {
+				kind: "observation-inadmissible",
+				reason: `the report declares ${report.changedFiles.length} changed file(s) — an observation Task accepts read-only findings only; produce a worker Task for changes`,
+			};
+		}
+		const attributed = [...new Set([...(producer.truthPaths ?? []), ...(producer.committedPaths ?? [])])];
+		if (attributed.length > 0) {
+			return {
+				kind: "observation-inadmissible",
+				reason: `execution ${producer.executionId} has attributed modifications (${attributed.join(", ")}); an observation Task cannot accept produced changes`,
+			};
+		}
+		const expected = task.spec?.expectedEvidence;
+		if (expected?.changedFiles === true) {
+			return {
+				kind: "observation-inadmissible",
+				reason: "spec expectedEvidence.changedFiles contradicts observation acceptance — observation Tasks never declare changed files",
+			};
+		}
+		if (expected?.gitRef === true && !report.evidence.finalGitRef && !report.evidence.baseGitRef) {
+			return {
+				kind: "observation-inadmissible",
+				reason: "spec expectedEvidence.gitRef requires a Git ref bound in the report evidence; none was recorded",
+			};
+		}
+		if (expected?.diffStat === true && !report.evidence.diffStat) {
+			return {
+				kind: "observation-inadmissible",
+				reason: "spec expectedEvidence.diffStat requires a diffStat bound in the report evidence; none was recorded",
+			};
+		}
+		if (expected?.tests === true && !report.validation.some((item) => item.status === "passed")) {
+			return {
+				kind: "observation-inadmissible",
+				reason: "spec expectedEvidence.tests requires at least one passed validation entry; none was recorded",
+			};
+		}
+		if (task.spec?.validation?.required === true) {
+			const missing = missingTaskSpecValidationCommands(task.spec, report);
+			if (missing.length > 0) {
+				return {
+					kind: "observation-inadmissible",
+					reason: `spec validation.required is unmet: no passed entry for ${missing.map((command) => JSON.stringify(command)).join(", ")}`,
+				};
+			}
+		}
+		return undefined;
+	}
+
+	/**
 	 * §3 step 2 — why Root may not record `verdict` on `task` right now.
 	 * Returns the structured refusal (typed kind + display prose), or undefined
 	 * when the verdict may proceed. Callers must branch on `kind`, never on the
@@ -1955,6 +2229,17 @@ export class PlannerOrchestrator {
 				kind: "no-report",
 				reason: `Task ${task.taskId} has no recorded WorkerReport; a pass or change request needs a report to judge.`,
 			};
+		}
+		// Ticket 03 — observation acceptance gates. An observation Task can
+		//    never run a reviewer, so the fresh-review gates are exempt; the
+		//    pass still binds the restricted-reader execution, a modification-
+		//    free report, and every declared evidence requirement.
+		if (acceptanceModeOf(task) === "observation") {
+			if (verdict === "pass") {
+				const blocker = this.observationPassBlocker(task);
+				if (blocker) return blocker;
+			}
+			return undefined;
 		}
 		if (
 			verdict === "pass" &&
@@ -2181,7 +2466,15 @@ export class PlannerOrchestrator {
 		let comparison = current.lastComparison;
 		let evidence: string | undefined;
 
-		if (verdict === "pass" && report && !rawJudged) {
+		if (verdict === "pass" && report && !rawJudged && acceptanceModeOf(current) === "observation") {
+			// Ticket 03 — observation acceptance never fabricates Git freshness:
+			// no snapshot binding, no comparison; the verdict binds the report
+			// revision and its restricted-reader execution instead.
+			comparison = undefined;
+			const revision = current.reports.length;
+			const producer = [...current.executions].reverse().find((execution) => execution.reportIndex === revision - 1);
+			evidence = `observation: report revision ${revision} bound to ${producer ? `${producer.executionId} (restricted-reader, confirmed)` : "no bound execution"}; worktree evidence excluded`;
+		} else if (verdict === "pass" && report && !rawJudged) {
 			const currentSample = await captureEvidence(
 				this.gitRunner,
 				captureEvidenceOptionsFor(current, report.evidence.workerRunId, {

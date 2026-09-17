@@ -1514,3 +1514,114 @@ console.log("planner-only evidence: PASS");
 		rmSync(scratchBase, { recursive: true, force: true });
 	}
 }
+
+// --------------------------------------------------------------------------
+// Ticket 01 — structured Git probe failure detail. A failed sample must say
+// WHICH fixed operation failed, in which cwd, with what exit/kill/startup
+// evidence — never collapse into a bare boolean.
+// --------------------------------------------------------------------------
+{
+	// Non-Git directory: rev-parse --git-dir returns "not a git repository".
+	const nonRepoDir = mkdtempSync(join(tmpdir(), "planner-evidence-nonrepo-"));
+	try {
+		const realRunner = async (args, cwd) => {
+			const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
+			return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", code: result.status ?? 1 };
+		};
+		const failedProbe = await probeGit(realRunner, nonRepoDir);
+		assert.equal(failedProbe.available, false);
+		assert.ok(Array.isArray(failedProbe.failures) && failedProbe.failures.length > 0, "non-repo probe records a failure");
+		const primary = failedProbe.failures[0];
+		assert.equal(primary.operation, "rev-parse --git-dir");
+		assert.equal(primary.kind, "not-a-git-repository");
+		assert.equal(primary.cwd, nonRepoDir);
+		assert.equal(primary.exitCode, 128);
+		assert.match(primary.error ?? "", /not a git repository/i);
+
+		const sample = await captureEvidence(realRunner, { cwd: nonRepoDir, taskId: "T-NG", workerRunId: "call-ng" });
+		assert.equal(sample.gitAvailable, false);
+		assert.ok(sample.probeFailures?.some((f) => f.kind === "not-a-git-repository"), "sample carries the classified failure");
+	} finally {
+		rmSync(nonRepoDir, { recursive: true, force: true });
+	}
+}
+{
+	// Git cannot be launched at all: the runner throws before any result.
+	const spawnFail = await probeGit(async () => { throw new Error("spawn git ENOENT"); }, CWD);
+	assert.equal(spawnFail.available, false);
+	assert.equal(spawnFail.failures?.[0]?.kind, "git-startup-failed");
+	assert.equal(spawnFail.failures?.[0]?.startupFailed, true);
+	assert.match(spawnFail.failures?.[0]?.error ?? "", /ENOENT/);
+
+	const spawnSample = await captureEvidence(async () => { throw new Error("spawn git ENOENT"); }, {
+		cwd: CWD, taskId: "T-SPAWN", workerRunId: "call-s",
+	});
+	assert.equal(spawnSample.gitAvailable, false);
+	assert.equal(spawnSample.probeFailures?.[0]?.kind, "git-startup-failed");
+}
+{
+	// Killed by the host (timeout): code non-zero + killed flag.
+	const killedProbe = await probeGit(async () => ({ stdout: "", stderr: "", code: 1, killed: true }), CWD);
+	assert.equal(killedProbe.available, false);
+	assert.equal(killedProbe.failures?.[0]?.kind, "probe-timed-out");
+	assert.equal(killedProbe.failures?.[0]?.killed, true);
+}
+{
+	// Git ran but status itself failed: repo exists, status probe is the failure.
+	const statusFail = await probeGit(async (args) => {
+		const joined = args.join(" ");
+		if (joined === "status --porcelain=v2 --branch") {
+			return { stdout: "", stderr: "fatal: index file corrupt", code: 128 };
+		}
+		return { stdout: ".git\n", code: 0 };
+	}, CWD);
+	assert.equal(statusFail.available, true, "repo-level probe succeeded");
+	assert.equal(statusFail.statusFailed, true);
+	assert.ok(statusFail.failures?.some((f) => f.kind === "status-probe-failed" && f.operation === "status --porcelain=v2 --branch"));
+}
+{
+	// A bare non-zero exit with no recognizable stderr stays unclassified —
+	// code 128 alone is never guessed into "not a repository".
+	const opaque = await probeGit(async () => ({ stdout: "", stderr: "", code: 128 }), CWD);
+	assert.equal(opaque.available, false);
+	assert.equal(opaque.failures?.[0]?.kind, "probe-error");
+	assert.equal(opaque.failures?.[0]?.exitCode, 128);
+}
+{
+	// Credential material in stderr is masked before it is stored.
+	const leaked = await probeGit(async () => ({
+		stdout: "",
+		stderr: "fatal: unable to access 'https://user:secret123@example.invalid/repo': token=abc123",
+		code: 128,
+	}), CWD);
+	assert.equal(leaked.failures?.[0]?.kind, "probe-error");
+	assert.ok(!(leaked.failures?.[0]?.error ?? "").includes("secret123"), "credential userinfo masked");
+	assert.ok(!(leaked.failures?.[0]?.error ?? "").includes("abc123"), "token value masked");
+}
+{
+	// Declared extra worktree roots that cannot be probed record their own cwd.
+	const rootDir = mkdtempSync(join(tmpdir(), "planner-evidence-extra-"));
+	const missingRoot = join(tmpdir(), "planner-evidence-missing-root-xyz");
+	try {
+		const realRunner = async (args, cwd) => {
+			const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
+			return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", code: result.status ?? 1 };
+		};
+		// rootDir must be a real repo for the primary probe to succeed.
+		spawnSync("git", ["-C", rootDir, "init", "-q"], { encoding: "utf8" });
+		const sample = await captureEvidence(realRunner, {
+			cwd: rootDir,
+			taskId: "T-XR",
+			workerRunId: "call-xr",
+			additionalWorktreeRoots: [missingRoot],
+		});
+		assert.ok(sample.unavailableWorktreeRoots?.includes(missingRoot), "missing root listed");
+		assert.ok(
+			sample.probeFailures?.some((f) => f.cwd === resolve(missingRoot)),
+			"extra-root failure names its cwd",
+		);
+	} finally {
+		rmSync(rootDir, { recursive: true, force: true });
+	}
+}
+console.log("evidence.test.mjs: ticket-01 probe failure cases passed");

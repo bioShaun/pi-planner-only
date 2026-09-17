@@ -1,0 +1,34 @@
+{
+ "host": {
+  "pi": "0.85.1",
+  "pi-subagents": "0.68.0",
+  "plugin": "pi-planner-only @ repo HEAD (loaded via -e /public/pi/pi-planner-only/index.ts, extension discovery disabled)",
+  "invocation": "pi -p --mode json --no-extensions -e ~/.pi/agent/npm/node_modules/pi-subagents/index.ts -e /public/pi/pi-planner-only/index.ts <prompt>"
+ },
+ "runs": {
+  "T-20260917-008": {
+   "cwd": "/tmp/planner-only-t07-nongit (non-Git)",
+   "flow": "planner_delegate explorer+observation \u2192 planner_tasks diagnostics \u2192 planner_verdict pass",
+   "result": "completed; execution capability=restricted-reader, confirmationBasis=terminal+restricted-reader; writerHold absent; lastComparison absent (worktree evidence excluded)",
+   "childAgent": "planner-scout (runtime-agent registered)",
+   "childToolCalls": [
+    "find",
+    "ls",
+    "read",
+    "read",
+    "read",
+    "structured_output"
+   ]
+  },
+  "T-20260917-009": {
+   "cwd": "/tmp/planner-only-t07-nongit (non-Git)",
+   "flow": "planner_delegate worker \u2192 ENVIRONMENT_UNVERIFIABLE refusal \u2192 planner_tasks diagnostics",
+   "result": "blocked pre-launch; no child launched; no writer hold; recovery.required set; diagnostics expose probeFailures kind=not-a-git-repository"
+  },
+  "T-20260917-010": {
+   "cwd": "/tmp/planner-only-t07-git (healthy Git, HEAD=7951a6e)",
+   "flow": "same as T-20260917-008 (control)",
+   "result": "completed; capability=restricted-reader; no writer hold; observation acceptance in a Git workspace"
+  }
+ }
+}

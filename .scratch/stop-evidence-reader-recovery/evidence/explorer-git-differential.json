@@ -1,0 +1,60 @@
+{
+  "nonGit": {
+    "kind": "nongit",
+    "cwd": "/tmp/planner-natural-nongit-NUazNo",
+    "rendered": "planner_delegate: T-20260917-001 blocked run=run-natural-nongit\ntermination: completed — reason=normal, confirmed=false, execution=stop_unconfirmed\nwriter hold: kept — the workspace stays reserved until a late terminal confirms quiescence or the operator resolves it\nwarning: stop-evidence sampling failed; residual workspace state is unknown\nrecovery.required: completed terminal without confirmed worktree quiescence — await confirmation or operator resolution — submit planner_redelegate.recovery{executionId=call-natural-nongit, action, reason, worktreeDecision} or planner_abort{executionId=call-natural-nongit, reason, worktreeDecision}",
+    "outcomeTermination": {
+      "status": "completed",
+      "reason": "normal",
+      "executionStatus": "stop_unconfirmed",
+      "terminationConfirmed": false,
+      "quiescenceWaitMs": 0,
+      "quiescenceWaitSource": "config",
+      "evidenceIncomplete": true,
+      "usageComplete": false
+    },
+    "taskState": "blocked",
+    "taskStateReason": "completed terminal arrived but worktree quiescence was not confirmed; report not admitted",
+    "recovery": {
+      "required": true,
+      "reason": "completed terminal without confirmed worktree quiescence — await confirmation or operator resolution",
+      "executionId": "call-natural-nongit"
+    },
+    "writerHold": null,
+    "reservations": [],
+    "reports": 0,
+    "execution": {
+      "kind": "explorer",
+      "readOnly": true,
+      "status": "stop_unconfirmed",
+      "terminationConfirmed": false,
+      "evidenceIncomplete": true,
+      "aRunGitAvailable": false,
+      "cReportGitAvailable": false,
+      "interimGitAvailable": false,
+      "hasCTerminal": false
+    }
+  },
+  "git": {
+    "kind": "git",
+    "cwd": "/tmp/planner-natural-git-UeAu7l",
+    "rendered": "planner_delegate: T-20260917-001 changes_requested run=run-natural-git\nsummary: read-only inspection complete\nreview: revalidate -> changes_requested — evidence is stale: report evidence incomplete — no HEAD binding (finalGitRef) to verify\nguidance: Stale evidence must not be accepted.\nguidance: Next step: re-delegate validation for the affected paths — one bounded validation; a bounded oracle check is enough when the worker's validation already exited 0.\nguidance: Automatic recovery attempt 1 of 3.",
+    "outcomeTermination": null,
+    "taskState": "changes_requested",
+    "taskStateReason": null,
+    "recovery": null,
+    "writerHold": null,
+    "reservations": [],
+    "reports": 1,
+    "execution": {
+      "kind": "explorer",
+      "readOnly": true,
+      "status": "completed",
+      "terminationConfirmed": true,
+      "evidenceIncomplete": false,
+      "aRunGitAvailable": true,
+      "cReportGitAvailable": true,
+      "hasCTerminal": true
+    }
+  }
+}

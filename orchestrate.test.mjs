@@ -1627,4 +1627,301 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	}
 }
 
+// ============================================================================
+// Ticket 02 — restore: a recorded restricted reader never synthesizes a
+// writer hold; an execution missing capability metadata stays conservative.
+// ============================================================================
+{
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-restore-reader-"));
+	try {
+		const ledger = new LedgerSnapshotStore(dir);
+		const reader = spentTaskRecord("T-20260908-rdr", 0.01, 0.05);
+		reader.state = "blocked";
+		reader.cwd = dir;
+		reader.executions.push({
+			executionId: "call-rdr",
+			taskId: reader.taskId,
+			kind: "explorer",
+			cwd: dir,
+			worktreeRoots: [dir],
+			aRun: { cwd: dir, taskId: reader.taskId, workerRunId: "call-rdr" },
+			status: "stop_unconfirmed",
+			endedReason: "operator_cancel",
+			readOnly: true,
+			capability: "restricted-reader",
+			capabilityBasis: "bound at launch",
+		});
+		const writer = spentTaskRecord("T-20260908-wtr", 0.01, 0.05);
+		writer.state = "blocked";
+		writer.cwd = dir;
+		writer.executions.push({
+			executionId: "call-wtr",
+			taskId: writer.taskId,
+			kind: "worker",
+			cwd: dir,
+			worktreeRoots: [dir],
+			aRun: { cwd: dir, taskId: writer.taskId, workerRunId: "call-wtr" },
+			status: "stop_unconfirmed",
+			endedReason: "operator_cancel",
+		});
+		// A pre-T02 explorer record (no capability field) stays conservative.
+		const legacyReader = spentTaskRecord("T-20260908-lrd", 0.01, 0.05);
+		legacyReader.state = "blocked";
+		legacyReader.cwd = dir;
+		legacyReader.executions.push({
+			executionId: "call-lrd",
+			taskId: legacyReader.taskId,
+			kind: "explorer",
+			cwd: dir,
+			worktreeRoots: [dir],
+			aRun: { cwd: dir, taskId: legacyReader.taskId, workerRunId: "call-lrd" },
+			status: "stop_unconfirmed",
+			endedReason: "operator_cancel",
+			readOnly: true,
+		});
+		ledger.write(reader);
+		ledger.write(writer);
+		ledger.write(legacyReader);
+		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
+		const result = orch.restoreFromLedger();
+		assert.equal(result.restored, 3);
+		assert.equal(orch.store.get(reader.taskId).writerHold, undefined, "no hold synthesized for a restricted reader");
+		assert.ok(orch.store.get(writer.taskId).writerHold, "writer stop_unconfirmed still synthesizes the hold");
+		assert.ok(orch.store.get(legacyReader.taskId).writerHold, "missing capability is conservative — hold synthesized");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// ============================================================================
+// Ticket 06 — read-only task diagnostics: canonical ids, lifecycle truth,
+// and no side effects (no mint, no restore, no launch).
+// ============================================================================
+{
+	const store = pinnedStore();
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const task = store.create(createTaskSpec({
+		taskId: "T-20260908-dg1",
+		objective: "where did the logs go",
+		cwd: "/fixture/diag",
+		role: "explorer",
+		acceptanceMode: "observation",
+		validation: { required: false },
+	}));
+	store.beginExecution(task.taskId, {
+		executionId: "call-dg1",
+		kind: "explorer",
+		cwd: "/fixture/diag",
+		worktreeRoots: ["/fixture/diag"],
+		aRun: {
+			cwd: "/fixture/diag",
+			taskId: task.taskId,
+			workerRunId: "call-dg1",
+			gitAvailable: false,
+			probeFailures: [{ operation: "rev-parse --git-dir", kind: "not-a-git-repository", cwd: "/fixture/diag", exitCode: 128, error: "fatal: not a git repository" }],
+		},
+		capability: "restricted-reader",
+		capabilityBasis: "test",
+		readOnly: true,
+	});
+	store.finalizeExecution(task.taskId, "call-dg1", {
+		status: "stop_unconfirmed",
+		endedReason: "operator_cancel",
+		endedAt: "2026-09-05T00:00:00.000Z",
+		terminationConfirmed: false,
+		unacceptedReport: {
+			version: 1,
+			taskId: task.taskId,
+			status: "completed",
+			summary: "logs are under /var/log/x",
+			changedFiles: [],
+			validation: [],
+			evidence: { cwd: "/fixture/diag", taskId: task.taskId, workerRunId: "run-dg1" },
+			risks: [],
+			unresolved: [],
+		},
+		unacceptedReportReason: "delegation ended cancelled; report not admitted",
+	});
+	store.transition(task.taskId, "blocked");
+
+	const before = structuredClone(store.require(task.taskId));
+	const result = orch.describeTaskDiagnostics("/fixture/diag", task.taskId);
+	assert.ok("diagnostics" in result);
+	const d = result.diagnostics;
+	assert.equal(d.taskId, task.taskId);
+	assert.equal(d.state, "blocked");
+	assert.equal(d.acceptanceMode, "observation");
+	assert.equal(d.source, "memory");
+	assert.equal(d.executions.length, 1);
+	const execution = d.executions[0];
+	assert.equal(execution.executionId, "call-dg1");
+	assert.equal(execution.status, "stop_unconfirmed");
+	assert.equal(execution.capability, "restricted-reader");
+	assert.equal(execution.terminationConfirmed, false);
+	assert.equal(execution.reportReceived, true);
+	assert.equal(execution.reportAccepted, false);
+	assert.equal(execution.unacceptedReport.status, "completed");
+	assert.equal(execution.unacceptedReport.workerRunId, "run-dg1");
+	assert.equal(execution.probeFailures[0].kind, "not-a-git-repository");
+	assert.ok(execution.guidance.length > 0);
+	assert.deepEqual(store.require(task.taskId), before, "diagnostics never mutate the record");
+
+	// executionId narrows the view; unknown ids get a structured error.
+	const narrowed = orch.describeTaskDiagnostics("/fixture/diag", task.taskId, "call-dg1");
+	assert.equal(narrowed.diagnostics.executions.length, 1);
+	const miss = orch.describeTaskDiagnostics("/fixture/diag", task.taskId, "call-nope");
+	assert.equal(miss.diagnostics.executions.length, 0);
+	const unknown = orch.describeTaskDiagnostics("/fixture/diag", "T-19990101-000");
+	assert.equal(unknown.error, "TASK_UNKNOWN");
+	const foreign = orch.describeTaskDiagnostics("/other/workspace", task.taskId);
+	assert.equal(foreign.error, "TASK_FOREIGN_WORKSPACE");
+}
+
+// ============================================================================
+// Ticket 03 — observation acceptance: the pass verdict binds the restricted
+// reader report; modification declarations or untrusted producers refuse.
+// ============================================================================
+{
+	const store = pinnedStore();
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const task = store.create(createTaskSpec({
+		taskId: "T-20260908-obs",
+		objective: "report the log locations",
+		cwd: "/fixture/obs",
+		role: "explorer",
+		acceptanceMode: "observation",
+		validation: { required: false },
+	}));
+	assert.equal(task.spec.acceptanceMode, "observation", "the mode persists on the spec");
+	store.transition(task.taskId, "executing");
+	store.beginExecution(task.taskId, {
+		executionId: "call-obs",
+		kind: "explorer",
+		cwd: "/fixture/obs",
+		worktreeRoots: ["/fixture/obs"],
+		aRun: { cwd: "/fixture/obs", taskId: task.taskId, workerRunId: "call-obs", gitAvailable: false },
+		capability: "restricted-reader",
+		capabilityBasis: "bound at launch",
+		readOnly: true,
+	});
+	const report = {
+		version: 1,
+		taskId: task.taskId,
+		status: "completed",
+		summary: "logs live under /var/log/x",
+		changedFiles: [],
+		validation: [],
+		evidence: { cwd: "/fixture/obs", taskId: task.taskId, workerRunId: "call-obs", gitAvailable: false },
+		risks: [],
+		unresolved: [],
+	};
+	store.recordReport(task.taskId, report);
+	store.completeExecution(task.taskId, "call-obs", {
+		status: "completed",
+		endedAt: "2026-09-05T00:00:00.000Z",
+		terminationConfirmed: true,
+		confirmationBasis: "terminal+restricted-reader",
+		reportIndex: 0,
+		usageComplete: true,
+	});
+	store.transition(task.taskId, "reviewing");
+
+	// The pass binds the report + reader execution — no Git freshness check.
+	assert.equal(orch.rootVerdictRefusal(store.require(task.taskId), "pass"), undefined);
+	const outcome = await orch.recordRootVerdict(store.require(task.taskId), "pass", "findings verified by inspection");
+	assert.equal(outcome.decision.action, "accept");
+	assert.equal(outcome.task.state, "completed");
+	assert.match(outcome.evidence ?? "", /observation/);
+	assert.equal(store.require(task.taskId).lastComparison, undefined, "observation never records a Git comparison");
+}
+
+{
+	// A report declaring changed files cannot pass under observation.
+	const store = pinnedStore();
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const task = store.create(createTaskSpec({
+		taskId: "T-20260908-ob2",
+		objective: "report plus a stray write",
+		cwd: "/fixture/ob2",
+		role: "explorer",
+		acceptanceMode: "observation",
+		validation: { required: false },
+	}));
+	store.transition(task.taskId, "executing");
+	store.beginExecution(task.taskId, {
+		executionId: "call-ob2",
+		kind: "explorer",
+		cwd: "/fixture/ob2",
+		worktreeRoots: ["/fixture/ob2"],
+		aRun: { cwd: "/fixture/ob2", taskId: task.taskId, workerRunId: "call-ob2", gitAvailable: false },
+		capability: "restricted-reader",
+		capabilityBasis: "bound at launch",
+		readOnly: true,
+	});
+	const report = {
+		version: 1,
+		taskId: task.taskId,
+		status: "completed",
+		summary: "found it and wrote notes",
+		changedFiles: ["notes.md"],
+		validation: [],
+		evidence: { cwd: "/fixture/ob2", taskId: task.taskId, workerRunId: "call-ob2", gitAvailable: false },
+		risks: [],
+		unresolved: [],
+	};
+	store.recordReport(task.taskId, report);
+	store.completeExecution(task.taskId, "call-ob2", {
+		status: "completed",
+		terminationConfirmed: true,
+		reportIndex: 0,
+	});
+	store.transition(task.taskId, "reviewing");
+	const refusal = orch.rootVerdictRefusal(store.require(task.taskId), "pass");
+	assert.equal(refusal?.kind, "observation-inadmissible");
+	assert.match(refusal.reason, /changed file/);
+	orch.recordRootVerdictRefusal(task, "pass", refusal);
+	assert.equal(store.require(task.taskId).state, "reviewing", "refused verdict does not complete the task");
+}
+
+{
+	// A report bound to an execution that was never a proven reader cannot pass.
+	const store = pinnedStore();
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const task = store.create(createTaskSpec({
+		taskId: "T-20260908-ob3",
+		objective: "untrusted producer",
+		cwd: "/fixture/ob3",
+		role: "explorer",
+		acceptanceMode: "observation",
+		validation: { required: false },
+	}));
+	store.transition(task.taskId, "executing");
+	store.beginExecution(task.taskId, {
+		executionId: "call-ob3",
+		kind: "explorer",
+		cwd: "/fixture/ob3",
+		worktreeRoots: ["/fixture/ob3"],
+		aRun: { cwd: "/fixture/ob3", taskId: task.taskId, workerRunId: "call-ob3" },
+		// capability absent — a pre-T02 record is "unknown", never a reader.
+		readOnly: true,
+	});
+	const report = {
+		version: 1,
+		taskId: task.taskId,
+		status: "completed",
+		summary: "surveyed",
+		changedFiles: [],
+		validation: [],
+		evidence: { cwd: "/fixture/ob3", taskId: task.taskId, workerRunId: "call-ob3" },
+		risks: [],
+		unresolved: [],
+	};
+	store.recordReport(task.taskId, report);
+	store.completeExecution(task.taskId, "call-ob3", { status: "completed", terminationConfirmed: true, reportIndex: 0 });
+	store.transition(task.taskId, "reviewing");
+	const refusal = orch.rootVerdictRefusal(store.require(task.taskId), "pass");
+	assert.equal(refusal?.kind, "observation-inadmissible");
+	assert.match(refusal.reason, /capability "unknown"/);
+}
+
 console.log("planner-only orchestration: PASS");

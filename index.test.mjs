@@ -2203,3 +2203,118 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 	assert.deepEqual(afterPassStray.recovery, beforePassStray.recovery, "stripped pass recovery is not consumed");
 	assert.deepEqual(afterPassStray.recoveryHistory ?? [], beforePassStray.recoveryHistory ?? [], "stripped pass adds no recovery history");
 }
+
+// ============================================================================
+// Ticket 02 + 06 — restricted-reader binding through the runtime-agent
+// registry, and the read-only planner_tasks diagnostics view.
+// ============================================================================
+{
+	const delegateTool = tools.get("planner_delegate");
+	const tasksTool = tools.get("planner_tasks");
+	const requestCount = () => piEvents.emitted.filter((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT).length;
+
+	// (a) No registry listener — explorer refuses before launch.
+	const beforeA = requestCount();
+	await assert.rejects(
+		delegateTool.execute(
+			"call-t02-nobind",
+			{
+				role: "explorer",
+				objective: "survey",
+				scope: {},
+				constraints: [],
+				acceptanceCriteria: [],
+				validation: { required: false },
+			},
+			undefined, () => {}, ctx,
+		),
+		(error) => error?.code === "READER_CAPABILITY_UNPROVEN",
+	);
+	assert.equal(requestCount(), beforeA, "a refused explorer never reaches the launcher");
+
+	// (b) pi-subagents' runtime-agent registry answers: the explorer binds the
+	//    trusted restricted reader, completes, and carries its capability
+	//    record on the execution.
+	const registrations = [];
+	piEvents.on("pi-subagents:runtime-agent-register:v1", (request) => {
+		if (request.name === "planner-scout") {
+			registrations.push(request);
+			request.result = { ok: true, registration: { dispose() {} } };
+		}
+	});
+	const execPromise = delegateTool.execute(
+		"call-t02-reader",
+		{
+			role: "explorer",
+			objective: "where are the logs",
+			acceptanceMode: "observation",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: false },
+		},
+		undefined, () => {}, ctx,
+	);
+	const deadline = Date.now() + 2000;
+	let readerRequest;
+	const emittedBefore = piEvents.emitted.length;
+	while (!readerRequest && Date.now() < deadline) {
+		readerRequest = piEvents.emitted
+			.slice(emittedBefore)
+			.find((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT)?.payload;
+		if (!readerRequest) await new Promise((r) => setTimeout(r, 2));
+	}
+	assert.ok(readerRequest, "explorer request emitted");
+	assert.equal(readerRequest.agent, "planner-scout", "explorer binds the trusted restricted reader");
+	assert.ok(registrations.length >= 1, "the runtime-agent definition was registered");
+	assert.deepEqual(registrations[0].definition.tools, ["read", "grep", "find", "ls"], "the registered tool list is read-only");
+	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: readerRequest.requestId,
+		ownerRunId: readerRequest.ownerRunId,
+		nodeId: readerRequest.nodeId,
+		status: "completed",
+		runId: "run-t02-reader",
+		agent: "planner-scout",
+		result: {
+			kind: "structured",
+			value: {
+				version: 1,
+				taskId: readerRequest.nodeId,
+				status: "completed",
+				summary: "logs live under /var/log/x",
+				changedFiles: [],
+				validation: [],
+				evidence: { cwd: readerRequest.cwd, taskId: readerRequest.nodeId, workerRunId: "run-t02-reader" },
+				risks: [],
+				unresolved: [],
+			},
+		},
+	});
+	const readerOutcome = await execPromise;
+	const readerTask = readerOutcome.details.taskId;
+	assert.equal(readerOutcome.details.state, "reviewing", "the report is admitted");
+
+	// (c) planner_tasks diagnostics: canonical ids, lifecycle truth, no launcher.
+	const beforeC = requestCount();
+	const diag = await tasksTool.execute("call-t06-diag", { taskId: readerTask }, undefined, () => {}, ctx);
+	const d = diag.details.diagnostics;
+	assert.equal(d.taskId, readerTask);
+	assert.equal(d.acceptanceMode, "observation");
+	assert.equal(d.executions[0].executionId, "call-t02-reader");
+	assert.equal(d.executions[0].capability, "restricted-reader");
+	assert.equal(d.executions[0].terminationConfirmed, true);
+	assert.equal(d.executions[0].confirmationBasis, "terminal+restricted-reader");
+	assert.equal(d.executions[0].reportReceived, true);
+	assert.equal(d.executions[0].reportAccepted, true);
+	assert.match(diag.content[0].text, /restricted-reader/);
+	const miss = await tasksTool.execute("call-t06-miss", { taskId: "T-19990101-000" }, undefined, () => {}, ctx);
+	assert.equal(miss.details.error, "TASK_UNKNOWN");
+	assert.equal(requestCount(), beforeC, "diagnostics never launches a child");
+
+	// (d) diagnostics on the ledger-only Task from ticket 18's block: source is
+	//    "ledger" and the record is NOT adopted into the session store.
+	const ledgerOnly = await tasksTool.execute("call-t06-ledger", { taskId: "T-20200101-500" }, undefined, () => {}, ctx);
+	assert.equal(ledgerOnly.details.diagnostics.source, "ledger");
+	assert.equal(ledgerOnly.details.diagnostics.state, "blocked");
+	assert.equal(ledgerOnly.details.diagnostics.recovery.required, true);
+}

@@ -1,0 +1,82 @@
+{
+ "taskId": "T-20260917-010",
+ "state": "completed",
+ "writerHold": null,
+ "lastComparison": null,
+ "reviews": [
+  {
+   "taskId": "T-20260917-010",
+   "verdict": "pass",
+   "summary": "Observation report verified",
+   "findings": [],
+   "evidenceFresh": true,
+   "reportRevision": 1,
+   "reportSource": "worker",
+   "requestedVerdict": "pass",
+   "executionId": "planner-scout",
+   "source": "root",
+   "appliedDecision": "accept"
+  }
+ ],
+ "execution": {
+  "status": "completed",
+  "executionId": "tool_0875t1XXTSOb264qo0u98GEN",
+  "kind": "explorer",
+  "cwd": "/tmp/planner-only-t07-git",
+  "worktreeRoots": [
+   "/tmp/planner-only-t07-git"
+  ],
+  "aRun": {
+   "cwd": "/tmp/planner-only-t07-git",
+   "taskId": "T-20260917-010",
+   "workerRunId": "tool_0875t1XXTSOb264qo0u98GEN",
+   "finalGitRef": "7951a6e137aec929f476cf74a24ba571c4f21c55",
+   "gitStatusHash": "e3b0c44298fc1c14",
+   "repoRoot": "/tmp/planner-only-t07-git",
+   "changedPaths": [],
+   "gitAvailable": true,
+   "generatedAt": "2026-09-17T09:48:30.820Z"
+  },
+  "capability": "restricted-reader",
+  "capabilityBasis": "agent 'planner-scout' bound with declared tools [read, grep, find, ls] \u2014 no shell, edit, write, or fan-out entry point",
+  "readOnly": true,
+  "taskId": "T-20260917-010",
+  "endedReason": "normal",
+  "endedAt": "2026-09-17T09:48:42.454Z",
+  "terminationConfirmed": true,
+  "confirmationBasis": "terminal+restricted-reader",
+  "usageComplete": true,
+  "cReport": {
+   "cwd": "/tmp/planner-only-t07-git",
+   "taskId": "T-20260917-010",
+   "workerRunId": "31c30133-137f-4998-87d8-ca1bf48e96ba",
+   "finalGitRef": "7951a6e137aec929f476cf74a24ba571c4f21c55",
+   "gitStatusHash": "e3b0c44298fc1c14",
+   "repoRoot": "/tmp/planner-only-t07-git",
+   "changedPaths": [],
+   "gitAvailable": true,
+   "generatedAt": "2026-09-17T09:48:42.431Z"
+  },
+  "cTerminal": {
+   "cwd": "/tmp/planner-only-t07-git",
+   "taskId": "T-20260917-010",
+   "workerRunId": "31c30133-137f-4998-87d8-ca1bf48e96ba",
+   "finalGitRef": "7951a6e137aec929f476cf74a24ba571c4f21c55",
+   "gitStatusHash": "e3b0c44298fc1c14",
+   "repoRoot": "/tmp/planner-only-t07-git",
+   "changedPaths": [],
+   "gitAvailable": true,
+   "generatedAt": "2026-09-17T09:48:42.431Z"
+  },
+  "runId": "31c30133-137f-4998-87d8-ca1bf48e96ba",
+  "truthPaths": [],
+  "executionChangedPaths": [],
+  "committedPaths": [],
+  "observedExternalPaths": [],
+  "undeclaredPaths": [],
+  "outOfScopePaths": [],
+  "extraDeclaredPaths": [],
+  "externalPaths": [],
+  "reportIndex": 0
+ }
+}

@@ -19,7 +19,7 @@ import {
 export type GitRunner = (
 	args: readonly string[],
 	cwd: string,
-) => Promise<{ stdout: string; stderr?: string; code: number }>;
+) => Promise<{ stdout: string; stderr?: string; code: number; killed?: boolean }>;
 
 /**
  * Argv owned by Git-read. Evidence probe and git_audit `status`/`head` share

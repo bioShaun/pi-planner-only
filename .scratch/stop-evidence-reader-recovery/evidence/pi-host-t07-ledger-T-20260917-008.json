@@ -1,0 +1,128 @@
+{
+ "taskId": "T-20260917-008",
+ "state": "completed",
+ "writerHold": null,
+ "lastComparison": null,
+ "recovery": null,
+ "reviews": [
+  {
+   "taskId": "T-20260917-008",
+   "verdict": "pass",
+   "summary": "Observation report verified: log paths correct",
+   "findings": [],
+   "evidenceFresh": true,
+   "reportRevision": 1,
+   "reportSource": "worker",
+   "requestedVerdict": "pass",
+   "executionId": "planner-scout",
+   "source": "root",
+   "appliedDecision": "accept"
+  }
+ ],
+ "reports": [
+  {
+   "version": 1,
+   "taskId": "T-20260917-008",
+   "status": "completed",
+   "summary": "Located 2 log files under /tmp/planner-only-t07-nongit/logs: logs/app/app.log (content: '2026-09-17 app start') and logs/system/sys.log (content: '2026-09-17 system boot'). The logs/ directory contains two subdirectories (app/, system/), each holding one log file. Also noted a README.txt at the workspace root (out of scope).",
+   "changedFiles": [],
+   "validation": [
+    {
+     "type": "manual",
+     "status": "passed",
+     "summary": "Read both located log files to confirm they exist and contain log content."
+    }
+   ],
+   "evidence": {
+    "cwd": "/tmp/planner-only-t07-nongit",
+    "taskId": "T-20260917-008",
+    "workerRunId": "planner-scout",
+    "changedPaths": []
+   },
+   "risks": [],
+   "unresolved": [],
+   "notes": [
+    "Found log files: logs/app/app.log, logs/system/sys.log",
+    "logs/app/app.log content: '2026-09-17 app start'",
+    "logs/system/sys.log content: '2026-09-17 system boot'",
+    "logs/ contains exactly two subdirectories (app/, system/), each with one .log file; no nested log files beyond these"
+   ]
+  }
+ ],
+ "execution": {
+  "status": "completed",
+  "executionId": "tool_x6KEe8tyPrfIWYBOrC557liQ",
+  "kind": "explorer",
+  "cwd": "/tmp/planner-only-t07-nongit",
+  "worktreeRoots": [
+   "/tmp/planner-only-t07-nongit"
+  ],
+  "aRun": {
+   "cwd": "/tmp/planner-only-t07-nongit",
+   "taskId": "T-20260917-008",
+   "workerRunId": "tool_x6KEe8tyPrfIWYBOrC557liQ",
+   "gitAvailable": false,
+   "probeFailures": [
+    {
+     "operation": "rev-parse --git-dir",
+     "kind": "not-a-git-repository",
+     "cwd": "/tmp/planner-only-t07-nongit",
+     "exitCode": 128,
+     "error": "fatal: not a git repository (or any parent up to mount point /)\nStopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set)."
+    }
+   ],
+   "generatedAt": "2026-09-17T09:43:56.564Z"
+  },
+  "capability": "restricted-reader",
+  "capabilityBasis": "agent 'planner-scout' bound with declared tools [read, grep, find, ls] \u2014 no shell, edit, write, or fan-out entry point",
+  "readOnly": true,
+  "taskId": "T-20260917-008",
+  "endedReason": "normal",
+  "endedAt": "2026-09-17T09:44:09.016Z",
+  "terminationConfirmed": true,
+  "confirmationBasis": "terminal+restricted-reader",
+  "usageComplete": true,
+  "cReport": {
+   "cwd": "/tmp/planner-only-t07-nongit",
+   "taskId": "T-20260917-008",
+   "workerRunId": "a7c8e672-fa52-4144-906e-2036692348c0",
+   "gitAvailable": false,
+   "probeFailures": [
+    {
+     "operation": "rev-parse --git-dir",
+     "kind": "not-a-git-repository",
+     "cwd": "/tmp/planner-only-t07-nongit",
+     "exitCode": 128,
+     "error": "fatal: not a git repository (or any parent up to mount point /)\nStopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set)."
+    }
+   ],
+   "generatedAt": "2026-09-17T09:44:09.010Z"
+  },
+  "cTerminal": {
+   "cwd": "/tmp/planner-only-t07-nongit",
+   "taskId": "T-20260917-008",
+   "workerRunId": "a7c8e672-fa52-4144-906e-2036692348c0",
+   "gitAvailable": false,
+   "probeFailures": [
+    {
+     "operation": "rev-parse --git-dir",
+     "kind": "not-a-git-repository",
+     "cwd": "/tmp/planner-only-t07-nongit",
+     "exitCode": 128,
+     "error": "fatal: not a git repository (or any parent up to mount point /)\nStopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set)."
+    }
+   ],
+   "generatedAt": "2026-09-17T09:44:09.010Z"
+  },
+  "runId": "a7c8e672-fa52-4144-906e-2036692348c0",
+  "truthPaths": [],
+  "executionChangedPaths": [],
+  "committedPaths": [],
+  "observedExternalPaths": [],
+  "undeclaredPaths": [],
+  "outOfScopePaths": [],
+  "extraDeclaredPaths": [],
+  "externalPaths": [],
+  "reportIndex": 0
+ }
+}

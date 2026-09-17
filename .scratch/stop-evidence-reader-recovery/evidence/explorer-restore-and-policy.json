@@ -1,0 +1,45 @@
+{
+  "beforeRestart": {
+    "executionKind": "explorer",
+    "executionReadOnly": true,
+    "executionStatus": "stop_unconfirmed",
+    "writerHold": null,
+    "reservations": []
+  },
+  "restoreResult": {
+    "restored": 1,
+    "corrupt": []
+  },
+  "afterRestart": {
+    "writerHold": {
+      "executionId": "call-explorer-restore",
+      "reason": "stop was in flight (stop_unconfirmed) when the host ended; residual state unsampled",
+      "since": "2026-09-17T06:06:34.151Z"
+    },
+    "reservations": [
+      {
+        "id": "writerhold:call-explorer-restore",
+        "taskId": "T-20260917-001",
+        "role": "worker",
+        "capability": "writer",
+        "workspaces": [
+          "/tmp/planner-restore-nongit-VPXnkG"
+        ],
+        "reservedAt": "2026-09-17T06:06:34.151Z"
+      }
+    ]
+  },
+  "policyIdle": {
+    "git_audit": {
+      "block": false
+    },
+    "read": {
+      "block": true,
+      "reason": "Planner-only guard (idle for gather): the parent process may not call 'read' while no Task is live for this cwd.\nNew gather starts with one Delegation: inspect tools, Git-read, and a general shell are refused so they cannot substitute for it.\nName the skill or lookup in the TaskSpec constraints and let the Worker follow them. Record a Verdict with planner_verdict, inspect Git with git_audit, or ask a question.\n\nTaskSpec repair summary:\n- role: derived role \"explorer\" from the refused read tool\n\nThe repaired TaskSpec is faithful to the submitted intent and can be resubmitted as-is:\n```json\n{\n  \"taskId\": \"T-pending\",\n  \"objective\": \"Describe the requested work for the worker in one or two sentences.\",\n  \"cwd\": \"/public/pi/pi-planner-only\",\n  \"role\": \"explorer\",\n  \"constraints\": [\n    \"Return only a valid WorkerReport JSON object (version, taskId, status, summary, changedFiles, validation, evidence, risks, unresolved) using the canonical Task id from your launch packet; you must not ask Root or supervisor for the taskId. The top-level status must be exactly completed, partial, blocked, or failed. The validation status must be exactly passed, failed, or not-run. Your final message must contain only the WorkerReport JSON.\"\n  ],\n  \"validation\": {\n    \"required\": false\n  }\n}\n```"
+    },
+    "grep": {
+      "block": true,
+      "reason": "Planner-only guard (idle for gather): the parent process may not call 'grep' while no Task is live for this cwd.\nNew gather starts with one Delegation: inspect tools, Git-read, and a general shell are refused so they cannot substitute for it.\nName the skill or lookup in the TaskSpec constraints and let the Worker follow them. Record a Verdict with planner_verdict, inspect Git with git_audit, or ask a question.\n\nTaskSpec repair summary:\n- role: derived role \"explorer\" from the refused grep tool\n\nThe repaired TaskSpec is faithful to the submitted intent and can be resubmitted as-is:\n```json\n{\n  \"taskId\": \"T-pending\",\n  \"objective\": \"Describe the requested work for the worker in one or two sentences.\",\n  \"cwd\": \"/public/pi/pi-planner-only\",\n  \"role\": \"explorer\",\n  \"constraints\": [\n    \"Return only a valid WorkerReport JSON object (version, taskId, status, summary, changedFiles, validation, evidence, risks, unresolved) using the canonical Task id from your launch packet; you must not ask Root or supervisor for the taskId. The top-level status must be exactly completed, partial, blocked, or failed. The validation status must be exactly passed, failed, or not-run. Your final message must contain only the WorkerReport JSON.\"\n  ],\n  \"validation\": {\n    \"required\": false\n  }\n}\n```"
+    }
+  }
+}

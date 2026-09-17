@@ -19,6 +19,8 @@ import type {
 	BinaryChange,
 	DiffCheckResult,
 	EvidenceRef,
+	GitProbeFailure,
+	GitProbeFailureKind,
 	ReviewEvidencePacket,
 	ReviewRoundAttribution,
 	TaskScope,
@@ -27,6 +29,81 @@ import type {
 } from "./types.ts";
 
 export type { GitRunner };
+
+/**
+ * Ticket 01 — bound + mask a captured Git error before it reaches a durable
+ * record or a tool result. Credentials in URLs, auth headers, and key=value
+ * secrets are replaced before truncation so the persisted text never carries
+ * the raw secret (not even inside a truncated tail).
+ */
+const MAX_PROBE_ERROR_CHARS = 400;
+
+export function maskProbeErrorText(text: string): { error?: string; truncated?: boolean } {
+	const trimmed = text.trimEnd();
+	if (!trimmed) return {};
+	const masked = trimmed
+		.replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s/]+@/gi, "$1***@")
+		.replace(/((?:token|passwd|password|secret|api[-_]?key|authorization)\s*[:=]\s*)\S+/gi, "$1***")
+		.replace(/bearer\s+\S+/gi, "Bearer ***");
+	return masked.length <= MAX_PROBE_ERROR_CHARS
+		? { error: masked }
+		: { error: `${masked.slice(0, MAX_PROBE_ERROR_CHARS)}…`, truncated: true };
+}
+
+function probeFailure(
+	operation: string,
+	cwd: string,
+	kind: GitProbeFailureKind,
+	detail: { exitCode?: number; killed?: boolean; startupFailed?: boolean; error?: string },
+): GitProbeFailure {
+	const bounded = detail.error === undefined ? {} : maskProbeErrorText(detail.error);
+	return {
+		operation,
+		kind,
+		cwd,
+		...(detail.exitCode !== undefined ? { exitCode: detail.exitCode } : {}),
+		...(detail.killed === true ? { killed: true } : {}),
+		...(detail.startupFailed === true ? { startupFailed: true } : {}),
+		...bounded,
+	};
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Ticket 01 — classify one failed fixed-argv Git call from its actual result.
+ * `killed` means the host terminated it (the runner's timeout) — that is the
+ * only kill source in this path, so it reads as a timeout. A non-zero exit is
+ * `not-a-git-repository` only when stderr says so; every other exit stays
+ * `probe-error` instead of being guessed from the code. A thrown runner means
+ * the command never produced a result.
+ */
+function classifyProbeResult(
+	operation: string,
+	cwd: string,
+	result: { stdout: string; stderr?: string; code: number; killed?: boolean },
+	options: { statusProbe?: boolean } = {},
+): GitProbeFailure {
+	const text = `${result.stderr ?? ""}\n${result.stdout ?? ""}`.trim();
+	const detail = {
+		exitCode: result.code,
+		...(result.killed === true ? { killed: true } : {}),
+		...(text ? { error: text } : {}),
+	};
+	if (result.killed === true) return probeFailure(operation, cwd, "probe-timed-out", detail);
+	if (options.statusProbe === true) return probeFailure(operation, cwd, "status-probe-failed", detail);
+	if (/not a git repository/i.test(text)) return probeFailure(operation, cwd, "not-a-git-repository", detail);
+	return probeFailure(operation, cwd, "probe-error", detail);
+}
+
+function classifyProbeThrow(operation: string, cwd: string, error: unknown): GitProbeFailure {
+	return probeFailure(operation, cwd, "git-startup-failed", {
+		startupFailed: true,
+		error: errorMessage(error),
+	});
+}
 
 export interface GitProbe {
 	available: boolean;
@@ -41,6 +118,8 @@ export interface GitProbe {
 	statusFailed: boolean;
 	/** Repository top-level this probe resolved; porcelain paths hang off it. */
 	repoRoot: string | null;
+	/** Ticket 01 — every fixed operation that failed during this probe, in order. */
+	failures: GitProbeFailure[];
 }
 
 const MAX_DIFF_STAT_CHARS = 2000;
@@ -230,7 +309,7 @@ export function untrackedPathsOf(sample: EvidenceRef): readonly string[] {
 	return untrackedPathsBySample.get(sample) ?? [];
 }
 
-function unavailableProbe(): GitProbe {
+function unavailableProbe(failures: GitProbeFailure[] = []): GitProbe {
 	return {
 		available: false,
 		head: null,
@@ -241,19 +320,23 @@ function unavailableProbe(): GitProbe {
 		diffStat: null,
 		statusFailed: false,
 		repoRoot: null,
+		failures,
 	};
 }
 
 export async function probeGit(run: GitRunner, cwd: string): Promise<GitProbe> {
-	const empty = unavailableProbe();
+	const failures: GitProbeFailure[] = [];
+	const gitDirOp = GIT_READ_ARGV.gitDir.join(" ");
 
-	let gitDir: { stdout: string; code: number };
+	let gitDir: { stdout: string; stderr?: string; code: number; killed?: boolean };
 	try {
 		gitDir = await run([...GIT_READ_ARGV.gitDir], cwd);
-	} catch {
-		return empty;
+	} catch (error) {
+		return unavailableProbe([classifyProbeThrow(gitDirOp, cwd, error)]);
 	}
-	if (gitDir.code !== 0) return empty;
+	if (gitDir.code !== 0) {
+		return unavailableProbe([classifyProbeResult(gitDirOp, cwd, gitDir)]);
+	}
 
 	// Best-effort: older hosts and non-repo fixtures answer with an error or
 	// empty output; callers then fall back to `cwd` for path normalization.
@@ -261,16 +344,36 @@ export async function probeGit(run: GitRunner, cwd: string): Promise<GitProbe> {
 	try {
 		const top = await run([...GIT_READ_ARGV.topLevel], cwd);
 		if (top.code === 0 && top.stdout.trim()) repoRoot = top.stdout.trim();
-	} catch {
+		else failures.push(classifyProbeResult(GIT_READ_ARGV.topLevel.join(" "), cwd, top));
+	} catch (error) {
+		failures.push(classifyProbeThrow(GIT_READ_ARGV.topLevel.join(" "), cwd, error));
 		repoRoot = null;
 	}
 
-	const head = await run([...GIT_READ_ARGV.head], cwd);
-	const status = await run([...GIT_READ_ARGV.status], cwd);
-	const diffStat = await run([...GIT_READ_ARGV.evidenceDiffStat], cwd);
+	const head = await run([...GIT_READ_ARGV.head], cwd).catch((error: unknown) => {
+		failures.push(classifyProbeThrow(GIT_READ_ARGV.head.join(" "), cwd, error));
+		return { stdout: "", code: -1 };
+	});
+	if (head.code !== 0 && !failures.some((failure) => failure.operation === GIT_READ_ARGV.head.join(" "))) {
+		failures.push(classifyProbeResult(GIT_READ_ARGV.head.join(" "), cwd, head));
+	}
+	const status = await run([...GIT_READ_ARGV.status], cwd).catch((error: unknown) => {
+		failures.push(classifyProbeThrow(GIT_READ_ARGV.status.join(" "), cwd, error));
+		return { stdout: "", code: -1 };
+	});
+	const diffStat = await run([...GIT_READ_ARGV.evidenceDiffStat], cwd).catch((error: unknown) => {
+		failures.push(classifyProbeThrow(GIT_READ_ARGV.evidenceDiffStat.join(" "), cwd, error));
+		return { stdout: "", code: -1 };
+	});
 	// A failed status probe must not be folded into an empty (clean) tree:
 	// empty output is only a valid result when the command succeeded (FR-02).
 	const statusFailed = status.code !== 0;
+	if (statusFailed && !failures.some((failure) => failure.operation === GIT_READ_ARGV.status.join(" "))) {
+		failures.push(classifyProbeResult(GIT_READ_ARGV.status.join(" "), cwd, status, { statusProbe: true }));
+	}
+	if (diffStat.code !== 0 && !failures.some((failure) => failure.operation === GIT_READ_ARGV.evidenceDiffStat.join(" "))) {
+		failures.push(classifyProbeResult(GIT_READ_ARGV.evidenceDiffStat.join(" "), cwd, diffStat));
+	}
 	const porcelain = statusFailed ? null : status.stdout;
 
 	return {
@@ -286,6 +389,7 @@ export async function probeGit(run: GitRunner, cwd: string): Promise<GitProbe> {
 				: null,
 		statusFailed,
 		repoRoot,
+		failures,
 	};
 }
 
@@ -390,6 +494,7 @@ async function hashDirtyPathsWithGap(
 	run: GitRunner,
 	cwd: string,
 	paths: readonly string[],
+	failures?: GitProbeFailure[],
 ): Promise<HashPathsResult> {
 	if (paths.length === 0) return { ok: true, hashes: undefined };
 	if (paths.length > MAX_BASELINE_HASH_PATHS) {
@@ -410,10 +515,11 @@ async function hashDirtyPathsWithGap(
 		else hashes[path] = null;
 	}
 	if (hashable.length > 0) {
-		let result: { stdout: string; code: number };
+		let result: { stdout: string; stderr?: string; code: number; killed?: boolean };
 		try {
 			result = await run([...GIT_READ_ARGV.hashObject, ...hashable], cwd);
-		} catch {
+		} catch (error) {
+			failures?.push(classifyProbeThrow(`${GIT_READ_ARGV.hashObject[0]} -- <${paths.length} paths>`, cwd, error));
 			return {
 				ok: false,
 				gap: {
@@ -424,6 +530,13 @@ async function hashDirtyPathsWithGap(
 		}
 		const lines = result.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
 		if (result.code !== 0 || lines.length !== hashable.length) {
+			failures?.push(
+				result.code !== 0
+					? classifyProbeResult(`${GIT_READ_ARGV.hashObject[0]} -- <${paths.length} paths>`, cwd, result)
+					: probeFailure(`${GIT_READ_ARGV.hashObject[0]} -- <${paths.length} paths>`, cwd, "probe-error", {
+						error: `hash-object returned ${lines.length} hashes for ${hashable.length} paths`,
+					}),
+			);
 			return {
 				ok: false,
 				gap: {
@@ -464,15 +577,19 @@ async function diffNamesBetweenRefs(
 	cwd: string,
 	baseGitRef: string,
 	head: string,
+	failures?: GitProbeFailure[],
 ): Promise<string[] | undefined> {
 	if (!GIT_REF_PATTERN.test(baseGitRef) || !GIT_REF_PATTERN.test(head)) return undefined;
 	if (baseGitRef === head) return [];
-	let result: { stdout: string; code: number };
+	const operation = `${GIT_READ_ARGV.diffNamesBetween.join(" ")} ${baseGitRef} ${head}`;
+	let result: { stdout: string; stderr?: string; code: number; killed?: boolean };
 	try {
 		result = await run([...GIT_READ_ARGV.diffNamesBetween, baseGitRef, head], cwd);
-	} catch {
+	} catch (error) {
+		failures?.push(classifyProbeThrow(operation, cwd, error));
 		return undefined;
 	}
+	if (result.code !== 0) failures?.push(classifyProbeResult(operation, cwd, result));
 	return result.code === 0 ? parseDiffNames(result.stdout) : undefined;
 }
 
@@ -520,6 +637,7 @@ async function fileLevelProbe(
 	run: GitRunner,
 	cwd: string,
 	probe: GitProbe,
+	failures?: GitProbeFailure[],
 ): Promise<{ changedPaths: string[]; untrackedPaths: string[] }> {
 	const keep = () => ({ changedPaths: probe.changedPaths, untrackedPaths: probe.untrackedPaths });
 	const collapsed =
@@ -528,7 +646,10 @@ async function fileLevelProbe(
 	if (!collapsed) return keep();
 	try {
 		const result = await run([...GIT_READ_ARGV.statusAll], cwd);
-		if (result.code !== 0) return keep();
+		if (result.code !== 0) {
+			failures?.push(classifyProbeResult(GIT_READ_ARGV.statusAll.join(" "), cwd, result, { statusProbe: true }));
+			return keep();
+		}
 		// The re-probe must replace the collapsed view as a PAIR: expanding only
 		// changedPaths would leave the paired untracked set collapsed and break
 		// the ticket-20 "untracked && outside allow-list -> external" rule.
@@ -539,7 +660,8 @@ async function fileLevelProbe(
 			changedPaths: changedPaths.length > 0 ? changedPaths : probe.changedPaths,
 			untrackedPaths: untrackedPaths.length > 0 ? untrackedPaths : probe.untrackedPaths,
 		};
-	} catch {
+	} catch (error) {
+		failures?.push(classifyProbeThrow(GIT_READ_ARGV.statusAll.join(" "), cwd, error));
 		return keep();
 	}
 }
@@ -560,12 +682,24 @@ export async function captureEvidence(
 	let probe: GitProbe;
 	try {
 		probe = await probeGit(run, cwd);
-	} catch {
-		probe = unavailableProbe();
+	} catch (error) {
+		probe = unavailableProbe([classifyProbeThrow("probe", cwd, error)]);
 	}
 
+	// Ticket 01 — every operation failure observed while building this sample,
+	// in order. The first entry is the repo probe's own failure list; later
+	// helpers append theirs (hash-object, diff --name-only, extra roots).
+	const probeFailures: GitProbeFailure[] = [...probe.failures];
+
 	if (!probe.available) {
-		return { cwd, taskId: options.taskId, workerRunId: options.workerRunId, gitAvailable: false, generatedAt };
+		return {
+			cwd,
+			taskId: options.taskId,
+			workerRunId: options.workerRunId,
+			gitAvailable: false,
+			...(probeFailures.length ? { probeFailures } : {}),
+			generatedAt,
+		};
 	}
 
 	// RF-1 — every sample (A and C) hashes its own dirty paths so compareEvidence
@@ -573,17 +707,17 @@ export async function captureEvidence(
 	// D1 — collapsed untracked directories are expanded to file level first so a
 	// declared file inside one is hashable and attributable.
 	// Ticket 11 — content snapshot/hash is restricted to task scope (allowedPaths ∪ truthPaths).
-	const expanded = await fileLevelProbe(run, cwd, probe);
+	const expanded = await fileLevelProbe(run, cwd, probe, probeFailures);
 	const expandedScope = options.scopePaths ? expandScopeToExistingFiles(cwd, options.scopePaths) : undefined;
 	const candidateDirtyPaths = options.scopePaths
 		? expanded.changedPaths.filter((p) => isPathInScope(p, cwd, options.scopePaths, expandedScope))
 		: expanded.changedPaths;
-	const hashResult = await hashDirtyPathsWithGap(run, cwd, candidateDirtyPaths);
+	const hashResult = await hashDirtyPathsWithGap(run, cwd, candidateDirtyPaths, probeFailures);
 	const dirtyPathHashes = hashResult.hashes;
 	let snapshotGap = hashResult.gap;
 	// RF-1 — only the C sample carries a baseGitRef to diff against (T2).
 	const committedPaths = options.baseGitRef && probe.head
-		? await diffNamesBetweenRefs(run, cwd, options.baseGitRef, probe.head)
+		? await diffNamesBetweenRefs(run, cwd, options.baseGitRef, probe.head, probeFailures)
 		: undefined;
 
 	const mergedChanged = [...expanded.changedPaths];
@@ -605,29 +739,32 @@ export async function captureEvidence(
 		let extra: GitProbe;
 		try {
 			extra = await probeGit(run, root);
-		} catch {
-			extra = unavailableProbe();
+		} catch (error) {
+			extra = unavailableProbe([classifyProbeThrow("probe", root, error)]);
 		}
+		probeFailures.push(...extra.failures);
 		if (!extra.available) {
 			unavailableRoots.push(root);
 			continue;
 		}
 		if (extra.statusFailed) statusFailed = true;
 		if (extra.statusPorcelain !== null) porcelainParts.push(extra.statusPorcelain);
-		const extraExpanded = await fileLevelProbe(run, root, extra);
+		const extraExpanded = await fileLevelProbe(run, root, extra, probeFailures);
 		const absChanged = absolutizePaths(root, extraExpanded.changedPaths);
 		const absUntracked = absolutizePaths(root, extraExpanded.untrackedPaths);
 		mergedChanged.push(...absChanged);
 		mergedUntracked.push(...absUntracked);
-		const extraHashes = await hashDirtyPaths(run, root, extraExpanded.changedPaths);
-		if (extraHashes) {
+		const extraHashes = await hashDirtyPathsWithGap(run, root, extraExpanded.changedPaths, probeFailures);
+		if (extraHashes.hashes) {
 			hasDirty = true;
-			for (const [rel, hash] of Object.entries(extraHashes)) {
+			for (const [rel, hash] of Object.entries(extraHashes.hashes)) {
 				mergedDirty[isAbsolute(rel) ? resolve(rel) : resolve(root, rel)] = hash;
 			}
+		} else if (extraHashes.gap && !snapshotGap) {
+			snapshotGap = extraHashes.gap;
 		}
 		if (options.baseGitRef && extra.head) {
-			const extraCommitted = await diffNamesBetweenRefs(run, root, options.baseGitRef, extra.head);
+			const extraCommitted = await diffNamesBetweenRefs(run, root, options.baseGitRef, extra.head, probeFailures);
 			if (extraCommitted) {
 				hasCommitted = true;
 				mergedCommitted.push(...absolutizePaths(root, extraCommitted));
@@ -662,6 +799,7 @@ export async function captureEvidence(
 		...(committedMerged ? { committedPaths: committedMerged } : {}),
 		...(diffStat ? { diffStat } : {}),
 		gitAvailable: true,
+		...(probeFailures.length ? { probeFailures } : {}),
 		generatedAt,
 	};
 	untrackedPathsBySample.set(sample, untrackedPaths);
@@ -741,12 +879,15 @@ export async function captureReviewEvidencePacket(
 	let probe: GitProbe;
 	try {
 		probe = await probeGit(run, target);
-	} catch {
-		probe = unavailableProbe();
+	} catch (error) {
+		probe = unavailableProbe([classifyProbeThrow("probe", target, error)]);
 	}
+	const probeFailures: GitProbeFailure[] = [...probe.failures];
 
 	const attribution = attributionFields(comparison);
-	if (!probe.available) return { gitAvailable: false, ...attribution };
+	if (!probe.available) {
+		return { gitAvailable: false, ...(probeFailures.length ? { probeFailures } : {}), ...attribution };
+	}
 
 	const diffChecks: RootDiffCheck[] = [
 		{ root: undefined, result: await boundedDiffCheck(run, target, GIT_READ_ARGV.diffCheck) },
@@ -767,9 +908,10 @@ export async function captureReviewEvidencePacket(
 		let extra: GitProbe;
 		try {
 			extra = await probeGit(run, root);
-		} catch {
-			extra = unavailableProbe();
+		} catch (error) {
+			extra = unavailableProbe([classifyProbeThrow("probe", root, error)]);
 		}
+		probeFailures.push(...extra.failures);
 		if (!extra.available || extra.statusFailed) {
 			unavailableRoots.push(root);
 			continue;
@@ -794,6 +936,7 @@ export async function captureReviewEvidencePacket(
 
 	return {
 		gitAvailable: true,
+		...(probeFailures.length ? { probeFailures } : {}),
 		...(probe.head ? { head: probe.head } : {}),
 		...(additionalRoots.length ? { worktreeRoots: additionalRoots } : {}),
 		...(status ? { status } : {}),
@@ -1212,7 +1355,7 @@ export function compareEvidence(
 	const baseGit = base.gitAvailable !== false;
 	const currentGit = current.gitAvailable !== false;
 	let verifiable = baseGit && currentGit;
-	if (!verifiable) reasons.push("git evidence unavailable — freshness cannot be verified");
+	if (!verifiable) reasons.push(probeFailureReason([base, current], "git evidence unavailable — freshness cannot be verified"));
 	// FR-02 — a failed status probe means the workspace state is unknown, never
 	// an implicitly clean tree.
 	if (base.statusProbeFailed || current.statusProbeFailed) {
@@ -1501,7 +1644,7 @@ export function compareExecutionTruth(
 ): ExecutionTruthComparison {
 	const reasons: string[] = [];
 	let verifiable = aRun.gitAvailable !== false && cReport.gitAvailable !== false;
-	if (!verifiable) reasons.push("git evidence unavailable — execution window cannot be verified");
+	if (!verifiable) reasons.push(probeFailureReason([aRun, cReport], "git evidence unavailable — execution window cannot be verified"));
 	if (aRun.statusProbeFailed || cReport.statusProbeFailed) {
 		verifiable = false;
 		reasons.push("git status probe failed — workspace state unknown");
@@ -1784,7 +1927,7 @@ export function compareFreshness(
 	const reasons: string[] = [];
 	const driftPaths = new Set<string>();
 	let verifiable = cReport.gitAvailable !== false && cNow.gitAvailable !== false;
-	if (!verifiable) reasons.push("git evidence unavailable — freshness cannot be verified");
+	if (!verifiable) reasons.push(probeFailureReason([cReport, cNow], "git evidence unavailable — freshness cannot be verified"));
 	if (cReport.statusProbeFailed || cNow.statusProbeFailed) {
 		verifiable = false;
 		reasons.push("git status probe failed — workspace state unknown");
@@ -1895,6 +2038,48 @@ export function workspaceSummaryDigest(report: WorkerReport): string {
  * drift requires fresh validation; purely out-of-scope drift may continue to
  * review.
  */
+/**
+ * Ticket 01 — the recorded probe failures of the given samples folded into
+ * a reason string; samples from older ledgers keep the bare reason.
+ */
+function probeFailureReason(samples: readonly EvidenceRef[], reason: string): string {
+	const failures = samples.flatMap((sample) => sample.probeFailures ?? []);
+	return failures.length > 0 ? `${reason}: ${describeProbeFailures(failures)}` : reason;
+}
+
+/**
+ * Ticket 01 — one-line rendering of recorded probe failures for tool text
+ * and diagnostics. Samples without recorded failures render "not recorded" —
+ * older ledgers never get reconstructed detail.
+ */
+export function describeProbeFailures(failures: readonly GitProbeFailure[] | undefined): string {
+	if (!failures?.length) return "not recorded";
+	return failures
+		.map((failure) => {
+			const flags = [
+				failure.exitCode !== undefined ? `exit=${failure.exitCode}` : undefined,
+				failure.killed === true ? "killed" : undefined,
+				failure.startupFailed === true ? "startup" : undefined,
+			].filter((flag) => flag !== undefined).join(",");
+			return `${failure.operation} @ ${failure.cwd}: ${failure.kind}${flags ? ` (${flags})` : ""}${failure.error ? ` — ${failure.error}` : ""}`;
+		})
+		.join("; ");
+}
+
+/**
+ * E02 — whether the environment itself made these samples unverifiable:
+ * Git unavailable, status probe failed, or a declared root unreadable.
+ * Structured, so the retry classification never matches on reason text.
+ * Shared by the delegation boundary and the acceptance boundary.
+ */
+export function environmentFailureOf(...samples: readonly EvidenceRef[]): boolean {
+	return samples.some((sample) =>
+		sample.gitAvailable === false
+		|| sample.statusProbeFailed === true
+		|| (sample.unavailableWorktreeRoots?.length ?? 0) > 0,
+	);
+}
+
 export function evidenceAction(comparison: EvidenceComparison): "review" | "revalidate" {
 	if (!comparison.verifiable) return "revalidate";
 	if (comparison.fresh) return "review";

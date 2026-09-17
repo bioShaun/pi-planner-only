@@ -158,6 +158,44 @@ export interface SnapshotGap {
 	paths: string[];
 }
 
+/**
+ * Ticket 01 — the classified reason one fixed Git operation could not be
+ * sampled. Classification is evidence-based: a kind is only named when the
+ * command result supports it (stderr text, killed flag, a thrown runner);
+ * an ambiguous non-zero exit stays `probe-error` rather than being guessed
+ * from the code alone.
+ */
+export type GitProbeFailureKind =
+	/** stderr evidence that cwd is not inside a Git worktree. */
+	| "not-a-git-repository"
+	/** The runner threw before Git produced a result (spawn/exec failure). */
+	| "git-startup-failed"
+	/** The status probe itself returned non-zero — workspace state unknown. */
+	| "status-probe-failed"
+	/** The host killed the command (timeout/abort), not a normal exit. */
+	| "probe-timed-out"
+	/** Git ran (or threw) but the failure cannot be reliably classified. */
+	| "probe-error";
+
+/** One bounded, credential-masked Git probe failure observation. */
+export interface GitProbeFailure {
+	/** The fixed Git operation that failed (e.g. "rev-parse --git-dir"). */
+	operation: string;
+	kind: GitProbeFailureKind;
+	/** The directory the operation ran in — names extra worktree roots. */
+	cwd: string;
+	/** Exit code when Git ran and returned one. */
+	exitCode?: number;
+	/** True when the host killed the command rather than it exiting. */
+	killed?: boolean;
+	/** True when the runner threw before a result existed. */
+	startupFailed?: boolean;
+	/** Bounded, masked error summary (stderr or thrown message). */
+	error?: string;
+	/** True when `error` was shortened to fit the bound. */
+	truncated?: boolean;
+}
+
 export interface EvidenceRef {
 	cwd: string;
 	taskId: string;
@@ -193,6 +231,12 @@ export interface EvidenceRef {
 	repoRoot?: string;
 	diffStat?: string;
 	gitAvailable?: boolean;
+	/**
+	 * Ticket 01 — per-operation Git probe failures observed while taking this
+	 * sample. Absent on clean samples and on pre-T01 ledgers; readers render
+	 * those as "not recorded", never fabricate output.
+	 */
+	probeFailures?: GitProbeFailure[];
 	generatedAt: string;
 }
 
@@ -220,6 +264,15 @@ export type ExecutionLifecycleStatus =
 	| "stopped"
 	| "completed"
 	| "failed";
+
+/**
+ * Ticket 02 — the trusted mutation capability of one execution, classified at
+ * launch time from the plugin-controlled agent binding — never from the
+ * Task's role or a model's self-report. `restricted-reader` means the bound
+ * agent's tool surface provably excludes shell/edit/write; `unknown` is the
+ * conservative class for records that predate the field or carry no proof.
+ */
+export type ExecutionCapability = "writer" | "restricted-reader" | "unknown";
 
 /** WRC P0-A (spec §2) — why an execution ended. An observed reason, not a diagnosis. */
 export type ExecutionEndedReason =
@@ -328,6 +381,30 @@ export interface TaskExecutionRecord {
 	/** P0-B — which envelope bound tripped, with the observed value. */
 	runawayObservation?: RunawayObservation;
 	/**
+	 * Ticket 02 — the launch-time trusted capability of this execution
+	 * (see `ExecutionCapability`). Absent on pre-T02 ledgers: readers treat a
+	 * missing value as `unknown`, never as reader.
+	 */
+	capability?: ExecutionCapability;
+	/** Why this capability classification holds (e.g. the bound agent's tool list). */
+	capabilityBasis?: string;
+	/**
+	 * Ticket 01 — the quiescence stop samples in the order taken (first,
+	 * second). Kept so a failed first sample is never overwritten by a clean
+	 * second one; `interimSample` stays the latest for compatibility.
+	 */
+	stopSamples?: EvidenceRef[];
+	/**
+	 * Ticket 05 — a launcher-validated report received on a terminal that was
+	 * never admitted to the report sequence (stop unconfirmed, evidence
+	 * refusal, or a non-completed terminal). Diagnostic material only: it
+	 * binds taskId/executionId/runId, creates no report revision, and never
+	 * advances review.
+	 */
+	unacceptedReport?: WorkerReport;
+	/** Why `unacceptedReport` was not admitted. */
+	unacceptedReportReason?: string;
+	/**
 	 * A `completed` report that arrived after a cancel was already requested
 	 * (spec §3 race): collected as evidence, never advances review.
 	 */
@@ -416,6 +493,16 @@ export interface TaskFinding {
 	resolvedBy?: string;
 }
 
+/**
+ * Ticket 03 — how a Task's result is accepted. `worktree` keeps the existing
+ * Git-evidence acceptance contract. `observation` authorizes a read-only
+ * informational delivery: Git-change verification is excluded from the
+ * completion condition, while the report's identity, schema, and declared
+ * acceptance inputs are still checked. It never asserts that code changes
+ * were verified. Root picks the mode at creation; it is immutable thereafter.
+ */
+export type AcceptanceMode = "worktree" | "observation";
+
 /** A pre-located evidence fragment supplied to a Worker in its TaskSpec. */
 export interface ContextPackEntry {
 	path: string;
@@ -436,6 +523,14 @@ export interface TaskSpec {
 	validation: TaskValidation;
 	expectedEvidence: ExpectedEvidence;
 	stopConditions: string[];
+	/**
+	 * Ticket 03 — acceptance contract for this Task, chosen by Root at
+	 * creation and immutable thereafter. `worktree` (the default, and the
+	 * interpretation of a missing field on older ledgers) requires the Git
+	 * evidence acceptance path; `observation` is only admissible on
+	 * role=explorer Tasks whose execution is a proven restricted reader.
+	 */
+	acceptanceMode?: AcceptanceMode;
 	parentEvidenceRef?: EvidenceRef;
 	/**
 	 * Extra linked Git worktree roots Root must sample for evidence
@@ -558,6 +653,8 @@ export interface ReviewRoundAttribution {
  */
 export interface ReviewEvidencePacket {
 	gitAvailable: boolean;
+	/** Ticket 01 — per-operation probe failures observed while taking this packet. */
+	probeFailures?: GitProbeFailure[];
 	head?: string;
 	/** Declared additional worktree roots sampled into this packet (absolute). */
 	worktreeRoots?: string[];
@@ -637,6 +734,7 @@ export type RootVerdictRefusalKind =
 	| "strict-zero-paths"
 	| "child-pending"
 	| "attribution-gap-unlock-refused"   // strict fresh mode has 0 evidence attribution paths
+	| "observation-inadmissible"       // an observation-acceptance gate failed (report/execution/declared-evidence)
 	| "recovery-invalid";              // the RecoveryDecision failed validateRecoveryDecision (planner_abort / redelegate gate)
 
 /** Structured refusal of a Root verdict request: typed kind plus prose for display. */
@@ -704,6 +802,26 @@ export const TERMINAL_TASK_STATES: readonly TaskState[] = ["completed", "closed-
 
 export function isTerminalTaskState(state: TaskState): boolean {
 	return TERMINAL_TASK_STATES.includes(state);
+}
+
+/**
+ * Ticket 02 — restore/gather-time predicate: does this recorded execution
+ * require writer isolation? Only a launch-time proven restricted reader is
+ * exempt; a missing field (pre-T02 ledgers) is `unknown` and conservative —
+ * `readOnly` and the role name never confer the exemption.
+ */
+export function executionNeedsWriterIsolation(execution: {
+	capability?: ExecutionCapability;
+}): boolean {
+	return execution.capability !== "restricted-reader";
+}
+
+/**
+ * Ticket 03 — a Task's persisted acceptance contract. A missing field on
+ * pre-T03 ledgers means `worktree`; nothing else may produce `observation`.
+ */
+export function acceptanceModeOf(task: { spec?: { acceptanceMode?: AcceptanceMode } }): AcceptanceMode {
+	return task.spec?.acceptanceMode ?? "worktree";
 }
 
 export function isFinalTaskState(state: TaskState): boolean {

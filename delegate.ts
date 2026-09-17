@@ -33,7 +33,7 @@ import {
 } from "./subagent-delegation-contract.ts";
 import type { GitRunner } from "./git-audit.ts";
 import type { ConcurrencyController, ConcurrencyReservation } from "./concurrency.ts";
-import { captureEvidence, captureReviewEvidencePacket, compareEvidence, compareExecutionTruth, describeComparison } from "./evidence.ts";
+import { captureEvidence, captureReviewEvidencePacket, compareEvidence, compareExecutionTruth, describeComparison, describeProbeFailures, environmentFailureOf } from "./evidence.ts";
 import type { ExecutionTruthComparison } from "./evidence.ts";
 import { buildTaskPacket, ROLE_AGENTS } from "./roles.ts";
 import { createTaskSpec, normalizeWorkspaceIdentity } from "./task.ts";
@@ -55,15 +55,17 @@ import {
 import type { FreshReviewerTaskInput, ReviewDecision } from "./review.ts";
 import { childUsageFromValue } from "./usage.ts";
 import type { UsageLedger } from "./usage.ts";
-import { isFinalTaskState, isTerminalTaskState } from "./types.ts";
+import { acceptanceModeOf, isFinalTaskState, isTerminalTaskState } from "./types.ts";
 import type {
 	DelegationKind,
 	EvidenceRef,
+	ExecutionCapability,
 	ExecutionEndedReason,
 	ExecutionEnvelope,
 	ExecutionLifecycleStatus,
 	FindingCategory,
 	FindingSeverity,
+	GitProbeFailure,
 	RecoveryDecision,
 	ReviewResult,
 	ReviewVerdict,
@@ -99,6 +101,85 @@ const TERMINAL_ENDED_REASON: Record<string, ExecutionEndedReason> = {
 /** P0-A default quiescence wait after an identity-matched terminal (spec §3). */
 export const DEFAULT_QUIESCENCE_WAIT_MS = 10_000;
 const DEFAULT_QUIESCENCE_SAMPLE_GAP_MS = 250;
+
+/**
+ * Ticket 02 — the plugin-owned restricted reader. Builtin `scout` declares
+ * bash+write, so it can never prove read-only behavior; the trusted binding
+ * is this runtime-registered agent whose declared tool list is the entire
+ * proof — every mutation entry point is absent by construction. index.ts
+ * registers it with pi-subagents at session start and only supplies
+ * `restrictedReaderAgent` on `DelegationDeps` when registration succeeded.
+ */
+export const RESTRICTED_READER_AGENT = "planner-scout";
+
+/** The declared tool allowlist — the capability proof itself. */
+export const RESTRICTED_READER_TOOLS = ["read", "grep", "find", "ls"] as const;
+
+/** The agent definition index.ts hands to the runtime-agent registry. */
+export const RESTRICTED_READER_DEFINITION = {
+	description: "Planner-only read-only Explorer: inspects the workspace and reports findings; cannot modify anything",
+	systemPromptMode: "replace" as const,
+	inheritProjectContext: true,
+	inheritSkills: false,
+	tools: [...RESTRICTED_READER_TOOLS],
+	systemPrompt: [
+		"You are a read-only observation subagent running inside pi.",
+		"You may ONLY use read, grep, find, and ls. You have no shell, no edit, no write, and no sub-agent tool.",
+		"Inspect the workspace, gather the requested information, and return your findings in the structured result.",
+		"Never modify, create, or delete anything. If the task requires changes, report that requirement instead of attempting it.",
+	].join("\n"),
+};
+
+/**
+ * Ticket 02 — the single capability classifier. One decision feeds launch
+ * admission, stop confirmation, cancellation, persistence, and restore, so
+ * no path can disagree about what an execution could have mutated.
+ *
+ * Only the plugin-owned restricted binding earns `restricted-reader`: the
+ * classification never consults the Task's role text, the model's
+ * self-report, or a `readOnly` flag — a shell-capable Validator stays a
+ * writer even though its execution is recorded readOnly.
+ */
+function classifyExecutionCapability(
+	role: DelegationKind,
+	restrictedReaderAgent: string | undefined,
+): { capability: ExecutionCapability; basis: string; agent?: string } {
+	if (role === "explorer") {
+		if (restrictedReaderAgent === undefined) {
+			return {
+				capability: "unknown",
+				basis: "no trusted restricted-reader binding is registered in this host",
+			};
+		}
+		return {
+			capability: "restricted-reader",
+			basis: `agent '${restrictedReaderAgent}' bound with declared tools [${RESTRICTED_READER_TOOLS.join(", ")}] — no shell, edit, write, or fan-out entry point`,
+			agent: restrictedReaderAgent,
+		};
+	}
+	// worker and validator children keep their full tool surface; the
+	// reviewer fork holds no execution at all, so this arm is defensive.
+	return {
+		capability: "writer",
+		basis: role === "validator"
+			? "validator oracle may execute validation commands; writer isolation applies"
+			: "child retains shell/edit/write tools; writer isolation applies",
+	};
+}
+
+/**
+ * Ticket 04 — can the captured A_run support a writer's evidence contract?
+ * Only a sample that is itself provably unusable refuses: git unavailable,
+ * the status probe failed, a declared root unreadable, or the content
+ * snapshot incomplete. An ambiguous-but-usable sample (e.g. unborn HEAD on a
+ * fresh repo) still launches — the existing comparison judges it.
+ */
+export function writerEvidenceAdmissible(sample: EvidenceRef): boolean {
+	return sample.gitAvailable !== false
+		&& sample.statusProbeFailed !== true
+		&& (sample.unavailableWorktreeRoots?.length ?? 0) === 0
+		&& sample.snapshotGap === undefined;
+}
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -219,6 +300,11 @@ const DELEGATION_SPEC_PARAMETERS = {
 			description: "Extra prose passed down to the child verbatim. Never read back.",
 		}),
 	),
+	acceptanceMode: Type.Optional(
+		Type.Union([Type.Literal("worktree"), Type.Literal("observation")], {
+			description: "Ticket 03 — acceptance contract, creation-time only. Default \"worktree\". \"observation\" (role=explorer only) accepts a read-only informational report without Git worktree evidence; use it for information-gathering tasks, especially in non-Git directories. Never claim code-change verification under it.",
+		}),
+	),
 	envelope: Type.Optional(
 		Type.Object({
 			maxTokens: Type.Optional(Type.Number({ description: "Cancel the child when cumulative UPDATE tokens exceed this. Snapshot input+output, no cache." })),
@@ -248,7 +334,7 @@ const DELEGATION_RECOVERY_PARAMETER = Type.Optional(
  */
 export const PLANNER_DELEGATE_PARAMETERS = Type.Object({
 	role: Type.Union([Type.Literal("worker"), Type.Literal("explorer"), Type.Literal("validator")], {
-		description: "Delegation role. worker implements; explorer does read-only recon (scout agent); validator runs an oracle verdict. Reviews of an existing Task go through planner_redelegate with role=reviewer.",
+		description: "Delegation role. worker implements; explorer does read-only recon (restricted-reader agent, no shell/edit/write); validator runs an oracle verdict. Reviews of an existing Task go through planner_redelegate with role=reviewer.",
 	}),
 	...DELEGATION_SPEC_PARAMETERS,
 });
@@ -265,7 +351,7 @@ export const PLANNER_REDELEGATE_PARAMETERS = Type.Object({
 		description: "Canonical id of an existing Task, verbatim from a prior planner_delegate result's details.taskId. Never construct one.",
 	}),
 	role: Type.Union([Type.Literal("worker"), Type.Literal("explorer"), Type.Literal("validator"), Type.Literal("reviewer")], {
-		description: "Delegation role. worker implements a correction round; explorer does read-only recon (scout agent); validator runs an oracle verdict; reviewer reviews the bound Task's latest WorkerReport — objective / scope / constraints / acceptanceCriteria / validation / instructions are ignored, the Task's stored spec is the reviewer's context.",
+		description: "Delegation role. worker implements a correction round; explorer does read-only recon (restricted-reader agent, no shell/edit/write); validator runs an oracle verdict; reviewer reviews the bound Task's latest WorkerReport — objective / scope / constraints / acceptanceCriteria / validation / instructions are ignored, the Task's stored spec is the reviewer's context.",
 	}),
 	...DELEGATION_SPEC_PARAMETERS,
 	recovery: DELEGATION_RECOVERY_PARAMETER,
@@ -396,6 +482,13 @@ export interface DelegationDeps {
 	usage: UsageLedger;
 	launch: (request: SubagentDelegationRequest, signal?: AbortSignal, hooks?: DelegationLaunchHooks) => Promise<SubagentDelegationResponse>;
 	ownerRunId: string;
+	/**
+	 * Ticket 02 — the name of the host-registered restricted reader agent
+	 * (RESTRICTED_READER_AGENT when index.ts's registration succeeded). When
+	 * absent, role=explorer is refused before launch: there is no trusted
+	 * read-only binding to prove the execution cannot mutate.
+	 */
+	restrictedReaderAgent?: string;
 	now?: () => Date;
 	/**
 	 * Wall-envelope clock: a monotonic `now()` plus the timer pair. Tests
@@ -427,6 +520,14 @@ export interface DelegationTermination {
 	quiescenceWaitSource?: "default" | "config";
 	/** Stop-evidence sampling failed — the writer hold stays until resolved or manually handled. */
 	evidenceIncomplete?: boolean;
+	/** Ticket 01 — per-operation Git probe failures observed in the stop samples. */
+	probeFailures?: GitProbeFailure[];
+	/** Ticket 05 — a structured report value arrived on this terminal. */
+	reportReceived?: boolean;
+	/** Ticket 05 — a received report was admitted to the Task's report sequence. */
+	reportAccepted?: boolean;
+	/** A real writer reservation exists (concurrency-held); absent for readers and reviewers. */
+	writerHold?: boolean;
 	/** Residual worktree sample after confirmed quiescence. */
 	cTerminal?: EvidenceRef;
 	/** Whether the terminal's usage was accounted; false means only the observed lower bound stands. */
@@ -517,6 +618,7 @@ function specFromParams(params: PlannerDelegationParams, taskId: string, cwd: st
 		objective: params.objective,
 		cwd,
 		role: params.role,
+		...(params.acceptanceMode !== undefined ? { acceptanceMode: params.acceptanceMode } : {}),
 		scope: {
 			...(params.scope.allowedPaths ? { allowedPaths: params.scope.allowedPaths } : {}),
 			...(params.scope.forbiddenPaths ? { forbiddenPaths: params.scope.forbiddenPaths } : {}),
@@ -552,6 +654,20 @@ export async function runDelegation(
 	if (role === "reviewer" && !params.taskId) {
 		throw new DelegationRefused("TASK_REQUIRED", `${toolName} refused: role=reviewer requires taskId of the Task under review`);
 	}
+
+	// Ticket 02 — classify the execution's mutation capability from the
+	//    binding that will actually run it, before any Task is minted. An
+	//    explorer without a proven restricted binding is refused outright:
+	//    launching it would create an unknown-capability execution that must
+	//    be writer-isolated but holds no reservation.
+	const classification = classifyExecutionCapability(role, deps.restrictedReaderAgent);
+	if (role === "explorer" && classification.capability !== "restricted-reader") {
+		throw new DelegationRefused(
+			"READER_CAPABILITY_UNPROVEN",
+			`${toolName} refused: role=explorer requires a trusted restricted-reader binding whose declared tools exclude shell/edit/write; ${classification.basis}. The host must register the plugin-owned restricted reader agent (pi-subagents runtime agent support) before explorer delegations can run.`,
+		);
+	}
+	const isRestrictedReader = classification.capability === "restricted-reader";
 
 	// 1. Task binding: an explicit id binds the existing record verbatim —
 	//    its stored spec is never rewritten (ticket 53); this call's spec
@@ -594,12 +710,35 @@ export async function runDelegation(
 				task.taskId,
 			);
 		}
+		// Ticket 03 — the acceptance contract is creation-time only: any
+		//    attempt to supply it on a bound Task is refused before launch,
+		//    and an observation Task admits explorer executions only — a
+		//    reviewer, validator, or worker can never borrow the observation
+		//    evidence exemption.
+		if (params.acceptanceMode !== undefined) {
+			throw new DelegationRefused(
+				"ACCEPTANCE_MODE_IMMUTABLE",
+				`${toolName} refused: acceptanceMode is fixed at Task creation (Task ${record.taskId} is "${acceptanceModeOf(record)}"); create a new Task with planner_delegate to choose a different mode`,
+				record.taskId,
+			);
+		}
+		if (acceptanceModeOf(record) === "observation" && role !== "explorer") {
+			throw new DelegationRefused(
+				"OBSERVATION_EXPLORER_ONLY",
+				`${toolName} refused: Task ${record.taskId} is acceptanceMode=observation — only role=explorer executions and planner_verdict are admissible`,
+				record.taskId,
+			);
+		}
 		// The reviewer fork: binding is identical, but the call mints no spec
 		// of its own — the stored spec is the reviewer's read-only context.
 		if (role === "reviewer") {
 			return runReviewInvocation(deps, task, { requestId, executionId }, options);
 		}
-		thisSpec = specFromParams(params, record.taskId, record.cwd || effectiveCwd);
+		// The packet spec inherits the stored acceptance contract — the child
+		// sees the same mode the ledger enforces (params.acceptanceMode was
+		// refused above).
+		const boundMode = record.spec?.acceptanceMode;
+		thisSpec = specFromParams(boundMode !== undefined ? { ...params, acceptanceMode: boundMode } : params, record.taskId, record.cwd || effectiveCwd);
 	} else {
 		// nextTaskId() already claims the id (process-local sequence or the
 		// persistent allocator); createAllocated pairs that claim with the
@@ -629,12 +768,13 @@ export async function runDelegation(
 	// P0-B — the explicit anomaly envelope; validated before launch, never defaulted.
 	const envelope = validateEnvelope(params.envelope, toolName);
 
-	// 2. Write lock: workers and validators claim the workspace; readers/explorers
-	//    run beside an active writer by design. A persisted writerHold outlives
-	//    both the session and the reservation map: a stop-unconfirmed
-	//    workspace admits no second writer (A4).
+	// 2. Write lock: capability decides, not the role name — a proven
+	//    restricted reader holds no workspace claim; writers, shell-capable
+	//    validators, and anything unclassified claim it. A persisted
+	//    writerHold outlives both the session and the reservation map: a
+	//    stop-unconfirmed workspace admits no second writer (A4).
 	let reservation: ConcurrencyReservation | undefined;
-	if (role === "worker" || role === "validator") {
+	if (!isRestrictedReader) {
 		if (task.writerHold && recoveryDecision?.worktreeDecision === "manual") {
 			deps.concurrency.release(task.writerHold.executionId);
 			deps.concurrency.release(`writerhold:${task.writerHold.executionId}`);
@@ -743,10 +883,48 @@ export async function runDelegation(
 			cwd: task.cwd || effectiveCwd,
 			worktreeRoots,
 			aRun,
+			capability: classification.capability,
+			capabilityBasis: classification.basis,
 			...(envelope ? { envelope } : {}),
 			...(role !== "worker" ? { readOnly: true } : {}),
 			...(role === "validator" ? { auxiliary: true } : {}),
 		});
+		// Ticket 04 — a writer-capable execution cannot be verified once its
+		//    required evidence base is already known unusable: refuse before
+		//    launch instead of minting a "started but stop unconfirmed" record
+		//    and a held reservation. The refusal is a structured environment
+		//    block: the temporary reservation releases in `finally`, the
+		//    RecoveryDecision (if any) stays unconsumed, and the execution is
+		//    honestly recorded as never launched.
+		if (!isRestrictedReader && !writerEvidenceAdmissible(aRun)) {
+			deps.store.finalizeExecution(task.taskId, executionId, {
+				status: "failed",
+				endedReason: "launch_failure",
+				endedAt: nowIso(),
+				terminationConfirmed: true,
+				confirmationBasis: "no-launch",
+				usageComplete: false,
+			});
+			try { deps.store.transition(task.taskId, "blocked"); } catch { /* already final */ }
+			deps.store.setStateReason(
+				task.taskId,
+				`writer evidence unavailable before launch: ${describeProbeFailures(aRun.probeFailures)}`,
+			);
+			deps.store.setRecoveryRequired(task.taskId, {
+				reason: `environment cannot supply writer evidence: ${describeProbeFailures(aRun.probeFailures)}; submit recovery{action:"fix_environment"} only after the workspace is a readable Git worktree`,
+				executionId,
+			});
+			releaseReservation = true;
+			throw new DelegationRefused(
+				"ENVIRONMENT_UNVERIFIABLE",
+				[
+					`${toolName} refused: Task ${task.taskId} requires writer-isolated evidence but the pre-launch sample cannot support it (${describeProbeFailures(aRun.probeFailures)}).`,
+					"No child was launched and no writer hold was created.",
+					"Fix the environment — a readable Git worktree at the Task cwd plus every declared additional root — then re-delegate with recovery{action:\"fix_environment\"}; for a read-only observation Task, create it with acceptanceMode=observation and role=explorer instead.",
+				].join(" "),
+				task.taskId,
+			);
+		}
 		// P0-B — the recovery decision is consumed by the execution it
 		//    authorized; the same abnormal execution cannot be recovered twice.
 		if (recoveryDecision) {
@@ -758,7 +936,7 @@ export async function runDelegation(
 			requestId,
 			ownerRunId: deps.ownerRunId,
 			nodeId: task.taskId,
-			agent: ROLE_AGENTS[role] ?? "worker",
+			agent: classification.agent ?? ROLE_AGENTS[role] ?? "worker",
 			task: buildTaskPacket(thisSpec, params.instructions ?? ""),
 			context: "fresh",
 			cwd: task.cwd || effectiveCwd,
@@ -766,26 +944,53 @@ export async function runDelegation(
 		};
 		// A2 — spec §3 predicate: an identity-matched terminal plus a quiet
 		//    worktree, sampled twice after quiescenceWaitMs. A sampling failure
-		//    is evidence-incomplete, never clean.
+		//    is evidence-incomplete, never clean; both samples are kept so a
+		//    failed first sample is never overwritten by a later one (T01).
 		const evaluateQuiescence = async (
 			terminalRunId?: string,
 		): Promise<
-			| { confirmed: true; cTerminal: EvidenceRef }
-			| { confirmed: false; interim: EvidenceRef; evidenceIncomplete?: boolean }
+			| { confirmed: true; cTerminal: EvidenceRef; samples: EvidenceRef[] }
+			| { confirmed: false; interim: EvidenceRef; samples: EvidenceRef[]; evidenceIncomplete?: boolean }
 		> => {
 			await sleep(quiescenceWaitMs);
 			const first = await captureEvidence(deps.gitRunner, sampleOptions(terminalRunId ?? executionId));
 			await sleep(quiescenceSampleGapMs);
 			const second = await captureEvidence(deps.gitRunner, sampleOptions(terminalRunId ?? executionId));
+			const samples = [first, second];
 			if (
 				first.statusProbeFailed || second.statusProbeFailed
 				|| first.gitAvailable === false || second.gitAvailable === false
+				|| (first.unavailableWorktreeRoots?.length ?? 0) > 0
+				|| (second.unavailableWorktreeRoots?.length ?? 0) > 0
 			) {
-				return { confirmed: false, interim: second, evidenceIncomplete: true };
+				return { confirmed: false, interim: second, samples, evidenceIncomplete: true };
 			}
 			return worktreeSamplesQuiet(first, second)
-				? { confirmed: true, cTerminal: second }
-				: { confirmed: false, interim: second };
+				? { confirmed: true, cTerminal: second, samples }
+				: { confirmed: false, interim: second, samples };
+		};
+
+		// Ticket 02 — a matched terminal plus the trusted restricted binding
+		//    proves a reader stopped: it holds no workspace claim and could not
+		//    mutate, so no worktree quiescence sample is required. Writers and
+		//    unknown capabilities keep the full predicate.
+		const confirmStop = async (terminalRunId?: string): Promise<
+			| { confirmed: true; basis: string; cTerminal?: EvidenceRef; samples: EvidenceRef[] }
+			| { confirmed: false; basis?: undefined; interim: EvidenceRef; samples: EvidenceRef[]; evidenceIncomplete?: boolean }
+		> => {
+			if (isRestrictedReader) {
+				return { confirmed: true, basis: "terminal+restricted-reader", samples: [] };
+			}
+			const q = await evaluateQuiescence(terminalRunId);
+			return q.confirmed
+				? { confirmed: true, basis: "terminal+quiet-worktree", cTerminal: q.cTerminal, samples: q.samples }
+				: { confirmed: false, interim: q.interim, samples: q.samples, ...(q.evidenceIncomplete ? { evidenceIncomplete: true } : {}) };
+		};
+
+		// Ticket 01 — the probe failures observed while deciding a stop.
+		const stopProbeFailures = (samples: readonly EvidenceRef[]): GitProbeFailure[] | undefined => {
+			const failures = samples.flatMap((sample) => sample.probeFailures ?? []);
+			return failures.length > 0 ? failures : undefined;
 		};
 
 		// A3 — a terminal arriving after the grace reject still finalizes the
@@ -797,7 +1002,7 @@ export async function runDelegation(
 				if (!execution) return;
 				if (execution.status === "stopped" || execution.status === "completed" || execution.status === "failed") return;
 				const lateSuccess = late.status === "completed";
-				const q = await evaluateQuiescence(late.runId);
+				const q = await confirmStop(late.runId);
 				let usageComplete = execution.usageComplete === true;
 				if (late.usage && !usageComplete) {
 					const child = childUsageFromValue(late.usage, role as DelegationKind, {
@@ -827,15 +1032,21 @@ export async function runDelegation(
 					endedReason,
 					endedAt: nowIso(),
 					terminationConfirmed: q.confirmed,
-					...(q.confirmed ? { confirmationBasis: "terminal+quiet-worktree", cTerminal: q.cTerminal } : { interimSample: q.interim }),
+					...(q.confirmed
+						? { confirmationBasis: q.basis, ...(q.cTerminal ? { cTerminal: q.cTerminal } : {}) }
+						: { interimSample: q.interim, stopSamples: q.samples }),
 					...(q.confirmed === false && q.evidenceIncomplete ? { evidenceIncomplete: true } : {}),
 					usageComplete,
 					...(late.runId ? { runId: late.runId } : {}),
 					...(lateSuccess && late.result?.kind === "structured" ? { lateReport: late.result.value as WorkerReport } : {}),
 				});
-				if (q.confirmed) {
-					if (reservation) deps.concurrency.release(reservation.id);
-					deps.store.clearWriterHold(task.taskId);
+				// Only this execution's own reservation/hold may clear — a
+				// reader's confirmed stop never releases a writer's hold.
+				if (q.confirmed && reservation) {
+					deps.concurrency.release(reservation.id);
+					if (deps.store.require(task.taskId).writerHold?.executionId === executionId) {
+						deps.store.clearWriterHold(task.taskId);
+					}
 				}
 			})().catch(() => {
 				/* late finalization is best-effort: the record stays stop_unconfirmed */
@@ -925,12 +1136,16 @@ export async function runDelegation(
 					releaseReservation = true;
 				}
 				try { deps.store.transition(task.taskId, "blocked"); } catch { /* already final */ }
+				// Ticket 02 — a reader holds nothing: the reason must not claim a
+				//    writer hold that does not exist.
 				deps.store.setStateReason(
 					task.taskId,
 					runaway
-						? `worker runaway: ${runaway.signal} ${runaway.observed} exceeded envelope ${runaway.limit}; ${emitted ? "stop unconfirmed, writer hold kept" : "cancelled before launch"}`
+						? `worker runaway: ${runaway.signal} ${runaway.observed} exceeded envelope ${runaway.limit}; ${emitted ? (reservation ? "stop unconfirmed, writer hold kept" : "stop unconfirmed") : "cancelled before launch"}`
 						: emitted
-							? "delegation cancelled by operator; no terminal response within grace — stop unconfirmed, writer hold kept"
+							? reservation
+								? "delegation cancelled by operator; no terminal response within grace — stop unconfirmed, writer hold kept"
+								: "delegation cancelled by operator; no terminal response within grace — stop unconfirmed"
 							: "delegation cancelled by operator before launch",
 				);
 				return {
@@ -945,6 +1160,7 @@ export async function runDelegation(
 						quiescenceWaitMs,
 						quiescenceWaitSource,
 						usageComplete: false,
+						...(emitted && reservation ? { writerHold: true } : {}),
 						error: error instanceof Error ? error.message : String(error),
 					},
 					warnings,
@@ -989,6 +1205,12 @@ export async function runDelegation(
 		const lateSuccess = response.status === "completed" && cancelRequestedAt !== undefined;
 		if (response.status !== "completed" || lateSuccess) {
 			const terminal = response as SubagentDelegationTerminalResponse;
+			// Ticket 05 — a schema-valid structured result on a non-completed
+			//    terminal is received-but-unaccepted diagnostic material: kept
+			//    on the execution, never admitted to the report sequence.
+			//    A completed result arriving after a cancel keeps the existing
+			//    lateReport semantics instead.
+			const terminalReport = terminal.result?.kind === "structured" ? (terminal.result.value as WorkerReport) : undefined;
 			const target = lateSuccess || BLOCKING_STATUSES.has(terminal.status) ? "blocked" : "failed";
 			try { deps.store.transition(task.taskId, target); } catch { /* already final */ }
 			deps.store.setStateReason(
@@ -1021,7 +1243,7 @@ export async function runDelegation(
 				}
 			}
 			deps.store.finalizeExecution(task.taskId, executionId, { status: "stopping" });
-			const q = await evaluateQuiescence(responseRunId);
+			const q = await confirmStop(responseRunId);
 			const endedReason: ExecutionEndedReason = lateSuccess
 				? "operator_cancel"
 				: runaway
@@ -1032,11 +1254,17 @@ export async function runDelegation(
 				endedReason,
 				endedAt: nowIso(),
 				terminationConfirmed: q.confirmed,
-				...(q.confirmed ? { confirmationBasis: "terminal+quiet-worktree", cTerminal: q.cTerminal } : { interimSample: q.interim }),
+				...(q.confirmed
+					? { confirmationBasis: q.basis, ...(q.cTerminal ? { cTerminal: q.cTerminal } : {}) }
+					: { interimSample: q.interim, stopSamples: q.samples }),
 				...(q.confirmed === false && q.evidenceIncomplete ? { evidenceIncomplete: true } : {}),
 				usageComplete,
 				...(responseRunId ? { runId: responseRunId } : {}),
-				...(lateSuccess && terminal.result?.kind === "structured" ? { lateReport: terminal.result.value as WorkerReport } : {}),
+				...(lateSuccess && terminalReport
+					? { lateReport: terminalReport }
+					: terminalReport
+						? { unacceptedReport: terminalReport, unacceptedReportReason: `delegation ended ${terminal.status}; report not admitted` }
+						: {}),
 			});
 			if (reservation) {
 				if (q.confirmed) {
@@ -1069,10 +1297,13 @@ export async function runDelegation(
 					executionStatus: q.confirmed ? "stopped" : "stop_unconfirmed",
 					terminationConfirmed: q.confirmed,
 					...(runaway ? { anomaly: { ...runaway, source: "delegation-param" } } : {}),
-					...(q.confirmed ? { confirmationBasis: "terminal+quiet-worktree", cTerminal: q.cTerminal } : {}),
+					...(q.confirmed ? { confirmationBasis: q.basis, ...(q.cTerminal ? { cTerminal: q.cTerminal } : {}) } : {}),
 					quiescenceWaitMs,
 					quiescenceWaitSource,
 					...(q.confirmed === false && q.evidenceIncomplete ? { evidenceIncomplete: true } : {}),
+					...(q.confirmed === false ? { probeFailures: stopProbeFailures(q.samples) } : {}),
+					...(terminalReport ? { reportReceived: true, reportAccepted: false } : {}),
+					...(reservation && !q.confirmed ? { writerHold: true } : {}),
 					usageComplete,
 					...(terminal.error ? { error: terminal.error } : {}),
 				},
@@ -1087,7 +1318,7 @@ export async function runDelegation(
 		//    execution record; `compareEvidence` produces the EvidenceComparison
 		//    the store and review loop consume.
 		const cReport = await captureEvidence(deps.gitRunner, sampleOptions(runId ?? executionId));
-		const completionQuiescence = await evaluateQuiescence(runId);
+		const completionQuiescence = await confirmStop(runId);
 		if (!completionQuiescence.confirmed) {
 			let usageComplete = false;
 			if (response.usage) {
@@ -1115,12 +1346,24 @@ export async function runDelegation(
 				terminationConfirmed: false,
 				cReport,
 				interimSample: completionQuiescence.interim,
+				stopSamples: completionQuiescence.samples,
 				...(completionQuiescence.evidenceIncomplete ? { evidenceIncomplete: true } : {}),
 				usageComplete,
 				...(runId ? { runId } : {}),
+				// Ticket 05 — the terminal carried a valid report but the stop was
+				//    never confirmed: keep it bound to this execution, out of the
+				//    report sequence.
+				...(report
+					? { unacceptedReport: report, unacceptedReportReason: "worktree quiescence was not confirmed; report not admitted" }
+					: {}),
 			});
 			try { deps.store.transition(task.taskId, "blocked"); } catch { /* already final */ }
-			deps.store.setStateReason(task.taskId, "completed terminal arrived but worktree quiescence was not confirmed; report not admitted");
+			deps.store.setStateReason(
+				task.taskId,
+				report
+					? "completed terminal arrived but worktree quiescence was not confirmed; report received but not admitted"
+					: "completed terminal arrived but worktree quiescence was not confirmed; report not admitted",
+			);
 			if (reservation) {
 				deps.store.setWriterHold(task.taskId, {
 					executionId,
@@ -1144,6 +1387,9 @@ export async function runDelegation(
 					quiescenceWaitMs,
 					quiescenceWaitSource,
 					...(completionQuiescence.evidenceIncomplete ? { evidenceIncomplete: true } : {}),
+					probeFailures: stopProbeFailures(completionQuiescence.samples),
+					...(report ? { reportReceived: true, reportAccepted: false } : {}),
+					...(reservation ? { writerHold: true } : {}),
 					usageComplete,
 				},
 				warnings,
@@ -1152,6 +1398,7 @@ export async function runDelegation(
 		const priorTruthPaths = task.executions
 			.filter((item) => item.executionId !== executionId && !item.auxiliary && !item.reportOnly && item.truthPaths?.length)
 			.flatMap((item) => item.truthPaths ?? []);
+		const observation = acceptanceModeOf(task) === "observation";
 		const truth = compareExecutionTruth(aRun, cReport, report, {
 			...(thisSpec.scope ? { scope: thisSpec.scope } : {}),
 			...(thisSpec.additionalWorktreeRoots?.length
@@ -1160,7 +1407,11 @@ export async function runDelegation(
 			...(role !== "worker" ? { readOnly: true } : {}),
 			...(priorTruthPaths.length > 0 ? { priorTruthPaths } : {}),
 		});
-		const comparison = report
+		// Ticket 03 — an observation Task never pretends Git freshness exists:
+		//    no comparison is recorded and none is fed to the review loop. The
+		//    report's identity/schema and any declared evidence requirements
+		//    are still judged at acceptance.
+		const comparison = report && !observation
 			? compareEvidence(aRun, cReport, report, {
 				...(thisSpec.scope ? { scope: thisSpec.scope } : {}),
 				...(thisSpec.additionalWorktreeRoots?.length
@@ -1169,7 +1420,13 @@ export async function runDelegation(
 				...(priorTruthPaths.length > 0 ? { priorTruthPaths } : {}),
 			})
 			: undefined;
-		if (comparison) deps.store.setLastComparison(task.taskId, comparison);
+		if (comparison) {
+			// Ticket 04 — a known-unusable evidence base is an environment
+			//    failure now, not after a revalidation loop: block instead of
+			//    granting a recovery that must fail.
+			comparison.environmentFailure = environmentFailureOf(aRun, cReport) || undefined;
+			deps.store.setLastComparison(task.taskId, comparison);
+		}
 
 		// 7. Report identity is checked against the delegation, never rewritten.
 		const identityErrors = report
@@ -1214,10 +1471,12 @@ export async function runDelegation(
 			endedReason: "normal",
 			endedAt: nowIso(),
 			terminationConfirmed: true,
-			confirmationBasis: "terminal+quiet-worktree",
+			confirmationBasis: completionQuiescence.basis,
 			usageComplete: response.usage !== undefined,
 			cReport,
-			cTerminal: completionQuiescence.cTerminal,
+			// A reader's confirmed stop keeps the result-receive sample as its
+			//    residual record; writers get the second quiescence sample.
+			cTerminal: completionQuiescence.cTerminal ?? cReport,
 			...(runId ? { runId } : {}),
 			truthPaths: truth.truthPaths,
 			executionChangedPaths: truth.executionChangedPaths,
@@ -1573,10 +1832,16 @@ export function renderDelegationOutcome(outcome: DelegationOutcome, toolName = "
 		if (t.anomaly) {
 			lines.push(`anomaly: ${t.anomaly.signal} observed=${t.anomaly.observed} limit=${t.anomaly.limit} (source: ${t.anomaly.source})`);
 		}
-		if (t.executionStatus === "stop_unconfirmed") {
+		if (t.executionStatus === "stop_unconfirmed" && t.writerHold === true) {
 			lines.push("writer hold: kept — the workspace stays reserved until a late terminal confirms quiescence or the operator resolves it");
 		}
 		if (t.evidenceIncomplete) lines.push("warning: stop-evidence sampling failed; residual workspace state is unknown");
+		if (t.probeFailures?.length) {
+			lines.push(`probe failures: ${describeProbeFailures(t.probeFailures)}`);
+		}
+		if (t.reportReceived === true && t.reportAccepted === false) {
+			lines.push("report: received but not admitted — kept as diagnostic material on the execution record");
+		}
 	}
 	if (outcome.task.recovery?.required) {
 		const r = outcome.task.recovery;

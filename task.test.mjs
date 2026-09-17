@@ -72,6 +72,29 @@ for (const unchanged of [
 }
 assert.equal(spec.cwd, resolve(cwd));
 assert.equal(spec.role, "worker");
+// Ticket 03 — acceptanceMode: omitted defaults to "worktree" and persists;
+// "observation" is explorer-only and validated at construction + validate.
+assert.equal(spec.acceptanceMode, "worktree", "omitted acceptanceMode defaults to worktree");
+assert.equal(
+	createTaskSpec({ objective: "observe", cwd, role: "explorer", acceptanceMode: "observation", validation: { required: false } }).acceptanceMode,
+	"observation",
+);
+assert.throws(
+	() => createTaskSpec({ objective: "observe with a writer", cwd, role: "worker", acceptanceMode: "observation" }),
+	(error) => error?.code === "TASKSPEC_ACCEPTANCE_MODE_INVALID",
+);
+assert.throws(
+	() => createTaskSpec({ objective: "observe with a validator", cwd, role: "validator", acceptanceMode: "observation" }),
+	(error) => error?.code === "TASKSPEC_ACCEPTANCE_MODE_INVALID",
+);
+assert.throws(
+	() => createTaskSpec({ objective: "bogus mode", cwd, acceptanceMode: "audit" }),
+	(error) => error?.code === "TASKSPEC_ACCEPTANCE_MODE_INVALID",
+);
+assert.deepEqual(validateTaskSpec({ ...spec, acceptanceMode: "worktree" }), []);
+assert.deepEqual(validateTaskSpec({ ...spec, role: "explorer", acceptanceMode: "observation" }), []);
+assert.ok(validateTaskSpec({ ...spec, acceptanceMode: "observation" }).some((e) => /acceptanceMode "observation" requires role "explorer"/.test(e)));
+assert.ok(validateTaskSpec({ ...spec, acceptanceMode: "audit" }).some((e) => /acceptanceMode must be "worktree" or "observation"/.test(e)));
 // Ticket 45 — "incomplete" counts USABLE commands, not array length. The
 // constructor and the repair renderer both normalise through `uniqueNonEmpty`,
 // which trims and drops blanks, so `["  "]` must be refused too: counting

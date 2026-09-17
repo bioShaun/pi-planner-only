@@ -25,6 +25,7 @@ import {
 	isFinalTaskState,
 } from "./types.ts";
 import type {
+	AcceptanceMode,
 	EvidenceRef,
 	ExpectedEvidence,
 	ReviewMode,
@@ -114,6 +115,12 @@ export interface CreateTaskSpecInput {
 	parentTaskId?: string;
 	/** Existing Task whose work this Task commits. */
 	commitOf?: string;
+	/**
+	 * Ticket 03 — the Task's acceptance contract. Omit for the default
+	 * `worktree`; `observation` is only valid for `role: "explorer"` and is
+	 * immutable once persisted.
+	 */
+	acceptanceMode?: AcceptanceMode;
 }
 
 /**
@@ -399,7 +406,8 @@ export class TaskIdAllocator {
 
 export type TaskSpecContractErrorCode =
 	| "TASKSPEC_VALIDATION_INCOMPLETE"
-	| "TASKSPEC_VALIDATION_COMMAND_NOT_EXECUTABLE";
+	| "TASKSPEC_VALIDATION_COMMAND_NOT_EXECUTABLE"
+	| "TASKSPEC_ACCEPTANCE_MODE_INVALID";
 
 /**
  * Ticket 19 — is this string shaped like an executable shell command? The
@@ -478,13 +486,31 @@ export function createTaskSpec(input: CreateTaskSpecInput, taskId?: string): Tas
 			);
 		}
 	}
+	// Ticket 03 — the acceptance contract is a creation-time choice. The mode
+	// is validated against the role here so an invalid combination never
+	// reaches a persisted spec or a launcher.
+	const role = input.role ?? "worker";
+	const acceptanceMode: AcceptanceMode = input.acceptanceMode ?? "worktree";
+	if (input.acceptanceMode !== undefined && input.acceptanceMode !== "worktree" && input.acceptanceMode !== "observation") {
+		throw new TaskSpecContractError(
+			"TASKSPEC_ACCEPTANCE_MODE_INVALID",
+			`createTaskSpec refused: acceptanceMode must be "worktree" or "observation" (received: ${JSON.stringify(input.acceptanceMode)}).`,
+		);
+	}
+	if (acceptanceMode === "observation" && role !== "explorer") {
+		throw new TaskSpecContractError(
+			"TASKSPEC_ACCEPTANCE_MODE_INVALID",
+			`createTaskSpec refused: acceptanceMode "observation" requires role "explorer" (received role: ${JSON.stringify(role)}); observation tasks deliver read-only findings only.`,
+		);
+	}
 	const suppliedTaskId = input.taskId?.trim();
 	const effectiveTaskId = taskId ?? createTaskId();
 	const spec: TaskSpec = {
 		taskId: suppliedTaskId || effectiveTaskId,
 		objective: input.objective.trim(),
 		cwd: resolve(input.cwd),
-		role: input.role ?? "worker",
+		role,
+		acceptanceMode,
 		scope: {
 			...(input.scope?.allowedPaths ? { allowedPaths: uniqueNonEmpty(input.scope.allowedPaths) } : {}),
 			...(input.scope?.forbiddenPaths
@@ -624,6 +650,13 @@ export function validateTaskSpec(value: unknown): string[] {
 	}
 	if (value.reportOnly !== undefined && typeof value.reportOnly !== "boolean") {
 		errors.push("reportOnly must be a boolean when present");
+	}
+	if (value.acceptanceMode !== undefined) {
+		if (value.acceptanceMode !== "worktree" && value.acceptanceMode !== "observation") {
+			errors.push('acceptanceMode must be "worktree" or "observation" when present');
+		} else if (value.acceptanceMode === "observation" && value.role !== "explorer") {
+			errors.push('acceptanceMode "observation" requires role "explorer"');
+		}
 	}
 	if (value.validation !== undefined) {
 		if (!isPlainObject(value.validation)) errors.push("validation must be an object when present");

@@ -1,0 +1,47 @@
+{
+ "taskId": "T-20260917-009",
+ "state": "blocked",
+ "stateReason": "writer evidence unavailable before launch: rev-parse --git-dir @ /tmp/planner-only-t07-nongit: not-a-git-repository (exit=128) \u2014 fatal: not a git repository (or any parent up to mount point /)\nStopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).",
+ "writerHold": null,
+ "recovery": {
+  "required": true,
+  "reason": "environment cannot supply writer evidence: rev-parse --git-dir @ /tmp/planner-only-t07-nongit: not-a-git-repository (exit=128) \u2014 fatal: not a git repository (or any parent up to mount point /)\nStopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).; submit recovery{action:\"fix_environment\"} only after the workspace is a readable Git worktree",
+  "executionId": "tool_S2fSjFUiYtGx7VRHVv6wW3eA"
+ },
+ "blockedReasonCode": null,
+ "executions": [
+  {
+   "status": "failed",
+   "executionId": "tool_S2fSjFUiYtGx7VRHVv6wW3eA",
+   "kind": "worker",
+   "cwd": "/tmp/planner-only-t07-nongit",
+   "worktreeRoots": [
+    "/tmp/planner-only-t07-nongit"
+   ],
+   "aRun": {
+    "cwd": "/tmp/planner-only-t07-nongit",
+    "taskId": "T-20260917-009",
+    "workerRunId": "tool_S2fSjFUiYtGx7VRHVv6wW3eA",
+    "gitAvailable": false,
+    "probeFailures": [
+     {
+      "operation": "rev-parse --git-dir",
+      "kind": "not-a-git-repository",
+      "cwd": "/tmp/planner-only-t07-nongit",
+      "exitCode": 128,
+      "error": "fatal: not a git repository (or any parent up to mount point /)\nStopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set)."
+     }
+    ],
+    "generatedAt": "2026-09-17T09:46:54.194Z"
+   },
+   "capability": "writer",
+   "capabilityBasis": "child retains shell/edit/write tools; writer isolation applies",
+   "taskId": "T-20260917-009",
+   "endedReason": "launch_failure",
+   "endedAt": "2026-09-17T09:46:54.199Z",
+   "terminationConfirmed": true,
+   "confirmationBasis": "no-launch",
+   "usageComplete": false
+  }
+ ]
+}
