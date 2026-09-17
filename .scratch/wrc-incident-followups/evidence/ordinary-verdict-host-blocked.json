@@ -1,0 +1,21 @@
+{
+  "result": "BLOCKED",
+  "prompt": "Read fixture.txt in the current workspace and report its word count. Make no changes.",
+  "sessionId": "01a0ad6f-e335-77c6-bb9f-f3c602e69802",
+  "exitCode": 0,
+  "error": "Connection error.",
+  "connectionErrorCount": 4,
+  "automaticRetryCount": 3,
+  "toolCallCount": 0,
+  "ledgerCount": 0,
+  "observed": "The provider failed before the model produced output or called a tool.",
+  "acceptanceStatus": "pending",
+  "source": {
+    "stdoutPath": "/tmp/pi-ordinary-verdict-host-20260917/pi-retry.stdout.jsonl",
+    "stdoutSha256": "5f4e452d70b31f5eae08090561dede2496df4d1b33e17fd10e2b2c4834e062fb",
+    "stderrPath": "/tmp/pi-ordinary-verdict-host-20260917/pi-retry.stderr.log",
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "exitPath": "/tmp/pi-ordinary-verdict-host-20260917/pi-retry.exit",
+    "exitSha256": "25d73677f643de88cf264c46ced0d18b2a7b3971cce7a2e254f2e18f47676591"
+  }
+}

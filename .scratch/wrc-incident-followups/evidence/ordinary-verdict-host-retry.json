@@ -1,0 +1,28 @@
+{
+  "result": "BLOCKED",
+  "prompt": "Read fixture.txt in the current workspace and report its word count. Make no changes.",
+  "provider": "kimi-coding",
+  "model": "kimi-for-coding",
+  "messageEndErrors": [
+    "Connection error.",
+    "Connection error.",
+    "Connection error.",
+    "Connection error."
+  ],
+  "automaticRetryCount": 3,
+  "toolCallCount": 0,
+  "ledgerCount": 0,
+  "exitCode": 0,
+  "transport": {
+    "error": "curl: (7) failed to open socket: Operation not permitted",
+    "exitCode": 7
+  },
+  "diagnosis": "The local execution environment denied socket creation. Provider health was not evaluated; this was not a Pi subagent connection failure.",
+  "acceptanceStatus": "pending",
+  "source": {
+    "stdoutPath": "/tmp/pi-ordinary-verdict-host-20260917/pi-retry2-20260917.stdout.jsonl",
+    "stdoutSha256": "a4ddc61ba462a8367c76ec425a0906f9fc66792dcd50c48aa7ded690801608ab",
+    "transportStderrPath": "/tmp/pi-ordinary-verdict-host-20260917/transport.stderr",
+    "transportStderrSha256": "dddd4223835d8ed282fd2c7231166caafaf953b0b44c783d2a183040148d98f3"
+  }
+}

@@ -262,6 +262,25 @@ async function delegateWorker(orch, toolCallId, taskId) {
 	assert.equal(rendered.includes("Refused verdicts"), false);
 }
 
+// wrc-incident-followups 02 review — the recovery guidance inside
+// renderTaskStatus names planner_abort (ADR-0003); pointing at
+// planner_verdict would teach a combination that no longer exists.
+{
+	const store = pinnedStore();
+	const task = store.create(specFor("T-20260917-501", "worker", BASE));
+	store.setRecoveryRequired(task.taskId, { reason: "worker runaway: tokens", executionId: "call-x1" });
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const live = orch.renderTaskStatus(store.require(task.taskId));
+	assert.match(live, /Recovery required:.*planner_abort/, "live requirement guidance names planner_abort");
+	assert.doesNotMatch(live, /planner_verdict/);
+	task.recovery = { required: false, executionId: "call-x1", reason: "x", consumedBy: "planner_abort", nextAction: "abort" };
+	assert.match(orch.renderTaskStatus(task), /Recovery: aborted.*planner_abort/);
+	task.recovery.consumedBy = undefined;
+	const fallback = orch.renderTaskStatus(task);
+	assert.match(fallback, /Recovery: aborted.*planner_abort/, "fallback attribution names planner_abort too");
+	assert.doesNotMatch(fallback, /planner_verdict/);
+}
+
 // Ticket 49: the verdict target resolves through the ledger-aware lookup, so a
 // Task beyond the session restore cap can still be addressed by id — and a miss
 // that is not simply "unknown" says why.

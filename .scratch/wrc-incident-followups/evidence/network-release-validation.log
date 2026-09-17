@@ -1,0 +1,80 @@
+=== npm run test:release ===
+2026-09-17T12:00:48+08:00
+
+> pi-planner-only@0.7.0 test:release
+> npm run typecheck && npm test
+
+
+> pi-planner-only@0.7.0 typecheck
+> tsc --noEmit
+
+
+> pi-planner-only@0.7.0 test
+> node --experimental-strip-types policy.test.mjs && node --experimental-strip-types policy-cutover.test.mjs && node --experimental-strip-types roles.test.mjs && node --experimental-strip-types floors.test.mjs && node --experimental-strip-types role-models.test.mjs && node --experimental-strip-types task.test.mjs && node --experimental-strip-types ledger-store.test.mjs && node --experimental-strip-types report.test.mjs && node --experimental-strip-types review.test.mjs && node --experimental-strip-types usage.test.mjs && node --experimental-strip-types orchestrate.test.mjs && node --experimental-strip-types evidence.test.mjs && node --experimental-strip-types git-audit.test.mjs && node --experimental-strip-types index.test.mjs && node --experimental-strip-types workspace-snapshot.test.mjs && node --experimental-strip-types architecture.test.mjs && node --experimental-strip-types naming.test.mjs && node --experimental-strip-types concurrency.test.mjs && node --experimental-strip-types rs01.test.mjs && node --experimental-strip-types rs02.test.mjs && node --experimental-strip-types rs02-concurrency.test.mjs && node --experimental-strip-types rs03.test.mjs && node --experimental-strip-types rt06.test.mjs && node --experimental-strip-types nx04-06.test.mjs && node --experimental-strip-types nx09-scope.test.mjs && node --experimental-strip-types nx10-attribution.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types refusal-breaker.test.mjs
+
+planner-only policy: PASS
+planner-only policy cutover: PASS
+planner-only roles: PASS
+planner-only floors: PASS
+role-models: PASS
+planner-only task lifecycle: PASS
+planner-only ledger-store: PASS
+planner-only report: PASS
+planner-only review: PASS
+planner-only usage: PASS
+error: open("src/parser.ts"): Permission denied
+fatal: cannot hash src/parser.ts
+fatal: could not open 'src/parser.ts' for reading: Permission denied
+planner-only orchestration: PASS
+planner-only evidence: PASS
+hint: Using 'master' as the name for the initial branch. This default branch name
+hint: is subject to change. To configure the initial branch name to use in all
+hint: of your new repositories, which will suppress this warning, call:
+hint:
+hint: 	git config --global init.defaultBranch <name>
+hint:
+hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+hint: 'development'. The just-created branch can be renamed via this command:
+hint:
+hint: 	git branch -m <name>
+hint:
+hint: Disable this message with "git config set advice.defaultBranchName false"
+planner-only git_audit: PASS
+planner-only workspace snapshot: PASS
+planner-only architecture: PASS
+planner-only naming: PASS
+✔ A01: Loaded plugin fingerprint is recorded from loaded build, distinct from disk HEAD (5.699795ms)
+✔ A05: Multi-process shared ledger allocation, quarantine, and cross-workspace checks pass (1.404332ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 9.841607
+rs02 tests passed
+rs02 concurrency tests passed
+rs03: PASS
+rt06: PASS
+planner-only NX-04/NX-05/NX-06: PASS
+✔ normalizeRepoRelativePath (0.476677ms)
+✔ matchesScopePath (0.140969ms)
+✔ isPathInDeclaredScope routes every entry form through the one matcher (0.228044ms)
+✔ validateTaskSpec rejects scope escaping workspace (0.242521ms)
+✔ real git e2e scope cases (74.350917ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 78.659926
+nx10-attribution.test.mjs passed!
+delegate.test.mjs: all cases passed
+refusal-breaker.test.mjs: all cases passed
+EXIT_CODE=0
+=== git diff --check ===
+EXIT_CODE=0
+RELEASE_RC= DIFFCHECK_RC=

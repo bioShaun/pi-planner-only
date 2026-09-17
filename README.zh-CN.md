@@ -56,7 +56,7 @@ pi -e .
 
 ## 父进程可用工具
 
-存在则保留：`read`、`grep`、`find`、`ls`、`git_audit`、`planner_verdict`、`planner_delegate`、`planner_redelegate`、`planner_tasks`、`git_commit`、`question`、`questionnaire`。
+存在则保留：`read`、`grep`、`find`、`ls`、`git_audit`、`planner_verdict`、`planner_abort`、`planner_delegate`、`planner_redelegate`、`planner_tasks`、`git_commit`、`question`、`questionnaire`。
 
 拦截：`edit`、`write`、通用 `bash`、未知 mutator，以及 `subagent` 的宿主机命令路径（如 `workflow: "run-ci"`、`gate`）。
 
@@ -127,7 +127,7 @@ Validator（`oracle`）在 Worker 校验已 exit 0 时默认做有界复核：`g
 
 ### Idle gather 策略
 
-Root 的 gather 阶段由适配器工作区的 Task store 推导。当该 cwd 存在未终结的 Task 时，适用常规允许清单（inspect 工具、`git_audit`、Verdict、一次委派）。当没有任何存活 Task（Idle for gather）时，Root 只能用 `planner_delegate` 发起一次 Delegation、用 `planner_redelegate` 重进既有 Task、用 `planner_tasks` 查 live Task、提问、记录 Verdict（`planner_verdict` 对 blocked/failed 同样可用）、用 `git_commit` 提交已 completed 的 Task，或用 `git_audit` 检查 Git；`subagent` 与 `bg_wait` 一律拒绝。每条 Idle 拒绝都附带可校验的 TaskSpec JSON（按被拒调用填充），修复只需一次粘贴。带独立 TaskSpec 的 standalone Explorer Task 与 Worker Task 一样闭环：校验过的 WorkerReport → reviewing → Root `planner_verdict`；零变更的只读结果是合法交付，畸形的终局报告会以修复指引 block 该 Task。blocked/failed 不会让 gather 保持存活；要再查看代码树，请重新委派。
+Root 的 gather 阶段由适配器工作区的 Task store 推导。当该 cwd 存在未终结的 Task 时，适用常规允许清单（inspect 工具、`git_audit`、Verdict、一次委派）。当没有任何存活 Task（Idle for gather）时，Root 只能用 `planner_delegate` 发起一次 Delegation、用 `planner_redelegate` 重进既有 Task、用 `planner_tasks` 查 live Task、提问、记录 Verdict（`planner_verdict` 对 blocked/failed 同样可用）、用 `planner_abort` 放弃挂着 `recovery.required` 的异常执行、用 `git_commit` 提交已 completed 的 Task，或用 `git_audit` 检查 Git；`subagent` 与 `bg_wait` 一律拒绝。每条 Idle 拒绝都附带可校验的 TaskSpec JSON（按被拒调用填充），修复只需一次粘贴。带独立 TaskSpec 的 standalone Explorer Task 与 Worker Task 一样闭环：校验过的 WorkerReport → reviewing → Root `planner_verdict`；零变更的只读结果是合法交付，畸形的终局报告会以修复指引 block 该 Task。blocked/failed 不会让 gather 保持存活；要再查看代码树，请重新委派。
 
 Reviewer 没有 `git_audit`（前台子进程不加载 ambient 扩展，该工具属于父扩展）。Root 自己采样 Git，把有界证据包——HEAD、status、当前变更文件、A-to-C 归因/漏报/多报路径、diff stat、diff check——放进 `ReviewRequest`；reviewer 只用 `read`/`grep`/`find`/`ls`。针对 Task 起始基线的有界补丁会随 `ReviewRequest` 传给 reviewer（已提交的 Task 变更仍可评审）；若补丁被截断（`patchTruncated` 或省略路径），reviewer 的 PASS 会被拒收，只能记录 `request_changes` 或 `blocked`。
 
@@ -188,7 +188,7 @@ TUI 下按 Esc 中止 `planner_delegate`/`planner_redelegate` 会向子代理发
 
 **停止确认（P0-A）。** 仅收到终态并不证明 writer 已静止。在身份匹配的终态到达后，委派会等待 `quiescenceWaitMs`（默认 10 s；`PI_PLANNER_ONLY_QUIESCENCE_MS` 覆盖），再要求两次连续一致的工作树采样——满足后停止才记为 `confirmed`（`confirmationBasis: terminal+quiet-worktree`）、释放 writer 预留，并把残留样本记为 `cTerminal`。普通 `completed` writer 也受同一谓词约束；若静止未确认，其报告不入账，Task 保持 `blocked` 与 writer hold。若 5 s 宽限期到期仍无终态，执行置为 `stop_unconfirmed`：Task 进 `blocked`，writer 预留转为持久化 `writerHold`，跨重启且不受普通账本恢复条数上限影响地继续拒绝第二写入者；launcher 保留 RESPONSE 订阅，迟到终态仍会把执行恰一次收尾（usage、`cTerminal`、释放）。采样失败记 `evidenceIncomplete`，同样保持 hold。非 completed 委派（cancelled、timed_out、failed 等）不再抛错：委派调用返回结构化 `details.termination`（宿主终态、ended reason、确认依据、执行生命周期状态、`usageComplete`）并附文本摘要。取消请求之后到达的 `completed` 报告只收入 `executions[].lateReport` 作证据，不再推进 review。
 
-**跑飞 envelope 与恢复（P0-B）。** 两个委派工具都接受显式 `envelope: { maxTokens?, maxWallMs? }`——UPDATE 累计 tokens（input+output 快照，不含 cache）与只覆盖实际 launcher 等待、不包含启动前 Evidence 采样的独立墙钟。越线即走与 Esc 相同的 CANCEL 路径，只触发一次；即使终态在取消宽限后迟到，执行原因仍保留为 `worker_runaway`。确认停止与未确认停止都会置 `task.recovery.required`。此后重新执行该 Task 必须在 `planner_redelegate` 携带结构化 `recovery` 决策（`retry_same_plan` / `fix_environment`，指明异常 `executionId`、理由与 `worktreeDecision`），或用 `planner_verdict`（`verdict: "blocked"` + `recovery: { action: "abort" }`）交人工。决策只消费一次；action、规范化 evidenceRefs 与 worktreeDecision 等价时，即使改写理由或调换证据顺序也会拒绝。`worktreeDecision: "manual"` 是操作者确认残留 writer 已处理后的显式断言，可解除持久 hold。未接线的 P1 动作明确拒绝。
+**跑飞 envelope 与恢复（P0-B）。** 两个委派工具都接受显式 `envelope: { maxTokens?, maxWallMs? }`——UPDATE 累计 tokens（input+output 快照，不含 cache）与只覆盖实际 launcher 等待、不包含启动前 Evidence 采样的独立墙钟。越线即走与 Esc 相同的 CANCEL 路径，只触发一次；即使终态在取消宽限后迟到，执行原因仍保留为 `worker_runaway`。确认停止与未确认停止都会置 `task.recovery.required`。此后重新执行该 Task 必须在 `planner_redelegate` 携带结构化 `recovery` 决策（`retry_same_plan` / `fix_environment`，指明异常 `executionId`、理由与 `worktreeDecision`），或用独立的 `planner_abort`（ADR-0003：一次调用落 blocked 裁决并消费恢复要求）交人工。决策只消费一次；action、规范化 evidenceRefs 与 worktreeDecision 等价时，即使改写理由或调换证据顺序也会拒绝。`worktreeDecision: "manual"` 是操作者确认残留 writer 已处理后的显式断言，可解除持久 hold。未接线的 P1 动作明确拒绝。对 `planner_redelegate` 而言，非终态 Task 上的 `recovery` 会在派发前对 worker、explorer、validator 和 reviewer 一律拒绝为 `RECOVERY_NOT_APPLICABLE`；普通修正或评审轮必须省略该键。终态调用仍走各角色原有守卫：非 reviewer 执行除 `blocked + recovery.required` 外返回 `TASK_CLOSED`，reviewer 仍由既有 `REVIEW_TERMINAL` 语义处理。`planner_verdict` 的兼容行为不同：它会剥离多余的 `recovery`，记录普通 verdict，在 `warnings` 披露剥离，并且不消费恢复要求。
 
 ## 设计规范
 

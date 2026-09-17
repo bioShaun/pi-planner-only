@@ -1,0 +1,110 @@
+{
+  "source": {
+    "path": "/tmp/pi-e2e-run1.jsonl",
+    "sha256": "7a1c0711c28d3d3234cfee19d5b1a17c5d3145fd69974a40ec34ecb3e5a5d172",
+    "bytes": 186396
+  },
+  "session": {
+    "id": "01a0ad57-7a7d-74c7-ab21-378a45ca8498",
+    "version": 3,
+    "cwd": "/tmp/pi-e2e-work",
+    "timestamp": "2026-09-17T03:09:46.494Z"
+  },
+  "classification": {
+    "kind": "instructed-host-integration",
+    "proves": "in-process child-agent execution, envelope breach handling, recovery.required, and planner_abort consumption",
+    "doesNotProve": [
+      "autonomous planner_abort selection",
+      "ordinary planner_verdict generation without recovery"
+    ]
+  },
+  "originalUserPrompt": "Do exactly these two tool calls, in order. 1) planner_delegate with {\"role\":\"worker\",\"objective\":\"Write a haiku about tests into haiku.txt in the current workspace\",\"cwd\":\"/tmp/pi-e2e-work\",\"scope\":{},\"constraints\":[],\"acceptanceCriteria\":[],\"validation\":{\"required\":false},\"envelope\":{\"maxTokens\":1}} — the result's details will contain taskId and flag recovery.required for the abnormal executionId. 2) Then call planner_abort with {\"taskId\":\"<taskId from step 1>\",\"executionId\":\"<the abnormal executionId>\",\"reason\":\"e2e probe: giving up after the envelope breach\",\"worktreeDecision\":\"keep\"}. Finally print the taskId, the delegation termination status, and the abort result.",
+  "events": [
+    {
+      "type": "toolCall",
+      "id": "tool_nBik0pYue71kNKlW5caAbPTJ",
+      "name": "planner_delegate",
+      "arguments": {
+        "role": "worker",
+        "objective": "Write a haiku about tests into haiku.txt in the current workspace",
+        "cwd": "/tmp/pi-e2e-work",
+        "scope": {},
+        "constraints": [],
+        "acceptanceCriteria": [],
+        "validation": { "required": false },
+        "envelope": { "maxTokens": 1 }
+      }
+    },
+    {
+      "type": "toolResult",
+      "toolCallId": "tool_nBik0pYue71kNKlW5caAbPTJ",
+      "name": "planner_delegate",
+      "result": {
+        "content": [{
+          "type": "text",
+          "text": "planner_delegate: T-20260917-001 blocked run=a4b69fe5-f1c1-4fa6-aeff-43f674494feb\ntermination: cancelled — reason=worker_runaway, confirmed=true (terminal+quiet-worktree), execution=stopped\nanomaly: tokens observed=3641 limit=1 (source: delegation-param)\nrecovery.required: worker runaway: tokens 3641 exceeded envelope 1 — submit planner_redelegate.recovery{executionId=tool_nBik0pYue71kNKlW5caAbPTJ, action, reason, worktreeDecision} or planner_abort{executionId=tool_nBik0pYue71kNKlW5caAbPTJ, reason, worktreeDecision}"
+        }],
+        "details": {
+          "taskId": "T-20260917-001",
+          "executionId": "tool_nBik0pYue71kNKlW5caAbPTJ",
+          "runId": "a4b69fe5-f1c1-4fa6-aeff-43f674494feb",
+          "state": "blocked",
+          "termination": {
+            "status": "cancelled",
+            "reason": "worker_runaway",
+            "executionStatus": "stopped",
+            "terminationConfirmed": true,
+            "anomaly": { "signal": "tokens", "observed": 3641, "limit": 1, "source": "delegation-param" },
+            "confirmationBasis": "terminal+quiet-worktree",
+            "cTerminal": {
+              "cwd": "/tmp/pi-e2e-work",
+              "taskId": "T-20260917-001",
+              "workerRunId": "a4b69fe5-f1c1-4fa6-aeff-43f674494feb",
+              "finalGitRef": "fc7ce84f6df1aab2e1567f7d5cacd2fd6be00c64",
+              "gitStatusHash": "e3b0c44298fc1c14",
+              "repoRoot": "/tmp/pi-e2e-work",
+              "changedPaths": [],
+              "gitAvailable": true,
+              "generatedAt": "2026-09-17T03:10:11.768Z"
+            },
+            "quiescenceWaitMs": 10000,
+            "quiescenceWaitSource": "default",
+            "usageComplete": true,
+            "error": "This operation was aborted"
+          },
+          "warnings": []
+        }
+      }
+    },
+    {
+      "type": "toolCall",
+      "id": "tool_SJHwd76OanKZYJUloH3PSnvi",
+      "name": "planner_abort",
+      "arguments": {
+        "executionId": "tool_nBik0pYue71kNKlW5caAbPTJ",
+        "reason": "e2e probe: giving up after the envelope breach",
+        "taskId": "T-20260917-001",
+        "worktreeDecision": "keep"
+      }
+    },
+    {
+      "type": "toolResult",
+      "toolCallId": "tool_SJHwd76OanKZYJUloH3PSnvi",
+      "name": "planner_abort",
+      "result": {
+        "content": [{
+          "type": "text",
+          "text": "[PLANNER-ONLY REVIEW STATE]\ntaskId: T-20260917-001\nstate: blocked\nround: 0/3\nreview mode: root\ndecision: blocked\nfailure: evidence (review-blocked)\nusage: root 845/$0.0033 (1 turns) · children 3.6k/$0.0033 · root share 50%\nreason: Abandoned abnormal execution tool_nBik0pYue71kNKlW5caAbPTJ: e2e probe: giving up after the envelope breach\n\nReport the blocker and the evidence to the user.\nDo not retry the same plan without a new decision or input from the user."
+        }],
+        "details": {
+          "taskId": "T-20260917-001",
+          "verdict": "blocked",
+          "action": "blocked",
+          "state": "blocked",
+          "round": 0,
+          "recovery": { "action": "abort", "consumedBy": "planner_abort" }
+        }
+      }
+    }
+  ]
+}

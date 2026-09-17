@@ -1,6 +1,6 @@
 # 13: `TASK_UNKNOWN` 拒绝文案不可操作 —— 幻觉 taskId 让 planner_delegate 原地重试
 
-Status: needs-triage（改进方向 1 可直接派活；方向 2 是工具面契约决策，需维护者先定）
+Status: done
 
 ## 现象
 
@@ -32,3 +32,14 @@ planner_delegate refused: unknown Task T-20260717-001
 
 - 2026-09-16（落档）：来源为宿主实跑观察 + 源码逐行核对；定性为可用性/防幻觉加固，非代码 bug。
 - 2026-09-16（复发与立项）：方向 1 已落地（含票 14 角色区分），但 session `01a0a9cc` 再次出现幻觉 `taskId`（`T-20260918-015`）同参数重发两次，证明文案不是 loop-breaker。§机制"触发诱因"段的结构性根治立项为票 17（创建路径去掉 `taskId`）；通用重复拒绝熔断立项为票 16；方向 2 立项为票 18。
+- 2026-09-17（收口核验与架构闭环）：
+  - HEAD: `de2cdbd0466070f6f8b6ea9350bf523b4696cdfd`（复用 T-20260917-004 typecheck 与全量测试全绿记录，定向核查源码与契约）。
+  - 方向 1 与方向 2 承接落地状态：
+    - 方向 1（拒绝指引可操作化与角色感知）：经票 14 细化，`delegate.ts:550-569` 针对 `TASK_UNKNOWN` 与 `TASK_FOREIGN_WORKSPACE` 严格区分 Reviewer（引导调用 `planner_tasks` 查找 canonical taskId 或在对应 workspace 寻找既有可评审 Task，禁止提示新建以防触发 `TASK_REQUIRED`）与普通角色（引导调用 `planner_tasks` 列出 live Tasks 或调用 `planner_delegate` 新建），并在 `delegate.test.mjs:272-308, 728-768` 严格测试断言。
+    - 方向 2（Task 枚举手段）：维护者已在票 18 裁定采纳工具方案（live-only v1），通过 `index.ts:962-984` 注册只读 `planner_tasks`，从内存与账本双源读取 live Task（`orchestrator.listLiveTasks`），为 Root 提供准确自查 canonical taskId 入口，消除无自查手段导致的凭空捏造。
+    - 结构性根治与通用熔断（票 16、票 17）：票 17 从根源消除了幻觉 taskId 的诱因，拆分工具契约为新建与再入两套独立工具；票 16（`refusal-breaker.ts`）则在所有 Root 工具上实施同 code 相同参数连续重复拒绝的机器熔断。
+  - 最终工具契约与架构：
+    1. 新建 Task：`planner_delegate`（schema 无 `taskId`/`recovery`，始终铸造新 Task 并返回 canonical `details.taskId`；透传 ID 自动忽略并出 warning，不再拒绝）。
+    2. 再入既有 Task：`planner_redelegate`（schema 必填 `taskId`，承接修正轮、Reviewer 评审与 recovery 恢复，严格按 ID 逐字绑定既有记录）。
+    3. 枚举 live Task：`planner_tasks`（只读，双源列出当前 workspace 的 live/可恢复 Task 与状态）。
+  - 结论：票 13 的两个改进方向及衍生诱因已全部由票 14、16、17、18 完整实现并测试覆盖，ADR-0002 架构落地闭环，不再存在『待维护者决策』未决状态，收口关闭此票。

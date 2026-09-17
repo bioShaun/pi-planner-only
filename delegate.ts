@@ -15,6 +15,7 @@
  * transitioned first so a refused run never masquerades as an outcome.
  */
 import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { Type, type Static } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
@@ -142,8 +143,8 @@ const P1_RECOVERY_ACTIONS = new Set(["narrow_task", "add_information", "repair_p
 /**
  * P0-B — validate a RecoveryDecision against a Task's recovery requirement
  * (spec §5). Shared by planner_redelegate (re-execution actions) and
- * planner_verdict (abort). Returns a refusal message, or undefined when the
- * decision is admissible.
+ * planner_abort (abort, ADR-0003). Returns a refusal message, or undefined
+ * when the decision is admissible.
  */
 export function validateRecoveryDecision(
 	task: TaskRecord,
@@ -157,7 +158,7 @@ export function validateRecoveryDecision(
 			: `recovery is only admissible while the Task flags recovery.required (Task ${task.taskId} does not)`;
 	}
 	if (decision === undefined) {
-		return `Task ${task.taskId} requires a RecoveryDecision: execution ${required.executionId} ended abnormally (${required.reason}); submit recovery{executionId, action, reason, worktreeDecision} or abort via planner_verdict`;
+		return `Task ${task.taskId} requires a RecoveryDecision: execution ${required.executionId} ended abnormally (${required.reason}); submit recovery{executionId, action, reason, worktreeDecision} or abort via planner_abort`;
 	}
 	if (decision.executionId !== required.executionId) {
 		return `recovery.executionId ${decision.executionId} does not match the abnormal execution ${required.executionId}`;
@@ -166,7 +167,7 @@ export function validateRecoveryDecision(
 		return `recovery for execution ${required.executionId} was already consumed by ${required.consumedBy}`;
 	}
 	if (decision.action === "abort" && !allowedActions.has("abort")) {
-		return "recovery action abort goes through planner_verdict (verdict=blocked), not planner_redelegate";
+		return "recovery action abort goes through planner_abort, not planner_redelegate";
 	}
 	if (!allowedActions.has(decision.action)) {
 		return P1_RECOVERY_ACTIONS.has(decision.action)
@@ -231,7 +232,7 @@ const DELEGATION_SPEC_PARAMETERS = {
 const DELEGATION_RECOVERY_PARAMETER = Type.Optional(
 	Type.Object({
 		executionId: Type.String({ minLength: 1 }),
-		action: Type.String({ minLength: 1, description: "P0 wired: retry_same_plan | fix_environment. abort goes through planner_verdict; the rest need P1." }),
+		action: Type.String({ minLength: 1, description: "P0 wired: retry_same_plan | fix_environment. abort goes through planner_abort; the rest need P1." }),
 		reason: Type.String({ minLength: 1 }),
 		evidenceRefs: Type.Optional(Type.Array(Type.String())),
 		worktreeDecision: Type.Union([Type.Literal("keep"), Type.Literal("manual")]),
@@ -396,6 +397,16 @@ export interface DelegationDeps {
 	launch: (request: SubagentDelegationRequest, signal?: AbortSignal, hooks?: DelegationLaunchHooks) => Promise<SubagentDelegationResponse>;
 	ownerRunId: string;
 	now?: () => Date;
+	/**
+	 * Wall-envelope clock: a monotonic `now()` plus the timer pair. Tests
+	 * inject a virtual clock; production defaults to performance.now and the
+	 * global timers. Distinct from `now`, which only renders ISO timestamps.
+	 */
+	wallClock?: {
+		now(): number;
+		setTimeout(fn: () => void, ms: number): ReturnType<typeof setTimeout>;
+		clearTimeout(handle: ReturnType<typeof setTimeout>): void;
+	};
 	/** P0-A stop-confirmation wait after an identity-matched terminal (spec §3). */
 	quiescenceWaitMs?: number;
 	/** Gap between the two confirmatory worktree samples. */
@@ -568,6 +579,21 @@ export async function runDelegation(
 			);
 		}
 		task = record;
+		// Ticket 03 (wrc-incident-followups) — reject a stray decision for
+		// every role before role-specific dispatch. In particular, reviewers
+		// must not bypass this gate through the early return below.
+		if (!isFinalTaskState(task.state) && params.recovery !== undefined) {
+			const stray = params.recovery as { executionId?: unknown; action?: unknown };
+			throw new DelegationRefused(
+				"RECOVERY_NOT_APPLICABLE",
+				[
+					`${toolName} refused: recovery is only admissible on a blocked Task flagged recovery.required — Task ${task.taskId} is ${task.state} with no pending requirement.`,
+					`received executionId=${typeof stray.executionId === "string" ? stray.executionId : "(missing)"}, action=${typeof stray.action === "string" ? stray.action : "(missing)"}; executionId names the abnormal execution's details.executionId, not a child runId.`,
+					"For a correction or review round omit recovery; to abandon a flagged execution use planner_abort.",
+				].join(" "),
+				task.taskId,
+			);
+		}
 		// The reviewer fork: binding is identical, but the call mints no spec
 		// of its own — the stored spec is the reviewer's read-only context.
 		if (role === "reviewer") {
@@ -651,10 +677,16 @@ export async function runDelegation(
 	const runController = new AbortController();
 	let runaway: RunawayObservation | undefined;
 	let maxTokensSeen = -1;
+	// Ticket 01 (wrc-incident-followups) — elapsed is read from a monotonic
+	//    clock, not Date.now: a wall-clock rollback can no longer shrink or
+	//    negate it.
+	const wallNow = deps.wallClock?.now ?? (() => performance.now());
+	const armWallTimer = deps.wallClock?.setTimeout ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
+	const disarmWallTimer = deps.wallClock?.clearTimeout ?? ((handle: ReturnType<typeof setTimeout>) => clearTimeout(handle));
 	let launchStartedAt = 0;
 	let wallTimer: ReturnType<typeof setTimeout> | undefined;
 	const stopWallTimer = () => {
-		if (wallTimer) clearTimeout(wallTimer);
+		if (wallTimer) disarmWallTimer(wallTimer);
 		wallTimer = undefined;
 	};
 	const breach = (signal: RunawaySignal, observed: number, limit: number) => {
@@ -814,10 +846,24 @@ export async function runDelegation(
 		try {
 			// P0-B — wall clock is independent of UPDATE heartbeats; a silent child
 			//    still trips maxWallMs. Cleared as soon as the launcher returns.
-			launchStartedAt = Date.now();
-			wallTimer = envelope?.maxWallMs !== undefined
-				? setTimeout(() => breach("wall", Date.now() - launchStartedAt, envelope.maxWallMs!), envelope.maxWallMs)
-				: undefined;
+			launchStartedAt = wallNow();
+			if (envelope?.maxWallMs !== undefined) {
+				const wallLimit = envelope.maxWallMs;
+				// Ticket 01 — the deadline callback re-checks elapsed instead of
+				//    breaching unconditionally: a timer that fires early re-arms
+				//    for the remainder (each re-arm bounded by the limit, so a
+				//    backwards clock cannot stretch it). Only a real overrun
+				//    breaches, keeping anomaly.observed >= anomaly.limit.
+				const onWallDeadline = () => {
+					const elapsed = wallNow() - launchStartedAt;
+					if (elapsed < wallLimit) {
+						wallTimer = armWallTimer(onWallDeadline, Math.min(wallLimit, Math.ceil(wallLimit - elapsed)));
+						return;
+					}
+					breach("wall", Math.floor(elapsed), wallLimit);
+				};
+				wallTimer = armWallTimer(onWallDeadline, wallLimit);
+			}
 			response = await deps.launch(request, runController.signal, {
 				onUpdate: (update) => {
 					// P0-B monitor — cumulative token snapshot, max not sum;
@@ -1534,7 +1580,7 @@ export function renderDelegationOutcome(outcome: DelegationOutcome, toolName = "
 	}
 	if (outcome.task.recovery?.required) {
 		const r = outcome.task.recovery;
-		lines.push(`recovery.required: ${r.reason} — submit planner_redelegate.recovery{executionId=${r.executionId}, action, reason, worktreeDecision} or planner_verdict blocked + recovery{action:"abort"}`);
+		lines.push(`recovery.required: ${r.reason} — submit planner_redelegate.recovery{executionId=${r.executionId}, action, reason, worktreeDecision} or planner_abort{executionId=${r.executionId}, reason, worktreeDecision}`);
 	}
 	for (const warning of outcome.warnings) lines.push(`warning: ${warning}`);
 	return lines.join("\n");

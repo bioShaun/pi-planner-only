@@ -51,7 +51,7 @@ Root's only Git access: fixed, read-only argv. Never a shell.
 _Avoid_: git shell, audit API
 
 **Policy**:
-The parent tool guard: which tools Root may call. While a Task is live for the workspace, the live allowlist applies; when none is (Idle for gather), Root may only start a Delegation with `planner_delegate`, re-enter an existing Task with `planner_redelegate`, list live Tasks with `planner_tasks`, ask a question, record a Verdict, or inspect Git with `git_audit`. Idle is derived from the Task store per workspace, never from prompt wording.
+The parent tool guard: which tools Root may call. While a Task is live for the workspace, the live allowlist applies; when none is (Idle for gather), Root may only start a Delegation with `planner_delegate`, re-enter an existing Task with `planner_redelegate`, abandon a `recovery.required` execution with `planner_abort`, list live Tasks with `planner_tasks`, ask a question, record a Verdict, or inspect Git with `git_audit`. Idle is derived from the Task store per workspace, never from prompt wording.
 _Avoid_: permissions, ACL
 
 **Delegation**:
@@ -63,7 +63,7 @@ The persisted `task.writerHold` left when an execution's stop was never confirme
 _Avoid_: lock, mutex
 
 **RecoveryDecision**:
-Root's structured decision (`planner_redelegate.recovery`, or `planner_verdict` blocked + `action:"abort"`) that authorizes one new bounded execution on a Task flagged `recovery.required`; consumed once, never reworded-retried.
+Root's structured decision (`planner_redelegate.recovery`, or the dedicated `planner_abort` surface for `action:"abort"` — ADR-0003; `planner_verdict` has no recovery key) that authorizes one new bounded execution on a Task flagged `recovery.required`, or abandons it for the operator; consumed once, never reworded-retried. Distinct from evidence revalidation, which is the workspace re-sampling behind a `revalidate` verdict action on ordinary Tasks — no `recovery` key, no `recovery.required` gate, nothing consumed.
 _Avoid_: replan, retry policy
 
 **Review loop**:
@@ -71,7 +71,7 @@ Decide the next lifecycle step from a report, evidence comparison, and optional 
 _Avoid_: review pipeline, arbitration service
 
 **Verdict**:
-Root's recorded judgment over a Task through `planner_verdict`; the operator's `/planner-only review` is an override, not a second verdict. Flow: worker report → Root evidence comparison → optional reviewer → `planner_verdict` (pass / request_changes / blocked) → `git_commit` once the Task is completed.
+Root's recorded judgment over a Task through `planner_verdict`; the operator's `/planner-only review` is an override, not a second verdict. Flow: worker report → Root evidence comparison → optional reviewer → `planner_verdict` (pass / request_changes / blocked — no recovery key; abandoning a `recovery.required` execution goes through `planner_abort`) → `git_commit` once the Task is completed.
 
 **Usage**:
 Token and derived-cost accounting attributed to a Task; Root turns by phase, children by run. Injected text and review leak are tracked separately.

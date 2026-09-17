@@ -1809,10 +1809,10 @@ export class PlannerOrchestrator {
 		}
 		if (task.recovery?.required) {
 			lines.push(
-				`Recovery required: ${task.recovery.reason} — execution ${task.recovery.executionId}; decide via planner_redelegate.recovery or planner_verdict blocked+abort`,
+				`Recovery required: ${task.recovery.reason} — execution ${task.recovery.executionId}; decide via planner_redelegate.recovery or planner_abort`,
 			);
 		} else if (task.recovery?.nextAction === "abort") {
-			lines.push(`Recovery: aborted — Task left for operator handling (decision by ${task.recovery.consumedBy ?? "planner_verdict"})`);
+			lines.push(`Recovery: aborted — Task left for operator handling (decision by ${task.recovery.consumedBy ?? "planner_abort"})`);
 		}
 		if (task.recoveryAttempts > 0) {
 			lines.push(`Recoveries: ${task.recoveryAttempts}/${MAX_RECOVERY_ATTEMPTS} automatic attempts used`);

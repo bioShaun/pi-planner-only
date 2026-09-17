@@ -82,8 +82,9 @@ export function refusalCodeOf(error: unknown): string {
 }
 
 const REFUSAL_MESSAGE_PATTERNS = [
-	/^(?:planner_delegate|planner_redelegate|planner_verdict|git_commit) refused\b/,
+	/^(?:planner_delegate|planner_redelegate|planner_verdict|planner_abort|git_commit) refused\b/,
 	/^planner_verdict: unknown task\b/,
+	/^planner_abort: unknown task\b/,
 ];
 
 /**
@@ -98,7 +99,7 @@ export function isRefusal(error: unknown): boolean {
 	if (error.name === "DelegationAborted") return false;
 	if (error.name === "DelegationRefused" || error.name === "TaskSpecContractError") return true;
 	const message = error.message;
-	if (/^planner_verdict refused \(store-error/.test(message)) return false;
+	if (/^planner_(?:verdict|abort) refused \(store-error/.test(message)) return false;
 	return REFUSAL_MESSAGE_PATTERNS.some((pattern) => pattern.test(message));
 }
 

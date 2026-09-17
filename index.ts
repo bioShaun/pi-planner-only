@@ -60,8 +60,8 @@ import type { DelegationOutcome, PlannerDelegationParams } from "./delegate.ts";
 import { RefusalBreaker, isRefusal } from "./refusal-breaker.ts";
 import type { RecoveryDecision } from "./types.ts";
 
-/** P0-B — the only recovery action wired through planner_verdict (spec §5). */
-const VERDICT_RECOVERY_ACTIONS = new Set(["abort"]);
+/** P0-B — the only recovery action wired through planner_abort (spec §5, ADR-0003). */
+const ABORT_RECOVERY_ACTIONS = new Set(["abort"]);
 
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
 	? resolve(process.env.PI_CODING_AGENT_DIR)
@@ -197,18 +197,18 @@ export const PLANNER_PROMPT = `[PLANNER-ONLY MODE]
 Root: plan, delegate, inspect read-only, review, and arbitrate.
 Do not edit or write files, run a general shell, or implement fixes.
 
-Gather: no live Task → start one planner_delegate; planner_verdict and git_audit stay allowed; live Tasks allow inspect/Git-read.
+Gather: no live Task → planner_delegate; planner_verdict/git_audit stay allowed; live Tasks allow inspect/Git-read.
 
 One bounded TaskSpec per planner_delegate call (full TaskSpec fields); one ticket per TaskSpec. Do not instruct workers to /code-review.
-planner_delegate always mints a new Task and returns its canonical taskId in details.taskId. Corrections, reviews, and recovery for that Task go through planner_redelegate with that exact taskId — unsure of it, call planner_tasks; never construct one.
+planner_delegate always mints a Task and returns its canonical taskId in details.taskId. Corrections, reviews, and recovery re-enter via planner_redelegate with that exact taskId — unsure, call planner_tasks; never construct one.
 
 Every worker returns WorkerReport version ${WORKER_REPORT_VERSION} — summary, changedFiles, validation plus exit codes, evidence, risks, and unresolved items. Top-level status must be exactly completed/partial/blocked/failed; validation status must be exactly passed/failed/not-run.
 
-Verify identity and evidence freshness (read/grep/git_audit), then record PASS, REQUEST_CHANGES, or BLOCKED with planner_verdict.
+Verify identity and evidence freshness (read/grep/git_audit), then record PASS, REQUEST_CHANGES, or BLOCKED with planner_verdict — no recovery key; abandon a recovery.required execution via planner_abort.
 
 Roles: explorer → scout, reviewer → builtin reviewer (read/grep/find/ls, context=fresh), validator → oracle (bash, no edits), worker keeps its agent; never pre-compose worker→reviewer as a workflowScript or chain; the reviewer runs via planner_redelegate only after the worker returns, in a separate call.
 
-Never trust a worker PASS. Never accept stale evidence; validation re-runs and corrections re-enter via planner_redelegate (bounded oracle: HEAD/status + named tests; full suite only if PI_PLANNER_ONLY_ORACLE=full). Never fix rejected work. Stop after ${MAX_REVIEW_ROUNDS} review rounds (blocked).
+Never trust a worker PASS. Never accept stale evidence; validation re-runs via bounded oracle: HEAD/status + named tests; full suite only if PI_PLANNER_ONLY_ORACLE=full. Never fix rejected work. Stop after ${MAX_REVIEW_ROUNDS} review rounds (blocked).
 Lifecycle state arrives in delegation results; the operator may override a verdict, you record yours with planner_verdict.`;
 
 function envForcesGuard(): boolean {
@@ -348,7 +348,10 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	const concurrency = new ConcurrencyController({ savedLimit: concurrencyConfig.limit, saved: concurrencyConfig.source === "saved", enforceWorkspace: true });
 	// ADR-0001 — the structured-delegation launcher for planner_delegate.
 	// Fallback owner identity when the session id is not yet known.
-	const delegationLaunch = createHostLauncher(pi);
+	// PI_PLANNER_ONLY_CANCEL_GRACE_MS exists for tests; the default stays 5 s.
+	const delegationLaunch = createHostLauncher(pi, {
+		cancelGraceMs: parseNonNegativeMs(process.env.PI_PLANNER_ONLY_CANCEL_GRACE_MS),
+	});
 	// WRC P0-A — spec §3 quiescenceWaitMs; env override exists for tests and
 	// calibrated hosts, the default stays 10 s (forced-settlement 3–4 s +
 	// session-close 5 s upper bound).
@@ -948,7 +951,8 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		promptGuidelines: [
 			"planner_redelegate binds an existing Task: pass the canonical taskId from a prior planner_delegate result's details.taskId verbatim. Never construct a taskId.",
 			"role=reviewer reviews the bound Task's latest WorkerReport; the launcher-validated ReviewResult arrives in details.review.",
-			"Optional envelope{maxTokens,maxWallMs} bounds a runaway execution; a Task flagged recovery.required re-executes only with a matching recovery decision (retry_same_plan / fix_environment) or planner_verdict blocked + abort.",
+			"Optional envelope{maxTokens,maxWallMs} bounds a runaway execution; a Task flagged recovery.required re-executes only with a matching recovery decision (retry_same_plan / fix_environment) or is aborted via planner_abort.",
+			"recovery.executionId names the abnormal execution's details.executionId — never a child runId; a stray recovery on a Task without a pending requirement is refused (RECOVERY_NOT_APPLICABLE), not ignored.",
 		],
 		parameters: PLANNER_REDELEGATE_PARAMETERS,
 	});
@@ -970,7 +974,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		promptGuidelines: [
 			"If you need a taskId and do not have it verbatim, call planner_tasks; never construct one.",
 			"planner_tasks is read-only: it never mints, binds, restores, or mutates a Task.",
-			"recoveryRequired: true marks a blocked Task whose next planner_redelegate must carry a recovery decision.",
+			"recoveryRequired: true marks a blocked Task whose next planner_redelegate must carry a recovery decision — or whose execution is abandoned via planner_abort.",
 		],
 		parameters: Type.Object({}),
 		async execute(_toolCallId, _params: Record<string, never>, _signal, _onUpdate, ctx) {
@@ -996,11 +1000,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		description: [
 			"Record Root's review verdict for a planner-only task: pass, request_changes, or blocked.",
 			"A pass re-samples the workspace at the acceptance boundary; stale evidence turns it into revalidate.",
+			"None of the three verdicts carries a recovery decision; abandoning an abnormal execution flagged recovery.required goes through planner_abort.",
 		].join(" "),
-		promptSnippet: "planner_verdict: record the root review verdict (pass | request_changes | blocked) for a task",
+		promptSnippet: "planner_verdict: record the root review verdict (pass | request_changes | blocked) for a task — no recovery key",
 		promptGuidelines: [
 			"After verifying the WorkerReport and evidence, record the verdict with planner_verdict; the slash command is the operator's override, not yours.",
 			"request_changes should carry findings so the correction guidance names what to fix.",
+			"Omit recovery entirely — there is no such key on this tool; pass, request_changes, and blocked are plain verdicts. To abandon an abnormal execution on a Task flagged recovery.required, call planner_abort.",
 		],
 		parameters: Type.Object({
 			verdict: Type.Union(
@@ -1045,15 +1051,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					commit: Type.Optional(Type.Boolean()),
 				}, { description: "Root acknowledgement of verified successor or commit drift." }),
 			),
-			recovery: Type.Optional(
-				Type.Object({
-					executionId: Type.String({ minLength: 1 }),
-					action: Type.String({ minLength: 1, description: "Only \"abort\" is wired here in P0: the Task stays blocked for operator handling." }),
-					reason: Type.String({ minLength: 1 }),
-					evidenceRefs: Type.Optional(Type.Array(Type.String())),
-					worktreeDecision: Type.Union([Type.Literal("keep"), Type.Literal("manual")]),
-				}, { description: "RecoveryDecision for a Task flagged recovery.required; verdict must be blocked." }),
-			),
 		}),
 		async execute(toolCallId, params: {
 			verdict: ReviewVerdict;
@@ -1061,9 +1058,17 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			taskId?: string;
 			findings?: ReviewFinding[];
 			acknowledgeDrift?: DriftAcknowledgement;
-			recovery?: RecoveryDecision;
+			recovery?: unknown;
 		}, _signal, _onUpdate, ctx: ExtensionContext) {
 			return withRefusalBreaker("planner_verdict", toolCallId, params, ctx, async () => {
+			// ADR-0003 — a passthrough recovery key on a non-validating host is
+			//    stripped and disclosed, never refused: refusing recreated the
+			//    replay loop this split exists to end (same shape as the
+			//    ADR-0002 taskId strip on planner_delegate).
+			const stripWarnings: string[] = [];
+			if (params.recovery !== undefined) {
+				stripWarnings.push("recovery is not a planner_verdict key and was ignored — to abandon an abnormal execution flagged recovery.required, call planner_abort");
+			}
 			// Ticket 49 — the target resolves through the same ledger-aware lookup the
 			// delegation path uses, so a Task beyond the session restore cap can still be
 			// addressed by id. An explicit id never falls back to another Task.
@@ -1088,17 +1093,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				orchestrator.recordRootVerdictRefusal(task, params.verdict, refusal);
 				throw new Error(`planner_verdict refused (${refusal.kind}, task=${task.taskId}, verdict=${params.verdict}): ${refusal.reason}`);
 			}
-			// P0-B — a RecoveryDecision on planner_verdict is only the abort
-			//    action on a blocked verdict (spec §5); validated before the
-			//    verdict lands, consumed after it succeeds.
-			if (params.recovery !== undefined) {
-				const recoveryRefusal = params.verdict !== "blocked"
-					? "a recovery decision on planner_verdict requires verdict=blocked"
-					: validateRecoveryDecision(task, params.recovery, VERDICT_RECOVERY_ACTIONS);
-				if (recoveryRefusal) {
-					throw new Error(`planner_verdict refused (recovery, task=${task.taskId}): ${recoveryRefusal}`);
-				}
-			}
 			try {
 				const before = task.state;
 				const outcome = await orchestrator.recordRootVerdict(task, params.verdict, params.summary, {
@@ -1106,12 +1100,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					...(params.acknowledgeDrift ? { acknowledgeDrift: params.acknowledgeDrift } : {}),
 					source: "root",
 				});
-				if (params.recovery !== undefined) {
-					orchestrator.store.consumeRecovery(task.taskId, params.recovery, "planner_verdict", "abort");
-					if (params.recovery.worktreeDecision === "manual") orchestrator.resolveWriterHold(task.taskId);
-				}
 				let text = orchestrator.renderDecisionBlock(orchestrator.store.require(task.taskId), outcome.decision, outcome.evidence);
 				text = enrichDecisionText(text, outcome.task.taskId);
+				for (const warning of stripWarnings) text = `${text}\nwarning: ${warning}`;
 				recordInjectedText(outcome.task.taskId, text);
 				persistSessionEntries();
 				await flushIfTerminal(outcome.task.taskId, before, ctx);
@@ -1126,11 +1117,122 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 						action: outcome.decision.action,
 						state: outcome.task.state,
 						round: outcome.task.reviewRound,
+						warnings: stripWarnings,
 					},
 				};
 			} catch (error) {
 				throw new Error(
 					`planner_verdict refused (store-error, task=${task.taskId}, verdict=${params.verdict}): ${error instanceof Error ? error.message : String(error)}`,
+				);
+			}
+			});
+		},
+	});
+
+	// ADR-0003 — abandoning an abnormal execution is its own tool surface:
+	// planner_verdict has no recovery key at all, so the "verdict plus maybe
+	// recovery" combination is inexpressible. planner_abort is the blocked
+	// verdict + abort RecoveryDecision as one atomic call — no `action` field
+	// exists because the tool's identity is the action.
+	pi.registerTool({
+		name: "planner_abort",
+		label: "Planner Abort",
+		description: [
+			"Abandon a blocked Task's abnormal execution: records a blocked verdict and consumes the recovery.required flag in one call, leaving the Task for operator handling.",
+			"Only admissible while the Task flags recovery.required. executionId is the abnormal execution's details.executionId — never a child runId.",
+		].join(" "),
+		promptSnippet: "planner_abort: abandon a blocked Task's abnormal execution — blocked verdict + consume recovery.required",
+		promptGuidelines: [
+			"Use planner_abort only on a Task flagged recovery.required when Root decides against re-executing; to keep working, re-enter with planner_redelegate and a retry_same_plan / fix_environment recovery decision instead.",
+			"executionId is the abnormal execution's details.executionId (the toolCallId that ran it) — never a child runId.",
+			"worktreeDecision=manual releases the persisted writer hold only after the operator resolved the unconfirmed stop; otherwise keep.",
+		],
+		parameters: Type.Object({
+			taskId: Type.String({ minLength: 1, description: "Canonical Task id, verbatim from a prior planner_delegate result's details.taskId." }),
+			executionId: Type.String({ minLength: 1, description: "The abnormal execution's details.executionId — not a child runId." }),
+			reason: Type.String({ minLength: 1, description: "Concrete basis for abandoning instead of recovering." }),
+			worktreeDecision: Type.Union([Type.Literal("keep"), Type.Literal("manual")], {
+				description: "keep leaves the workspace reserved; manual releases the writer hold after operator resolution.",
+			}),
+			evidenceRefs: Type.Optional(Type.Array(Type.String())),
+			summary: Type.Optional(Type.String({ maxLength: 2000, description: "Verdict summary; derived from reason when omitted." })),
+		}),
+		async execute(toolCallId, params: {
+			taskId: string;
+			executionId: string;
+			reason: string;
+			worktreeDecision: "keep" | "manual";
+			evidenceRefs?: string[];
+			summary?: string;
+		}, _signal, _onUpdate, ctx: ExtensionContext) {
+			return withRefusalBreaker("planner_abort", toolCallId, params, ctx, async () => {
+			const abortResolution = orchestrator.resolveVerdictTask(params.taskId, ctx.cwd || process.cwd());
+			const task = abortResolution.task;
+			if (!task) {
+				throw new Error(
+					[
+						`planner_abort: unknown task ${params.taskId}.${abortResolution.note ? ` ${abortResolution.note}.` : ""}`,
+						"Usage: planner_abort({ taskId, executionId, reason, worktreeDecision }) — executionId is details.executionId of the abnormal execution, not a child runId.",
+					].join(" "),
+				);
+			}
+			latestCtx = ctx;
+			const refusal = orchestrator.rootVerdictRefusal(task, "blocked");
+			if (refusal) {
+				orchestrator.recordRootVerdictRefusal(task, "blocked", refusal);
+				throw new Error(`planner_abort refused (${refusal.kind}, task=${task.taskId}): ${refusal.reason}`);
+			}
+			const decision: RecoveryDecision = {
+				executionId: params.executionId,
+				action: "abort",
+				reason: params.reason,
+				worktreeDecision: params.worktreeDecision,
+				...(params.evidenceRefs ? { evidenceRefs: params.evidenceRefs } : {}),
+			};
+			const recoveryRefusal = validateRecoveryDecision(task, decision, ABORT_RECOVERY_ACTIONS);
+			if (recoveryRefusal) {
+				orchestrator.store.recordVerdictRefusal(task.taskId, {
+					taskId: task.taskId,
+					requestedVerdict: "blocked",
+					kind: "recovery-invalid",
+					reason: recoveryRefusal,
+					executionId: params.executionId,
+				});
+				throw new Error(
+					`planner_abort refused (recovery, task=${task.taskId}): ${recoveryRefusal}.`
+					+ ` received executionId=${params.executionId}; Task state=${task.state},`
+					+ ` recovery.required=${task.recovery?.required === true}, consumedBy=${task.recovery?.consumedBy ?? "none"}.`
+					+ " If this Task needs no recovery, record the verdict with planner_verdict or re-enter with planner_redelegate — executionId is details.executionId of the abnormal execution, not a child runId.",
+				);
+			}
+			try {
+				const before = task.state;
+				const summary = (params.summary ?? `Abandoned abnormal execution ${params.executionId}: ${params.reason}`).slice(0, 2000);
+				const outcome = await orchestrator.recordRootVerdict(task, "blocked", summary, { source: "root" });
+				orchestrator.store.consumeRecovery(task.taskId, decision, "planner_abort", "abort");
+				if (params.worktreeDecision === "manual") orchestrator.resolveWriterHold(task.taskId);
+				let text = orchestrator.renderDecisionBlock(orchestrator.store.require(task.taskId), outcome.decision, outcome.evidence);
+				text = enrichDecisionText(text, outcome.task.taskId);
+				recordInjectedText(outcome.task.taskId, text);
+				persistSessionEntries();
+				await flushIfTerminal(outcome.task.taskId, before, ctx);
+				return {
+					content: [{
+						type: "text",
+						text,
+					}],
+					details: {
+						taskId: outcome.task.taskId,
+						verdict: "blocked",
+						action: outcome.decision.action,
+						state: outcome.task.state,
+						round: outcome.task.reviewRound,
+						recovery: { action: "abort", consumedBy: "planner_abort" },
+					},
+				};
+			} catch (error) {
+				throw new Error(
+					`planner_abort refused (store-error, task=${task.taskId}): ${error instanceof Error ? error.message : String(error)}`,
 				);
 			}
 			});
@@ -1206,12 +1308,12 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				return breakerBlock;
 			}
 		}
-		if (!IS_SUBAGENT && ["subagent", "bg_wait", "planner_verdict", "git_audit", "planner_delegate", "planner_redelegate", "planner_tasks"].includes(event.toolName)) {
+		if (!IS_SUBAGENT && ["subagent", "bg_wait", "planner_verdict", "planner_abort", "git_audit", "planner_delegate", "planner_redelegate", "planner_tasks"].includes(event.toolName)) {
 			rootTurnToolCallIds.add(event.toolCallId);
 			const input = asRecord(event.input);
 			// Only binding surfaces carry a meaningful taskId — planner_delegate
 			// ignores a passthrough taskId entirely, so it must not attribute.
-			if ((event.toolName === "planner_verdict" || event.toolName === "planner_redelegate") && typeof input?.taskId === "string") {
+			if ((event.toolName === "planner_verdict" || event.toolName === "planner_redelegate" || event.toolName === "planner_abort") && typeof input?.taskId === "string") {
 				rootTurnTaskIds.add(canonicalTaskId(input.taskId));
 			} else if (event.toolName === "planner_verdict" || event.toolName === "git_audit") {
 				const active = orchestrator.store.activeForCwd(policyCwd);

@@ -1,6 +1,6 @@
 # 01: 冻结 M/N 代表事件 fixture 并回填验收矩阵（C01/C02/C17/C18）
 
-Status: ready-for-human
+Status: closed
 
 ## 背景
 
@@ -24,3 +24,13 @@ NX-01～NX-06 的离线套件（nx01/nx02-03/nx04-06）目前使用合成 fixtur
   - C08：nx02-03 新增 9 请求/8 落账/1 拒绝重算（拒绝经真实 `rootVerdictRefusal` 分类为 child-pending，不入账）。
   - 矩阵回填：新增 `acceptance-claims.ts`（C01–C18、B01–B24 全量映射），接线进 `orchestrate.exportEvidence`（即公开 usage export 入口），并加入指纹文件清单与 package.json files。C01/C02/C03/C07/C08/C09/C17 标 handler-verified（引用上述套件与 fixture）；C04–C06 handler-verified + host-run-pending；C10–C16、C18 implemented + host-run-pending；B 项按审计文档 §Acceptance matrix 并修正 NX 批次已关闭项（B08 恢复计数已改为真实派发时 +1）。helper PASS 不作为升级依据由 acceptance.ts 门禁强制。
   - 宿主级证据（C04–C06、C10–C16、C18 宿主列）待 followup-split §5 宿主会话。
+- 2026-09-17（agent 宿主证据核对与收口）：
+  - 核验 02/03 后续票据决策与宿主报告：
+    - 02（.scratch/nx-followups/issues/02-host-probe-exploration-budget.md）已 wontfix：探测对象（`createExplorationProbeFixture`/`explorationProbeDelta`/`ExplorationBudgetLedger`）已在 floors.ts 删除，C10 差异恒为 0 的问题随对象删除消解，探索预算不再走 floors。
+    - 03（.scratch/nx-followups/issues/03-host-verification-runs.md）已 wontfix：acceptance.ts 门禁已在 typed cutover 中删除（现 acceptance-claims.ts 语义不同），原验收矩阵框架不复存在；相关宿主级验证已由 typed-delegation host-10/11 与 worker-runaway-controller host-01/02 替代覆盖（见 .scratch/typed-delegation/issues/10-host-acceptance.md 裁定 K5/K8：acceptance matrix 已收不重建，release gate 不设 host contract 门禁）。
+    - 宿主报告核对：现有报告（.scratch/host-verify-46-48-49-50/summary.md 及 typed-delegation/host-05/host-10）覆盖 typed-delegation 完整周期与 cost-control 验证，无旧 acceptance 框架下 C04–C06/C10–C16/C18 的单项宿主回填。
+  - 验收边界与收口结论：
+    - 01 票内三项验收标准已闭环满足：(1) 导出去敏代表事件 fixture（session-013147-mn.json）并用于 nx01 重放；(2) 跨进程 restore → rescan 验证无重复记账；(3) 矩阵各条目均已挂上真实 handler 证据或按规范允许填入 `notDoneReason: host-run-pending`。
+    - 01 验收要求为 fixture 冻结与证据/notDoneReason 挂接，不以宿主运行全绿为前提；且涉及的未上机宿主场景后续已在 02/03 正式裁定为 wontfix 或移交 typed-delegation。
+    - 明确保留历史矩阵中相关条目的 `host-run-pending` 标记，不将 wontfix 降格或虚报为「宿主验证通过」。当前 ROOT 无 usage export 工具且无法重启自身，宿主场景已由后续演进替代。
+    - 综上，01 验收标准已全部满足，正式予以关闭。

@@ -11,3 +11,7 @@ The five canonical triage labels, used as-is: `needs-triage`, `needs-info`, `rea
 ### Domain docs
 
 Single-context: root `CONTEXT.md` + `docs/adr/`. See `docs/agents/domain.md`.
+
+### Native Codex delegation
+
+When running implementation, verification, or independent review in native Codex, follow `.codex/codex-subagent-config-astra-planner.md` and use the seven project `astra_*` roles. Root owns scope, scheduling, and final acceptance; route complex evidence validation to `astra_validator_complex`, keep one writer per cwd, freeze neutral evidence, and use the separate read-only launcher for a strict review gate. Role/config changes require a new main session. Pi hosts continue to use the structured contracts in `CONTEXT.md` and `docs/adr/`.

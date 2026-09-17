@@ -1,6 +1,6 @@
 # 05: 提取 ChildProvenance 类型并清理重复/坏味道残留
 
-Status: ready-for-human
+Status: done
 
 ## 背景
 
@@ -19,3 +19,4 @@ Status: ready-for-human
 ## Comments
 
 - 2026-09-12（agent）：已完成。`types.ts` 新增 `ChildProvenance`（八字段，observedInSessionId 按规范刻意排除在外并注明原因），`ChildUsage`/`ChildRunMeta`（notify.ts）/`ChildUsageIds` 改为继承该类型；`childFromMeta`/`sourceSessionFromMeta` 上移为 notify.ts 导出（纯函数、可离线重放），index.ts 复用。`sourceTranscriptPath` 统一为 `transcriptPath`（写入侧改名，无读取方依赖旧名，persisted 形状与 host meta 命名一致；repairT004 本就按 `transcriptPath` 读取）。归因推导单点化为 usage.ts `deriveRootTurnAttribution(candidates, taskedAllowed)`，applyRootTurn（保留 phase 门：state 未知不算 tasked）与 index.ts message_end 共用；`RootTurnAttribution` 别名统一四处标注。floors.ts `record` 改选项对象（ExplorationRecordOptions），orchestrate 与 nx04-06 调用点同步。`applyRootReadCeiling` 移除 enabled 旗标，魔法 200 提为 `ROOT_READ_CEILING_LINES`（apply/notice/调用点/测试共用）。notify.ts artifact 注释加"目录名非 Evidence 样本"说明。typecheck、全量测试、git diff --check 全绿。
+- 2026-09-17（T-20260917-004 核验收口）：核验通过，状态收口为 done。定向核验实现：1) `ChildProvenance`（8 字段）在 types.ts:752 规范定义，`ChildUsage`（types.ts:770）与 `ChildUsageIds`（usage.ts:87）均继承该契约；2) 归因推导在 usage.ts `deriveRootTurnAttribution` 单点实现，usage.ts 与 index.ts:1274 共用；3) floors.ts 原 record 选项对象机制后续已随 WRC P0-B 裁决清理下线并由 envelope 机制替代；4) ROOT_READ_CEILING_LINES 常量在 index.ts:253 统一定义（200 行），applyRootReadCeiling 移除了 enabled 冗余旗标并在 nx04-06.test.mjs 持续覆盖。本轮运行 `npm run typecheck`、`npm test`、`git diff --check` 全绿通过。

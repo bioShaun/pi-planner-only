@@ -66,3 +66,6 @@ whose contract requires a real one.
   `planner_delegate.recovery` is now `planner_redelegate.recovery`.
 - The repeated-refusal breaker (`.scratch/nx-followups/issues/16`) stays
   wired on both surfaces for every refusal that remains.
+- Superseded in part by ADR-0003 (2026-09-17): the `action:"abort"` half of
+  the RecoveryDecision moved off `planner_verdict` onto the dedicated
+  `planner_abort` tool — `planner_verdict` carries no `recovery` key at all.

@@ -636,7 +636,8 @@ export type RootVerdictRefusalKind =
 	| "fresh-review-pending" // fresh mode has no reviewer ReviewResult yet
 	| "strict-zero-paths"
 	| "child-pending"
-	| "attribution-gap-unlock-refused";   // strict fresh mode has 0 evidence attribution paths
+	| "attribution-gap-unlock-refused"   // strict fresh mode has 0 evidence attribution paths
+	| "recovery-invalid";              // the RecoveryDecision failed validateRecoveryDecision (planner_abort / redelegate gate)
 
 /** Structured refusal of a Root verdict request: typed kind plus prose for display. */
 export interface RootVerdictRefusal {

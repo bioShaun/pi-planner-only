@@ -65,6 +65,11 @@ looks like JSON" and "Reviewer prose is never parsed."
   fix_environment, `planner_verdict` blocked for abort) — each decision is
   consumed once and reworded duplicates are refused.
 
+  *Superseded (2026-09-17, ADR-0003):* the abort entry is no longer
+  `planner_verdict` blocked + `recovery`; it is the dedicated `planner_abort`
+  tool. (ADR-0002 already moved `planner_delegate.recovery` to
+  `planner_redelegate.recovery`.)
+
 ## Consequences
 
 - `task.ts` `extractTaskSpec*` / `topLevelJsonCandidates`, `report.ts`

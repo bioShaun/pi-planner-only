@@ -1857,6 +1857,126 @@ for (const [index, [status, expectedState]] of [
 }
 
 // ---------------------------------------------------------------------------
+// wrc-incident-followups ticket 01 — the wall deadline re-checks elapsed on a
+// monotonic clock: an early-firing timer re-arms for the remainder instead of
+// breaching (the incident logged observed=179999 "exceeding" limit=180000).
+// ---------------------------------------------------------------------------
+function makeFakeWallClock() {
+	const state = { now: 0, timer: undefined };
+	return {
+		state,
+		clock: {
+			now: () => state.now,
+			setTimeout: (fn, ms) => {
+				const handle = { fn, ms };
+				state.timer = handle;
+				return handle;
+			},
+			clearTimeout: (handle) => {
+				if (state.timer === handle) state.timer = undefined;
+			},
+		},
+		fire: () => {
+			const timer = state.timer;
+			state.timer = undefined;
+			timer.fn();
+		},
+	};
+}
+
+{
+	const dir = initRealRepo();
+	const wall = makeFakeWallClock();
+	const { deps } = makeDeps({
+		gitRunner: async (args, cwd) => realGit(dir, ...args),
+		launch: async (request, signal) => {
+			// The deadline fires 1 ms early: no breach, the timer re-arms.
+			wall.state.now = 179_999;
+			wall.fire();
+			assert.equal(signal.aborted, false, "an early deadline re-arms instead of breaching");
+			assert.ok(wall.state.timer, "a replacement timer was armed for the remainder");
+			assert.equal(wall.state.timer.ms, 1, "the re-arm covers only the remaining 1 ms");
+			// Advancing to the real deadline breaches with observed >= limit.
+			wall.state.now = 180_000;
+			wall.fire();
+			assert.equal(signal.aborted, true, "reaching the limit breaches");
+			return {
+				requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId,
+				status: "cancelled",
+				runId: "run-wall-edge",
+				agent: "worker",
+			};
+		},
+	});
+	deps.wallClock = wall.clock;
+	const outcome = await runDelegation(deps, makeParams({ envelope: { maxWallMs: 180_000 } }), dir, { executionId: "call-wall-edge" });
+	assert.equal(outcome.termination.reason, "worker_runaway");
+	assert.equal(outcome.termination.anomaly.signal, "wall");
+	assert.ok(
+		outcome.termination.anomaly.observed >= outcome.termination.anomaly.limit,
+		"observed never reports below the limit",
+	);
+	assert.equal(outcome.termination.anomaly.observed, 180_000);
+}
+
+{
+	const dir = initRealRepo();
+	const wall = makeFakeWallClock();
+	const { deps } = makeDeps({
+		gitRunner: async (args, cwd) => realGit(dir, ...args),
+		launch: async (request, signal) => {
+			// Clock rollback: elapsed reads negative — no breach, and the re-arm
+			// is capped at the limit instead of stretching past it.
+			wall.state.now = -50;
+			wall.fire();
+			assert.equal(signal.aborted, false, "negative elapsed never breaches");
+			assert.equal(wall.state.timer.ms, 180_000, "re-arm is bounded by the limit");
+			wall.state.now = 200_000;
+			wall.fire();
+			assert.equal(signal.aborted, true);
+			return {
+				requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId,
+				status: "cancelled",
+				runId: "run-wall-back",
+				agent: "worker",
+			};
+		},
+	});
+	deps.wallClock = wall.clock;
+	const outcome = await runDelegation(deps, makeParams({ envelope: { maxWallMs: 180_000 } }), dir, { executionId: "call-wall-back" });
+	assert.equal(outcome.termination.anomaly.signal, "wall");
+	assert.equal(outcome.termination.anomaly.observed, 200_000);
+	assert.ok(outcome.termination.anomaly.observed >= outcome.termination.anomaly.limit);
+}
+
+{
+	// The launcher returns while a re-armed timer is pending: stopWallTimer
+	// clears it, so nothing breaches late.
+	const dir = initRealRepo();
+	const wall = makeFakeWallClock();
+	const { deps } = makeDeps({
+		gitRunner: async (args, cwd) => realGit(dir, ...args),
+		launch: async (request, signal) => {
+			wall.state.now = 179_999;
+			wall.fire(); // early deadline → re-arm, then the launcher returns
+			assert.equal(signal.aborted, false);
+			return {
+				requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId,
+				status: "completed",
+				runId: "run-wall-clear",
+				agent: "worker",
+				result: { kind: "structured", value: makeReport(request.nodeId, "run-wall-clear", request.cwd) },
+			};
+		},
+	});
+	deps.wallClock = wall.clock;
+	const outcome = await runDelegation(deps, makeParams({ envelope: { maxWallMs: 180_000 } }), dir, { executionId: "call-wall-clear" });
+	assert.equal(outcome.termination, undefined);
+	assert.equal(wall.state.timer, undefined, "the re-armed timer was cleared on launcher return");
+	assert.equal(outcome.task.recovery, undefined, "no late breach re-arms recovery");
+}
+
+// ---------------------------------------------------------------------------
 // P0-B.5 — recovery gate: missing/wrong/misrouted decisions refuse; a valid
 // retry_same_plan produces a new execution under the same Task and is consumed.
 // ---------------------------------------------------------------------------
@@ -1896,7 +2016,7 @@ for (const [index, [status, expectedState]] of [
 		}), dir, { executionId: "call-g4" }),
 		"RECOVERY_REQUIRED",
 	);
-	assert.match(abortViaDelegate.message, /planner_verdict/);
+	assert.match(abortViaDelegate.message, /planner_abort/);
 	// P1 action → unwired refusal.
 	const p1 = await expectRefusal(
 		runDelegation(deps, makeParams({
@@ -1965,8 +2085,58 @@ for (const [index, [status, expectedState]] of [
 }
 
 // ---------------------------------------------------------------------------
-// P0-B.6 — verdict-level abort decision: validateRecoveryDecision under the
-// verdict action set + consumeRecovery lands nextAction="abort".
+// wrc-incident-followups ticket 03 — a stray RecoveryDecision on a non-final
+// Task is refused RECOVERY_NOT_APPLICABLE before dispatch for every role: the
+// launcher never runs, no execution is recorded, and the Task is untouched.
+// The message re-teaches executionId (details.executionId) vs the child runId.
+// ---------------------------------------------------------------------------
+{
+	const dir = initCommittedRepo();
+	let launches = 0;
+	const { deps } = makeReviewDeps(dir, {
+		reviewFor: (request) => makeReview(request.nodeId),
+	});
+	const innerLaunch = deps.launch;
+	deps.launch = async (...args) => {
+		launches += 1;
+		return innerLaunch(...args);
+	};
+	const first = await runDelegation(deps, makeParams(), dir, { executionId: "call-na0" });
+	const taskId = first.task.taskId;
+	// A child runId where an executionId belongs — the incident's wrong key.
+	const stray = { executionId: "run-na", action: "abort", reason: "leftover recovery", worktreeDecision: "keep" };
+	for (const state of ["executing", "reviewing", "changes_requested"]) {
+		for (const role of ["worker", "explorer", "validator", "reviewer"]) {
+			deps.store.require(taskId).state = state;
+			const before = structuredClone(deps.store.require(taskId));
+			const params = role === "reviewer"
+				? reviewerParams(taskId, { recovery: stray })
+				: makeParams({ taskId, role, recovery: stray });
+			const refusal = await expectRefusal(
+				runDelegation(deps, params, dir, { executionId: `call-na-${state}-${role}` }),
+				"RECOVERY_NOT_APPLICABLE",
+			);
+			assert.match(refusal.message, new RegExp(`only admissible on a blocked Task flagged recovery\\.required — Task ${taskId} is ${state}`));
+			assert.match(refusal.message, /not a child runId/, "the refusal re-teaches executionId vs runId");
+			assert.match(refusal.message, /received executionId=run-na/, "the refusal echoes what was received");
+			assert.match(refusal.message, /action=abort/, "the refusal echoes the recovery action");
+			assert.equal(refusal.taskId, taskId);
+			assert.deepEqual(deps.store.require(taskId), before, `${role}/${state} refusal leaves the Task unchanged`);
+		}
+	}
+	assert.equal(launches, 1, "stray recovery never reaches the launcher — only the first delegation ran");
+
+	// Omitting recovery still follows the existing reviewer path.
+	deps.store.require(taskId).state = "reviewing";
+	const review = await runDelegation(deps, reviewerParams(taskId), dir, { executionId: "call-na-review-ok" });
+	assert.equal(review.decision.action, "accept");
+	assert.equal(launches, 2, "the no-recovery reviewer is dispatched");
+}
+
+// ---------------------------------------------------------------------------
+// P0-B.6 — abort decision (ADR-0003, planner_abort's action set):
+// validateRecoveryDecision under the abort action set + consumeRecovery
+// lands nextAction="abort".
 // ---------------------------------------------------------------------------
 {
 	const dir = initRealRepo();

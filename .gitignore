@@ -26,3 +26,6 @@ node_modules/
 
 # ticket 05 B host-verification probe repo (the collected artifacts around it stay committed)
 .scratch/typed-delegation/host-05/probe-repo/
+
+# local Codex subagent config (machine-specific)
+.codex/

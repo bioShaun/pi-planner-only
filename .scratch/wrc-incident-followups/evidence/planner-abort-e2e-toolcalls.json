@@ -1,0 +1,60 @@
+[
+  {
+    "kind": "toolCall",
+    "id": "tool_nBik0pYue71kNKlW5caAbPTJ",
+    "name": "planner_delegate",
+    "arguments": {
+      "role": "worker",
+      "objective": "Write a haiku about tests into haiku.txt in the current workspace",
+      "cwd": "/tmp/pi-e2e-work",
+      "scope": {},
+      "constraints": [],
+      "acceptanceCriteria": [],
+      "validation": {
+        "required": false
+      },
+      "envelope": {
+        "maxTokens": 1
+      }
+    }
+  },
+  {
+    "kind": "toolResult",
+    "toolCallId": "tool_nBik0pYue71kNKlW5caAbPTJ",
+    "name": "planner_delegate",
+    "detailsKeys": [
+      "executionId",
+      "runId",
+      "state",
+      "taskId",
+      "termination",
+      "warnings"
+    ],
+    "textHead": "planner_delegate: T-20260917-001 blocked run=a4b69fe5-f1c1-4fa6-aeff-43f674494feb\ntermination: cancelled \u2014 reason=worker_runaway, confirmed=true (terminal+quiet-worktree), execution=stopped\nanomaly: tokens observed=3641 limit=1 (source: delegation-param)\nrecovery.required: worker runaway: tokens 3641 exceeded envelope 1 \u2014 submit planner_redelegate.recovery{executionId=tool_nBik0pYue71kNKlW5caAbPTJ"
+  },
+  {
+    "kind": "toolCall",
+    "id": "tool_SJHwd76OanKZYJUloH3PSnvi",
+    "name": "planner_abort",
+    "arguments": {
+      "executionId": "tool_nBik0pYue71kNKlW5caAbPTJ",
+      "reason": "e2e probe: giving up after the envelope breach",
+      "taskId": "T-20260917-001",
+      "worktreeDecision": "keep"
+    }
+  },
+  {
+    "kind": "toolResult",
+    "toolCallId": "tool_SJHwd76OanKZYJUloH3PSnvi",
+    "name": "planner_abort",
+    "detailsKeys": [
+      "action",
+      "recovery",
+      "round",
+      "state",
+      "taskId",
+      "verdict"
+    ],
+    "textHead": "[PLANNER-ONLY REVIEW STATE]\ntaskId: T-20260917-001\nstate: blocked\nround: 0/3\nreview mode: root\ndecision: blocked\nfailure: evidence (review-blocked)\nusage: root 845/$0.0033 (1 turns) \u00b7 children 3.6k/$0.0033 \u00b7 root share 50%\nreason: Abandoned abnormal execution tool_nBik0pYue71kNKlW5caAbPTJ: e2e probe: giving up after the envelope breach\n\nReport the blocker and the evidence to the user.\nDo not retry"
+  }
+]

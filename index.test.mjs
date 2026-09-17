@@ -18,6 +18,8 @@ process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
 process.env.PI_PLANNER_ONLY_SEED_PRICING = "0";
 // P0-A — keep the spec §3 quiescence wait instant in tests; the default is 10 s.
 process.env.PI_PLANNER_ONLY_QUIESCENCE_MS = "0";
+// Keep the cancel grace near-instant so the stop_unconfirmed/writerHold path is testable; default is 5 s.
+process.env.PI_PLANNER_ONLY_CANCEL_GRACE_MS = "50";
 // ticket 05 → 08: this file drives the pre-cutover subagent chain through the hook; deleted with it.
 
 delete process.env.PI_SUBAGENT_CHILD;
@@ -1264,14 +1266,18 @@ try {
 	assert.equal(runawayLedger.task.recovery.executionId, "call-wrc-1");
 	assert.equal(runawayLedger.task.executions[0].endedReason, "worker_runaway");
 
-	// Recovery via verdict blocked + abort.
-	const verdictAbort = await verdictTool.execute(
+	// Recovery via planner_abort (ADR-0003 — verdict no longer carries one).
+	const abortTool = tools.get("planner_abort");
+	assert.ok(abortTool, "planner_abort is registered");
+	assert.equal(verdictTool.parameters.properties.recovery, undefined, "planner_verdict exposes no recovery key");
+	const verdictAbort = await abortTool.execute(
 		"call-wrc-v1",
 		{
-			verdict: "blocked",
-			summary: "hand the runaway task to the operator",
 			taskId: wrcRequest.nodeId,
-			recovery: { executionId: "call-wrc-1", action: "abort", reason: "needs manual triage", worktreeDecision: "manual" },
+			executionId: "call-wrc-1",
+			reason: "needs manual triage",
+			worktreeDecision: "manual",
+			summary: "hand the runaway task to the operator",
 		},
 		undefined,
 		() => {},
@@ -1280,7 +1286,8 @@ try {
 	const afterAbort = JSON.parse(readFileSync(join(isolatedAgentDir, "planner-only", "ledger", `${wrcRequest.nodeId}.json`), "utf8"));
 	assert.equal(afterAbort.task.recovery.required, false);
 	assert.equal(afterAbort.task.recovery.nextAction, "abort");
-	assert.equal(afterAbort.task.recoveryHistory[0].consumedBy, "planner_verdict");
+	assert.equal(afterAbort.task.recoveryHistory[0].consumedBy, "planner_abort");
+	assert.equal(afterAbort.task.state, "blocked", "planner_abort leaves the Task blocked for operator handling");
 
 	// (b) runaway + delegate retry_same_plan retry completing the Task.
 	const retryFirst = tools.get("planner_delegate").execute(
@@ -1678,4 +1685,521 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 	const emptyListed = await tasksTool.execute("call-tasks-2", {}, undefined, () => {}, { ...ctx, cwd: join(tmpdir(), "planner-only-no-live-cwd") });
 	assert.deepEqual(emptyListed.details.tasks, []);
 	assert.match(emptyListed.content[0].text, /No live Tasks in .+\. planner_delegate mints a new one\./);
+}
+
+// ---------------------------------------------------------------------------
+// wrc-incident-followups ticket 04: the 2026-09-17 verdict/recovery boundary
+// incident as a permanent fixture (ported from the R2 harness
+// /tmp/opencode/planner-verdict-recovery-repro.mjs). A runaway Task is
+// recovered via planner_redelegate retry_same_plan, its retry report judged
+// into changes_requested — the S:116 state: a report exists, the requirement
+// is already consumed, the Task is not blocked. Assertions a–f lock the
+// ADR-0003 boundary (tickets 02/03 landed: verdict strips+warns,
+// planner_abort owns the abort RecoveryDecision, a stray redelegate recovery
+// refuses RECOVERY_NOT_APPLICABLE).
+// ---------------------------------------------------------------------------
+{
+	const delegateTool04 = tools.get("planner_delegate");
+	const redelegateTool04 = tools.get("planner_redelegate");
+	const ledgerPath04 = (taskId) => join(isolatedAgentDir, "planner-only", "ledger", `${taskId}.json`);
+	const readLedger04 = (taskId) => JSON.parse(readFileSync(ledgerPath04(taskId), "utf8"));
+	const seen04 = new Set(
+		piEvents.emitted
+			.filter((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT)
+			.map((entry) => entry.payload.requestId),
+	);
+	const nextRequest04 = async () => {
+		const deadline = Date.now() + 2000;
+		let found;
+		while (!found && Date.now() < deadline) {
+			found = piEvents.emitted.find(
+				(entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT && !seen04.has(entry.payload.requestId),
+			)?.payload;
+			if (!found) await new Promise((r) => setTimeout(r, 2));
+		}
+		assert.ok(found, "REQUEST emitted on the delegation bus");
+		seen04.add(found.requestId);
+		return found;
+	};
+	const requestCount04 = () => piEvents.emitted.filter((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT).length;
+	const reportFor04 = (request, runId, summary) => ({
+		kind: "structured",
+		value: {
+			version: 1,
+			taskId: request.nodeId,
+			status: "completed",
+			summary,
+			changedFiles: [],
+			validation: [],
+			evidence: { cwd: request.cwd, taskId: request.nodeId, workerRunId: runId },
+			risks: [],
+			unresolved: [],
+		},
+	});
+	// Mint a worker Task and drive it into worker_runaway via a token breach:
+	// blocked + recovery.required, keyed on the delegate call's executionId.
+	const runawayTask04 = async (toolCallId) => {
+		const exec = delegateTool04.execute(
+			toolCallId,
+			{
+				role: "worker",
+				objective: "ticket-04 runaway probe",
+				scope: {},
+				constraints: [],
+				acceptanceCriteria: [],
+				validation: { required: false },
+				envelope: { maxTokens: 100 },
+			},
+			undefined,
+			() => {},
+			ctx,
+		);
+		const request = await nextRequest04();
+		const triple = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
+		piEvents.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, { ...triple, tokens: 5000 });
+		await new Promise((r) => setTimeout(r, 5));
+		piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+			...triple,
+			status: "cancelled",
+			runId: `${toolCallId}-run`,
+			agent: "worker",
+			usage: { input: 5, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1, toolCalls: 1, durationMs: 10 },
+		});
+		const result = await exec;
+		assert.equal(result.details.termination?.reason, "worker_runaway");
+		assert.equal(readLedger04(request.nodeId).task.recovery.required, true);
+		return { request, result };
+	};
+
+	// Incident sequence (S:95–116): runaway -> retry_same_plan consumes the
+	// requirement -> the retry report lands -> request_changes.
+	const incident = await runawayTask04("call-wrc04-1");
+	const incidentTask = incident.request.nodeId;
+	const retryExec = redelegateTool04.execute(
+		"call-wrc04-2",
+		{
+			taskId: incidentTask,
+			role: "worker",
+			objective: "ticket-04 runaway probe",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: false },
+			recovery: { executionId: "call-wrc04-1", action: "retry_same_plan", reason: "transient stall; retry with a fresh execution", worktreeDecision: "keep" },
+		},
+		undefined,
+		() => {},
+		ctx,
+	);
+	const retryRequest = await nextRequest04();
+	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: retryRequest.requestId,
+		ownerRunId: retryRequest.ownerRunId,
+		nodeId: retryRequest.nodeId,
+		status: "completed",
+		runId: "run-wrc04-retry",
+		agent: "worker",
+		usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1, toolCalls: 1, durationMs: 5 },
+		result: reportFor04(retryRequest, "run-wrc04-retry", "recovered"),
+	});
+	await retryExec;
+	assert.equal(readLedger04(incidentTask).task.recovery.required, false, "the retry consumed the requirement");
+	await verdictTool.execute(
+		"call-wrc04-3",
+		{
+			taskId: incidentTask,
+			verdict: "request_changes",
+			summary: "the report needs one correction",
+			findings: [{ severity: "major", category: "correctness", description: "correction needed", requestedChange: "fix it" }],
+		},
+		undefined,
+		() => {},
+		ctx,
+	);
+	assert.equal(readLedger04(incidentTask).task.state, "changes_requested", "fixture reached the S:116 state");
+
+	// (a) request_changes + a stray recovery object: ADR-0003 strips the key,
+	//     discloses it in warnings, and lets the verdict land — the replay loop
+	//     the incident showed is refused no more, the combination is simply
+	//     inexpressible on the schema.
+	const strayRecovery = { executionId: "run-wrc04-retry", action: "abort", reason: "not applicable", worktreeDecision: "keep" };
+	const strayParams = { taskId: incidentTask, verdict: "request_changes", summary: "recover", recovery: strayRecovery };
+	const strippedA = await verdictTool.execute("call-wrc04-a", strayParams, undefined, () => {}, ctx);
+	assert.equal(strippedA.details.verdict, "request_changes", "the stripped verdict landed");
+	assert.ok(
+		strippedA.details.warnings?.some((warning) => /not a planner_verdict key/.test(warning)),
+		"the stripped recovery is disclosed in details.warnings",
+	);
+	assert.match(strippedA.content[0].text, /warning: recovery is not a planner_verdict key/);
+	const afterA = readLedger04(incidentTask).task;
+	assert.equal(afterA.state, "changes_requested", "the verdict applied normally");
+	assert.equal(afterA.recovery?.consumedBy, "call-wrc04-2", "the strip consumed nothing — the retry still owns the consumption");
+	assert.equal(afterA.verdictRefusals?.length ?? 0, 0, "a stripped key is a warning, not a refusal");
+
+	// (c, moved) planner_abort on a Task whose requirement is not live refuses
+	//     with the admissibility refusal — and the refusal is recorded, closing
+	//     the incident's verdictRefusals blind spot.
+	// (b, moved) a byte-identical resend earns the ticket-16 Repeat notice —
+	//     the breaker check moved onto planner_abort with the refusal itself.
+	const abortTool04 = tools.get("planner_abort");
+	const badAbort = { taskId: incidentTask, executionId: "run-wrc04-retry", reason: "not applicable", worktreeDecision: "keep" };
+	await assert.rejects(
+		abortTool04.execute("call-wrc04-c1", badAbort, undefined, () => {}, ctx),
+		(error) => {
+			assert.match(error.message, /planner_abort refused \(recovery, task=T-\d{8}-\d{3}\): recovery is only admissible while the Task flags recovery\.required/);
+			assert.match(error.message, /not a child runId/, "the refusal re-teaches executionId vs runId");
+			return true;
+		},
+	);
+	await assert.rejects(
+		abortTool04.execute("call-wrc04-c2", badAbort, undefined, () => {}, ctx),
+		(error) => {
+			assert.match(error.message, /Repeat notice: these arguments are byte-identical to refused call call-wrc04-c1/);
+			return true;
+		},
+	);
+	const refusals04 = readLedger04(incidentTask).task.verdictRefusals ?? [];
+	assert.equal(refusals04.length, 2, "both planner_abort refusals are recorded (was: ledger blind spot)");
+	assert.ok(refusals04.every((r) => r.kind === "recovery-invalid" && r.executionId === "run-wrc04-retry"), "records echo the received executionId");
+
+	// (f) the same stray recovery on planner_redelegate now refuses
+	//     RECOVERY_NOT_APPLICABLE (ticket 03): no launch, no execution, no
+	//     state change — and a byte-identical resend earns the Repeat notice.
+	//     Ordered before (d) because (d) leaves the Task blocked.
+	const requestsBeforeF = requestCount04();
+	const strayRedelegate = {
+		taskId: incidentTask,
+		role: "worker",
+		objective: "ticket-04 correction round",
+		scope: {},
+		constraints: [],
+		acceptanceCriteria: [],
+		validation: { required: false },
+		recovery: strayRecovery,
+	};
+	await assert.rejects(
+		redelegateTool04.execute("call-wrc04-f", strayRedelegate, undefined, () => {}, ctx),
+		(error) => {
+			assert.equal(error.code, "RECOVERY_NOT_APPLICABLE");
+			assert.match(error.message, /planner_redelegate refused: recovery is only admissible on a blocked Task flagged recovery\.required/);
+			assert.match(error.message, /not a child runId/);
+			return true;
+		},
+	);
+	await assert.rejects(
+		redelegateTool04.execute("call-wrc04-f2", strayRedelegate, undefined, () => {}, ctx),
+		(error) => {
+			assert.match(error.message, /Repeat notice: these arguments are byte-identical to refused call call-wrc04-f/);
+			return true;
+		},
+	);
+	assert.equal(requestCount04(), requestsBeforeF, "the stray recovery launched nothing");
+	assert.equal(readLedger04(incidentTask).task.state, "changes_requested", "the refused call changed no state");
+
+	// (d) a plain blocked verdict — the correct shape once a Task truly cannot
+	//     proceed — lands.
+	const blockedResult = await verdictTool.execute(
+		"call-wrc04-d",
+		{ taskId: incidentTask, verdict: "blocked", summary: "host evidence still missing" },
+		undefined,
+		() => {},
+		ctx,
+	);
+	assert.equal(blockedResult.details.state, "blocked");
+
+	// (e, moved) while a requirement is still live, planner_abort consumes it —
+	//     the only legal abort shape. A separate Task: the incident Task's
+	//     requirement was spent by the retry.
+	const abortTask = await runawayTask04("call-wrc04-e1");
+	const abortResult = await abortTool04.execute(
+		"call-wrc04-e2",
+		{
+			taskId: abortTask.request.nodeId,
+			executionId: "call-wrc04-e1",
+			reason: "needs manual triage",
+			worktreeDecision: "keep",
+			summary: "hand the runaway task to the operator",
+		},
+		undefined,
+		() => {},
+		ctx,
+	);
+	assert.equal(abortResult.details.state, "blocked");
+	assert.equal(abortResult.details.recovery?.consumedBy, "planner_abort");
+	const afterAbort04 = readLedger04(abortTask.request.nodeId).task;
+	assert.equal(afterAbort04.recovery.required, false);
+	assert.equal(afterAbort04.recovery.nextAction, "abort");
+	assert.equal(afterAbort04.recoveryHistory[0].consumedBy, "planner_abort");
+}
+
+// ---------------------------------------------------------------------------
+// wrc-incident-followups ticket 02 review follow-up — planner_abort's refusal
+// surface on a LIVE requirement (wrong executionId incl. the child-runId
+// mistake, empty reason, duplicate-after-consume), pass/blocked with a stray
+// recovery key stripped, and worktreeDecision:"manual" actually releasing a
+// persisted writer hold via the stop_unconfirmed path.
+// ---------------------------------------------------------------------------
+{
+	const delegateTool04b = tools.get("planner_delegate");
+	const abortTool04b = tools.get("planner_abort");
+	const ledgerPath04b = (taskId) => join(isolatedAgentDir, "planner-only", "ledger", `${taskId}.json`);
+	const readLedger04b = (taskId) => JSON.parse(readFileSync(ledgerPath04b(taskId), "utf8"));
+	const taskWithoutRefusalAudit04b = (task) => {
+		const copy = structuredClone(task);
+		delete copy.verdictRefusals;
+		delete copy.updatedAt;
+		return copy;
+	};
+	const assertSingleRefusalAppend04b = (before, after, { executionId, reason }) => {
+		assert.deepEqual(
+			taskWithoutRefusalAudit04b(after),
+			taskWithoutRefusalAudit04b(before),
+			"a refused planner_abort changes only verdictRefusals and updatedAt",
+		);
+		const beforeRows = before.verdictRefusals ?? [];
+		const afterRows = after.verdictRefusals ?? [];
+		assert.equal(afterRows.length, beforeRows.length + 1, "one refusal appends exactly one audit row");
+		assert.deepEqual(afterRows.slice(0, beforeRows.length), beforeRows, "existing refusal audit order and contents are preserved");
+		const appended = afterRows.at(-1);
+		assert.equal(appended.taskId, before.taskId);
+		assert.equal(appended.requestedVerdict, "blocked");
+		assert.equal(appended.kind, "recovery-invalid");
+		assert.equal(appended.executionId, executionId);
+		assert.match(appended.reason, reason);
+		assert.equal(typeof appended.at, "string", "the store supplies the refusal timestamp");
+	};
+	const seen04b = new Set(
+		piEvents.emitted
+			.filter((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT)
+			.map((entry) => entry.payload.requestId),
+	);
+	const nextRequest04b = async () => {
+		const deadline = Date.now() + 2000;
+		let found;
+		while (!found && Date.now() < deadline) {
+			found = piEvents.emitted.find(
+				(entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT && !seen04b.has(entry.payload.requestId),
+			)?.payload;
+			if (!found) await new Promise((r) => setTimeout(r, 2));
+		}
+		assert.ok(found, "REQUEST emitted on the delegation bus");
+		seen04b.add(found.requestId);
+		return found;
+	};
+	// A runaway whose CANCEL goes unanswered: cancel grace expires ->
+	// stop_unconfirmed + persisted writerHold + recovery.required.
+	const unconfirmedRunaway = async (toolCallId) => {
+		const exec = delegateTool04b.execute(
+			toolCallId,
+			{
+				role: "worker",
+				objective: "stop-unconfirmed probe",
+				scope: {},
+				constraints: [],
+				acceptanceCriteria: [],
+				validation: { required: false },
+				envelope: { maxTokens: 100 },
+			},
+			undefined,
+			() => {},
+			ctx,
+		);
+		const request = await nextRequest04b();
+		piEvents.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, {
+			requestId: request.requestId,
+			ownerRunId: request.ownerRunId,
+			nodeId: request.nodeId,
+			tokens: 5000,
+		});
+		// No terminal: the cancel grace expires and the launcher rejects.
+		const result = await exec;
+		const record = readLedger04b(request.nodeId).task;
+		assert.equal(record.state, "blocked");
+		assert.equal(record.recovery.required, true);
+		assert.equal(record.recovery.executionId, toolCallId);
+		assert.equal(record.executions.at(-1).status, "stop_unconfirmed");
+		assert.ok(record.writerHold, "persisted writer hold");
+		return { request, result };
+	};
+
+	const held = await unconfirmedRunaway("call-wrc04b-1");
+	const heldTask = held.request.nodeId;
+
+	// Refusals on a live requirement — recorded as verdictRefusals, but no
+	// verdict, no consumption, no state change beyond the refusal audit row.
+	const beforeBadId = readLedger04b(heldTask).task;
+	await assert.rejects(
+		// The incident's mistake: a child runId where the executionId belongs.
+		abortTool04b.execute(
+			"call-wrc04b-badid",
+			{ taskId: heldTask, executionId: "run-child-not-exec", reason: "wrong id", worktreeDecision: "keep" },
+			undefined, () => {}, ctx,
+		),
+		(error) => {
+			assert.match(error.message, /does not match the abnormal execution call-wrc04b-1/);
+			assert.match(error.message, /received executionId=run-child-not-exec/);
+			assert.match(error.message, /not a child runId/);
+			return true;
+		},
+	);
+	const afterBadId = readLedger04b(heldTask).task;
+	assertSingleRefusalAppend04b(beforeBadId, afterBadId, {
+		executionId: "run-child-not-exec",
+		reason: /does not match the abnormal execution call-wrc04b-1/,
+	});
+	const beforeEmpty = readLedger04b(heldTask).task;
+	await assert.rejects(
+		abortTool04b.execute(
+			"call-wrc04b-empty",
+			{ taskId: heldTask, executionId: "call-wrc04b-1", reason: "", worktreeDecision: "keep" },
+			undefined, () => {}, ctx,
+		),
+		/recovery\.reason must name a concrete basis/,
+	);
+	const afterEmpty = readLedger04b(heldTask).task;
+	assertSingleRefusalAppend04b(beforeEmpty, afterEmpty, {
+		executionId: "call-wrc04b-1",
+		reason: /recovery\.reason must name a concrete basis/,
+	});
+	const afterRefusals = readLedger04b(heldTask).task;
+	assert.equal(afterRefusals.state, "blocked");
+	assert.equal(afterRefusals.recovery.required, true, "refusals never consume the requirement");
+	assert.equal(afterRefusals.executions.length, 1);
+	assert.ok(afterRefusals.writerHold);
+	assert.equal(afterRefusals.verdictRefusals.length, 2, "the refusals are the only ledger change");
+
+	// worktreeDecision:"manual" aborts AND releases the persisted writer hold.
+	const manualAbort = await abortTool04b.execute(
+		"call-wrc04b-manual",
+		{ taskId: heldTask, executionId: "call-wrc04b-1", reason: "operator confirmed the writer is dead", worktreeDecision: "manual" },
+		undefined, () => {}, ctx,
+	);
+	assert.equal(manualAbort.details.state, "blocked");
+	const afterManual = readLedger04b(heldTask).task;
+	assert.equal(afterManual.writerHold, undefined, "manual abort releases the persisted writer hold");
+	assert.equal(afterManual.recovery.required, false);
+	assert.equal(afterManual.recovery.nextAction, "abort");
+
+	// Duplicate after consume: the same call now hits the consumed gate, and a
+	// byte-identical resend earns the breaker Repeat notice.
+	const spent = { taskId: heldTask, executionId: "call-wrc04b-1", reason: "operator confirmed the writer is dead", worktreeDecision: "manual" };
+	const beforeConsumed = readLedger04b(heldTask).task;
+	await assert.rejects(
+		abortTool04b.execute("call-wrc04b-dup", spent, undefined, () => {}, ctx),
+		(error) => {
+			assert.match(error.message, /only admissible while the Task flags recovery\.required/);
+			assert.match(error.message, /consumedBy=planner_abort/, "the refusal names the consumer");
+			return true;
+		},
+	);
+	const afterConsumed = readLedger04b(heldTask).task;
+	assertSingleRefusalAppend04b(beforeConsumed, afterConsumed, {
+		executionId: "call-wrc04b-1",
+		reason: /only admissible while the Task flags recovery\.required/,
+	});
+	const beforeRepeatedConsumed = readLedger04b(heldTask).task;
+	await assert.rejects(
+		abortTool04b.execute("call-wrc04b-dup2", spent, undefined, () => {}, ctx),
+		/Repeat notice: these arguments are byte-identical to refused call call-wrc04b-dup/,
+	);
+	const afterRepeatedConsumed = readLedger04b(heldTask).task;
+	assertSingleRefusalAppend04b(beforeRepeatedConsumed, afterRepeatedConsumed, {
+		executionId: "call-wrc04b-1",
+		reason: /only admissible while the Task flags recovery\.required/,
+	});
+	const refusals04b = readLedger04b(heldTask).task.verdictRefusals ?? [];
+	assert.equal(refusals04b.length, 4, "wrong id, empty reason, consumed, and repeated consumed are all recorded once");
+	assert.deepEqual(
+		refusals04b.map((row) => row.executionId),
+		["run-child-not-exec", "call-wrc04b-1", "call-wrc04b-1", "call-wrc04b-1"],
+		"refusal audit rows preserve call order and received identity",
+	);
+
+	// blocked with a stray recovery on a live-requirement Task: the key is
+	// stripped, the verdict lands, the requirement stays live for planner_abort.
+	const liveAbort = await unconfirmedRunaway("call-wrc04b-2");
+	const liveTask = liveAbort.request.nodeId;
+	const beforeBlockedStray = readLedger04b(liveTask).task;
+	const blockedStray = await verdictTool.execute(
+		"call-wrc04b-bs",
+		{
+			taskId: liveTask,
+			verdict: "blocked",
+			summary: "cannot proceed",
+			recovery: { executionId: "call-wrc04b-2", action: "abort", reason: "stray", worktreeDecision: "keep" },
+		},
+		undefined, () => {}, ctx,
+	);
+	assert.equal(blockedStray.details.verdict, "blocked");
+	assert.ok(blockedStray.details.warnings?.some((w) => /not a planner_verdict key/.test(w)));
+	const afterBlockedStray = readLedger04b(liveTask).task;
+	assert.equal(afterBlockedStray.reviews.length, beforeBlockedStray.reviews.length + 1, "the blocked verdict is persisted");
+	assert.equal(afterBlockedStray.reviews.at(-1).requestedVerdict, "blocked");
+	assert.equal(afterBlockedStray.reviews.at(-1).source, "root");
+	assert.deepEqual(afterBlockedStray.recovery, beforeBlockedStray.recovery, "a stripped recovery never consumes the requirement");
+	assert.deepEqual(afterBlockedStray.recoveryHistory ?? [], beforeBlockedStray.recoveryHistory ?? [], "strip adds no recovery history");
+	// The surviving requirement is still abortable via the dedicated surface
+	// (manual so the workspace reservation frees for the delegate below).
+	const liveAbortResult = await abortTool04b.execute(
+		"call-wrc04b-live",
+		{ taskId: liveTask, executionId: "call-wrc04b-2", reason: "operator triage", worktreeDecision: "manual" },
+		undefined, () => {}, ctx,
+	);
+	assert.equal(liveAbortResult.details.recovery?.consumedBy, "planner_abort");
+
+	// pass with a stray recovery: the key is stripped and disclosed the same
+	// way — whatever the acceptance gate decides, the call is never a refusal
+	// *because of* recovery.
+	const passExec = delegateTool04b.execute(
+		"call-wrc04b-p0",
+		{
+			role: "worker",
+			objective: "passable task",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: false },
+		},
+		undefined, () => {}, ctx,
+	);
+	const passRequest = await nextRequest04b();
+	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: passRequest.requestId,
+		ownerRunId: passRequest.ownerRunId,
+		nodeId: passRequest.nodeId,
+		status: "completed",
+		runId: "run-wrc04b-pass",
+		agent: "worker",
+		usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1, toolCalls: 1, durationMs: 5 },
+		result: {
+			kind: "structured",
+			value: {
+				version: 1, taskId: passRequest.nodeId, status: "completed", summary: "done",
+				changedFiles: [], validation: [],
+				evidence: { cwd: passRequest.cwd, taskId: passRequest.nodeId, workerRunId: "run-wrc04b-pass" },
+				risks: [], unresolved: [],
+			},
+		},
+	});
+	await passExec;
+	const beforePassStray = readLedger04b(passRequest.nodeId).task;
+	const passStray = await verdictTool.execute(
+		"call-wrc04b-ps",
+		{
+			taskId: passRequest.nodeId,
+			verdict: "pass",
+			summary: "accept",
+			recovery: { executionId: "call-wrc04b-p0", action: "abort", reason: "stray", worktreeDecision: "keep" },
+		},
+		undefined, () => {}, ctx,
+	);
+	assert.equal(passStray.details.verdict, "pass", "the verdict itself lands");
+	assert.ok(passStray.details.warnings?.some((w) => /not a planner_verdict key/.test(w)), "strip disclosed in warnings");
+	const afterPassStray = readLedger04b(passRequest.nodeId).task;
+	assert.equal(afterPassStray.state, "completed", "the pass verdict is persisted");
+	assert.equal(afterPassStray.reviews.length, beforePassStray.reviews.length + 1);
+	assert.equal(afterPassStray.reviews.at(-1).requestedVerdict, "pass");
+	assert.equal(afterPassStray.reviews.at(-1).source, "root");
+	assert.deepEqual(afterPassStray.recovery, beforePassStray.recovery, "stripped pass recovery is not consumed");
+	assert.deepEqual(afterPassStray.recoveryHistory ?? [], beforePassStray.recoveryHistory ?? [], "stripped pass adds no recovery history");
 }

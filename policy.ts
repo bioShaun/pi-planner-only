@@ -24,17 +24,19 @@ export const QUESTION_TOOLS = new Set(["question", "questionnaire"]);
  * Task, and a completed Task is never live, so it must be admitted while Idle.
  * `planner_redelegate` is admitted for the same reason: a blocked Task flagged
  * recovery.required is final, so its workspace reads Idle when its recovery
- * re-execution arrives. `planner_tasks` is read-only lookup — the answer to
- * "which taskId" must be reachable before any delegation.
+ * re-execution arrives — and `planner_abort` is the other half of that same
+ * admission (give up instead of re-execute). `planner_tasks` is read-only
+ * lookup — the answer to "which taskId" must be reachable before any
+ * delegation.
  */
-export const IDLE_TOOLS = new Set(["planner_delegate", "planner_redelegate", "planner_tasks", "planner_verdict", "git_audit", "git_commit"]);
+export const IDLE_TOOLS = new Set(["planner_delegate", "planner_redelegate", "planner_tasks", "planner_verdict", "planner_abort", "git_audit", "git_commit"]);
 
 /**
  * First-class tools this extension registers for Root itself.
  * Unlike the leftover `bash` allowlist, these are present in the parent's
  * schema, not just tolerated on a stale call.
  */
-export const ROOT_TOOLS = new Set(["git_audit", "planner_verdict", "planner_delegate", "planner_redelegate", "planner_tasks"]);
+export const ROOT_TOOLS = new Set(["git_audit", "planner_verdict", "planner_abort", "planner_delegate", "planner_redelegate", "planner_tasks"]);
 
 export interface PolicyInput {
 	toolName: string;
