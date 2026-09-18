@@ -437,7 +437,6 @@ export const WORKER_REPORT_SCHEMA = structuredClone(Type.Object(
 		evidence: Type.Object({
 			cwd: Type.String(),
 			taskId: Type.String(),
-			workerRunId: Type.String(),
 			baseGitRef: Type.Optional(Type.String()),
 			finalGitRef: Type.Optional(Type.String()),
 			gitStatusHash: Type.Optional(Type.String()),
@@ -500,117 +499,6 @@ export interface DelegationLaunchHooks {
 	onLateTerminal?: (response: SubagentDelegationTerminalResponse) => void;
 }
 
-export interface LauncherCapabilities {
-	/**
-	 * Whether the launcher authoritatively allocates a child runId
-	 * and provides it to the child before the child's first turn.
-	 */
-	childRunIdentity?: boolean;
-}
-
-export interface ChildRunIdentityDelivery {
-	channel: "task-packet-envelope" | "launch-context" | string;
-	runId: string;
-	taskId: string;
-}
-
-/**
- * Deliver authoritative child run identity into the task prompt.
- * A capable launcher wraps or prefixes the child's task before execution.
- */
-export function deliverChildRunIdentity(taskPrompt: string, delivery: ChildRunIdentityDelivery): string {
-	const header = `<!-- SUBAGENT_RUN_IDENTITY: {"version":1,"runId":"${delivery.runId}","taskId":"${delivery.taskId}"} -->`;
-	return `${header}\n${taskPrompt}`;
-}
-
-/**
- * Extract authoritative child run identity from the child's prompt or context.
- * The child model/test runner reads this channel to populate its WorkerReport.
- */
-export function extractChildRunIdentity(input: { prompt?: string; context?: { runId?: string } }): string | undefined {
-	if (input.context?.runId) return input.context.runId;
-	if (typeof input.prompt === "string") {
-		const match = input.prompt.match(/<!-- SUBAGENT_RUN_IDENTITY:\s*(\{.*?\})\s*-->/);
-		if (match) {
-			try {
-				const parsed = JSON.parse(match[1]);
-				if (typeof parsed.runId === "string" && parsed.runId.trim()) return parsed.runId.trim();
-			} catch {
-				// unparseable
-			}
-		}
-		const altMatch = input.prompt.match(/\[Execution Run Identity:\s*([^\s\]]+)\]/);
-		if (altMatch) return altMatch[1].trim();
-	}
-	return undefined;
-}
-
-export interface CapableLauncherOptions {
-	allocateRunId?: () => string;
-	tamperChildRunId?: (context: { runId: string; request: SubagentDelegationRequest }) => string;
-	onAttempt?: (attempt: { runId: string; request: SubagentDelegationRequest; prompt: string }) => void;
-	status?: "completed" | "failed" | "timed_out" | "cancelled";
-	reportOverrides?: Partial<WorkerReport>;
-	omitReport?: boolean;
-}
-
-/**
- * Creates a capable test/mock launcher that authoritatively allocates runIds
- * and delivers them to the child via the deterministic delivery channel.
- */
-export function createCapableLauncher(options: CapableLauncherOptions = {}): DelegationDeps["launch"] {
-	let counter = 0;
-	const launcher: DelegationDeps["launch"] = async (request, _signal, _hooks) => {
-		counter += 1;
-		const runId = options.allocateRunId ? options.allocateRunId() : `run-${randomUUID().slice(0, 8)}`;
-		const deliveredPrompt = deliverChildRunIdentity(request.task, {
-			channel: "task-packet-envelope",
-			runId,
-			taskId: request.nodeId,
-		});
-		options.onAttempt?.({ runId, request, prompt: deliveredPrompt });
-
-		// Simulated child reads run identity from the channel:
-		const channelRunId = extractChildRunIdentity({ prompt: deliveredPrompt });
-		const childRunId = options.tamperChildRunId
-			? options.tamperChildRunId({ runId: channelRunId ?? runId, request })
-			: (channelRunId ?? runId);
-
-		const isScout = request.agent === "planner-scout" || request.agent === "scout";
-		const report: WorkerReport = {
-			version: 1,
-			taskId: request.nodeId,
-			status: "completed",
-			summary: isScout ? "Recon completed" : "Work completed",
-			changedFiles: [],
-			validation: [],
-			evidence: {
-				cwd: request.cwd,
-				taskId: request.nodeId,
-				workerRunId: childRunId,
-				generatedAt: new Date().toISOString(),
-			},
-			risks: [],
-			unresolved: [],
-			...options.reportOverrides,
-		};
-
-		return {
-			requestId: request.requestId,
-			ownerRunId: request.ownerRunId,
-			nodeId: request.nodeId,
-			status: options.status ?? "completed",
-			runId,
-			agent: request.agent,
-			model: request.model ?? "test/model",
-			usage: { input: 10, output: 20, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 2, toolCalls: 2, durationMs: 100 },
-			...(!options.omitReport ? { result: { kind: "structured" as const, value: report } } : {}),
-		};
-	};
-	(launcher as { capabilities?: LauncherCapabilities }).capabilities = { childRunIdentity: true };
-	return launcher;
-}
-
 export interface DelegationDeps {
 	store: TaskStore;
 	gitRunner: GitRunner;
@@ -618,11 +506,6 @@ export interface DelegationDeps {
 	usage: UsageLedger;
 	launch: (request: SubagentDelegationRequest, signal?: AbortSignal, hooks?: DelegationLaunchHooks) => Promise<SubagentDelegationResponse>;
 	ownerRunId: string;
-	/**
-	 * Ticket 01 — declared capabilities of the delegation launcher.
-	 * Launchers lacking childRunIdentity are refused before admission.
-	 */
-	launcherCapabilities?: LauncherCapabilities;
 	/**
 	 * Ticket 02 — the name of the host-registered restricted reader agent
 	 * (RESTRICTED_READER_AGENT when index.ts's registration succeeded). When
@@ -773,6 +656,27 @@ function specFromParams(params: PlannerDelegationParams, taskId: string, cwd: st
 	});
 }
 
+function stampWorkerReport(
+	rawReport: WorkerReport | undefined,
+	stampedRunId: string,
+	warnings: string[],
+): WorkerReport | undefined {
+	if (!rawReport) return undefined;
+	const { workerRunId: childSupplied, ...childEvidence } = (rawReport.evidence ?? {}) as unknown as Record<string, unknown>;
+	if (childSupplied !== undefined) {
+		warnings.push(
+			`evidence.workerRunId is stamped by Root from the launcher terminal; the child-supplied value ${JSON.stringify(childSupplied)} was ignored`,
+		);
+	}
+	return {
+		...rawReport,
+		evidence: {
+			...childEvidence,
+			workerRunId: stampedRunId,
+		} as EvidenceRef,
+	};
+}
+
 export async function runDelegation(
 	deps: DelegationDeps,
 	params: PlannerDelegationParams,
@@ -809,19 +713,6 @@ export async function runDelegation(
 		);
 	}
 	const isRestrictedReader = classification.capability === "restricted-reader";
-
-	// Ticket 01 (delegation-contract-incident-20260918) — verify the launcher
-	// supports authoritative child run identity delivery before first turn.
-	// Launchers lacking this capability force children to guess identities
-	// (e.g. planner-scout, taskId, placeholder). Refuse before admission/task minting.
-	const launcherCapabilities = deps.launcherCapabilities ?? (deps.launch as { capabilities?: LauncherCapabilities } | undefined)?.capabilities;
-	if (role !== "reviewer" && launcherCapabilities?.childRunIdentity !== true) {
-		throw new DelegationRefused(
-			"LAUNCHER_CAPABILITY_UNSUPPORTED",
-			`${toolName} refused: launcher does not support authoritative child run identity delivery before first turn (requires launcher capability 'childRunIdentity'; host launcher lacks child run identity channel). No child was launched.`,
-			params.taskId,
-		);
-	}
 
 	// 1. Task binding: an explicit id binds the existing record verbatim —
 	//    its stored spec is never rewritten (ticket 53); this call's spec
@@ -1225,7 +1116,9 @@ export async function runDelegation(
 					...(q.confirmed === false && q.evidenceIncomplete ? { evidenceIncomplete: true } : {}),
 					usageComplete,
 					...(late.runId ? { runId: late.runId } : {}),
-					...(lateSuccess && late.result?.kind === "structured" ? { lateReport: late.result.value as WorkerReport } : {}),
+					...(lateSuccess && late.result?.kind === "structured"
+						? { lateReport: stampWorkerReport(late.result.value as WorkerReport, late.runId ?? executionId, warnings) }
+						: {}),
 				});
 				// Only this execution's own reservation/hold may clear — a
 				// reader's confirmed stop never releases a writer's hold.
@@ -1397,7 +1290,12 @@ export async function runDelegation(
 			//    on the execution, never admitted to the report sequence.
 			//    A completed result arriving after a cancel keeps the existing
 			//    lateReport semantics instead.
-			const terminalReport = terminal.result?.kind === "structured" ? (terminal.result.value as WorkerReport) : undefined;
+			const terminalRunId = responseRunId ?? executionId;
+			const terminalReport = stampWorkerReport(
+				terminal.result?.kind === "structured" ? (terminal.result.value as WorkerReport) : undefined,
+				terminalRunId,
+				warnings,
+			);
 			const target = lateSuccess || BLOCKING_STATUSES.has(terminal.status) ? "blocked" : "failed";
 			try { deps.store.transition(task.taskId, target); } catch { /* already final */ }
 			deps.store.setStateReason(
@@ -1499,12 +1397,17 @@ export async function runDelegation(
 		}
 
 		const runId = response.runId;
-		const report = response.result?.kind === "structured" ? (response.result.value as WorkerReport) : undefined;
+		const stampedRunId = runId ?? executionId;
+		const report = stampWorkerReport(
+			response.result?.kind === "structured" ? (response.result.value as WorkerReport) : undefined,
+			stampedRunId,
+			warnings,
+		);
 
 		// 6. C_report + execution-window truth. `compareExecutionTruth` feeds the
 		//    execution record; `compareEvidence` produces the EvidenceComparison
 		//    the store and review loop consume.
-		const cReport = await captureEvidence(deps.gitRunner, sampleOptions(runId ?? executionId));
+		const cReport = await captureEvidence(deps.gitRunner, sampleOptions(stampedRunId));
 		const completionQuiescence = await confirmStop(runId);
 		if (!completionQuiescence.confirmed) {
 			let usageComplete = false;
@@ -1616,6 +1519,8 @@ export async function runDelegation(
 		}
 
 		// 7. Report identity is checked against the delegation, never rewritten.
+		// runId branch guards restored ledgers at the verdict boundary (orchestrate.ts reportIdentityRefusal);
+		// admission path is guaranteed to pass via stamping.
 		const identityErrors = report
 			? validateWorkerReportIdentity(report, {
 				taskId: task.taskId,
@@ -1688,7 +1593,7 @@ export async function runDelegation(
 			...(report && !admittedReport
 				? {
 					unacceptedReport: report,
-					unacceptedReportReason: `report identity does not match this Task or execution: ${reportError}`,
+					unacceptedReportReason: `report identity does not match this Task: ${reportError}`,
 				}
 				: {}),
 		});
@@ -2060,11 +1965,6 @@ export interface HostLauncherOptions {
 	 * DelegationAborted.
 	 */
 	cancelGraceMs?: number;
-	/**
-	 * Declared launcher capabilities; if omitted, probes the host event bus
-	 * for capability declaration or inspects environment flags.
-	 */
-	capabilities?: LauncherCapabilities;
 }
 
 /**
@@ -2098,18 +1998,6 @@ export function cancelInFlightDelegations(pi: ExtensionAPI): number {
  */
 export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOptions = {}): DelegationDeps["launch"] {
 	const cancelGraceMs = options.cancelGraceMs ?? 5000;
-	let capabilities: LauncherCapabilities = options.capabilities ?? {};
-	if (options.capabilities === undefined) {
-		const probe: { version: number; capabilities?: LauncherCapabilities } = { version: 1 };
-		try {
-			pi.events.emit("pi-subagents:delegation-capability-probe:v1", probe);
-			if (probe.capabilities) {
-				capabilities = probe.capabilities;
-			}
-		} catch {
-			// No listener
-		}
-	}
 	const launcher: DelegationDeps["launch"] = (request, signal, hooks) => new Promise((resolve, reject) => {
 		if (signal?.aborted) {
 			reject(new DelegationAborted(request.nodeId, false));
@@ -2178,6 +2066,5 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
 		// fires the listener — catch it here so the grace path still runs.
 		if (signal?.aborted) onAbort();
 	});
-	(launcher as { capabilities?: LauncherCapabilities }).capabilities = capabilities;
 	return launcher;
 }

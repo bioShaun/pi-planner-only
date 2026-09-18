@@ -52,3 +52,7 @@ Testing seam: 用户已确认的已注册 planner_* 工具入口，加真实 Pi 
 
 4. **已知限制与上游依赖**：
    - 当前已安装的 `pi-subagents@0.68.0` 内部生成 runId 但未提供下发渠道或能力探针，运行于该版本时 `pi-planner-only` 将安全拒绝（`LAUNCHER_CAPABILITY_UNSUPPORTED`）。需要上游提供受支持的身份渠道与能力广告；尚无证据指定可用版本。
+
+## Comments
+
+- 2026-09-18：身份链路部分由 `.scratch/root-stamped-run-identity/` 承接。本票宿主验收中与身份无关的项保持原状态，不在本票关闭。

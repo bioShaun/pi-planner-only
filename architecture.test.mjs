@@ -119,4 +119,41 @@ assert.match(index, /from "\.\/refusal-breaker\.ts"/, "the adapter wires the ref
 assert.doesNotMatch(refusalBreaker, /from "\.\/index\.ts"|@earendil-works/, "refusal-breaker.ts must not import the adapter or the Pi host");
 
 
+// Ticket 02 (root-stamped-run-identity) — capability gate and probe machinery removed
+const forbiddenPatterns = [
+	"childRunIdentity",
+	"delegation-capability-probe",
+	"LAUNCHER_CAPABILITY_UNSUPPORTED",
+	"SUBAGENT_RUN_IDENTITY",
+	"createCapableLauncher",
+	"deliverChildRunIdentity",
+	"extractChildRunIdentity",
+];
+const { readdirSync: archReaddir, statSync: archStat } = await import("node:fs");
+function scanForCode(dir) {
+	const files = [];
+	for (const entry of archReaddir(dir)) {
+		if (entry === "node_modules" || entry === ".git" || entry === ".scratch" || entry === "dist") continue;
+		const full = join(dir, entry);
+		const st = archStat(full);
+		if (st.isDirectory()) {
+			files.push(...scanForCode(full));
+		} else if (entry.endsWith(".ts") || entry.endsWith(".test.mjs") || entry.endsWith(".mjs")) {
+			files.push(full);
+		}
+	}
+	return files;
+}
+const repoCodeFiles = scanForCode(root).filter((f) => f !== join(root, "architecture.test.mjs"));
+for (const file of repoCodeFiles) {
+	const content = readFileSync(file, "utf8");
+	for (const pattern of forbiddenPatterns) {
+		assert.equal(
+			content.includes(pattern),
+			false,
+			`forbidden pattern '${pattern}' must not appear in code file ${file.slice(root.length + 1)}`,
+		);
+	}
+}
+
 console.log("planner-only architecture: PASS");

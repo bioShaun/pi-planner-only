@@ -77,7 +77,7 @@ looks like JSON" and "Reviewer prose is never parsed."
   `TASK_ID_RE` binding, and `orchestrate.ts` `prepareRoleDelegation` become
   dead once the migration lands and are deleted, not kept as fallbacks.
 - A Task is bound by the `taskId` argument of the tool call, or minted when the
-  argument is absent; mentioning an id in prose binds nothing.
+  argument is absent; mentioning an id in prose binds nothing (run identity: see ADR-0004).
 - Policy still guards the `subagent` tool, but only to refuse it for Root; it
   no longer reads the prompt.
 - The plugin does not `import` from `pi-subagents/*`. That package exports raw

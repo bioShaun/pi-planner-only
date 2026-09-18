@@ -143,7 +143,7 @@ Validator（`oracle`）在 Worker 校验已 exit 0 时默认做有界复核：`g
 
 两份子契约都要与所属委派对账：
 
-- `WorkerReport` 只有在 `taskId`、`evidence.taskId` 以及（存在时的）`evidence.workerRunId` 与被委派任务和 subagent 调用一致时才被接受。结构合法但属于别的任务的报告会带着身份错误落到复核判定上，不会被静默接受。
+- `WorkerReport` 只有在 `taskId` 与 `evidence.taskId` 与被委派任务一致时才被接受。执行身份（`evidence.workerRunId`）由 Root 从 launcher terminal 盖章（ADR-0004）；child 传入的值会被剥离并在 warnings 中披露，不会导致拒收。结构合法但属于别的任务的报告会带着身份错误落到复核判定上，不会被静默接受。
 - `ReviewResult` 只有在 `taskId` 与被评审任务一致时才被记录；不匹配的裁决不落库、任何状态都不变。
 
 证据按执行记录归属，全部由 Root 采集。每次实际子进程执行都有独立证据记录：Root 在执行真正开始前采样（`A_run`），在该执行的最终结果到达时再采一次（`C_report`）——即使报告无法解析也会保存。Truth/scope 是纯函数 `diff(A_run, C_report)` 与报告声明的交叉核对——`A_run` 之前的一切（包括分支上早已存在的无关提交）天然不在窗口内。Freshness 是独立的 `diff(C_report, C_now)`：Root 在复核和验收边界重新采样，报告之后的工作区漂移强制 `revalidate` 而非完成；fresh reviewer 的 `evidenceFresh: true` 永远绕不过这道 Root 侧检查。findings（漏报、越界、漂移）跨纠正轮次保留并阻止 PASS，直到复核确认修复；早于每次执行证据的旧账本记录被标记为不可验证，无法自动完成。修正轮的 changedFiles 可以复述本 Task 早前执行已归因的路径；只有从未归因给本 Task 的路径才算 over-reported。写锁按 worktree 的真实路径生效：同一 worktree 的别名（相对路径、符号链接）共享同一把锁，独立 worktree 互不影响。

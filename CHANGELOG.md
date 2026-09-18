@@ -1,7 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 - 2026-09-18
 
+- **Run identity is Root-stamped (ADR-0004)**: child-facing schema drops `evidence.workerRunId`; Root stamps the launcher terminal's `response.runId` (defaulting to `executionId`) at the admission boundary; child-supplied passthrough values are stripped and disclosed in warnings; incident sentinel values (`planner-scout`, `T-20260918-004`, `not-provided-in-launch-packet`) no longer cause rejection.
+- **Launcher capability gate removed**: `LAUNCHER_CAPABILITY_UNSUPPORTED`, `childRunIdentity`, and `pi-subagents:delegation-capability-probe:v1` completely removed; fixes 0.7.x regression that prevented launching worker, explorer, or validator subagents on installed `pi-subagents@0.68.0`.
 - **Restricted reader opts out of the pi-subagents completion guard**: `planner-scout` is registered with `completionGuard: false`. The guard is a text heuristic over Root-authored spec prose and misread a read-only constraint ("do not create, modify, or delete any files") as an implementation task, refusing three explorer launches (2026-09-18, T-20260918-001..003) that were then reported as `provider_failure`; the declared tool allowlist is the capability proof.
 - **Launch-time rejections classified and surfaced**: a `failed` terminal with zero turns and zero wall time is recorded as `launch_failure` (not `provider_failure`), and the host error text is rendered in the `planner_delegate`/`planner_redelegate` result, so Root no longer misdiagnoses a contract refusal as a provider outage.
 

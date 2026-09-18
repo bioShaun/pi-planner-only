@@ -2567,5 +2567,66 @@ function boundReaderExecution(store, task, { executionId, runId, report }) {
 	assert.match(rendered, /T-20260918-200 execution=writerhold:call-restored role=worker capability=writer workspace=\/workspace\/restored \(restored writer hold: unconfirmed stop on previous session abort\)/);
 }
 
+// ============================================================================
+// root-stamped-run-identity Ticket 01 — Restoring legacy ledger with child-supplied runId
+// ============================================================================
+{
+	const dir = mkdtempSync(join(tmpdir(), "planner-only-legacy-ledger-"));
+	try {
+		const ledger = new LedgerSnapshotStore(dir);
+		const taskId = "T-20260918-leg";
+		const record = spentTaskRecord(taskId);
+		record.cwd = "/fixture/leg";
+		record.state = "reviewing";
+		record.executions = [{
+			executionId: "call-leg-1",
+			runId: "run-real-allocated",
+			role: "worker",
+			reportIndex: 0,
+			status: "completed",
+			aRun: { cwd: "/fixture/leg", taskId, workerRunId: "call-leg-1", gitAvailable: false },
+			startedAt: "2026-09-18T10:00:00.000Z",
+			endedAt: "2026-09-18T10:05:00.000Z",
+		}];
+		record.reports = [{
+			version: 1,
+			taskId,
+			status: "completed",
+			summary: "old report with child-self-reported workerRunId",
+			changedFiles: [],
+			validation: [],
+			evidence: {
+				cwd: "/fixture/leg",
+				taskId,
+				workerRunId: "planner-scout", // legacy bad value self-reported by child
+				gitAvailable: false,
+			},
+			risks: [],
+			unresolved: [],
+		}];
+		ledger.write(record);
+
+		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
+		const restoreResult = orch.restoreFromLedger();
+		assert.equal(restoreResult.restored, 1, "legacy ledger restores successfully");
+		assert.equal(restoreResult.corrupt.length, 0);
+
+		const restoredTask = orch.store.require(taskId);
+		assert.equal(restoredTask.reports[0].evidence.workerRunId, "planner-scout", "historical value preserved as-is");
+
+		// Diagnostics is readable
+		const diag = orch.describeTaskDiagnostics("/fixture/leg", taskId);
+		assert.equal(diag.error, undefined);
+		assert.equal(diag.diagnostics?.taskId, taskId);
+
+		// Verdict refuses with report-identity because workerRunId 'planner-scout' does not match bound execution
+		const refusal = orch.rootVerdictRefusal(restoredTask, "pass");
+		assert.equal(refusal?.kind, "report-identity");
+		assert.match(refusal.reason, /planner-scout/);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
 console.log("planner-only orchestration: PASS");
 

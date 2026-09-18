@@ -9,11 +9,9 @@ import {
 	PLANNER_DELEGATE_PARAMETERS,
 	PLANNER_REDELEGATE_PARAMETERS,
 	REVIEW_RESULT_SCHEMA,
+	WORKER_REPORT_SCHEMA,
 	cancelInFlightDelegations,
-	createCapableLauncher,
 	createHostLauncher,
-	deliverChildRunIdentity,
-	extractChildRunIdentity,
 	renderDelegationOutcome,
 	renderDelegationProgress,
 	runDelegation,
@@ -30,6 +28,7 @@ import { ConcurrencyController } from "./concurrency.ts";
 import { LedgerSnapshotStore } from "./ledger-store.ts";
 import { TaskStore, createTaskSpec } from "./task.ts";
 import { UsageLedger } from "./usage.ts";
+import { Compile } from "typebox/compile";
 
 // ============================================================================
 // delegate.test.mjs — the fake-launcher unit suite for runDelegation (ticket
@@ -80,14 +79,12 @@ const NO_GIT = async () => ({ stdout: "", stderr: "fatal: not a git repository (
 
 function makeDeps(overrides = {}) {
 	const launches = [];
-	const launcherCapabilities = overrides.launcherCapabilities ?? { childRunIdentity: true };
 	const deps = {
 		store: overrides.store ?? new TaskStore(),
 		gitRunner: overrides.gitRunner ?? fakeCleanGit(),
 		concurrency: overrides.concurrency ?? new ConcurrencyController(),
 		usage: overrides.usage ?? new UsageLedger({ pricing: { version: 1, currency: "USD", rates: {} } }),
 		ownerRunId: overrides.ownerRunId ?? "owner-run-1",
-		launcherCapabilities,
 		// Ticket 02 — the host normally has the restricted-reader binding
 		// registered; the unproven-capability tests pass restrictedReaderAgent:
 		// undefined explicitly.
@@ -99,15 +96,6 @@ function makeDeps(overrides = {}) {
 		launch: overrides.launch ?? (async (request) => {
 			launches.push(request);
 			const runId = overrides.allocateRunId ? overrides.allocateRunId(launches.length) : `run-${launches.length}`;
-			const deliveredPrompt = deliverChildRunIdentity(request.task, {
-				channel: "task-packet-envelope",
-				runId,
-				taskId: request.nodeId,
-			});
-			const channelRunId = extractChildRunIdentity({ prompt: deliveredPrompt });
-			const childRunId = overrides.tamperChildRunId
-				? overrides.tamperChildRunId({ runId: channelRunId ?? runId, request })
-				: (channelRunId ?? runId);
 			return {
 				requestId: request.requestId,
 				ownerRunId: request.ownerRunId,
@@ -117,13 +105,10 @@ function makeDeps(overrides = {}) {
 				agent: "worker",
 				model: "test/model",
 				usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 3, toolCalls: 3, durationMs: 10 },
-				result: { kind: "structured", value: makeReport(request.nodeId, childRunId, request.cwd) },
+				result: { kind: "structured", value: makeReport(request.nodeId, undefined, request.cwd) },
 			};
 		}),
 	};
-	if (deps.launch && !deps.launch.capabilities) {
-		deps.launch.capabilities = launcherCapabilities;
-	}
 	return { deps, launches };
 }
 
@@ -135,7 +120,11 @@ function makeReport(taskId, runId, cwd, overrides = {}) {
 		summary: "done",
 		changedFiles: [],
 		validation: [],
-		evidence: { cwd, taskId, workerRunId: runId },
+		evidence: {
+			cwd,
+			taskId,
+			...(runId !== undefined ? { workerRunId: runId } : {}),
+		},
 		risks: [],
 		unresolved: [],
 		...overrides,
@@ -873,7 +862,6 @@ function makeReviewDeps(dir, { store, concurrency, reviewFor, reviewStatus = "co
 		concurrency: concurrency ?? new ConcurrencyController(),
 		usage: new UsageLedger({ pricing: { version: 1, currency: "USD", rates: {} } }),
 		ownerRunId: "owner-run-1",
-		launcherCapabilities: { childRunIdentity: true },
 		restrictedReaderAgent: "planner-scout",
 		quiescenceWaitMs: 0,
 		quiescenceSampleGapMs: 0,
@@ -2820,216 +2808,281 @@ function makeFakeWallClock() {
 	assert.equal(launches.length, 1, "only the mint launch ran");
 }
 
+
+
 // ============================================================================
-// Ticket 01 (delegation-contract-incident-20260918) — Child Run Identity & Launcher Capability
+// root-stamped-run-identity Ticket 01 — Worker Report Identity & Root Stamping
 // ============================================================================
 {
-	// 1. Launcher without childRunIdentity capability is refused before admission.
-	//    Leaves no task, no execution, no reservation.
-	const dir = initRealRepo();
-	const store = new TaskStore();
-	const concurrency = new ConcurrencyController({ savedLimit: 3, enforceWorkspace: true });
-	const { deps, launches } = makeDeps({
-		store,
-		concurrency,
-		launcherCapabilities: { childRunIdentity: false },
-	});
-	const refusal = await expectRefusal(
-		runDelegation(deps, makeParams({ role: "worker" }), dir, { executionId: "call-uncapable-worker" }),
-		"LAUNCHER_CAPABILITY_UNSUPPORTED",
-	);
-	assert.match(refusal.message, /childRunIdentity/);
-	assert.equal(launches.length, 0, "no child launched");
-	assert.equal(store.list().length, 0, "no task minted");
-	assert.equal(concurrency.status().occupied, 0, "no reservation held");
+	// 8. Schema snapshot: evidence.properties has no workerRunId, required has no workerRunId,
+	// evidence.additionalProperties === undefined, outer additionalProperties === false
+	const evidenceSchema = WORKER_REPORT_SCHEMA.properties.evidence;
+	assert.equal(evidenceSchema.properties.workerRunId, undefined, "workerRunId removed from evidence properties");
+	assert.equal(evidenceSchema.required.includes("workerRunId"), false, "workerRunId removed from evidence required");
+	assert.equal(evidenceSchema.additionalProperties, undefined, "evidence does not set additionalProperties");
+	assert.equal(WORKER_REPORT_SCHEMA.additionalProperties, false, "outer schema retains additionalProperties: false");
 
-	// Same refusal for role=explorer
-	const refusalExp = await expectRefusal(
-		runDelegation(deps, makeParams({ role: "explorer", objective: "recon" }), dir, { executionId: "call-uncapable-exp" }),
-		"LAUNCHER_CAPABILITY_UNSUPPORTED",
-	);
-	assert.equal(launches.length, 0);
-	assert.equal(store.list().length, 0);
-	assert.equal(concurrency.status().occupied, 0);
+	// 8b. Launcher boundary mirror: using typebox/compile Compile
+	const check = Compile(WORKER_REPORT_SCHEMA);
+	const validWithoutWorkerRunId = {
+		version: 1,
+		taskId: "T-20260918-001",
+		status: "completed",
+		summary: "done",
+		changedFiles: [],
+		validation: [],
+		evidence: { cwd: "/repo", taskId: "T-20260918-001" },
+		risks: [],
+		unresolved: [],
+	};
+	assert.equal(check.Check(validWithoutWorkerRunId), true, "report without workerRunId passes launcher Check");
 
-	// An environment variable is not production capability proof. Neither an
-	// explicit unsupported probe nor a missing listener can be overridden.
-	const previousCapabilityEnv = process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY;
-	process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY = "true";
-	try {
-		for (const probeValue of [false, undefined]) {
-			const bus = tinyEmitter();
-			if (probeValue !== undefined) {
-				bus.on("pi-subagents:delegation-capability-probe:v1", (probe) => {
-					probe.capabilities = { childRunIdentity: probeValue };
-				});
-			}
-			const hostLauncher = createHostLauncher({ events: bus });
-			const probeStore = new TaskStore();
-			const probeConcurrency = new ConcurrencyController();
-			const { deps: probeDeps } = makeDeps({
-				store: probeStore,
-				concurrency: probeConcurrency,
-				launch: hostLauncher,
-				launcherCapabilities: hostLauncher.capabilities,
-			});
-			await expectRefusal(
-				runDelegation(probeDeps, makeParams(), dir, { executionId: `call-env-${String(probeValue)}` }),
-				"LAUNCHER_CAPABILITY_UNSUPPORTED",
-			);
-			assert.equal(probeStore.list().length, 0, "env override cannot mint a Task");
-			assert.equal(probeConcurrency.status().occupied, 0, "env override cannot reserve capacity");
-			assert.equal(bus.emitted.some((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT), false, "env override cannot launch a child");
-		}
-	} finally {
-		if (previousCapabilityEnv === undefined) delete process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY;
-		else process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY = previousCapabilityEnv;
-	}
+	const reportWithPassthrough = {
+		...validWithoutWorkerRunId,
+		evidence: { cwd: "/repo", taskId: "T-20260918-001", workerRunId: "planner-scout" },
+	};
+	assert.equal(check.Check(reportWithPassthrough), true, "report with extra evidence.workerRunId passes launcher Check to reach Root");
+
+	const reportWithTopLevelUnknown = {
+		...validWithoutWorkerRunId,
+		unknownTopLevelField: true,
+	};
+	assert.equal(check.Check(reportWithTopLevelUnknown), false, "outer additionalProperties: false rejects unknown top-level keys");
 }
 
 {
-	// 2. Child MUST receive run identity from the delivery channel, not test hardcoding.
-	//    Simulated child extracts runId from the channel and sets evidence.workerRunId.
-	const dir = initRealRepo();
+	// 1. Fake launcher returns report without evidence.workerRunId + runId: "run-A"
+	const dir = initCommittedRepo();
 	const store = new TaskStore();
-	const recordedLaunches = [];
-	const launcher = createCapableLauncher({
-		onAttempt: (attempt) => recordedLaunches.push(attempt),
-	});
 	const { deps } = makeDeps({
 		store,
-		launch: launcher,
-		launcherCapabilities: { childRunIdentity: true },
-	});
-
-	// Explorer Task 1: round 1 runs, child extracts runId from channel, report is admitted.
-	const exp1 = await runDelegation(
-		deps,
-		makeParams({ role: "explorer", objective: "survey repo", acceptanceMode: "observation" }),
-		dir,
-		{ executionId: "call-exp1" },
-	);
-	assert.equal(exp1.task.state, "reviewing");
-	assert.equal(exp1.task.reports.length, 1);
-	assert.equal(exp1.task.reports[0].evidence.workerRunId, exp1.runId);
-	assert.equal(recordedLaunches.length, 1);
-	assert.match(recordedLaunches[0].prompt, /SUBAGENT_RUN_IDENTITY/);
-	assert.ok(exp1.runId && exp1.runId.startsWith("run-"));
-
-	// Worker Task: round 1 runs, child extracts runId from channel, report is admitted.
-	const w1 = await runDelegation(
-		deps,
-		makeParams({ role: "worker", objective: "write code" }),
-		dir,
-		{ executionId: "call-w1" },
-	);
-	assert.equal(w1.task.reports.length, 1);
-	assert.equal(w1.task.reports[0].evidence.workerRunId, w1.runId);
-	assert.notEqual(w1.runId, exp1.runId, "distinct runIds generated authoritatively");
-
-	// Explorer Task 2 with correction round:
-	// Round 1: child extracts round 1 runId from channel.
-	let round = 0;
-	const exp2Launcher = createCapableLauncher({
-		allocateRunId: () => { round += 1; return `run-exp2-r${round}`; },
-		reportOverrides: { status: "partial", summary: "first pass incomplete" },
-	});
-	const { deps: exp2Deps } = makeDeps({
-		store,
-		launch: exp2Launcher,
-		launcherCapabilities: { childRunIdentity: true },
-	});
-	const exp2Round1 = await runDelegation(
-		exp2Deps,
-		makeParams({ role: "explorer", objective: "explore deeply", acceptanceMode: "observation" }),
-		dir,
-		{ executionId: "call-exp2-r1" },
-	);
-	assert.equal(exp2Round1.runId, "run-exp2-r1");
-	assert.equal(exp2Round1.task.executions[0].runId, "run-exp2-r1");
-	assert.equal(exp2Round1.task.reports.length, 1);
-	assert.equal(exp2Round1.task.reports[0].evidence.workerRunId, "run-exp2-r1");
-
-	// Round 2 (correction round via redelegate): gets NEW fresh runId from launcher.
-	const exp2Round2 = await runDelegation(
-		exp2Deps,
-		makeParams({ taskId: exp2Round1.task.taskId, role: "explorer", objective: "finish exploration" }),
-		dir,
-		{ executionId: "call-exp2-r2" },
-	);
-	assert.equal(exp2Round2.runId, "run-exp2-r2");
-	assert.notEqual(exp2Round2.runId, exp2Round1.runId, "new round gets fresh runId, does not reuse previous");
-	assert.equal(exp2Round2.task.executions[1].runId, "run-exp2-r2");
-	assert.equal(exp2Round2.task.reports.length, 2);
-	assert.equal(exp2Round2.task.reports[1].evidence.workerRunId, "run-exp2-r2");
-}
-
-{
-	// 3. Negative identities: role name, taskId, previous runId, foreign runId, placeholder
-	//    are strictly rejected. Reports are preserved as unaccepted diagnostics, no pass.
-	const dir = initRealRepo();
-	const badIdentities = [
-		{ name: "role name", value: "planner-scout" },
-		{ name: "taskId", value: "T-20260918-004" },
-		{ name: "previous runId", value: "run-earlier-round" },
-		{ name: "placeholder", value: "not-provided-in-launch-packet" },
-		{ name: "foreign runId", value: "run-foreign-uuid" },
-	];
-
-	for (const bad of badIdentities) {
-		const store = new TaskStore();
-		const launcher = createCapableLauncher({
-			allocateRunId: () => "run-legit-allocated",
-			tamperChildRunId: () => bad.value,
-		});
-		const { deps } = makeDeps({
-			store,
-			launch: launcher,
-			launcherCapabilities: { childRunIdentity: true },
-		});
-		const outcome = await runDelegation(
-			deps,
-			makeParams({ role: "explorer", objective: `test ${bad.name}` }),
-			dir,
-			{ executionId: `call-bad-${bad.name.replace(/\s+/g, "-")}` },
-		);
-		assert.equal(outcome.task.reports.length, 0, `bad identity ${bad.name} must not be admitted to reports`);
-		const exec = outcome.task.executions[0];
-		assert.ok(exec.unacceptedReport, `unacceptedReport must be preserved for ${bad.name}`);
-		assert.equal(exec.unacceptedReport.evidence.workerRunId, bad.value);
-		assert.match(exec.unacceptedReportReason, /WorkerReport evidence\.workerRunId mismatch/);
-		assert.match(exec.unacceptedReportReason, /run-legit-allocated/);
-		assert.notEqual(outcome.task.state, "accepted", "cannot achieve accepted pass");
-		assert.equal(outcome.decision.action, "report_correction");
-		assert.equal(outcome.decision.reasonCode, "report-invalid");
-	}
-}
-
-{
-	// 4. Observation mode also enforces identity gate: wrong runId is rejected.
-	const dir = initRealRepo();
-	const store = new TaskStore();
-	const launcher = createCapableLauncher({
-		allocateRunId: () => "run-obs-real",
-		tamperChildRunId: () => "planner-scout",
-	});
-	const { deps } = makeDeps({
-		store,
-		launch: launcher,
-		launcherCapabilities: { childRunIdentity: true },
-		gitRunner: NO_GIT,
+		gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args),
+		launch: async (request) => ({
+			status: "completed",
+			runId: "run-A",
+			result: {
+				kind: "structured",
+				value: {
+					version: 1,
+					taskId: request.nodeId,
+					status: "completed",
+					summary: "done without workerRunId",
+					changedFiles: [],
+					validation: [],
+					evidence: { cwd: request.cwd, taskId: request.nodeId, finalGitRef: headRef(dir) },
+					risks: [],
+					unresolved: [],
+				},
+			},
+		}),
 	});
 	const outcome = await runDelegation(
 		deps,
-		makeParams({ role: "explorer", objective: "obs survey", acceptanceMode: "observation" }),
+		makeParams({ role: "worker", objective: "implement something" }),
 		dir,
-		{ executionId: "call-obs-tamper" },
+		{ executionId: "call-run-A" },
 	);
-	assert.equal(outcome.task.reports.length, 0, "observation mode does not admit wrong identity");
-	assert.ok(outcome.task.executions[0].unacceptedReport);
-	assert.equal(outcome.task.executions[0].unacceptedReport.evidence.workerRunId, "planner-scout");
-	assert.match(outcome.task.executions[0].unacceptedReportReason, /WorkerReport evidence\.workerRunId mismatch/);
-	assert.equal(outcome.decision.action, "report_correction");
+	assert.equal(outcome.task.reports.length, 1, "report is admitted");
+	assert.equal(outcome.task.reports[0].evidence.workerRunId, "run-A", "Root stamps response.runId");
+	assert.equal(outcome.task.executions[0].reportIndex, 0);
+	assert.equal(outcome.task.executions[0].runId, "run-A");
+	assert.equal(outcome.task.state, "reviewing");
+}
+
+{
+	// 2. Terminal without runId: stamped value === executionId
+	const dir = initRealRepo();
+	const store = new TaskStore();
+	const { deps } = makeDeps({
+		store,
+		launch: async (request) => ({
+			status: "completed",
+			result: {
+				kind: "structured",
+				value: {
+					version: 1,
+					taskId: request.nodeId,
+					status: "completed",
+					summary: "done without runId",
+					changedFiles: [],
+					validation: [],
+					evidence: { cwd: request.cwd, taskId: request.nodeId },
+					risks: [],
+					unresolved: [],
+				},
+			},
+		}),
+	});
+	const outcome = await runDelegation(
+		deps,
+		makeParams({ role: "worker", objective: "implement something" }),
+		dir,
+		{ executionId: "call-no-runid" },
+	);
+	assert.equal(outcome.task.reports.length, 1);
+	assert.equal(outcome.task.reports[0].evidence.workerRunId, "call-no-runid", "stamped with executionId when runId missing");
+}
+
+{
+	// 3. Passthrough evidence.workerRunId: "planner-scout": admitted; outcome.warnings contains child value; ledger has stamped runId
+	const dir = initRealRepo();
+	const store = new TaskStore();
+	const { deps } = makeDeps({
+		store,
+		launch: async (request) => ({
+			status: "completed",
+			runId: "run-scout-override",
+			result: {
+				kind: "structured",
+				value: {
+					version: 1,
+					taskId: request.nodeId,
+					status: "completed",
+					summary: "done with child-supplied runId",
+					changedFiles: [],
+					validation: [],
+					evidence: { cwd: request.cwd, taskId: request.nodeId, workerRunId: "planner-scout" },
+					risks: [],
+					unresolved: [],
+				},
+			},
+		}),
+	});
+	const outcome = await runDelegation(
+		deps,
+		makeParams({ role: "worker", objective: "test passthrough" }),
+		dir,
+		{ executionId: "call-passthrough" },
+	);
+	assert.equal(outcome.task.reports.length, 1, "report is admitted despite child-supplied workerRunId");
+	assert.equal(outcome.task.reports[0].evidence.workerRunId, "run-scout-override", "ledger has stamped runId, not child-supplied");
+	assert.ok(
+		outcome.warnings.some((w) => w.includes("planner-scout")),
+		"warnings disclose child-supplied value",
+	);
+}
+
+{
+	// 4. taskId mismatch: reports.length === 0, unacceptedReport has stamped runId, unacceptedReportReason mentions task, not execution
+	const dir = initRealRepo();
+	const store = new TaskStore();
+	const { deps } = makeDeps({
+		store,
+		launch: async (request) => ({
+			status: "completed",
+			runId: "run-mismatch-task",
+			result: {
+				kind: "structured",
+				value: {
+					version: 1,
+					taskId: "T-99999999-999",
+					status: "completed",
+					summary: "wrong task",
+					changedFiles: [],
+					validation: [],
+					evidence: { cwd: request.cwd, taskId: "T-99999999-999" },
+					risks: [],
+					unresolved: [],
+				},
+			},
+		}),
+	});
+	const outcome = await runDelegation(
+		deps,
+		makeParams({ role: "worker", objective: "test taskId mismatch" }),
+		dir,
+		{ executionId: "call-task-mismatch" },
+	);
+	assert.equal(outcome.task.reports.length, 0);
+	const exec = outcome.task.executions[0];
+	assert.ok(exec.unacceptedReport);
+	assert.equal(exec.unacceptedReport.evidence.workerRunId, "run-mismatch-task", "unacceptedReport is stamped with runId");
+	assert.match(exec.unacceptedReportReason, /does not match this Task/);
+	assert.equal(exec.unacceptedReportReason.includes("execution"), false, "reason does not mention execution");
+}
+
+{
+	// 5. Correction round: round 1 runId: "run-A" -> request_changes -> redelegate round 2 runId: "run-B"
+	const dir = initRealRepo();
+	const store = new TaskStore();
+	let currentRunId = "run-A";
+	const { deps } = makeDeps({
+		store,
+		launch: async (request) => ({
+			status: "completed",
+			runId: currentRunId,
+			result: {
+				kind: "structured",
+				value: {
+					version: 1,
+					taskId: request.nodeId,
+					status: "completed",
+					summary: `round ${currentRunId}`,
+					changedFiles: [],
+					validation: [],
+					evidence: { cwd: request.cwd, taskId: request.nodeId },
+					risks: [],
+					unresolved: [],
+				},
+			},
+		}),
+	});
+	const round1 = await runDelegation(
+		deps,
+		makeParams({ role: "worker", objective: "two rounds" }),
+		dir,
+		{ executionId: "call-r1" },
+	);
+	assert.equal(round1.task.reports.length, 1);
+	assert.equal(round1.task.reports[0].evidence.workerRunId, "run-A");
+
+	// Trigger correction round: set state to changes_requested
+	store.transition(round1.task.taskId, "changes_requested");
+	currentRunId = "run-B";
+
+	const round2 = await runDelegation(
+		deps,
+		makeParams({ taskId: round1.task.taskId, role: "worker", objective: "two rounds" }),
+		dir,
+		{ executionId: "call-r2" },
+	);
+	assert.equal(round2.task.reports.length, 2);
+	assert.deepEqual(round2.task.reports.map((r) => r.evidence.workerRunId), ["run-A", "run-B"]);
+}
+
+{
+	// 6. Validator role: validatorReports[0].evidence.workerRunId === runId
+	const dir = initRealRepo();
+	const store = new TaskStore();
+	const { deps } = makeDeps({
+		store,
+		launch: async (request) => ({
+			status: "completed",
+			runId: "run-validator",
+			result: {
+				kind: "structured",
+				value: {
+					version: 1,
+					taskId: request.nodeId,
+					status: "completed",
+					summary: "validated",
+					changedFiles: [],
+					validation: [],
+					evidence: { cwd: request.cwd, taskId: request.nodeId },
+					risks: [],
+					unresolved: [],
+				},
+			},
+		}),
+	});
+	const outcome = await runDelegation(
+		deps,
+		makeParams({ role: "validator", objective: "validate work" }),
+		dir,
+		{ executionId: "call-validator" },
+	);
+	assert.equal(outcome.task.validatorReports.length, 1);
+	assert.equal(outcome.task.validatorReports[0].evidence.workerRunId, "run-validator");
 }
 
 console.log("delegate.test.mjs: all cases passed");

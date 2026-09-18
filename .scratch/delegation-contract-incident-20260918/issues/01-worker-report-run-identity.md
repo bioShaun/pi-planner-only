@@ -2,9 +2,9 @@
 
 **What to build:** Explorer 和 Worker 在首次执行前取得 launcher 分配的本次 runId，首轮与纠正轮均能返回可接纳的 WorkerReport，Root 可在其他验收条件满足时记录 Verdict；错误身份继续被拒绝。交付包括真实 launcher 下发能力核对、必要接线、工具入口回归和本票真实宿主演示。
 
-**Blocked by:** Installed `pi-subagents@0.68.0` has no supported channel that gives its internally allocated runId to the child before the first turn, and advertises no matching capability.
+**Blocked by:** （已失效：被 ADR-0004 否决，见下方 Comments）
 
-**Status:** ready-for-agent
+**Status:** wontfix
 
 Parent: Delegation 契约事故修复：运行身份、准入一致性与参数保真（2026-09-18）。范围 A；User Stories 1–7、23–25。
 
@@ -47,3 +47,7 @@ Testing seam: 现有已注册 planner_* 工具、委派事件与报告接纳；�
    - `index.test.mjs`：
      - 未知能力探针测试：验证 `planner_delegate` 拒绝抛出 `LAUNCHER_CAPABILITY_UNSUPPORTED`。
      - 宿主工具入口集成测试（`planner_delegate` -> `planner_redelegate` -> `planner_verdict`）：Explorer 两个 Task（包含纠正轮）与 Worker Task 完整生命周期，正确进入 `completed` 状态并准确记录 executions。
+
+## Comments
+
+- 2026-09-18：本票方案（要求上游下发 runId 并设能力门禁）被 ADR-0004 否决。运行身份已改为在 Root 侧接纳时直接盖章，子代理 schema 不再要求该字段，问题已由 `.scratch/root-stamped-run-identity/01` 彻底解决。本票标记为 wontfix，Blocked-by 依赖解除。

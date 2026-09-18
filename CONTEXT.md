@@ -43,8 +43,8 @@ the Task role or a self-reported read-only flag does not.
 _Avoid_: role, readOnly claim
 
 **WorkerReport**:
-The upward contract: the only structured thing a Worker returns.
-_Avoid_: transcript, log, result blob
+The upward contract: the only structured thing a Worker returns. It declares Task identity (`taskId` / `evidence.taskId`) and the Git facts the child observed; the execution identity producing it (`evidence.workerRunId`) is Root-stamped at admission (ADR-0004), never child-declared.
+_Avoid_: transcript, log, result blob, child-reported runId
 
 **ReviewResult**:
 The structured verdict a Reviewer returns.

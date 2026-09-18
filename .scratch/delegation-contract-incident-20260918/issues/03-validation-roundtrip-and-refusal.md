@@ -24,3 +24,7 @@ Parent: Delegation 契约事故修复：运行身份、准入一致性与参数�
 - [x] 重复保护触发后 status、planner_tasks 和其他合法调用仍可用；相关回归同时覆盖参数修正与重复保护不被绕过，不通过禁用 breaker 解锁。
 
 Testing seam: 主测已注册工具入口、宿主参数边界和真实 child 输入；复用既有 TaskSpec 拒绝与 RefusalBreaker 用例。本票可在已存在、可重入的 Task fixture 上启动验证，不依赖 01 的报告接纳修复或 02 的容量拒绝修复；跨缺陷完整链路由 05 验收。
+
+## Comments
+
+- 2026-09-18：身份链路部分由 `.scratch/root-stamped-run-identity/` 承接。本票的 `validation.commands` 参数保真及 Breaker 行为保持原状态，不在本票关闭。

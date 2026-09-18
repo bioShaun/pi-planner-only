@@ -143,35 +143,6 @@ assert.deepEqual(activeTools, [
 ]);
 assert.equal(setActiveCalls.length, 0);
 
-// Ticket 01 regression: an env=true setting cannot manufacture launcher
-// capability when the production probe has no supporting listener.
-{
-	const previousCapabilityOverride = process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY;
-	process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY = "true";
-	try {
-		await assert.rejects(
-			tools.get("planner_delegate").execute(
-				"call-env-cannot-prove-capability",
-				{
-					role: "worker",
-					objective: "attempt without production capability",
-					scope: {},
-					constraints: [],
-					acceptanceCriteria: [],
-					validation: { required: false },
-				},
-				undefined,
-				undefined,
-				ctx,
-			),
-			(error) => error?.code === "LAUNCHER_CAPABILITY_UNSUPPORTED",
-		);
-		assert.equal(piEvents.emitted.some((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT), false);
-	} finally {
-		if (previousCapabilityOverride === undefined) delete process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY;
-		else process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY = previousCapabilityOverride;
-	}
-}
 
 
 // Issue 13B: status exposes session totals and keeps pre-Task Root usage unattributed.
@@ -1115,47 +1086,67 @@ try {
 {
 	assert.equal(tools.has("planner_delegate"), true);
 
-	// Ticket 01 — launcher lacking childRunIdentity capability refuses before admission.
-	const uncapableCall = tools.get("planner_delegate").execute(
-		"call-uncapable-1",
+	const seenReqIds = new Set(
+		piEvents.emitted
+			.filter((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT)
+			.map((entry) => entry.payload.requestId),
+	);
+	const requestSeen = async () => {
+		const deadline = Date.now() + 2000;
+		let found;
+		while (!found && Date.now() < deadline) {
+			found = piEvents.emitted.find(
+				(entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT && !seenReqIds.has(entry.payload.requestId),
+			)?.payload;
+			if (!found) await new Promise((r) => setTimeout(r, 2));
+		}
+		assert.ok(found, "REQUEST emitted on the delegation bus");
+		seenReqIds.add(found.requestId);
+		return found;
+	};
+
+	// Ticket 02 (root-stamped-run-identity) — launcher starts child without legacy capability rejection gate.
+	const capFreeExec = tools.get("planner_delegate").execute(
+		"call-capfree-init",
 		{
 			role: "worker",
-			objective: "attempt without capability",
+			objective: "attempt without capability gate",
 			scope: {},
 			constraints: [],
 			acceptanceCriteria: [],
 			validation: { required: false },
 		},
 		undefined,
-		undefined,
+		() => {},
 		ctx,
 	);
-	await assert.rejects(uncapableCall, (error) => {
-		assert.equal(error?.code, "LAUNCHER_CAPABILITY_UNSUPPORTED");
-		assert.match(error?.message, /childRunIdentity/);
-		return true;
+	const capReq = await requestSeen();
+	assert.ok(capReq, "REQUEST emitted without capability gate");
+	assert.ok(capReq.nodeId, "taskId exists");
+	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: capReq.requestId,
+		ownerRunId: capReq.ownerRunId,
+		nodeId: capReq.nodeId,
+		status: "completed",
+		runId: "run-capfree-init",
+		result: {
+			kind: "structured",
+			value: {
+				version: 1,
+				taskId: capReq.nodeId,
+				status: "completed",
+				summary: "done",
+				changedFiles: [],
+				validation: [],
+				evidence: { cwd: capReq.cwd, taskId: capReq.nodeId },
+				risks: [],
+				unresolved: [],
+			},
+		},
 	});
-
-	// Enable capability on mock bus for subsequent integration tests
-	piEvents.on("pi-subagents:delegation-capability-probe:v1", (probe) => {
-		probe.capabilities = { childRunIdentity: true };
-	});
-
-	// The launcher emits REQUEST only after runDelegation's async setup —
-	// poll the bus until it lands (bounded so an early throw cannot hang).
-	// `excludeRequestId` skips an earlier delegation's REQUEST.
-	const requestSeen = async (excludeRequestId) => {
-		const deadline = Date.now() + 2000;
-		let found;
-		while (!found && Date.now() < deadline) {
-			found = piEvents.emitted.find((entry) =>
-				entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT && entry.payload.requestId !== excludeRequestId,
-			)?.payload;
-			if (!found) await new Promise((r) => setTimeout(r, 2));
-		}
-		assert.ok(found, "REQUEST emitted on the delegation bus");
-		return found;
-	};
+	const capFreeRes = await capFreeExec;
+	assert.ok(capFreeRes.details.taskId);
+	assert.equal(capFreeRes.details.report?.evidence?.workerRunId, "run-capfree-init");
 
 	// (a) UPDATE -> onUpdate once, marked as progress; completed RESPONSE
 	//     settles the call with the structured WorkerReport in details.report.
@@ -1222,7 +1213,7 @@ try {
 		() => {},
 		ctx,
 	);
-	const pendingRequest = await requestSeen(request.requestId);
+	const pendingRequest = await requestSeen();
 	assert.notEqual(pendingRequest.requestId, request.requestId, "a second delegation is in flight");
 	const cancelsBefore = piEvents.emitted.filter((entry) => entry.event === SUBAGENT_DELEGATION_CANCEL_EVENT).length;
 	await handlers.get("session_shutdown")({}, ctx);
@@ -3048,4 +3039,139 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 	);
 	assert.equal(vW.details.state, "completed");
 	assert.equal(ledger.read(wRes.details.taskId).record.state, "completed");
+}
+
+// ============================================================================
+// root-stamped-run-identity Ticket 01 — Host Entrypoint: Stamped report and incident replay
+// ============================================================================
+{
+	const delegateTool = tools.get("planner_delegate");
+	const verdictTool = tools.get("planner_verdict");
+	const ledger = new LedgerSnapshotStore(isolatedAgentDir);
+
+	const seenRequests = new Set(
+		piEvents.emitted
+			.filter((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT)
+			.map((entry) => entry.payload.requestId),
+	);
+	const nextReq = async () => {
+		const deadline = Date.now() + 2000;
+		let found;
+		while (!found && Date.now() < deadline) {
+			found = piEvents.emitted.find(
+				(entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT && !seenRequests.has(entry.payload.requestId),
+			)?.payload;
+			if (!found) await new Promise((r) => setTimeout(r, 2));
+		}
+		assert.ok(found, "REQUEST emitted on the delegation bus");
+		seenRequests.add(found.requestId);
+		return found;
+	};
+
+	// 9. Report without workerRunId is admitted and completes via planner_verdict pass
+	const execPromise = delegateTool.execute(
+		"call-no-runid-tool",
+		{
+			role: "explorer",
+			objective: "child without workerRunId",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: false },
+			acceptanceMode: "observation",
+		},
+		undefined,
+		() => {},
+		ctx,
+	);
+	const req = await nextReq();
+	const hostAllocatedRunId = "run-host-alloc-clean";
+	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: req.requestId,
+		ownerRunId: req.ownerRunId,
+		nodeId: req.nodeId,
+		status: "completed",
+		runId: hostAllocatedRunId,
+		result: {
+			kind: "structured",
+			value: {
+				version: 1,
+				taskId: req.nodeId,
+				status: "completed",
+				summary: "clean report",
+				changedFiles: [],
+				validation: [],
+				evidence: { cwd: req.cwd, taskId: req.nodeId }, // NO workerRunId
+				risks: [],
+				unresolved: [],
+			},
+		},
+	});
+	const res = await execPromise;
+	assert.equal(res.details.report.evidence.workerRunId, hostAllocatedRunId, "Root stamped runId");
+	assert.equal(res.details.state, "reviewing");
+
+	const vRes = await verdictTool.execute(
+		"call-v-no-runid",
+		{
+			taskId: res.details.taskId,
+			verdict: "pass",
+			summary: "clean report accepted",
+		},
+		undefined,
+		() => {},
+		ctx,
+	);
+	assert.equal(vRes.details.state, "completed");
+	assert.equal(ledger.read(res.details.taskId).record.state, "completed");
+
+	// 10. Incident replay: three incident values ("planner-scout", "T-20260918-004", "not-provided-in-launch-packet")
+	const incidentValues = ["planner-scout", "T-20260918-004", "not-provided-in-launch-packet"];
+	for (const incidentVal of incidentValues) {
+		const incPromise = delegateTool.execute(
+			`call-inc-${incidentVal.slice(0, 8)}`,
+			{
+				role: "explorer",
+				objective: `replay incident ${incidentVal}`,
+				scope: {},
+				constraints: [],
+				acceptanceCriteria: [],
+				validation: { required: false },
+				acceptanceMode: "observation",
+			},
+			undefined,
+			() => {},
+			ctx,
+		);
+		const incReq = await nextReq();
+		const incRunId = `run-replay-${incidentVal.slice(0, 8)}`;
+		piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+			requestId: incReq.requestId,
+			ownerRunId: incReq.ownerRunId,
+			nodeId: incReq.nodeId,
+			status: "completed",
+			runId: incRunId,
+			result: {
+				kind: "structured",
+				value: {
+					version: 1,
+					taskId: incReq.nodeId,
+					status: "completed",
+					summary: `replaying ${incidentVal}`,
+					changedFiles: [],
+					validation: [],
+					evidence: { cwd: incReq.cwd, taskId: incReq.nodeId, workerRunId: incidentVal },
+					risks: [],
+					unresolved: [],
+				},
+			},
+		});
+		const incRes = await incPromise;
+		assert.equal(incRes.details.report.evidence.workerRunId, incRunId, "stamped by Root to launcher runId");
+		assert.equal(incRes.details.state, "reviewing", "admitted, not unaccepted");
+		assert.ok(
+			incRes.details.warnings?.some((w) => w.includes(incidentVal)),
+			`warnings disclose child value ${incidentVal}`,
+		);
+	}
 }

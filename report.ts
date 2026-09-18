@@ -111,7 +111,7 @@ function identityMatches(value: string, expected: WorkerReportIdentity): boolean
  *
  * Identity is checked against the delegation, not the report itself:
  * `taskId`, `evidence.taskId` must match the delegated task or any alias, and
- * `evidence.workerRunId` must match the subagent call when both sides carry one.
+ * `evidence.workerRunId` is Root-stamped at admission; the check here guards restored ledgers at the verdict boundary.
  */
 export function validateWorkerReportIdentity(
 	report: WorkerReport,

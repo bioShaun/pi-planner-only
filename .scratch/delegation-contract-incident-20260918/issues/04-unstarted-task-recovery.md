@@ -21,3 +21,7 @@ Parent: Delegation 契约事故修复：运行身份、准入一致性与参数�
 当前限制：持久化 fixture 与工具入口回归可证明本地 lifecycle 行为；没有本轮隔离真实宿主的查询与 blocked 结束证据，因此不能关闭本票。
 
 Testing seam: 已注册任务查询、重入、Verdict 工具及可重载账本，参考既有 mint/rebind、无报告 Verdict 与恢复测试。独立 fixture 与完整有效参数足以验证本票，所以 01–03 不构成启动本票的逻辑依赖。
+
+## Comments
+
+- 2026-09-18：身份链路部分由 `.scratch/root-stamped-run-identity/` 承接。本票的遗留 planning Task 恢复与 blocked 路径保持原状态，不在本票关闭。

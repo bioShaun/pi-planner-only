@@ -60,7 +60,7 @@ import {
 	runDelegation,
 	validateRecoveryDecision,
 } from "./delegate.ts";
-import type { DelegationOutcome, LauncherCapabilities, PlannerDelegationParams } from "./delegate.ts";
+import type { DelegationOutcome, PlannerDelegationParams } from "./delegate.ts";
 import { RefusalBreaker, isRefusal } from "./refusal-breaker.ts";
 import type { RecoveryDecision } from "./types.ts";
 
@@ -477,24 +477,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			// No registry listener (pi-subagents absent or older): explorer
 			// delegations refuse with READER_CAPABILITY_UNPROVEN.
 		}
-	};
-	// Ticket 01 — check for launcher capabilities (childRunIdentity)
-	let launcherCapabilities: LauncherCapabilities | undefined;
-	const ensureLauncherCapabilities = (): LauncherCapabilities => {
-		if (launcherCapabilities?.childRunIdentity === true) return launcherCapabilities;
-		let caps: LauncherCapabilities = { ...((delegationLaunch as { capabilities?: LauncherCapabilities })?.capabilities ?? {}) };
-		try {
-			const probe: { version: number; capabilities?: LauncherCapabilities } = { version: 1 };
-			pi.events.emit("pi-subagents:delegation-capability-probe:v1", probe);
-			if (probe.capabilities) {
-				caps = { ...caps, ...probe.capabilities };
-			}
-		} catch {
-			// No listener
-		}
-		launcherCapabilities = caps;
-		(delegationLaunch as { capabilities?: LauncherCapabilities }).capabilities = caps;
-		return caps;
 	};
 	// WRC P0-A — spec §3 quiescenceWaitMs; env override exists for tests and
 	// calibrated hosts, the default stays 10 s (forced-settlement 3–4 s +
@@ -1011,7 +993,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					let outcome: DelegationOutcome;
 					try {
 						ensureRestrictedReaderAgent();
-						const currentCapabilities = ensureLauncherCapabilities();
 						outcome = await runDelegation(
 							{
 								store: orchestrator.store,
@@ -1019,7 +1000,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 								concurrency,
 								usage: ledger,
 								launch: delegationLaunch,
-								launcherCapabilities: currentCapabilities,
 								...(restrictedReaderAgent !== undefined ? { restrictedReaderAgent } : {}),
 								...(quiescenceWaitMs !== undefined ? { quiescenceWaitMs } : {}),
 								ownerRunId: ctx.sessionManager?.getSessionId?.() || PROCESS_OWNER_RUN_ID,

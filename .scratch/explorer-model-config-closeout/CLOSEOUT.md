@@ -23,7 +23,7 @@
 
 1. 票 01：原规格完整宿主兼容性仍未满足。当前仅针对 pi-subagents 0.68 核对的有限投影；复杂 frontmatter、包贡献 plain scout、额外扫描目录，以及 defaultProvider/modelScope/maxThinking/disableBuiltins=true 等有效宿主配置明确拒绝。依赖范围其他版本也未验证。需兼容实现或受支持的轻量发现/投影接口；不能把拒绝当作支持。
 2. 票 02：本地生命周期用例已通过，依赖票 01 以及完整发布/真实宿主验证后才能关闭。
-3. 票 03：需上游在子会话报告前提供真实 runId；不能猜测、回写或放松身份校验。该接口到位后针对最终源码重跑并取得已接纳报告。
+3. 票 03：需上游在子会话报告前提供真实 runId；不能猜测、回写或放松身份校验。（2026-09-18 注：此前提已由 ADR-0004 及 root-stamped-run-identity 取消，改为 Root 盖章，宿主重跑并入 root-stamped-run-identity/04）。
 4. 环境：修复子进程 stdout 捕获异常后重跑完整 release。slot jobs/audit 目录只读、cpu.socket EPERM 阻塞需排队的真实宿主和独立 strict 只读 launcher；见 [slot 失败日志](../explorer-model-config-review-20260918/release.log) 和 [预检查](../explorer-model-config-review-20260918/preflight-validator.log)。未取得 runtime permission proof，因此不得将行为只读复核写作 strict gate PASS。
 
 ## 独立复核

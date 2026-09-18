@@ -219,10 +219,12 @@ suite. Failed worker validation still re-runs the listed commands.
 
 Both child contracts are checked against the delegation they answer:
 
-- A `WorkerReport` is accepted only when `taskId`, `evidence.taskId`, and (when
-  present) `evidence.workerRunId` match the delegated task and subagent call.
-  A structurally valid report for the wrong task lands flagged with identity
-  errors on the review decision rather than being silently accepted.
+- A `WorkerReport` is accepted only when `taskId` and `evidence.taskId` match
+  the delegated task. Execution identity (`evidence.workerRunId`) is stamped by
+  Root from the launcher terminal (ADR-0004); any child-provided runId is stripped
+  and disclosed in warnings rather than rejected. A structurally valid report
+  for the wrong task lands flagged with identity errors on the review decision
+  rather than being silently accepted.
 - A `ReviewResult` is accepted only when its `taskId` matches the reviewed
   task; mismatched verdicts are never recorded and no state changes.
 

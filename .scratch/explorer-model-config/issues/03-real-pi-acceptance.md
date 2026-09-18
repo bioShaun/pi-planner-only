@@ -38,3 +38,4 @@
   - 真实委派执行：Root 调用注册的 `planner_delegate` 启动 Explorer，`resolveExplorerModelSelection` 准确解析配置并透传至结构化请求；pi-subagents 成功绑定并启动 `planner-scout`，子会话首条消息和元数据证实实际 provider 为 `qwen-local`，model 为 `qwen3.8-27b`，thinking 为 `low`，工具数严格为 4（`read`、`grep`、`find`、`ls`）。
   - 账本与用量核验：`T-20260918-001.json` 及 `usage.jsonl` 分离记录 Root 为 `gpt-5.6-luna`，Explorer 为 `qwen-local/qwen3.8-27b:low`；执行分类保持为 `restricted-reader`，确认依据为 `terminal+restricted-reader`。
   - 完整证据链与运行文件见 `.scratch/explorer-model-config/evidence/` 及 [REPORT.md](../evidence/REPORT.md)。
+- 2026-09-18：关于"需上游提供真实 runId"的前提已由 ADR-0004 及 `.scratch/root-stamped-run-identity/` 取消（改为 Root 在接纳时盖章）。宿主重跑验收并入 `root-stamped-run-identity/04`。
