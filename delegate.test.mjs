@@ -11,6 +11,7 @@ import {
 	REVIEW_RESULT_SCHEMA,
 	cancelInFlightDelegations,
 	createHostLauncher,
+	renderDelegationOutcome,
 	renderDelegationProgress,
 	runDelegation,
 	validateRecoveryDecision,
@@ -450,6 +451,59 @@ for (const [index, [status, expectedState]] of [
 	assert.equal(execution.endedReason, TERMINAL_REASON_TABLE[status]);
 	assert.ok(execution.cTerminal, "confirmed stop records the residual sample");
 	assert.equal(record.writerHold, undefined, "no hold after a confirmed stop");
+}
+
+// ---------------------------------------------------------------------------
+// Launch-time rejection: a `failed` terminal whose child never ran (zero
+// turns, zero wall time) is a launch_failure, not a provider_failure, and
+// the host error text reaches the Root-facing render. Regression coverage
+// for the pi-subagents completion-guard refusal (2026-09-18
+// T-20260918-001..003), which misread a read-only constraint as an
+// implementation task and was reported back as provider_failure.
+// ---------------------------------------------------------------------------
+const LAUNCH_REJECT_ERROR = "Agent 'planner-scout' was given an implementation task, but its tool allowlist has no mutation-capable tools. Add bash, edit, write, or another mutation-capable tool to the agent, or use a read-only task/agent.";
+for (const [name, usage, expectedReason] of [
+	["launch-reject", { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0, toolCalls: 0, durationMs: 0 }, "launch_failure"],
+	["mid-run-failure", { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 2, toolCalls: 0, durationMs: 1500 }, "provider_failure"],
+]) {
+	const dir = initRealRepo();
+	const store = new TaskStore();
+	const { deps, launches } = makeDeps({
+		store,
+		gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args),
+		launch: async (request) => {
+			launches.push(request);
+			return {
+				requestId: request.requestId,
+				ownerRunId: request.ownerRunId,
+				nodeId: request.nodeId,
+				status: "failed",
+				runId: "run-launch-reject",
+				agent: "planner-scout",
+				model: "test/model",
+				exitCode: 1,
+				error: LAUNCH_REJECT_ERROR,
+				usage,
+			};
+		},
+	});
+	const outcome = await runDelegation(
+		deps,
+		makeParams({ role: "explorer", objective: "read-only recon: do not create, modify, or delete any files", acceptanceMode: "observation" }),
+		dir,
+		{ executionId: `call-${name}` },
+	);
+	assert.equal(launches[0].agent, "planner-scout", "explorer binds the restricted reader");
+	assert.equal(outcome.termination?.reason, expectedReason, `${name}: endedReason is ${expectedReason}`);
+	assert.equal(outcome.termination?.error, LAUNCH_REJECT_ERROR, `${name}: the host error text is carried on the termination`);
+	const record = store.get(outcome.task.taskId);
+	assert.equal(record.state, "failed");
+	assert.equal(record.executions[0].endedReason, expectedReason);
+	const rendered = renderDelegationOutcome(outcome);
+	assert.ok(
+		rendered.includes(`error: Agent 'planner-scout' was given an implementation task`),
+		`${name}: the rendered result surfaces the host error so Root does not misdiagnose a refusal as a provider outage`,
+	);
 }
 
 // ---------------------------------------------------------------------------

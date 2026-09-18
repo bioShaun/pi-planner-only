@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Restricted reader opts out of the pi-subagents completion guard**: `planner-scout` is registered with `completionGuard: false`. The guard is a text heuristic over Root-authored spec prose and misread a read-only constraint ("do not create, modify, or delete any files") as an implementation task, refusing three explorer launches (2026-09-18, T-20260918-001..003) that were then reported as `provider_failure`; the declared tool allowlist is the capability proof.
+- **Launch-time rejections classified and surfaced**: a `failed` terminal with zero turns and zero wall time is recorded as `launch_failure` (not `provider_failure`), and the host error text is rendered in the `planner_delegate`/`planner_redelegate` result, so Root no longer misdiagnoses a contract refusal as a provider outage.
+
 ## 0.7.0 - 2026-09-17
 
 - **Abort gets its own tool surface (ADR-0003, wrc-incident-followups/02)**: `planner_verdict` no longer has a `recovery` key — pass, request_changes, and blocked are plain verdicts. Abandoning an abnormal execution on a Task flagged `recovery.required` goes through the new `planner_abort` (`taskId`, `executionId`, `reason`, `worktreeDecision`, optional `evidenceRefs`/`summary`), which records the blocked verdict and consumes the requirement atomically. A passthrough `recovery` on `planner_verdict` is stripped and disclosed in `warnings`, never refused. `planner_abort` refusals are recorded as `recovery-invalid` verdict refusals (closing the incident's audit blind spot), echo the received `executionId` vs the child `runId`, and stay inside the repeated-refusal breaker. The discriminated-union alternative was probed on the incident provider and rejected: the union schema is accepted but does not constrain generation.

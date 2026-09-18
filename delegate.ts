@@ -99,6 +99,12 @@ const TERMINAL_ENDED_REASON: Record<string, ExecutionEndedReason> = {
 	duplicate_node: "launch_failure",
 };
 
+/** A `failed` terminal whose child never ran (no turn, no wall time) is a launch-time rejection, not a provider fault. */
+function terminalEndedReason(terminal: { status: string; usage?: { turns: number; durationMs: number } }): ExecutionEndedReason {
+	if (terminal.status === "failed" && terminal.usage && terminal.usage.turns === 0 && terminal.usage.durationMs === 0) return "launch_failure";
+	return TERMINAL_ENDED_REASON[terminal.status] ?? "provider_failure";
+}
+
 /** P0-A default quiescence wait after an identity-matched terminal (spec §3). */
 export const DEFAULT_QUIESCENCE_WAIT_MS = 10_000;
 const DEFAULT_QUIESCENCE_SAMPLE_GAP_MS = 250;
@@ -116,12 +122,19 @@ export const RESTRICTED_READER_AGENT = "planner-scout";
 /** The declared tool allowlist — the capability proof itself. */
 export const RESTRICTED_READER_TOOLS = ["read", "grep", "find", "ls"] as const;
 
-/** The agent definition index.ts hands to the runtime-agent registry. */
+/**
+ * The agent definition index.ts hands to the runtime-agent registry. The
+ * declared tool allowlist is the capability proof; pi-subagents' completion
+ * guard is a text heuristic over Root-authored spec prose (e.g. "do not
+ * create, modify, or delete") that can misread a read-only observation task
+ * as an implementation task and refuse the launch, so it is disabled here.
+ */
 export const RESTRICTED_READER_DEFINITION = {
 	description: "Planner-only read-only Explorer: inspects the workspace and reports findings; cannot modify anything",
 	systemPromptMode: "replace" as const,
 	inheritProjectContext: true,
 	inheritSkills: false,
+	completionGuard: false,
 	tools: [...RESTRICTED_READER_TOOLS],
 	systemPrompt: [
 		"You are a read-only observation Explorer running inside pi.",
@@ -1039,7 +1052,7 @@ export async function runDelegation(
 					? "worker_runaway"
 					: cancelRequestedAt
 						? "operator_cancel"
-						: (TERMINAL_ENDED_REASON[late.status] ?? "provider_failure");
+						: terminalEndedReason(late);
 				deps.store.finalizeExecution(task.taskId, executionId, {
 					status: q.confirmed ? "stopped" : "stop_unconfirmed",
 					endedReason,
@@ -1261,7 +1274,7 @@ export async function runDelegation(
 				? "operator_cancel"
 				: runaway
 					? "worker_runaway"
-					: (TERMINAL_ENDED_REASON[terminal.status] ?? "provider_failure");
+					: terminalEndedReason(terminal);
 			deps.store.finalizeExecution(task.taskId, executionId, {
 				status: q.confirmed ? "stopped" : "stop_unconfirmed",
 				endedReason,
@@ -1668,7 +1681,7 @@ async function runReviewInvocation(
 			...("runId" in response && response.runId ? { runId: response.runId } : {}),
 			termination: {
 				status: response.status,
-				reason: TERMINAL_ENDED_REASON[response.status] ?? "provider_failure",
+				reason: terminalEndedReason(response),
 				terminationConfirmed: true,
 				usageComplete: "usage" in response && response.usage !== undefined,
 				...("error" in response && response.error ? { error: response.error } : {}),
@@ -1855,6 +1868,7 @@ export function renderDelegationOutcome(outcome: DelegationOutcome, toolName = "
 		lines.push(
 			`termination: ${t.status ?? "no-terminal"} — reason=${t.reason}, confirmed=${t.terminationConfirmed}${t.confirmationBasis ? ` (${t.confirmationBasis})` : ""}${t.executionStatus ? `, execution=${t.executionStatus}` : ""}`,
 		);
+		if (typeof t.error === "string" && t.error.length > 0) lines.push(`error: ${t.error}`);
 		if (t.anomaly) {
 			lines.push(`anomaly: ${t.anomaly.signal} observed=${t.anomaly.observed} limit=${t.anomaly.limit} (source: ${t.anomaly.source})`);
 		}

@@ -2268,6 +2268,8 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 	assert.equal(readerRequest.agent, "planner-scout", "explorer binds the trusted restricted reader");
 	assert.ok(registrations.length >= 1, "the runtime-agent definition was registered");
 	assert.deepEqual(registrations[0].definition.tools, ["read", "grep", "find", "ls"], "the registered tool list is read-only");
+	// 2026-09-18 T-20260918-001..003 launch rejections from the pi-subagents task-intent heuristic.
+	assert.equal(registrations[0].definition.completionGuard, false, "the restricted reader opts out of the completion-guard text heuristic");
 	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
 		requestId: readerRequest.requestId,
 		ownerRunId: readerRequest.ownerRunId,
