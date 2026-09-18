@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { LedgerSnapshotStore } from "./ledger-store.ts";
-import { TaskStore, validateTaskSpec } from "./task.ts";
+import { TaskStore, createTaskSpec, validateTaskSpec } from "./task.ts";
 import { emptyTaskUsage } from "./usage.ts";
 import {
 	SUBAGENT_DELEGATION_CANCEL_EVENT,
@@ -1073,6 +1073,32 @@ try {
 {
 	assert.equal(tools.has("planner_delegate"), true);
 
+	// Ticket 01 — launcher lacking childRunIdentity capability refuses before admission.
+	const uncapableCall = tools.get("planner_delegate").execute(
+		"call-uncapable-1",
+		{
+			role: "worker",
+			objective: "attempt without capability",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: false },
+		},
+		undefined,
+		undefined,
+		ctx,
+	);
+	await assert.rejects(uncapableCall, (error) => {
+		assert.equal(error?.code, "LAUNCHER_CAPABILITY_UNSUPPORTED");
+		assert.match(error?.message, /childRunIdentity/);
+		return true;
+	});
+
+	// Enable capability on mock bus for subsequent integration tests
+	piEvents.on("pi-subagents:delegation-capability-probe:v1", (probe) => {
+		probe.capabilities = { childRunIdentity: true };
+	});
+
 	// The launcher emits REQUEST only after runDelegation's async setup —
 	// poll the bus until it lands (bounded so an early throw cannot hang).
 	// `excludeRequestId` skips an earlier delegation's REQUEST.
@@ -1435,8 +1461,8 @@ try {
 
 	const e2 = await refused("call-rb-2");
 	assert.equal(e2.code, "TASK_UNKNOWN", "the breaker appends text without losing the refusal code");
-	assert.match(e2.message, /Repeat notice: these arguments are byte-identical to refused call call-rb-1 \(same refusal TASK_UNKNOWN\)/);
-	assert.match(e2.message, /read back the arguments you actually sent/);
+	assert.match(e2.message, /Repeat notice: 本边界收到的规范化参数相同 \(observed boundary: root tool input; previous toolCallId: call-rb-1; refusal code: TASK_UNKNOWN; missing fields: none\)/);
+	assert.match(e2.message, /Read back the arguments actually received at this boundary before calling again/);
 	assert.match(e2.message, /planner_redelegate refused: unknown Task T-20200101-001/, "the original refusal text is kept, appended not replaced");
 
 	const e3 = await refused("call-rb-3");
@@ -1854,7 +1880,7 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 	await assert.rejects(
 		abortTool04.execute("call-wrc04-c2", badAbort, undefined, () => {}, ctx),
 		(error) => {
-			assert.match(error.message, /Repeat notice: these arguments are byte-identical to refused call call-wrc04-c1/);
+			assert.match(error.message, /Repeat notice: 本边界收到的规范化参数相同 \(observed boundary: root tool input; previous toolCallId: call-wrc04-c1;/);
 			return true;
 		},
 	);
@@ -1875,13 +1901,13 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 		constraints: [],
 		acceptanceCriteria: [],
 		validation: { required: false },
-		recovery: strayRecovery,
+		recovery: { executionId: "run-wrc04-retry", action: "retry_same_plan", reason: "stray" },
 	};
 	await assert.rejects(
 		redelegateTool04.execute("call-wrc04-f", strayRedelegate, undefined, () => {}, ctx),
 		(error) => {
 			assert.equal(error.code, "RECOVERY_NOT_APPLICABLE");
-			assert.match(error.message, /planner_redelegate refused: recovery is only admissible on a blocked Task flagged recovery\.required/);
+			assert.match(error.message, /planner_redelegate refused: recovery is only admissible on a blocked Task flagged recovery\.required — Task T-\d{8}-\d{3} is changes_requested with no pending requirement/);
 			assert.match(error.message, /not a child runId/);
 			return true;
 		},
@@ -1889,7 +1915,7 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 	await assert.rejects(
 		redelegateTool04.execute("call-wrc04-f2", strayRedelegate, undefined, () => {}, ctx),
 		(error) => {
-			assert.match(error.message, /Repeat notice: these arguments are byte-identical to refused call call-wrc04-f/);
+			assert.match(error.message, /Repeat notice: 本边界收到的规范化参数相同 \(observed boundary: root tool input; previous toolCallId: call-wrc04-f;/);
 			return true;
 		},
 	);
@@ -2100,7 +2126,7 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 	const beforeRepeatedConsumed = readLedger04b(heldTask).task;
 	await assert.rejects(
 		abortTool04b.execute("call-wrc04b-dup2", spent, undefined, () => {}, ctx),
-		/Repeat notice: these arguments are byte-identical to refused call call-wrc04b-dup/,
+		/Repeat notice: 本边界收到的规范化参数相同 \(observed boundary: root tool input; previous toolCallId: call-wrc04b-dup/,
 	);
 	const afterRepeatedConsumed = readLedger04b(heldTask).task;
 	assertSingleRefusalAppend04b(beforeRepeatedConsumed, afterRepeatedConsumed, {
@@ -2502,3 +2528,483 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 	);
 	assert.match(noSession.content[0].text, /session log: unknown/);
 }
+
+// ---------------------------------------------------------------------------
+// Ticket 04: Legacy unstarted planning task recovery and blocked verdict
+// ---------------------------------------------------------------------------
+{
+	const tasksTool = tools.get("planner_tasks");
+	const redelegateTool = tools.get("planner_redelegate");
+	const verdictTool = tools.get("planner_verdict");
+	const abortTool = tools.get("planner_abort");
+	const ledger = new LedgerSnapshotStore(isolatedAgentDir);
+
+	// 1. Construct a legacy unstarted planning task in the ledger
+	const legacyId = "T-20260918-099";
+	const legacyTask = {
+		taskId: legacyId,
+		state: "planning",
+		role: "worker",
+		cwd: ctx.cwd,
+		spec: {
+			taskId: legacyId,
+			objective: "legacy unstarted task",
+			cwd: ctx.cwd,
+			role: "worker",
+			validation: { required: false },
+		},
+		executions: [],
+		reports: [],
+		reviews: [],
+		updatedAt: "2026-09-18T10:00:00.000Z",
+	};
+	ledger.write(legacyTask);
+
+	// 2. planner_tasks lists and diagnoses the unstarted task
+	const listResult = await tasksTool.execute("call-t04-list", {}, undefined, () => {}, ctx);
+	assert.match(listResult.content[0].text, new RegExp(legacyId));
+	assert.match(listResult.content[0].text, /planning/);
+
+	const diagResult = await tasksTool.execute("call-t04-diag", { taskId: legacyId }, undefined, () => {}, ctx);
+	assert.match(diagResult.content[0].text, /state: planning/);
+	assert.match(diagResult.content[0].text, /executions: none recorded/);
+	assert.doesNotMatch(diagResult.content[0].text, /recovery\.required/);
+
+	// 3. planner_abort is refused (recovery.required is false) with guidance to planner_verdict or planner_redelegate
+	await assert.rejects(
+		abortTool.execute("call-t04-abort", { taskId: legacyId, executionId: "fake-exec", reason: "abort unstarted", worktreeDecision: "keep" }, undefined, () => {}, ctx),
+		(error) => {
+			assert.match(error.message, /planner_abort refused \(recovery/);
+			assert.match(error.message, /record the verdict with planner_verdict or re-enter with planner_redelegate/);
+			return true;
+		},
+	);
+
+	// 4. On a separate unstarted fixture, planner_verdict blocked transitions planning -> blocked cleanly
+	const abandonId = "T-20260918-098";
+	const abandonTask = {
+		taskId: abandonId,
+		state: "planning",
+		role: "worker",
+		cwd: ctx.cwd,
+		spec: {
+			taskId: abandonId,
+			objective: "legacy task to abandon",
+			cwd: ctx.cwd,
+			role: "worker",
+			validation: { required: false },
+		},
+		executions: [],
+		reports: [],
+		reviews: [],
+		updatedAt: "2026-09-18T10:00:00.000Z",
+	};
+	ledger.write(abandonTask);
+
+	const verdictOutcome = await verdictTool.execute(
+		"call-t04-verdict-blocked",
+		{ taskId: abandonId, verdict: "blocked", summary: "operator chose to abandon unstarted legacy task" },
+		undefined,
+		() => {},
+		ctx,
+	);
+	assert.equal(verdictOutcome.details.state, "blocked");
+	const abandonedAfter = ledger.read(abandonId).record;
+	assert.equal(abandonedAfter.state, "blocked");
+	assert.equal(abandonedAfter.executions.length, 0, "no fake execution minted");
+	assert.equal(abandonedAfter.reports.length, 0, "no fake WorkerReport minted");
+	assert.equal(abandonedAfter.stateReason, "operator chose to abandon unstarted legacy task");
+
+	// 4b. Refusal breaker triggered by malformed redelegate does not block query or verdict
+	const abandonId2 = "T-20260918-097";
+	ledger.write({
+		taskId: abandonId2,
+		state: "planning",
+		role: "worker",
+		cwd: ctx.cwd,
+		spec: {
+			taskId: abandonId2,
+			objective: "legacy task with malformed redelegations",
+			cwd: ctx.cwd,
+			role: "worker",
+			validation: { required: false },
+		},
+		executions: [],
+		reports: [],
+		reviews: [],
+		updatedAt: "2026-09-18T10:00:00.000Z",
+	});
+
+	// Attempt 1: malformed redelegate (validation.required true but no commands)
+	await assert.rejects(
+		redelegateTool.execute(
+			"call-t04-malformed-1",
+			{
+				taskId: abandonId2,
+				role: "worker",
+				objective: "missing commands",
+				scope: {},
+				constraints: [],
+				acceptanceCriteria: [],
+				validation: { required: true },
+			},
+			undefined,
+			() => {},
+			ctx,
+		),
+		(err) => err.message.includes("validation.commands must be a non-empty array"),
+	);
+
+	// Attempt 2: identical malformed redelegate -> refusal breaker notice
+	await assert.rejects(
+		redelegateTool.execute(
+			"call-t04-malformed-2",
+			{
+				taskId: abandonId2,
+				role: "worker",
+				objective: "missing commands",
+				scope: {},
+				constraints: [],
+				acceptanceCriteria: [],
+				validation: { required: true },
+			},
+			undefined,
+			() => {},
+			ctx,
+		),
+		(err) => err.message.includes("Repeat notice"),
+	);
+
+	// Query still works
+	const diagAfterRefusal = await tasksTool.execute("call-t04-diag-2", { taskId: abandonId2 }, undefined, () => {}, ctx);
+	assert.match(diagAfterRefusal.content[0].text, /state: planning/);
+
+	// Verdict blocked still works and transitions the task
+	const verdictAfterRefusal = await verdictTool.execute(
+		"call-t04-verdict-blocked-2",
+		{ taskId: abandonId2, verdict: "blocked", summary: "abandoned after repeated refusal" },
+		undefined,
+		() => {},
+		ctx,
+	);
+	assert.equal(verdictAfterRefusal.details.state, "blocked");
+	assert.equal(ledger.read(abandonId2).record.state, "blocked");
+
+	// 5. On the first fixture, planner_redelegate launches the existing task without requiring RecoveryDecision
+	const seenT04 = new Set(
+		piEvents.emitted
+			.filter((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT)
+			.map((entry) => entry.payload.requestId),
+	);
+	const nextReqT04 = async () => {
+		const deadline = Date.now() + 2000;
+		let found;
+		while (!found && Date.now() < deadline) {
+			found = piEvents.emitted.find(
+				(entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT && !seenT04.has(entry.payload.requestId),
+			)?.payload;
+			if (!found) await new Promise((r) => setTimeout(r, 2));
+		}
+		assert.ok(found, "REQUEST emitted on the delegation bus");
+		seenT04.add(found.requestId);
+		return found;
+	};
+
+	const initialRequests = piEvents.emitted.filter((e) => e.event === SUBAGENT_DELEGATION_REQUEST_EVENT).length;
+	const redelegatePromise = redelegateTool.execute(
+		"call-t04-redelegate",
+		{
+			taskId: legacyId,
+			role: "worker",
+			objective: "execute unstarted legacy task",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: false },
+		},
+		undefined,
+		() => {},
+		ctx,
+	);
+	const req = await nextReqT04();
+	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: req.requestId,
+		ownerRunId: req.ownerRunId,
+		nodeId: req.nodeId,
+		status: "completed",
+		runId: "run-t04",
+		result: {
+			kind: "structured",
+			value: {
+				version: 1,
+				taskId: req.nodeId,
+				status: "completed",
+				summary: "worker completed",
+				changedFiles: [],
+				validation: [],
+				evidence: { cwd: req.cwd, taskId: req.nodeId, workerRunId: "run-t04" },
+				risks: [],
+				unresolved: [],
+			},
+		},
+	});
+	const redelegateResult = await redelegatePromise;
+	assert.equal(redelegateResult.details.taskId, legacyId, "executed original taskId");
+	const currentRequests = piEvents.emitted.filter((e) => e.event === SUBAGENT_DELEGATION_REQUEST_EVENT).length;
+	assert.equal(currentRequests, initialRequests + 1, "exactly one launch occurred");
+	const finalRecord = ledger.read(legacyId).record;
+	assert.equal(finalRecord.spec?.objective, "legacy unstarted task", "original TaskSpec not overwritten");
+}
+
+// ============================================================================
+// Ticket 01 (delegation-contract-incident-20260918) — Host Entrypoint Regression:
+// Explorer (2 tasks, 1 correction round) and Worker Report Admission & Verdict
+// ============================================================================
+{
+	const delegateTool = tools.get("planner_delegate");
+	const redelegateTool = tools.get("planner_redelegate");
+	const verdictTool = tools.get("planner_verdict");
+	assert.ok(delegateTool && redelegateTool && verdictTool);
+	const ledger = new LedgerSnapshotStore(isolatedAgentDir);
+
+	const seenRequests = new Set(
+		piEvents.emitted
+			.filter((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT)
+			.map((entry) => entry.payload.requestId),
+	);
+	const nextReq = async () => {
+		const deadline = Date.now() + 2000;
+		let found;
+		while (!found && Date.now() < deadline) {
+			found = piEvents.emitted.find(
+				(entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT && !seenRequests.has(entry.payload.requestId),
+			)?.payload;
+			if (!found) await new Promise((r) => setTimeout(r, 2));
+		}
+		assert.ok(found, "REQUEST emitted on the delegation bus");
+		seenRequests.add(found.requestId);
+		return found;
+	};
+
+	// 1. Explorer Task 1: single round, runId allocated by launcher, admitted, enters Verdict.
+	const exp1Promise = delegateTool.execute(
+		"call-exp1-mint",
+		{
+			role: "explorer",
+			objective: "investigate repo layout",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: false },
+			acceptanceMode: "observation",
+		},
+		undefined,
+		() => {},
+		ctx,
+	);
+	const reqExp1 = await nextReq();
+	const runIdExp1 = "run-exp1-host-alloc";
+	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: reqExp1.requestId,
+		ownerRunId: reqExp1.ownerRunId,
+		nodeId: reqExp1.nodeId,
+		status: "completed",
+		runId: runIdExp1,
+		result: {
+			kind: "structured",
+			value: {
+				version: 1,
+				taskId: reqExp1.nodeId,
+				status: "completed",
+				summary: "Explorer recon done",
+				changedFiles: [],
+				validation: [],
+				evidence: { cwd: reqExp1.cwd, taskId: reqExp1.nodeId, workerRunId: runIdExp1 },
+				risks: [],
+				unresolved: [],
+			},
+		},
+	});
+	const exp1Res = await exp1Promise;
+	assert.equal(exp1Res.details.report.evidence.workerRunId, runIdExp1);
+	assert.equal(exp1Res.details.state, "reviewing");
+
+	// Verdict for Explorer Task 1
+	const v1 = await verdictTool.execute(
+		"call-v-exp1",
+		{
+			taskId: exp1Res.details.taskId,
+			verdict: "pass",
+			summary: "Recon matches requirements",
+		},
+		undefined,
+		() => {},
+		ctx,
+	);
+	assert.equal(v1.details.state, "completed");
+	assert.equal(ledger.read(exp1Res.details.taskId).record.state, "completed");
+
+	// 2. Explorer Task 2: Round 1 needs correction -> Round 2 redelegate -> Verdict.
+	// Execution 1: Round 1
+	const exp2Promise = delegateTool.execute(
+		"call-exp2-mint",
+		{
+			role: "explorer",
+			objective: "investigate dependencies",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: false },
+			acceptanceMode: "observation",
+		},
+		undefined,
+		() => {},
+		ctx,
+	);
+	const reqExp2R1 = await nextReq();
+	const runIdExp2R1 = "run-exp2-round1-alloc";
+	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: reqExp2R1.requestId,
+		ownerRunId: reqExp2R1.ownerRunId,
+		nodeId: reqExp2R1.nodeId,
+		status: "completed",
+		runId: runIdExp2R1,
+		result: {
+			kind: "structured",
+			value: {
+				version: 1,
+				taskId: reqExp2R1.nodeId,
+				status: "partial",
+				summary: "Partial dependencies found; more needed",
+				changedFiles: [],
+				validation: [],
+				evidence: { cwd: reqExp2R1.cwd, taskId: reqExp2R1.nodeId, workerRunId: runIdExp2R1 },
+				risks: [],
+				unresolved: [],
+			},
+		},
+	});
+	const exp2R1Res = await exp2Promise;
+	assert.equal(exp2R1Res.details.report.evidence.workerRunId, runIdExp2R1);
+	const exp2TaskId = exp2R1Res.details.taskId;
+
+	// Execution 2: Round 2 (correction round via redelegate)
+	const exp2R2Promise = redelegateTool.execute(
+		"call-exp2-r2",
+		{
+			taskId: exp2TaskId,
+			role: "explorer",
+			objective: "finish dependencies survey",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: false },
+		},
+		undefined,
+		() => {},
+		ctx,
+	);
+	const reqExp2R2 = await nextReq();
+	assert.notEqual(reqExp2R2.requestId, reqExp2R1.requestId);
+	const runIdExp2R2 = "run-exp2-round2-fresh-alloc";
+	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: reqExp2R2.requestId,
+		ownerRunId: reqExp2R2.ownerRunId,
+		nodeId: reqExp2R2.nodeId,
+		status: "completed",
+		runId: runIdExp2R2,
+		result: {
+			kind: "structured",
+			value: {
+				version: 1,
+				taskId: reqExp2R2.nodeId,
+				status: "completed",
+				summary: "All dependencies documented",
+				changedFiles: [],
+				validation: [],
+				evidence: { cwd: reqExp2R2.cwd, taskId: reqExp2R2.nodeId, workerRunId: runIdExp2R2 },
+				risks: [],
+				unresolved: [],
+			},
+		},
+	});
+	const exp2R2Res = await exp2R2Promise;
+	assert.equal(exp2R2Res.details.report.evidence.workerRunId, runIdExp2R2);
+	assert.notEqual(runIdExp2R2, runIdExp2R1, "correction round obtains new runId");
+
+	// Verdict for Explorer Task 2
+	const v2 = await verdictTool.execute(
+		"call-v-exp2",
+		{
+			taskId: exp2TaskId,
+			verdict: "pass",
+			summary: "Complete survey accepted",
+		},
+		undefined,
+		() => {},
+		ctx,
+	);
+	assert.equal(v2.details.state, "completed");
+	const task2Record = ledger.read(exp2TaskId).record;
+	assert.equal(task2Record.state, "completed");
+	assert.equal(task2Record.executions.length, 2, "Task 2 accurately records two executions");
+	assert.equal(task2Record.executions[0].runId, runIdExp2R1);
+	assert.equal(task2Record.executions[1].runId, runIdExp2R2);
+
+	// 3. Worker Task: executes, binds runId, report admitted, enters Verdict.
+	const workerPromise = delegateTool.execute(
+		"call-w-mint",
+		{
+			role: "worker",
+			objective: "implement component",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: false },
+		},
+		undefined,
+		() => {},
+		ctx,
+	);
+	const reqW = await nextReq();
+	const runIdW = "run-worker-alloc";
+	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: reqW.requestId,
+		ownerRunId: reqW.ownerRunId,
+		nodeId: reqW.nodeId,
+		status: "completed",
+		runId: runIdW,
+		result: {
+			kind: "structured",
+			value: {
+				version: 1,
+				taskId: reqW.nodeId,
+				status: "completed",
+				summary: "component implemented",
+				changedFiles: [],
+				validation: [],
+				evidence: { cwd: reqW.cwd, taskId: reqW.nodeId, workerRunId: runIdW },
+				risks: [],
+				unresolved: [],
+			},
+		},
+	});
+	const wRes = await workerPromise;
+	assert.equal(wRes.details.report.evidence.workerRunId, runIdW);
+
+	// Verdict for Worker Task
+	const vW = await verdictTool.execute(
+		"call-v-w",
+		{
+			taskId: wRes.details.taskId,
+			verdict: "pass",
+			summary: "Worker implementation accepted",
+		},
+		undefined,
+		() => {},
+		ctx,
+	);
+	assert.equal(vW.details.state, "completed");
+	assert.equal(ledger.read(wRes.details.taskId).record.state, "completed");
+}
+

@@ -60,7 +60,8 @@ import {
 	runDelegation,
 	validateRecoveryDecision,
 } from "./delegate.ts";
-import type { DelegationOutcome, PlannerDelegationParams } from "./delegate.ts";
+import type { DelegationOutcome, LauncherCapabilities, PlannerDelegationParams } from "./delegate.ts";
+import { resolveExplorerModelSelection } from "./explorer-model.ts";
 import { RefusalBreaker, isRefusal } from "./refusal-breaker.ts";
 import type { RecoveryDecision } from "./types.ts";
 
@@ -190,6 +191,7 @@ export function computeLoadedFingerprint(dir = PLUGIN_DIR): string {
 	const files = [
 		"concurrency.ts",
 		"evidence.ts",
+		"explorer-model.ts",
 		"floors.ts",
 		"git-audit.ts",
 		"index.ts",
@@ -477,6 +479,30 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			// No registry listener (pi-subagents absent or older): explorer
 			// delegations refuse with READER_CAPABILITY_UNPROVEN.
 		}
+	};
+	// Ticket 01 — check for launcher capabilities (childRunIdentity)
+	let launcherCapabilities: LauncherCapabilities | undefined;
+	const ensureLauncherCapabilities = (): LauncherCapabilities => {
+		if (launcherCapabilities?.childRunIdentity === true) return launcherCapabilities;
+		let caps: LauncherCapabilities = { ...((delegationLaunch as { capabilities?: LauncherCapabilities })?.capabilities ?? {}) };
+		try {
+			const probe: { version: number; capabilities?: LauncherCapabilities } = { version: 1 };
+			pi.events.emit("pi-subagents:delegation-capability-probe:v1", probe);
+			if (probe.capabilities) {
+				caps = { ...caps, ...probe.capabilities };
+			}
+		} catch {
+			// No listener
+		}
+		if (process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY !== undefined) {
+			caps = {
+				...caps,
+				childRunIdentity: process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY === "true",
+			};
+		}
+		launcherCapabilities = caps;
+		(delegationLaunch as { capabilities?: LauncherCapabilities }).capabilities = caps;
+		return caps;
 	};
 	// WRC P0-A — spec §3 quiescenceWaitMs; env override exists for tests and
 	// calibrated hosts, the default stays 10 s (forced-settlement 3–4 s +
@@ -987,9 +1013,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 							"planner_redelegate refused: taskId is required — pass the canonical id verbatim from a prior planner_delegate result's details.taskId; never construct one",
 						);
 					}
+					if (params.taskId) {
+						orchestrator.resolveVerdictTask(params.taskId, ctx.cwd || process.cwd());
+					}
 					let outcome: DelegationOutcome;
 					try {
 						ensureRestrictedReaderAgent();
+						const currentCapabilities = ensureLauncherCapabilities();
 						outcome = await runDelegation(
 							{
 								store: orchestrator.store,
@@ -997,8 +1027,19 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 								concurrency,
 								usage: ledger,
 								launch: delegationLaunch,
+								launcherCapabilities: currentCapabilities,
 								...(restrictedReaderAgent !== undefined ? { restrictedReaderAgent } : {}),
 								...(quiescenceWaitMs !== undefined ? { quiescenceWaitMs } : {}),
+								// T-20260918-004 — the Explorer launch selection is
+								// resolved per launch from the operator's subagent
+								// configuration; the runtime-agent registration stays
+								// capability-only and cached, so host-visible config
+								// changes reach the next delegation. Reads only —
+								// the Root model is never switched.
+								resolveExplorerModelSelection: (workspaceCwd) => resolveExplorerModelSelection({
+									cwd: workspaceCwd,
+									currentProvider: rootModelIdentity(ctx.model)?.provider,
+								}),
 								ownerRunId: ctx.sessionManager?.getSessionId?.() || PROCESS_OWNER_RUN_ID,
 							},
 							effectiveParams,

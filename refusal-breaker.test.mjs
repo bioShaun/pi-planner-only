@@ -71,7 +71,7 @@ assert.equal(BLOCK_AT, 4);
 	const second = breaker.observeRefusal("planner_delegate", "call-2", params, refusal());
 	assert.equal(second.count, 2);
 	assert.equal(second.previousToolCallId, "call-1");
-	assert.match(second.notice, /Repeat notice: these arguments are byte-identical to refused call call-1 \(same refusal TASK_UNKNOWN\)/);
+	assert.match(second.notice, /Repeat notice: 本边界收到的规范化参数相同 \(observed boundary: root tool input; previous toolCallId: call-1; refusal code: TASK_UNKNOWN; missing fields: none\)/);
 	assert.doesNotMatch(second.notice, /^STOP:/);
 	assert.equal(second.hardStop, false);
 	assert.equal(breaker.shouldBlock("planner_delegate", params).block, false);
@@ -155,4 +155,41 @@ assert.equal(BLOCK_AT, 4);
 	assert.equal(observation.count, 1);
 }
 
+// --------------------------------------------------------------------------
+// Ticket 03: Missing fields summary & commands variation participates in key
+// --------------------------------------------------------------------------
+{
+	const breaker = new RefusalBreaker();
+	const paramsIncomplete = {
+		role: "worker",
+		objective: "fix issue",
+		validation: { required: true },
+	};
+	const refusalIncomplete = () => new Error("createTaskSpec refused: validation.commands is required and must contain at least one non-empty command when validation.required is true");
+
+	breaker.observeRefusal("planner_delegate", "call-missing-1", paramsIncomplete, refusalIncomplete());
+	const second = breaker.observeRefusal("planner_delegate", "call-missing-2", paramsIncomplete, refusalIncomplete());
+	assert.equal(second.count, 2);
+	assert.match(second.notice, /missing fields: validation\.commands/);
+	assert.match(second.notice, /observed boundary: root tool input/);
+
+	// Incident sample command: passing commands produces a distinct canonical key,
+	// allowing genuine correction to not be blocked by the previous refusal streak.
+	const incidentCommand = "cd skills/herdr-pair && python3 -m unittest tests.test_pairctl -v";
+	const paramsCorrected = {
+		role: "worker",
+		objective: "fix issue",
+		validation: { required: true, commands: [incidentCommand] },
+	};
+	const refusalOther = () => new Error("another refusal");
+	const correctedObs = breaker.observeRefusal("planner_delegate", "call-corrected", paramsCorrected, refusalOther());
+	assert.equal(correctedObs.count, 1, "corrected commands produce a new key, count resets to 1");
+
+	// Commands order difference produces different key
+	const paramsOrder1 = { commands: ["cmd1", "cmd2"] };
+	const paramsOrder2 = { commands: ["cmd2", "cmd1"] };
+	assert.notEqual(canonicalJson(paramsOrder1), canonicalJson(paramsOrder2), "array order is preserved in canonicalJson");
+}
+
 console.log("refusal-breaker.test.mjs: all cases passed");
+

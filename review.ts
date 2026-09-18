@@ -879,12 +879,16 @@ export function applyReviewDecision(
 	const task = store.require(taskId);
 	if (isTerminalTaskState(task.state)) return task;
 	if (task.state !== "reviewing") {
-		// A verdict recorded without re-delegating (e.g. via /planner-only
-		// review) still passes through the spec's EXECUTING -> REVIEWING hop.
-		if (!TASK_TRANSITIONS[task.state].includes("reviewing")) {
-			store.transition(taskId, "executing");
+		if (task.state === "planning" && decision.nextState === "blocked") {
+			store.transition(taskId, "blocked");
+		} else {
+			// A verdict recorded without re-delegating (e.g. via /planner-only
+			// review) still passes through the spec's EXECUTING -> REVIEWING hop.
+			if (!TASK_TRANSITIONS[task.state].includes("reviewing")) {
+				store.transition(taskId, "executing");
+			}
+			store.transition(taskId, "reviewing");
 		}
-		store.transition(taskId, "reviewing");
 	}
 	if (decision.nextState !== "reviewing" && store.require(taskId).state === "reviewing") {
 		store.transition(taskId, decision.nextState);

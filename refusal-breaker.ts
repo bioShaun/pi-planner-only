@@ -103,6 +103,30 @@ export function isRefusal(error: unknown): boolean {
 	return REFUSAL_MESSAGE_PATTERNS.some((pattern) => pattern.test(message));
 }
 
+export function summarizeMissingFields(params: unknown, error: unknown): string {
+	const missing: string[] = [];
+	if (params !== null && typeof params === "object") {
+		const obj = params as Record<string, unknown>;
+		if (obj.validation !== null && typeof obj.validation === "object") {
+			const val = obj.validation as Record<string, unknown>;
+			if (val.required === true && (!Array.isArray(val.commands) || val.commands.length === 0)) {
+				missing.push("validation.commands");
+			}
+		}
+	}
+	const message = error instanceof Error ? error.message : String(error ?? "");
+	if (/validation\.commands is required/i.test(message) && !missing.includes("validation.commands")) {
+		missing.push("validation.commands");
+	}
+	if (/(?:missing|requires)\s+(?:task|taskId)/i.test(message) && !missing.includes("taskId")) {
+		missing.push("taskId");
+	}
+	if (/envelope requires at least one of maxTokens/i.test(message) && !missing.includes("envelope")) {
+		missing.push("envelope.(maxTokens|maxWallMs)");
+	}
+	return missing.length > 0 ? missing.join(", ") : "none";
+}
+
 export class RefusalBreaker {
 	private readonly entries = new Map<string, RefusalEntry>();
 
@@ -123,7 +147,8 @@ export class RefusalBreaker {
 		const hardStop = count >= HARD_STOP_AT;
 		let notice: string | undefined;
 		if (count >= NOTICE_AT) {
-			const repeat = `Repeat notice: these arguments are byte-identical to refused call ${previousToolCallId} (same refusal ${code}). The change you described was not emitted — read back the arguments you actually sent before calling again.`;
+			const missingSummary = summarizeMissingFields(params, error);
+			const repeat = `Repeat notice: 本边界收到的规范化参数相同 (observed boundary: root tool input; previous toolCallId: ${previousToolCallId}; refusal code: ${code}; missing fields: ${missingSummary}). Read back the arguments actually received at this boundary before calling again.`;
 			notice = hardStop
 				? `STOP: this exact call has now been refused ${count} times with ${code}. Do not call ${toolName} again with these arguments. Report the received arguments verbatim to the user and wait for instruction.\n${repeat}`
 				: repeat;

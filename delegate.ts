@@ -33,6 +33,7 @@ import {
 } from "./subagent-delegation-contract.ts";
 import type { GitRunner } from "./git-audit.ts";
 import type { ConcurrencyController, ConcurrencyReservation } from "./concurrency.ts";
+import type { ExplorerModelSelection, ExplorerModelSelectionResult } from "./explorer-model.ts";
 import { captureEvidence, captureReviewEvidencePacket, compareEvidence, compareExecutionTruth, describeComparison, describeProbeFailures, environmentFailureOf } from "./evidence.ts";
 import type { ExecutionTruthComparison } from "./evidence.ts";
 import { buildTaskPacket, ROLE_AGENTS } from "./roles.ts";
@@ -500,6 +501,117 @@ export interface DelegationLaunchHooks {
 	onLateTerminal?: (response: SubagentDelegationTerminalResponse) => void;
 }
 
+export interface LauncherCapabilities {
+	/**
+	 * Whether the launcher authoritatively allocates a child runId
+	 * and provides it to the child before the child's first turn.
+	 */
+	childRunIdentity?: boolean;
+}
+
+export interface ChildRunIdentityDelivery {
+	channel: "task-packet-envelope" | "launch-context" | string;
+	runId: string;
+	taskId: string;
+}
+
+/**
+ * Deliver authoritative child run identity into the task prompt.
+ * A capable launcher wraps or prefixes the child's task before execution.
+ */
+export function deliverChildRunIdentity(taskPrompt: string, delivery: ChildRunIdentityDelivery): string {
+	const header = `<!-- SUBAGENT_RUN_IDENTITY: {"version":1,"runId":"${delivery.runId}","taskId":"${delivery.taskId}"} -->`;
+	return `${header}\n${taskPrompt}`;
+}
+
+/**
+ * Extract authoritative child run identity from the child's prompt or context.
+ * The child model/test runner reads this channel to populate its WorkerReport.
+ */
+export function extractChildRunIdentity(input: { prompt?: string; context?: { runId?: string } }): string | undefined {
+	if (input.context?.runId) return input.context.runId;
+	if (typeof input.prompt === "string") {
+		const match = input.prompt.match(/<!-- SUBAGENT_RUN_IDENTITY:\s*(\{.*?\})\s*-->/);
+		if (match) {
+			try {
+				const parsed = JSON.parse(match[1]);
+				if (typeof parsed.runId === "string" && parsed.runId.trim()) return parsed.runId.trim();
+			} catch {
+				// unparseable
+			}
+		}
+		const altMatch = input.prompt.match(/\[Execution Run Identity:\s*([^\s\]]+)\]/);
+		if (altMatch) return altMatch[1].trim();
+	}
+	return undefined;
+}
+
+export interface CapableLauncherOptions {
+	allocateRunId?: () => string;
+	tamperChildRunId?: (context: { runId: string; request: SubagentDelegationRequest }) => string;
+	onAttempt?: (attempt: { runId: string; request: SubagentDelegationRequest; prompt: string }) => void;
+	status?: "completed" | "failed" | "timed_out" | "cancelled";
+	reportOverrides?: Partial<WorkerReport>;
+	omitReport?: boolean;
+}
+
+/**
+ * Creates a capable test/mock launcher that authoritatively allocates runIds
+ * and delivers them to the child via the deterministic delivery channel.
+ */
+export function createCapableLauncher(options: CapableLauncherOptions = {}): DelegationDeps["launch"] {
+	let counter = 0;
+	const launcher: DelegationDeps["launch"] = async (request, _signal, _hooks) => {
+		counter += 1;
+		const runId = options.allocateRunId ? options.allocateRunId() : `run-${randomUUID().slice(0, 8)}`;
+		const deliveredPrompt = deliverChildRunIdentity(request.task, {
+			channel: "task-packet-envelope",
+			runId,
+			taskId: request.nodeId,
+		});
+		options.onAttempt?.({ runId, request, prompt: deliveredPrompt });
+
+		// Simulated child reads run identity from the channel:
+		const channelRunId = extractChildRunIdentity({ prompt: deliveredPrompt });
+		const childRunId = options.tamperChildRunId
+			? options.tamperChildRunId({ runId: channelRunId ?? runId, request })
+			: (channelRunId ?? runId);
+
+		const isScout = request.agent === "planner-scout" || request.agent === "scout";
+		const report: WorkerReport = {
+			version: 1,
+			taskId: request.nodeId,
+			status: "completed",
+			summary: isScout ? "Recon completed" : "Work completed",
+			changedFiles: [],
+			validation: [],
+			evidence: {
+				cwd: request.cwd,
+				taskId: request.nodeId,
+				workerRunId: childRunId,
+				generatedAt: new Date().toISOString(),
+			},
+			risks: [],
+			unresolved: [],
+			...options.reportOverrides,
+		};
+
+		return {
+			requestId: request.requestId,
+			ownerRunId: request.ownerRunId,
+			nodeId: request.nodeId,
+			status: options.status ?? "completed",
+			runId,
+			agent: request.agent,
+			model: request.model ?? "test/model",
+			usage: { input: 10, output: 20, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 2, toolCalls: 2, durationMs: 100 },
+			...(!options.omitReport ? { result: { kind: "structured" as const, value: report } } : {}),
+		};
+	};
+	(launcher as { capabilities?: LauncherCapabilities }).capabilities = { childRunIdentity: true };
+	return launcher;
+}
+
 export interface DelegationDeps {
 	store: TaskStore;
 	gitRunner: GitRunner;
@@ -508,12 +620,26 @@ export interface DelegationDeps {
 	launch: (request: SubagentDelegationRequest, signal?: AbortSignal, hooks?: DelegationLaunchHooks) => Promise<SubagentDelegationResponse>;
 	ownerRunId: string;
 	/**
+	 * Ticket 01 — declared capabilities of the delegation launcher.
+	 * Launchers lacking childRunIdentity are refused before admission.
+	 */
+	launcherCapabilities?: LauncherCapabilities;
+	/**
 	 * Ticket 02 — the name of the host-registered restricted reader agent
 	 * (RESTRICTED_READER_AGENT when index.ts's registration succeeded). When
 	 * absent, role=explorer is refused before launch: there is no trusted
 	 * read-only binding to prove the execution cannot mutate.
 	 */
 	restrictedReaderAgent?: string;
+	/**
+	 * T-20260918-004 — resolves the Explorer launch selection (model/thinking)
+	 * from the operator's subagent configuration at launch time. Explorer only;
+	 * a broken configuration refuses before any Task is minted. Configured
+	 * model strings cross this seam unchanged; the host launcher owns model
+	 * resolution and reports an unavailable model as a visible launch failure.
+	 * Absent → the request omits model/thinking and host fallback proceeds.
+	 */
+	resolveExplorerModelSelection?: (cwd: string) => ExplorerModelSelectionResult;
 	now?: () => Date;
 	/**
 	 * Wall-envelope clock: a monotonic `now()` plus the timer pair. Tests
@@ -694,11 +820,37 @@ export async function runDelegation(
 	}
 	const isRestrictedReader = classification.capability === "restricted-reader";
 
+	// Ticket 01 (delegation-contract-incident-20260918) — verify the launcher
+	// supports authoritative child run identity delivery before first turn.
+	// Launchers lacking this capability force children to guess identities
+	// (e.g. planner-scout, taskId, placeholder). Refuse before admission/task minting.
+	const launcherCapabilities = deps.launcherCapabilities ?? (deps.launch as { capabilities?: LauncherCapabilities } | undefined)?.capabilities;
+	if (role !== "reviewer" && launcherCapabilities?.childRunIdentity !== true) {
+		throw new DelegationRefused(
+			"LAUNCHER_CAPABILITY_UNSUPPORTED",
+			`${toolName} refused: launcher does not support authoritative child run identity delivery before first turn (requires launcher capability 'childRunIdentity'; host launcher lacks child run identity channel). No child was launched.`,
+			params.taskId,
+		);
+	}
+
+	// T-20260918-004 — resolve the Explorer launch selection before any Task is
+	//    minted. Configured model strings cross into the request unchanged so
+	//    the host launcher remains the single resolution/availability boundary.
+	let explorerSelection: ExplorerModelSelection | undefined;
+	if (role === "explorer" && deps.resolveExplorerModelSelection) {
+		const resolved = deps.resolveExplorerModelSelection(effectiveCwd);
+		if (!resolved.ok) {
+			throw new DelegationRefused(resolved.code, `${toolName} refused: ${resolved.message}`);
+		}
+		explorerSelection = resolved.selection;
+	}
+
 	// 1. Task binding: an explicit id binds the existing record verbatim —
 	//    its stored spec is never rewritten (ticket 53); this call's spec
 	//    only goes into the packet.
-	let task: TaskRecord;
+	let task!: TaskRecord;
 	let thisSpec: TaskSpec;
+	let recoveryDecision: RecoveryDecision | undefined;
 	if (params.taskId) {
 		const record = deps.store.get(params.taskId);
 		if (!record) {
@@ -764,30 +916,27 @@ export async function runDelegation(
 		// refused above).
 		const boundMode = record.spec?.acceptanceMode;
 		thisSpec = specFromParams(boundMode !== undefined ? { ...params, acceptanceMode: boundMode } : params, record.taskId, record.cwd || effectiveCwd);
+
+		if (isFinalTaskState(task.state)) {
+			if (task.state === "blocked" && task.recovery?.required === true) {
+				const refusal = validateRecoveryDecision(task, params.recovery as RecoveryDecision | undefined, DELEGATE_RECOVERY_ACTIONS);
+				if (refusal) throw new DelegationRefused("RECOVERY_REQUIRED", `${toolName} refused: ${refusal}`, task.taskId);
+				recoveryDecision = params.recovery as RecoveryDecision;
+			} else {
+				throw new DelegationRefused(
+					"TASK_CLOSED",
+					`${toolName} refused: Task ${task.taskId} is ${task.state}; start a new Task instead`,
+					task.taskId,
+				);
+			}
+		}
 	} else {
 		// nextTaskId() already claims the id (process-local sequence or the
 		// persistent allocator); createAllocated pairs that claim with the
 		// record so a store.create round-trip can never re-reserve it.
+		// Minting validates the spec before any reservation or store write.
 		const taskId = deps.store.nextTaskId();
-		const spec = specFromParams(params, taskId, effectiveCwd);
-		task = deps.store.createAllocated(taskId, spec);
-		thisSpec = spec;
-	}
-	// P0-B — a blocked Task flagged recovery.required only re-executes under a
-	// valid RecoveryDecision (spec §5); other final states stay TASK_CLOSED.
-	let recoveryDecision: RecoveryDecision | undefined;
-	if (isFinalTaskState(task.state)) {
-		if (task.state === "blocked" && task.recovery?.required === true) {
-			const refusal = validateRecoveryDecision(task, params.recovery as RecoveryDecision | undefined, DELEGATE_RECOVERY_ACTIONS);
-			if (refusal) throw new DelegationRefused("RECOVERY_REQUIRED", `${toolName} refused: ${refusal}`, task.taskId);
-			recoveryDecision = params.recovery as RecoveryDecision;
-		} else {
-			throw new DelegationRefused(
-				"TASK_CLOSED",
-				`${toolName} refused: Task ${task.taskId} is ${task.state}; start a new Task instead`,
-				task.taskId,
-			);
-		}
+		thisSpec = specFromParams(params, taskId, effectiveCwd);
 	}
 
 	// P0-B — the explicit anomaly envelope; validated before launch, never defaulted.
@@ -800,31 +949,65 @@ export async function runDelegation(
 	//    stop-unconfirmed workspace admits no second writer (A4).
 	let reservation: ConcurrencyReservation | undefined;
 	if (!isRestrictedReader) {
-		if (task.writerHold && recoveryDecision?.worktreeDecision === "manual") {
-			deps.concurrency.release(task.writerHold.executionId);
-			deps.concurrency.release(`writerhold:${task.writerHold.executionId}`);
-			task = deps.store.clearWriterHold(task.taskId);
+		if (params.taskId) {
+			if (task.writerHold && recoveryDecision?.worktreeDecision === "manual") {
+				deps.concurrency.release(task.writerHold.executionId);
+				deps.concurrency.release(`writerhold:${task.writerHold.executionId}`);
+				task = deps.store.clearWriterHold(task.taskId);
+			}
+			if (task.writerHold) {
+				throw new DelegationRefused(
+					"WRITER_HOLD",
+					`${toolName} refused: Task ${task.taskId} writer execution ${task.writerHold.executionId} was never confirmed stopped (${task.writerHold.reason}); submit a matching recovery with worktreeDecision=manual only after operator resolution`,
+					task.taskId,
+				);
+			}
+			const admission = deps.concurrency.reserve({
+				id: executionId,
+				taskId: task.taskId,
+				state: task.state,
+				structured: true,
+				role,
+				capability: "writer",
+				workspaces: [task.cwd || effectiveCwd, ...(thisSpec.additionalWorktreeRoots ?? [])],
+			});
+			if (admission.refusal) {
+				throw new DelegationRefused(
+					admission.refusal.code,
+					`${toolName} refused: ${admission.refusal.reason}; Task ${task.taskId} unchanged, no execution was launched`,
+					task.taskId,
+				);
+			}
+			reservation = admission.reservation;
+		} else {
+			// Minting a new Task: reserve concurrency atomically before creating the Task in store.
+			const admission = deps.concurrency.reserve({
+				id: executionId,
+				taskId: thisSpec.taskId,
+				state: "planning",
+				structured: true,
+				role,
+				capability: "writer",
+				workspaces: [effectiveCwd, ...(thisSpec.additionalWorktreeRoots ?? [])],
+			});
+			if (admission.refusal) {
+				throw new DelegationRefused(
+					admission.refusal.code,
+					`${toolName} refused: ${admission.refusal.reason}; no Task was created, no execution was launched`,
+				);
+			}
+			reservation = admission.reservation;
+			try {
+				task = deps.store.createAllocated(thisSpec.taskId, thisSpec);
+			} catch (error) {
+				if (reservation) {
+					deps.concurrency.release(reservation.id);
+				}
+				throw error;
+			}
 		}
-		if (task.writerHold) {
-			throw new DelegationRefused(
-				"WRITER_HOLD",
-				`${toolName} refused: Task ${task.taskId} writer execution ${task.writerHold.executionId} was never confirmed stopped (${task.writerHold.reason}); submit a matching recovery with worktreeDecision=manual only after operator resolution`,
-				task.taskId,
-			);
-		}
-		const admission = deps.concurrency.reserve({
-			id: executionId,
-			taskId: task.taskId,
-			state: task.state,
-			structured: true,
-			role,
-			capability: "writer",
-			workspaces: [task.cwd || effectiveCwd, ...(thisSpec.additionalWorktreeRoots ?? [])],
-		});
-		if (admission.refusal) {
-			throw new DelegationRefused("WRITER_CONFLICT", `${toolName} refused: ${admission.refusal.reason}`);
-		}
-		reservation = admission.reservation;
+	} else if (!params.taskId) {
+		task = deps.store.createAllocated(thisSpec.taskId, thisSpec);
 	}
 
 	const nowIso = () => (deps.now ? deps.now() : new Date()).toISOString();
@@ -957,6 +1140,9 @@ export async function runDelegation(
 		}
 
 		// 4. Structured delegation: the packet is rendered once, downward only.
+		//    T-20260918-004 — the Explorer's configured model/thinking selection
+		//    rides the typed request fields; "inherit" forwards verbatim and the
+		//    launcher resolves it against the current parent session model.
 		const request: SubagentDelegationRequest = {
 			requestId,
 			ownerRunId: deps.ownerRunId,
@@ -965,6 +1151,8 @@ export async function runDelegation(
 			task: buildTaskPacket(thisSpec, params.instructions ?? ""),
 			context: "fresh",
 			cwd: task.cwd || effectiveCwd,
+			...(explorerSelection?.model !== undefined ? { model: explorerSelection.model } : {}),
+			...(explorerSelection?.thinking !== undefined ? { thinking: explorerSelection.thinking } : {}),
 			result: { kind: "structured", schema: WORKER_REPORT_SCHEMA },
 		};
 		// A2 — spec §3 predicate: an identity-matched terminal plus a quiet
@@ -1899,6 +2087,11 @@ export interface HostLauncherOptions {
 	 * DelegationAborted.
 	 */
 	cancelGraceMs?: number;
+	/**
+	 * Declared launcher capabilities; if omitted, probes the host event bus
+	 * for capability declaration or inspects environment flags.
+	 */
+	capabilities?: LauncherCapabilities;
 }
 
 /**
@@ -1932,7 +2125,25 @@ export function cancelInFlightDelegations(pi: ExtensionAPI): number {
  */
 export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOptions = {}): DelegationDeps["launch"] {
 	const cancelGraceMs = options.cancelGraceMs ?? 5000;
-	return (request, signal, hooks) => new Promise((resolve, reject) => {
+	let capabilities: LauncherCapabilities = options.capabilities ?? {};
+	if (options.capabilities === undefined) {
+		const probe: { version: number; capabilities?: LauncherCapabilities } = { version: 1 };
+		try {
+			pi.events.emit("pi-subagents:delegation-capability-probe:v1", probe);
+			if (probe.capabilities) {
+				capabilities = probe.capabilities;
+			}
+		} catch {
+			// No listener
+		}
+		if (process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY !== undefined) {
+			capabilities = {
+				...capabilities,
+				childRunIdentity: process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY === "true",
+			};
+		}
+	}
+	const launcher: DelegationDeps["launch"] = (request, signal, hooks) => new Promise((resolve, reject) => {
 		if (signal?.aborted) {
 			reject(new DelegationAborted(request.nodeId, false));
 			return;
@@ -2000,4 +2211,6 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
 		// fires the listener — catch it here so the grace path still runs.
 		if (signal?.aborted) onAbort();
 	});
+	(launcher as { capabilities?: LauncherCapabilities }).capabilities = capabilities;
+	return launcher;
 }

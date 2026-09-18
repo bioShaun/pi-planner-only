@@ -29,3 +29,8 @@ node_modules/
 
 # local Codex subagent config (machine-specific)
 .codex/
+
+# Explorer model-config acceptance runtime state and credentials
+.scratch/explorer-model-config/acceptance/agent/
+.scratch/explorer-model-config/acceptance/workspace/
+.scratch/explorer-model-config/acceptance/runs/

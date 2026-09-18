@@ -31,6 +31,7 @@ export interface ConcurrencyReservation {
 	capability: ConcurrencyCapability;
 	workspaces: string[];
 	reservedAt: string;
+	holdReason?: string;
 }
 
 export interface ConcurrencyStatus {
@@ -185,7 +186,7 @@ export class ConcurrencyController {
 	 * Never refuses: the hold exists precisely because a stop was never
 	 * confirmed, so it must occupy the workspace unconditionally.
 	 */
-	hold(entry: { id: string; taskId?: string; role: string; capability: ConcurrencyCapability; workspaces: readonly string[]; reservedAt: string }): void {
+	hold(entry: { id: string; taskId?: string; role: string; capability: ConcurrencyCapability; workspaces: readonly string[]; reservedAt: string; holdReason?: string }): void {
 		if (this.reservations.has(entry.id)) return;
 		this.reservations.set(entry.id, {
 			id: entry.id,
@@ -194,6 +195,7 @@ export class ConcurrencyController {
 			capability: entry.capability,
 			workspaces: [...new Set(entry.workspaces.filter(Boolean).map(normalizedWorkspace))],
 			reservedAt: entry.reservedAt,
+			...(entry.holdReason ? { holdReason: entry.holdReason } : {}),
 		});
 	}
 	setTaskId(id: string, taskId: string): void {

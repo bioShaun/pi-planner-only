@@ -1628,6 +1628,10 @@ export class TaskStore {
 		if (!Array.isArray(record.findings)) record.findings = [];
 		if (!Array.isArray(record.successors)) record.successors = [];
 		if (!Array.isArray(record.recoveryStates)) record.recoveryStates = [];
+		if (!Array.isArray(record.aliases)) record.aliases = [];
+		if (!Array.isArray(record.reports)) record.reports = [];
+		if (!Array.isArray(record.reviews)) record.reviews = [];
+		if (!Array.isArray(record.validatorReports)) record.validatorReports = [];
 		if (!Number.isFinite(record.recoveryAttempts) || record.recoveryAttempts < 0) {
 			record.recoveryAttempts = 0;
 		}

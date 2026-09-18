@@ -2533,4 +2533,39 @@ function boundReaderExecution(store, task, { executionId, runId, report }) {
 	}
 }
 
+// --------------------------------------------------------------------------
+// Ticket 02: renderConcurrencyStatus explains restored writer holds with reason
+// --------------------------------------------------------------------------
+{
+	const store = new TaskStore();
+	const concurrency = new ConcurrencyController({ savedLimit: 2 });
+	const orch = new PlannerOrchestrator({ store, concurrency });
+
+	// Add an active normal reservation
+	concurrency.reserve({
+		id: "call-active",
+		taskId: "T-20260918-100",
+		role: "worker",
+		capability: "writer",
+		workspaces: ["/workspace/active"],
+	});
+
+	// Add a restored writer hold
+	concurrency.hold({
+		id: "writerhold:call-restored",
+		taskId: "T-20260918-200",
+		role: "worker",
+		capability: "writer",
+		workspaces: ["/workspace/restored"],
+		reservedAt: "2026-09-18T12:00:00.000Z",
+		holdReason: "unconfirmed stop on previous session abort",
+	});
+
+	const rendered = orch.renderConcurrencyStatus();
+	assert.match(rendered, /Concurrency: 2\/2 occupied, 0 available/);
+	assert.match(rendered, /T-20260918-100 execution=call-active role=worker capability=writer workspace=\/workspace\/active$/m);
+	assert.match(rendered, /T-20260918-200 execution=writerhold:call-restored role=worker capability=writer workspace=\/workspace\/restored \(restored writer hold: unconfirmed stop on previous session abort\)/);
+}
+
 console.log("planner-only orchestration: PASS");
+

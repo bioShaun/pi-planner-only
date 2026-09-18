@@ -41,16 +41,20 @@ test("A01: Loaded plugin fingerprint is recorded from loaded build, distinct fro
 	try {
 		writeFileSync(join(tempDir, "package.json"), JSON.stringify({ name: "test-pkg", version: "0.4.1" }));
 		writeFileSync(join(tempDir, "index.ts"), "export const dummy = 1;");
+		writeFileSync(join(tempDir, "explorer-model.ts"), "export const explorerModelFixture = 1;");
 		const customFingerprint = computeLoadedFingerprint(tempDir);
 		assert.match(customFingerprint, /^[0-9a-f]{64}$/);
 		assert.notEqual(customFingerprint, initialFingerprint);
+		writeFileSync(join(tempDir, "explorer-model.ts"), "export const explorerModelFixture = 2;");
+		const changedExplorerFingerprint = computeLoadedFingerprint(tempDir);
+		assert.notEqual(changedExplorerFingerprint, customFingerprint, "explorer-model.ts changes affect the loaded fingerprint");
 
 		// The memory loaded fingerprint has not changed
 		assert.equal(getLoadedPluginFingerprint(), initialFingerprint);
 
 		// But if reloadLoadedFingerprint is called for that directory, it changes
 		const reloaded = reloadLoadedFingerprint(tempDir);
-		assert.equal(reloaded, customFingerprint);
+		assert.equal(reloaded, changedExplorerFingerprint);
 
 		// Reloading original directory restores it
 		reloadLoadedFingerprint();

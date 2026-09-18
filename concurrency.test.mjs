@@ -75,3 +75,55 @@ try {
 		rmSync(aliasParent, { recursive: true, force: true });
 	}
 }
+
+// --------------------------------------------------------------------------
+// Ticket 02: Restored writer holds with holdReason and occupied > limit
+// --------------------------------------------------------------------------
+{
+	const c = new ConcurrencyController({ savedLimit: 2 });
+	c.hold({
+		id: "writerhold:call-1",
+		taskId: "T-20260918-001",
+		role: "worker",
+		capability: "writer",
+		workspaces: ["/repo/a"],
+		reservedAt: "2026-09-18T10:00:00.000Z",
+		holdReason: "unconfirmed stop on crash",
+	});
+	c.hold({
+		id: "writerhold:call-2",
+		taskId: "T-20260918-002",
+		role: "worker",
+		capability: "writer",
+		workspaces: ["/repo/b"],
+		reservedAt: "2026-09-18T10:05:00.000Z",
+		holdReason: "abnormal termination",
+	});
+	c.hold({
+		id: "writerhold:call-3",
+		taskId: "T-20260918-003",
+		role: "worker",
+		capability: "writer",
+		workspaces: ["/repo/c"],
+		reservedAt: "2026-09-18T10:10:00.000Z",
+		holdReason: "network drop",
+	});
+
+	const status = c.status();
+	assert.equal(status.occupied, 3, "occupied is 3");
+	assert.equal(status.limit, 2, "limit is 2; occupied > limit from restore");
+	assert.equal(status.available, 0, "available is 0");
+	assert.equal(c.get("writerhold:call-1")?.holdReason, "unconfirmed stop on crash");
+
+	// New writer is refused with CONCURRENCY_LIMIT_REACHED
+	const res = c.reserve({
+		id: "w-new",
+		taskId: "T-20260918-004",
+		role: "worker",
+		capability: "writer",
+		workspaces: ["/repo/d"],
+	});
+	assert.equal(res.refusal?.code, "CONCURRENCY_LIMIT_REACHED");
+	assert.equal(c.status().occupied, 3, "holds not cleared");
+	assert.equal(c.status().limit, 2, "limit not bumped");
+}
