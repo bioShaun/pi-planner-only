@@ -15,7 +15,7 @@ Spec: `.scratch/root-stamped-run-identity/spec.md`
 ## 3. Provider & Model Configuration
 - Scenario A:
   - Root session: `tcuni-luna / gpt-5.6-luna`
-  - Explorer (scout override): `qwen-local / qwen3.8-27b` (thinking: `low`)
+  - Explorer: **实际** `tcuni-luna / gpt-5.6-luna`（与 Root 相同；`A/meta.json:14`，三次执行一致）。`settings.json` 配置了 `subagents.agentOverrides.scout = qwen-local/qwen3.8-27b, thinking low`，但**未生效**——0.8.0 不含 explorer 模型路由（`4fa55e3` 已回退 explorer-model 接线），override 不作用于 `planner-scout`。此行 2026-09-18 更正：原记录写的是配置意图，不是实际运行模型。
 - Scenario B:
   - Root session: `qwen-local / qwen3.8-27b`
   - Worker subagent: `tcuni-luna / gpt-5.6-luna`
