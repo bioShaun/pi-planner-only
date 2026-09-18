@@ -35,6 +35,13 @@ node_modules/
 .scratch/explorer-model-config/acceptance/workspace/
 .scratch/explorer-model-config/acceptance/runs/
 
+# Root-stamped run-identity acceptance runtime state and credentials
+.scratch/root-stamped-run-identity/acceptance/agent-*/
+.scratch/root-stamped-run-identity/acceptance/workspace-*/
+.scratch/root-stamped-run-identity/acceptance/tmp-*/
+.scratch/root-stamped-run-identity/acceptance/*.jsonl
+.scratch/root-stamped-run-identity/acceptance/*.txt
+
 # bulky runtime artifacts inside .scratch work dirs: node compile cache, npm
 # cache, whole-repo validation snapshots/candidates, ad-hoc probe scratch
 .scratch/*/runtime-tmp/

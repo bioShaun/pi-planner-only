@@ -1,0 +1,156 @@
+[
+  {
+    "runId": "69482789-6408-472f-87c3-ea30ed9de33f",
+    "agent": "worker",
+    "task": "[prompt redacted]",
+    "exitCode": 0,
+    "usage": {
+      "input": 7025,
+      "output": 1250,
+      "cacheRead": 58880,
+      "cacheWrite": 0,
+      "cost": 0,
+      "turns": 7
+    },
+    "model": "tcuni-luna/gpt-5.6-luna:high",
+    "requestedModel": "tcuni-luna/gpt-5.6-luna",
+    "durationMs": 62451,
+    "toolCount": 10,
+    "launchContractDigest": "2edaf140c7488e886dea8b229ff84a010af54083490c70e51a8ac01911da634f",
+    "launchResolvedExtensions": {
+      "version": 1,
+      "source": "launch-resolved",
+      "disableAmbientExtensions": true,
+      "runtime": [
+        "sha256:d03ad380efa2768f"
+      ],
+      "configured": [],
+      "required": [],
+      "effective": [
+        "sha256:d03ad380efa2768f"
+      ],
+      "omitted": {
+        "runtime": 0,
+        "configured": 0,
+        "required": 0,
+        "effective": 0
+      }
+    },
+    "acceptance": {
+      "status": "not-required",
+      "evidenceStatus": "not-required",
+      "explicit": true,
+      "effectiveAcceptance": {
+        "level": "none",
+        "explicit": true,
+        "inferredReason": [
+          "write-capable worker/task"
+        ],
+        "criteria": [],
+        "evidence": [],
+        "verify": [],
+        "stopRules": [],
+        "reason": "disabled by deprecated false shorthand"
+      },
+      "inferredReason": [
+        "write-capable worker/task"
+      ],
+      "criteria": [],
+      "runtimeChecks": [],
+      "verifyRuns": []
+    },
+    "effects": {
+      "fileMutation": {
+        "status": "observed",
+        "expected": true,
+        "attempted": true,
+        "evidence": {
+          "source": "tracked-files",
+          "trackedOnly": true,
+          "changedFiles": [],
+          "attemptedMutation": false
+        }
+      }
+    },
+    "transcriptPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/root-stamped-run-identity/acceptance/agent-b/sessions/--home-tcuni-claw-pi-pi-planner-only-.scratch-root-stamped-run-identity-acceptance-workspace-b--/subagent-artifacts/69482789-6408-472f-87c3-ea30ed9de33f_worker_0_transcript.jsonl",
+    "timestamp": 1789745986789
+  },
+  {
+    "runId": "b5609fb4-c8a6-417c-a7db-221b7a3afe4b",
+    "agent": "worker",
+    "task": "[prompt redacted]",
+    "exitCode": 0,
+    "usage": {
+      "input": 4428,
+      "output": 901,
+      "cacheRead": 41472,
+      "cacheWrite": 0,
+      "cost": 0,
+      "turns": 5
+    },
+    "model": "tcuni-luna/gpt-5.6-luna:high",
+    "requestedModel": "tcuni-luna/gpt-5.6-luna",
+    "durationMs": 40071,
+    "toolCount": 10,
+    "launchContractDigest": "dcf4eab1d497581591115d6aa6dca078e50d4b78a9c5e71dafde9776b16f25e0",
+    "launchResolvedExtensions": {
+      "version": 1,
+      "source": "launch-resolved",
+      "disableAmbientExtensions": true,
+      "runtime": [
+        "sha256:d03ad380efa2768f"
+      ],
+      "configured": [],
+      "required": [],
+      "effective": [
+        "sha256:d03ad380efa2768f"
+      ],
+      "omitted": {
+        "runtime": 0,
+        "configured": 0,
+        "required": 0,
+        "effective": 0
+      }
+    },
+    "acceptance": {
+      "status": "not-required",
+      "evidenceStatus": "not-required",
+      "explicit": true,
+      "effectiveAcceptance": {
+        "level": "none",
+        "explicit": true,
+        "inferredReason": [
+          "write-capable worker/task"
+        ],
+        "criteria": [],
+        "evidence": [],
+        "verify": [],
+        "stopRules": [],
+        "reason": "disabled by deprecated false shorthand"
+      },
+      "inferredReason": [
+        "write-capable worker/task"
+      ],
+      "criteria": [],
+      "runtimeChecks": [],
+      "verifyRuns": []
+    },
+    "effects": {
+      "fileMutation": {
+        "status": "observed",
+        "expected": true,
+        "attempted": true,
+        "evidence": {
+          "source": "tracked-files",
+          "trackedOnly": true,
+          "changedFiles": [
+            "hello.txt"
+          ],
+          "attemptedMutation": true
+        }
+      }
+    },
+    "transcriptPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/root-stamped-run-identity/acceptance/agent-b/sessions/--home-tcuni-claw-pi-pi-planner-only-.scratch-root-stamped-run-identity-acceptance-workspace-b--/subagent-artifacts/b5609fb4-c8a6-417c-a7db-221b7a3afe4b_worker_0_transcript.jsonl",
+    "timestamp": 1789745910747
+  }
+]

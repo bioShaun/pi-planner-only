@@ -1,0 +1,4 @@
+Session path: .scratch/root-stamped-run-identity/acceptance/agent-b/sessions/--home-tcuni-claw-pi-pi-planner-only-.scratch-root-stamped-run-identity-acceptance-workspace-b--/2026-09-18T15-37-01-673Z_01a0b529-f7e8-7415-80e6-5ec308998e29.jsonl
+SHA-256: 1e5f063d621f80383a7a97a0b80256941ad473f210d65268c2d912e760977db4
+Size: 32055 bytes
+Lines: 35

@@ -1,6 +1,6 @@
 # 04: 在已安装的 `pi-subagents@0.68.0` 上真实收口 Explorer 与 Worker
 
-Status: ready-for-agent
+Status: resolved
 Type: acceptance
 Blocked by: 01, 02, 03
 来源：../spec.md §Testing Decisions 末段、User Story 1/2/8
@@ -54,3 +54,4 @@ Blocked by: 01, 02, 03
 ## Comments
 
 - 2026-09-18 开票。对照组：`.scratch/explorer-model-config/evidence/REPORT.md:11` 是同类 Explorer 场景在 0.7.0 上的失败样本（runId `d8280241…` vs 报告 `explorer-model-config-T-20260918-001`，`reports=[]`）；A 场景过了就是对它的直接翻转。
+- 2026-09-18 验收完成：场景 A（Explorer, 非 Git）、场景 B（Worker, Git 纠正轮）真实宿主运行全部 PASS，场景 C（负向未知 taskId 拒收）验证成功。真实宿主证据见 `evidence/<A|B|C>/` 及 `evidence/REPORT.md`。全量测试 `npm run test:release` 30 测试文件全部 exit 0，落日志 `evidence/release.log`。本票关闭。

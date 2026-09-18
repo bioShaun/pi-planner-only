@@ -1,0 +1,62 @@
+{
+  "runId": "1a505c38-41b2-48cd-9032-6b9b46e22c8d",
+  "agent": "planner-scout",
+  "task": "[prompt redacted]",
+  "exitCode": 0,
+  "usage": {
+    "input": 16583,
+    "output": 502,
+    "cacheRead": 7680,
+    "cacheWrite": 0,
+    "cost": 0,
+    "turns": 3
+  },
+  "model": "tcuni-luna/gpt-5.6-luna",
+  "durationMs": 17412,
+  "toolCount": 3,
+  "launchContractDigest": "01ac806601833dd3ac0d969db3f46a8f1f5cf581037216e1a1ea9c24b720af01",
+  "launchResolvedExtensions": {
+    "version": 1,
+    "source": "launch-resolved",
+    "disableAmbientExtensions": true,
+    "runtime": [
+      "sha256:d03ad380efa2768f"
+    ],
+    "configured": [],
+    "required": [],
+    "effective": [
+      "sha256:d03ad380efa2768f"
+    ],
+    "omitted": {
+      "runtime": 0,
+      "configured": 0,
+      "required": 0,
+      "effective": 0
+    }
+  },
+  "acceptance": {
+    "status": "not-required",
+    "evidenceStatus": "not-required",
+    "explicit": true,
+    "effectiveAcceptance": {
+      "level": "none",
+      "explicit": true,
+      "inferredReason": [
+        "read-only/reviewer-style agent"
+      ],
+      "criteria": [],
+      "evidence": [],
+      "verify": [],
+      "stopRules": [],
+      "reason": "disabled by deprecated false shorthand"
+    },
+    "inferredReason": [
+      "read-only/reviewer-style agent"
+    ],
+    "criteria": [],
+    "runtimeChecks": [],
+    "verifyRuns": []
+  },
+  "transcriptPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/root-stamped-run-identity/acceptance/agent-a/sessions/--home-tcuni-claw-pi-pi-planner-only-.scratch-root-stamped-run-identity-acceptance-workspace-a--/subagent-artifacts/1a505c38-41b2-48cd-9032-6b9b46e22c8d_planner-scout_0_transcript.jsonl",
+  "timestamp": 1789743197208
+}

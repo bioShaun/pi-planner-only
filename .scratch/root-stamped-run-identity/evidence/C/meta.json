@@ -1,0 +1,9 @@
+{
+  "scenario": "C",
+  "targetTaskId": "T-99999999-001",
+  "expectedRefusal": "TASK_UNKNOWN / unknown task",
+  "testedOn": "live host",
+  "provider": "qwen-local",
+  "model": "qwen3.8-27b",
+  "timestamp": 1789746158976
+}

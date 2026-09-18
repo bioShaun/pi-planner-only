@@ -1,0 +1,21 @@
+[
+  {
+    "toolCallId": "call_0f0e9984c65c8ef3",
+    "toolName": "planner_verdict",
+    "args": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "Testing unknown taskId rejection"
+    },
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? })."
+        }
+      ],
+      "details": {}
+    },
+    "isError": true
+  }
+]

@@ -1,6 +1,6 @@
 # 运行身份由 Root 盖章：删除子代理无法满足的 `workerRunId` 契约与 launcher 能力门禁
 
-Status: ready-for-agent
+Status: done
 Date: 2026-09-18
 Type: spec
 Baseline: 33a5c2c1aeeba6d517987935d25bfdeabf210471（package 0.7.0）
