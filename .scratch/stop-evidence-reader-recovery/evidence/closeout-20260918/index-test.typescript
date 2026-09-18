@@ -1,0 +1,21 @@
+Script started on 2026-09-18 10:09:47+08:00 [COMMAND="node --experimental-strip-types index.test.mjs" <not executed on terminal>]
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: The input did not match the regular expression /planner-only toggle: PASS/. Input:
+
+''
+
+    at file:///public/pi/pi-planner-only/index.test.mjs:329:9 {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: '',
+  expected: /planner-only toggle: PASS/,
+  operator: 'match',
+  diff: 'simple'
+}
+
+Node.js v24.14.0
+
+Script done on 2026-09-18 10:09:48+08:00 [COMMAND_EXIT_CODE="1"]

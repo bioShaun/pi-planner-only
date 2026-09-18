@@ -25,6 +25,167 @@ export type LedgerReadResult =
 	| { status: "unreadable"; reason: string }
 	| { status: "corrupt"; reason: string };
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const OPTIONAL_STRING_FIELDS = [
+	"taskId",
+	"role",
+	"cwd",
+	"state",
+	"createdAt",
+	"updatedAt",
+	"parentTaskId",
+	"stateReason",
+	"sealedAt",
+	"completionKind",
+	"pendingRevalidationKey",
+] as const;
+
+const OPTIONAL_ARRAY_FIELDS = [
+	"successors",
+	"reports",
+	"validatorReports",
+	"reviews",
+	"verdictRefusals",
+	"overrides",
+	"aliases",
+	"findings",
+	"recoveryStates",
+	"recoveryDispatches",
+	"recoveryHistory",
+] as const;
+
+const OPTIONAL_BOOLEAN_FIELDS = ["standaloneExplorer", "isPlaceholder", "titleAliasUsed"] as const;
+
+function executionShapeError(value: unknown, index: number): string | undefined {
+	const label = `task.executions[${index}]`;
+	if (!isPlainObject(value)) return `${label} must be an object`;
+	for (const field of ["executionId", "kind", "status", "capability", "capabilityBasis", "runId", "cwd", "endedReason", "endedAt", "confirmationBasis", "unacceptedReportReason"] as const) {
+		if (value[field] !== undefined && typeof value[field] !== "string") return `${label}.${field} must be a string`;
+	}
+	if (typeof value.executionId !== "string") return `${label}.executionId must be a string`;
+	if (!isPlainObject(value.aRun)) return `${label}.aRun must be an object`;
+	const probeFailuresError = (sample: Record<string, unknown>, sampleLabel: string): string | undefined => {
+		if (sample.probeFailures === undefined) return undefined;
+		if (!Array.isArray(sample.probeFailures)) return `${sampleLabel}.probeFailures must be an array`;
+		for (let i = 0; i < sample.probeFailures.length; i += 1) {
+			const failure = sample.probeFailures[i];
+			const failureLabel = `${sampleLabel}.probeFailures[${i}]`;
+			if (!isPlainObject(failure)) return `${failureLabel} must be an object`;
+			for (const field of ["operation", "kind", "cwd"] as const) {
+				if (typeof failure[field] !== "string") return `${failureLabel}.${field} must be a string`;
+			}
+			if (failure.error !== undefined && typeof failure.error !== "string") return `${failureLabel}.error must be a string`;
+			for (const field of ["killed", "startupFailed", "truncated"] as const) {
+				if (failure[field] !== undefined && typeof failure[field] !== "boolean") return `${failureLabel}.${field} must be a boolean`;
+			}
+			if (failure.exitCode !== undefined && typeof failure.exitCode !== "number") return `${failureLabel}.exitCode must be a number`;
+		}
+		return undefined;
+	};
+	let sampleError = probeFailuresError(value.aRun, `${label}.aRun`);
+	if (sampleError) return sampleError;
+	if (value.cReport !== undefined) {
+		if (!isPlainObject(value.cReport)) return `${label}.cReport must be an object`;
+		sampleError = probeFailuresError(value.cReport, `${label}.cReport`);
+		if (sampleError) return sampleError;
+	}
+	if (value.stopSamples !== undefined) {
+		if (!Array.isArray(value.stopSamples)) return `${label}.stopSamples must be an array`;
+		for (let i = 0; i < value.stopSamples.length; i += 1) {
+			const sample = value.stopSamples[i];
+			if (!isPlainObject(sample)) return `${label}.stopSamples[${i}] must be an object`;
+			sampleError = probeFailuresError(sample, `${label}.stopSamples[${i}]`);
+			if (sampleError) return sampleError;
+		}
+	}
+	if (value.worktreeRoots !== undefined && !Array.isArray(value.worktreeRoots)) {
+		return `${label}.worktreeRoots must be an array`;
+	}
+	if (Array.isArray(value.worktreeRoots)) {
+		for (let i = 0; i < value.worktreeRoots.length; i += 1) {
+			if (typeof value.worktreeRoots[i] !== "string") return `${label}.worktreeRoots[${i}] must be a string`;
+		}
+	}
+	if (value.unacceptedReport !== undefined) {
+		if (!isPlainObject(value.unacceptedReport)) return `${label}.unacceptedReport must be an object`;
+		for (const field of ["taskId", "status", "summary"] as const) {
+			if (typeof value.unacceptedReport[field] !== "string") return `${label}.unacceptedReport.${field} must be a string`;
+		}
+		if (!isPlainObject(value.unacceptedReport.evidence)) return `${label}.unacceptedReport.evidence must be an object`;
+		if (typeof value.unacceptedReport.evidence.workerRunId !== "string") return `${label}.unacceptedReport.evidence.workerRunId must be a string`;
+	}
+	return undefined;
+}
+
+/**
+ * R2 — a syntactically valid envelope can still carry a record whose fields
+ * have the wrong shape; diagnostics dereferences executions, usage.children,
+ * writerHold and recovery deeply enough that a wrong type throws instead of
+ * reporting TASK_LEDGER_CORRUPT. Every check is validate-if-present: fields
+ * a record predating them may simply lack stay tolerated (the restore path
+ * has always defaulted missing collections), because missing is history,
+ * wrong-typed is damage. The identity core (a matching string taskId) is
+ * enforced separately in parseEnvelope.
+ */
+function recordShapeError(task: unknown): string | undefined {
+	if (!isPlainObject(task)) return "task must be an object";
+	for (const field of OPTIONAL_STRING_FIELDS) {
+		if (task[field] !== undefined && typeof task[field] !== "string") return `task.${field} must be a string`;
+	}
+	for (const field of OPTIONAL_ARRAY_FIELDS) {
+		if (task[field] !== undefined && !Array.isArray(task[field])) return `task.${field} must be an array`;
+	}
+	for (const field of OPTIONAL_BOOLEAN_FIELDS) {
+		if (task[field] !== undefined && typeof task[field] !== "boolean") return `task.${field} must be a boolean`;
+	}
+	for (const field of ["reviewRound", "reportCorrections", "recoveryAttempts"] as const) {
+		if (task[field] !== undefined && typeof task[field] !== "number") return `task.${field} must be a number`;
+	}
+	if (task.spec !== undefined && !isPlainObject(task.spec)) return "task.spec must be an object";
+	if (task.usage !== undefined) {
+		if (!isPlainObject(task.usage)) return "task.usage must be an object";
+		if (task.usage.children !== undefined) {
+			if (!Array.isArray(task.usage.children)) return "task.usage.children must be an array";
+			for (let i = 0; i < task.usage.children.length; i += 1) {
+				if (!isPlainObject(task.usage.children[i])) return `task.usage.children[${i}] must be an object`;
+			}
+		}
+	}
+	if (task.writerHold !== undefined) {
+		if (!isPlainObject(task.writerHold)) return "task.writerHold must be an object";
+		for (const field of ["executionId", "reason", "since"] as const) {
+			if (typeof task.writerHold[field] !== "string") return `task.writerHold.${field} must be a string`;
+		}
+	}
+	if (task.recovery !== undefined) {
+		if (!isPlainObject(task.recovery)) return "task.recovery must be an object";
+		if (task.recovery.reason !== undefined && typeof task.recovery.reason !== "string") {
+			return "task.recovery.reason must be a string";
+		}
+		if (task.recovery.executionId !== undefined && typeof task.recovery.executionId !== "string") {
+			return "task.recovery.executionId must be a string";
+		}
+		if (task.recovery.required !== undefined && typeof task.recovery.required !== "boolean") {
+			return "task.recovery.required must be a boolean";
+		}
+		if (task.recovery.required === true) {
+			if (typeof task.recovery.reason !== "string") return "task.recovery.reason must be a string when recovery is required";
+			if (typeof task.recovery.executionId !== "string") return "task.recovery.executionId must be a string when recovery is required";
+		}
+	}
+	if (task.executions !== undefined) {
+		if (!Array.isArray(task.executions)) return "task.executions must be an array";
+		for (let i = 0; i < task.executions.length; i += 1) {
+			const error = executionShapeError(task.executions[i], i);
+			if (error) return error;
+		}
+	}
+	return undefined;
+}
+
 /** Validate one ledger envelope body; shared by readAll() and read(). */
 function parseEnvelope(stem: string, raw: string): { record: TaskRecord } | { corrupt: string } {
 	let envelope: unknown;
@@ -47,6 +208,8 @@ function parseEnvelope(stem: string, raw: string): { record: TaskRecord } | { co
 	if (task.taskId !== stem) {
 		return { corrupt: `task.taskId does not match filename` };
 	}
+	const shapeError = recordShapeError(task);
+	if (shapeError) return { corrupt: shapeError };
 	return { record: task };
 }
 

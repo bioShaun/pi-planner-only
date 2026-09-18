@@ -2360,11 +2360,143 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 	const fat = await tasksTool.execute("call-t06-fat", { taskId: "T-20200101-900" }, undefined, () => {}, ctx);
 	const fd = fat.details.diagnostics;
 	assert.equal(fd.totalExecutions, 25);
-	assert.equal(fd.executions.length, 20, "structured output is capped");
+	assert.ok(
+		fd.executions.length >= 1 && fd.executions.length <= 20,
+		`structured output is capped (got ${fd.executions.length})`,
+	);
+	assert.ok(
+		JSON.stringify(fd).length <= 65536,
+		`structured details stay within the total budget (got ${JSON.stringify(fd).length})`,
+	);
 	assert.equal(fd.truncated, true, "truncation is disclosed");
 	assert.ok(
 		fat.content[0].text.length <= 20500,
 		`rendered text stays bounded (got ${fat.content[0].text.length})`,
 	);
 	assert.match(fat.content[0].text, /truncated/, "the text discloses the cap");
+}
+
+// ---------------------------------------------------------------------------
+// F7 (ticket 06): an unaccepted report with unbounded identity fields must not
+// blow through the structured payload — details carry a fixed total budget and
+// disclose the truncation in sync with the text.
+// ---------------------------------------------------------------------------
+{
+	const tasksTool = tools.get("planner_tasks");
+	const longRunId = "r".repeat(1_000_000);
+	const longReason = "identity mismatch " + "x".repeat(1_000_000);
+	const longSummary = "s".repeat(1_000_000);
+	const identityTask = {
+		taskId: "T-20200101-901",
+		state: "blocked",
+		role: "worker",
+		cwd: ctx.cwd,
+		spec: { objective: "unaccepted report with huge identity fields" },
+		executions: [{
+			executionId: "call-identity-1",
+			kind: "worker",
+			status: "stop_unconfirmed",
+			capability: "writer",
+			aRun: { cwd: ctx.cwd, taskId: "T-20200101-901", workerRunId: "call-identity-1" },
+			unacceptedReport: {
+				version: 1,
+				taskId: "T-20200101-901",
+				status: "completed",
+				summary: longSummary,
+				changedFiles: [],
+				validation: [],
+				evidence: { cwd: ctx.cwd, taskId: "T-20200101-901", workerRunId: longRunId },
+				risks: [],
+				unresolved: [],
+			},
+			unacceptedReportReason: longReason,
+		}],
+		reports: [],
+		reviews: [],
+		updatedAt: "2020-01-01T00:00:00.000Z",
+	};
+	new LedgerSnapshotStore(isolatedAgentDir).write(identityTask);
+	const identity = await tasksTool.execute("call-t06-identity", { taskId: "T-20200101-901" }, undefined, () => {}, ctx);
+	const id = identity.details.diagnostics;
+	const serialized = JSON.stringify(id).length;
+	assert.ok(serialized <= 65536, `structured details stay within the total budget (got ${serialized})`);
+	assert.equal(id.truncated, true, "the structured details disclose the truncation");
+	assert.ok(
+		id.executions[0].unacceptedReport.workerRunId.length < longRunId.length,
+		"the untrusted identity field is deep-capped",
+	);
+	assert.match(identity.content[0].text, /diagnostics truncated/, "the text discloses the same truncation");
+}
+
+// The registered surface budgets UTF-8 bytes (including the details wrapper),
+// deep-caps strings inside arrays, and remains observational over its ledger.
+{
+	const tasksTool = tools.get("planner_tasks");
+	const taskId = "T-20200101-902";
+	const ledger = new LedgerSnapshotStore(isolatedAgentDir);
+	ledger.write({
+		taskId,
+		state: "blocked",
+		role: "worker",
+		cwd: ctx.cwd,
+		spec: { objective: "multibyte diagnostics budget" },
+		executions: Array.from({ length: 20 }, (_, i) => ({
+			executionId: `call-byte-${i}`,
+			kind: "worker",
+			status: "stop_unconfirmed",
+			capability: "writer",
+			cwd: ctx.cwd,
+			worktreeRoots: Array.from({ length: 50 }, () => `/${"界".repeat(500)}`),
+			aRun: {
+				cwd: ctx.cwd,
+				taskId,
+				workerRunId: `call-byte-${i}`,
+				probeFailures: Array.from({ length: 10 }, (_, n) => ({
+					operation: `probe-${n}`,
+					kind: "probe-error",
+					cwd: ctx.cwd,
+					exitCode: 1,
+					error: "界".repeat(4000),
+				})),
+			},
+		})),
+		reports: [],
+		reviews: [],
+		updatedAt: "2020-01-01T00:00:00.000Z",
+	});
+	const ledgerPath = join(isolatedAgentDir, "planner-only", "ledger", `${taskId}.json`);
+	const beforeLedger = readFileSync(ledgerPath, "utf8");
+	const beforeRequests = piEvents.emitted.filter((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT).length;
+	const first = await tasksTool.execute("call-t06-byte-budget-1", { taskId }, undefined, () => {}, ctx);
+	const second = await tasksTool.execute("call-t06-byte-budget-2", { taskId }, undefined, () => {}, ctx);
+	assert.ok(Buffer.byteLength(JSON.stringify(first.details), "utf8") < 64 * 1024, "all structured details fit below 64 KiB in UTF-8 bytes");
+	assert.equal(first.details.diagnostics.truncated, true, "byte-budget truncation is disclosed");
+	assert.deepEqual(second.details, first.details, "repeated diagnostics are stable and do not mutate their source record");
+	assert.equal(readFileSync(ledgerPath, "utf8"), beforeLedger, "registered diagnostics do not rewrite or mutate the ledger record");
+	assert.equal(
+		piEvents.emitted.filter((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT).length,
+		beforeRequests,
+		"registered diagnostics do not launch or alter execution concurrency",
+	);
+}
+
+// ---------------------------------------------------------------------------
+// F5 (ticket 06): with no host sessionFile the plugin's own storage directory
+// must not be mislabeled as the session-log default — the location is unknown.
+// ---------------------------------------------------------------------------
+{
+	const tasksTool = tools.get("planner_tasks");
+	const noSessionCtx = {
+		...ctx,
+		sessionManager: { getEntries() { return sessionEntries; } },
+	};
+	const noSession = await tasksTool.execute("call-t06-nosession", { taskId: "T-20200101-900" }, undefined, () => {}, noSessionCtx);
+	const ns = noSession.details.diagnostics;
+	assert.equal(ns.sessionLog.status, "unknown", "without a host sessionFile the log location is unknown, not a directory hint");
+	assert.equal(ns.sessionLog.path, undefined, "no path is claimed");
+	assert.ok(
+		!noSession.content[0].text.includes(join(isolatedAgentDir, "planner-only")),
+		"the plugin storage directory is never rendered as the session log location",
+	);
+	assert.match(noSession.content[0].text, /session log: unknown/);
 }

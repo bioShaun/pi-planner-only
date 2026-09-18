@@ -420,4 +420,113 @@ function snapshotPath(dir, taskId) {
 	}
 }
 
+// R2 — structurally invalid records inside legal JSON are corrupt, not ok.
+{
+	const dir = sandbox();
+	function shapedRecord(taskId, overrides = {}) {
+		return {
+			taskId,
+			role: "worker",
+			cwd,
+			state: "executing",
+			reviewRound: 0,
+			reviewMode: "root",
+			reports: [],
+			validatorReports: [],
+			reviews: [],
+			overrides: [],
+			aliases: [],
+			reportCorrections: 0,
+			successors: [],
+			executions: [],
+			findings: [],
+			recoveryAttempts: 0,
+			recoveryStates: [],
+			usage: {},
+			createdAt: "2026-09-08T00:00:00.000Z",
+			updatedAt: "2026-09-08T00:00:00.000Z",
+			...overrides,
+		};
+	}
+	function writeEnvelope(taskId, task) {
+		const ledgerDir = join(dir, "planner-only", "ledger");
+		mkdirSync(ledgerDir, { recursive: true });
+		writeFileSync(
+			join(ledgerDir, `${taskId}.json`),
+			JSON.stringify({ version: 1, writtenAt: "2026-09-08T00:00:00.000Z", task }),
+			"utf8",
+		);
+	}
+	try {
+		const ledger = new LedgerSnapshotStore(dir);
+
+		writeEnvelope("T-20260918-s1", shapedRecord("T-20260918-s1", { executions: {} }));
+		const badExecutions = ledger.read("T-20260918-s1");
+		assert.equal(badExecutions.status, "corrupt", "S1: executions as object is corrupt, not ok");
+		assert.match(badExecutions.reason, /task\.executions must be an array/);
+		const { records, corrupt } = ledger.readAll();
+		assert.equal(records.some((r) => r.taskId === "T-20260918-s1"), false, "S2: a structurally invalid record is not restored");
+		assert.match(corrupt.find((c) => c.taskId === "T-20260918-s1")?.reason ?? "", /task\.executions must be an array/, "S3: readAll reports the same shape error");
+
+		const wrongTypes = [
+			["T-20260918-s4", shapedRecord("T-20260918-s4", { state: 42 }), /task\.state must be a string/],
+			["T-20260918-s5", shapedRecord("T-20260918-s5", { reports: {} }), /task\.reports must be an array/],
+			["T-20260918-s6", shapedRecord("T-20260918-s6", { usage: "leaked" }), /task\.usage must be an object/],
+			["T-20260918-s7", shapedRecord("T-20260918-s7", { writerHold: { executionId: 7, reason: "x", since: "y" } }), /task\.writerHold\.executionId must be a string/],
+			["T-20260918-s8", shapedRecord("T-20260918-s8", { recovery: { required: "yes" } }), /task\.recovery\.required must be a boolean/],
+			["T-20260918-s9", shapedRecord("T-20260918-s9", { executions: [{ executionId: "call-1" }] }), /task\.executions\[0\]\.aRun must be an object/],
+			["T-20260918-s10", shapedRecord("T-20260918-s10", { executions: [{
+				executionId: "call-2",
+				aRun: {},
+				stopSamples: [null],
+			}] }), /task\.executions\[0\]\.stopSamples\[0\] must be an object/],
+			["T-20260918-s15", shapedRecord("T-20260918-s15", { executions: [{
+				executionId: "call-3", aRun: {}, cReport: { probeFailures: {} },
+			}] }), /task\.executions\[0\]\.cReport\.probeFailures must be an array/],
+			["T-20260918-s16", shapedRecord("T-20260918-s16", { executions: [{
+				executionId: "call-4", aRun: { probeFailures: [{ operation: 7 }] },
+			}] }), /task\.executions\[0\]\.aRun\.probeFailures\[0\]\.operation must be a string/],
+			["T-20260918-s17", shapedRecord("T-20260918-s17", { executions: [{
+				executionId: "call-5", aRun: {}, worktreeRoots: [42],
+			}] }), /task\.executions\[0\]\.worktreeRoots\[0\] must be a string/],
+			["T-20260918-s18", shapedRecord("T-20260918-s18", { executions: [{
+				executionId: "call-6", aRun: {}, endedReason: 42,
+			}] }), /task\.executions\[0\]\.endedReason must be a string/],
+			["T-20260918-s19", shapedRecord("T-20260918-s19", { executions: [{
+				executionId: "call-7", aRun: {}, unacceptedReport: { taskId: 9, status: "completed", summary: "x", evidence: { workerRunId: "r" } },
+			}] }), /task\.executions\[0\]\.unacceptedReport\.taskId must be a string/],
+			["T-20260918-s20", shapedRecord("T-20260918-s20", { executions: [{
+				executionId: "call-8", aRun: {}, unacceptedReport: { taskId: "T-20260918-s20", status: "completed", summary: "x", evidence: { workerRunId: false } },
+			}] }), /task\.executions\[0\]\.unacceptedReport\.evidence\.workerRunId must be a string/],
+			["T-20260918-s21", shapedRecord("T-20260918-s21", { recovery: { required: true } }), /task\.recovery\.reason must be a string when recovery is required/],
+		];
+		for (const [taskId, task, pattern] of wrongTypes) {
+			writeEnvelope(taskId, task);
+			const result = ledger.read(taskId);
+			assert.equal(result.status, "corrupt", `${taskId}: wrong-typed field is corrupt`);
+			assert.match(result.reason, pattern, `${taskId}: reason names the field`);
+		}
+
+		const legacy = shapedRecord("T-20260918-s11");
+		delete legacy.successors;
+		delete legacy.executions;
+		delete legacy.findings;
+		delete legacy.recoveryAttempts;
+		delete legacy.recoveryStates;
+		delete legacy.verdictRefusals;
+		writeEnvelope("T-20260918-s11", legacy);
+		const historical = ledger.read("T-20260918-s11");
+		assert.equal(historical.status, "ok", "S11: a record missing fields predating them is not corrupt");
+
+		writeEnvelope("T-20260918-s12", shapedRecord("T-20260918-s12", { executions: {} }));
+		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
+		const diagnostics = orch.describeTaskDiagnostics(cwd, "T-20260918-s12");
+		assert.equal(diagnostics.error, "TASK_LEDGER_CORRUPT", "S12: single-Task diagnostics classifies the record as corrupt");
+		assert.match(diagnostics.reason, /task\.executions must be an array/, "S13: the diagnostic reason is the readable shape error");
+		assert.equal(existsSync(join(dir, "planner-only", "ledger", "T-20260918-s12.json")), true, "S14: the corrupt file is left untouched");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
 console.log("planner-only ledger-store: PASS");

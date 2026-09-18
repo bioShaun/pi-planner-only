@@ -1,0 +1,21 @@
+Script started on 2026-09-18 10:05:28+08:00 [COMMAND="node --experimental-strip-types diagnostics-regression.test.mjs" <not executed on terminal>]
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: aRun.operation is required
+
+'ok' !== 'corrupt'
+
+    at file:///public/pi/pi-planner-only/diagnostics-regression.test.mjs:60:11 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 'ok',
+  expected: 'corrupt',
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.14.0
+
+Script done on 2026-09-18 10:05:29+08:00 [COMMAND_EXIT_CODE="1"]

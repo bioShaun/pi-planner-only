@@ -1764,6 +1764,8 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	assert.equal(execution.probeFailures[0].kind, "not-a-git-repository");
 	assert.ok(execution.guidance.length > 0);
 	assert.deepEqual(store.require(task.taskId), before, "diagnostics never mutate the record");
+	execution.probeFailures[0].error = "caller mutation";
+	assert.deepEqual(store.require(task.taskId), before, "returned probe diagnostics do not alias stored Evidence");
 
 	// executionId narrows the view; unknown ids get a structured error.
 	const narrowed = orch.describeTaskDiagnostics("/fixture/diag", task.taskId, "call-dg1");
@@ -2339,6 +2341,196 @@ function boundReaderExecution(store, task, { executionId, runId, report }) {
 	const narrowed = orch.describeTaskDiagnostics("/fixture/cap", task.taskId, "call-cap-0").diagnostics;
 	assert.equal(narrowed.executions.length, 1);
 	assert.equal(narrowed.executions[0].executionId, "call-cap-0");
+}
+
+// Re-review d1cc34c R5 — hold precision: a same-Task reservation of another
+// execution is still listed, but "active" requires a write-isolating
+// reservation of the *held* execution (or its writerhold re-registration).
+{
+	const store = pinnedStore();
+	const concurrency = new ConcurrencyController();
+	const orch = new PlannerOrchestrator({ gitRunner, store, concurrency });
+	const task = store.create(createTaskSpec({
+		taskId: "T-20260918-r5",
+		objective: "hold precision",
+		cwd: "/fixture/r5",
+		role: "worker",
+		validation: { required: false },
+	}));
+	store.setWriterHold(task.taskId, {
+		executionId: "call-missing-writer",
+		reason: "stop unknown",
+		since: "2026-09-05T00:00:00.000Z",
+	});
+
+	// Another execution's reader reservation on the same Task does not prove
+	// the missing writer's isolation, but stays visible in the listing.
+	concurrency.reserve({
+		id: "another-reader",
+		taskId: task.taskId,
+		role: "explorer",
+		capability: "reader",
+		workspaces: ["/fixture/r5"],
+	});
+	let d = orch.describeTaskDiagnostics("/fixture/r5", task.taskId).diagnostics;
+	assert.equal(d.writerHold?.active, false, "another execution's reader reservation does not mark the held writer active");
+	assert.ok(d.reservations.some((item) => item.id === "another-reader"), "task-level reservations stay visible");
+	assert.ok(d.guidance.some((line) => line.includes("restart state drift")));
+
+	// Even a reservation whose id matches the held execution is not
+	// isolation when its capability is a reader.
+	concurrency.release("another-reader");
+	concurrency.reserve({
+		id: "call-missing-writer",
+		taskId: task.taskId,
+		role: "explorer",
+		capability: "reader",
+		workspaces: ["/fixture/r5"],
+	});
+	d = orch.describeTaskDiagnostics("/fixture/r5", task.taskId).diagnostics;
+	assert.equal(d.writerHold?.active, false, "a matching-id reader reservation still is not write isolation");
+	concurrency.release("call-missing-writer");
+
+	// The real shapes: a live writer reservation, then its post-restart
+	// writerhold re-registration, both for the held execution.
+	concurrency.reserve({
+		id: "call-missing-writer",
+		taskId: task.taskId,
+		role: "worker",
+		capability: "writer",
+		workspaces: ["/fixture/r5"],
+	});
+	d = orch.describeTaskDiagnostics("/fixture/r5", task.taskId).diagnostics;
+	assert.equal(d.writerHold?.active, true, "a live writer reservation for the held execution reports active isolation");
+	concurrency.release("call-missing-writer");
+	concurrency.hold({
+		id: "writerhold:call-missing-writer",
+		taskId: task.taskId,
+		role: "worker",
+		capability: "writer",
+		workspaces: ["/fixture/r5"],
+		reservedAt: "2026-09-05T00:00:00.000Z",
+	});
+	d = orch.describeTaskDiagnostics("/fixture/r5", task.taskId).diagnostics;
+	assert.equal(d.writerHold?.active, true, "a writerhold re-registration for the held execution reports active isolation");
+}
+
+// Re-review d1cc34c R1 — untrusted unaccepted-report fields cannot inflate
+// the diagnostics object: every free string field is capped at construction
+// and the truncation is disclosed on the diagnostics model itself.
+{
+	const store = pinnedStore();
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const task = store.create(createTaskSpec({
+		taskId: "T-20260918-r1",
+		objective: "bounded diagnostics fields",
+		cwd: "/fixture/r1",
+		role: "worker",
+		validation: { required: false },
+	}));
+	store.beginExecution(task.taskId, {
+		executionId: "call-r1",
+		kind: "worker",
+		cwd: "/fixture/r1",
+		worktreeRoots: ["/fixture/r1"],
+		aRun: { cwd: "/fixture/r1", taskId: task.taskId, workerRunId: "call-r1" },
+		capability: "writer",
+	});
+	const huge = "x".repeat(1_000_000);
+	store.finalizeExecution(task.taskId, "call-r1", {
+		status: "stop_unconfirmed",
+		endedReason: "operator_cancel",
+		endedAt: "2026-09-05T00:00:00.000Z",
+		terminationConfirmed: false,
+		unacceptedReport: {
+			version: 1,
+			taskId: task.taskId,
+			status: "completed",
+			summary: huge,
+			changedFiles: [],
+			validation: [],
+			evidence: { cwd: "/fixture/r1", taskId: task.taskId, workerRunId: huge },
+			risks: [],
+			unresolved: [],
+		},
+		unacceptedReportReason: `identity mismatch ${huge}`,
+	});
+	const d = orch.describeTaskDiagnostics("/fixture/r1", task.taskId).diagnostics;
+	const execution = d.executions[0];
+	assert.equal(execution.unacceptedReport.workerRunId.length, 200, "workerRunId is capped");
+	assert.equal(execution.unacceptedReport.reason.length, 400, "the unaccepted reason is capped");
+	assert.equal(execution.unacceptedReport.summary.length, 200, "the report summary is capped");
+	const reportLine = execution.guidance.find((line) => line.includes("not admitted"));
+	assert.ok(reportLine, "the unaccepted report is explained in guidance");
+	assert.ok(reportLine.length < 500, "the reason embedded in guidance is capped too");
+	assert.equal(d.truncated, true, "field-level truncation is disclosed on the diagnostics object");
+	assert.ok(JSON.stringify(d).length < 20000, "the structured diagnostics object has a bounded size");
+}
+
+// Re-review d1cc34c R4 — a recorded transcript path earns "verified-file"
+// only as a regular file readable from this host; a directory and an
+// unreadable file are disclosed separately, and with no sessionDir the
+// location is honestly unknown rather than a guessed plugin directory.
+{
+	const store = pinnedStore();
+	const orch = new PlannerOrchestrator({ gitRunner, store });
+	const task = store.create(createTaskSpec({
+		taskId: "T-20260918-r4",
+		objective: "session log verification",
+		cwd: "/fixture/r4",
+		role: "worker",
+		validation: { required: false },
+	}));
+	store.beginExecution(task.taskId, {
+		executionId: "call-r4",
+		kind: "worker",
+		cwd: "/fixture/r4",
+		worktreeRoots: ["/fixture/r4"],
+		aRun: { cwd: "/fixture/r4", taskId: task.taskId, workerRunId: "call-r4" },
+		capability: "writer",
+	});
+
+	// No recorded path and no host metadata: unknown, never a fabricated path.
+	let d = orch.describeTaskDiagnostics("/fixture/r4", task.taskId).diagnostics;
+	assert.equal(d.sessionLog.status, "unknown");
+	assert.equal(d.sessionLog.path, undefined, "without sessionDir no directory is guessed");
+
+	const logDir = mkdtempSync(join(tmpdir(), "planner-only-r4-"));
+	try {
+		task.usage.children.push({
+			input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
+			kind: "worker", pending: false, source: "sync-details",
+			toolCallId: "call-r4", runId: "run-r4",
+			transcriptPath: logDir,
+		});
+
+		// A directory recorded as the transcript path is disclosed as a directory.
+		d = orch.describeTaskDiagnostics("/fixture/r4", task.taskId).diagnostics;
+		assert.equal(d.sessionLog.status, "directory", "a directory is not labelled a verified file");
+		assert.equal(d.sessionLog.path, logDir);
+
+		// An unreadable regular file is not verified either.
+		const deniedFile = join(logDir, "denied.jsonl");
+		writeFileSync(deniedFile, "{}\n", "utf8");
+		chmodSync(deniedFile, 0o000);
+		if (typeof process.getuid === "function" && process.getuid() !== 0) {
+			task.usage.children[0].transcriptPath = deniedFile;
+			d = orch.describeTaskDiagnostics("/fixture/r4", task.taskId).diagnostics;
+			assert.equal(d.sessionLog.status, "known-unavailable", "an unreadable file is not labelled a verified file");
+			assert.match(d.sessionLog.note ?? "", /not readable/);
+			chmodSync(deniedFile, 0o600);
+		}
+
+		// A readable regular file earns verified-file as before.
+		const logFile = join(logDir, "child-transcript.jsonl");
+		writeFileSync(logFile, "{}\n", "utf8");
+		task.usage.children[0].transcriptPath = logFile;
+		d = orch.describeTaskDiagnostics("/fixture/r4", task.taskId).diagnostics;
+		assert.equal(d.sessionLog.status, "verified-file");
+		assert.equal(d.sessionLog.path, logFile);
+	} finally {
+		rmSync(logDir, { recursive: true, force: true });
+	}
 }
 
 console.log("planner-only orchestration: PASS");

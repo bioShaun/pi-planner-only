@@ -4,7 +4,9 @@
 
 **Blocked by:** 01 — Git 采样失败提供具体原因；02 — 受限 Explorer 正确停止，恢复时不生成写入占用。
 
-**Status:** done
+**Status:** needs-triage
+
+**Resolution:** Implementation complete; acceptance pending final independent review.
 
 **Parent:** [停止证据失败规格](../spec.md)，实施决策 §2 writer 启动前阻塞、§5 完整静止证据。
 

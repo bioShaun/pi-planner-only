@@ -98,6 +98,29 @@ Root 把 `TaskSpec` 作为 `planner_delegate` 的参数传入——该工具没�
 
 `planner_delegate` 登记任务、采样工作区；同一 cwd 上第二个 `worker` 委派会被拒绝（每个 cwd 至多一个 worker）；`subagent` 与 `bg_wait` 调用一律拒绝。铸出的 id 会在共享 ledger 命名空间中以跨进程原子 claim 保留；恢复过、终态、超恢复上限或快照损坏的 id 都不会再次分配。`planner_redelegate` 逐字绑定既有记录——其存下的 spec 绝不重写——并校验 workspace；id 冲突不会被当作继续。受限角色会 remap 到工具面匹配的 builtin agent：
 
+### 只读恢复与诊断
+
+`acceptanceMode` 只能在 `planner_delegate` 创建 Task 时选择，重绑定时
+不可修改；省略时默认为 `worktree`。只有 `role: "explorer"` 才能使用
+`acceptanceMode: "observation"` 交付只读信息。观察类验收接受可信
+restricted-reader 的信息报告，不表示已验证代码变更。受限 reader 收到
+匹配终态后以 `terminal+restricted-reader` 确认，不需要 Git，也不会获得
+writer reservation 或 `writerHold`；没有匹配终态时仍是未确认状态，但不会
+因此获得 writer hold。
+
+Worktree Task 以及可写或能力未知的执行继续要求原有 Evidence。若 writer
+在启动前无法提供必要采样，会以 `ENVIRONMENT_UNVERIFIABLE` 拒绝启动，不
+产生子执行或新的 hold；启动后出现采样或哈希缺口时继续保持 writer 隔离和
+hold，直到恢复条件解决。
+
+不带 `taskId` 的 `planner_tasks` 仍列出 live Task；带 canonical `taskId`、可
+选 `executionId` 时，只读返回内存或账本中的诊断，不发起委派、不采样 Git、
+不运行 shell。返回执行状态、能力与确认依据、终态和报告接纳、探测失败、
+恢复要求、writer hold 及会话日志位置。位置明确区分已验证可读文件、已知但
+不可访问的文件、目录提示和未知；目录不会冒称已验证日志文件。结构化诊断
+固定上限为 64 KiB，并披露截断。`executionId` 指 Task 的一次执行，用于
+诊断，和子执行的 `runId` 不同。
+
 非法 TaskSpec 拒绝会展示修复摘要，保留可信角色和验证意图。命令列表简写会转换成明确的必需验证；无法无损转换的 validation 会继续拒绝并要求补充，不会静默变成 `required: false`。`validation.commands` 的每一项必须是可执行命令形状——以程序名或路径开头的 shell 命令；指令性散文会被拒绝（`TASKSPEC_VALIDATION_COMMAND_NOT_EXECUTABLE`），因为 worker 会逐字执行这些项、校验器也逐字比对。`planner_redelegate` 上未知或其他 workspace 的 `taskId` 会在启动 child 前拒绝，也不会创建 placeholder。
 
 | 角色 | Builtin agent | 子进程工具 |

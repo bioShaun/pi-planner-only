@@ -1,0 +1,4 @@
+Script started on 2026-09-18 10:10:16+08:00 [COMMAND="node --experimental-strip-types diagnostics-regression.test.mjs" <not executed on terminal>]
+diagnostics regression tests passed
+
+Script done on 2026-09-18 10:10:16+08:00 [COMMAND_EXIT_CODE="0"]

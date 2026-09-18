@@ -4,7 +4,9 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** done
+**Status:** needs-triage
+
+**Resolution:** Implementation complete; acceptance pending final independent review.
 
 **Parent:** [停止证据失败规格](../spec.md)，实施决策 §5，兼容要求 §7。
 

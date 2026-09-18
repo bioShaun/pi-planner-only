@@ -4,7 +4,7 @@
  * delegate.ts (ADR-0001).
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import {
 	captureEvidence,
@@ -24,7 +24,7 @@ import {
 	compareSnapshotBinding,
 } from "./workspace-snapshot.ts";
 import type { GitRunner } from "./git-audit.ts";
-import { GIT_REF_PATTERN } from "./git-audit.ts";
+import { GIT_READ_ARGV, GIT_REF_PATTERN } from "./git-audit.ts";
 import { validateWorkerReportIdentity } from "./report.ts";
 import {
 	lastWorkerValidationPassed,
@@ -361,7 +361,7 @@ export interface PlannerTaskSummary {
 
 /** Ticket 06 — where the session log for a Task is known to live. */
 export interface TaskSessionLogStatus {
-	status: "verified-file" | "known-unavailable" | "default-directory" | "unknown";
+	status: "verified-file" | "known-unavailable" | "directory" | "default-directory" | "unknown";
 	/** The file path (verified/known-unavailable) or directory hint. */
 	path?: string;
 	/** Where the location claim came from — never guessed. */
@@ -655,6 +655,11 @@ export class PlannerOrchestrator {
 		executionId?: string,
 		options: { sessionFile?: string; sessionDir?: string } = {},
 	): { diagnostics: PlannerTaskDiagnostics } | { error: string; reason: string } {
+		const boundedQuery = (value: unknown, max: number): string => {
+			const text = typeof value === "string" ? value : "unknown";
+			return text.length <= max ? text : text.slice(0, max);
+		};
+		const queryTaskId = boundedQuery(taskId, 200);
 		let record = this.store.get(taskId);
 		// A corrupt ledger record was quarantined into memory as a placeholder
 		// by restoreFromLedger — the classification stays "corrupt", not the
@@ -662,7 +667,7 @@ export class PlannerOrchestrator {
 		if (record && record.cwd === "" && this.untrustedBalances.has(taskId)) {
 			return {
 				error: "TASK_LEDGER_CORRUPT",
-				reason: `planner_tasks: the ledger record for ${taskId} exists but is corrupt (${this.untrustedBalances.get(taskId)}); the record was quarantined, not restored — inspect the ledger file or repair it manually`,
+				reason: `planner_tasks: the ledger record for ${queryTaskId} exists but is corrupt (${boundedQuery(this.untrustedBalances.get(taskId), 400)}); the record was quarantined, not restored — inspect the ledger file or repair it manually`,
 			};
 		}
 		let source: "memory" | "ledger" | undefined = record ? "memory" : undefined;
@@ -673,7 +678,7 @@ export class PlannerOrchestrator {
 			if (!SAFE_TASK_ID.test(taskId)) {
 				return {
 					error: "TASK_ID_INVALID",
-					reason: `planner_tasks: ${JSON.stringify(taskId)} is not a safe Task id; pass the canonical taskId verbatim from a prior planner_delegate result`,
+					reason: `planner_tasks: ${JSON.stringify(queryTaskId)} is not a safe Task id; pass the canonical taskId verbatim from a prior planner_delegate result`,
 				};
 			}
 			const found = this.snapshots.read(taskId);
@@ -685,17 +690,17 @@ export class PlannerOrchestrator {
 				case "corrupt":
 					return {
 						error: "TASK_LEDGER_CORRUPT",
-						reason: `planner_tasks: the ledger record for ${taskId} exists but is corrupt (${found.reason}); the record was not restored or modified — inspect the ledger file or repair it manually`,
+						reason: `planner_tasks: the ledger record for ${queryTaskId} exists but is corrupt (${boundedQuery(found.reason, 400)}); the record was not restored or modified — inspect the ledger file or repair it manually`,
 					};
 				case "unreadable":
 					return {
 						error: "TASK_LEDGER_UNREADABLE",
-						reason: `planner_tasks: the ledger record for ${taskId} could not be read (${found.reason}); fix the filesystem permission or remount, then retry`,
+						reason: `planner_tasks: the ledger record for ${queryTaskId} could not be read (${boundedQuery(found.reason, 400)}); fix the filesystem permission or remount, then retry`,
 					};
 				case "invalid":
 					return {
 						error: "TASK_ID_INVALID",
-						reason: `planner_tasks: ${JSON.stringify(taskId)} is not a safe Task id; pass the canonical taskId verbatim from a prior planner_delegate result`,
+						reason: `planner_tasks: ${JSON.stringify(queryTaskId)} is not a safe Task id; pass the canonical taskId verbatim from a prior planner_delegate result`,
 					};
 				default:
 					break;
@@ -704,22 +709,34 @@ export class PlannerOrchestrator {
 		if (!record || !source) {
 			return {
 				error: "TASK_UNKNOWN",
-				reason: `planner_tasks: unknown Task ${taskId}; pass the canonical taskId verbatim from a prior planner_delegate result, or call planner_tasks without an id to list live Tasks`,
+				reason: `planner_tasks: unknown Task ${queryTaskId}; pass the canonical taskId verbatim from a prior planner_delegate result, or call planner_tasks without an id to list live Tasks`,
 			};
 		}
 		if (record.cwd && normalizeWorkspaceIdentity(record.cwd) !== normalizeWorkspaceIdentity(cwd)) {
 			return {
 				error: "TASK_FOREIGN_WORKSPACE",
-				reason: `Task ${record.taskId} belongs to workspace ${record.cwd}, not ${cwd}; call planner_tasks from that workspace`,
+				reason: `Task ${boundedQuery(record.taskId, 200)} belongs to workspace ${boundedQuery(record.cwd, 400)}, not ${boundedQuery(cwd, 400)}; call planner_tasks from that workspace`,
 			};
 		}
 		const taskRef = record;
 		// A live reservation or a restored writerhold: re-registration both keep
-		// the workspace occupied; "active" means something is actually holding it.
+		// the workspace occupied; "active" means the *held execution* (or its
+		// writerhold re-registration) still holds a write-isolating reservation.
+		// A same-Task reservation of another execution — especially a reader —
+		// proves nothing about the missing writer's isolation.
 		const reservations = this.concurrency.status().reservations
 			.filter((item) => item.taskId === taskRef.taskId || item.id === taskRef.writerHold?.executionId || item.id === `writerhold:${taskRef.writerHold?.executionId}`);
-		const holdActive = taskRef.writerHold !== undefined && reservations.length > 0;
+		const heldExecutionId = taskRef.writerHold?.executionId;
+		const holdActive = heldExecutionId !== undefined && reservations.some((item) =>
+			(item.id === heldExecutionId || item.id === `writerhold:${heldExecutionId}`)
+			&& (item.capability === "writer" || item.capability === "reviewer"));
 		let truncated = false;
+		const capped = (value: unknown, max: number, fallback = "unknown"): string => {
+			const text = typeof value === "string" ? value : fallback;
+			if (text.length <= max) return text;
+			truncated = true;
+			return text.slice(0, max);
+		};
 		const filteredExecutions = (taskRef.executions ?? [])
 			.filter((execution) => executionId === undefined || execution.executionId === executionId);
 		const totalExecutions = filteredExecutions.length;
@@ -734,7 +751,16 @@ export class PlannerOrchestrator {
 					...(execution.cReport?.probeFailures ?? []),
 					...(execution.stopSamples ?? []).flatMap((sample) => sample.probeFailures ?? []),
 				];
-				const sampleFailures = allFailures.slice(0, MAX_TASK_DIAGNOSTIC_PROBE_FAILURES);
+				const sampleFailures = allFailures.slice(0, MAX_TASK_DIAGNOSTIC_PROBE_FAILURES).map((failure) => ({
+					operation: capped(failure.operation, 200),
+					kind: capped(failure.kind, 100) as GitProbeFailure["kind"],
+					cwd: capped(failure.cwd, 400),
+					...(failure.exitCode !== undefined ? { exitCode: failure.exitCode } : {}),
+					...(failure.killed !== undefined ? { killed: failure.killed } : {}),
+					...(failure.startupFailed !== undefined ? { startupFailed: failure.startupFailed } : {}),
+					...(failure.error !== undefined ? { error: capped(failure.error, 400) } : {}),
+					...(failure.truncated !== undefined ? { truncated: failure.truncated } : {}),
+				}));
 				const failuresTruncated = allFailures.length - sampleFailures.length;
 				if (failuresTruncated > 0) truncated = true;
 				const reportReceived = execution.reportIndex !== undefined
@@ -755,7 +781,7 @@ export class PlannerOrchestrator {
 					guidance.push("stop-evidence sampling failed — residual workspace state is unknown");
 				}
 				if (execution.unacceptedReport) {
-					guidance.push(`a structured report was received but not admitted (${execution.unacceptedReportReason ?? "reason not recorded"})`);
+					guidance.push(`a structured report was received but not admitted (${capped(execution.unacceptedReportReason ?? "reason not recorded", 400)})`);
 				}
 				if (execution.lateReport) {
 					guidance.push("a completed report arrived after a cancel request; it is kept as lateReport evidence only");
@@ -767,29 +793,31 @@ export class PlannerOrchestrator {
 					guidance.push("the execution never launched — a pre-launch check refused it");
 				}
 				return {
-					executionId: execution.executionId,
-					kind: execution.kind,
-					...(execution.status ? { status: execution.status } : {}),
-					capability: execution.capability ?? "unknown",
-					...(execution.capabilityBasis ? { capabilityBasis: execution.capabilityBasis } : {}),
-					...(execution.runId ? { runId: execution.runId } : {}),
-					...(execution.cwd ? { cwd: execution.cwd } : {}),
-					...(execution.worktreeRoots?.length ? { worktreeRoots: [...execution.worktreeRoots] } : {}),
-					...(execution.endedReason ? { endedReason: execution.endedReason } : {}),
-					...(execution.endedAt ? { endedAt: execution.endedAt } : {}),
+					executionId: capped(execution.executionId, 200),
+					kind: capped(execution.kind, 100) as DelegationKind,
+					...(execution.status ? { status: capped(execution.status, 100) as ExecutionLifecycleStatus } : {}),
+					capability: capped(execution.capability, 100) as ExecutionCapability | "unknown",
+					...(execution.capabilityBasis ? { capabilityBasis: capped(execution.capabilityBasis, 200) } : {}),
+					...(execution.runId ? { runId: capped(execution.runId, 200) } : {}),
+					...(execution.cwd ? { cwd: capped(execution.cwd, 400) } : {}),
+					...(execution.worktreeRoots?.length
+						? { worktreeRoots: execution.worktreeRoots.map((root) => capped(root, 400)) }
+						: {}),
+					...(execution.endedReason ? { endedReason: capped(execution.endedReason, 400) } : {}),
+					...(execution.endedAt ? { endedAt: capped(execution.endedAt, 100) } : {}),
 					terminationConfirmed: execution.terminationConfirmed === true,
-					...(execution.confirmationBasis ? { confirmationBasis: execution.confirmationBasis } : {}),
+					...(execution.confirmationBasis ? { confirmationBasis: capped(execution.confirmationBasis, 200) } : {}),
 					...(execution.evidenceIncomplete === true ? { evidenceIncomplete: true } : {}),
 					reportReceived,
 					reportAccepted,
 					...(execution.unacceptedReport
 						? {
 							unacceptedReport: {
-								taskId: execution.unacceptedReport.taskId,
-								status: execution.unacceptedReport.status,
-								summary: execution.unacceptedReport.summary.slice(0, 200),
-								workerRunId: execution.unacceptedReport.evidence?.workerRunId ?? "",
-								reason: (execution.unacceptedReportReason ?? "not recorded").slice(0, 400),
+								taskId: capped(execution.unacceptedReport.taskId, 200),
+								status: capped(execution.unacceptedReport.status, 100),
+								summary: capped(execution.unacceptedReport.summary, 200),
+								workerRunId: capped(execution.unacceptedReport.evidence?.workerRunId ?? "", 200),
+								reason: capped(execution.unacceptedReportReason ?? "not recorded", 400),
 							},
 						}
 						: {}),
@@ -805,15 +833,16 @@ export class PlannerOrchestrator {
 		if (executions.length === 0) {
 			guidance.push(executionId === undefined
 				? "never launched — no execution records exist on this Task"
-				: `no execution ${executionId} on this Task`);
+				: `no execution ${capped(executionId, 200)} on this Task`);
 		}
 		if (record.writerHold) {
+			const heldId = capped(record.writerHold.executionId, 200);
 			guidance.push(holdActive
-				? `writer hold active for execution ${record.writerHold.executionId} (${record.writerHold.reason.slice(0, 200)})`
-				: `writer hold recorded for execution ${record.writerHold.executionId} but no live reservation exists — restart state drift`);
+				? `writer hold active for execution ${heldId} (${capped(record.writerHold.reason, 200)})`
+				: `writer hold recorded for execution ${heldId} but no live reservation exists — restart state drift`);
 		}
 		if (record.recovery?.required === true) {
-			guidance.push(`recovery required: ${record.recovery.reason.slice(0, 400)}; submit planner_redelegate recovery or planner_abort for execution ${record.recovery.executionId}`);
+			guidance.push(`recovery required: ${capped(record.recovery.reason, 400)}; submit planner_redelegate recovery or planner_abort for execution ${capped(record.recovery.executionId, 200)}`);
 		}
 		if (source === "ledger") {
 			guidance.push("read from the ledger record — it was not restored into this session's store");
@@ -825,26 +854,26 @@ export class PlannerOrchestrator {
 		}
 		return {
 			diagnostics: {
-				taskId: record.taskId,
-				state: record.state,
-				...(record.stateReason ? { stateReason: record.stateReason.slice(0, 400) } : {}),
-				acceptanceMode: acceptanceModeOf(record),
+				taskId: capped(record.taskId, 200),
+				state: capped(record.state, 100) as TaskState,
+				...(record.stateReason ? { stateReason: capped(record.stateReason, 400) } : {}),
+				acceptanceMode: capped(acceptanceModeOf(record), 100) as AcceptanceMode,
 				...(record.recovery?.required === true
-					? { recovery: { required: true, reason: record.recovery.reason.slice(0, 400), executionId: record.recovery.executionId } }
+					? { recovery: { required: true, reason: capped(record.recovery.reason, 400), executionId: capped(record.recovery.executionId, 200) } }
 					: {}),
 				...(record.writerHold
-					? { writerHold: { executionId: record.writerHold.executionId, reason: record.writerHold.reason.slice(0, 400), since: record.writerHold.since, active: holdActive } }
+					? { writerHold: { executionId: capped(record.writerHold.executionId, 200), reason: capped(record.writerHold.reason, 400), since: capped(record.writerHold.since, 100), active: holdActive } }
 					: {}),
 				reservations: reservations.map((item) => ({
-					id: item.id,
-					...(item.taskId ? { taskId: item.taskId } : {}),
-					capability: item.capability,
-					workspaces: [...item.workspaces],
+					id: capped(item.id, 200),
+					...(item.taskId ? { taskId: capped(item.taskId, 200) } : {}),
+					capability: capped(item.capability, 100),
+					workspaces: item.workspaces.map((workspace) => capped(workspace, 400)),
 				})),
 				source,
 				reports: record.reports?.length ?? 0,
 				reviews: record.reviews?.length ?? 0,
-				sessionLog: this.describeSessionLog(record, shownExecutions, options),
+				sessionLog: this.describeSessionLog(record, shownExecutions, options, capped),
 				executions,
 				totalExecutions,
 				truncated,
@@ -858,13 +887,15 @@ export class PlannerOrchestrator {
 	 * sources are trusted: a path persisted on the Task's own usage record
 	 * (the child transcript/session file), or host-provided metadata for the
 	 * *current* session when this session actually owns the Task. A known
-	 * path is verified with an existence check only — diagnostics never read
-	 * log contents and never scan a session directory for candidates.
+	 * path is verified with a stat (regular file) plus a read-permission
+	 * check only — diagnostics never read log contents and never scan a
+	 * session directory for candidates.
 	 */
 	private describeSessionLog(
 		record: TaskRecord,
 		targetExecutions: readonly TaskExecutionRecord[],
 		options: { sessionFile?: string; sessionDir?: string },
+		capped: (value: string, max: number) => string,
 	): TaskSessionLogStatus {
 		const children = record.usage?.children ?? [];
 		for (const execution of targetExecutions) {
@@ -878,14 +909,11 @@ export class PlannerOrchestrator {
 					? loose.sessionFile
 					: undefined;
 			if (recordedPath) {
-				return existsSync(recordedPath)
-					? { status: "verified-file", path: recordedPath, source: "task-usage-record" }
-					: {
-						status: "known-unavailable",
-						path: recordedPath,
-						source: "task-usage-record",
-						note: "a location is recorded for this execution but it is not accessible from this host now",
-					};
+				return this.verifySessionLogPath(recordedPath, "task-usage-record", {
+					directory: "the recorded location is a directory, not a session log file — inspect it for the right file yourself",
+					unavailable: "a location is recorded for this execution but it is not accessible from this host now",
+					unreadable: "the recorded file exists but is not readable from this host now — fix the filesystem permission, then retry",
+				}, capped);
 			}
 		}
 		const sessionIds = new Set(
@@ -895,19 +923,55 @@ export class PlannerOrchestrator {
 		const ownedHere = sessionIds.size > 0
 			&& children.some((entry) => entry.ownerRootSessionId !== undefined && sessionIds.has(entry.ownerRootSessionId));
 		if (options.sessionFile && ownedHere) {
-			return existsSync(options.sessionFile)
-				? { status: "verified-file", path: options.sessionFile, source: "host-session", note: "the current Root session log; this Task ran in this session" }
-				: { status: "known-unavailable", path: options.sessionFile, source: "host-session", note: "the host-reported session file is not accessible now" };
+			return this.verifySessionLogPath(options.sessionFile, "host-session", {
+				verified: "the current Root session log; this Task ran in this session",
+				directory: "the host-reported session file is a directory, not a file",
+				unavailable: "the host-reported session file is not accessible now",
+				unreadable: "the host-reported session file exists but is not readable now — fix the filesystem permission, then retry",
+			}, capped);
 		}
 		if (options.sessionDir) {
 			return {
 				status: "default-directory",
-				path: options.sessionDir,
+				path: capped(options.sessionDir, 1000),
 				source: "host-default",
 				note: "session logs live under this directory; no exact file is recorded for this Task — do not assume any file there belongs to it",
 			};
 		}
 		return { status: "unknown", note: "no session log location is recorded for this Task" };
+	}
+
+	/**
+	 * Existence alone never earns "verified-file": the path must stat as a
+	 * regular file and be readable from this host (contents are never read).
+	 * A directory and an unreadable file each get their own disclosure instead
+	 * of masquerading as a verified log file.
+	 */
+	private verifySessionLogPath(
+		path: string,
+		source: "task-usage-record" | "host-session",
+		notes: { verified?: string; directory: string; unavailable: string; unreadable: string },
+		capped: (value: string, max: number) => string,
+	): TaskSessionLogStatus {
+		const cappedPath = capped(path, 1000);
+		let stats: ReturnType<typeof statSync>;
+		try {
+			stats = statSync(path);
+		} catch {
+			return { status: "known-unavailable", path: cappedPath, source, note: notes.unavailable };
+		}
+		if (stats.isDirectory()) {
+			return { status: "directory", path: cappedPath, source, note: notes.directory };
+		}
+		if (!stats.isFile()) {
+			return { status: "known-unavailable", path: cappedPath, source, note: notes.unavailable };
+		}
+		try {
+			accessSync(path, constants.R_OK);
+		} catch {
+			return { status: "known-unavailable", path: cappedPath, source, note: notes.unreadable };
+		}
+		return { status: "verified-file", path: cappedPath, source, ...(notes.verified ? { note: notes.verified } : {}) };
 	}
 
 	/**
@@ -2307,9 +2371,12 @@ export class PlannerOrchestrator {
 	/**
 	 * Ticket 03 — explicit declared-evidence requirements are never waived by
 	 * observation mode: a claimed Git ref or diffStat is checked against
-	 * Root's own fresh sample, not trusted as a non-empty field. When the
-	 * environment cannot supply the sample, the requirement is unverifiable
-	 * and the pass refuses.
+	 * Root's own fresh sample, not trusted as a bound field. A diffStat is
+	 * distinguished by three states: unbound (refused), a failed diff probe
+	 * (refused — unverifiable), and a succeeded probe with empty output —
+	 * a clean worktree, where only an empty declared diffStat matches.
+	 * When the environment cannot supply the sample, the requirement is
+	 * unverifiable and the pass refuses.
 	 */
 	private async observationDeclaredEvidenceRefusal(task: TaskRecord, report: WorkerReport): Promise<RootVerdictRefusal | undefined> {
 		const expected = task.spec?.expectedEvidence;
@@ -2349,16 +2416,18 @@ export class PlannerOrchestrator {
 		}
 		if (expected?.diffStat === true) {
 			const declared = report.evidence.diffStat;
-			if (!declared) {
+			if (declared === undefined) {
 				return {
 					kind: "observation-inadmissible",
 					reason: "spec expectedEvidence.diffStat requires a diffStat bound in the report evidence; none was recorded",
 				};
 			}
-			if (!gitOk) {
+			const diffStatOperation = GIT_READ_ARGV.evidenceDiffStat.join(" ");
+			const diffStatFailed = (sample.probeFailures ?? []).some((failure) => failure.operation === diffStatOperation);
+			if (!gitOk || diffStatFailed || (sample.unavailableWorktreeRoots?.length ?? 0) > 0) {
 				return {
 					kind: "observation-inadmissible",
-					reason: `spec expectedEvidence.diffStat requires Root's own diff sample, but Git is unavailable at ${task.cwd} (${probeDetail}); the declared diffStat cannot be verified`,
+					reason: `spec expectedEvidence.diffStat requires Root's own diff sample, but the diff probe at ${task.cwd} did not produce one (${probeDetail}); the declared diffStat cannot be verified`,
 				};
 			}
 			if (declared !== (sample.diffStat ?? "")) {
@@ -2427,7 +2496,7 @@ export class PlannerOrchestrator {
 				reason: "spec expectedEvidence.gitRef requires a Git ref bound in the report evidence; none was recorded",
 			};
 		}
-		if (expected?.diffStat === true && !report.evidence.diffStat) {
+		if (expected?.diffStat === true && report.evidence.diffStat === undefined) {
 			return {
 				kind: "observation-inadmissible",
 				reason: "spec expectedEvidence.diffStat requires a diffStat bound in the report evidence; none was recorded",

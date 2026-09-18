@@ -1,0 +1,15 @@
+Script started on 2026-09-18 10:09:47+08:00 [COMMAND="npm run typecheck" <not executed on terminal>]
+
+> pi-planner-only@0.7.0 typecheck
+> tsc --noEmit
+
+orchestrate.ts(877,5): error TS2322: Type '{ guidance: string[]; probeFailuresTruncated?: number | undefined; probeFailures?: { truncated?: boolean | undefined; error?: string | undefined; startupFailed?: boolean | undefined; ... 4 more ...; cwd: string; }[] | undefined; ... 15 more ...; kind: DelegationKind; }[]' is not assignable to type '{ executionId: string; kind: DelegationKind; status?: ExecutionLifecycleStatus | undefined; capability: ExecutionCapability; ... 14 more ...; guidance: string[]; }[]'.
+  Type '{ guidance: string[]; probeFailuresTruncated?: number | undefined; probeFailures?: { truncated?: boolean | undefined; error?: string | undefined; startupFailed?: boolean | undefined; ... 4 more ...; cwd: string; }[] | undefined; ... 15 more ...; kind: DelegationKind; }' is not assignable to type '{ executionId: string; kind: DelegationKind; status?: ExecutionLifecycleStatus | undefined; capability: ExecutionCapability; ... 14 more ...; guidance: string[]; }'.
+    Types of property 'probeFailures' are incompatible.
+      Type '{ truncated?: boolean | undefined; error?: string | undefined; startupFailed?: boolean | undefined; killed?: boolean | undefined; exitCode?: number | undefined; operation: string; kind: string; cwd: string; }[] | undefined' is not assignable to type 'GitProbeFailure[] | undefined'.
+        Type '{ truncated?: boolean | undefined; error?: string | undefined; startupFailed?: boolean | undefined; killed?: boolean | undefined; exitCode?: number | undefined; operation: string; kind: string; cwd: string; }[]' is not assignable to type 'GitProbeFailure[]'.
+          Type '{ truncated?: boolean | undefined; error?: string | undefined; startupFailed?: boolean | undefined; killed?: boolean | undefined; exitCode?: number | undefined; operation: string; kind: string; cwd: string; }' is not assignable to type 'GitProbeFailure'.
+            Types of property 'kind' are incompatible.
+              Type 'string' is not assignable to type 'GitProbeFailureKind'.
+⠙[1G[0K
+Script done on 2026-09-18 10:09:50+08:00 [COMMAND_EXIT_CODE="2"]

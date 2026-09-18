@@ -1,0 +1,21 @@
+{
+  ".scratch/stop-evidence-reader-recovery/issues/01-git-probe-diagnostics.md": "0dc3856dcf4c832bb565ddc8d4057e2393c273e519b647620d70ba0b4e617fd0",
+  ".scratch/stop-evidence-reader-recovery/issues/02-reader-termination-and-restore.md": "9ace59a24c184a7baabd5363bd2e60e2f186717542034de88004fdd73e60230a",
+  ".scratch/stop-evidence-reader-recovery/issues/03-observation-task-completion.md": "32ad2ea08b56116da129a19bddcb05098cc00860c58e248f0296d76924813f95",
+  ".scratch/stop-evidence-reader-recovery/issues/04-writer-evidence-admission.md": "308a4fce956456e87e914d5be73c19c1c504393f7ecad99fa017a66b8c4dfc3c",
+  ".scratch/stop-evidence-reader-recovery/issues/05-unaccepted-terminal-reports.md": "d01d6aa9ada17e5c0ad70a15e3a34c7e16d711eca68a4e3da1d97a8505a47aa9",
+  ".scratch/stop-evidence-reader-recovery/issues/06-task-diagnostics-without-delegation.md": "58bfa277ef3beab6c84cb199210d3641f825285207f385f2c0682a59e34932cf",
+  ".scratch/stop-evidence-reader-recovery/issues/07-pi-host-end-to-end-acceptance.md": "8f26663453f573c8d45795810da2a9114bb9ae63cdf5e8acca2748846ff21174",
+  ".scratch/stop-evidence-reader-recovery/spec.md": "046fb5f03cb8d2a50a4bbbc45c5e978aa11310f120eb127f9856093f6c4f14eb",
+  "CONTEXT.md": "7e52b1f89d8c0f88dc5410408f5bfc2793a033326c68497acea67f6faac80c31",
+  "README.md": "cb67237ba78e89dbb1ba4cc1abfa5c296097dfecace87b96ed243b4fc379449b",
+  "README.zh-CN.md": "c2133c5611e10166254adf3184a636ae5411e66c8cc856cf312fefae7a2b1132",
+  "index.test.mjs": "987079e2db650e23eaddace70526fc52a5168703c1e074a8cc5f137c452b1fc1",
+  "index.ts": "56669e81bc9013521c11616e2d55585c7c05f95569a9ed8319321a00833645c8",
+  "ledger-store.test.mjs": "e6782af30ca54550c917f09919f916463cf01675321320b0dee53a092cf07012",
+  "ledger-store.ts": "b6bbc527e54a2852ce934578656936282a221c965619ccd03cbbcf74b81f8e7a",
+  "orchestrate.test.mjs": "09ba841865f74625e9630b03478422f12fef88f521d34bb7176f4a151129bb86",
+  "orchestrate.ts": "6185ebd874c63b1060a095a7149aeded156b57dad0457d8b44137d33f2078cd3",
+  "package.json": "29679609725fdc382ce24dddb355b9df0f92ffa73a6292267c4954551c3468ab",
+  "diffstat-acceptance.test.mjs": "cef01b87e83e7bf371c1e76d871c6e910ed271b06d99c0826be194f1962b8f79"
+}

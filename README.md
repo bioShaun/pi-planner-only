@@ -85,6 +85,37 @@ A small git/`pwd` allowlist exists only in `tool_call` policy for stale calls.
 Root `bash`/`edit`/`write` calls stay blocked by policy even though those
 names remain active for the child ceiling.
 
+### Reader recovery and diagnostics
+
+`acceptanceMode` is chosen only when `planner_delegate` creates a Task. It is
+immutable on rebind; omit it for the default `worktree` mode. Use
+`acceptanceMode: "observation"` only with `role: "explorer"` for read-only
+information delivery. Observation accepts a trusted restricted-reader report
+as information and never claims that code changes were verified. A restricted
+reader with a matching terminal is confirmed by `terminal+restricted-reader`,
+does not need Git, and never receives a writer reservation or `writerHold`.
+Without a matching terminal, it remains unconfirmed and follows recovery
+diagnostics without gaining a writer hold.
+
+Worktree tasks and writer-capable or unknown executions retain the normal
+Evidence requirements. A writer whose pre-launch environment cannot provide
+the required samples is refused with `ENVIRONMENT_UNVERIFIABLE` before launch;
+no child execution or new hold is created. A sampling or hash gap discovered
+after launch keeps the writer isolated and the hold active until recovery is
+resolved.
+
+`planner_tasks` without `taskId` still lists live Tasks. With a canonical
+`taskId`, and optionally an `executionId`, it returns read-only diagnostics for
+in-memory or ledger-only Tasks without delegation, Git sampling, or shell
+access. It reports execution status, capability and confirmation basis,
+termination and report admission, probe failures, recovery requirements,
+writer hold state, and session-log location. A location is classified as a
+verified readable file, a known but unavailable file, a directory hint, or
+unknown; a directory is never presented as a verified log file. Diagnostic
+details are bounded to a fixed 64 KiB structured budget and disclose
+truncation. `executionId` identifies the Task execution used for diagnostics;
+it is distinct from a child `runId`.
+
 ## v0.2 orchestration
 
 Root passes a `TaskSpec` as the `planner_delegate` parameters — no `taskId`

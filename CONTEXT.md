@@ -30,6 +30,18 @@ _Avoid_: job, ticket, unit of work
 The downward contract: what a Worker is allowed and required to do.
 _Avoid_: prompt, brief, ticket body
 
+**Acceptance mode**:
+The immutable declaration of what a Task may accept: `worktree` requires
+code-change evidence, while `observation` accepts read-only information and
+does not verify code changes.
+_Avoid_: reader verification, report text inference
+
+**Execution capability**:
+The trusted capability classification of one execution: `restricted-reader`,
+`writer`, or `unknown`. It determines stop confirmation and writer isolation;
+the Task role or a self-reported read-only flag does not.
+_Avoid_: role, readOnly claim
+
 **WorkerReport**:
 The upward contract: the only structured thing a Worker returns.
 _Avoid_: transcript, log, result blob

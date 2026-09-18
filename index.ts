@@ -17,6 +17,7 @@ import { GIT_AUDIT_OPERATIONS, classifyCommitDirtyPaths, dirtyPathsOutsideTruth,
 import { describeProbeFailures } from "./evidence.ts";
 import type { GitAuditRequest, GitRunner } from "./git-audit.ts";
 import { PlannerOrchestrator } from "./orchestrate.ts";
+import type { PlannerTaskDiagnostics } from "./orchestrate.ts";
 import { MAX_REVIEW_ROUNDS, MAX_TASK_DIAGNOSTICS_TEXT_CHARS, WORKER_REPORT_VERSION, isFinalTaskState } from "./types.ts";
 import type { DriftAcknowledgement, LoadedPluginFingerprint, ReviewFinding, ReviewMode, ReviewVerdict, TaskState } from "./types.ts";
 import {
@@ -65,6 +66,98 @@ import type { RecoveryDecision } from "./types.ts";
 
 /** P0-B — the only recovery action wired through planner_abort (spec §5, ADR-0003). */
 const ABORT_RECOVERY_ACTIONS = new Set(["abort"]);
+
+/** Ticket 06 — total serialization budget for the structured diagnostics payload in details. */
+const MAX_TASK_DIAGNOSTICS_DETAILS_BYTES = 64 * 1024;
+const MAX_TASK_DIAGNOSTICS_DETAILS_STRING_CHARS = 4000;
+const FLOOR_TASK_DIAGNOSTICS_DETAILS_STRING_CHARS = 256;
+const MAX_TASK_DIAGNOSTICS_DETAILS_ARRAY_ITEMS = 50;
+
+function cloneCappedDiagnosticsValue(value: unknown, stringCap: number, arrayCap: number, fieldName?: string): { value: unknown; cut: boolean } {
+	if (typeof value === "string") {
+		if (value.length <= stringCap) return { value, cut: false };
+		const suffix = "... [truncated]";
+		return {
+			value: stringCap <= suffix.length ? value.slice(0, stringCap) : `${value.slice(0, stringCap - suffix.length)}${suffix}`,
+			cut: true,
+		};
+	}
+	if (Array.isArray(value)) {
+		let cut = value.length > arrayCap;
+		const clone: unknown[] = [];
+		const items = fieldName === "executions" ? value.slice(-arrayCap) : value.slice(0, arrayCap);
+		for (const item of items) {
+			const capped = cloneCappedDiagnosticsValue(item, stringCap, arrayCap);
+			clone.push(capped.value);
+			cut = capped.cut || cut;
+		}
+		return { value: clone, cut };
+	}
+	if (value !== null && typeof value === "object") {
+		let cut = false;
+		const clone: Record<string, unknown> = {};
+		for (const [key, field] of Object.entries(value as Record<string, unknown>)) {
+			const capped = cloneCappedDiagnosticsValue(field, stringCap, arrayCap, key);
+			clone[key] = capped.value;
+			cut = capped.cut || cut;
+		}
+		return { value: clone, cut };
+	}
+	return { value, cut: false };
+}
+
+function synchronizeExecutionTruncationLabel(diagnostics: PlannerTaskDiagnostics): void {
+	if (diagnostics.totalExecutions <= diagnostics.executions.length) return;
+	const label = `showing the latest ${diagnostics.executions.length} of ${diagnostics.totalExecutions} executions; pass executionId to inspect a specific one`;
+	const index = diagnostics.guidance.findIndex((line) => /^showing the latest \d+ of \d+ executions;/.test(line));
+	if (index >= 0) diagnostics.guidance[index] = label;
+	else diagnostics.guidance.unshift(label);
+}
+
+function diagnosticsDetailsBytes(diagnostics: PlannerTaskDiagnostics): number {
+	return Buffer.byteLength(JSON.stringify({ diagnostics }), "utf8");
+}
+
+/**
+ * Ticket 06 — the return boundary's total budget over the structured
+ * diagnostics payload. Even individually bounded fields can exceed the
+ * aggregate budget through array fan-out, so this creates successively
+ * tighter immutable bounded copies until the UTF-8 serialized details fit.
+ * A fixed-shape fallback preserves identity and counts under adversarial
+ * fan-out. Any cut sets truncated=true so the text and details disclosures
+ * stay in sync.
+ */
+function enforceDiagnosticsDetailsBudget(diagnostics: PlannerTaskDiagnostics): PlannerTaskDiagnostics {
+	const attempts = [
+		[MAX_TASK_DIAGNOSTICS_DETAILS_STRING_CHARS, MAX_TASK_DIAGNOSTICS_DETAILS_ARRAY_ITEMS],
+		[2000, 50], [1000, 50], [500, 50], [FLOOR_TASK_DIAGNOSTICS_DETAILS_STRING_CHARS, 50],
+		[FLOOR_TASK_DIAGNOSTICS_DETAILS_STRING_CHARS, 25], [128, 10], [64, 5], [32, 1],
+	] as const;
+	for (const [stringCap, arrayCap] of attempts) {
+		const capped = cloneCappedDiagnosticsValue(diagnostics, stringCap, arrayCap);
+		const candidate = capped.value as PlannerTaskDiagnostics;
+		candidate.truncated = diagnostics.truncated || capped.cut;
+		synchronizeExecutionTruncationLabel(candidate);
+		if (diagnosticsDetailsBytes(candidate) < MAX_TASK_DIAGNOSTICS_DETAILS_BYTES) return candidate;
+	}
+
+	// Fixed-shape last resort: even adversarial fan-out cannot escape the
+	// boundary. Keep identity and counts so the caller can issue a narrow query.
+	return {
+		taskId: diagnostics.taskId.slice(0, 128),
+		state: diagnostics.state.slice(0, 64) as PlannerTaskDiagnostics["state"],
+		acceptanceMode: diagnostics.acceptanceMode === "observation" ? "observation" : "worktree",
+		reservations: [],
+		source: diagnostics.source,
+		reports: diagnostics.reports,
+		reviews: diagnostics.reviews,
+		sessionLog: { status: diagnostics.sessionLog.status },
+		executions: [],
+		totalExecutions: diagnostics.totalExecutions,
+		truncated: true,
+		guidance: ["diagnostics exceeded the structured output budget; pass executionId to narrow the query"],
+	};
+}
 
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
 	? resolve(process.env.PI_CODING_AGENT_DIR)
@@ -1027,7 +1120,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			if (params.taskId !== undefined) {
 				const sessionFile = sessionFileOf(ctx);
 				const result = orchestrator.describeTaskDiagnostics(cwd, params.taskId, params.executionId, {
-					...(sessionFile ? { sessionFile, sessionDir: dirname(sessionFile) } : { sessionDir: join(AGENT_DIR, "planner-only") }),
+					...(sessionFile ? { sessionFile, sessionDir: dirname(sessionFile) } : {}),
 				});
 				if ("error" in result) {
 					return {
@@ -1035,14 +1128,16 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 						details: { error: result.error, taskId: params.taskId },
 					};
 				}
-				const d = result.diagnostics;
+				const d = enforceDiagnosticsDetailsBudget(result.diagnostics);
+				// The structured payload is bounded before rendering so the text
+				// and details disclosures stay in sync.
 				const lines = [
 					`planner_tasks diagnostics for ${d.taskId} (${d.source}):`,
 					`state: ${d.state}${d.stateReason ? ` — ${d.stateReason}` : ""} | acceptanceMode: ${d.acceptanceMode} | reports: ${d.reports} | reviews: ${d.reviews}`,
 					`session log: ${d.sessionLog.status}${d.sessionLog.path ? ` — ${d.sessionLog.path}` : ""}${d.sessionLog.note ? ` (${d.sessionLog.note})` : ""}`,
 					...(d.writerHold ? [`writer hold: ${d.writerHold.active ? "active" : "recorded (no live reservation)"} for execution ${d.writerHold.executionId} — ${d.writerHold.reason}`] : []),
 					...(d.recovery ? [`recovery.required: ${d.recovery.reason} (execution ${d.recovery.executionId})`] : []),
-					...(d.executions.length === 0 ? ["executions: none recorded"] : []),
+						...(d.executions.length === 0 && d.totalExecutions === 0 ? ["executions: none recorded"] : []),
 					...(d.totalExecutions > d.executions.length
 						? [`executions: showing latest ${d.executions.length} of ${d.totalExecutions} — pass executionId to inspect a specific one`]
 						: []),
@@ -1054,6 +1149,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 						...execution.guidance.map((item) => `  → ${item}`),
 					]),
 					...d.guidance.map((item) => `→ ${item}`),
+					...(d.truncated ? [`… diagnostics truncated; pass executionId to narrow the query`] : []),
 				];
 				// A fixed total cap bounds the rendered text; truncation is
 				// disclosed and a narrower query recovers the detail.
