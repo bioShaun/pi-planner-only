@@ -42,3 +42,4 @@ node_modules/
 .scratch/*/independent-validation/
 .scratch/*/validation/snapshot/
 .scratch/*/validation-tmp/
+.scratch/*/node-compile-cache/

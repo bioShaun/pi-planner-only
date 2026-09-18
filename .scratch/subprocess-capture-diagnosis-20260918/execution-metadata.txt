@@ -1,0 +1,6 @@
+started_at=2026-09-18T13:40:15.993266335Z
+finished_at=2026-09-18T13:40:16.199638892Z
+exit_code=0
+stdout=/home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/harness.stdout
+stderr=/home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/harness.stderr
+results=/home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/results.json

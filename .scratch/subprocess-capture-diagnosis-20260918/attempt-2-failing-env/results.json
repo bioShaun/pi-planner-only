@@ -1,0 +1,235 @@
+{
+  "schemaVersion": 1,
+  "runStartedAt": "2026-09-18T13:33:46.039Z",
+  "runFinishedAt": "2026-09-18T13:33:46.129Z",
+  "runtime": {
+    "node": "v24.14.0",
+    "execPath": "/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node",
+    "libuv": "1.51.0",
+    "platform": "linux",
+    "arch": "x64"
+  },
+  "harness": {
+    "argv": [
+      "/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node",
+      "/home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/harness.mjs"
+    ],
+    "cwd": "/home/tcuni-claw/pi/pi-planner-only",
+    "timeoutMs": 3000,
+    "resultsPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/results.json"
+  },
+  "syncCases": [
+    {
+      "name": "node-console-spawnSync",
+      "command": {
+        "file": "/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node",
+        "args": [
+          "-e",
+          "console.log('capture-probe')"
+        ],
+        "display": "\"/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node\" \"-e\" \"console.log('capture-probe')\""
+      },
+      "startedAt": "2026-09-18T13:33:46.039Z",
+      "finishedAt": "2026-09-18T13:33:46.055Z",
+      "status": 0,
+      "signal": null,
+      "pid": 13,
+      "stdout": "",
+      "stderr": "",
+      "error": {
+        "name": "Error",
+        "code": "EPERM",
+        "errno": -1,
+        "syscall": "spawnSync /home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node",
+        "message": "spawnSync /home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node EPERM",
+        "stack": "Error: spawnSync /home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node EPERM\n    at Object.spawnSync (node:internal/child_process:1119:20)\n    at spawnSync (node:child_process:911:24)\n    at syncCase (file:///home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/harness.mjs:35:14)\n    at file:///home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/harness.mjs:119:16\n    at ModuleJob.run (node:internal/modules/esm/module_job:430:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:661:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)"
+      },
+      "thrownError": null
+    },
+    {
+      "name": "node-writeSync-spawnSync",
+      "command": {
+        "file": "/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node",
+        "args": [
+          "-e",
+          "require('node:fs').writeSync(1,'capture-probe\\n')"
+        ],
+        "display": "\"/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node\" \"-e\" \"require('node:fs').writeSync(1,'capture-probe\\\\n')\""
+      },
+      "startedAt": "2026-09-18T13:33:46.055Z",
+      "finishedAt": "2026-09-18T13:33:46.068Z",
+      "status": 0,
+      "signal": null,
+      "pid": 20,
+      "stdout": "capture-probe\n",
+      "stderr": "",
+      "error": {
+        "name": "Error",
+        "code": "EPERM",
+        "errno": -1,
+        "syscall": "spawnSync /home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node",
+        "message": "spawnSync /home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node EPERM",
+        "stack": "Error: spawnSync /home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node EPERM\n    at Object.spawnSync (node:internal/child_process:1119:20)\n    at spawnSync (node:child_process:911:24)\n    at syncCase (file:///home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/harness.mjs:35:14)\n    at file:///home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/harness.mjs:124:16\n    at ModuleJob.run (node:internal/modules/esm/module_job:430:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:661:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)"
+      },
+      "thrownError": null
+    },
+    {
+      "name": "bin-echo-spawnSync",
+      "command": {
+        "file": "/bin/echo",
+        "args": [
+          "capture-probe"
+        ],
+        "display": "\"/bin/echo\" \"capture-probe\""
+      },
+      "startedAt": "2026-09-18T13:33:46.068Z",
+      "finishedAt": "2026-09-18T13:33:46.071Z",
+      "status": 0,
+      "signal": null,
+      "pid": 27,
+      "stdout": "capture-probe\n",
+      "stderr": "",
+      "error": {
+        "name": "Error",
+        "code": "EPERM",
+        "errno": -1,
+        "syscall": "spawnSync /bin/echo",
+        "message": "spawnSync /bin/echo EPERM",
+        "stack": "Error: spawnSync /bin/echo EPERM\n    at Object.spawnSync (node:internal/child_process:1119:20)\n    at spawnSync (node:child_process:911:24)\n    at syncCase (file:///home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/harness.mjs:35:14)\n    at file:///home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/harness.mjs:129:16\n    at ModuleJob.run (node:internal/modules/esm/module_job:430:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:661:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)"
+      },
+      "thrownError": null
+    },
+    {
+      "name": "node-console-regular-file-fd-spawnSync",
+      "command": {
+        "file": "/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node",
+        "args": [
+          "-e",
+          "console.log('capture-probe')"
+        ],
+        "display": "\"/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node\" \"-e\" \"console.log('capture-probe')\""
+      },
+      "startedAt": "2026-09-18T13:33:46.071Z",
+      "finishedAt": "2026-09-18T13:33:46.085Z",
+      "status": 0,
+      "signal": null,
+      "pid": 28,
+      "stdout": null,
+      "stderr": "",
+      "error": null,
+      "thrownError": null,
+      "redirectedFile": "/home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/redirected-console.stdout",
+      "redirectedFileContent": "capture-probe\n"
+    }
+  ],
+  "asyncCases": [
+    {
+      "name": "node-console-spawn",
+      "command": {
+        "file": "/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node",
+        "args": [
+          "-e",
+          "console.log('capture-probe')"
+        ],
+        "display": "\"/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node\" \"-e\" \"console.log('capture-probe')\""
+      },
+      "startedAt": "2026-09-18T13:33:46.100Z",
+      "finishedAt": "2026-09-18T13:33:46.116Z",
+      "pid": 42,
+      "stdout": "",
+      "stderr": "",
+      "events": [
+        {
+          "event": "exit",
+          "at": "2026-09-18T13:33:46.116Z",
+          "code": 0,
+          "signal": null
+        },
+        {
+          "event": "close",
+          "at": "2026-09-18T13:33:46.116Z",
+          "code": 0,
+          "signal": null
+        }
+      ],
+      "error": null,
+      "timedOut": false
+    },
+    {
+      "name": "node-writeSync-spawn",
+      "command": {
+        "file": "/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node",
+        "args": [
+          "-e",
+          "require('node:fs').writeSync(1,'capture-probe\\n')"
+        ],
+        "display": "\"/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node\" \"-e\" \"require('node:fs').writeSync(1,'capture-probe\\\\n')\""
+      },
+      "startedAt": "2026-09-18T13:33:46.116Z",
+      "finishedAt": "2026-09-18T13:33:46.129Z",
+      "pid": 49,
+      "stdout": "capture-probe\n",
+      "stderr": "",
+      "events": [
+        {
+          "event": "exit",
+          "at": "2026-09-18T13:33:46.129Z",
+          "code": 0,
+          "signal": null
+        },
+        {
+          "event": "close",
+          "at": "2026-09-18T13:33:46.129Z",
+          "code": 0,
+          "signal": null
+        }
+      ],
+      "error": null,
+      "timedOut": false
+    }
+  ],
+  "sideEffect": {
+    "name": "node-side-effect-then-console-spawnSync",
+    "command": {
+      "file": "/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node",
+      "args": [
+        "-e",
+        "const fs=require('node:fs');fs.writeFileSync(\"/home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/side-effect.marker\",'marker-written\\n');console.log('capture-probe')"
+      ],
+      "display": "\"/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node\" \"-e\" \"const fs=require('node:fs');fs.writeFileSync(\\\"/home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/side-effect.marker\\\",'marker-written\\\\n');console.log('capture-probe')\""
+    },
+    "startedAt": "2026-09-18T13:33:46.085Z",
+    "finishedAt": "2026-09-18T13:33:46.099Z",
+    "status": 0,
+    "signal": null,
+    "pid": 35,
+    "stdout": "",
+    "stderr": "",
+    "error": {
+      "name": "Error",
+      "code": "EPERM",
+      "errno": -1,
+      "syscall": "spawnSync /home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node",
+      "message": "spawnSync /home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node EPERM",
+      "stack": "Error: spawnSync /home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node EPERM\n    at Object.spawnSync (node:internal/child_process:1119:20)\n    at spawnSync (node:child_process:911:24)\n    at syncCase (file:///home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/harness.mjs:35:14)\n    at file:///home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/harness.mjs:157:20\n    at ModuleJob.run (node:internal/modules/esm/module_job:430:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:661:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)"
+    },
+    "thrownError": null,
+    "markerPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/side-effect.marker",
+    "markerExists": true,
+    "markerContent": "marker-written\n"
+  },
+  "baselineEvaluation": {
+    "case": "node-console-spawnSync",
+    "expected": {
+      "error": null,
+      "status": 0,
+      "signal": null,
+      "stdout": "capture-probe\n"
+    },
+    "pass": false,
+    "failures": [
+      "result.error is present",
+      "stdout is \"\""
+    ]
+  }
+}

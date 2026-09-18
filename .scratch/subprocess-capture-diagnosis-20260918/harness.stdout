@@ -1,0 +1,96 @@
+{
+  "resultsPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/results.json",
+  "sync": [
+    {
+      "name": "node-console-spawnSync",
+      "status": 0,
+      "signal": null,
+      "stdout": "capture-probe\n",
+      "stderr": "",
+      "errorCode": null
+    },
+    {
+      "name": "node-writeSync-spawnSync",
+      "status": 0,
+      "signal": null,
+      "stdout": "capture-probe\n",
+      "stderr": "",
+      "errorCode": null
+    },
+    {
+      "name": "bin-echo-spawnSync",
+      "status": 0,
+      "signal": null,
+      "stdout": "capture-probe\n",
+      "stderr": "",
+      "errorCode": null
+    },
+    {
+      "name": "node-console-regular-file-fd-spawnSync",
+      "status": 0,
+      "signal": null,
+      "stdout": null,
+      "stderr": "",
+      "errorCode": null
+    }
+  ],
+  "async": [
+    {
+      "name": "node-console-spawn",
+      "pid": 844500,
+      "stdout": "capture-probe\n",
+      "stderr": "",
+      "errorCode": null,
+      "timedOut": false,
+      "events": [
+        {
+          "event": "exit",
+          "code": 0,
+          "signal": null
+        },
+        {
+          "event": "close",
+          "code": 0,
+          "signal": null
+        }
+      ]
+    },
+    {
+      "name": "node-writeSync-spawn",
+      "pid": 844507,
+      "stdout": "capture-probe\n",
+      "stderr": "",
+      "errorCode": null,
+      "timedOut": false,
+      "events": [
+        {
+          "event": "exit",
+          "code": 0,
+          "signal": null
+        },
+        {
+          "event": "close",
+          "code": 0,
+          "signal": null
+        }
+      ]
+    }
+  ],
+  "sideEffect": {
+    "status": 0,
+    "errorCode": null,
+    "markerExists": true,
+    "markerContent": "marker-written\n"
+  },
+  "baselineEvaluation": {
+    "case": "node-console-spawnSync",
+    "expected": {
+      "error": null,
+      "status": 0,
+      "signal": null,
+      "stdout": "capture-probe\n"
+    },
+    "pass": true,
+    "failures": []
+  }
+}

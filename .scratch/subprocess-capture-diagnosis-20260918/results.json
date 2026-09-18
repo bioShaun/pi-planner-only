@@ -1,0 +1,204 @@
+{
+  "schemaVersion": 1,
+  "runStartedAt": "2026-09-18T13:40:16.012Z",
+  "runFinishedAt": "2026-09-18T13:40:16.104Z",
+  "runtime": {
+    "node": "v24.14.0",
+    "execPath": "/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node",
+    "libuv": "1.51.0",
+    "platform": "linux",
+    "arch": "x64"
+  },
+  "harness": {
+    "argv": [
+      "/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node",
+      "/home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/harness.mjs"
+    ],
+    "cwd": "/home/tcuni-claw/pi/pi-planner-only",
+    "timeoutMs": 3000,
+    "resultsPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/results.json"
+  },
+  "syncCases": [
+    {
+      "name": "node-console-spawnSync",
+      "command": {
+        "file": "/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node",
+        "args": [
+          "-e",
+          "console.log('capture-probe')"
+        ],
+        "display": "\"/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node\" \"-e\" \"console.log('capture-probe')\""
+      },
+      "startedAt": "2026-09-18T13:40:16.012Z",
+      "finishedAt": "2026-09-18T13:40:16.027Z",
+      "status": 0,
+      "signal": null,
+      "pid": 844471,
+      "stdout": "capture-probe\n",
+      "stderr": "",
+      "error": null,
+      "thrownError": null
+    },
+    {
+      "name": "node-writeSync-spawnSync",
+      "command": {
+        "file": "/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node",
+        "args": [
+          "-e",
+          "require('node:fs').writeSync(1,'capture-probe\\n')"
+        ],
+        "display": "\"/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node\" \"-e\" \"require('node:fs').writeSync(1,'capture-probe\\\\n')\""
+      },
+      "startedAt": "2026-09-18T13:40:16.028Z",
+      "finishedAt": "2026-09-18T13:40:16.041Z",
+      "status": 0,
+      "signal": null,
+      "pid": 844478,
+      "stdout": "capture-probe\n",
+      "stderr": "",
+      "error": null,
+      "thrownError": null
+    },
+    {
+      "name": "bin-echo-spawnSync",
+      "command": {
+        "file": "/bin/echo",
+        "args": [
+          "capture-probe"
+        ],
+        "display": "\"/bin/echo\" \"capture-probe\""
+      },
+      "startedAt": "2026-09-18T13:40:16.041Z",
+      "finishedAt": "2026-09-18T13:40:16.044Z",
+      "status": 0,
+      "signal": null,
+      "pid": 844485,
+      "stdout": "capture-probe\n",
+      "stderr": "",
+      "error": null,
+      "thrownError": null
+    },
+    {
+      "name": "node-console-regular-file-fd-spawnSync",
+      "command": {
+        "file": "/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node",
+        "args": [
+          "-e",
+          "console.log('capture-probe')"
+        ],
+        "display": "\"/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node\" \"-e\" \"console.log('capture-probe')\""
+      },
+      "startedAt": "2026-09-18T13:40:16.044Z",
+      "finishedAt": "2026-09-18T13:40:16.058Z",
+      "status": 0,
+      "signal": null,
+      "pid": 844486,
+      "stdout": null,
+      "stderr": "",
+      "error": null,
+      "thrownError": null,
+      "redirectedFile": "/home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/redirected-console.stdout",
+      "redirectedFileContent": "capture-probe\n"
+    }
+  ],
+  "asyncCases": [
+    {
+      "name": "node-console-spawn",
+      "command": {
+        "file": "/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node",
+        "args": [
+          "-e",
+          "console.log('capture-probe')"
+        ],
+        "display": "\"/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node\" \"-e\" \"console.log('capture-probe')\""
+      },
+      "startedAt": "2026-09-18T13:40:16.073Z",
+      "finishedAt": "2026-09-18T13:40:16.090Z",
+      "pid": 844500,
+      "stdout": "capture-probe\n",
+      "stderr": "",
+      "events": [
+        {
+          "event": "exit",
+          "at": "2026-09-18T13:40:16.090Z",
+          "code": 0,
+          "signal": null
+        },
+        {
+          "event": "close",
+          "at": "2026-09-18T13:40:16.090Z",
+          "code": 0,
+          "signal": null
+        }
+      ],
+      "error": null,
+      "timedOut": false
+    },
+    {
+      "name": "node-writeSync-spawn",
+      "command": {
+        "file": "/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node",
+        "args": [
+          "-e",
+          "require('node:fs').writeSync(1,'capture-probe\\n')"
+        ],
+        "display": "\"/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node\" \"-e\" \"require('node:fs').writeSync(1,'capture-probe\\\\n')\""
+      },
+      "startedAt": "2026-09-18T13:40:16.090Z",
+      "finishedAt": "2026-09-18T13:40:16.104Z",
+      "pid": 844507,
+      "stdout": "capture-probe\n",
+      "stderr": "",
+      "events": [
+        {
+          "event": "exit",
+          "at": "2026-09-18T13:40:16.104Z",
+          "code": 0,
+          "signal": null
+        },
+        {
+          "event": "close",
+          "at": "2026-09-18T13:40:16.104Z",
+          "code": 0,
+          "signal": null
+        }
+      ],
+      "error": null,
+      "timedOut": false
+    }
+  ],
+  "sideEffect": {
+    "name": "node-side-effect-then-console-spawnSync",
+    "command": {
+      "file": "/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node",
+      "args": [
+        "-e",
+        "const fs=require('node:fs');fs.writeFileSync(\"/home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/side-effect.marker\",'marker-written\\n');console.log('capture-probe')"
+      ],
+      "display": "\"/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/node\" \"-e\" \"const fs=require('node:fs');fs.writeFileSync(\\\"/home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/side-effect.marker\\\",'marker-written\\\\n');console.log('capture-probe')\""
+    },
+    "startedAt": "2026-09-18T13:40:16.058Z",
+    "finishedAt": "2026-09-18T13:40:16.073Z",
+    "status": 0,
+    "signal": null,
+    "pid": 844493,
+    "stdout": "capture-probe\n",
+    "stderr": "",
+    "error": null,
+    "thrownError": null,
+    "markerPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/subprocess-capture-diagnosis-20260918/side-effect.marker",
+    "markerExists": true,
+    "markerContent": "marker-written\n"
+  },
+  "baselineEvaluation": {
+    "case": "node-console-spawnSync",
+    "expected": {
+      "error": null,
+      "status": 0,
+      "signal": null,
+      "stdout": "capture-probe\n"
+    },
+    "pass": true,
+    "failures": []
+  }
+}
