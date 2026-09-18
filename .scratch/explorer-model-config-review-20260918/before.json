@@ -1,0 +1,10 @@
+{
+  "head": "f57a4de309a5317dd4ecef6a52ba83c7d7d545ff",
+  "sha256": {
+    "delegate.ts": "72b1a18a66d31d7ad8bb8431a3f37ea864fcf75a9211900b1f307c88dc0de834",
+    "index.ts": "c0b46057facf0eba982483a5724f33a254c47a70cb589ebcdb5502bd5ddfdb35",
+    "package.json": "16e6b3033a8a0d56415f18a136e16fe75d0473b261b4422f28d77c044611c2b2",
+    "explorer-model.ts": "9abfb64e8962616ad805d86572fd55b4290e99fc00ad583fd63261871e1312bd",
+    "explorer-model-config.test.mjs": "edb8b88a4ca4dc49addb51257a8c956c6f9a5c17d5c5b6fb642b605844f2a6e3"
+  }
+}

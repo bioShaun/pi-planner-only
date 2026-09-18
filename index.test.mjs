@@ -143,6 +143,36 @@ assert.deepEqual(activeTools, [
 ]);
 assert.equal(setActiveCalls.length, 0);
 
+// Ticket 01 regression: an env=true setting cannot manufacture launcher
+// capability when the production probe has no supporting listener.
+{
+	const previousCapabilityOverride = process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY;
+	process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY = "true";
+	try {
+		await assert.rejects(
+			tools.get("planner_delegate").execute(
+				"call-env-cannot-prove-capability",
+				{
+					role: "worker",
+					objective: "attempt without production capability",
+					scope: {},
+					constraints: [],
+					acceptanceCriteria: [],
+					validation: { required: false },
+				},
+				undefined,
+				undefined,
+				ctx,
+			),
+			(error) => error?.code === "LAUNCHER_CAPABILITY_UNSUPPORTED",
+		);
+		assert.equal(piEvents.emitted.some((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT), false);
+	} finally {
+		if (previousCapabilityOverride === undefined) delete process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY;
+		else process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY = previousCapabilityOverride;
+	}
+}
+
 
 // Issue 13B: status exposes session totals and keeps pre-Task Root usage unattributed.
 await handlers.get("message_end")({ message: {
@@ -3007,4 +3037,3 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 	assert.equal(vW.details.state, "completed");
 	assert.equal(ledger.read(wRes.details.taskId).record.state, "completed");
 }
-

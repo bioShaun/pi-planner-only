@@ -1,0 +1,38 @@
+COMMAND: node --experimental-strip-types delegate.test.mjs
+EXIT: 0
+WALL: 7.08s
+STDOUT/STDERR:
+Planner-only: failed to persist ledger snapshot: EISDIR: illegal operation on a directory, rename '<project-local-runtime>/planner-only/ledger/.tmp-4-2' -> '<project-local-runtime>/planner-only/ledger/T-20260918-001.json'
+delegate.test.mjs: all cases passed
+
+COMMAND: npm run typecheck
+EXIT: 0
+WALL: 4.48s
+STDOUT:
+> pi-planner-only@0.7.0 typecheck
+> tsc --noEmit
+
+COMMAND: node --experimental-strip-types rs01.test.mjs
+EXIT: 0
+WALL: 0.26s
+STDOUT:
+✔ A01: Loaded plugin fingerprint is recorded from loaded build, distinct from disk HEAD (7.081832ms)
+✔ A05: Multi-process shared ledger allocation, quarantine, and cross-workspace checks pass (2.581102ms)
+ℹ tests 2
+ℹ pass 2
+ℹ fail 0
+
+COMMAND: node --experimental-strip-types index.test.mjs
+EXIT: 1
+WALL: 0.66s
+STDERR:
+AssertionError [ERR_ASSERTION]: The input did not match the regular expression /planner-only toggle: PASS/. Input: ''
+at index.test.mjs:359:9
+
+The registered-tool env=true capability regression is above this line and completed before the unchanged subprocess assertion failed.
+
+COMMAND: git diff --check
+EXIT: 0
+OUTPUT: <empty>
+
+All Node/npm commands used project-local TMPDIR/TMP/TEMP/npm cache, NODE_OPTIONS=--max-old-space-size=768, and timeout 55s.

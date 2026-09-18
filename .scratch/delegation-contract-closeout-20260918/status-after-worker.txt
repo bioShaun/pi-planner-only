@@ -1,0 +1,22 @@
+ M .scratch/delegation-contract-incident-20260918/issues/01-worker-report-run-identity.md
+ M .scratch/delegation-contract-incident-20260918/issues/02-atomic-admission-and-capacity.md
+ M .scratch/delegation-contract-incident-20260918/issues/03-validation-roundtrip-and-refusal.md
+ M .scratch/delegation-contract-incident-20260918/issues/04-unstarted-task-recovery.md
+ M .scratch/delegation-contract-incident-20260918/issues/05-host-incident-chain-acceptance.md
+ M delegate.test.mjs
+ M delegate.ts
+ M index.test.mjs
+ M index.ts
+ M ledger-store.ts
+ M orchestrate.ts
+ M package.json
+ M rs01.test.mjs
+ M task.ts
+?? .scratch/delegation-contract-closeout-20260918/
+?? .scratch/delegation-contract-review-20260918/
+?? .scratch/explorer-model-config-closeout/
+?? .scratch/explorer-model-config-review-20260918/
+?? .scratch/explorer-model-config/
+?? .ticket-drafts/
+?? explorer-model-config.test.mjs
+?? explorer-model.ts

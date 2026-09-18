@@ -1,0 +1,12 @@
+{
+  "sha256": {
+    "explorer-model.ts": "2709f1b07633be4bedf52ac8483fb73a8c9d6fdac113e876e0a2a85926f9ea48",
+    "explorer-model-config.test.mjs": "7848c5218e3db75b369559e58e152b48a69521136dff6dcbc20a9945e1f1576c",
+    "delegate.ts": "ea86aa44a266b53b8719104efd1202631e7ed9040a77955cdf2fe4bb9448615a",
+    "index.ts": "5b378e9fef53c9f38f82d285459079cb2b100321a8a131d5c1f748d7027c17f2",
+    "package.json": "16e6b3033a8a0d56415f18a136e16fe75d0473b261b4422f28d77c044611c2b2",
+    ".gitignore": "ade7803736f2831f4158828ab3eeed02f75750290ab19e2ddb2c0216291fbd93",
+    "rs01.test.mjs": "5fd786c41396f366105124d057256933810ae3ea0a54280972ef9c0880fb5079",
+    ".scratch/explorer-model-config/acceptance/run-acceptance.sh": "2c06be673c40ede397fa695395a64952281fd09695ff31e7575d01856aca7431"
+  }
+}

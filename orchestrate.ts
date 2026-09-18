@@ -447,7 +447,7 @@ export class PlannerOrchestrator {
 			this.snapshots = snapshots;
 			this.store = new TaskStore({
 				allocator: new TaskIdAllocator(deps.ledgerDir),
-				onPersist: (record) => snapshots.write(record),
+				onPersist: (record) => snapshots.writeOrThrow(record),
 				onRemove: (taskId) => snapshots.remove(taskId),
 			});
 		} else {

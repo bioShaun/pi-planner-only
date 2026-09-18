@@ -1,0 +1,162 @@
+diff --git a/.gitignore b/.gitignore
+index 17db5d0..403dcd6 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -29,3 +29,7 @@ node_modules/
+ 
+ # local Codex subagent config (machine-specific)
+ .codex/
++
++# Explorer model-config acceptance runtime state and credentials
++.scratch/explorer-model-config/acceptance/agent/
++.scratch/explorer-model-config/acceptance/workspace/
+diff --git a/delegate.ts b/delegate.ts
+index 12a432c..dd2e964 100644
+--- a/delegate.ts
++++ b/delegate.ts
+@@ -33,6 +33,7 @@ import {
+ } from "./subagent-delegation-contract.ts";
+ import type { GitRunner } from "./git-audit.ts";
+ import type { ConcurrencyController, ConcurrencyReservation } from "./concurrency.ts";
++import type { ExplorerModelSelection, ExplorerModelSelectionResult } from "./explorer-model.ts";
+ import { captureEvidence, captureReviewEvidencePacket, compareEvidence, compareExecutionTruth, describeComparison, describeProbeFailures, environmentFailureOf } from "./evidence.ts";
+ import type { ExecutionTruthComparison } from "./evidence.ts";
+ import { buildTaskPacket, ROLE_AGENTS } from "./roles.ts";
+@@ -514,6 +515,15 @@ export interface DelegationDeps {
+ 	 * read-only binding to prove the execution cannot mutate.
+ 	 */
+ 	restrictedReaderAgent?: string;
++	/**
++	 * T-20260918-004 — resolves the Explorer launch selection (model/thinking)
++	 * from the operator's subagent configuration at launch time. Explorer only;
++	 * a broken configuration refuses before any Task is minted. Configured
++	 * model strings cross this seam unchanged; the host launcher owns model
++	 * resolution and reports an unavailable model as a visible launch failure.
++	 * Absent → the request omits model/thinking and host fallback proceeds.
++	 */
++	resolveExplorerModelSelection?: (cwd: string) => ExplorerModelSelectionResult;
+ 	now?: () => Date;
+ 	/**
+ 	 * Wall-envelope clock: a monotonic `now()` plus the timer pair. Tests
+@@ -694,6 +704,18 @@ export async function runDelegation(
+ 	}
+ 	const isRestrictedReader = classification.capability === "restricted-reader";
+ 
++	// T-20260918-004 — resolve the Explorer launch selection before any Task is
++	//    minted. Configured model strings cross into the request unchanged so
++	//    the host launcher remains the single resolution/availability boundary.
++	let explorerSelection: ExplorerModelSelection | undefined;
++	if (role === "explorer" && deps.resolveExplorerModelSelection) {
++		const resolved = deps.resolveExplorerModelSelection(effectiveCwd);
++		if (!resolved.ok) {
++			throw new DelegationRefused(resolved.code, `${toolName} refused: ${resolved.message}`);
++		}
++		explorerSelection = resolved.selection;
++	}
++
+ 	// 1. Task binding: an explicit id binds the existing record verbatim —
+ 	//    its stored spec is never rewritten (ticket 53); this call's spec
+ 	//    only goes into the packet.
+@@ -957,6 +979,9 @@ export async function runDelegation(
+ 		}
+ 
+ 		// 4. Structured delegation: the packet is rendered once, downward only.
++		//    T-20260918-004 — the Explorer's configured model/thinking selection
++		//    rides the typed request fields; "inherit" forwards verbatim and the
++		//    launcher resolves it against the current parent session model.
+ 		const request: SubagentDelegationRequest = {
+ 			requestId,
+ 			ownerRunId: deps.ownerRunId,
+@@ -965,6 +990,8 @@ export async function runDelegation(
+ 			task: buildTaskPacket(thisSpec, params.instructions ?? ""),
+ 			context: "fresh",
+ 			cwd: task.cwd || effectiveCwd,
++			...(explorerSelection?.model !== undefined ? { model: explorerSelection.model } : {}),
++			...(explorerSelection?.thinking !== undefined ? { thinking: explorerSelection.thinking } : {}),
+ 			result: { kind: "structured", schema: WORKER_REPORT_SCHEMA },
+ 		};
+ 		// A2 — spec §3 predicate: an identity-matched terminal plus a quiet
+diff --git a/index.ts b/index.ts
+index 6c1379e..e5ee7c4 100644
+--- a/index.ts
++++ b/index.ts
+@@ -61,6 +61,7 @@ import {
+ 	validateRecoveryDecision,
+ } from "./delegate.ts";
+ import type { DelegationOutcome, PlannerDelegationParams } from "./delegate.ts";
++import { resolveExplorerModelSelection } from "./explorer-model.ts";
+ import { RefusalBreaker, isRefusal } from "./refusal-breaker.ts";
+ import type { RecoveryDecision } from "./types.ts";
+ 
+@@ -190,6 +191,7 @@ export function computeLoadedFingerprint(dir = PLUGIN_DIR): string {
+ 	const files = [
+ 		"concurrency.ts",
+ 		"evidence.ts",
++		"explorer-model.ts",
+ 		"floors.ts",
+ 		"git-audit.ts",
+ 		"index.ts",
+@@ -999,6 +1001,16 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 								launch: delegationLaunch,
+ 								...(restrictedReaderAgent !== undefined ? { restrictedReaderAgent } : {}),
+ 								...(quiescenceWaitMs !== undefined ? { quiescenceWaitMs } : {}),
++								// T-20260918-004 — the Explorer launch selection is
++								// resolved per launch from the operator's subagent
++								// configuration; the runtime-agent registration stays
++								// capability-only and cached, so host-visible config
++								// changes reach the next delegation. Reads only —
++								// the Root model is never switched.
++								resolveExplorerModelSelection: (workspaceCwd) => resolveExplorerModelSelection({
++									cwd: workspaceCwd,
++									currentProvider: rootModelIdentity(ctx.model)?.provider,
++								}),
+ 								ownerRunId: ctx.sessionManager?.getSessionId?.() || PROCESS_OWNER_RUN_ID,
+ 							},
+ 							effectiveParams,
+diff --git a/package.json b/package.json
+index dc4f36b..84c009a 100644
+--- a/package.json
++++ b/package.json
+@@ -38,6 +38,7 @@
+     "workspace-snapshot.ts",
+     "concurrency.ts",
+     "delegate.ts",
++    "explorer-model.ts",
+     "refusal-breaker.ts",
+     "subagent-delegation-contract.ts",
+     "pricing.defaults.json"
+@@ -52,7 +53,7 @@
+     "piHost": ">=0.84 <1"
+   },
+   "scripts": {
+-    "test": "node --experimental-strip-types policy.test.mjs && node --experimental-strip-types policy-cutover.test.mjs && node --experimental-strip-types roles.test.mjs && node --experimental-strip-types floors.test.mjs && node --experimental-strip-types role-models.test.mjs && node --experimental-strip-types task.test.mjs && node --experimental-strip-types ledger-store.test.mjs && node --experimental-strip-types report.test.mjs && node --experimental-strip-types review.test.mjs && node --experimental-strip-types usage.test.mjs && node --experimental-strip-types orchestrate.test.mjs && node --experimental-strip-types evidence.test.mjs && node --experimental-strip-types git-audit.test.mjs && node --experimental-strip-types index.test.mjs && node --experimental-strip-types diagnostics-regression.test.mjs && node --experimental-strip-types workspace-snapshot.test.mjs && node --experimental-strip-types architecture.test.mjs && node --experimental-strip-types naming.test.mjs && node --experimental-strip-types concurrency.test.mjs && node --experimental-strip-types rs01.test.mjs && node --experimental-strip-types rs02.test.mjs && node --experimental-strip-types rs02-concurrency.test.mjs && node --experimental-strip-types rs03.test.mjs && node --experimental-strip-types rt06.test.mjs && node --experimental-strip-types nx04-06.test.mjs && node --experimental-strip-types nx09-scope.test.mjs && node --experimental-strip-types nx10-attribution.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types refusal-breaker.test.mjs && node --experimental-strip-types diffstat-acceptance.test.mjs",
++    "test": "node --experimental-strip-types policy.test.mjs && node --experimental-strip-types policy-cutover.test.mjs && node --experimental-strip-types roles.test.mjs && node --experimental-strip-types floors.test.mjs && node --experimental-strip-types role-models.test.mjs && node --experimental-strip-types task.test.mjs && node --experimental-strip-types ledger-store.test.mjs && node --experimental-strip-types report.test.mjs && node --experimental-strip-types review.test.mjs && node --experimental-strip-types usage.test.mjs && node --experimental-strip-types orchestrate.test.mjs && node --experimental-strip-types evidence.test.mjs && node --experimental-strip-types git-audit.test.mjs && node --experimental-strip-types index.test.mjs && node --experimental-strip-types explorer-model-config.test.mjs && node --experimental-strip-types diagnostics-regression.test.mjs && node --experimental-strip-types workspace-snapshot.test.mjs && node --experimental-strip-types architecture.test.mjs && node --experimental-strip-types naming.test.mjs && node --experimental-strip-types concurrency.test.mjs && node --experimental-strip-types rs01.test.mjs && node --experimental-strip-types rs02.test.mjs && node --experimental-strip-types rs02-concurrency.test.mjs && node --experimental-strip-types rs03.test.mjs && node --experimental-strip-types rt06.test.mjs && node --experimental-strip-types nx04-06.test.mjs && node --experimental-strip-types nx09-scope.test.mjs && node --experimental-strip-types nx10-attribution.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types refusal-breaker.test.mjs && node --experimental-strip-types diffstat-acceptance.test.mjs",
+     "typecheck": "tsc --noEmit",
+     "test:release": "npm run typecheck && npm test"
+   },
+diff --git a/rs01.test.mjs b/rs01.test.mjs
+index 8611011..c0bc7af 100644
+--- a/rs01.test.mjs
++++ b/rs01.test.mjs
+@@ -41,16 +41,20 @@ test("A01: Loaded plugin fingerprint is recorded from loaded build, distinct fro
+ 	try {
+ 		writeFileSync(join(tempDir, "package.json"), JSON.stringify({ name: "test-pkg", version: "0.4.1" }));
+ 		writeFileSync(join(tempDir, "index.ts"), "export const dummy = 1;");
++		writeFileSync(join(tempDir, "explorer-model.ts"), "export const explorerModelFixture = 1;");
+ 		const customFingerprint = computeLoadedFingerprint(tempDir);
+ 		assert.match(customFingerprint, /^[0-9a-f]{64}$/);
+ 		assert.notEqual(customFingerprint, initialFingerprint);
++		writeFileSync(join(tempDir, "explorer-model.ts"), "export const explorerModelFixture = 2;");
++		const changedExplorerFingerprint = computeLoadedFingerprint(tempDir);
++		assert.notEqual(changedExplorerFingerprint, customFingerprint, "explorer-model.ts changes affect the loaded fingerprint");
+ 
+ 		// The memory loaded fingerprint has not changed
+ 		assert.equal(getLoadedPluginFingerprint(), initialFingerprint);
+ 
+ 		// But if reloadLoadedFingerprint is called for that directory, it changes
+ 		const reloaded = reloadLoadedFingerprint(tempDir);
+-		assert.equal(reloaded, customFingerprint);
++		assert.equal(reloaded, changedExplorerFingerprint);
+ 
+ 		// Reloading original directory restores it
+ 		reloadLoadedFingerprint();

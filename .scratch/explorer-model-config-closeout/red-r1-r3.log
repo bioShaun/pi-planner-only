@@ -1,0 +1,18 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+'medium' !== 'low'
+
+    at file:///home/tcuni-claw/pi/pi-planner-only/explorer-model-config.test.mjs:342:9 {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: 'medium',
+  expected: 'low',
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.14.0

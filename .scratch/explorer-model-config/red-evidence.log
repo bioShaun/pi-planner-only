@@ -1,0 +1,21 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: scout model config reaches the launch
++ actual - expected
+
++ undefined
+- 'scoutp/model-b'
+
+    at file:///home/tcuni-claw/pi/pi-planner-only/explorer-model-config.test.mjs:235:9 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: undefined,
+  expected: 'scoutp/model-b',
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.14.0
+EXIT CODE: 1

@@ -1,0 +1,17 @@
+# Recovery recipe for the unrelated Explorer model-selection work removed from this incident.
+# Base containing the integration: 200985e. Apply/rebuild only in that feature's branch.
+# The untracked implementation and test were deliberately preserved byte-for-byte:
+# explorer-model.ts sha256 bf8c861e81c63e257ceb60ef46fa5da3aedd72f8be63d9e8ae819a18592ebb2c
+# explorer-model-config.test.mjs sha256 60ae2215cd7b219adfeeac33d5f312a3a2ab5e61f9b331e08e726cd80a20a824
+#
+# Integration hunks to recover from commit 200985e:
+# - delegate.ts: import ExplorerModelSelection types; add resolveExplorerModelSelection
+#   dependency; resolve it before Task mint; forward model/thinking on the launcher request.
+# - index.ts: import/wire resolveExplorerModelSelection per launch and include
+#   explorer-model.ts in computeLoadedFingerprint.
+# - package.json: include explorer-model.ts and explorer-model-config.test.mjs.
+# - rs01.test.mjs: cover explorer-model.ts in the loaded fingerprint.
+#
+# Review the exact original hunks with:
+# git diff 200985e^ 200985e -- delegate.ts index.ts package.json rs01.test.mjs
+# The same commit also contains incident work, so do not apply its full diff blindly.

@@ -27,6 +27,7 @@ import {
 } from "./subagent-delegation-contract.ts";
 import { FINDING_CATEGORIES, FINDING_SEVERITIES, REVIEW_VERDICTS } from "./review.ts";
 import { ConcurrencyController } from "./concurrency.ts";
+import { LedgerSnapshotStore } from "./ledger-store.ts";
 import { TaskStore, createTaskSpec } from "./task.ts";
 import { UsageLedger } from "./usage.ts";
 
@@ -422,7 +423,26 @@ async function expectRefusal(promise, code) {
 
 	// Ticket 02: Task 建档失败时释放本次临时 reservation，不影响已有 Task
 	{
-		const store = new TaskStore();
+		const ledgerRoot = makeTempDir("planner-only-admission-ledger-");
+		const snapshots = new LedgerSnapshotStore(ledgerRoot);
+		const fixedNow = new Date("2026-09-18T12:00:00.000Z");
+		const store = new TaskStore({
+			now: () => fixedNow,
+			onPersist: (record) => snapshots.writeOrThrow(record),
+			onRemove: (taskId) => snapshots.remove(taskId),
+		});
+		const parent = store.create(createTaskSpec({
+			taskId: "T-20260918-900",
+			objective: "existing parent",
+			cwd: dir,
+			role: "worker",
+		}, "T-20260918-900"));
+		const parentBefore = structuredClone(parent);
+		const parentSnapshotPath = join(ledgerRoot, "planner-only", "ledger", `${parent.taskId}.json`);
+		const parentSnapshotBefore = readFileSync(parentSnapshotPath, "utf8");
+		// A directory at the new Task's final snapshot path makes the real atomic
+		// rename fail after the temporary file was written.
+		mkdirSync(join(ledgerRoot, "planner-only", "ledger", "T-20260918-001.json"));
 		const concurrency = new ConcurrencyController({ savedLimit: 2 });
 		concurrency.reserve({
 			id: "prior-call",
@@ -431,18 +451,18 @@ async function expectRefusal(promise, code) {
 			capability: "writer",
 			workspaces: ["/other"],
 		});
-		// Inject fault on createAllocated
-		store.createAllocated = () => {
-			throw new Error("simulated ledger disk error on createAllocated");
-		};
 		const { deps, launches } = makeDeps({ store, concurrency });
 		await assert.rejects(
-			() => runDelegation(deps, makeParams(), dir, { executionId: "call-failing-create" }),
-			/simulated ledger disk error/,
+			() => runDelegation(deps, makeParams({ parentTaskId: parent.taskId }), dir, { executionId: "call-failing-create" }),
+			(error) => error?.code === "EISDIR" || error?.code === "ENOTDIR" || /directory/i.test(error?.message ?? ""),
 		);
 		assert.equal(launches.length, 0, "launch not called");
 		assert.equal(concurrency.status().occupied, 1, "temporary reservation released; prior reservation untouched");
 		assert.ok(concurrency.get("prior-call"), "prior reservation still intact");
+		assert.equal(store.get("T-20260918-001"), undefined, "failed admission leaves no in-memory Task");
+		assert.deepEqual(store.require(parent.taskId), parentBefore, "failed child admission leaves parent memory unchanged");
+		assert.equal(readFileSync(parentSnapshotPath, "utf8"), parentSnapshotBefore, "failed child admission leaves parent snapshot byte-for-byte unchanged");
+		assert.deepEqual(snapshots.readAll().records.map((record) => record.taskId), [parent.taskId], "failed Task cannot resurrect from the ledger");
 	}
 
 	// Ticket 02: TaskSpec 无效或 envelope 无效在前置拒绝时无 reservation、无新 Task
@@ -2831,6 +2851,40 @@ function makeFakeWallClock() {
 	assert.equal(launches.length, 0);
 	assert.equal(store.list().length, 0);
 	assert.equal(concurrency.status().occupied, 0);
+
+	// An environment variable is not production capability proof. Neither an
+	// explicit unsupported probe nor a missing listener can be overridden.
+	const previousCapabilityEnv = process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY;
+	process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY = "true";
+	try {
+		for (const probeValue of [false, undefined]) {
+			const bus = tinyEmitter();
+			if (probeValue !== undefined) {
+				bus.on("pi-subagents:delegation-capability-probe:v1", (probe) => {
+					probe.capabilities = { childRunIdentity: probeValue };
+				});
+			}
+			const hostLauncher = createHostLauncher({ events: bus });
+			const probeStore = new TaskStore();
+			const probeConcurrency = new ConcurrencyController();
+			const { deps: probeDeps } = makeDeps({
+				store: probeStore,
+				concurrency: probeConcurrency,
+				launch: hostLauncher,
+				launcherCapabilities: hostLauncher.capabilities,
+			});
+			await expectRefusal(
+				runDelegation(probeDeps, makeParams(), dir, { executionId: `call-env-${String(probeValue)}` }),
+				"LAUNCHER_CAPABILITY_UNSUPPORTED",
+			);
+			assert.equal(probeStore.list().length, 0, "env override cannot mint a Task");
+			assert.equal(probeConcurrency.status().occupied, 0, "env override cannot reserve capacity");
+			assert.equal(bus.emitted.some((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT), false, "env override cannot launch a child");
+		}
+	} finally {
+		if (previousCapabilityEnv === undefined) delete process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY;
+		else process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY = previousCapabilityEnv;
+	}
 }
 
 {

@@ -1,0 +1,59 @@
+{
+  "label": "A",
+  "input": {
+    "cwd": "/home/tcuni-claw/pi/pi-planner-only/.scratch/explorer-model-config-review-20260918/tmp/adapter-fixtures/project",
+    "availableModels": [
+      {
+        "provider": "p",
+        "id": "m"
+      }
+    ]
+  },
+  "result": {
+    "ok": true,
+    "selection": {
+      "source": "model unset (host fallback); thinking unset (host fallback)"
+    }
+  }
+}
+{
+  "label": "B",
+  "input": {
+    "cwd": "/home/tcuni-claw/pi/pi-planner-only/.scratch/explorer-model-config-review-20260918/tmp/adapter-fixtures/project",
+    "availableModels": [
+      {
+        "provider": "p",
+        "id": "default"
+      },
+      {
+        "provider": "p",
+        "id": "user"
+      }
+    ]
+  },
+  "result": {
+    "ok": true,
+    "selection": {
+      "model": "p/user",
+      "thinking": "high",
+      "source": "agentOverrides.scout (user settings at /home/tcuni-claw/pi/pi-planner-only/.scratch/explorer-model-config-review-20260918/tmp/adapter-fixtures/user/settings.json); agentOverrides.scout (project settings at /home/tcuni-claw/pi/pi-planner-only/.scratch/explorer-model-config-review-20260918/tmp/adapter-fixtures/project/.pi/settings.json)"
+    }
+  }
+}
+{
+  "label": "C",
+  "input": {
+    "cwd": "/home/tcuni-claw/pi/pi-planner-only/.scratch/explorer-model-config-review-20260918/tmp/adapter-fixtures/project",
+    "availableModels": [
+      {
+        "provider": "scoutp",
+        "id": "nested/model-d"
+      }
+    ]
+  },
+  "result": {
+    "ok": false,
+    "code": "EXPLORER_MODEL_UNAVAILABLE",
+    "message": "explorer model 'nested/model-d' from agentOverrides.scout (user settings at /home/tcuni-claw/pi/pi-planner-only/.scratch/explorer-model-config-review-20260918/tmp/adapter-fixtures/user/settings.json) is not available in the host model registry; fix the configuration or the registry instead of launching a substitute"
+  }
+}

@@ -33,7 +33,6 @@ import {
 } from "./subagent-delegation-contract.ts";
 import type { GitRunner } from "./git-audit.ts";
 import type { ConcurrencyController, ConcurrencyReservation } from "./concurrency.ts";
-import type { ExplorerModelSelection, ExplorerModelSelectionResult } from "./explorer-model.ts";
 import { captureEvidence, captureReviewEvidencePacket, compareEvidence, compareExecutionTruth, describeComparison, describeProbeFailures, environmentFailureOf } from "./evidence.ts";
 import type { ExecutionTruthComparison } from "./evidence.ts";
 import { buildTaskPacket, ROLE_AGENTS } from "./roles.ts";
@@ -631,15 +630,6 @@ export interface DelegationDeps {
 	 * read-only binding to prove the execution cannot mutate.
 	 */
 	restrictedReaderAgent?: string;
-	/**
-	 * T-20260918-004 — resolves the Explorer launch selection (model/thinking)
-	 * from the operator's subagent configuration at launch time. Explorer only;
-	 * a broken configuration refuses before any Task is minted. Configured
-	 * model strings cross this seam unchanged; the host launcher owns model
-	 * resolution and reports an unavailable model as a visible launch failure.
-	 * Absent → the request omits model/thinking and host fallback proceeds.
-	 */
-	resolveExplorerModelSelection?: (cwd: string) => ExplorerModelSelectionResult;
 	now?: () => Date;
 	/**
 	 * Wall-envelope clock: a monotonic `now()` plus the timer pair. Tests
@@ -831,18 +821,6 @@ export async function runDelegation(
 			`${toolName} refused: launcher does not support authoritative child run identity delivery before first turn (requires launcher capability 'childRunIdentity'; host launcher lacks child run identity channel). No child was launched.`,
 			params.taskId,
 		);
-	}
-
-	// T-20260918-004 — resolve the Explorer launch selection before any Task is
-	//    minted. Configured model strings cross into the request unchanged so
-	//    the host launcher remains the single resolution/availability boundary.
-	let explorerSelection: ExplorerModelSelection | undefined;
-	if (role === "explorer" && deps.resolveExplorerModelSelection) {
-		const resolved = deps.resolveExplorerModelSelection(effectiveCwd);
-		if (!resolved.ok) {
-			throw new DelegationRefused(resolved.code, `${toolName} refused: ${resolved.message}`);
-		}
-		explorerSelection = resolved.selection;
 	}
 
 	// 1. Task binding: an explicit id binds the existing record verbatim —
@@ -1140,9 +1118,6 @@ export async function runDelegation(
 		}
 
 		// 4. Structured delegation: the packet is rendered once, downward only.
-		//    T-20260918-004 — the Explorer's configured model/thinking selection
-		//    rides the typed request fields; "inherit" forwards verbatim and the
-		//    launcher resolves it against the current parent session model.
 		const request: SubagentDelegationRequest = {
 			requestId,
 			ownerRunId: deps.ownerRunId,
@@ -1151,8 +1126,6 @@ export async function runDelegation(
 			task: buildTaskPacket(thisSpec, params.instructions ?? ""),
 			context: "fresh",
 			cwd: task.cwd || effectiveCwd,
-			...(explorerSelection?.model !== undefined ? { model: explorerSelection.model } : {}),
-			...(explorerSelection?.thinking !== undefined ? { thinking: explorerSelection.thinking } : {}),
 			result: { kind: "structured", schema: WORKER_REPORT_SCHEMA },
 		};
 		// A2 — spec §3 predicate: an identity-matched terminal plus a quiet
@@ -2135,12 +2108,6 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
 			}
 		} catch {
 			// No listener
-		}
-		if (process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY !== undefined) {
-			capabilities = {
-				...capabilities,
-				childRunIdentity: process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY === "true",
-			};
 		}
 	}
 	const launcher: DelegationDeps["launch"] = (request, signal, hooks) => new Promise((resolve, reject) => {

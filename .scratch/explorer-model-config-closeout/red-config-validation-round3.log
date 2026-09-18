@@ -1,0 +1,6 @@
+Warning: Detected unsettled top-level await at file:///home/tcuni-claw/pi/pi-planner-only/explorer-model-config.test.mjs:590
+	await assertExplorerRefused("call-invalid-tools-shape", "EXPLORER_CONFIG_INVALID");
+	^
+
+
+

@@ -1389,7 +1389,7 @@ export class TaskStore {
 	/**
 	 * IS-01 — build a fresh record for an id the caller has already proven free.
 	 */
-	private insertNew(taskId: string, spec: TaskSpec | undefined, alias: string | undefined): TaskRecord {
+	private insertNew(taskId: string, spec: TaskSpec | undefined, alias: string | undefined, requirePersistence = false): TaskRecord {
 		const timestamp = this.now().toISOString();
 		// Ticket 46 — never register an alias that could not resolve.
 		if (alias && alias !== taskId) {
@@ -1430,10 +1430,18 @@ export class TaskStore {
 			createdAt: timestamp,
 			updatedAt: timestamp,
 		};
+		if (requirePersistence) {
+			try {
+				this.onPersist?.(record);
+			} catch (error) {
+				try { this.onRemove?.(taskId); } catch { /* rollback remains in memory */ }
+				throw error;
+			}
+		}
 		this.tasks.set(taskId, record);
 		this.linkSuccessor(spec?.parentTaskId, taskId);
 		this.linkSuccessor(spec?.commitOf, taskId);
-		this.persist(record);
+		if (!requirePersistence) this.persist(record);
 		return record;
 	}
 
@@ -1449,7 +1457,7 @@ export class TaskStore {
 				{ taskId },
 			);
 		}
-		return this.insertNew(taskId, spec, alias);
+		return this.insertNew(taskId, spec, alias, true);
 	}
 
 	/**

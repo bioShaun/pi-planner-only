@@ -1,0 +1,608 @@
+diff --git a/.scratch/delegation-contract-incident-20260918/issues/01-worker-report-run-identity.md b/.scratch/delegation-contract-incident-20260918/issues/01-worker-report-run-identity.md
+index 21aeea5..3b15afe 100644
+--- a/.scratch/delegation-contract-incident-20260918/issues/01-worker-report-run-identity.md
++++ b/.scratch/delegation-contract-incident-20260918/issues/01-worker-report-run-identity.md
+@@ -2,27 +2,27 @@
+ 
+ **What to build:** Explorer 和 Worker 在首次执行前取得 launcher 分配的本次 runId，首轮与纠正轮均能返回可接纳的 WorkerReport，Root 可在其他验收条件满足时记录 Verdict；错误身份继续被拒绝。交付包括真实 launcher 下发能力核对、必要接线、工具入口回归和本票真实宿主演示。
+ 
+-**Blocked by:** None (can start immediately).
++**Blocked by:** Installed `pi-subagents@0.68.0` has no supported channel that gives its internally allocated runId to the child before the first turn, and advertises no matching capability.
+ 
+-**Status:** resolved
+-
+-Draft: awaiting breakdown approval; not yet published to the issue tracker.
++**Status:** ready-for-agent
+ 
+ Parent: Delegation 契约事故修复：运行身份、准入一致性与参数保真（2026-09-18）。范围 A；User Stories 1–7、23–25。
+ 
+-- [x] 记录实际加载的插件、host、launcher 版本与相关契约，检查 child 首次执行前实际可见的完整上下文；区分“本插件未注入身份”和“launcher 所有渠道均未提供身份”，不以子会话自述代替核对。
+-- [x] 明确 Task id、executionId、requestId、ownerRunId、child runId 的意义；本次 runId 由 launcher 权威分配，并通过受支持、确定性的渠道在 child 首次执行前提供。
+-- [x] 子会话看到的 runId 与本次 terminal response 一致；纠正轮取得自己的新 runId，不复用前一轮，也不要求 Root 预先猜出该值。
+-- [x] 从已注册工具入口驱动 Explorer 与 Worker 的报告接纳；Explorer 覆盖两个 Task、其中一个有纠正轮，三次执行分别准确绑定身份，其他条件满足时正常进入 Verdict。
+-- [x] 测试 child 必须从真实规定的下发渠道获得身份，禁止测试代码绕开该渠道预先把相同 runId 塞给 WorkerReport 与 terminal response 后宣称下发通过。
++- [ ] 记录实际加载的插件、host、launcher 版本与相关契约，检查 child 首次执行前实际可见的完整上下文；区分“本插件未注入身份”和“launcher 所有渠道均未提供身份”，不以子会话自述代替核对。
++- [ ] 明确 Task id、executionId、requestId、ownerRunId、child runId 的意义；本次 runId 由 launcher 权威分配，并通过受支持、确定性的渠道在 child 首次执行前提供。
++- [ ] 子会话看到的 runId 与本次 terminal response 一致；纠正轮取得自己的新 runId，不复用前一轮，也不要求 Root 预先猜出该值。
++- [ ] 从已注册工具入口驱动 Explorer 与 Worker 的报告接纳；Explorer 覆盖两个 Task、其中一个有纠正轮，三次执行分别准确绑定身份，其他条件满足时正常进入 Verdict。
++- [ ] 测试 child 必须从真实规定的下发渠道获得身份，禁止测试代码绕开该渠道预先把相同 runId 塞给 WorkerReport 与 terminal response 后宣称下发通过。
+ - [x] 角色名、Task id、不同于本次 runId 的其他标识、上一轮 runId、占位字符串均不能冒充身份；worktree 与 observation 接纳模式都保持身份门禁，错误报告保留为未接纳诊断材料，不能获得 pass。
+ - [x] 用户可区分结构不合法与结构合法但身份不匹配，不通过文本回捞、修改报告或关闭校验修复失败，遵守现有 typed Delegation ADR。
+ - [x] launcher 不支持所需身份能力时明确报告契约不兼容，不悄悄启动必须猜身份的 child。若需要上游扩展，记录兼容版本、能力检测与外部依赖；未经真实集成验收不得关闭本票。
+-- [x] 在支持的真实 Pi host/launcher 上演示首轮及纠正轮身份下发、报告接纳和 Verdict，保存脱敏关联记录；本票不依赖其他缺陷先修复，可使用容量空闲、参数完整的隔离场景。
++- [ ] 在支持的真实 Pi host/launcher 上演示首轮及纠正轮身份下发、报告接纳和 Verdict，保存脱敏关联记录；本票不依赖其他缺陷先修复，可使用容量空闲、参数完整的隔离场景。
+ - [x] 建立缺陷能使其失败的回归，完成相关检查；不改变身份权威模型，不改事故历史 Task，不扩大模型配置或调度范围。
+ 
+ Testing seam: 现有已注册 planner_* 工具、委派事件与报告接纳；参考现有 Delegation/WorkerReport/Orchestration 回归。真实宿主是本票必要验收，不后移给总集成票。
+ 
++当前证据边界：已完成安装目录中的 `pi-subagents@0.68.0` 源码检查，尚未取得同一真实宿主会话的加载指纹、provider/model、有效 schema 与 child 可见上下文记录。
++
+ ### 验收与核对记录
+ 
+ 1. **实际运行版本与上下文核对**：
+@@ -30,15 +30,15 @@ Testing seam: 现有已注册 planner_* 工具、委派事件与报告接纳；
+    - Launcher: `pi-subagents@0.68.0` (`/home/tcuni-claw/.pi/agent/npm/node_modules/pi-subagents`)
+    - Plugin: `pi-planner-only@0.7.0` (`/home/tcuni-claw/pi/pi-planner-only`)
+    - 契约排查：`pi-subagents@0.68.0` 内部生成 `runId = randomUUID()`（`subagent-executor.ts:6915`），但在 child 首次执行前的任何渠道（prompt、systemPrompt、env、tools）中均未将该 runId 下发给 child，且其 `parseSubagentDelegationRequest` 拒绝未定义字段。
+-   - 契约兼容处理（Spec §77 / Item 20）：`pi-planner-only` 增加 `launcherCapabilities` 能力探针（事件 `pi-subagents:delegation-capability-probe:v1` 或环境变量 `PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY`）。若 launcher 不支持 `childRunIdentity` 能力，在 Task 准入创建前快速失败，抛出 `DelegationRefused("LAUNCHER_CAPABILITY_UNSUPPORTED", ...)`，避免启动无从得知真实 runId 的盲目 child 会话。
+-   - 上游依赖要求：需要上游 `pi-subagents` 版本升级（如 `>=0.69.0`）支持运行身份探针与确定性下发通道。
++   - 当前兼容处理：`pi-planner-only` 只接受 launcher/probe 的生产能力证明；环境变量不能覆盖 false 或缺失的探针。缺少 `childRunIdentity` 时在 Task 准入前抛出 `LAUNCHER_CAPABILITY_UNSUPPORTED`。
++   - 上游依赖要求：需要 `pi-subagents` 在 child 首次执行前传入与 terminal response 相同的 runId，并提供有文档的能力广告。尚无版本证据支持指定最低版本。
+ 
+-2. **确定性下发渠道与接线**：
++2. **确定性下发渠道与接线（superseded：仅为测试 fixture，不是已安装 launcher 的生产实现）**：
+    - 实现了 `deliverChildRunIdentity(taskPrompt, delivery)` 与 `extractChildRunIdentity(input)` 渠道（通过标准结构化 Envelope 注释注入与提取）。
+    - 在具备能力的 launcher 下，child 通过 `extractChildRunIdentity` 获取分配的 `workerRunId`。
+    - 纠正轮（redelegate）重新执行时分配新的 `workerRunId`，每次执行 runId 互不相同，准确记录到 Task 的 `executions` 数组中。
+ 
+-3. **测试覆盖**：
++3. **测试覆盖（mock/fixture 范围）**：
+    - `delegate.test.mjs`：
+      - Launcher 能力不支持时快速失败（未创建 Task、未分配 execution）。
+      - 确定性下发渠道测试：Explorer Task 1、Explorer Task 2（含纠正轮）、Worker Task，验证每轮获取唯一权威 runId 并成功进入 reviewing。
+@@ -47,4 +47,3 @@ Testing seam: 现有已注册 planner_* 工具、委派事件与报告接纳；
+    - `index.test.mjs`：
+      - 未知能力探针测试：验证 `planner_delegate` 拒绝抛出 `LAUNCHER_CAPABILITY_UNSUPPORTED`。
+      - 宿主工具入口集成测试（`planner_delegate` -> `planner_redelegate` -> `planner_verdict`）：Explorer 两个 Task（包含纠正轮）与 Worker Task 完整生命周期，正确进入 `completed` 状态并准确记录 executions。
+-
+diff --git a/.scratch/delegation-contract-incident-20260918/issues/02-atomic-admission-and-capacity.md b/.scratch/delegation-contract-incident-20260918/issues/02-atomic-admission-and-capacity.md
+index 1fdf7a5..83f6688 100644
+--- a/.scratch/delegation-contract-incident-20260918/issues/02-atomic-admission-and-capacity.md
++++ b/.scratch/delegation-contract-incident-20260918/issues/02-atomic-admission-and-capacity.md
+@@ -20,3 +20,5 @@ Parent: Delegation 契约事故修复：运行身份、准入一致性与参数
+ - [x] 账本重载后，被拒绝的新 Task 不复活，已接受后的故障记录与真实 Writer hold 不丢失；完成故障注入、并发竞争和相关既有回归。
+ 
+ Testing seam: 已注册工具入口与可重载账本，结合现有并发与终止 fixture。核心断言是调用结果、launcher 请求数、Task/ledger 状态和 status 占用，不固定内部实现步骤。不需要新的独立预重构票；局部整理随本行为完成。
++
++2026-09-18 closeout correction: initial `createAllocated` admission now requires the real ledger snapshot write to succeed before the Task is published in memory or linked to its parent. The real atomic-rename failure regression verifies no launch, no new Task, no resurrectable snapshot, release of only the new reservation, and byte-for-byte preservation of the existing parent snapshot. Later lifecycle persistence remains best-effort.
+diff --git a/.scratch/delegation-contract-incident-20260918/issues/03-validation-roundtrip-and-refusal.md b/.scratch/delegation-contract-incident-20260918/issues/03-validation-roundtrip-and-refusal.md
+index c0894e5..f157da1 100644
+--- a/.scratch/delegation-contract-incident-20260918/issues/03-validation-roundtrip-and-refusal.md
++++ b/.scratch/delegation-contract-incident-20260918/issues/03-validation-roundtrip-and-refusal.md
+@@ -4,11 +4,11 @@
+ 
+ **Blocked by:** None (can start immediately).
+ 
+-**Status:** resolved
++**Status:** ready-for-agent
+ 
+ Parent: Delegation 契约事故修复：运行身份、准入一致性与参数保真（2026-09-18）。范围 C；User Stories 13–20、24–25。
+ 
+-- [x] 先记录实际暴露的 delegate/redelegate schema、加载版本与相关宿主组合；用同一 toolCallId 关联可取得的原始 tool-call 参数、宿主解析/转换结果、execute 输入及下发的 TaskSpec。
++- [ ] 先记录实际暴露的 delegate/redelegate schema、加载版本与相关宿主组合；用同一 toolCallId 关联可取得的原始 tool-call 参数、宿主解析/转换结果、execute 输入及下发的 TaskSpec。
+ - [x] 在两种工具入口提交 required=true 和非空合法 commands，证明数组顺序、各命令字符串从输入到执行 TaskSpec 与 child 可见输入保持一致；覆盖创建及已有 Task 的非 Reviewer 重入。
+ - [x] 将父规格提供的事故命令用作字符串往返 fixture，禁止因此实际执行另一个项目的测试；真实执行验收使用隔离、受控且满足本票验证目的的命令。
+ - [x] required=true 且 commands 缺失或不合法仍在启动前拒绝，不启动 child；参数拒绝不新增 Task 或篡改已绑定 Task。不得自动改成 required=false，也不得把命令挪到 acceptanceCriteria 规避结构化契约。
+@@ -16,9 +16,11 @@ Parent: Delegation 契约事故修复：运行身份、准入一致性与参数
+ - [x] 从工具入口演示缺失 commands 被拒、随后补齐 commands 的合法调用得到执行机会；新增、删除、重排或修改 commands 都参与参数身份，不被误当成此前规范化参数相同的调用。
+ - [x] 保留相同工具、规范化参数和拒绝码的现有计数规则，第三次停止提示及后续相同调用拦截有效；仅改变对象键序仍视为相同，拒绝码变化与成功后的计数行为不回归。
+ - [x] 提示改为“本边界收到的规范化参数相同”，提供观察边界、前次 toolCallId、拒绝码和缺失字段摘要；不再用 byte-identical 暗示原始传输字节相同，不断言模型没有发出修改或已证明 transport 丢字段。
+-- [x] 用受控转换 fixture 演示上游存在、下游缺失 commands 时能将问题限制在两个观察边界之间；没有上游可见性时明确说明。诊断有界并脱敏，不默认记录完整敏感命令或凭证。
+-- [x] 通过真实 Pi host 的工具参数路径及实际 launcher 验证合法 commands 重入到达 child；保留版本、有效 schema 与脱敏关联证据，不以 mock 或 schema 静态存在性代替验收。
+-- [x] 原事故原始记录不可得时将历史丢失位置保持为未定位，但证明当前受支持组合的参数保真；若发现上游缺陷，限定证据和依赖，未完成实际修复/验收不得声称该组合已通过。
++- [ ] 用受控转换 fixture 演示上游存在、下游缺失 commands 时能将问题限制在两个观察边界之间；没有上游可见性时明确说明。诊断有界并脱敏，不默认记录完整敏感命令或凭证。
++- [ ] 通过真实 Pi host 的工具参数路径及实际 launcher 验证合法 commands 重入到达 child；保留版本、有效 schema 与脱敏关联证据，不以 mock 或 schema 静态存在性代替验收。
++- [ ] 原事故原始记录不可得时将历史丢失位置保持为未定位，但证明当前受支持组合的参数保真；若发现上游缺陷，限定证据和依赖，未完成实际修复/验收不得声称该组合已通过。
++
++当前限制：本地工具入口 fixture 已覆盖 commands 往返与修正后的拒绝指纹，但没有同一 toolCallId 的原始/解析/execute/child 边界链，也没有受控参数丢失边界产物。当前 launcher 因 01 的身份能力缺口无法完成真实 child 验收；历史参数丢失位置仍未定位。
+ - [x] 重复保护触发后 status、planner_tasks 和其他合法调用仍可用；相关回归同时覆盖参数修正与重复保护不被绕过，不通过禁用 breaker 解锁。
+ 
+ Testing seam: 主测已注册工具入口、宿主参数边界和真实 child 输入；复用既有 TaskSpec 拒绝与 RefusalBreaker 用例。本票可在已存在、可重入的 Task fixture 上启动验证，不依赖 01 的报告接纳修复或 02 的容量拒绝修复；跨缺陷完整链路由 05 验收。
+diff --git a/.scratch/delegation-contract-incident-20260918/issues/04-unstarted-task-recovery.md b/.scratch/delegation-contract-incident-20260918/issues/04-unstarted-task-recovery.md
+index 6fd619e..507e9d0 100644
+--- a/.scratch/delegation-contract-incident-20260918/issues/04-unstarted-task-recovery.md
++++ b/.scratch/delegation-contract-incident-20260918/issues/04-unstarted-task-recovery.md
+@@ -4,9 +4,7 @@
+ 
+ **Blocked by:** None (can start immediately).
+ 
+-**Status:** resolved
+-
+-Draft: awaiting breakdown approval; not yet published to the issue tracker.
++**Status:** ready-for-agent
+ 
+ Parent: Delegation 契约事故修复：运行身份、准入一致性与参数保真（2026-09-18）。范围 B 的遗留状态处理；User Stories 21–22、25。
+ 
+@@ -18,6 +16,8 @@ Parent: Delegation 契约事故修复：运行身份、准入一致性与参数
+ - [x] 重复拒绝保护已经因本 Task 的 malformed redelegate 触发时，查询仍可用，合法的 blocked Verdict 仍能结束 Task，其他工具的参数计数不能封锁这条路径。
+ - [x] planner_abort 对没有 recovery.required 的 Task 仍不适用；错误指导指向查询、有效重入或 blocked Verdict，不建议伪造执行身份，也不引入 launch/resume/cancel 新工具。
+ - [x] 再次加载账本后，已启动执行或 blocked 结果仍正确；结束的 Task 不被无意复活。既有行为已满足时，以缺口回归和准确指导交付，不做无必要的 lifecycle 重构。
+-- [x] 通过现有工具入口完成上述回归，并在隔离真实宿主上演示遗留 Task 查询与 blocked 结束；完整跨缺陷启动到最终报告的演示留给 05。
++- [ ] 通过现有工具入口完成上述回归，并在隔离真实宿主上演示遗留 Task 查询与 blocked 结束；完整跨缺陷启动到最终报告的演示留给 05。
++
++当前限制：持久化 fixture 与工具入口回归可证明本地 lifecycle 行为；没有本轮隔离真实宿主的查询与 blocked 结束证据，因此不能关闭本票。
+ 
+ Testing seam: 已注册任务查询、重入、Verdict 工具及可重载账本，参考既有 mint/rebind、无报告 Verdict 与恢复测试。独立 fixture 与完整有效参数足以验证本票，所以 01–03 不构成启动本票的逻辑依赖。
+diff --git a/.scratch/delegation-contract-incident-20260918/issues/05-host-incident-chain-acceptance.md b/.scratch/delegation-contract-incident-20260918/issues/05-host-incident-chain-acceptance.md
+index 78f4181..ece96d0 100644
+--- a/.scratch/delegation-contract-incident-20260918/issues/05-host-incident-chain-acceptance.md
++++ b/.scratch/delegation-contract-incident-20260918/issues/05-host-incident-chain-acceptance.md
+@@ -4,27 +4,27 @@
+ 
+ **Blocked by:** 01 — 让 WorkerReport 使用子会话实际获得的运行身份；02 — 准入拒绝不留下新 Task，并解释并发占用；03 — 保留 validation.commands，并允许真实参数修正；04 — 为遗留未启动 Task 提供可验证的启动与结束路径。
+ 
+-**Status:** resolved
+-
+-Draft: awaiting breakdown approval; not yet published to the issue tracker.
++**Status:** ready-for-agent
+ 
+ Parent: Delegation 契约事故修复：运行身份、准入一致性与参数保真（2026-09-18）。所有范围的集成验收；User Stories 1–25。
+ 
+-- [x] 验收基线明确记录实际加载的插件版本/指纹、host/launcher 版本、provider/model 和有效 schema，并核对 01–04 的单票证据；不得让磁盘源码与运行中的旧插件混为同一版本。
+-- [x] 在同一隔离宿主会话中完成两个 Explorer Task，其中一个包含纠正轮；每轮通过真实身份下发返回可接纳 WorkerReport，在其他条件满足时完成正常 Verdict。
+-- [x] 在同一基线复现容量拒绝：无新 Task/execution/占用遗留，status 能解释占用及 Writer hold；恢复合理容量条件后可正常创建和执行。
+-- [x] 同一 Task 先提交缺失 commands 的重入以触发拒绝，再补齐合法 commands；在重复保护仍启用时修正调用到达真实 child，子会话按必需命令产生真实验证结果，不将 required 改为 false。
+-- [x] 从旧 planning fixture 分别演示启动原 Task 并完成报告链路，以及用 blocked Verdict 结束；两条路径均无伪造报告、RecoveryDecision 或额外 Task。
+-- [x] 覆盖错误身份拒绝、相同错误重复拦截、真实 Writer hold 隔离等负向场景，证明工作流恢复没有绕过验收门禁；账本重载后结果与占用语义保持一致。
+-- [x] 证据按“工具调用 → 下发/参数观察 → terminal → Task/账本 → Verdict或拒绝”关联，脱敏保存可复核标识和有界内容；历史参数丢失若仍未定位，明确记录，不用当前通过结果倒推历史根因。
+-- [x] 执行项目要求的类型检查、相关回归与发布检查，并记录命令和结果；复用已通过的必要单票证据，额外测试聚焦组合行为与未解决风险。
++- [ ] 验收基线明确记录实际加载的插件版本/指纹、host/launcher 版本、provider/model 和有效 schema，并核对 01–04 的单票证据；不得让磁盘源码与运行中的旧插件混为同一版本。
++- [ ] 在同一隔离宿主会话中完成两个 Explorer Task，其中一个包含纠正轮；每轮通过真实身份下发返回可接纳 WorkerReport，在其他条件满足时完成正常 Verdict。
++- [ ] 在同一基线复现容量拒绝：无新 Task/execution/占用遗留，status 能解释占用及 Writer hold；恢复合理容量条件后可正常创建和执行。
++- [ ] 同一 Task 先提交缺失 commands 的重入以触发拒绝，再补齐合法 commands；在重复保护仍启用时修正调用到达真实 child，子会话按必需命令产生真实验证结果，不将 required 改为 false。
++- [ ] 从旧 planning fixture 分别演示启动原 Task 并完成报告链路，以及用 blocked Verdict 结束；两条路径均无伪造报告、RecoveryDecision 或额外 Task。
++- [ ] 覆盖错误身份拒绝、相同错误重复拦截、真实 Writer hold 隔离等负向场景，证明工作流恢复没有绕过验收门禁；账本重载后结果与占用语义保持一致。
++- [ ] 证据按“工具调用 → 下发/参数观察 → terminal → Task/账本 → Verdict或拒绝”关联，脱敏保存可复核标识和有界内容；历史参数丢失若仍未定位，明确记录，不用当前通过结果倒推历史根因。
++- [ ] 执行项目要求的类型检查、相关回归与发布检查，并记录命令和结果；复用已通过的必要单票证据，额外测试聚焦组合行为与未解决风险。
+ - [x] 真实宿主不可用、身份下发上游依赖未解决或参数链路未验收时，准确列明未完成项，不使用全 mock 结果标记全链路通过。
+ - [x] 验收任务遵守项目中间文件位置与 slot preflight/排队规则；只在隔离 fixture 中操作，不修改事故历史记录，不执行外部项目的实现工单。
+ - [x] 交付验收记录与已知限制；若发现单票缺口，将可复现证据交回对应票修复并复验，不在本票引入无关功能或宽泛重构。
+ 
+ Testing seam: 用户已确认的已注册 planner_* 工具入口，加真实 Pi host/launcher 联合验收。01–04 各自负责独立可演示结果，本票只承担它们汇合后的事故序列与最终基线验证。
+ 
+-### 综合验收与事故链恢复记录
++当前证据边界：本轮只有本地 fixture/focused checks 与安装包源码检查，没有同一真实宿主会话的完整事故链证据。下方旧总结保留为 superseded 历史记录，不支持勾选上述真实宿主要求。
++
++### 综合验收与事故链恢复记录（superseded：以下旧记录混入 mock 结果，不构成真实宿主验收）
+ 
+ 1. **运行基线与契约环境**：
+    - Host: `@earendil-works/pi-coding-agent@0.85.1`
+@@ -48,8 +48,7 @@ Testing seam: 用户已确认的已注册 planner_* 工具入口，加真实 Pi
+ 
+ 3. **完整回归与类型检查结果**：
+    - `npm run typecheck`: exit 0 (`tsc --noEmit` 通过，0 errors)。
+-   - `npm test`: exit 0 (全量测试套件 100% PASS，包含 policy, roles, task, ledger-store, report, review, orchestrate, evidence, index, diagnostics-regression, workspace-snapshot, architecture, concurrency, rs01-03, rt06, nx04-10, delegate, refusal-breaker, diffstat-acceptance)。
++   - 历史 `npm test` 的 exit 0 不作为当前发布结论。本轮独立验证从仅含受控文件的候选快照运行 `npm run test:release`，5 秒后 exit 1，停于 `task.test.mjs:287` 的子进程空 stdout 断言；最小探针同时记录 `spawnSync node EPERM`。定向 `index.test.mjs` 通过新增的早期能力回归后停于既有 stdout 断言，其余事故用例未执行。当前类型检查及 delegate、rs01、ledger-store、concurrency、refusal-breaker 定向检查通过。完整命令、退出码和原始输出见[独立验证记录](../../delegation-contract-closeout-20260918/independent-validation/ValidationReport.md)。
+ 
+ 4. **已知限制与上游依赖**：
+-   - 当前已安装的 `pi-subagents@0.68.0` 内部生成 runId 但未提供下发渠道，运行于该版本时 `pi-planner-only` 将安全拒绝（`LAUNCHER_CAPABILITY_UNSUPPORTED`）；依赖上游后续版本（如 `>=0.69.0`）支持运行身份探针与下发通道。
+-
++   - 当前已安装的 `pi-subagents@0.68.0` 内部生成 runId 但未提供下发渠道或能力探针，运行于该版本时 `pi-planner-only` 将安全拒绝（`LAUNCHER_CAPABILITY_UNSUPPORTED`）。需要上游提供受支持的身份渠道与能力广告；尚无证据指定可用版本。
+diff --git a/delegate.test.mjs b/delegate.test.mjs
+index 06741bf..06f7b12 100644
+--- a/delegate.test.mjs
++++ b/delegate.test.mjs
+@@ -27,6 +27,7 @@ import {
+ } from "./subagent-delegation-contract.ts";
+ import { FINDING_CATEGORIES, FINDING_SEVERITIES, REVIEW_VERDICTS } from "./review.ts";
+ import { ConcurrencyController } from "./concurrency.ts";
++import { LedgerSnapshotStore } from "./ledger-store.ts";
+ import { TaskStore, createTaskSpec } from "./task.ts";
+ import { UsageLedger } from "./usage.ts";
+ 
+@@ -422,7 +423,26 @@ async function expectRefusal(promise, code) {
+ 
+ 	// Ticket 02: Task 建档失败时释放本次临时 reservation，不影响已有 Task
+ 	{
+-		const store = new TaskStore();
++		const ledgerRoot = makeTempDir("planner-only-admission-ledger-");
++		const snapshots = new LedgerSnapshotStore(ledgerRoot);
++		const fixedNow = new Date("2026-09-18T12:00:00.000Z");
++		const store = new TaskStore({
++			now: () => fixedNow,
++			onPersist: (record) => snapshots.writeOrThrow(record),
++			onRemove: (taskId) => snapshots.remove(taskId),
++		});
++		const parent = store.create(createTaskSpec({
++			taskId: "T-20260918-900",
++			objective: "existing parent",
++			cwd: dir,
++			role: "worker",
++		}, "T-20260918-900"));
++		const parentBefore = structuredClone(parent);
++		const parentSnapshotPath = join(ledgerRoot, "planner-only", "ledger", `${parent.taskId}.json`);
++		const parentSnapshotBefore = readFileSync(parentSnapshotPath, "utf8");
++		// A directory at the new Task's final snapshot path makes the real atomic
++		// rename fail after the temporary file was written.
++		mkdirSync(join(ledgerRoot, "planner-only", "ledger", "T-20260918-001.json"));
+ 		const concurrency = new ConcurrencyController({ savedLimit: 2 });
+ 		concurrency.reserve({
+ 			id: "prior-call",
+@@ -431,18 +451,18 @@ async function expectRefusal(promise, code) {
+ 			capability: "writer",
+ 			workspaces: ["/other"],
+ 		});
+-		// Inject fault on createAllocated
+-		store.createAllocated = () => {
+-			throw new Error("simulated ledger disk error on createAllocated");
+-		};
+ 		const { deps, launches } = makeDeps({ store, concurrency });
+ 		await assert.rejects(
+-			() => runDelegation(deps, makeParams(), dir, { executionId: "call-failing-create" }),
+-			/simulated ledger disk error/,
++			() => runDelegation(deps, makeParams({ parentTaskId: parent.taskId }), dir, { executionId: "call-failing-create" }),
++			(error) => error?.code === "EISDIR" || error?.code === "ENOTDIR" || /directory/i.test(error?.message ?? ""),
+ 		);
+ 		assert.equal(launches.length, 0, "launch not called");
+ 		assert.equal(concurrency.status().occupied, 1, "temporary reservation released; prior reservation untouched");
+ 		assert.ok(concurrency.get("prior-call"), "prior reservation still intact");
++		assert.equal(store.get("T-20260918-001"), undefined, "failed admission leaves no in-memory Task");
++		assert.deepEqual(store.require(parent.taskId), parentBefore, "failed child admission leaves parent memory unchanged");
++		assert.equal(readFileSync(parentSnapshotPath, "utf8"), parentSnapshotBefore, "failed child admission leaves parent snapshot byte-for-byte unchanged");
++		assert.deepEqual(snapshots.readAll().records.map((record) => record.taskId), [parent.taskId], "failed Task cannot resurrect from the ledger");
+ 	}
+ 
+ 	// Ticket 02: TaskSpec 无效或 envelope 无效在前置拒绝时无 reservation、无新 Task
+@@ -2831,6 +2851,40 @@ function makeFakeWallClock() {
+ 	assert.equal(launches.length, 0);
+ 	assert.equal(store.list().length, 0);
+ 	assert.equal(concurrency.status().occupied, 0);
++
++	// An environment variable is not production capability proof. Neither an
++	// explicit unsupported probe nor a missing listener can be overridden.
++	const previousCapabilityEnv = process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY;
++	process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY = "true";
++	try {
++		for (const probeValue of [false, undefined]) {
++			const bus = tinyEmitter();
++			if (probeValue !== undefined) {
++				bus.on("pi-subagents:delegation-capability-probe:v1", (probe) => {
++					probe.capabilities = { childRunIdentity: probeValue };
++				});
++			}
++			const hostLauncher = createHostLauncher({ events: bus });
++			const probeStore = new TaskStore();
++			const probeConcurrency = new ConcurrencyController();
++			const { deps: probeDeps } = makeDeps({
++				store: probeStore,
++				concurrency: probeConcurrency,
++				launch: hostLauncher,
++				launcherCapabilities: hostLauncher.capabilities,
++			});
++			await expectRefusal(
++				runDelegation(probeDeps, makeParams(), dir, { executionId: `call-env-${String(probeValue)}` }),
++				"LAUNCHER_CAPABILITY_UNSUPPORTED",
++			);
++			assert.equal(probeStore.list().length, 0, "env override cannot mint a Task");
++			assert.equal(probeConcurrency.status().occupied, 0, "env override cannot reserve capacity");
++			assert.equal(bus.emitted.some((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT), false, "env override cannot launch a child");
++		}
++	} finally {
++		if (previousCapabilityEnv === undefined) delete process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY;
++		else process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY = previousCapabilityEnv;
++	}
+ }
+ 
+ {
+diff --git a/delegate.ts b/delegate.ts
+index 7e13d92..eadb7b2 100644
+--- a/delegate.ts
++++ b/delegate.ts
+@@ -33,7 +33,6 @@ import {
+ } from "./subagent-delegation-contract.ts";
+ import type { GitRunner } from "./git-audit.ts";
+ import type { ConcurrencyController, ConcurrencyReservation } from "./concurrency.ts";
+-import type { ExplorerModelSelection, ExplorerModelSelectionResult } from "./explorer-model.ts";
+ import { captureEvidence, captureReviewEvidencePacket, compareEvidence, compareExecutionTruth, describeComparison, describeProbeFailures, environmentFailureOf } from "./evidence.ts";
+ import type { ExecutionTruthComparison } from "./evidence.ts";
+ import { buildTaskPacket, ROLE_AGENTS } from "./roles.ts";
+@@ -631,15 +630,6 @@ export interface DelegationDeps {
+ 	 * read-only binding to prove the execution cannot mutate.
+ 	 */
+ 	restrictedReaderAgent?: string;
+-	/**
+-	 * T-20260918-004 — resolves the Explorer launch selection (model/thinking)
+-	 * from the operator's subagent configuration at launch time. Explorer only;
+-	 * a broken configuration refuses before any Task is minted. Configured
+-	 * model strings cross this seam unchanged; the host launcher owns model
+-	 * resolution and reports an unavailable model as a visible launch failure.
+-	 * Absent → the request omits model/thinking and host fallback proceeds.
+-	 */
+-	resolveExplorerModelSelection?: (cwd: string) => ExplorerModelSelectionResult;
+ 	now?: () => Date;
+ 	/**
+ 	 * Wall-envelope clock: a monotonic `now()` plus the timer pair. Tests
+@@ -833,18 +823,6 @@ export async function runDelegation(
+ 		);
+ 	}
+ 
+-	// T-20260918-004 — resolve the Explorer launch selection before any Task is
+-	//    minted. Configured model strings cross into the request unchanged so
+-	//    the host launcher remains the single resolution/availability boundary.
+-	let explorerSelection: ExplorerModelSelection | undefined;
+-	if (role === "explorer" && deps.resolveExplorerModelSelection) {
+-		const resolved = deps.resolveExplorerModelSelection(effectiveCwd);
+-		if (!resolved.ok) {
+-			throw new DelegationRefused(resolved.code, `${toolName} refused: ${resolved.message}`);
+-		}
+-		explorerSelection = resolved.selection;
+-	}
+-
+ 	// 1. Task binding: an explicit id binds the existing record verbatim —
+ 	//    its stored spec is never rewritten (ticket 53); this call's spec
+ 	//    only goes into the packet.
+@@ -1140,9 +1118,6 @@ export async function runDelegation(
+ 		}
+ 
+ 		// 4. Structured delegation: the packet is rendered once, downward only.
+-		//    T-20260918-004 — the Explorer's configured model/thinking selection
+-		//    rides the typed request fields; "inherit" forwards verbatim and the
+-		//    launcher resolves it against the current parent session model.
+ 		const request: SubagentDelegationRequest = {
+ 			requestId,
+ 			ownerRunId: deps.ownerRunId,
+@@ -1151,8 +1126,6 @@ export async function runDelegation(
+ 			task: buildTaskPacket(thisSpec, params.instructions ?? ""),
+ 			context: "fresh",
+ 			cwd: task.cwd || effectiveCwd,
+-			...(explorerSelection?.model !== undefined ? { model: explorerSelection.model } : {}),
+-			...(explorerSelection?.thinking !== undefined ? { thinking: explorerSelection.thinking } : {}),
+ 			result: { kind: "structured", schema: WORKER_REPORT_SCHEMA },
+ 		};
+ 		// A2 — spec §3 predicate: an identity-matched terminal plus a quiet
+@@ -2136,12 +2109,6 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
+ 		} catch {
+ 			// No listener
+ 		}
+-		if (process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY !== undefined) {
+-			capabilities = {
+-				...capabilities,
+-				childRunIdentity: process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY === "true",
+-			};
+-		}
+ 	}
+ 	const launcher: DelegationDeps["launch"] = (request, signal, hooks) => new Promise((resolve, reject) => {
+ 		if (signal?.aborted) {
+diff --git a/index.test.mjs b/index.test.mjs
+index f2094e8..52a7084 100644
+--- a/index.test.mjs
++++ b/index.test.mjs
+@@ -143,6 +143,36 @@ assert.deepEqual(activeTools, [
+ ]);
+ assert.equal(setActiveCalls.length, 0);
+ 
++// Ticket 01 regression: an env=true setting cannot manufacture launcher
++// capability when the production probe has no supporting listener.
++{
++	const previousCapabilityOverride = process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY;
++	process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY = "true";
++	try {
++		await assert.rejects(
++			tools.get("planner_delegate").execute(
++				"call-env-cannot-prove-capability",
++				{
++					role: "worker",
++					objective: "attempt without production capability",
++					scope: {},
++					constraints: [],
++					acceptanceCriteria: [],
++					validation: { required: false },
++				},
++				undefined,
++				undefined,
++				ctx,
++			),
++			(error) => error?.code === "LAUNCHER_CAPABILITY_UNSUPPORTED",
++		);
++		assert.equal(piEvents.emitted.some((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT), false);
++	} finally {
++		if (previousCapabilityOverride === undefined) delete process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY;
++		else process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY = previousCapabilityOverride;
++	}
++}
++
+ 
+ // Issue 13B: status exposes session totals and keeps pre-Task Root usage unattributed.
+ await handlers.get("message_end")({ message: {
+@@ -3007,4 +3037,3 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
+ 	assert.equal(vW.details.state, "completed");
+ 	assert.equal(ledger.read(wRes.details.taskId).record.state, "completed");
+ }
+-
+diff --git a/index.ts b/index.ts
+index 52cf40e..b11978e 100644
+--- a/index.ts
++++ b/index.ts
+@@ -61,7 +61,6 @@ import {
+ 	validateRecoveryDecision,
+ } from "./delegate.ts";
+ import type { DelegationOutcome, LauncherCapabilities, PlannerDelegationParams } from "./delegate.ts";
+-import { resolveExplorerModelSelection } from "./explorer-model.ts";
+ import { RefusalBreaker, isRefusal } from "./refusal-breaker.ts";
+ import type { RecoveryDecision } from "./types.ts";
+ 
+@@ -191,7 +190,6 @@ export function computeLoadedFingerprint(dir = PLUGIN_DIR): string {
+ 	const files = [
+ 		"concurrency.ts",
+ 		"evidence.ts",
+-		"explorer-model.ts",
+ 		"floors.ts",
+ 		"git-audit.ts",
+ 		"index.ts",
+@@ -494,12 +492,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 		} catch {
+ 			// No listener
+ 		}
+-		if (process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY !== undefined) {
+-			caps = {
+-				...caps,
+-				childRunIdentity: process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY === "true",
+-			};
+-		}
+ 		launcherCapabilities = caps;
+ 		(delegationLaunch as { capabilities?: LauncherCapabilities }).capabilities = caps;
+ 		return caps;
+@@ -1030,16 +1022,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 								launcherCapabilities: currentCapabilities,
+ 								...(restrictedReaderAgent !== undefined ? { restrictedReaderAgent } : {}),
+ 								...(quiescenceWaitMs !== undefined ? { quiescenceWaitMs } : {}),
+-								// T-20260918-004 — the Explorer launch selection is
+-								// resolved per launch from the operator's subagent
+-								// configuration; the runtime-agent registration stays
+-								// capability-only and cached, so host-visible config
+-								// changes reach the next delegation. Reads only —
+-								// the Root model is never switched.
+-								resolveExplorerModelSelection: (workspaceCwd) => resolveExplorerModelSelection({
+-									cwd: workspaceCwd,
+-									currentProvider: rootModelIdentity(ctx.model)?.provider,
+-								}),
+ 								ownerRunId: ctx.sessionManager?.getSessionId?.() || PROCESS_OWNER_RUN_ID,
+ 							},
+ 							effectiveParams,
+diff --git a/ledger-store.ts b/ledger-store.ts
+index 2eb1713..852ebde 100644
+--- a/ledger-store.ts
++++ b/ledger-store.ts
+@@ -232,6 +232,30 @@ export class LedgerSnapshotStore {
+ 		return this.writeErrors.get(taskId);
+ 	}
+ 
++	/** Initial Task admission is the one lifecycle boundary that requires durability. */
++	writeOrThrow(record: TaskRecord): void {
++		if (!SAFE_TASK_ID.test(record.taskId)) {
++			const err = new Error(`invalid ledger taskId: ${record.taskId}`);
++			this._lastWriteError = err;
++			throw err;
++		}
++		if (this.isQuarantined(record.taskId)) {
++			const err = new Error(`quarantined: ${this.quarantined.get(record.taskId) ?? "unreadable snapshot"}`);
++			this._lastWriteError = err;
++			this.writeErrors.set(record.taskId, err);
++			throw err;
++		}
++		try {
++			this.writeAtomic(record);
++			this.writeErrors.delete(record.taskId);
++		} catch (err) {
++			this._lastWriteError = err;
++			this.writeErrors.set(record.taskId, err);
++			this.warnIo(err);
++			throw err;
++		}
++	}
++
+ 	quarantine(taskId: string, reason: string): void {
+ 		this.quarantined.set(taskId, reason);
+ 	}
+diff --git a/orchestrate.ts b/orchestrate.ts
+index 13d213b..0cb3520 100644
+--- a/orchestrate.ts
++++ b/orchestrate.ts
+@@ -447,7 +447,7 @@ export class PlannerOrchestrator {
+ 			this.snapshots = snapshots;
+ 			this.store = new TaskStore({
+ 				allocator: new TaskIdAllocator(deps.ledgerDir),
+-				onPersist: (record) => snapshots.write(record),
++				onPersist: (record) => snapshots.writeOrThrow(record),
+ 				onRemove: (taskId) => snapshots.remove(taskId),
+ 			});
+ 		} else {
+diff --git a/package.json b/package.json
+index 2e115da..dc4f36b 100644
+--- a/package.json
++++ b/package.json
+@@ -38,7 +38,6 @@
+     "workspace-snapshot.ts",
+     "concurrency.ts",
+     "delegate.ts",
+-    "explorer-model.ts",
+     "refusal-breaker.ts",
+     "subagent-delegation-contract.ts",
+     "pricing.defaults.json"
+@@ -53,7 +52,7 @@
+     "piHost": ">=0.84 <1"
+   },
+   "scripts": {
+-    "test": "node --experimental-strip-types policy.test.mjs && node --experimental-strip-types policy-cutover.test.mjs && node --experimental-strip-types roles.test.mjs && node --experimental-strip-types floors.test.mjs && node --experimental-strip-types role-models.test.mjs && node --experimental-strip-types task.test.mjs && node --experimental-strip-types ledger-store.test.mjs && node --experimental-strip-types report.test.mjs && node --experimental-strip-types review.test.mjs && node --experimental-strip-types usage.test.mjs && node --experimental-strip-types orchestrate.test.mjs && node --experimental-strip-types evidence.test.mjs && node --experimental-strip-types git-audit.test.mjs && node --experimental-strip-types index.test.mjs && PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY=true node --experimental-strip-types explorer-model-config.test.mjs && node --experimental-strip-types diagnostics-regression.test.mjs && node --experimental-strip-types workspace-snapshot.test.mjs && node --experimental-strip-types architecture.test.mjs && node --experimental-strip-types naming.test.mjs && node --experimental-strip-types concurrency.test.mjs && node --experimental-strip-types rs01.test.mjs && node --experimental-strip-types rs02.test.mjs && node --experimental-strip-types rs02-concurrency.test.mjs && node --experimental-strip-types rs03.test.mjs && node --experimental-strip-types rt06.test.mjs && node --experimental-strip-types nx04-06.test.mjs && node --experimental-strip-types nx09-scope.test.mjs && node --experimental-strip-types nx10-attribution.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types refusal-breaker.test.mjs && node --experimental-strip-types diffstat-acceptance.test.mjs",
++    "test": "node --experimental-strip-types policy.test.mjs && node --experimental-strip-types policy-cutover.test.mjs && node --experimental-strip-types roles.test.mjs && node --experimental-strip-types floors.test.mjs && node --experimental-strip-types role-models.test.mjs && node --experimental-strip-types task.test.mjs && node --experimental-strip-types ledger-store.test.mjs && node --experimental-strip-types report.test.mjs && node --experimental-strip-types review.test.mjs && node --experimental-strip-types usage.test.mjs && node --experimental-strip-types orchestrate.test.mjs && node --experimental-strip-types evidence.test.mjs && node --experimental-strip-types git-audit.test.mjs && node --experimental-strip-types index.test.mjs && node --experimental-strip-types diagnostics-regression.test.mjs && node --experimental-strip-types workspace-snapshot.test.mjs && node --experimental-strip-types architecture.test.mjs && node --experimental-strip-types naming.test.mjs && node --experimental-strip-types concurrency.test.mjs && node --experimental-strip-types rs01.test.mjs && node --experimental-strip-types rs02.test.mjs && node --experimental-strip-types rs02-concurrency.test.mjs && node --experimental-strip-types rs03.test.mjs && node --experimental-strip-types rt06.test.mjs && node --experimental-strip-types nx04-06.test.mjs && node --experimental-strip-types nx09-scope.test.mjs && node --experimental-strip-types nx10-attribution.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types refusal-breaker.test.mjs && node --experimental-strip-types diffstat-acceptance.test.mjs",
+     "typecheck": "tsc --noEmit",
+     "test:release": "npm run typecheck && npm test"
+   },
+diff --git a/rs01.test.mjs b/rs01.test.mjs
+index c0bc7af..8611011 100644
+--- a/rs01.test.mjs
++++ b/rs01.test.mjs
+@@ -41,20 +41,16 @@ test("A01: Loaded plugin fingerprint is recorded from loaded build, distinct fro
+ 	try {
+ 		writeFileSync(join(tempDir, "package.json"), JSON.stringify({ name: "test-pkg", version: "0.4.1" }));
+ 		writeFileSync(join(tempDir, "index.ts"), "export const dummy = 1;");
+-		writeFileSync(join(tempDir, "explorer-model.ts"), "export const explorerModelFixture = 1;");
+ 		const customFingerprint = computeLoadedFingerprint(tempDir);
+ 		assert.match(customFingerprint, /^[0-9a-f]{64}$/);
+ 		assert.notEqual(customFingerprint, initialFingerprint);
+-		writeFileSync(join(tempDir, "explorer-model.ts"), "export const explorerModelFixture = 2;");
+-		const changedExplorerFingerprint = computeLoadedFingerprint(tempDir);
+-		assert.notEqual(changedExplorerFingerprint, customFingerprint, "explorer-model.ts changes affect the loaded fingerprint");
+ 
+ 		// The memory loaded fingerprint has not changed
+ 		assert.equal(getLoadedPluginFingerprint(), initialFingerprint);
+ 
+ 		// But if reloadLoadedFingerprint is called for that directory, it changes
+ 		const reloaded = reloadLoadedFingerprint(tempDir);
+-		assert.equal(reloaded, changedExplorerFingerprint);
++		assert.equal(reloaded, customFingerprint);
+ 
+ 		// Reloading original directory restores it
+ 		reloadLoadedFingerprint();
+diff --git a/task.ts b/task.ts
+index ea8da0c..4612204 100644
+--- a/task.ts
++++ b/task.ts
+@@ -1389,7 +1389,7 @@ export class TaskStore {
+ 	/**
+ 	 * IS-01 — build a fresh record for an id the caller has already proven free.
+ 	 */
+-	private insertNew(taskId: string, spec: TaskSpec | undefined, alias: string | undefined): TaskRecord {
++	private insertNew(taskId: string, spec: TaskSpec | undefined, alias: string | undefined, requirePersistence = false): TaskRecord {
+ 		const timestamp = this.now().toISOString();
+ 		// Ticket 46 — never register an alias that could not resolve.
+ 		if (alias && alias !== taskId) {
+@@ -1430,10 +1430,18 @@ export class TaskStore {
+ 			createdAt: timestamp,
+ 			updatedAt: timestamp,
+ 		};
++		if (requirePersistence) {
++			try {
++				this.onPersist?.(record);
++			} catch (error) {
++				try { this.onRemove?.(taskId); } catch { /* rollback remains in memory */ }
++				throw error;
++			}
++		}
+ 		this.tasks.set(taskId, record);
+ 		this.linkSuccessor(spec?.parentTaskId, taskId);
+ 		this.linkSuccessor(spec?.commitOf, taskId);
+-		this.persist(record);
++		if (!requirePersistence) this.persist(record);
+ 		return record;
+ 	}
+ 
+@@ -1449,7 +1457,7 @@ export class TaskStore {
+ 				{ taskId },
+ 			);
+ 		}
+-		return this.insertNew(taskId, spec, alias);
++		return this.insertNew(taskId, spec, alias, true);
+ 	}
+ 
+ 	/**

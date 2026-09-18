@@ -1,0 +1,4 @@
+/home/tcuni-claw/.local/bin/slot: line 271: /home/tcuni-claw/.local/share/slot/jobs/1789733903-4-14194.sh: Read-only file system
+chmod: cannot access '/home/tcuni-claw/.local/share/slot/jobs/1789733903-4-14194.sh': No such file or directory
+/home/tcuni-claw/.local/bin/slot: line 58: /home/tcuni-claw/.local/share/slot/audit.log: Read-only file system
+c: cannot connect to the server at '/home/tcuni-claw/.local/share/slot/cpu.socket': Operation not permitted

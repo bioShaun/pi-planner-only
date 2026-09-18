@@ -20,3 +20,5 @@ Parent: Delegation 契约事故修复：运行身份、准入一致性与参数�
 - [x] 账本重载后，被拒绝的新 Task 不复活，已接受后的故障记录与真实 Writer hold 不丢失；完成故障注入、并发竞争和相关既有回归。
 
 Testing seam: 已注册工具入口与可重载账本，结合现有并发与终止 fixture。核心断言是调用结果、launcher 请求数、Task/ledger 状态和 status 占用，不固定内部实现步骤。不需要新的独立预重构票；局部整理随本行为完成。
+
+2026-09-18 closeout correction: initial `createAllocated` admission now requires the real ledger snapshot write to succeed before the Task is published in memory or linked to its parent. The real atomic-rename failure regression verifies no launch, no new Task, no resurrectable snapshot, release of only the new reservation, and byte-for-byte preservation of the existing parent snapshot. Later lifecycle persistence remains best-effort.

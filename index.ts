@@ -61,7 +61,6 @@ import {
 	validateRecoveryDecision,
 } from "./delegate.ts";
 import type { DelegationOutcome, LauncherCapabilities, PlannerDelegationParams } from "./delegate.ts";
-import { resolveExplorerModelSelection } from "./explorer-model.ts";
 import { RefusalBreaker, isRefusal } from "./refusal-breaker.ts";
 import type { RecoveryDecision } from "./types.ts";
 
@@ -191,7 +190,6 @@ export function computeLoadedFingerprint(dir = PLUGIN_DIR): string {
 	const files = [
 		"concurrency.ts",
 		"evidence.ts",
-		"explorer-model.ts",
 		"floors.ts",
 		"git-audit.ts",
 		"index.ts",
@@ -493,12 +491,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			}
 		} catch {
 			// No listener
-		}
-		if (process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY !== undefined) {
-			caps = {
-				...caps,
-				childRunIdentity: process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY === "true",
-			};
 		}
 		launcherCapabilities = caps;
 		(delegationLaunch as { capabilities?: LauncherCapabilities }).capabilities = caps;
@@ -1030,16 +1022,6 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 								launcherCapabilities: currentCapabilities,
 								...(restrictedReaderAgent !== undefined ? { restrictedReaderAgent } : {}),
 								...(quiescenceWaitMs !== undefined ? { quiescenceWaitMs } : {}),
-								// T-20260918-004 — the Explorer launch selection is
-								// resolved per launch from the operator's subagent
-								// configuration; the runtime-agent registration stays
-								// capability-only and cached, so host-visible config
-								// changes reach the next delegation. Reads only —
-								// the Root model is never switched.
-								resolveExplorerModelSelection: (workspaceCwd) => resolveExplorerModelSelection({
-									cwd: workspaceCwd,
-									currentProvider: rootModelIdentity(ctx.model)?.provider,
-								}),
 								ownerRunId: ctx.sessionManager?.getSessionId?.() || PROCESS_OWNER_RUN_ID,
 							},
 							effectiveParams,

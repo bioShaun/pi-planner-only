@@ -34,3 +34,11 @@ node_modules/
 .scratch/explorer-model-config/acceptance/agent/
 .scratch/explorer-model-config/acceptance/workspace/
 .scratch/explorer-model-config/acceptance/runs/
+
+# bulky runtime artifacts inside .scratch work dirs: node compile cache, npm
+# cache, whole-repo validation snapshots/candidates, ad-hoc probe scratch
+.scratch/*/runtime-tmp/
+.scratch/*/npm-cache/
+.scratch/*/independent-validation/
+.scratch/*/validation/snapshot/
+.scratch/*/validation-tmp/

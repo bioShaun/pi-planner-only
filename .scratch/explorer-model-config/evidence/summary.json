@@ -1,0 +1,91 @@
+{
+  "host": {
+    "pi": "0.85.1",
+    "piBinary": "/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/pi",
+    "piSubagents": "0.68.0",
+    "plugin": "pi-planner-only @ repo HEAD (loaded via -e index.ts, extension discovery disabled)",
+    "gitHead": "f57a4de309a5317dd4ecef6a52ba83c7d7d545ff",
+    "invocation": "slot cpu -L explorer-model-acceptance -- pi -p --mode json --no-extensions -e ~/.pi/agent/npm/node_modules/pi-subagents/index.ts -e index.ts --provider tcuni-luna --model gpt-5.6-luna <prompt>"
+  },
+  "models": {
+    "rootConfigured": {
+      "provider": "tcuni-luna",
+      "model": "gpt-5.6-luna"
+    },
+    "scoutConfigured": {
+      "provider": "qwen-local",
+      "model": "qwen3.8-27b",
+      "thinking": "low"
+    },
+    "explorerLaunchResolved": {
+      "agent": "planner-scout",
+      "model": "qwen-local/qwen3.8-27b",
+      "thinking": "low"
+    },
+    "childActual": {
+      "provider": "qwen-local",
+      "model": "qwen3.8-27b",
+      "effectiveModel": "qwen-local/qwen3.8-27b:low",
+      "reportedThinking": "low",
+      "runId": "d8280241-8e7d-43e6-937a-67d2aaa91b67"
+    }
+  },
+  "capabilities": {
+    "agent": "planner-scout",
+    "declaredTools": [
+      "read",
+      "grep",
+      "find",
+      "ls"
+    ],
+    "toolCount": 4,
+    "hasMutationTools": false,
+    "executionCapability": "restricted-reader",
+    "confirmationBasis": "terminal+restricted-reader"
+  },
+  "task": {
+    "taskId": "T-20260918-001",
+    "acceptanceMode": "observation",
+    "runId": "d8280241-8e7d-43e6-937a-67d2aaa91b67",
+    "executionStatus": "completed",
+    "endedReason": "normal",
+    "childToolCalls": [
+      "read",
+      "ls",
+      "structured_output"
+    ],
+    "ledgerPath": ".scratch/explorer-model-config/evidence/planner-only/ledger/T-20260918-001.json",
+    "usageLogPath": ".scratch/explorer-model-config/evidence/planner-only/usage.jsonl",
+    "transcriptPath": ".scratch/explorer-model-config/evidence/subagent-artifacts/d8280241-8e7d-43e6-937a-67d2aaa91b67_planner-scout_0_transcript.jsonl",
+    "metaPath": ".scratch/explorer-model-config/evidence/subagent-artifacts/d8280241-8e7d-43e6-937a-67d2aaa91b67_planner-scout_0_meta.json",
+    "ledgerState": "changes_requested",
+    "admittedReportCount": 0,
+    "reportAdmitted": false,
+    "reportedWorkerRunId": "explorer-model-config-T-20260918-001",
+    "workerRunIdMatches": false
+  },
+  "verificationConclusion": {
+    "modelRoutingVerified": true,
+    "readOnlyIsolationVerified": true,
+    "thinkingPropagationVerified": true,
+    "deterministicSuitesPass": false,
+    "hostEvidenceChain": "settings.json (qwen-local/qwen3.8-27b:low) -> resolveExplorerModelSelection -> SubagentDelegationRequest -> pi-subagents launch -> child session assistant message (qwen3.8-27b) -> ledger usage attribution (qwen-local/qwen3.8-27b:low distinct from root gpt-5.6-luna)",
+    "hostContractBoundaryNote": "Historical child model/tools verified, but WorkerReport rejected for workerRunId mismatch; Task changes_requested and reports empty. Upstream child-visible true run identity is required before rerun.",
+    "fullAcceptancePassed": false,
+    "currentImplementationHostVerified": false,
+    "historicalModelRoutingVerified": true,
+    "historicalReadOnlyIsolationVerified": true,
+    "historicalThinkingPropagationVerified": true
+  },
+  "evidenceScope": "Historical pre-closeout run; not acceptance of current working tree.",
+  "currentCloseout": {
+    "sourceHashes": ".scratch/explorer-model-config-closeout/after-config-correction2.json",
+    "focusedValidation": "passed: Explorer, delegate, rs01, typecheck",
+    "focusedReport": ".scratch/explorer-model-config-closeout/final-focused-report.md",
+    "releaseValidation": "failed exit 1 at task.test.mjs:287; reproduced environmental Node console pipe output loss; remaining suite not run",
+    "releaseReport": ".scratch/explorer-model-config-closeout/final-validator-report.md",
+    "compatibility": "Partial pi-subagents 0.68 projection; valid unsupported configurations refuse explicitly. Other declared dependency versions unverified.",
+    "strictReadOnlyGate": "blocked: slot state/socket permissions",
+    "realHostAcceptance": "blocked: upstream true runId exposure missing; no current-source rerun"
+  }
+}

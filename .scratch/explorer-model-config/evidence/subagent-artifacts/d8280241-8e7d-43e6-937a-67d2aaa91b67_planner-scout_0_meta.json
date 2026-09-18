@@ -1,0 +1,63 @@
+{
+  "runId": "d8280241-8e7d-43e6-937a-67d2aaa91b67",
+  "agent": "planner-scout",
+  "task": "[prompt redacted]",
+  "exitCode": 0,
+  "usage": {
+    "input": 0,
+    "output": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "cost": 0,
+    "turns": 3
+  },
+  "model": "qwen-local/qwen3.8-27b:low",
+  "requestedModel": "qwen-local/qwen3.8-27b",
+  "durationMs": 7568,
+  "toolCount": 4,
+  "launchContractDigest": "f7be7a86ae05d0e7e24a3a5fd827a8cd4ef423e970d9201eb082a03007fd555b",
+  "launchResolvedExtensions": {
+    "version": 1,
+    "source": "launch-resolved",
+    "disableAmbientExtensions": true,
+    "runtime": [
+      "sha256:d03ad380efa2768f"
+    ],
+    "configured": [],
+    "required": [],
+    "effective": [
+      "sha256:d03ad380efa2768f"
+    ],
+    "omitted": {
+      "runtime": 0,
+      "configured": 0,
+      "required": 0,
+      "effective": 0
+    }
+  },
+  "acceptance": {
+    "status": "not-required",
+    "evidenceStatus": "not-required",
+    "explicit": true,
+    "effectiveAcceptance": {
+      "level": "none",
+      "explicit": true,
+      "inferredReason": [
+        "read-only/reviewer-style agent"
+      ],
+      "criteria": [],
+      "evidence": [],
+      "verify": [],
+      "stopRules": [],
+      "reason": "disabled by deprecated false shorthand"
+    },
+    "inferredReason": [
+      "read-only/reviewer-style agent"
+    ],
+    "criteria": [],
+    "runtimeChecks": [],
+    "verifyRuns": []
+  },
+  "transcriptPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/explorer-model-config/acceptance/agent/sessions/--home-tcuni-claw-pi-pi-planner-only-.scratch-explorer-model-config-acceptance-workspace--/subagent-artifacts/d8280241-8e7d-43e6-937a-67d2aaa91b67_planner-scout_0_transcript.jsonl",
+  "timestamp": 1789721510193
+}

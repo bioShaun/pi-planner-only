@@ -232,6 +232,30 @@ export class LedgerSnapshotStore {
 		return this.writeErrors.get(taskId);
 	}
 
+	/** Initial Task admission is the one lifecycle boundary that requires durability. */
+	writeOrThrow(record: TaskRecord): void {
+		if (!SAFE_TASK_ID.test(record.taskId)) {
+			const err = new Error(`invalid ledger taskId: ${record.taskId}`);
+			this._lastWriteError = err;
+			throw err;
+		}
+		if (this.isQuarantined(record.taskId)) {
+			const err = new Error(`quarantined: ${this.quarantined.get(record.taskId) ?? "unreadable snapshot"}`);
+			this._lastWriteError = err;
+			this.writeErrors.set(record.taskId, err);
+			throw err;
+		}
+		try {
+			this.writeAtomic(record);
+			this.writeErrors.delete(record.taskId);
+		} catch (err) {
+			this._lastWriteError = err;
+			this.writeErrors.set(record.taskId, err);
+			this.warnIo(err);
+			throw err;
+		}
+	}
+
 	quarantine(taskId: string, reason: string): void {
 		this.quarantined.set(taskId, reason);
 	}

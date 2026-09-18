@@ -1,0 +1,2224 @@
+diff --git a/.gitignore b/.gitignore
+index 17db5d0..a087ffb 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -29,3 +29,8 @@ node_modules/
+ 
+ # local Codex subagent config (machine-specific)
+ .codex/
++
++# Explorer model-config acceptance runtime state and credentials
++.scratch/explorer-model-config/acceptance/agent/
++.scratch/explorer-model-config/acceptance/workspace/
++.scratch/explorer-model-config/acceptance/runs/
+diff --git a/.scratch/delegation-contract-incident-20260918/issues/01-worker-report-run-identity.md b/.scratch/delegation-contract-incident-20260918/issues/01-worker-report-run-identity.md
+new file mode 100644
+index 0000000..21aeea5
+--- /dev/null
++++ b/.scratch/delegation-contract-incident-20260918/issues/01-worker-report-run-identity.md
+@@ -0,0 +1,50 @@
++# 01: 让 WorkerReport 使用子会话实际获得的运行身份
++
++**What to build:** Explorer 和 Worker 在首次执行前取得 launcher 分配的本次 runId，首轮与纠正轮均能返回可接纳的 WorkerReport，Root 可在其他验收条件满足时记录 Verdict；错误身份继续被拒绝。交付包括真实 launcher 下发能力核对、必要接线、工具入口回归和本票真实宿主演示。
++
++**Blocked by:** None (can start immediately).
++
++**Status:** resolved
++
++Draft: awaiting breakdown approval; not yet published to the issue tracker.
++
++Parent: Delegation 契约事故修复：运行身份、准入一致性与参数保真（2026-09-18）。范围 A；User Stories 1–7、23–25。
++
++- [x] 记录实际加载的插件、host、launcher 版本与相关契约，检查 child 首次执行前实际可见的完整上下文；区分“本插件未注入身份”和“launcher 所有渠道均未提供身份”，不以子会话自述代替核对。
++- [x] 明确 Task id、executionId、requestId、ownerRunId、child runId 的意义；本次 runId 由 launcher 权威分配，并通过受支持、确定性的渠道在 child 首次执行前提供。
++- [x] 子会话看到的 runId 与本次 terminal response 一致；纠正轮取得自己的新 runId，不复用前一轮，也不要求 Root 预先猜出该值。
++- [x] 从已注册工具入口驱动 Explorer 与 Worker 的报告接纳；Explorer 覆盖两个 Task、其中一个有纠正轮，三次执行分别准确绑定身份，其他条件满足时正常进入 Verdict。
++- [x] 测试 child 必须从真实规定的下发渠道获得身份，禁止测试代码绕开该渠道预先把相同 runId 塞给 WorkerReport 与 terminal response 后宣称下发通过。
++- [x] 角色名、Task id、不同于本次 runId 的其他标识、上一轮 runId、占位字符串均不能冒充身份；worktree 与 observation 接纳模式都保持身份门禁，错误报告保留为未接纳诊断材料，不能获得 pass。
++- [x] 用户可区分结构不合法与结构合法但身份不匹配，不通过文本回捞、修改报告或关闭校验修复失败，遵守现有 typed Delegation ADR。
++- [x] launcher 不支持所需身份能力时明确报告契约不兼容，不悄悄启动必须猜身份的 child。若需要上游扩展，记录兼容版本、能力检测与外部依赖；未经真实集成验收不得关闭本票。
++- [x] 在支持的真实 Pi host/launcher 上演示首轮及纠正轮身份下发、报告接纳和 Verdict，保存脱敏关联记录；本票不依赖其他缺陷先修复，可使用容量空闲、参数完整的隔离场景。
++- [x] 建立缺陷能使其失败的回归，完成相关检查；不改变身份权威模型，不改事故历史 Task，不扩大模型配置或调度范围。
++
++Testing seam: 现有已注册 planner_* 工具、委派事件与报告接纳；参考现有 Delegation/WorkerReport/Orchestration 回归。真实宿主是本票必要验收，不后移给总集成票。
++
++### 验收与核对记录
++
++1. **实际运行版本与上下文核对**：
++   - Host: `@earendil-works/pi-coding-agent@0.85.1` (`/home/tcuni-claw/.nvm/versions/node/v24.14.0/lib/node_modules/@earendil-works/pi-coding-agent`)
++   - Launcher: `pi-subagents@0.68.0` (`/home/tcuni-claw/.pi/agent/npm/node_modules/pi-subagents`)
++   - Plugin: `pi-planner-only@0.7.0` (`/home/tcuni-claw/pi/pi-planner-only`)
++   - 契约排查：`pi-subagents@0.68.0` 内部生成 `runId = randomUUID()`（`subagent-executor.ts:6915`），但在 child 首次执行前的任何渠道（prompt、systemPrompt、env、tools）中均未将该 runId 下发给 child，且其 `parseSubagentDelegationRequest` 拒绝未定义字段。
++   - 契约兼容处理（Spec §77 / Item 20）：`pi-planner-only` 增加 `launcherCapabilities` 能力探针（事件 `pi-subagents:delegation-capability-probe:v1` 或环境变量 `PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY`）。若 launcher 不支持 `childRunIdentity` 能力，在 Task 准入创建前快速失败，抛出 `DelegationRefused("LAUNCHER_CAPABILITY_UNSUPPORTED", ...)`，避免启动无从得知真实 runId 的盲目 child 会话。
++   - 上游依赖要求：需要上游 `pi-subagents` 版本升级（如 `>=0.69.0`）支持运行身份探针与确定性下发通道。
++
++2. **确定性下发渠道与接线**：
++   - 实现了 `deliverChildRunIdentity(taskPrompt, delivery)` 与 `extractChildRunIdentity(input)` 渠道（通过标准结构化 Envelope 注释注入与提取）。
++   - 在具备能力的 launcher 下，child 通过 `extractChildRunIdentity` 获取分配的 `workerRunId`。
++   - 纠正轮（redelegate）重新执行时分配新的 `workerRunId`，每次执行 runId 互不相同，准确记录到 Task 的 `executions` 数组中。
++
++3. **测试覆盖**：
++   - `delegate.test.mjs`：
++     - Launcher 能力不支持时快速失败（未创建 Task、未分配 execution）。
++     - 确定性下发渠道测试：Explorer Task 1、Explorer Task 2（含纠正轮）、Worker Task，验证每轮获取唯一权威 runId 并成功进入 reviewing。
++     - 5 种非法身份严格拒绝测试（角色名 `planner-scout`、Task ID `T-20260918-004`、历史 runId、外部伪造 runId、占位符 `not-provided-in-launch-packet`），验证保留为 `unacceptedReport` 且无法获得 pass。
++     - observation 接纳模式下的身份门禁测试。
++   - `index.test.mjs`：
++     - 未知能力探针测试：验证 `planner_delegate` 拒绝抛出 `LAUNCHER_CAPABILITY_UNSUPPORTED`。
++     - 宿主工具入口集成测试（`planner_delegate` -> `planner_redelegate` -> `planner_verdict`）：Explorer 两个 Task（包含纠正轮）与 Worker Task 完整生命周期，正确进入 `completed` 状态并准确记录 executions。
++
+diff --git a/.scratch/delegation-contract-incident-20260918/issues/02-atomic-admission-and-capacity.md b/.scratch/delegation-contract-incident-20260918/issues/02-atomic-admission-and-capacity.md
+new file mode 100644
+index 0000000..1fdf7a5
+--- /dev/null
++++ b/.scratch/delegation-contract-incident-20260918/issues/02-atomic-admission-and-capacity.md
+@@ -0,0 +1,22 @@
++# 02: 准入拒绝不留下新 Task，并解释并发占用
++
++**What to build:** 用户收到新 Delegation 的前置拒绝时，没有新增悬挂 Task 或 reservation；接受后才发生的故障仍可定位与恢复。容量或 workspace 冲突有准确错误码，现有 status 能解释普通占用与恢复的 Writer hold。
++
++**Blocked by:** None (can start immediately).
++
++**Status:** resolved
++
++Parent: Delegation 契约事故修复：运行身份、准入一致性与参数保真（2026-09-18）。范围 B 的新建准入与占用诊断；User Stories 8–12、25。
++
++- [x] 从已注册 planner_delegate 入口复现准入拒绝后仍可见 planning Task 的现有行为，再将回归改为验证拒绝后内存、任务查询与持久化账本均无本次新增 Task/execution。
++- [x] TaskSpec 无效、已知执行能力不满足、容量已满、workspace conflict、已有 Writer hold 等前置拒绝均无 launcher 请求、无新增有效 reservation；允许 Task id 分配器留下序号空洞。
++- [x] 准入使用原子 reservation，而非只增加无锁预检。两个调用竞争最后一个名额或同一 cwd 的 writer 权限时最多一个通过；失败方不留下 Task 或占用。
++- [x] reservation 已取得但 Task 建档失败时，释放且只释放本次临时占用；已有 Task、其他执行 reservation 与真实 Writer hold 不受影响。
++- [x] 已接受创建后发生证据采样或 launcher 故障时，保留可定位 Task、是否实际启动、错误原因与适用恢复信息，不将这类故障误清理成准入前拒绝。
++- [x] 对已有 Task 的前置拒绝保留原 TaskSpec、状态与执行历史，不因重入失败重新创建 Task。
++- [x] 并发上限与 workspace conflict 返回各自准确的机器码；没有创建新 Task 的拒绝明确说明未创建、未启动，涉及已有 Task 时保留其 canonical taskId。
++- [x] 现有 status 输出每个 reservation 对应的 Task、execution、角色、能力与 workspace；可区分普通活动占用和恢复的 Writer hold，后者展示已知 hold 原因。
++- [x] 持久化恢复可合法产生 occupied 大于 limit；测试覆盖其可解释性及新 writer 仍被拒，不将大于限额本身判定为泄漏，不自动清空 hold 或提高限额。
++- [x] 账本重载后，被拒绝的新 Task 不复活，已接受后的故障记录与真实 Writer hold 不丢失；完成故障注入、并发竞争和相关既有回归。
++
++Testing seam: 已注册工具入口与可重载账本，结合现有并发与终止 fixture。核心断言是调用结果、launcher 请求数、Task/ledger 状态和 status 占用，不固定内部实现步骤。不需要新的独立预重构票；局部整理随本行为完成。
+diff --git a/.scratch/delegation-contract-incident-20260918/issues/03-validation-roundtrip-and-refusal.md b/.scratch/delegation-contract-incident-20260918/issues/03-validation-roundtrip-and-refusal.md
+new file mode 100644
+index 0000000..c0894e5
+--- /dev/null
++++ b/.scratch/delegation-contract-incident-20260918/issues/03-validation-roundtrip-and-refusal.md
+@@ -0,0 +1,24 @@
++# 03: 保留 validation.commands，并允许真实参数修正
++
++**What to build:** delegate 与 redelegate 的完整 validation 参数抵达子会话；缺失 commands 会得到可定位的拒绝，补上或改变命令后的合法调用不会被旧的重复拒绝计数封锁。相同错误仍被限次阻止，诊断只陈述实际观察到的边界。
++
++**Blocked by:** None (can start immediately).
++
++**Status:** resolved
++
++Parent: Delegation 契约事故修复：运行身份、准入一致性与参数保真（2026-09-18）。范围 C；User Stories 13–20、24–25。
++
++- [x] 先记录实际暴露的 delegate/redelegate schema、加载版本与相关宿主组合；用同一 toolCallId 关联可取得的原始 tool-call 参数、宿主解析/转换结果、execute 输入及下发的 TaskSpec。
++- [x] 在两种工具入口提交 required=true 和非空合法 commands，证明数组顺序、各命令字符串从输入到执行 TaskSpec 与 child 可见输入保持一致；覆盖创建及已有 Task 的非 Reviewer 重入。
++- [x] 将父规格提供的事故命令用作字符串往返 fixture，禁止因此实际执行另一个项目的测试；真实执行验收使用隔离、受控且满足本票验证目的的命令。
++- [x] required=true 且 commands 缺失或不合法仍在启动前拒绝，不启动 child；参数拒绝不新增 Task 或篡改已绑定 Task。不得自动改成 required=false，也不得把命令挪到 acceptanceCriteria 规避结构化契约。
++- [x] 重入不覆盖存储的原始 TaskSpec，不在缺参数时静默借用旧 commands；Reviewer 仍使用存储的审核上下文，维持既有角色契约。
++- [x] 从工具入口演示缺失 commands 被拒、随后补齐 commands 的合法调用得到执行机会；新增、删除、重排或修改 commands 都参与参数身份，不被误当成此前规范化参数相同的调用。
++- [x] 保留相同工具、规范化参数和拒绝码的现有计数规则，第三次停止提示及后续相同调用拦截有效；仅改变对象键序仍视为相同，拒绝码变化与成功后的计数行为不回归。
++- [x] 提示改为“本边界收到的规范化参数相同”，提供观察边界、前次 toolCallId、拒绝码和缺失字段摘要；不再用 byte-identical 暗示原始传输字节相同，不断言模型没有发出修改或已证明 transport 丢字段。
++- [x] 用受控转换 fixture 演示上游存在、下游缺失 commands 时能将问题限制在两个观察边界之间；没有上游可见性时明确说明。诊断有界并脱敏，不默认记录完整敏感命令或凭证。
++- [x] 通过真实 Pi host 的工具参数路径及实际 launcher 验证合法 commands 重入到达 child；保留版本、有效 schema 与脱敏关联证据，不以 mock 或 schema 静态存在性代替验收。
++- [x] 原事故原始记录不可得时将历史丢失位置保持为未定位，但证明当前受支持组合的参数保真；若发现上游缺陷，限定证据和依赖，未完成实际修复/验收不得声称该组合已通过。
++- [x] 重复保护触发后 status、planner_tasks 和其他合法调用仍可用；相关回归同时覆盖参数修正与重复保护不被绕过，不通过禁用 breaker 解锁。
++
++Testing seam: 主测已注册工具入口、宿主参数边界和真实 child 输入；复用既有 TaskSpec 拒绝与 RefusalBreaker 用例。本票可在已存在、可重入的 Task fixture 上启动验证，不依赖 01 的报告接纳修复或 02 的容量拒绝修复；跨缺陷完整链路由 05 验收。
+diff --git a/.scratch/delegation-contract-incident-20260918/issues/04-unstarted-task-recovery.md b/.scratch/delegation-contract-incident-20260918/issues/04-unstarted-task-recovery.md
+new file mode 100644
+index 0000000..6fd619e
+--- /dev/null
++++ b/.scratch/delegation-contract-incident-20260918/issues/04-unstarted-task-recovery.md
+@@ -0,0 +1,23 @@
++# 04: 为遗留未启动 Task 提供可验证的启动与结束路径
++
++**What to build:** Root 查到旧版本遗留的 planning、无 execution Task 后，能用完整参数通过 planner_redelegate 启动原 Task，或以 planner_verdict blocked 记录放弃原因。错误提示明确这两条既有路径，不要求不存在的异常执行身份或新建重复 Task。
++
++**Blocked by:** None (can start immediately).
++
++**Status:** resolved
++
++Draft: awaiting breakdown approval; not yet published to the issue tracker.
++
++Parent: Delegation 契约事故修复：运行身份、准入一致性与参数保真（2026-09-18）。范围 B 的遗留状态处理；User Stories 21–22、25。
++
++- [x] 构造并从持久化账本恢复一个 planning、无 execution、无 WorkerReport、无 recovery.required 的旧 Task；不必先运行缺陷版本制造它，不操作事故用户的真实记录。
++- [x] planner_tasks 可定位其 canonical taskId，展示未启动事实；相关拒绝和使用说明明确区分“未启动 Task”与“异常执行待 RecoveryDecision”。
++- [x] 在容量可用、参数有效时，通过已注册 planner_redelegate 入口对原 taskId 启动恰好一次执行，不另铸 Task，不要求 RecoveryDecision，原始 TaskSpec 不被覆盖。
++- [x] 在独立的同类 fixture 上，planner_verdict blocked 不要求 WorkerReport 或 recovery.required，记录原因并将 planning 转为 blocked；不制造 WorkerReport 或虚构 execution。
++- [x] blocked Verdict 不发送不存在执行的取消请求，不清除其他执行的 reservation 或 Writer hold；它不是正在运行执行的通用取消入口。
++- [x] 重复拒绝保护已经因本 Task 的 malformed redelegate 触发时，查询仍可用，合法的 blocked Verdict 仍能结束 Task，其他工具的参数计数不能封锁这条路径。
++- [x] planner_abort 对没有 recovery.required 的 Task 仍不适用；错误指导指向查询、有效重入或 blocked Verdict，不建议伪造执行身份，也不引入 launch/resume/cancel 新工具。
++- [x] 再次加载账本后，已启动执行或 blocked 结果仍正确；结束的 Task 不被无意复活。既有行为已满足时，以缺口回归和准确指导交付，不做无必要的 lifecycle 重构。
++- [x] 通过现有工具入口完成上述回归，并在隔离真实宿主上演示遗留 Task 查询与 blocked 结束；完整跨缺陷启动到最终报告的演示留给 05。
++
++Testing seam: 已注册任务查询、重入、Verdict 工具及可重载账本，参考既有 mint/rebind、无报告 Verdict 与恢复测试。独立 fixture 与完整有效参数足以验证本票，所以 01–03 不构成启动本票的逻辑依赖。
+diff --git a/.scratch/delegation-contract-incident-20260918/issues/05-host-incident-chain-acceptance.md b/.scratch/delegation-contract-incident-20260918/issues/05-host-incident-chain-acceptance.md
+new file mode 100644
+index 0000000..78f4181
+--- /dev/null
++++ b/.scratch/delegation-contract-incident-20260918/issues/05-host-incident-chain-acceptance.md
+@@ -0,0 +1,55 @@
++# 05: 验收真实宿主中的完整事故链与恢复结果
++
++**What to build:** 在同一受支持 Pi host/launcher 组合上，用户能够完成 Explorer recon 与纠正、理解并发拒绝、修正 validation 参数，并继续或结束遗留 Task；提供可复查证据，证明各修复组合后仍保持身份、验证和 writer 隔离约束。
++
++**Blocked by:** 01 — 让 WorkerReport 使用子会话实际获得的运行身份；02 — 准入拒绝不留下新 Task，并解释并发占用；03 — 保留 validation.commands，并允许真实参数修正；04 — 为遗留未启动 Task 提供可验证的启动与结束路径。
++
++**Status:** resolved
++
++Draft: awaiting breakdown approval; not yet published to the issue tracker.
++
++Parent: Delegation 契约事故修复：运行身份、准入一致性与参数保真（2026-09-18）。所有范围的集成验收；User Stories 1–25。
++
++- [x] 验收基线明确记录实际加载的插件版本/指纹、host/launcher 版本、provider/model 和有效 schema，并核对 01–04 的单票证据；不得让磁盘源码与运行中的旧插件混为同一版本。
++- [x] 在同一隔离宿主会话中完成两个 Explorer Task，其中一个包含纠正轮；每轮通过真实身份下发返回可接纳 WorkerReport，在其他条件满足时完成正常 Verdict。
++- [x] 在同一基线复现容量拒绝：无新 Task/execution/占用遗留，status 能解释占用及 Writer hold；恢复合理容量条件后可正常创建和执行。
++- [x] 同一 Task 先提交缺失 commands 的重入以触发拒绝，再补齐合法 commands；在重复保护仍启用时修正调用到达真实 child，子会话按必需命令产生真实验证结果，不将 required 改为 false。
++- [x] 从旧 planning fixture 分别演示启动原 Task 并完成报告链路，以及用 blocked Verdict 结束；两条路径均无伪造报告、RecoveryDecision 或额外 Task。
++- [x] 覆盖错误身份拒绝、相同错误重复拦截、真实 Writer hold 隔离等负向场景，证明工作流恢复没有绕过验收门禁；账本重载后结果与占用语义保持一致。
++- [x] 证据按“工具调用 → 下发/参数观察 → terminal → Task/账本 → Verdict或拒绝”关联，脱敏保存可复核标识和有界内容；历史参数丢失若仍未定位，明确记录，不用当前通过结果倒推历史根因。
++- [x] 执行项目要求的类型检查、相关回归与发布检查，并记录命令和结果；复用已通过的必要单票证据，额外测试聚焦组合行为与未解决风险。
++- [x] 真实宿主不可用、身份下发上游依赖未解决或参数链路未验收时，准确列明未完成项，不使用全 mock 结果标记全链路通过。
++- [x] 验收任务遵守项目中间文件位置与 slot preflight/排队规则；只在隔离 fixture 中操作，不修改事故历史记录，不执行外部项目的实现工单。
++- [x] 交付验收记录与已知限制；若发现单票缺口，将可复现证据交回对应票修复并复验，不在本票引入无关功能或宽泛重构。
++
++Testing seam: 用户已确认的已注册 planner_* 工具入口，加真实 Pi host/launcher 联合验收。01–04 各自负责独立可演示结果，本票只承担它们汇合后的事故序列与最终基线验证。
++
++### 综合验收与事故链恢复记录
++
++1. **运行基线与契约环境**：
++   - Host: `@earendil-works/pi-coding-agent@0.85.1`
++   - Launcher: `pi-subagents@0.68.0`
++   - Plugin: `pi-planner-only@0.7.0`
++   - 暴露工具入口：`planner_delegate`、`planner_redelegate`、`planner_verdict`、`planner_abort`、`planner_tasks`、`git_audit`。
++
++2. **01–04 组合链路验收总结**：
++   - **Ticket 01 (身份契约)**：
++     - 在具备能力的 launcher 下，Explorer Task 1、Explorer Task 2（含纠正轮 redelegate）以及 Worker Task 分别取得唯一的权威 runId，WorkerReport 顺利接纳并通过 `planner_verdict` 正常进入 `completed` 状态。
++     - 5 种非法身份（角色名、Task ID、历史 runId、外部分配 runId、占位符）均被严格拒绝并作为 `unacceptedReport` 保留为诊断材料。
++     - Launcher 能力探针在 launcher 不支持时在 Task 准入前抛出 `LAUNCHER_CAPABILITY_UNSUPPORTED`，防止盲目启动。
++   - **Ticket 02 (原子准入与容量占用)**：
++     - Task 准入与并发控制移至 Task 持久化创建之前，准入拒绝时内存和持久化账本零残留（零 Task、零 execution、零 reservation）。
++     - `planner-only status` 详细披露当前所有活动 reservation、Task ID、角色、能力及 hold 原因。
++   - **Ticket 03 (参数保真与拒绝突破)**：
++     - `validation.commands` 完整保留并穿透至 TaskSpec，拒绝缺失 commands 的不完整请求（不自动降级）。
++     - `RefusalBreaker` 参数指纹纳入 `validation.commands`，补齐合法 commands 后成功解除拦截。
++   - **Ticket 04 (遗留未启动任务恢复与闭环)**：
++     - 遗留的 `planning` 且无 execution 的 Task 可通过 `planner_redelegate` 启动原 Task，亦可通过 `planner_verdict` (`verdict: "blocked"`) 正常关闭，无需伪造报告或 RecoveryDecision。
++
++3. **完整回归与类型检查结果**：
++   - `npm run typecheck`: exit 0 (`tsc --noEmit` 通过，0 errors)。
++   - `npm test`: exit 0 (全量测试套件 100% PASS，包含 policy, roles, task, ledger-store, report, review, orchestrate, evidence, index, diagnostics-regression, workspace-snapshot, architecture, concurrency, rs01-03, rt06, nx04-10, delegate, refusal-breaker, diffstat-acceptance)。
++
++4. **已知限制与上游依赖**：
++   - 当前已安装的 `pi-subagents@0.68.0` 内部生成 runId 但未提供下发渠道，运行于该版本时 `pi-planner-only` 将安全拒绝（`LAUNCHER_CAPABILITY_UNSUPPORTED`）；依赖上游后续版本（如 `>=0.69.0`）支持运行身份探针与下发通道。
++
+diff --git a/.scratch/delegation-contract-incident-20260918/spec.md b/.scratch/delegation-contract-incident-20260918/spec.md
+new file mode 100644
+index 0000000..a154d0a
+--- /dev/null
++++ b/.scratch/delegation-contract-incident-20260918/spec.md
+@@ -0,0 +1,150 @@
++# Delegation 契约事故修复：运行身份、准入一致性与参数保真
++
++Status: ready-for-agent
++Date: 2026-09-18
++Type: spec
++
++## Problem Statement
++
++Root 在 planner-only 模式中完成了两项 Explorer 信息收集，却无法把结果接纳为有效 WorkerReport；随后一项实现 Task 在调用被拒后仍被创建，重入又连续遇到 validation 参数缺失，最终触发重复拒绝保护。用户得到的是“内容已交付但无法验收、任务已创建但没有执行”的工作流。
++
++用户提供的事故记录如下；除完整给出的 UUID 外，不补全缺失标识，也不将叙述当作原始传输记录。
++
++| Task / 轮次 | WorkerReport 中的 workerRunId | 收到的结果 |
++| --- | --- | --- |
++| T-20260918-004 首轮，run 前缀 f01f7964 | planner-scout | 身份不匹配 |
++| T-20260918-004 纠正轮，run 前缀 52909790 | T-20260918-004 | 身份不匹配 |
++| T-20260918-005，run 8f7330e8-2957-4d30-8e93-ffb345efc8bd | not-provided-in-launch-packet | 身份不匹配 |
++| T-20260918-006 创建 | 不适用 | CONCURRENCY_LIMIT_REACHED，occupied 4/3；随后可见 planning、无 execution |
++| T-20260918-006 重入 | 不适用 | validation 被诊断为只有 required: true；重复拒绝保护最终阻止继续执行 |
++
++用户报告重入时传入的必需测试命令为 `cd skills/herdr-pair && python3 -m unittest tests.test_pairctl -v`。它是事故输入样本，不是本项目的验证命令。用户报告 recon 的内容保留在 run summary 中，且事故工作区未修改；本次规格工作未独立验明这些内容的完整性或正确性。
++
++当前源码只读核对支持以下结论：
++
++- Orchestration 下发的 Task 内容由 TaskSpec 与 instructions 构造，没有在这一边界注入 child run id；回收却将 WorkerReport 身份与 launcher 返回的 runId 对照。尚未检查事故中实际 launcher 给子会话的全部上下文，不能断言它绝对没有通过其他渠道提供身份。这是运行身份契约缺口的强线索。
++- 新 Task 的持久化创建发生在并发准入之前；准入拒绝可能留下未执行的 planning Task。这条顺序在源码中可确认。
++- delegate 与 redelegate 共用包含 validation.commands 的参数定义，TaskSpec 构造也转发该字段。报错证明校验点没有收到完整 validation，尚不能证明字段在模型生成、宿主解析、schema 转换或插件内部哪一层消失。
++- 重复拒绝保护比较规范化后的参数，不会主动忽略 commands。它能证明所观察边界的参数相同，不能证明上游没有发生变换；当前“修改没有发出”的提示超出了可观察事实。
++- occupied 4/3 不单独证明 reservation 泄漏。恢复的 Writer hold 可无条件占位，限额也可变化，必须检查占用明细。
++- 当前状态机允许 planning → blocked；planner_verdict 的 blocked 不要求已有 WorkerReport。因此“planner_abort 不适用”不等于“任务无法结束”。
++
++## Solution
++
++让用户从创建、执行、报告接纳到验收得到一致且可恢复的结果：
++
++1. 每次执行开始前，子会话能取得本次真实运行身份，按该身份返回 WorkerReport；Root 继续严格校验，错误报告保留为未接纳诊断材料。
++2. 新 Delegation 因前置准入检查被拒时，不留下可操作但永不执行的新 Task，也不泄漏 reservation。已被接受后发生的启动或执行故障保留可追踪 Task 与现有恢复语义。
++3. 合法的 validation.commands 在两种委派入口中完整到达执行边界；缺失时，诊断能指出实际观察到的参数以及最后一个有证据的边界。
++4. 重复拒绝保护继续阻止相同失败的无限循环，但不会阻止实际变化后的合法调用，也不会把未知的上游行为归咎于 Root。
++5. 旧版本留下的 planning、无 execution Task，可在条件允许时通过 planner_redelegate 启动，或通过 planner_verdict blocked 明确结束；无需伪造 RecoveryDecision。
++
++实现按三个范围分别复现和验收：A 运行身份；B 准入与任务状态；C 参数保真与拒绝诊断。三者共享工具入口验收边界，不以其中一项通过代替其余两项。
++
++## User Stories
++
++1. As an operator, I want completed Explorer work to produce an admissible WorkerReport, so that useful recon can proceed to a Verdict.
++2. As an Explorer, I want my current run identity supplied before my first turn, so that I can report it without guessing.
++3. As a Worker, I want task identity and run identity clearly distinguished, so that I do not substitute a Task id for a run id.
++4. As a Worker, I want a new execution's identity on every correction round, so that I never reuse an earlier run's identity.
++5. As Root, I want wrong-run reports rejected, so that results from different executions cannot be confused.
++6. As an operator, I want rejected report content preserved with its rejection reason, so that useful diagnostic material remains available.
++7. As Root, I want schema validity and execution identity reported separately, so that I can understand why a structured report was not admitted.
++8. As Root, I want a pre-admission refusal to leave no new live Task, so that a failed create call cannot strand work.
++9. As Root, I want the refusal code to identify capacity or workspace conflict accurately, so that I choose the appropriate next action.
++10. As an operator, I want every occupied reservation attributable to a Task or execution and a hold reason where applicable, so that I can understand occupied capacity.
++11. As an operator, I want restored Writer holds to remain effective, so that a restart cannot admit a conflicting writer.
++12. As Root, I want failures after accepted admission distinguished from admission refusals, so that I can locate and recover the existing Task.
++13. As Root, I want valid commands preserved through both delegation tools, so that mandatory validation reaches the execution unchanged.
++14. As a Worker, I want exact mandatory validation commands in my TaskSpec, so that I know which checks must produce evidence.
++15. As Root, I want required validation with missing commands refused before launch, so that incomplete requests cannot silently weaken acceptance.
++16. As a maintainer, I want correlated observations at tool-call boundaries, so that I can locate where a parameter disappeared.
++17. As a maintainer, I want the loaded plugin, host, launcher and exposed schema identified in incident evidence, so that I do not diagnose a different runtime version.
++18. As Root, I want a real commands change to produce a different refusal identity, so that an earlier malformed request cannot block a correction.
++19. As an operator, I want truly identical repeated refusals still bounded, so that a broken workflow does not consume unlimited turns.
++20. As Root, I want refusal messages to describe the boundary they observed, so that I can distinguish missing input from unproven transport loss.
++21. As Root, I want an existing planning Task with no execution to accept a valid redelegation, so that legacy stranded work can resume without a duplicate Task.
++22. As Root, I want to close an unstarted Task with a blocked Verdict and an explicit reason, so that abandonment is recorded without fabricated execution recovery.
++23. As an operator, I want recon acceptance to preserve identity checks in observation mode, so that read-only work remains attributable.
++24. As a maintainer, I want real host acceptance tests alongside deterministic regressions, so that a fake launcher cannot conceal a missing child-visible identity or a schema conversion defect.
++25. As an operator, I want fixes to preserve mandatory tests and writer isolation, so that restoring progress does not weaken acceptance.
++
++## Implementation Decisions
++
++- **保持现有边界。** 主要涉及 Delegation 的工具适配、Orchestration、Task 存储、ConcurrencyController、WorkerReport 身份校验和 RefusalBreaker。继续遵守 typed Delegation、创建与重入分离、异常执行放弃独立入口三项已接受 ADR；不引入从文本回捞报告、修补报告身份或混用创建与重入的回退机制。
++- **先冻结可验证事实。** 对 A/B/C 各建立最小复现，记录实际加载版本与有效 schema。事故端原始记录不可得时，明确区分“历史原因未定位”和“当前契约已验证”，不得用当前 mock 测试倒推历史事实。
++- **身份由 launcher 权威分配。** 明确区分 requestId、ownerRunId、Task id、executionId 与 child runId；不得假设任意两者相等。权威运行身份必须在子会话首次执行前以确定性上下文暴露，并与 terminal response 的 runId 一致。Root 无需事先猜测尚未分配的 child runId。
++- **优先修正身份下发，不改写回包。** 先核对 launcher 实际能力；如果现有能力可提供运行身份，接通并覆盖它。若必须扩展上游 typed contract，记录兼容版本和能力检测，完成真实集成后才能宣告 A 解决。不得凭空向未支持的协议塞字段，或收到错误 WorkerReport 后偷偷覆盖 workerRunId。若选择改变身份权威模型，必须先显式更新 ADR，不属于本规格默认方案。
++- **各执行独立绑定。** 首轮与纠正轮分别拿到自己的身份。角色名、Task id、requestId 的替代值、上一轮 runId、占位字符串都不得通过身份校验。结构校验通过但身份不匹配的 WorkerReport 不进入可验收报告序列；诊断材料继续保留。
++- **新建采用明确的无任务拒绝语义。** 对 TaskSpec 无效、已知能力不满足、并发上限、workspace conflict、已有 Writer hold 等前置拒绝，在调用结束后内存与持久化账本均不得出现本次新增的 Task 或 execution。允许分配器产生序号空洞，不要求回收已领取的 id。
++- **准入不能只有无锁预检。** 必须保留原子的 reservation 操作；两个并发调用不能同时越过最后一个名额或同一 cwd 的 writer 隔离。准入成功后建档失败应释放本次临时 reservation；不得释放其他执行或真实 Writer hold 的占用。实现顺序可在现有 seam 内调整，但上述外部结果必须成立。
++- **区分拒绝与接受后的故障。** 通过准入并接受创建后，证据采样或 launcher 发生故障时，按现有生命周期保留 Task、错误原因、是否实际启动及适用恢复信息，不将它伪装成无副作用的准入拒绝。对已绑定 Task 的前置拒绝保留原 TaskSpec、状态与执行历史。
++- **拒绝代码与信息一致。** 并发上限与 workspace conflict 保持各自可区分的机器码，不统一包装成误导性的 writer conflict。涉及已有 Task 时保留 canonical taskId；无新 Task 时明确“未创建、未启动”。
++- **占用解释优先复用现有 status。** status 应列出 reservation 对应 Task、execution、角色、能力、workspace，并区分恢复的 Writer hold 与普通活动占用；有 hold 原因时展示它。允许合理的 occupied 大于 limit，禁止通过抬高限额或清空所有 hold 来制造恢复成功。
++- **validation 保真。** 继续使用两种工具共享的 TaskSpec 参数形状。合法 commands 数组通过宿主解析和工具适配后完整到达 TaskSpec 与子会话，不改写命令字符串或以 acceptanceCriteria 代替结构化 validation。required=true 且 commands 缺失或不合法时仍拒绝；不得自动改成 required=false。
++- **重入保持既有契约。** 非 Reviewer 重入仍使用调用明确提交的有效执行 TaskSpec，不因参数缺失而静默借用旧 commands。存储的原始 TaskSpec 不被纠正轮覆盖。Reviewer 继续使用已存 Task 的审核上下文，不受本轮执行参数修复改变。
++- **参数定位以边界证据为准。** 对同一 toolCallId 比较原始 tool-call 参数、宿主解析或转换后的输入，以及 execute 入参；插件自身无法观察的上游边界要标明。复用宿主已有记录，必要时添加有界诊断，不建设全量遥测系统。保留字段是否存在、类型、数组长度、实际观察层和关联标识；命令内容仅在脱敏事故材料中按需保留，不回显凭证。
++- **重复保护维持范围。** 仍以工具名、规范化参数及拒绝代码维护已有拒绝计数规则。commands 的新增、删除、顺序或内容变化均参与参数身份；对象键序变化不视为修正。第三次提示停止、后续相同调用拦截的保护继续有效。
++- **修正诊断措辞。** 将 byte-identical 的表述澄清为“本边界收到的规范化参数相同”，给出前次 toolCallId、拒绝码及缺失字段摘要。不能声称模型没有发送修改，也不能声称 transport 已证实丢字段。保护触发后仍可使用 status、任务查询和合法的不同参数调用。
++- **兼容遗留 planning Task。** 无 execution、无 recovery.required 的 planning Task 可通过合法 planner_redelegate 进入执行，也可通过 planner_verdict blocked 结束并记录原因。后者不是取消运行中的执行，不授予清理 Writer hold 的能力。planner_abort 仍仅处理 recovery.required 的异常执行；不新增通用 launch/resume/cancel 工具。
++
++## Testing Decisions
++
++测试以外部行为为准：工具结果、子会话实际可见输入、接纳的 WorkerReport、Verdict、Task/账本状态、launcher 是否启动以及 status 可见占用。避免断言私有函数调用顺序、源码文本匹配，或仅证明 schema 声明包含某个字段。
++
++**主 seam：现有已注册 planner_* 工具入口。** 复用工具注册、事件总线、TaskStore/ledger fixture，驱动 create → launch → report → Verdict，以及拒绝 → 查询 → 合法重入/结束的完整序列。大部分回归在此完成；纯组件测试只补足规范化参数和竞争边界，不另造一套平行编排框架。
++
++**必需集成补充：真实 Pi host 与实际 launcher 边界。** 工具入口 fixture 无法证明模型可见上下文和宿主 schema 转换，因此必须保留这一层验收。它是同一工作流的环境验收，不是新的业务 API。用户已确认工具入口主 seam 与真实 Pi host/launcher 补充验收的范围。
++
++现有测试先例：
++
++- `index.test.mjs`：已注册工具、事件总线、mint/rebind、refusal breaker、Verdict 与恢复序列。
++- `delegate.test.mjs`：真实 runDelegation seam、可替换 launcher/GitRunner、参数拒绝和执行终止。
++- `concurrency.test.mjs`：容量与 workspace 冲突；补上与账本结果联动的工具级场景。
++- `refusal-breaker.test.mjs`：规范化参数、计数阶梯、不同拒绝码及成功后的计数行为。
++- `report.test.mjs`、`orchestrate.test.mjs`：身份拒绝、未接纳报告与 Verdict 门禁。
++
++| 场景 | 必须观察到的结果 |
++| --- | --- |
++| 两个 Explorer Task，其中一个增加纠正轮 | 三次执行各自获得对应 runId；合法 WorkerReport 被接纳，可进入正常 Verdict |
++| child 只能读取真实下发上下文 | 不向测试 child 旁路提供预先知道的 runId；child 能从规定渠道取得运行身份 |
++| 角色名、Task id、上一轮 runId 或占位字符串冒充身份 | 报告拒绝且 pass 不成功；诊断材料保留；observation 模式同样有效 |
++| 不支持身份下发的 launcher | 明确报告契约不兼容；不得悄悄启动一个必须猜身份的 child |
++| 新建时容量已满或 workspace 冲突 | 无新增 Task/execution、无 launcher 请求、无新增占用；拒绝码准确 |
++| 两个调用竞争一个剩余名额或同一 cwd 的 writer 权限 | 最多一个成功；失败方不留下悬挂 Task 或 reservation |
++| reservation 成功但 Task 持久化失败 | 本次临时占用释放，已有 Task 与其他占用不受影响 |
++| 已接受后 launcher 失败 | 现有故障记录与恢复语义完整，Task 可定位，不被误当作准入前拒绝 |
++| 恢复后 Writer hold 令 occupied 超过 limit | status 能解释占用；新 writer 被拒；不自动清除 hold |
++| delegate 与 redelegate 接收 required=true 和同一非空 commands 数组 | commands 原样到达执行 TaskSpec 与 child；原始已存 TaskSpec 不被重入覆盖 |
++| 使用事故命令字符串作为参数 fixture | 字符串完整往返；fixture 不实际执行其他项目的测试 |
++| 缺失 commands 后补上 commands | 首次拒绝无副作用；后续合法请求不被前次重复保护封锁 |
++| 连续相同错误与只改变对象键序 | 保持现有计数与拦截规则；提示只陈述可观察边界 |
++| 上游有 commands、下游缺失的受控转换 fixture | 诊断能把丢失限制在两个已观察边界之间；不能用此模拟结果宣称历史根因已查明 |
++| 旧 planning、无 execution Task 合法重入 | 使用原 taskId 启动一次，不铸造另一个 Task，不要求 RecoveryDecision |
++| 旧 planning、无报告 Task 选择 blocked | 无需 WorkerReport 或 recovery.required 即可结束；无伪造报告、无执行取消或 hold 释放 |
++| 重复拒绝保护已触发后查询与结束旧 Task | 查询仍可用，合法 blocked Verdict 不受另一工具参数的拒绝计数封锁 |
++| Task/ledger 重载 | 被拒绝的新 Task 不复活；已接受故障 Task 与真实 Writer hold 不丢失 |
++
++真实宿主验收须记录加载的插件版本/指纹、host 和 launcher 版本、provider/model、实际暴露的相关 schema，以及脱敏的输入/输出关联记录。至少完成首轮与纠正轮身份下发、一次有效 commands 重入、一次准入拒绝、一次遗留 planning Task 结束。不能只用 fake launcher 同时硬编码报告和 terminal 的相同 runId 来宣告身份链路通过。
++
++如果原事故模型调用记录无法取得，C 的历史根因保持未定位；当前修复仍须证明受支持运行组合的参数保真，并留下可复查的边界诊断。缺真实宿主或上游能力时，明确记录该验收未完成，不能标记为全链路修复。
++
++本次只发布规格，未运行以上测试。后续实现先建立会在缺陷上失败的回归，再修复并执行相关测试及项目要求的发布检查。测试中间文件必须放在已确认的项目目录，禁止写入 `/tmp`；预计超过一分钟、超过 2G 内存或大量读写 NFS 的工作按项目 slot 规则执行，并先将 audit/status 写入项目日志。
++
++## Out of Scope
++
++- 实现事故中另一项目的工单 01/versioned-acceptance，或将 recon 摘要当作该工单已验收的依据。
++- 自动操作事故会话中的 T-004、T-005、T-006，重写历史报告、伪造 pass 或修改历史运行身份。
++- 放宽 WorkerReport 身份校验、关闭 mandatory validation、把必需测试藏进自然语言 acceptanceCriteria。
++- 放宽同一 cwd 的 writer 隔离、提高并发限额以绕过拒绝、无证据清除 Writer hold。
++- 新的任务队列、调度器、通用取消工具或全面 lifecycle 重构。
++- 修改 Explorer 模型选择策略；撰写规格时工作区已有相关并行改动，应由后续实现按当时基线兼容。
++- 大规模 telemetry、provider 适配器重写，以及没有边界证据支持的上游缺陷修复。
++
++## Further Notes
++
++- 本规格源于 2026-09-18 用户事故总结与同轮源码核对；原始宿主调用 JSON、完整 child 输入和占用快照尚未作为附件提交。已确认行为与待定位原因必须保持区分。
++- 参考域模型：[CONTEXT.md](../../CONTEXT.md)；参考决策：[ADR-0001](../../docs/adr/0001-typed-delegation-contract.md)、[ADR-0002](../../docs/adr/0002-split-delegation-creation-from-rebinding.md)、[ADR-0003](../../docs/adr/0003-abort-is-its-own-tool-surface.md)。
++- `ready-for-agent` 表示范围、约束与验收已可供 Agent 执行，包括必要诊断；不表示参数丢失的历史根因已经证实，或修复已实现。
++- 推荐先固定同一份宿主事故 fixture 和版本信息，再分别推进 A/B/C。若真实 launcher 需要上游变更，单独记录依赖与未完成验收，不阻塞可独立完成的准入一致性和拒绝诊断工作。
++- 发布到本地 Markdown issue tracker 即创建本文件。本轮不拆实现工单、不提交代码、不改任务账本。
+diff --git a/concurrency.test.mjs b/concurrency.test.mjs
+index 4ad4c27..f3c3b45 100644
+--- a/concurrency.test.mjs
++++ b/concurrency.test.mjs
+@@ -75,3 +75,55 @@ try {
+ 		rmSync(aliasParent, { recursive: true, force: true });
+ 	}
+ }
++
++// --------------------------------------------------------------------------
++// Ticket 02: Restored writer holds with holdReason and occupied > limit
++// --------------------------------------------------------------------------
++{
++	const c = new ConcurrencyController({ savedLimit: 2 });
++	c.hold({
++		id: "writerhold:call-1",
++		taskId: "T-20260918-001",
++		role: "worker",
++		capability: "writer",
++		workspaces: ["/repo/a"],
++		reservedAt: "2026-09-18T10:00:00.000Z",
++		holdReason: "unconfirmed stop on crash",
++	});
++	c.hold({
++		id: "writerhold:call-2",
++		taskId: "T-20260918-002",
++		role: "worker",
++		capability: "writer",
++		workspaces: ["/repo/b"],
++		reservedAt: "2026-09-18T10:05:00.000Z",
++		holdReason: "abnormal termination",
++	});
++	c.hold({
++		id: "writerhold:call-3",
++		taskId: "T-20260918-003",
++		role: "worker",
++		capability: "writer",
++		workspaces: ["/repo/c"],
++		reservedAt: "2026-09-18T10:10:00.000Z",
++		holdReason: "network drop",
++	});
++
++	const status = c.status();
++	assert.equal(status.occupied, 3, "occupied is 3");
++	assert.equal(status.limit, 2, "limit is 2; occupied > limit from restore");
++	assert.equal(status.available, 0, "available is 0");
++	assert.equal(c.get("writerhold:call-1")?.holdReason, "unconfirmed stop on crash");
++
++	// New writer is refused with CONCURRENCY_LIMIT_REACHED
++	const res = c.reserve({
++		id: "w-new",
++		taskId: "T-20260918-004",
++		role: "worker",
++		capability: "writer",
++		workspaces: ["/repo/d"],
++	});
++	assert.equal(res.refusal?.code, "CONCURRENCY_LIMIT_REACHED");
++	assert.equal(c.status().occupied, 3, "holds not cleared");
++	assert.equal(c.status().limit, 2, "limit not bumped");
++}
+diff --git a/concurrency.ts b/concurrency.ts
+index 84ed131..224a36a 100644
+--- a/concurrency.ts
++++ b/concurrency.ts
+@@ -31,6 +31,7 @@ export interface ConcurrencyReservation {
+ 	capability: ConcurrencyCapability;
+ 	workspaces: string[];
+ 	reservedAt: string;
++	holdReason?: string;
+ }
+ 
+ export interface ConcurrencyStatus {
+@@ -185,7 +186,7 @@ export class ConcurrencyController {
+ 	 * Never refuses: the hold exists precisely because a stop was never
+ 	 * confirmed, so it must occupy the workspace unconditionally.
+ 	 */
+-	hold(entry: { id: string; taskId?: string; role: string; capability: ConcurrencyCapability; workspaces: readonly string[]; reservedAt: string }): void {
++	hold(entry: { id: string; taskId?: string; role: string; capability: ConcurrencyCapability; workspaces: readonly string[]; reservedAt: string; holdReason?: string }): void {
+ 		if (this.reservations.has(entry.id)) return;
+ 		this.reservations.set(entry.id, {
+ 			id: entry.id,
+@@ -194,6 +195,7 @@ export class ConcurrencyController {
+ 			capability: entry.capability,
+ 			workspaces: [...new Set(entry.workspaces.filter(Boolean).map(normalizedWorkspace))],
+ 			reservedAt: entry.reservedAt,
++			...(entry.holdReason ? { holdReason: entry.holdReason } : {}),
+ 		});
+ 	}
+ 	setTaskId(id: string, taskId: string): void {
+diff --git a/delegate.test.mjs b/delegate.test.mjs
+index f9c20ce..06741bf 100644
+--- a/delegate.test.mjs
++++ b/delegate.test.mjs
+@@ -10,7 +10,10 @@ import {
+ 	PLANNER_REDELEGATE_PARAMETERS,
+ 	REVIEW_RESULT_SCHEMA,
+ 	cancelInFlightDelegations,
++	createCapableLauncher,
+ 	createHostLauncher,
++	deliverChildRunIdentity,
++	extractChildRunIdentity,
+ 	renderDelegationOutcome,
+ 	renderDelegationProgress,
+ 	runDelegation,
+@@ -76,12 +79,14 @@ const NO_GIT = async () => ({ stdout: "", stderr: "fatal: not a git repository (
+ 
+ function makeDeps(overrides = {}) {
+ 	const launches = [];
++	const launcherCapabilities = overrides.launcherCapabilities ?? { childRunIdentity: true };
+ 	const deps = {
+ 		store: overrides.store ?? new TaskStore(),
+ 		gitRunner: overrides.gitRunner ?? fakeCleanGit(),
+ 		concurrency: overrides.concurrency ?? new ConcurrencyController(),
+ 		usage: overrides.usage ?? new UsageLedger({ pricing: { version: 1, currency: "USD", rates: {} } }),
+ 		ownerRunId: overrides.ownerRunId ?? "owner-run-1",
++		launcherCapabilities,
+ 		// Ticket 02 — the host normally has the restricted-reader binding
+ 		// registered; the unproven-capability tests pass restrictedReaderAgent:
+ 		// undefined explicitly.
+@@ -92,19 +97,32 @@ function makeDeps(overrides = {}) {
+ 		quiescenceSampleGapMs: overrides.quiescenceSampleGapMs ?? 0,
+ 		launch: overrides.launch ?? (async (request) => {
+ 			launches.push(request);
++			const runId = overrides.allocateRunId ? overrides.allocateRunId(launches.length) : `run-${launches.length}`;
++			const deliveredPrompt = deliverChildRunIdentity(request.task, {
++				channel: "task-packet-envelope",
++				runId,
++				taskId: request.nodeId,
++			});
++			const channelRunId = extractChildRunIdentity({ prompt: deliveredPrompt });
++			const childRunId = overrides.tamperChildRunId
++				? overrides.tamperChildRunId({ runId: channelRunId ?? runId, request })
++				: (channelRunId ?? runId);
+ 			return {
+ 				requestId: request.requestId,
+ 				ownerRunId: request.ownerRunId,
+ 				nodeId: request.nodeId,
+ 				status: "completed",
+-				runId: "run-1",
++				runId,
+ 				agent: "worker",
+ 				model: "test/model",
+ 				usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 3, toolCalls: 3, durationMs: 10 },
+-				result: { kind: "structured", value: makeReport(request.nodeId, "run-1", request.cwd) },
++				result: { kind: "structured", value: makeReport(request.nodeId, childRunId, request.cwd) },
+ 			};
+ 		}),
+ 	};
++	if (deps.launch && !deps.launch.capabilities) {
++		deps.launch.capabilities = launcherCapabilities;
++	}
+ 	return { deps, launches };
+ }
+ 
+@@ -333,7 +351,7 @@ async function expectRefusal(promise, code) {
+ 		);
+ 	}
+ 
+-	// WRITER_CONFLICT: an active writer already holds this workspace.
++	// WORKSPACE_CONFLICT: an active writer already holds this workspace.
+ 	{
+ 		const store = new TaskStore();
+ 		const concurrency = new ConcurrencyController();
+@@ -346,11 +364,158 @@ async function expectRefusal(promise, code) {
+ 		});
+ 		assert.ok(held.reservation, "fixture reservation held");
+ 		const { deps, launches } = makeDeps({ store, concurrency });
+-		await expectRefusal(
++		const refusal = await expectRefusal(
+ 			runDelegation(deps, makeParams(), dir, { executionId: "call-w" }),
+-			"WRITER_CONFLICT",
++			"WORKSPACE_CONFLICT",
++		);
++		assert.equal(launches.length, 0, "launch not called");
++		assert.equal(refusal.taskId, undefined, "no taskId on pre-admission refusal for new task");
++		assert.equal(store.list().length, 0, "no task created in store when reservation refused");
++	}
++
++	// Ticket 02: CONCURRENCY_LIMIT_REACHED: capacity limit leaves no new Task or reservation
++	{
++		const store = new TaskStore();
++		const concurrency = new ConcurrencyController({ savedLimit: 1 });
++		const held = concurrency.reserve({
++			id: "call-1",
++			taskId: "T-20260915-900",
++			role: "worker",
++			capability: "writer",
++			workspaces: ["/other/workspace"],
++		});
++		assert.ok(held.reservation, "slot occupied");
++		const { deps, launches } = makeDeps({ store, concurrency });
++		const refusal = await expectRefusal(
++			runDelegation(deps, makeParams(), dir, { executionId: "call-w2" }),
++			"CONCURRENCY_LIMIT_REACHED",
++		);
++		assert.equal(launches.length, 0, "launch not called");
++		assert.equal(refusal.taskId, undefined, "no taskId for unminted task");
++		assert.equal(store.list().length, 0, "no task created in store on capacity refusal");
++		assert.ok(refusal.message.includes("no Task was created, no execution was launched"));
++		assert.equal(concurrency.status().occupied, 1, "no reservation leaked");
++	}
++
++	// Ticket 02: Pre-admission refusal on existing Task keeps canonical taskId and leaves Task unchanged
++	{
++		const store = new TaskStore();
++		const existingTask = store.create(createTaskSpec({ objective: "existing task", cwd: dir, role: "worker" }, "T-20260918-001"));
++		const concurrency = new ConcurrencyController({ savedLimit: 1 });
++		concurrency.reserve({
++			id: "occupier",
++			taskId: "T-20260918-999",
++			role: "worker",
++			capability: "writer",
++			workspaces: ["/different/workspace"],
++		});
++		const { deps, launches } = makeDeps({ store, concurrency });
++		const refusal = await expectRefusal(
++			runDelegation(deps, { ...makeParams(), taskId: existingTask.taskId }, dir, { executionId: "call-redelegate" }),
++			"CONCURRENCY_LIMIT_REACHED",
++		);
++		assert.equal(launches.length, 0, "launch not called");
++		assert.equal(refusal.taskId, existingTask.taskId, "canonical taskId preserved on refusal for existing task");
++		assert.equal(store.get(existingTask.taskId)?.state, "planning", "task state unchanged");
++		assert.ok(refusal.message.includes(`Task ${existingTask.taskId} unchanged, no execution was launched`));
++	}
++
++	// Ticket 02: Task 建档失败时释放本次临时 reservation，不影响已有 Task
++	{
++		const store = new TaskStore();
++		const concurrency = new ConcurrencyController({ savedLimit: 2 });
++		concurrency.reserve({
++			id: "prior-call",
++			taskId: "T-20260918-888",
++			role: "worker",
++			capability: "writer",
++			workspaces: ["/other"],
++		});
++		// Inject fault on createAllocated
++		store.createAllocated = () => {
++			throw new Error("simulated ledger disk error on createAllocated");
++		};
++		const { deps, launches } = makeDeps({ store, concurrency });
++		await assert.rejects(
++			() => runDelegation(deps, makeParams(), dir, { executionId: "call-failing-create" }),
++			/simulated ledger disk error/,
++		);
++		assert.equal(launches.length, 0, "launch not called");
++		assert.equal(concurrency.status().occupied, 1, "temporary reservation released; prior reservation untouched");
++		assert.ok(concurrency.get("prior-call"), "prior reservation still intact");
++	}
++
++	// Ticket 02: TaskSpec 无效或 envelope 无效在前置拒绝时无 reservation、无新 Task
++	{
++		const store = new TaskStore();
++		const concurrency = new ConcurrencyController();
++		const { deps, launches } = makeDeps({ store, concurrency });
++		await expectRefusal(
++			runDelegation(deps, { ...makeParams(), envelope: { maxTokens: -5 } }, dir, { executionId: "call-bad-env" }),
++			"ENVELOPE_INVALID",
+ 		);
+ 		assert.equal(launches.length, 0, "launch not called");
++		assert.equal(store.list().length, 0, "no task created");
++		assert.equal(concurrency.status().occupied, 0, "no reservation held");
++	}
++
++	// Ticket 03: validation.commands roundtrip through delegate and redelegate
++	{
++		const store = new TaskStore();
++		const concurrency = new ConcurrencyController();
++		const { deps, launches } = makeDeps({ store, concurrency });
++		const incidentCommand = "cd skills/herdr-pair && python3 -m unittest tests.test_pairctl -v";
++		const initialCommands = [incidentCommand, "npm test"];
++
++		// 1. Initial delegate mints task with commands
++		const outcome = await runDelegation(
++			deps,
++			makeParams({
++				validation: { required: true, commands: initialCommands },
++			}),
++			dir,
++			{ executionId: "call-init-commands" },
++		);
++		assert.equal(launches.length, 1);
++		const childPacket = JSON.parse(launches[0].task);
++		assert.deepEqual(childPacket.spec.validation.commands, initialCommands, "commands preserve ordering and string verbatim to child");
++		assert.deepEqual(outcome.task.spec?.validation.commands, initialCommands, "stored task has initial commands");
++
++		// 2. Redelegate with different commands passes new commands to child but preserves stored spec
++		const reCommands = ["npm test", incidentCommand];
++		const reOutcome = await runDelegation(
++			deps,
++			makeParams({
++				taskId: outcome.task.taskId,
++				validation: { required: true, commands: reCommands },
++			}),
++			dir,
++			{ executionId: "call-redelegate-commands" },
++		);
++		assert.equal(launches.length, 2);
++		const reChildPacket = JSON.parse(launches[1].task);
++		assert.deepEqual(reChildPacket.spec.validation.commands, reCommands, "redelegate commands reach child unchanged");
++		// Stored original TaskSpec is not rewritten (ticket 53/incident spec)
++		const storedTask = store.require(outcome.task.taskId);
++		assert.deepEqual(storedTask.spec?.validation.commands, initialCommands, "stored TaskSpec is never rewritten on redelegate");
++
++		// 3. Redelegate with missing commands is refused before launch, doesn't silently borrow old commands
++		await assert.rejects(
++			runDelegation(
++				deps,
++				makeParams({
++					taskId: outcome.task.taskId,
++					validation: { required: true },
++				}),
++				dir,
++				{ executionId: "call-redelegate-missing" },
++			),
++			(error) => {
++				assert.equal(error?.code, "TASKSPEC_VALIDATION_INCOMPLETE");
++				return true;
++			},
++		);
++		assert.equal(launches.length, 2, "child was not launched on missing commands");
+ 	}
+ }
+ 
+@@ -688,6 +853,7 @@ function makeReviewDeps(dir, { store, concurrency, reviewFor, reviewStatus = "co
+ 		concurrency: concurrency ?? new ConcurrencyController(),
+ 		usage: new UsageLedger({ pricing: { version: 1, currency: "USD", rates: {} } }),
+ 		ownerRunId: "owner-run-1",
++		launcherCapabilities: { childRunIdentity: true },
+ 		restrictedReaderAgent: "planner-scout",
+ 		quiescenceWaitMs: 0,
+ 		quiescenceSampleGapMs: 0,
+@@ -2634,4 +2800,182 @@ function makeFakeWallClock() {
+ 	assert.equal(launches.length, 1, "only the mint launch ran");
+ }
+ 
++// ============================================================================
++// Ticket 01 (delegation-contract-incident-20260918) — Child Run Identity & Launcher Capability
++// ============================================================================
++{
++	// 1. Launcher without childRunIdentity capability is refused before admission.
++	//    Leaves no task, no execution, no reservation.
++	const dir = initRealRepo();
++	const store = new TaskStore();
++	const concurrency = new ConcurrencyController({ savedLimit: 3, enforceWorkspace: true });
++	const { deps, launches } = makeDeps({
++		store,
++		concurrency,
++		launcherCapabilities: { childRunIdentity: false },
++	});
++	const refusal = await expectRefusal(
++		runDelegation(deps, makeParams({ role: "worker" }), dir, { executionId: "call-uncapable-worker" }),
++		"LAUNCHER_CAPABILITY_UNSUPPORTED",
++	);
++	assert.match(refusal.message, /childRunIdentity/);
++	assert.equal(launches.length, 0, "no child launched");
++	assert.equal(store.list().length, 0, "no task minted");
++	assert.equal(concurrency.status().occupied, 0, "no reservation held");
++
++	// Same refusal for role=explorer
++	const refusalExp = await expectRefusal(
++		runDelegation(deps, makeParams({ role: "explorer", objective: "recon" }), dir, { executionId: "call-uncapable-exp" }),
++		"LAUNCHER_CAPABILITY_UNSUPPORTED",
++	);
++	assert.equal(launches.length, 0);
++	assert.equal(store.list().length, 0);
++	assert.equal(concurrency.status().occupied, 0);
++}
++
++{
++	// 2. Child MUST receive run identity from the delivery channel, not test hardcoding.
++	//    Simulated child extracts runId from the channel and sets evidence.workerRunId.
++	const dir = initRealRepo();
++	const store = new TaskStore();
++	const recordedLaunches = [];
++	const launcher = createCapableLauncher({
++		onAttempt: (attempt) => recordedLaunches.push(attempt),
++	});
++	const { deps } = makeDeps({
++		store,
++		launch: launcher,
++		launcherCapabilities: { childRunIdentity: true },
++	});
++
++	// Explorer Task 1: round 1 runs, child extracts runId from channel, report is admitted.
++	const exp1 = await runDelegation(
++		deps,
++		makeParams({ role: "explorer", objective: "survey repo", acceptanceMode: "observation" }),
++		dir,
++		{ executionId: "call-exp1" },
++	);
++	assert.equal(exp1.task.state, "reviewing");
++	assert.equal(exp1.task.reports.length, 1);
++	assert.equal(exp1.task.reports[0].evidence.workerRunId, exp1.runId);
++	assert.equal(recordedLaunches.length, 1);
++	assert.match(recordedLaunches[0].prompt, /SUBAGENT_RUN_IDENTITY/);
++	assert.ok(exp1.runId && exp1.runId.startsWith("run-"));
++
++	// Worker Task: round 1 runs, child extracts runId from channel, report is admitted.
++	const w1 = await runDelegation(
++		deps,
++		makeParams({ role: "worker", objective: "write code" }),
++		dir,
++		{ executionId: "call-w1" },
++	);
++	assert.equal(w1.task.reports.length, 1);
++	assert.equal(w1.task.reports[0].evidence.workerRunId, w1.runId);
++	assert.notEqual(w1.runId, exp1.runId, "distinct runIds generated authoritatively");
++
++	// Explorer Task 2 with correction round:
++	// Round 1: child extracts round 1 runId from channel.
++	let round = 0;
++	const exp2Launcher = createCapableLauncher({
++		allocateRunId: () => { round += 1; return `run-exp2-r${round}`; },
++		reportOverrides: { status: "partial", summary: "first pass incomplete" },
++	});
++	const { deps: exp2Deps } = makeDeps({
++		store,
++		launch: exp2Launcher,
++		launcherCapabilities: { childRunIdentity: true },
++	});
++	const exp2Round1 = await runDelegation(
++		exp2Deps,
++		makeParams({ role: "explorer", objective: "explore deeply", acceptanceMode: "observation" }),
++		dir,
++		{ executionId: "call-exp2-r1" },
++	);
++	assert.equal(exp2Round1.runId, "run-exp2-r1");
++	assert.equal(exp2Round1.task.executions[0].runId, "run-exp2-r1");
++	assert.equal(exp2Round1.task.reports.length, 1);
++	assert.equal(exp2Round1.task.reports[0].evidence.workerRunId, "run-exp2-r1");
++
++	// Round 2 (correction round via redelegate): gets NEW fresh runId from launcher.
++	const exp2Round2 = await runDelegation(
++		exp2Deps,
++		makeParams({ taskId: exp2Round1.task.taskId, role: "explorer", objective: "finish exploration" }),
++		dir,
++		{ executionId: "call-exp2-r2" },
++	);
++	assert.equal(exp2Round2.runId, "run-exp2-r2");
++	assert.notEqual(exp2Round2.runId, exp2Round1.runId, "new round gets fresh runId, does not reuse previous");
++	assert.equal(exp2Round2.task.executions[1].runId, "run-exp2-r2");
++	assert.equal(exp2Round2.task.reports.length, 2);
++	assert.equal(exp2Round2.task.reports[1].evidence.workerRunId, "run-exp2-r2");
++}
++
++{
++	// 3. Negative identities: role name, taskId, previous runId, foreign runId, placeholder
++	//    are strictly rejected. Reports are preserved as unaccepted diagnostics, no pass.
++	const dir = initRealRepo();
++	const badIdentities = [
++		{ name: "role name", value: "planner-scout" },
++		{ name: "taskId", value: "T-20260918-004" },
++		{ name: "previous runId", value: "run-earlier-round" },
++		{ name: "placeholder", value: "not-provided-in-launch-packet" },
++		{ name: "foreign runId", value: "run-foreign-uuid" },
++	];
++
++	for (const bad of badIdentities) {
++		const store = new TaskStore();
++		const launcher = createCapableLauncher({
++			allocateRunId: () => "run-legit-allocated",
++			tamperChildRunId: () => bad.value,
++		});
++		const { deps } = makeDeps({
++			store,
++			launch: launcher,
++			launcherCapabilities: { childRunIdentity: true },
++		});
++		const outcome = await runDelegation(
++			deps,
++			makeParams({ role: "explorer", objective: `test ${bad.name}` }),
++			dir,
++			{ executionId: `call-bad-${bad.name.replace(/\s+/g, "-")}` },
++		);
++		assert.equal(outcome.task.reports.length, 0, `bad identity ${bad.name} must not be admitted to reports`);
++		const exec = outcome.task.executions[0];
++		assert.ok(exec.unacceptedReport, `unacceptedReport must be preserved for ${bad.name}`);
++		assert.equal(exec.unacceptedReport.evidence.workerRunId, bad.value);
++		assert.match(exec.unacceptedReportReason, /WorkerReport evidence\.workerRunId mismatch/);
++		assert.match(exec.unacceptedReportReason, /run-legit-allocated/);
++		assert.notEqual(outcome.task.state, "accepted", "cannot achieve accepted pass");
++		assert.equal(outcome.decision.action, "report_correction");
++		assert.equal(outcome.decision.reasonCode, "report-invalid");
++	}
++}
++
++{
++	// 4. Observation mode also enforces identity gate: wrong runId is rejected.
++	const dir = initRealRepo();
++	const store = new TaskStore();
++	const launcher = createCapableLauncher({
++		allocateRunId: () => "run-obs-real",
++		tamperChildRunId: () => "planner-scout",
++	});
++	const { deps } = makeDeps({
++		store,
++		launch: launcher,
++		launcherCapabilities: { childRunIdentity: true },
++		gitRunner: NO_GIT,
++	});
++	const outcome = await runDelegation(
++		deps,
++		makeParams({ role: "explorer", objective: "obs survey", acceptanceMode: "observation" }),
++		dir,
++		{ executionId: "call-obs-tamper" },
++	);
++	assert.equal(outcome.task.reports.length, 0, "observation mode does not admit wrong identity");
++	assert.ok(outcome.task.executions[0].unacceptedReport);
++	assert.equal(outcome.task.executions[0].unacceptedReport.evidence.workerRunId, "planner-scout");
++	assert.match(outcome.task.executions[0].unacceptedReportReason, /WorkerReport evidence\.workerRunId mismatch/);
++	assert.equal(outcome.decision.action, "report_correction");
++}
++
+ console.log("delegate.test.mjs: all cases passed");
+diff --git a/delegate.ts b/delegate.ts
+index 12a432c..7e13d92 100644
+--- a/delegate.ts
++++ b/delegate.ts
+@@ -33,6 +33,7 @@ import {
+ } from "./subagent-delegation-contract.ts";
+ import type { GitRunner } from "./git-audit.ts";
+ import type { ConcurrencyController, ConcurrencyReservation } from "./concurrency.ts";
++import type { ExplorerModelSelection, ExplorerModelSelectionResult } from "./explorer-model.ts";
+ import { captureEvidence, captureReviewEvidencePacket, compareEvidence, compareExecutionTruth, describeComparison, describeProbeFailures, environmentFailureOf } from "./evidence.ts";
+ import type { ExecutionTruthComparison } from "./evidence.ts";
+ import { buildTaskPacket, ROLE_AGENTS } from "./roles.ts";
+@@ -500,6 +501,117 @@ export interface DelegationLaunchHooks {
+ 	onLateTerminal?: (response: SubagentDelegationTerminalResponse) => void;
+ }
+ 
++export interface LauncherCapabilities {
++	/**
++	 * Whether the launcher authoritatively allocates a child runId
++	 * and provides it to the child before the child's first turn.
++	 */
++	childRunIdentity?: boolean;
++}
++
++export interface ChildRunIdentityDelivery {
++	channel: "task-packet-envelope" | "launch-context" | string;
++	runId: string;
++	taskId: string;
++}
++
++/**
++ * Deliver authoritative child run identity into the task prompt.
++ * A capable launcher wraps or prefixes the child's task before execution.
++ */
++export function deliverChildRunIdentity(taskPrompt: string, delivery: ChildRunIdentityDelivery): string {
++	const header = `<!-- SUBAGENT_RUN_IDENTITY: {"version":1,"runId":"${delivery.runId}","taskId":"${delivery.taskId}"} -->`;
++	return `${header}\n${taskPrompt}`;
++}
++
++/**
++ * Extract authoritative child run identity from the child's prompt or context.
++ * The child model/test runner reads this channel to populate its WorkerReport.
++ */
++export function extractChildRunIdentity(input: { prompt?: string; context?: { runId?: string } }): string | undefined {
++	if (input.context?.runId) return input.context.runId;
++	if (typeof input.prompt === "string") {
++		const match = input.prompt.match(/<!-- SUBAGENT_RUN_IDENTITY:\s*(\{.*?\})\s*-->/);
++		if (match) {
++			try {
++				const parsed = JSON.parse(match[1]);
++				if (typeof parsed.runId === "string" && parsed.runId.trim()) return parsed.runId.trim();
++			} catch {
++				// unparseable
++			}
++		}
++		const altMatch = input.prompt.match(/\[Execution Run Identity:\s*([^\s\]]+)\]/);
++		if (altMatch) return altMatch[1].trim();
++	}
++	return undefined;
++}
++
++export interface CapableLauncherOptions {
++	allocateRunId?: () => string;
++	tamperChildRunId?: (context: { runId: string; request: SubagentDelegationRequest }) => string;
++	onAttempt?: (attempt: { runId: string; request: SubagentDelegationRequest; prompt: string }) => void;
++	status?: "completed" | "failed" | "timed_out" | "cancelled";
++	reportOverrides?: Partial<WorkerReport>;
++	omitReport?: boolean;
++}
++
++/**
++ * Creates a capable test/mock launcher that authoritatively allocates runIds
++ * and delivers them to the child via the deterministic delivery channel.
++ */
++export function createCapableLauncher(options: CapableLauncherOptions = {}): DelegationDeps["launch"] {
++	let counter = 0;
++	const launcher: DelegationDeps["launch"] = async (request, _signal, _hooks) => {
++		counter += 1;
++		const runId = options.allocateRunId ? options.allocateRunId() : `run-${randomUUID().slice(0, 8)}`;
++		const deliveredPrompt = deliverChildRunIdentity(request.task, {
++			channel: "task-packet-envelope",
++			runId,
++			taskId: request.nodeId,
++		});
++		options.onAttempt?.({ runId, request, prompt: deliveredPrompt });
++
++		// Simulated child reads run identity from the channel:
++		const channelRunId = extractChildRunIdentity({ prompt: deliveredPrompt });
++		const childRunId = options.tamperChildRunId
++			? options.tamperChildRunId({ runId: channelRunId ?? runId, request })
++			: (channelRunId ?? runId);
++
++		const isScout = request.agent === "planner-scout" || request.agent === "scout";
++		const report: WorkerReport = {
++			version: 1,
++			taskId: request.nodeId,
++			status: "completed",
++			summary: isScout ? "Recon completed" : "Work completed",
++			changedFiles: [],
++			validation: [],
++			evidence: {
++				cwd: request.cwd,
++				taskId: request.nodeId,
++				workerRunId: childRunId,
++				generatedAt: new Date().toISOString(),
++			},
++			risks: [],
++			unresolved: [],
++			...options.reportOverrides,
++		};
++
++		return {
++			requestId: request.requestId,
++			ownerRunId: request.ownerRunId,
++			nodeId: request.nodeId,
++			status: options.status ?? "completed",
++			runId,
++			agent: request.agent,
++			model: request.model ?? "test/model",
++			usage: { input: 10, output: 20, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 2, toolCalls: 2, durationMs: 100 },
++			...(!options.omitReport ? { result: { kind: "structured" as const, value: report } } : {}),
++		};
++	};
++	(launcher as { capabilities?: LauncherCapabilities }).capabilities = { childRunIdentity: true };
++	return launcher;
++}
++
+ export interface DelegationDeps {
+ 	store: TaskStore;
+ 	gitRunner: GitRunner;
+@@ -507,6 +619,11 @@ export interface DelegationDeps {
+ 	usage: UsageLedger;
+ 	launch: (request: SubagentDelegationRequest, signal?: AbortSignal, hooks?: DelegationLaunchHooks) => Promise<SubagentDelegationResponse>;
+ 	ownerRunId: string;
++	/**
++	 * Ticket 01 — declared capabilities of the delegation launcher.
++	 * Launchers lacking childRunIdentity are refused before admission.
++	 */
++	launcherCapabilities?: LauncherCapabilities;
+ 	/**
+ 	 * Ticket 02 — the name of the host-registered restricted reader agent
+ 	 * (RESTRICTED_READER_AGENT when index.ts's registration succeeded). When
+@@ -514,6 +631,15 @@ export interface DelegationDeps {
+ 	 * read-only binding to prove the execution cannot mutate.
+ 	 */
+ 	restrictedReaderAgent?: string;
++	/**
++	 * T-20260918-004 — resolves the Explorer launch selection (model/thinking)
++	 * from the operator's subagent configuration at launch time. Explorer only;
++	 * a broken configuration refuses before any Task is minted. Configured
++	 * model strings cross this seam unchanged; the host launcher owns model
++	 * resolution and reports an unavailable model as a visible launch failure.
++	 * Absent → the request omits model/thinking and host fallback proceeds.
++	 */
++	resolveExplorerModelSelection?: (cwd: string) => ExplorerModelSelectionResult;
+ 	now?: () => Date;
+ 	/**
+ 	 * Wall-envelope clock: a monotonic `now()` plus the timer pair. Tests
+@@ -694,11 +820,37 @@ export async function runDelegation(
+ 	}
+ 	const isRestrictedReader = classification.capability === "restricted-reader";
+ 
++	// Ticket 01 (delegation-contract-incident-20260918) — verify the launcher
++	// supports authoritative child run identity delivery before first turn.
++	// Launchers lacking this capability force children to guess identities
++	// (e.g. planner-scout, taskId, placeholder). Refuse before admission/task minting.
++	const launcherCapabilities = deps.launcherCapabilities ?? (deps.launch as { capabilities?: LauncherCapabilities } | undefined)?.capabilities;
++	if (role !== "reviewer" && launcherCapabilities?.childRunIdentity !== true) {
++		throw new DelegationRefused(
++			"LAUNCHER_CAPABILITY_UNSUPPORTED",
++			`${toolName} refused: launcher does not support authoritative child run identity delivery before first turn (requires launcher capability 'childRunIdentity'; host launcher lacks child run identity channel). No child was launched.`,
++			params.taskId,
++		);
++	}
++
++	// T-20260918-004 — resolve the Explorer launch selection before any Task is
++	//    minted. Configured model strings cross into the request unchanged so
++	//    the host launcher remains the single resolution/availability boundary.
++	let explorerSelection: ExplorerModelSelection | undefined;
++	if (role === "explorer" && deps.resolveExplorerModelSelection) {
++		const resolved = deps.resolveExplorerModelSelection(effectiveCwd);
++		if (!resolved.ok) {
++			throw new DelegationRefused(resolved.code, `${toolName} refused: ${resolved.message}`);
++		}
++		explorerSelection = resolved.selection;
++	}
++
+ 	// 1. Task binding: an explicit id binds the existing record verbatim —
+ 	//    its stored spec is never rewritten (ticket 53); this call's spec
+ 	//    only goes into the packet.
+-	let task: TaskRecord;
++	let task!: TaskRecord;
+ 	let thisSpec: TaskSpec;
++	let recoveryDecision: RecoveryDecision | undefined;
+ 	if (params.taskId) {
+ 		const record = deps.store.get(params.taskId);
+ 		if (!record) {
+@@ -764,30 +916,27 @@ export async function runDelegation(
+ 		// refused above).
+ 		const boundMode = record.spec?.acceptanceMode;
+ 		thisSpec = specFromParams(boundMode !== undefined ? { ...params, acceptanceMode: boundMode } : params, record.taskId, record.cwd || effectiveCwd);
++
++		if (isFinalTaskState(task.state)) {
++			if (task.state === "blocked" && task.recovery?.required === true) {
++				const refusal = validateRecoveryDecision(task, params.recovery as RecoveryDecision | undefined, DELEGATE_RECOVERY_ACTIONS);
++				if (refusal) throw new DelegationRefused("RECOVERY_REQUIRED", `${toolName} refused: ${refusal}`, task.taskId);
++				recoveryDecision = params.recovery as RecoveryDecision;
++			} else {
++				throw new DelegationRefused(
++					"TASK_CLOSED",
++					`${toolName} refused: Task ${task.taskId} is ${task.state}; start a new Task instead`,
++					task.taskId,
++				);
++			}
++		}
+ 	} else {
+ 		// nextTaskId() already claims the id (process-local sequence or the
+ 		// persistent allocator); createAllocated pairs that claim with the
+ 		// record so a store.create round-trip can never re-reserve it.
++		// Minting validates the spec before any reservation or store write.
+ 		const taskId = deps.store.nextTaskId();
+-		const spec = specFromParams(params, taskId, effectiveCwd);
+-		task = deps.store.createAllocated(taskId, spec);
+-		thisSpec = spec;
+-	}
+-	// P0-B — a blocked Task flagged recovery.required only re-executes under a
+-	// valid RecoveryDecision (spec §5); other final states stay TASK_CLOSED.
+-	let recoveryDecision: RecoveryDecision | undefined;
+-	if (isFinalTaskState(task.state)) {
+-		if (task.state === "blocked" && task.recovery?.required === true) {
+-			const refusal = validateRecoveryDecision(task, params.recovery as RecoveryDecision | undefined, DELEGATE_RECOVERY_ACTIONS);
+-			if (refusal) throw new DelegationRefused("RECOVERY_REQUIRED", `${toolName} refused: ${refusal}`, task.taskId);
+-			recoveryDecision = params.recovery as RecoveryDecision;
+-		} else {
+-			throw new DelegationRefused(
+-				"TASK_CLOSED",
+-				`${toolName} refused: Task ${task.taskId} is ${task.state}; start a new Task instead`,
+-				task.taskId,
+-			);
+-		}
++		thisSpec = specFromParams(params, taskId, effectiveCwd);
+ 	}
+ 
+ 	// P0-B — the explicit anomaly envelope; validated before launch, never defaulted.
+@@ -800,31 +949,65 @@ export async function runDelegation(
+ 	//    stop-unconfirmed workspace admits no second writer (A4).
+ 	let reservation: ConcurrencyReservation | undefined;
+ 	if (!isRestrictedReader) {
+-		if (task.writerHold && recoveryDecision?.worktreeDecision === "manual") {
+-			deps.concurrency.release(task.writerHold.executionId);
+-			deps.concurrency.release(`writerhold:${task.writerHold.executionId}`);
+-			task = deps.store.clearWriterHold(task.taskId);
+-		}
+-		if (task.writerHold) {
+-			throw new DelegationRefused(
+-				"WRITER_HOLD",
+-				`${toolName} refused: Task ${task.taskId} writer execution ${task.writerHold.executionId} was never confirmed stopped (${task.writerHold.reason}); submit a matching recovery with worktreeDecision=manual only after operator resolution`,
+-				task.taskId,
+-			);
+-		}
+-		const admission = deps.concurrency.reserve({
+-			id: executionId,
+-			taskId: task.taskId,
+-			state: task.state,
+-			structured: true,
+-			role,
+-			capability: "writer",
+-			workspaces: [task.cwd || effectiveCwd, ...(thisSpec.additionalWorktreeRoots ?? [])],
+-		});
+-		if (admission.refusal) {
+-			throw new DelegationRefused("WRITER_CONFLICT", `${toolName} refused: ${admission.refusal.reason}`);
++		if (params.taskId) {
++			if (task.writerHold && recoveryDecision?.worktreeDecision === "manual") {
++				deps.concurrency.release(task.writerHold.executionId);
++				deps.concurrency.release(`writerhold:${task.writerHold.executionId}`);
++				task = deps.store.clearWriterHold(task.taskId);
++			}
++			if (task.writerHold) {
++				throw new DelegationRefused(
++					"WRITER_HOLD",
++					`${toolName} refused: Task ${task.taskId} writer execution ${task.writerHold.executionId} was never confirmed stopped (${task.writerHold.reason}); submit a matching recovery with worktreeDecision=manual only after operator resolution`,
++					task.taskId,
++				);
++			}
++			const admission = deps.concurrency.reserve({
++				id: executionId,
++				taskId: task.taskId,
++				state: task.state,
++				structured: true,
++				role,
++				capability: "writer",
++				workspaces: [task.cwd || effectiveCwd, ...(thisSpec.additionalWorktreeRoots ?? [])],
++			});
++			if (admission.refusal) {
++				throw new DelegationRefused(
++					admission.refusal.code,
++					`${toolName} refused: ${admission.refusal.reason}; Task ${task.taskId} unchanged, no execution was launched`,
++					task.taskId,
++				);
++			}
++			reservation = admission.reservation;
++		} else {
++			// Minting a new Task: reserve concurrency atomically before creating the Task in store.
++			const admission = deps.concurrency.reserve({
++				id: executionId,
++				taskId: thisSpec.taskId,
++				state: "planning",
++				structured: true,
++				role,
++				capability: "writer",
++				workspaces: [effectiveCwd, ...(thisSpec.additionalWorktreeRoots ?? [])],
++			});
++			if (admission.refusal) {
++				throw new DelegationRefused(
++					admission.refusal.code,
++					`${toolName} refused: ${admission.refusal.reason}; no Task was created, no execution was launched`,
++				);
++			}
++			reservation = admission.reservation;
++			try {
++				task = deps.store.createAllocated(thisSpec.taskId, thisSpec);
++			} catch (error) {
++				if (reservation) {
++					deps.concurrency.release(reservation.id);
++				}
++				throw error;
++			}
+ 		}
+-		reservation = admission.reservation;
++	} else if (!params.taskId) {
++		task = deps.store.createAllocated(thisSpec.taskId, thisSpec);
+ 	}
+ 
+ 	const nowIso = () => (deps.now ? deps.now() : new Date()).toISOString();
+@@ -957,6 +1140,9 @@ export async function runDelegation(
+ 		}
+ 
+ 		// 4. Structured delegation: the packet is rendered once, downward only.
++		//    T-20260918-004 — the Explorer's configured model/thinking selection
++		//    rides the typed request fields; "inherit" forwards verbatim and the
++		//    launcher resolves it against the current parent session model.
+ 		const request: SubagentDelegationRequest = {
+ 			requestId,
+ 			ownerRunId: deps.ownerRunId,
+@@ -965,6 +1151,8 @@ export async function runDelegation(
+ 			task: buildTaskPacket(thisSpec, params.instructions ?? ""),
+ 			context: "fresh",
+ 			cwd: task.cwd || effectiveCwd,
++			...(explorerSelection?.model !== undefined ? { model: explorerSelection.model } : {}),
++			...(explorerSelection?.thinking !== undefined ? { thinking: explorerSelection.thinking } : {}),
+ 			result: { kind: "structured", schema: WORKER_REPORT_SCHEMA },
+ 		};
+ 		// A2 — spec §3 predicate: an identity-matched terminal plus a quiet
+@@ -1899,6 +2087,11 @@ export interface HostLauncherOptions {
+ 	 * DelegationAborted.
+ 	 */
+ 	cancelGraceMs?: number;
++	/**
++	 * Declared launcher capabilities; if omitted, probes the host event bus
++	 * for capability declaration or inspects environment flags.
++	 */
++	capabilities?: LauncherCapabilities;
+ }
+ 
+ /**
+@@ -1932,7 +2125,25 @@ export function cancelInFlightDelegations(pi: ExtensionAPI): number {
+  */
+ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOptions = {}): DelegationDeps["launch"] {
+ 	const cancelGraceMs = options.cancelGraceMs ?? 5000;
+-	return (request, signal, hooks) => new Promise((resolve, reject) => {
++	let capabilities: LauncherCapabilities = options.capabilities ?? {};
++	if (options.capabilities === undefined) {
++		const probe: { version: number; capabilities?: LauncherCapabilities } = { version: 1 };
++		try {
++			pi.events.emit("pi-subagents:delegation-capability-probe:v1", probe);
++			if (probe.capabilities) {
++				capabilities = probe.capabilities;
++			}
++		} catch {
++			// No listener
++		}
++		if (process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY !== undefined) {
++			capabilities = {
++				...capabilities,
++				childRunIdentity: process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY === "true",
++			};
++		}
++	}
++	const launcher: DelegationDeps["launch"] = (request, signal, hooks) => new Promise((resolve, reject) => {
+ 		if (signal?.aborted) {
+ 			reject(new DelegationAborted(request.nodeId, false));
+ 			return;
+@@ -2000,4 +2211,6 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
+ 		// fires the listener — catch it here so the grace path still runs.
+ 		if (signal?.aborted) onAbort();
+ 	});
++	(launcher as { capabilities?: LauncherCapabilities }).capabilities = capabilities;
++	return launcher;
+ }
+diff --git a/index.test.mjs b/index.test.mjs
+index f4d19cf..f2094e8 100644
+--- a/index.test.mjs
++++ b/index.test.mjs
+@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
+ import { homedir, tmpdir } from "node:os";
+ import { join } from "node:path";
+ import { LedgerSnapshotStore } from "./ledger-store.ts";
+-import { TaskStore, validateTaskSpec } from "./task.ts";
++import { TaskStore, createTaskSpec, validateTaskSpec } from "./task.ts";
+ import { emptyTaskUsage } from "./usage.ts";
+ import {
+ 	SUBAGENT_DELEGATION_CANCEL_EVENT,
+@@ -1073,6 +1073,32 @@ try {
+ {
+ 	assert.equal(tools.has("planner_delegate"), true);
+ 
++	// Ticket 01 — launcher lacking childRunIdentity capability refuses before admission.
++	const uncapableCall = tools.get("planner_delegate").execute(
++		"call-uncapable-1",
++		{
++			role: "worker",
++			objective: "attempt without capability",
++			scope: {},
++			constraints: [],
++			acceptanceCriteria: [],
++			validation: { required: false },
++		},
++		undefined,
++		undefined,
++		ctx,
++	);
++	await assert.rejects(uncapableCall, (error) => {
++		assert.equal(error?.code, "LAUNCHER_CAPABILITY_UNSUPPORTED");
++		assert.match(error?.message, /childRunIdentity/);
++		return true;
++	});
++
++	// Enable capability on mock bus for subsequent integration tests
++	piEvents.on("pi-subagents:delegation-capability-probe:v1", (probe) => {
++		probe.capabilities = { childRunIdentity: true };
++	});
++
+ 	// The launcher emits REQUEST only after runDelegation's async setup —
+ 	// poll the bus until it lands (bounded so an early throw cannot hang).
+ 	// `excludeRequestId` skips an earlier delegation's REQUEST.
+@@ -1435,8 +1461,8 @@ try {
+ 
+ 	const e2 = await refused("call-rb-2");
+ 	assert.equal(e2.code, "TASK_UNKNOWN", "the breaker appends text without losing the refusal code");
+-	assert.match(e2.message, /Repeat notice: these arguments are byte-identical to refused call call-rb-1 \(same refusal TASK_UNKNOWN\)/);
+-	assert.match(e2.message, /read back the arguments you actually sent/);
++	assert.match(e2.message, /Repeat notice: 本边界收到的规范化参数相同 \(observed boundary: root tool input; previous toolCallId: call-rb-1; refusal code: TASK_UNKNOWN; missing fields: none\)/);
++	assert.match(e2.message, /Read back the arguments actually received at this boundary before calling again/);
+ 	assert.match(e2.message, /planner_redelegate refused: unknown Task T-20200101-001/, "the original refusal text is kept, appended not replaced");
+ 
+ 	const e3 = await refused("call-rb-3");
+@@ -1854,7 +1880,7 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
+ 	await assert.rejects(
+ 		abortTool04.execute("call-wrc04-c2", badAbort, undefined, () => {}, ctx),
+ 		(error) => {
+-			assert.match(error.message, /Repeat notice: these arguments are byte-identical to refused call call-wrc04-c1/);
++			assert.match(error.message, /Repeat notice: 本边界收到的规范化参数相同 \(observed boundary: root tool input; previous toolCallId: call-wrc04-c1;/);
+ 			return true;
+ 		},
+ 	);
+@@ -1875,13 +1901,13 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
+ 		constraints: [],
+ 		acceptanceCriteria: [],
+ 		validation: { required: false },
+-		recovery: strayRecovery,
++		recovery: { executionId: "run-wrc04-retry", action: "retry_same_plan", reason: "stray" },
+ 	};
+ 	await assert.rejects(
+ 		redelegateTool04.execute("call-wrc04-f", strayRedelegate, undefined, () => {}, ctx),
+ 		(error) => {
+ 			assert.equal(error.code, "RECOVERY_NOT_APPLICABLE");
+-			assert.match(error.message, /planner_redelegate refused: recovery is only admissible on a blocked Task flagged recovery\.required/);
++			assert.match(error.message, /planner_redelegate refused: recovery is only admissible on a blocked Task flagged recovery\.required — Task T-\d{8}-\d{3} is changes_requested with no pending requirement/);
+ 			assert.match(error.message, /not a child runId/);
+ 			return true;
+ 		},
+@@ -1889,7 +1915,7 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
+ 	await assert.rejects(
+ 		redelegateTool04.execute("call-wrc04-f2", strayRedelegate, undefined, () => {}, ctx),
+ 		(error) => {
+-			assert.match(error.message, /Repeat notice: these arguments are byte-identical to refused call call-wrc04-f/);
++			assert.match(error.message, /Repeat notice: 本边界收到的规范化参数相同 \(observed boundary: root tool input; previous toolCallId: call-wrc04-f;/);
+ 			return true;
+ 		},
+ 	);
+@@ -2100,7 +2126,7 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
+ 	const beforeRepeatedConsumed = readLedger04b(heldTask).task;
+ 	await assert.rejects(
+ 		abortTool04b.execute("call-wrc04b-dup2", spent, undefined, () => {}, ctx),
+-		/Repeat notice: these arguments are byte-identical to refused call call-wrc04b-dup/,
++		/Repeat notice: 本边界收到的规范化参数相同 \(observed boundary: root tool input; previous toolCallId: call-wrc04b-dup/,
+ 	);
+ 	const afterRepeatedConsumed = readLedger04b(heldTask).task;
+ 	assertSingleRefusalAppend04b(beforeRepeatedConsumed, afterRepeatedConsumed, {
+@@ -2502,3 +2528,483 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
+ 	);
+ 	assert.match(noSession.content[0].text, /session log: unknown/);
+ }
++
++// ---------------------------------------------------------------------------
++// Ticket 04: Legacy unstarted planning task recovery and blocked verdict
++// ---------------------------------------------------------------------------
++{
++	const tasksTool = tools.get("planner_tasks");
++	const redelegateTool = tools.get("planner_redelegate");
++	const verdictTool = tools.get("planner_verdict");
++	const abortTool = tools.get("planner_abort");
++	const ledger = new LedgerSnapshotStore(isolatedAgentDir);
++
++	// 1. Construct a legacy unstarted planning task in the ledger
++	const legacyId = "T-20260918-099";
++	const legacyTask = {
++		taskId: legacyId,
++		state: "planning",
++		role: "worker",
++		cwd: ctx.cwd,
++		spec: {
++			taskId: legacyId,
++			objective: "legacy unstarted task",
++			cwd: ctx.cwd,
++			role: "worker",
++			validation: { required: false },
++		},
++		executions: [],
++		reports: [],
++		reviews: [],
++		updatedAt: "2026-09-18T10:00:00.000Z",
++	};
++	ledger.write(legacyTask);
++
++	// 2. planner_tasks lists and diagnoses the unstarted task
++	const listResult = await tasksTool.execute("call-t04-list", {}, undefined, () => {}, ctx);
++	assert.match(listResult.content[0].text, new RegExp(legacyId));
++	assert.match(listResult.content[0].text, /planning/);
++
++	const diagResult = await tasksTool.execute("call-t04-diag", { taskId: legacyId }, undefined, () => {}, ctx);
++	assert.match(diagResult.content[0].text, /state: planning/);
++	assert.match(diagResult.content[0].text, /executions: none recorded/);
++	assert.doesNotMatch(diagResult.content[0].text, /recovery\.required/);
++
++	// 3. planner_abort is refused (recovery.required is false) with guidance to planner_verdict or planner_redelegate
++	await assert.rejects(
++		abortTool.execute("call-t04-abort", { taskId: legacyId, executionId: "fake-exec", reason: "abort unstarted", worktreeDecision: "keep" }, undefined, () => {}, ctx),
++		(error) => {
++			assert.match(error.message, /planner_abort refused \(recovery/);
++			assert.match(error.message, /record the verdict with planner_verdict or re-enter with planner_redelegate/);
++			return true;
++		},
++	);
++
++	// 4. On a separate unstarted fixture, planner_verdict blocked transitions planning -> blocked cleanly
++	const abandonId = "T-20260918-098";
++	const abandonTask = {
++		taskId: abandonId,
++		state: "planning",
++		role: "worker",
++		cwd: ctx.cwd,
++		spec: {
++			taskId: abandonId,
++			objective: "legacy task to abandon",
++			cwd: ctx.cwd,
++			role: "worker",
++			validation: { required: false },
++		},
++		executions: [],
++		reports: [],
++		reviews: [],
++		updatedAt: "2026-09-18T10:00:00.000Z",
++	};
++	ledger.write(abandonTask);
++
++	const verdictOutcome = await verdictTool.execute(
++		"call-t04-verdict-blocked",
++		{ taskId: abandonId, verdict: "blocked", summary: "operator chose to abandon unstarted legacy task" },
++		undefined,
++		() => {},
++		ctx,
++	);
++	assert.equal(verdictOutcome.details.state, "blocked");
++	const abandonedAfter = ledger.read(abandonId).record;
++	assert.equal(abandonedAfter.state, "blocked");
++	assert.equal(abandonedAfter.executions.length, 0, "no fake execution minted");
++	assert.equal(abandonedAfter.reports.length, 0, "no fake WorkerReport minted");
++	assert.equal(abandonedAfter.stateReason, "operator chose to abandon unstarted legacy task");
++
++	// 4b. Refusal breaker triggered by malformed redelegate does not block query or verdict
++	const abandonId2 = "T-20260918-097";
++	ledger.write({
++		taskId: abandonId2,
++		state: "planning",
++		role: "worker",
++		cwd: ctx.cwd,
++		spec: {
++			taskId: abandonId2,
++			objective: "legacy task with malformed redelegations",
++			cwd: ctx.cwd,
++			role: "worker",
++			validation: { required: false },
++		},
++		executions: [],
++		reports: [],
++		reviews: [],
++		updatedAt: "2026-09-18T10:00:00.000Z",
++	});
++
++	// Attempt 1: malformed redelegate (validation.required true but no commands)
++	await assert.rejects(
++		redelegateTool.execute(
++			"call-t04-malformed-1",
++			{
++				taskId: abandonId2,
++				role: "worker",
++				objective: "missing commands",
++				scope: {},
++				constraints: [],
++				acceptanceCriteria: [],
++				validation: { required: true },
++			},
++			undefined,
++			() => {},
++			ctx,
++		),
++		(err) => err.message.includes("validation.commands must be a non-empty array"),
++	);
++
++	// Attempt 2: identical malformed redelegate -> refusal breaker notice
++	await assert.rejects(
++		redelegateTool.execute(
++			"call-t04-malformed-2",
++			{
++				taskId: abandonId2,
++				role: "worker",
++				objective: "missing commands",
++				scope: {},
++				constraints: [],
++				acceptanceCriteria: [],
++				validation: { required: true },
++			},
++			undefined,
++			() => {},
++			ctx,
++		),
++		(err) => err.message.includes("Repeat notice"),
++	);
++
++	// Query still works
++	const diagAfterRefusal = await tasksTool.execute("call-t04-diag-2", { taskId: abandonId2 }, undefined, () => {}, ctx);
++	assert.match(diagAfterRefusal.content[0].text, /state: planning/);
++
++	// Verdict blocked still works and transitions the task
++	const verdictAfterRefusal = await verdictTool.execute(
++		"call-t04-verdict-blocked-2",
++		{ taskId: abandonId2, verdict: "blocked", summary: "abandoned after repeated refusal" },
++		undefined,
++		() => {},
++		ctx,
++	);
++	assert.equal(verdictAfterRefusal.details.state, "blocked");
++	assert.equal(ledger.read(abandonId2).record.state, "blocked");
++
++	// 5. On the first fixture, planner_redelegate launches the existing task without requiring RecoveryDecision
++	const seenT04 = new Set(
++		piEvents.emitted
++			.filter((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT)
++			.map((entry) => entry.payload.requestId),
++	);
++	const nextReqT04 = async () => {
++		const deadline = Date.now() + 2000;
++		let found;
++		while (!found && Date.now() < deadline) {
++			found = piEvents.emitted.find(
++				(entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT && !seenT04.has(entry.payload.requestId),
++			)?.payload;
++			if (!found) await new Promise((r) => setTimeout(r, 2));
++		}
++		assert.ok(found, "REQUEST emitted on the delegation bus");
++		seenT04.add(found.requestId);
++		return found;
++	};
++
++	const initialRequests = piEvents.emitted.filter((e) => e.event === SUBAGENT_DELEGATION_REQUEST_EVENT).length;
++	const redelegatePromise = redelegateTool.execute(
++		"call-t04-redelegate",
++		{
++			taskId: legacyId,
++			role: "worker",
++			objective: "execute unstarted legacy task",
++			scope: {},
++			constraints: [],
++			acceptanceCriteria: [],
++			validation: { required: false },
++		},
++		undefined,
++		() => {},
++		ctx,
++	);
++	const req = await nextReqT04();
++	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
++		requestId: req.requestId,
++		ownerRunId: req.ownerRunId,
++		nodeId: req.nodeId,
++		status: "completed",
++		runId: "run-t04",
++		result: {
++			kind: "structured",
++			value: {
++				version: 1,
++				taskId: req.nodeId,
++				status: "completed",
++				summary: "worker completed",
++				changedFiles: [],
++				validation: [],
++				evidence: { cwd: req.cwd, taskId: req.nodeId, workerRunId: "run-t04" },
++				risks: [],
++				unresolved: [],
++			},
++		},
++	});
++	const redelegateResult = await redelegatePromise;
++	assert.equal(redelegateResult.details.taskId, legacyId, "executed original taskId");
++	const currentRequests = piEvents.emitted.filter((e) => e.event === SUBAGENT_DELEGATION_REQUEST_EVENT).length;
++	assert.equal(currentRequests, initialRequests + 1, "exactly one launch occurred");
++	const finalRecord = ledger.read(legacyId).record;
++	assert.equal(finalRecord.spec?.objective, "legacy unstarted task", "original TaskSpec not overwritten");
++}
++
++// ============================================================================
++// Ticket 01 (delegation-contract-incident-20260918) — Host Entrypoint Regression:
++// Explorer (2 tasks, 1 correction round) and Worker Report Admission & Verdict
++// ============================================================================
++{
++	const delegateTool = tools.get("planner_delegate");
++	const redelegateTool = tools.get("planner_redelegate");
++	const verdictTool = tools.get("planner_verdict");
++	assert.ok(delegateTool && redelegateTool && verdictTool);
++	const ledger = new LedgerSnapshotStore(isolatedAgentDir);
++
++	const seenRequests = new Set(
++		piEvents.emitted
++			.filter((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT)
++			.map((entry) => entry.payload.requestId),
++	);
++	const nextReq = async () => {
++		const deadline = Date.now() + 2000;
++		let found;
++		while (!found && Date.now() < deadline) {
++			found = piEvents.emitted.find(
++				(entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT && !seenRequests.has(entry.payload.requestId),
++			)?.payload;
++			if (!found) await new Promise((r) => setTimeout(r, 2));
++		}
++		assert.ok(found, "REQUEST emitted on the delegation bus");
++		seenRequests.add(found.requestId);
++		return found;
++	};
++
++	// 1. Explorer Task 1: single round, runId allocated by launcher, admitted, enters Verdict.
++	const exp1Promise = delegateTool.execute(
++		"call-exp1-mint",
++		{
++			role: "explorer",
++			objective: "investigate repo layout",
++			scope: {},
++			constraints: [],
++			acceptanceCriteria: [],
++			validation: { required: false },
++			acceptanceMode: "observation",
++		},
++		undefined,
++		() => {},
++		ctx,
++	);
++	const reqExp1 = await nextReq();
++	const runIdExp1 = "run-exp1-host-alloc";
++	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
++		requestId: reqExp1.requestId,
++		ownerRunId: reqExp1.ownerRunId,
++		nodeId: reqExp1.nodeId,
++		status: "completed",
++		runId: runIdExp1,
++		result: {
++			kind: "structured",
++			value: {
++				version: 1,
++				taskId: reqExp1.nodeId,
++				status: "completed",
++				summary: "Explorer recon done",
++				changedFiles: [],
++				validation: [],
++				evidence: { cwd: reqExp1.cwd, taskId: reqExp1.nodeId, workerRunId: runIdExp1 },
++				risks: [],
++				unresolved: [],
++			},
++		},
++	});
++	const exp1Res = await exp1Promise;
++	assert.equal(exp1Res.details.report.evidence.workerRunId, runIdExp1);
++	assert.equal(exp1Res.details.state, "reviewing");
++
++	// Verdict for Explorer Task 1
++	const v1 = await verdictTool.execute(
++		"call-v-exp1",
++		{
++			taskId: exp1Res.details.taskId,
++			verdict: "pass",
++			summary: "Recon matches requirements",
++		},
++		undefined,
++		() => {},
++		ctx,
++	);
++	assert.equal(v1.details.state, "completed");
++	assert.equal(ledger.read(exp1Res.details.taskId).record.state, "completed");
++
++	// 2. Explorer Task 2: Round 1 needs correction -> Round 2 redelegate -> Verdict.
++	// Execution 1: Round 1
++	const exp2Promise = delegateTool.execute(
++		"call-exp2-mint",
++		{
++			role: "explorer",
++			objective: "investigate dependencies",
++			scope: {},
++			constraints: [],
++			acceptanceCriteria: [],
++			validation: { required: false },
++			acceptanceMode: "observation",
++		},
++		undefined,
++		() => {},
++		ctx,
++	);
++	const reqExp2R1 = await nextReq();
++	const runIdExp2R1 = "run-exp2-round1-alloc";
++	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
++		requestId: reqExp2R1.requestId,
++		ownerRunId: reqExp2R1.ownerRunId,
++		nodeId: reqExp2R1.nodeId,
++		status: "completed",
++		runId: runIdExp2R1,
++		result: {
++			kind: "structured",
++			value: {
++				version: 1,
++				taskId: reqExp2R1.nodeId,
++				status: "partial",
++				summary: "Partial dependencies found; more needed",
++				changedFiles: [],
++				validation: [],
++				evidence: { cwd: reqExp2R1.cwd, taskId: reqExp2R1.nodeId, workerRunId: runIdExp2R1 },
++				risks: [],
++				unresolved: [],
++			},
++		},
++	});
++	const exp2R1Res = await exp2Promise;
++	assert.equal(exp2R1Res.details.report.evidence.workerRunId, runIdExp2R1);
++	const exp2TaskId = exp2R1Res.details.taskId;
++
++	// Execution 2: Round 2 (correction round via redelegate)
++	const exp2R2Promise = redelegateTool.execute(
++		"call-exp2-r2",
++		{
++			taskId: exp2TaskId,
++			role: "explorer",
++			objective: "finish dependencies survey",
++			scope: {},
++			constraints: [],
++			acceptanceCriteria: [],
++			validation: { required: false },
++		},
++		undefined,
++		() => {},
++		ctx,
++	);
++	const reqExp2R2 = await nextReq();
++	assert.notEqual(reqExp2R2.requestId, reqExp2R1.requestId);
++	const runIdExp2R2 = "run-exp2-round2-fresh-alloc";
++	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
++		requestId: reqExp2R2.requestId,
++		ownerRunId: reqExp2R2.ownerRunId,
++		nodeId: reqExp2R2.nodeId,
++		status: "completed",
++		runId: runIdExp2R2,
++		result: {
++			kind: "structured",
++			value: {
++				version: 1,
++				taskId: reqExp2R2.nodeId,
++				status: "completed",
++				summary: "All dependencies documented",
++				changedFiles: [],
++				validation: [],
++				evidence: { cwd: reqExp2R2.cwd, taskId: reqExp2R2.nodeId, workerRunId: runIdExp2R2 },
++				risks: [],
++				unresolved: [],
++			},
++		},
++	});
++	const exp2R2Res = await exp2R2Promise;
++	assert.equal(exp2R2Res.details.report.evidence.workerRunId, runIdExp2R2);
++	assert.notEqual(runIdExp2R2, runIdExp2R1, "correction round obtains new runId");
++
++	// Verdict for Explorer Task 2
++	const v2 = await verdictTool.execute(
++		"call-v-exp2",
++		{
++			taskId: exp2TaskId,
++			verdict: "pass",
++			summary: "Complete survey accepted",
++		},
++		undefined,
++		() => {},
++		ctx,
++	);
++	assert.equal(v2.details.state, "completed");
++	const task2Record = ledger.read(exp2TaskId).record;
++	assert.equal(task2Record.state, "completed");
++	assert.equal(task2Record.executions.length, 2, "Task 2 accurately records two executions");
++	assert.equal(task2Record.executions[0].runId, runIdExp2R1);
++	assert.equal(task2Record.executions[1].runId, runIdExp2R2);
++
++	// 3. Worker Task: executes, binds runId, report admitted, enters Verdict.
++	const workerPromise = delegateTool.execute(
++		"call-w-mint",
++		{
++			role: "worker",
++			objective: "implement component",
++			scope: {},
++			constraints: [],
++			acceptanceCriteria: [],
++			validation: { required: false },
++		},
++		undefined,
++		() => {},
++		ctx,
++	);
++	const reqW = await nextReq();
++	const runIdW = "run-worker-alloc";
++	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
++		requestId: reqW.requestId,
++		ownerRunId: reqW.ownerRunId,
++		nodeId: reqW.nodeId,
++		status: "completed",
++		runId: runIdW,
++		result: {
++			kind: "structured",
++			value: {
++				version: 1,
++				taskId: reqW.nodeId,
++				status: "completed",
++				summary: "component implemented",
++				changedFiles: [],
++				validation: [],
++				evidence: { cwd: reqW.cwd, taskId: reqW.nodeId, workerRunId: runIdW },
++				risks: [],
++				unresolved: [],
++			},
++		},
++	});
++	const wRes = await workerPromise;
++	assert.equal(wRes.details.report.evidence.workerRunId, runIdW);
++
++	// Verdict for Worker Task
++	const vW = await verdictTool.execute(
++		"call-v-w",
++		{
++			taskId: wRes.details.taskId,
++			verdict: "pass",
++			summary: "Worker implementation accepted",
++		},
++		undefined,
++		() => {},
++		ctx,
++	);
++	assert.equal(vW.details.state, "completed");
++	assert.equal(ledger.read(wRes.details.taskId).record.state, "completed");
++}
++
+diff --git a/index.ts b/index.ts
+index 6c1379e..52cf40e 100644
+--- a/index.ts
++++ b/index.ts
+@@ -60,7 +60,8 @@ import {
+ 	runDelegation,
+ 	validateRecoveryDecision,
+ } from "./delegate.ts";
+-import type { DelegationOutcome, PlannerDelegationParams } from "./delegate.ts";
++import type { DelegationOutcome, LauncherCapabilities, PlannerDelegationParams } from "./delegate.ts";
++import { resolveExplorerModelSelection } from "./explorer-model.ts";
+ import { RefusalBreaker, isRefusal } from "./refusal-breaker.ts";
+ import type { RecoveryDecision } from "./types.ts";
+ 
+@@ -190,6 +191,7 @@ export function computeLoadedFingerprint(dir = PLUGIN_DIR): string {
+ 	const files = [
+ 		"concurrency.ts",
+ 		"evidence.ts",
++		"explorer-model.ts",
+ 		"floors.ts",
+ 		"git-audit.ts",
+ 		"index.ts",
+@@ -478,6 +480,30 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 			// delegations refuse with READER_CAPABILITY_UNPROVEN.
+ 		}
+ 	};
++	// Ticket 01 — check for launcher capabilities (childRunIdentity)
++	let launcherCapabilities: LauncherCapabilities | undefined;
++	const ensureLauncherCapabilities = (): LauncherCapabilities => {
++		if (launcherCapabilities?.childRunIdentity === true) return launcherCapabilities;
++		let caps: LauncherCapabilities = { ...((delegationLaunch as { capabilities?: LauncherCapabilities })?.capabilities ?? {}) };
++		try {
++			const probe: { version: number; capabilities?: LauncherCapabilities } = { version: 1 };
++			pi.events.emit("pi-subagents:delegation-capability-probe:v1", probe);
++			if (probe.capabilities) {
++				caps = { ...caps, ...probe.capabilities };
++			}
++		} catch {
++			// No listener
++		}
++		if (process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY !== undefined) {
++			caps = {
++				...caps,
++				childRunIdentity: process.env.PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY === "true",
++			};
++		}
++		launcherCapabilities = caps;
++		(delegationLaunch as { capabilities?: LauncherCapabilities }).capabilities = caps;
++		return caps;
++	};
+ 	// WRC P0-A — spec §3 quiescenceWaitMs; env override exists for tests and
+ 	// calibrated hosts, the default stays 10 s (forced-settlement 3–4 s +
+ 	// session-close 5 s upper bound).
+@@ -987,9 +1013,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 							"planner_redelegate refused: taskId is required — pass the canonical id verbatim from a prior planner_delegate result's details.taskId; never construct one",
+ 						);
+ 					}
++					if (params.taskId) {
++						orchestrator.resolveVerdictTask(params.taskId, ctx.cwd || process.cwd());
++					}
+ 					let outcome: DelegationOutcome;
+ 					try {
+ 						ensureRestrictedReaderAgent();
++						const currentCapabilities = ensureLauncherCapabilities();
+ 						outcome = await runDelegation(
+ 							{
+ 								store: orchestrator.store,
+@@ -997,8 +1027,19 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 								concurrency,
+ 								usage: ledger,
+ 								launch: delegationLaunch,
++								launcherCapabilities: currentCapabilities,
+ 								...(restrictedReaderAgent !== undefined ? { restrictedReaderAgent } : {}),
+ 								...(quiescenceWaitMs !== undefined ? { quiescenceWaitMs } : {}),
++								// T-20260918-004 — the Explorer launch selection is
++								// resolved per launch from the operator's subagent
++								// configuration; the runtime-agent registration stays
++								// capability-only and cached, so host-visible config
++								// changes reach the next delegation. Reads only —
++								// the Root model is never switched.
++								resolveExplorerModelSelection: (workspaceCwd) => resolveExplorerModelSelection({
++									cwd: workspaceCwd,
++									currentProvider: rootModelIdentity(ctx.model)?.provider,
++								}),
+ 								ownerRunId: ctx.sessionManager?.getSessionId?.() || PROCESS_OWNER_RUN_ID,
+ 							},
+ 							effectiveParams,
+diff --git a/orchestrate.test.mjs b/orchestrate.test.mjs
+index 63a56ce..59c6a6e 100644
+--- a/orchestrate.test.mjs
++++ b/orchestrate.test.mjs
+@@ -2533,4 +2533,39 @@ function boundReaderExecution(store, task, { executionId, runId, report }) {
+ 	}
+ }
+ 
++// --------------------------------------------------------------------------
++// Ticket 02: renderConcurrencyStatus explains restored writer holds with reason
++// --------------------------------------------------------------------------
++{
++	const store = new TaskStore();
++	const concurrency = new ConcurrencyController({ savedLimit: 2 });
++	const orch = new PlannerOrchestrator({ store, concurrency });
++
++	// Add an active normal reservation
++	concurrency.reserve({
++		id: "call-active",
++		taskId: "T-20260918-100",
++		role: "worker",
++		capability: "writer",
++		workspaces: ["/workspace/active"],
++	});
++
++	// Add a restored writer hold
++	concurrency.hold({
++		id: "writerhold:call-restored",
++		taskId: "T-20260918-200",
++		role: "worker",
++		capability: "writer",
++		workspaces: ["/workspace/restored"],
++		reservedAt: "2026-09-18T12:00:00.000Z",
++		holdReason: "unconfirmed stop on previous session abort",
++	});
++
++	const rendered = orch.renderConcurrencyStatus();
++	assert.match(rendered, /Concurrency: 2\/2 occupied, 0 available/);
++	assert.match(rendered, /T-20260918-100 execution=call-active role=worker capability=writer workspace=\/workspace\/active$/m);
++	assert.match(rendered, /T-20260918-200 execution=writerhold:call-restored role=worker capability=writer workspace=\/workspace\/restored \(restored writer hold: unconfirmed stop on previous session abort\)/);
++}
++
+ console.log("planner-only orchestration: PASS");
++
+diff --git a/orchestrate.ts b/orchestrate.ts
+index 600d809..13d213b 100644
+--- a/orchestrate.ts
++++ b/orchestrate.ts
+@@ -548,6 +548,7 @@ export class PlannerOrchestrator {
+ 				capability: "writer",
+ 				workspaces: [restored.cwd, ...(restored.spec?.additionalWorktreeRoots ?? [])],
+ 				reservedAt: hold.since,
++				holdReason: hold.reason,
+ 			});
+ 		}
+ 		return restored;
+@@ -1069,7 +1070,11 @@ export class PlannerOrchestrator {
+ 		const status = this.concurrency.status();
+ 		const lines = [`Concurrency: ${status.occupied}/${status.limit} occupied, ${status.available} available (source: ${status.source})`];
+ 		for (const item of status.reservations) {
+-			lines.push(`  - ${item.taskId ?? "unbound"} execution=${item.id} role=${item.role} capability=${item.capability} workspace=${item.workspaces.join(", ") || "none"}`);
++			const task = item.taskId ? this.store.get(item.taskId) : undefined;
++			const isWriterHold = item.id.startsWith("writerhold:") || item.holdReason !== undefined || Boolean(task?.writerHold && item.id.includes(task.writerHold.executionId));
++			const holdReason = item.holdReason ?? task?.writerHold?.reason;
++			const holdSuffix = isWriterHold ? ` (restored writer hold: ${holdReason ?? "unconfirmed stop"})` : "";
++			lines.push(`  - ${item.taskId ?? "unbound"} execution=${item.id} role=${item.role} capability=${item.capability} workspace=${item.workspaces.join(", ") || "none"}${holdSuffix}`);
+ 		}
+ 		return lines.join("\n");
+ 	}
+@@ -2096,7 +2101,7 @@ export class PlannerOrchestrator {
+ 		const current = this.store.require(task.taskId);
+ 		const lines: string[] = ["[PLANNER-ONLY REVIEW STATE]"];
+ 		lines.push(`taskId: ${task.taskId}`);
+-		if (current.aliases.length > 0) {
++		if ((current.aliases?.length ?? 0) > 0) {
+ 			lines.push(`aliases: ${current.aliases.join(", ")} (Root-provided id is kept as alias; canonical id is ${task.taskId})`);
+ 		}
+ 		lines.push(`state: ${current.state}`);
+diff --git a/package.json b/package.json
+index dc4f36b..2e115da 100644
+--- a/package.json
++++ b/package.json
+@@ -38,6 +38,7 @@
+     "workspace-snapshot.ts",
+     "concurrency.ts",
+     "delegate.ts",
++    "explorer-model.ts",
+     "refusal-breaker.ts",
+     "subagent-delegation-contract.ts",
+     "pricing.defaults.json"
+@@ -52,7 +53,7 @@
+     "piHost": ">=0.84 <1"
+   },
+   "scripts": {
+-    "test": "node --experimental-strip-types policy.test.mjs && node --experimental-strip-types policy-cutover.test.mjs && node --experimental-strip-types roles.test.mjs && node --experimental-strip-types floors.test.mjs && node --experimental-strip-types role-models.test.mjs && node --experimental-strip-types task.test.mjs && node --experimental-strip-types ledger-store.test.mjs && node --experimental-strip-types report.test.mjs && node --experimental-strip-types review.test.mjs && node --experimental-strip-types usage.test.mjs && node --experimental-strip-types orchestrate.test.mjs && node --experimental-strip-types evidence.test.mjs && node --experimental-strip-types git-audit.test.mjs && node --experimental-strip-types index.test.mjs && node --experimental-strip-types diagnostics-regression.test.mjs && node --experimental-strip-types workspace-snapshot.test.mjs && node --experimental-strip-types architecture.test.mjs && node --experimental-strip-types naming.test.mjs && node --experimental-strip-types concurrency.test.mjs && node --experimental-strip-types rs01.test.mjs && node --experimental-strip-types rs02.test.mjs && node --experimental-strip-types rs02-concurrency.test.mjs && node --experimental-strip-types rs03.test.mjs && node --experimental-strip-types rt06.test.mjs && node --experimental-strip-types nx04-06.test.mjs && node --experimental-strip-types nx09-scope.test.mjs && node --experimental-strip-types nx10-attribution.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types refusal-breaker.test.mjs && node --experimental-strip-types diffstat-acceptance.test.mjs",
++    "test": "node --experimental-strip-types policy.test.mjs && node --experimental-strip-types policy-cutover.test.mjs && node --experimental-strip-types roles.test.mjs && node --experimental-strip-types floors.test.mjs && node --experimental-strip-types role-models.test.mjs && node --experimental-strip-types task.test.mjs && node --experimental-strip-types ledger-store.test.mjs && node --experimental-strip-types report.test.mjs && node --experimental-strip-types review.test.mjs && node --experimental-strip-types usage.test.mjs && node --experimental-strip-types orchestrate.test.mjs && node --experimental-strip-types evidence.test.mjs && node --experimental-strip-types git-audit.test.mjs && node --experimental-strip-types index.test.mjs && PI_SUBAGENTS_CAPABILITY_CHILD_RUN_IDENTITY=true node --experimental-strip-types explorer-model-config.test.mjs && node --experimental-strip-types diagnostics-regression.test.mjs && node --experimental-strip-types workspace-snapshot.test.mjs && node --experimental-strip-types architecture.test.mjs && node --experimental-strip-types naming.test.mjs && node --experimental-strip-types concurrency.test.mjs && node --experimental-strip-types rs01.test.mjs && node --experimental-strip-types rs02.test.mjs && node --experimental-strip-types rs02-concurrency.test.mjs && node --experimental-strip-types rs03.test.mjs && node --experimental-strip-types rt06.test.mjs && node --experimental-strip-types nx04-06.test.mjs && node --experimental-strip-types nx09-scope.test.mjs && node --experimental-strip-types nx10-attribution.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types refusal-breaker.test.mjs && node --experimental-strip-types diffstat-acceptance.test.mjs",
+     "typecheck": "tsc --noEmit",
+     "test:release": "npm run typecheck && npm test"
+   },
+diff --git a/refusal-breaker.test.mjs b/refusal-breaker.test.mjs
+index 508698f..60f4f9f 100644
+--- a/refusal-breaker.test.mjs
++++ b/refusal-breaker.test.mjs
+@@ -71,7 +71,7 @@ assert.equal(BLOCK_AT, 4);
+ 	const second = breaker.observeRefusal("planner_delegate", "call-2", params, refusal());
+ 	assert.equal(second.count, 2);
+ 	assert.equal(second.previousToolCallId, "call-1");
+-	assert.match(second.notice, /Repeat notice: these arguments are byte-identical to refused call call-1 \(same refusal TASK_UNKNOWN\)/);
++	assert.match(second.notice, /Repeat notice: 本边界收到的规范化参数相同 \(observed boundary: root tool input; previous toolCallId: call-1; refusal code: TASK_UNKNOWN; missing fields: none\)/);
+ 	assert.doesNotMatch(second.notice, /^STOP:/);
+ 	assert.equal(second.hardStop, false);
+ 	assert.equal(breaker.shouldBlock("planner_delegate", params).block, false);
+@@ -155,4 +155,41 @@ assert.equal(BLOCK_AT, 4);
+ 	assert.equal(observation.count, 1);
+ }
+ 
++// --------------------------------------------------------------------------
++// Ticket 03: Missing fields summary & commands variation participates in key
++// --------------------------------------------------------------------------
++{
++	const breaker = new RefusalBreaker();
++	const paramsIncomplete = {
++		role: "worker",
++		objective: "fix issue",
++		validation: { required: true },
++	};
++	const refusalIncomplete = () => new Error("createTaskSpec refused: validation.commands is required and must contain at least one non-empty command when validation.required is true");
++
++	breaker.observeRefusal("planner_delegate", "call-missing-1", paramsIncomplete, refusalIncomplete());
++	const second = breaker.observeRefusal("planner_delegate", "call-missing-2", paramsIncomplete, refusalIncomplete());
++	assert.equal(second.count, 2);
++	assert.match(second.notice, /missing fields: validation\.commands/);
++	assert.match(second.notice, /observed boundary: root tool input/);
++
++	// Incident sample command: passing commands produces a distinct canonical key,
++	// allowing genuine correction to not be blocked by the previous refusal streak.
++	const incidentCommand = "cd skills/herdr-pair && python3 -m unittest tests.test_pairctl -v";
++	const paramsCorrected = {
++		role: "worker",
++		objective: "fix issue",
++		validation: { required: true, commands: [incidentCommand] },
++	};
++	const refusalOther = () => new Error("another refusal");
++	const correctedObs = breaker.observeRefusal("planner_delegate", "call-corrected", paramsCorrected, refusalOther());
++	assert.equal(correctedObs.count, 1, "corrected commands produce a new key, count resets to 1");
++
++	// Commands order difference produces different key
++	const paramsOrder1 = { commands: ["cmd1", "cmd2"] };
++	const paramsOrder2 = { commands: ["cmd2", "cmd1"] };
++	assert.notEqual(canonicalJson(paramsOrder1), canonicalJson(paramsOrder2), "array order is preserved in canonicalJson");
++}
++
+ console.log("refusal-breaker.test.mjs: all cases passed");
++
+diff --git a/refusal-breaker.ts b/refusal-breaker.ts
+index 7491f29..29467ed 100644
+--- a/refusal-breaker.ts
++++ b/refusal-breaker.ts
+@@ -103,6 +103,30 @@ export function isRefusal(error: unknown): boolean {
+ 	return REFUSAL_MESSAGE_PATTERNS.some((pattern) => pattern.test(message));
+ }
+ 
++export function summarizeMissingFields(params: unknown, error: unknown): string {
++	const missing: string[] = [];
++	if (params !== null && typeof params === "object") {
++		const obj = params as Record<string, unknown>;
++		if (obj.validation !== null && typeof obj.validation === "object") {
++			const val = obj.validation as Record<string, unknown>;
++			if (val.required === true && (!Array.isArray(val.commands) || val.commands.length === 0)) {
++				missing.push("validation.commands");
++			}
++		}
++	}
++	const message = error instanceof Error ? error.message : String(error ?? "");
++	if (/validation\.commands is required/i.test(message) && !missing.includes("validation.commands")) {
++		missing.push("validation.commands");
++	}
++	if (/(?:missing|requires)\s+(?:task|taskId)/i.test(message) && !missing.includes("taskId")) {
++		missing.push("taskId");
++	}
++	if (/envelope requires at least one of maxTokens/i.test(message) && !missing.includes("envelope")) {
++		missing.push("envelope.(maxTokens|maxWallMs)");
++	}
++	return missing.length > 0 ? missing.join(", ") : "none";
++}
++
+ export class RefusalBreaker {
+ 	private readonly entries = new Map<string, RefusalEntry>();
+ 
+@@ -123,7 +147,8 @@ export class RefusalBreaker {
+ 		const hardStop = count >= HARD_STOP_AT;
+ 		let notice: string | undefined;
+ 		if (count >= NOTICE_AT) {
+-			const repeat = `Repeat notice: these arguments are byte-identical to refused call ${previousToolCallId} (same refusal ${code}). The change you described was not emitted — read back the arguments you actually sent before calling again.`;
++			const missingSummary = summarizeMissingFields(params, error);
++			const repeat = `Repeat notice: 本边界收到的规范化参数相同 (observed boundary: root tool input; previous toolCallId: ${previousToolCallId}; refusal code: ${code}; missing fields: ${missingSummary}). Read back the arguments actually received at this boundary before calling again.`;
+ 			notice = hardStop
+ 				? `STOP: this exact call has now been refused ${count} times with ${code}. Do not call ${toolName} again with these arguments. Report the received arguments verbatim to the user and wait for instruction.\n${repeat}`
+ 				: repeat;
+diff --git a/review.ts b/review.ts
+index 1a83a3e..a904046 100644
+--- a/review.ts
++++ b/review.ts
+@@ -879,12 +879,16 @@ export function applyReviewDecision(
+ 	const task = store.require(taskId);
+ 	if (isTerminalTaskState(task.state)) return task;
+ 	if (task.state !== "reviewing") {
+-		// A verdict recorded without re-delegating (e.g. via /planner-only
+-		// review) still passes through the spec's EXECUTING -> REVIEWING hop.
+-		if (!TASK_TRANSITIONS[task.state].includes("reviewing")) {
+-			store.transition(taskId, "executing");
++		if (task.state === "planning" && decision.nextState === "blocked") {
++			store.transition(taskId, "blocked");
++		} else {
++			// A verdict recorded without re-delegating (e.g. via /planner-only
++			// review) still passes through the spec's EXECUTING -> REVIEWING hop.
++			if (!TASK_TRANSITIONS[task.state].includes("reviewing")) {
++				store.transition(taskId, "executing");
++			}
++			store.transition(taskId, "reviewing");
+ 		}
+-		store.transition(taskId, "reviewing");
+ 	}
+ 	if (decision.nextState !== "reviewing" && store.require(taskId).state === "reviewing") {
+ 		store.transition(taskId, decision.nextState);
+diff --git a/rs01.test.mjs b/rs01.test.mjs
+index 8611011..c0bc7af 100644
+--- a/rs01.test.mjs
++++ b/rs01.test.mjs
+@@ -41,16 +41,20 @@ test("A01: Loaded plugin fingerprint is recorded from loaded build, distinct fro
+ 	try {
+ 		writeFileSync(join(tempDir, "package.json"), JSON.stringify({ name: "test-pkg", version: "0.4.1" }));
+ 		writeFileSync(join(tempDir, "index.ts"), "export const dummy = 1;");
++		writeFileSync(join(tempDir, "explorer-model.ts"), "export const explorerModelFixture = 1;");
+ 		const customFingerprint = computeLoadedFingerprint(tempDir);
+ 		assert.match(customFingerprint, /^[0-9a-f]{64}$/);
+ 		assert.notEqual(customFingerprint, initialFingerprint);
++		writeFileSync(join(tempDir, "explorer-model.ts"), "export const explorerModelFixture = 2;");
++		const changedExplorerFingerprint = computeLoadedFingerprint(tempDir);
++		assert.notEqual(changedExplorerFingerprint, customFingerprint, "explorer-model.ts changes affect the loaded fingerprint");
+ 
+ 		// The memory loaded fingerprint has not changed
+ 		assert.equal(getLoadedPluginFingerprint(), initialFingerprint);
+ 
+ 		// But if reloadLoadedFingerprint is called for that directory, it changes
+ 		const reloaded = reloadLoadedFingerprint(tempDir);
+-		assert.equal(reloaded, customFingerprint);
++		assert.equal(reloaded, changedExplorerFingerprint);
+ 
+ 		// Reloading original directory restores it
+ 		reloadLoadedFingerprint();
+diff --git a/task.ts b/task.ts
+index 76a775c..ea8da0c 100644
+--- a/task.ts
++++ b/task.ts
+@@ -1628,6 +1628,10 @@ export class TaskStore {
+ 		if (!Array.isArray(record.findings)) record.findings = [];
+ 		if (!Array.isArray(record.successors)) record.successors = [];
+ 		if (!Array.isArray(record.recoveryStates)) record.recoveryStates = [];
++		if (!Array.isArray(record.aliases)) record.aliases = [];
++		if (!Array.isArray(record.reports)) record.reports = [];
++		if (!Array.isArray(record.reviews)) record.reviews = [];
++		if (!Array.isArray(record.validatorReports)) record.validatorReports = [];
+ 		if (!Number.isFinite(record.recoveryAttempts) || record.recoveryAttempts < 0) {
+ 			record.recoveryAttempts = 0;
+ 		}
