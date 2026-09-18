@@ -273,15 +273,18 @@ assert.equal(isExplicitlyNoValidation(createTaskSpec({ objective: "default valid
 		);
 		const moduleUrl = new URL("./task.ts", import.meta.url).href;
 		const childCode = `import { TaskIdAllocator } from ${JSON.stringify(moduleUrl)}; const allocator = new TaskIdAllocator(process.argv[1], { now: () => new Date("2026-09-11T12:00:00.000Z") }); console.log(allocator.allocate());`;
-		const runChild = () => new Promise((resolve) => {
+		const runChild = () => new Promise((resolve, reject) => {
 			const child = spawn(process.execPath, ["--experimental-strip-types", "-e", childCode, root], { stdio: ["ignore", "pipe", "pipe"] });
 			let stdout = "";
 			let stderr = "";
 			child.stdout.on("data", (chunk) => { stdout += chunk; });
 			child.stderr.on("data", (chunk) => { stderr += chunk; });
-			child.on("close", (code) => resolve({ code, stdout, stderr }));
+			child.on("error", reject);
+			child.on("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
 		});
 		const [childA, childB] = await Promise.all([runChild(), runChild()]);
+		assert.equal(childA.signal, null);
+		assert.equal(childB.signal, null);
 		assert.equal(childA.code, 0, `first concurrent allocator exited cleanly: ${childA.stderr}`);
 		assert.equal(childB.code, 0, `second concurrent allocator exited cleanly: ${childB.stderr}`);
 		assert.notEqual(childA.stdout.trim(), childB.stdout.trim(), "independent processes receive distinct ids");

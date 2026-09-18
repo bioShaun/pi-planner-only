@@ -288,6 +288,8 @@ const childProbe = spawnSync(
 		encoding: "utf8",
 	},
 );
+assert.ifError(childProbe.error);
+assert.equal(childProbe.signal, null);
 assert.equal(childProbe.status, 0, childProbe.stderr || childProbe.stdout);
 
 const userMarker = join(homedir(), ".pi", "agent", "planner-only.off");
@@ -355,6 +357,8 @@ try {
 			encoding: "utf8",
 		},
 	);
+	assert.ifError(toggleProbe.error);
+	assert.equal(toggleProbe.signal, null);
 	assert.equal(toggleProbe.status, 0, toggleProbe.stderr || toggleProbe.stdout);
 	assert.match(toggleProbe.stdout, /planner-only toggle: PASS/);
 } finally {
@@ -446,6 +450,8 @@ try {
 			encoding: "utf8",
 		},
 	);
+	assert.ifError(rf4Probe.error);
+	assert.equal(rf4Probe.signal, null);
 	assert.equal(rf4Probe.status, 0, rf4Probe.stderr || rf4Probe.stdout);
 	assert.match(rf4Probe.stdout, /planner-only rf4: PASS/);
 } finally {
@@ -515,6 +521,8 @@ try {
 			encoding: "utf8",
 		},
 	);
+	assert.ifError(t05Probe.error);
+	assert.equal(t05Probe.signal, null);
 	assert.equal(t05Probe.status, 0, t05Probe.stderr || t05Probe.stdout);
 	assert.match(t05Probe.stdout, /planner-only t05 restore: PASS/);
 } finally {
@@ -591,6 +599,8 @@ try {
 			encoding: "utf8",
 		},
 	);
+	assert.ifError(t05bProbe.error);
+	assert.equal(t05bProbe.signal, null);
 	assert.equal(t05bProbe.status, 0, t05bProbe.stderr || t05bProbe.stdout);
 	assert.match(t05bProbe.stdout, /planner-only t05 env: PASS/);
 } finally {
@@ -1064,6 +1074,8 @@ try {
 			encoding: "utf8",
 		},
 	);
+	assert.ifError(i07Probe.error);
+	assert.equal(i07Probe.signal, null);
 	assert.equal(i07Probe.status, 0, i07Probe.stderr || i07Probe.stdout);
 	assert.match(i07Probe.stdout, /planner-only issue07 root rate warning: PASS/);
 } finally {

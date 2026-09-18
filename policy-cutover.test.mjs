@@ -230,6 +230,8 @@ const pendingCwd = "/fixture/cutover-05b";
 			encoding: "utf8",
 		},
 	);
+	assert.ifError(childProbe.error);
+	assert.equal(childProbe.signal, null);
 	assert.equal(childProbe.status, 0, childProbe.stderr || childProbe.stdout);
 }
 
