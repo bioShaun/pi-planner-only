@@ -1,0 +1,22 @@
+[
+  {
+    "name": "p1-root-r2",
+    "command": [
+      "npm",
+      "run",
+      "test:p1"
+    ],
+    "startedAt": "2026-09-20T02:30:57.781727+00:00",
+    "exit": 0
+  },
+  {
+    "name": "sdk-stop-r2",
+    "command": [
+      "node",
+      "--experimental-strip-types",
+      "/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/sdk-stop-probe.mjs"
+    ],
+    "startedAt": "2026-09-20T02:31:00.029896+00:00",
+    "exit": 1
+  }
+]

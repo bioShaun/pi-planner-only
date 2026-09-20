@@ -67,6 +67,21 @@ function executionShapeError(value: unknown, index: number): string | undefined 
 	}
 	if (typeof value.executionId !== "string") return `${label}.executionId must be a string`;
 	if (!isPlainObject(value.aRun)) return `${label}.aRun must be an object`;
+	if (value.envelope !== undefined) {
+		if (!isPlainObject(value.envelope)) return `${label}.envelope must be an object`;
+		if (!["delegation-param", "default", "operator-config"].includes(value.envelope.source as string)) {
+			return `${label}.envelope.source must be delegation-param, default, or operator-config`;
+		}
+		for (const field of ["maxTokens", "maxWallMs"] as const) {
+			const bound = value.envelope[field];
+			if (bound !== undefined && (!Number.isSafeInteger(bound) || (bound as number) <= 0)) {
+				return `${label}.envelope.${field} must be a positive finite safe integer`;
+			}
+		}
+		if (value.envelope.maxTokens === undefined && value.envelope.maxWallMs === undefined) {
+			return `${label}.envelope requires maxTokens or maxWallMs`;
+		}
+	}
 	const probeFailuresError = (sample: Record<string, unknown>, sampleLabel: string): string | undefined => {
 		if (sample.probeFailures === undefined) return undefined;
 		if (!Array.isArray(sample.probeFailures)) return `${sampleLabel}.probeFailures must be an array`;

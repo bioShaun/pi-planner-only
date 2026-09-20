@@ -1,0 +1,82 @@
+[
+  {
+    "name": "typecheck-final",
+    "cmd": [
+      "npm",
+      "run",
+      "typecheck"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "p1-p2-final",
+    "cmd": [
+      "node",
+      "--experimental-strip-types",
+      "p1-delegation.test.mjs"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "request-control-final",
+    "cmd": [
+      "node",
+      "--experimental-strip-types",
+      "request-control.test.mjs"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "role-models-final",
+    "cmd": [
+      "node",
+      "--experimental-strip-types",
+      "role-models.test.mjs"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "ledger-final",
+    "cmd": [
+      "node",
+      "--experimental-strip-types",
+      "ledger-store.test.mjs"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "study-summary",
+    "cmd": [
+      "node",
+      ".scratch/stability-next-20260920/study-summary.test.mjs"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "study-syntax",
+    "cmd": [
+      "node",
+      "--check",
+      ".scratch/stability-next-20260920/run-study.mjs"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "delegate-syntax-final",
+    "cmd": [
+      "node",
+      "--check",
+      "delegate.test.mjs"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "diff-check-final",
+    "cmd": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit": 0
+  }
+]

@@ -79,9 +79,9 @@ try {
 	assert.equal(request.resume(false), false);
 	assert.equal(request.resume(true), true);
 
-	let now = 1000, callback;
+	let now = 1000, callback, rootAborts = 0;
 	const timedStore = new MemoryStorage();
-	const timed = make(timedStore, { now: () => now, setTimer: fn => { callback = fn; return { unref() {} }; }, clearTimer() {}, stopRoot: () => "requested" });
+	const timed = make(timedStore, { now: () => now, setTimer: fn => { callback = fn; return { unref() {} }; }, clearTimer() {}, stopRoot: () => { rootAborts++; return "requested"; } });
 	tool(timed, "start");
 	assert.equal(timed.snapshot().deadline, 901000);
 	now = 901000; callback();
@@ -89,6 +89,11 @@ try {
 	assert.equal(timed.snapshot().rootStop, "requested");
 	timed.modelCall(); assert.equal(timed.snapshot().rootStop, "requested", "another call never proves stop");
 	timed.settle(); assert.equal(timed.snapshot().rootStop, "confirmed");
+	const priorAborts = rootAborts;
+	timed.rootActive();
+	assert.equal(rootAborts, priorAborts + 1, "a queued run with a new abort signal receives a new stop request");
+	assert.equal(timed.snapshot().rootStop, "requested", "old settlement is not proof that a new run stopped");
+	timed.settle();
 	const restoredTime = make(timedStore, { now: () => now });
 	assert.equal(restoredTime.snapshot().deadline, 901000);
 

@@ -1,0 +1,15 @@
+{
+  "verdict": "PASS",
+  "quietBeforeQuitMs": 3000,
+  "forcedCleanup": false,
+  "exitStatus": 0,
+  "observations": {
+    "hasUI": true,
+    "closureObserved": true,
+    "cancelObserved": true,
+    "cancelledTerminal": true,
+    "settled": true,
+    "afterClosureCalls": 0,
+    "lastEventMs": 1789880915092
+  }
+}

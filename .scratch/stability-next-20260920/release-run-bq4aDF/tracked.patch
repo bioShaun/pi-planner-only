@@ -1,0 +1,904 @@
+diff --git a/.scratch/request-stop-p0-20260919/README.md b/.scratch/request-stop-p0-20260919/README.md
+index 24e6f3b..73ffab5 100644
+--- a/.scratch/request-stop-p0-20260919/README.md
++++ b/.scratch/request-stop-p0-20260919/README.md
+@@ -2,7 +2,7 @@
+ 
+ 开始：2026-09-19；整理：2026-09-20（Asia/Shanghai）。基线 `3991c5c762584cbbc235576359734259f69931ce`。
+ 
+-已完成前置验证和模型身份核验。2026-09-20 用户明确批准建议值和五票拆分，进入实现；通过验收前不宣称 P0 已修复。原始 drafts 和证据保留不改。
++2026-09-20 用户批准建议值和五票拆分；01–05 已完成，P0 保底验收通过，随后纳入提交 `85bdd2a`。当前状态以 [验收记录](evidence/acceptance.md)为准。原始 drafts、失败尝试和历史证据保留不改。
+ 
+ - [前置验证结论](evidence/discovery.md)
+ - [P0 spec](spec.md)
+@@ -23,15 +23,15 @@
+ 
+ 执行顺序：04 → 01 → 02 → 03 → 05。正式工单在 `issues/`。唯一写入者由 Root 在每次交接时指定。
+ 
+-当前进度：01–04 已实现；限定独立验证[复验通过（7/7）](evidence/final-validation-r2/summary.md)，[首轮失败（21/22）](evidence/final-validation/summary.md) 保留。审查发现的恢复边界和终态归类问题已修正，[最后一轮独立行为代码复审通过](evidence/review-r3/behavioral-review.md)，最终定向测试与 SDK 探针通过。05 的完整发布验收仍待完成。新增 Request 持久准入控制、失败因果链、可信新输入/UI 恢复，以及实际 revalidation 派发记账。采用批准的 32/8/3/2/15 分钟默认值，每 Task revalidation 仍为 3。完整证据与未完成项见 [验收状态](evidence/acceptance.md)。
++当前进度：01–05 完成。普通终端 [release](release-run-Xg0XFH/test-release.log)、[真实 CLI](cli-acceptance/REPORT.md) 和 [strict delta review](evidence/review-r4/strict-verdict.md)通过。实现了 Request 持久准入、失败因果链、可信恢复与实际 revalidation 派发记账；采用批准的 32/8/3/2/15 分钟默认值，每 Task revalidation 仍为 3。早期[首轮失败（21/22）](evidence/final-validation/summary.md)、[复验（7/7）](evidence/final-validation-r2/summary.md)及 [r3 行为复审](evidence/review-r3/behavioral-review.md)仅是中间版本历史证据。
+ 
+-当前可执行证据使用三个新增单进程测试（request-control、request-stop、revalidation-accounting）及真实 SDK 0.85.1 的 [集成探针](request-host-probe.mjs)。它们模拟 Git 与 child 来源；不是 CLI/TUI 或 pi-subagents 0.69.0 验收。实现与验证记录见 [日志](evidence/implementation-log.md)。
++单进程证据使用三个新增测试（request-control、request-stop、revalidation-accounting）及真实 SDK 0.85.1 的 [集成探针](request-host-probe.mjs)。该层模拟 Git 与 child 来源；普通终端真实 CLI/launcher 证据单列。实现与验证记录见 [日志](evidence/implementation-log.md)。
+ 
+ ## 验证环境约束
+ 
+ 项目禁止在 sandbox agent executor 内跑 release 或生成子进程的测试。历史插件探针的 fingerprint 路径实际上调用了 Git 子进程，原始记录保留，此处纠正先前“全部无子进程”的范围说明。新增 fixture 显式替换该边界，不改受保护的原测试探针。最终 release、真实 CLI/TUI/launcher 验收需普通终端或 CI。可在普通终端执行 `bash .scratch/request-stop-p0-20260919/run-release-terminal.sh`，自动记录 slot preflight、源码指纹和测试输出。
+ 
+-严格代码审查必须使用全局独立只读 launcher 并验证实际权限；此次[启动受阻](evidence/strict-review/blocked.json)：slot 共享目录只读且 socket 连接被拒，exit 255，审查进程没有启动。缺少该证据不能宣布严格门禁通过。普通终端完成 release 后可执行 `bash .scratch/request-stop-p0-20260919/run-review-terminal.sh`，使用最终冻结源码和自包含审查请求；仍须检查实际权限证明与 verdict。[最终 SDK 结果](request-host-run-mZtnv0/results.json)已证实封锁后队列仍可多调用一次模型，但没有新增 child，因此不承诺所有模式的完整 Root stop 或 token/费用硬上限。
++严格代码审查必须使用全局独立只读 launcher 并验证实际权限。早期 sandbox [启动受阻](evidence/strict-review/blocked.json)的记录保留；随后普通终端 [r4](evidence/review-r4/strict-verdict.md)已获得父/子 EROFS 证据和 reviewer PASS。该次 launcher 仍以 124 超时结束（父最终转述未完成），不能写成正常退出 0。[SDK 结果](request-host-run-mZtnv0/results.json)证实队列可能多调用一次模型；真实 print 场景的完整停止不外推到 TUI 或所有续跑模式，也不承诺 token/费用硬上限。
+ 
+ 项目引用的 `.codex/codex-subagent-config-astra-planner.md` 不存在；已搜索确认，本轮使用当前用户级 `/home/tcuni-claw/.codex/astra-planner.md`。未改角色配置。
+ 
+diff --git a/.scratch/request-stop-p0-20260919/evidence/acceptance.md b/.scratch/request-stop-p0-20260919/evidence/acceptance.md
+index c98e977..4c0ac93 100644
+--- a/.scratch/request-stop-p0-20260919/evidence/acceptance.md
++++ b/.scratch/request-stop-p0-20260919/evidence/acceptance.md
+@@ -1,6 +1,6 @@
+ # P0 实现与验收状态
+ 
+-2026-09-20，基线 `3991c5c762584cbbc235576359734259f69931ce`。用户已批准 spec、建议值和五票拆分，并要求“将 05 处理完”。01–05 全部完成；05 的强制门禁在普通终端（Claude Code 的 Bash，不是 pi 的 sandbox executor）跑完。未提交、推送或发布。
++2026-09-20，验收基线 `3991c5c762584cbbc235576359734259f69931ce`。用户已批准 spec、建议值和五票拆分，并要求“将 05 处理完”。01–05 全部完成；05 的强制门禁在普通终端（Claude Code 的 Bash，不是 pi 的 sandbox executor）跑完。验收当时未提交；随后源码与证据纳入提交 `85bdd2a93b994d3e4894e7534ab91cf6b16c9043`。本文没有推送或发布证明。
+ 
+ ## 实现结果
+ 
+diff --git a/.scratch/request-stop-p0-20260919/issues/05-host-and-release-acceptance.md b/.scratch/request-stop-p0-20260919/issues/05-host-and-release-acceptance.md
+index 36fbfcb..2d6b912 100644
+--- a/.scratch/request-stop-p0-20260919/issues/05-host-and-release-acceptance.md
++++ b/.scratch/request-stop-p0-20260919/issues/05-host-and-release-acceptance.md
+@@ -4,7 +4,7 @@
+ 
+ **Blocked by:** 01、02、03、04。
+ 
+-**Status:** done（2026-09-20；未提交/发布）
++**Status:** done（2026-09-20；验收后纳入 `85bdd2a`，无发布证明）
+ 
+ **Approval:** 2026-09-20 用户批准建议值和五票拆分；同日要求“将 05 处理完”。
+ 
+diff --git a/CONTEXT.md b/CONTEXT.md
+index 133c183..8102893 100644
+--- a/CONTEXT.md
++++ b/CONTEXT.md
+@@ -85,7 +85,7 @@ The parent tool guard: which tools Root may call. While a Task is live for the w
+ _Avoid_: permissions, ACL
+ 
+ **Delegation**:
+-Launching a child with a role and a TaskSpec. Two entry points: `planner_delegate` always mints a new Task (it takes no `taskId`) and returns the canonical `taskId`; `planner_redelegate` binds an existing Task by that verbatim id for a correction round, a review, or a recovery re-execution; `planner_tasks` is the read-only lookup that lists this workspace's live Tasks (memory plus ledger records the restore cap left out) when the canonical id is not in context. The child's WorkerReport returns launcher-validated, never parsed from text; at most one worker per cwd. An explicit `envelope` (maxTokens / maxWallMs) bounds a runaway execution; a breach fires CANCEL and records `worker_runaway` on the TaskExecutionRecord.
++Launching a child with a role and a TaskSpec. Two entry points: `planner_delegate` always mints a new Task (it takes no `taskId`) and returns the canonical `taskId`; `planner_redelegate` binds an existing Task by that verbatim id for a correction round, a review, or a recovery re-execution. Rebinding reads the complete stored TaskSpec and never accepts caller fields that redefine it; optional instructions augment one child packet only, while the invocation role selects routing without changing the stored role. Workspace admission compares the stored workspace to the host context cwd. `planner_tasks` is the read-only lookup that lists this workspace's live Tasks (memory plus ledger records the restore cap left out) when the canonical id is not in context. The child's WorkerReport returns launcher-validated, never parsed from text; at most one worker per cwd. Ordinary worker, explorer, and validator executions use finite default anomaly bounds (`maxTokens=100000`, `maxWallMs=300000`) unless an operator configuration or explicit `envelope` replaces them; the source is persisted. A breach fires CANCEL and records `worker_runaway` on the TaskExecutionRecord. Reviewer invocations remain Request-bounded.
+ _Avoid_: spawn, dispatch (the host mechanism), packet
+ 
+ **Writer hold**:
+diff --git a/README.md b/README.md
+index 777fea5..25f17e1 100644
+--- a/README.md
++++ b/README.md
+@@ -139,18 +139,14 @@ id in `details.taskId`:
+ Re-entering an existing Task — a correction round after `request_changes`, a
+ reviewer invocation over its latest WorkerReport, or a recovery re-execution —
+ goes through `planner_redelegate`, which requires the canonical `taskId`
+-verbatim from a prior result's `details.taskId` (never construct one) and
+-accepts `role` including `reviewer` plus an optional `recovery` decision:
++verbatim from a prior result's `details.taskId` (never construct one). Its
++public input is only `taskId`, invocation `role`, and optional `instructions`,
++`envelope`, and `recovery`:
+ 
+ ```json
+ {
+   "taskId": "T-20260831-001",
+-  "role": "reviewer",
+-  "objective": "review the latest WorkerReport",
+-  "scope": {},
+-  "constraints": [],
+-  "acceptanceCriteria": [],
+-  "validation": { "required": false }
++  "role": "reviewer"
+ }
+ ```
+ 
+@@ -166,8 +162,11 @@ second `worker` for the same cwd (at most one worker per cwd); `subagent` and
+ `bg_wait` calls are refused outright. The minted id is reserved in the shared ledger
+ namespace with an atomic cross-process claim: restored, terminal, over-cap, and
+ unreadable snapshot ids remain occupied. `planner_redelegate` binds the
+-existing record verbatim — its stored spec is never rewritten — and checks the
+-workspace; an id collision is never treated as continuation. Restricted roles remap onto builtin agents:
++existing record verbatim — its full stored spec, including workspace and
++validation, is the child contract and is never rewritten — and checks the host
++context workspace. Legacy repeated definition fields are ignored with a
++warning; `instructions` augments only that child packet. An id collision is
++never treated as continuation. Restricted roles remap onto builtin agents:
+ 
+ Invalid TaskSpec refusals show a repair summary that preserves the trusted
+ role and validation intent. A command-list shorthand becomes explicit mandatory
+@@ -190,7 +189,7 @@ Validation runs are delegated by Root explicitly (`planner_delegate` with
+ role=validator for a fresh validation Task, `planner_redelegate` to re-validate
+ an existing Task); nothing is auto-dispatched.
+ 
+-`planner_delegate` and `planner_redelegate` do not set `model`, `thinking`, `toolBudget`, or `timeoutMs` on the delegation request; the child runs with the host's defaults for all four. The `model` and `thinking` values in usage rows are read back from the child's response for attribution only.
++`planner_delegate` and `planner_redelegate` use launcher defaults for `model` and `thinking` unless operator role routing is enabled. Enabled routing sends an exactly verified available `provider/model` and thinking, then checks actual terminal identity before accepting completion. Neither tool sets `toolBudget` or `timeoutMs`; the plugin owns its execution envelope. Usage rows retain the child response identity for attribution.
+ 
+ A `reviewer` child always launches with `context: "fresh"` carrying a
+ `ReviewRequest` — the Task's spec, the latest WorkerReport, Root's Git
+@@ -329,8 +328,10 @@ request starts. Zero, empty, negative, fractional, or unlimited values are inval
+ The durable state lives under the agent directory's `planner-only/requests/`.
+ Committed claims, observed sends, terminal receipt, and confirmed stop remain
+ separate diagnostics. Do not delete this state to recover an unconfirmed writer.
+-Root abort is best effort: a host may still process queued messages and incur
+-model calls. Provider-request hooks are observations, may be absent for some
++Root abort is reasserted at every subsequent agent start while the Request is closed.
++The real SDK 0.85.1 / faux-provider queue probe observes zero extra model calls
++with this guard; interactive TUI behavior remains unverified. Other host paths
++may still require additional stop support. Provider-request hooks are observations, may be absent for some
+ providers, and are not a token, cost, or exact model-call hard limit.
+ 
+ ### Composite workflows
+@@ -379,7 +380,7 @@ The pricing table format:
+ - Keys starting with `_` are ignored (useful for comments).
+ - Reload rates in-session with `/planner-only usage reload`.
+ 
+-Session-level root spend gating is **off by default**. `/planner-only budget on` turns it on for this machine (marker: `~/.pi/agent/planner-only/session-root-budget.on`); `/planner-only budget off` turns it off. Soft cap warns at 3× the worker-initial floor; the 5× hard threshold is reported only — it does not refuse delegations yet. `PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` or `=0` overrides the marker. Per-execution anomaly bounds are explicit-only: `planner_delegate` and `planner_redelegate` accept `envelope: { maxTokens?, maxWallMs? }` and cancel the child (via the same CANCEL path as Esc) when a bound trips; with no envelope the monitor only observes. The session evidence export carries `statuses` (task / workerReport / reviewResult / rootVerdict / refusalKind), `findings`, `usage`, `breakdown`, and `unattributed`; the linkage / requirements / evidenceMatrix / analysis blocks are gone.
++Session-level root spend gating is **off by default**. `/planner-only budget on` turns it on for this machine (marker: `~/.pi/agent/planner-only/session-root-budget.on`); `/planner-only budget off` turns it off. Soft cap warns at 3× the worker-initial floor; the 5× hard threshold is reported only — it does not refuse delegations yet. `PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` or `=0` overrides the marker. Ordinary worker, explorer, and validator executions always have finite anomaly bounds. Omitting `envelope` uses `maxTokens=100000` and `maxWallMs=300000`; operators may replace either default with the positive safe-integer environment variables `PI_PLANNER_ONLY_EXECUTION_MAX_TOKENS` and `PI_PLANNER_ONLY_EXECUTION_MAX_WALL_MS`. The persisted source is `default`, `operator-config`, or `delegation-param`. An explicit `envelope: { maxTokens?, maxWallMs? }` keeps only its caller-supplied dimensions and values. Reviewer invocations remain bounded by the enclosing Request and do not claim an execution envelope. The session evidence export carries `statuses` (task / workerReport / reviewResult / rootVerdict / refusalKind), `findings`, `usage`, `breakdown`, and `unattributed`; the linkage / requirements / evidenceMatrix / analysis blocks are gone.
+ 
+ **Alternative:** The preferred approach is to specify `cost` directly in `~/.pi/agent/models.json`. This enables native cost calculation across both Pi and `pi-subagents` (e.g. `/subagent-cost`). The plugin table serves as a fallback or override when you prefer not to modify `models.json`.
+ 
+@@ -435,3 +436,20 @@ runs, not as a release-gate suite.
+ | `index.ts` | hooks, tool, commands |
+ 
+ No background advisor or telemetry. Persistence includes Task ledger snapshots, Request control records, session custom entries, and the local append-only usage log.
++
++### Operator-selected delegation models
++
++`PI_PLANNER_ONLY_ROLE_MODELS=1` enables routing on the typed delegation tools.
++Set `PI_PLANNER_ONLY_MODEL_WORKER=provider/model` and
++`PI_PLANNER_ONLY_THINKING_WORKER=low` (likewise `EXPLORER`, `VALIDATOR`, or
++`REVIEWER`). With routing disabled, the launcher retains its existing selection.
++Tool arguments cannot override operator routing. The configured model must be
++available in the host registry before a Task or child is allocated. Only explicitly
++configured `PI_PLANNER_ONLY_MODEL_WORKER_FALLBACK` candidates may replace it.
++
++The launcher terminal must report the expected qualified model and thinking
++(either a separate field or a known `:thinking` suffix). Missing or conflicting
++identity prevents completed reports from being accepted; usage and diagnostic
++reports remain recorded. Tool `details.modelRoute` and session entries of type
++`planner-only-model-route` preserve expected and actual identity. This wiring has
++fixture coverage; real provider routing and cost savings still require measurement.
+diff --git a/README.zh-CN.md b/README.zh-CN.md
+index 4c3bfe6..ffbb020 100644
+--- a/README.zh-CN.md
++++ b/README.zh-CN.md
+@@ -80,23 +80,18 @@ Root 把 `TaskSpec` 作为 `planner_delegate` 的参数传入——该工具没
+ }
+ ```
+ 
+-重进一个已有 Task——`request_changes` 后的修正轮、对其最新 WorkerReport 的 reviewer 调用、或一次 recovery 重执行——走 `planner_redelegate`：`taskId` 必填，逐字取自上一次结果的 `details.taskId`（绝不自行构造），role 含 `reviewer`，并可携带 `recovery` 决策：
++重进一个已有 Task——`request_changes` 后的修正轮、对其最新 WorkerReport 的 reviewer 调用、或一次 recovery 重执行——走 `planner_redelegate`：`taskId` 必填，逐字取自上一次结果的 `details.taskId`（绝不自行构造）。公开输入只保留 `taskId`、本次调用的 `role`，以及可选的 `instructions`、`envelope`、`recovery`：
+ 
+ ```json
+ {
+   "taskId": "T-20260831-001",
+-  "role": "reviewer",
+-  "objective": "review the latest WorkerReport",
+-  "scope": {},
+-  "constraints": [],
+-  "acceptanceCriteria": [],
+-  "validation": { "required": false }
++  "role": "reviewer"
+ }
+ ```
+ 
+ 当 canonical id 不在上下文里（压缩或 session 恢复后），`planner_tasks` 会列出本 workspace 的 live Task——非终态，以及挂着 recovery 决策的 blocked——含 `taskId`、`state`、`role`、`recoveryRequired` 与来源（`memory` 或 `ledger`；restore cap 可能让 live Task 只留在磁盘上）。它只读：不铸新、不绑定、不恢复、不启动。
+ 
+-`planner_delegate` 登记任务、采样工作区；同一 cwd 上第二个 `worker` 委派会被拒绝（每个 cwd 至多一个 worker）；`subagent` 与 `bg_wait` 调用一律拒绝。铸出的 id 会在共享 ledger 命名空间中以跨进程原子 claim 保留；恢复过、终态、超恢复上限或快照损坏的 id 都不会再次分配。`planner_redelegate` 逐字绑定既有记录——其存下的 spec 绝不重写——并校验 workspace；id 冲突不会被当作继续。受限角色会 remap 到工具面匹配的 builtin agent：
++`planner_delegate` 登记任务、采样工作区；同一 cwd 上第二个 `worker` 委派会被拒绝（每个 cwd 至多一个 worker）；`subagent` 与 `bg_wait` 调用一律拒绝。铸出的 id 会在共享 ledger 命名空间中以跨进程原子 claim 保留；恢复过、终态、超恢复上限或快照损坏的 id 都不会再次分配。`planner_redelegate` 逐字绑定既有记录——完整已存 spec（包括 workspace 与 validation）是下行契约，绝不重写——并按宿主上下文校验 workspace。旧客户端重复提供的定义字段会被忽略并告警；`instructions` 只补充本次 child packet。id 冲突不会被当作继续。受限角色会 remap 到工具面匹配的 builtin agent：
+ 
+ ### 只读恢复与诊断
+ 
+@@ -131,7 +126,7 @@ hold，直到恢复条件解决。
+ 
+ 验证运行由 Root 显式委派（`planner_delegate` + role=validator 新建验证 Task，`planner_redelegate` 复验既有 Task）；没有任何自动派发。
+ 
+-`planner_delegate` 与 `planner_redelegate` 不在委派请求里设置 `model`、`thinking`、`toolBudget`、`timeoutMs`，子进程按宿主默认值运行；usage 行里的 `model` / `thinking` 是从子进程响应读回、只用于归因。
++`planner_delegate` / `planner_redelegate` 在角色路由关闭时沿用 launcher 的 `model` / `thinking` 默认值；启用操作者策略后，发送精确确认可用的 `provider/model` 与 thinking，并在采纳完成报告前核对终态实际身份。两个工具不设置 `toolBudget` / `timeoutMs`；执行 envelope 由插件控制。usage 按 child 返回的实际身份归因。
+ 
+ `reviewer` 子进程一律 `context: "fresh"`，携带 `ReviewRequest`——Task 的 spec、最新 WorkerReport、Root 采集的 Git 证据、有界补丁——不会 fork 父会话。ReviewRequest 是对 Task 的一次调用，绝不是新的 TaskSpec；reviewer 调用只能经 `planner_redelegate`（新铸的 Task 上没有东西可审）。Task 的原始 role、objective、spec 在 worker / reviewer / validation 各轮中保持不变。经 `planner_redelegate` 的 validator 调用是对被审 Task 的调用，其报告记录在该 Task 的 validatorReports。
+ 
+@@ -192,7 +187,7 @@ operator 可通过环境变量配置正有限整数，请求创建时冻结；
+ 
+ 状态保存在 agent 目录下的 `planner-only/requests/`，区分 claim 已提交、REQUEST
+ 已观察发出、terminal 已收到和停止已确认。不要用删除状态的方式解除未确认 writer。
+-Root abort 属于尽力停止；宿主仍可能消费排队消息并产生模型调用。provider-request
++Request 封锁后，每次新的 agent_start 都会重新发出 abort。真实 SDK 0.85.1 / 假模型队列探针已观察到额外模型调用为 0；交互 TUI 尚未验证，其他宿主路径仍可能需要额外停止支持。provider-request
+ hook 的观测取决于 provider，不承诺全局模型次数、token 或费用硬上限。
+ 
+ ### 复合工作流
+@@ -238,7 +233,7 @@ Token 数为准，美元/人民币金额是推导值。扩展跟踪 Root 各生
+ - 以 `_` 开头的键会被忽略（可用于注释）。
+ - 可在会话内通过 `/planner-only usage reload` 重新加载费率表。
+ 
+-会话级 root 累计预算**默认关闭**。`/planner-only budget on` 打开（标记文件 `~/.pi/agent/planner-only/session-root-budget.on`），`/planner-only budget off` 关闭。开启后按 worker 初始 floor 的 ×3 软顶警告；×5 硬顶目前只披露、不拦截委派。`PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` 或 `=0` 会覆盖标记。单次执行的异常上限走显式 `envelope` 参数（`planner_delegate` 与 `planner_redelegate`），无默认线——未配置时只观测不取消。会话证据导出只携带 `statuses`（task / workerReport / reviewResult / rootVerdict / refusalKind）、`findings`、`usage`、`breakdown`、`unattributed`；linkage / requirements / evidenceMatrix / analysis 块已移除。
++会话级 root 累计预算**默认关闭**。`/planner-only budget on` 打开（标记文件 `~/.pi/agent/planner-only/session-root-budget.on`），`/planner-only budget off` 关闭。开启后按 worker 初始 floor 的 ×3 软顶警告；×5 硬顶目前只披露、不拦截委派。`PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` 或 `=0` 会覆盖标记。普通 worker、explorer、validator 执行始终有有限异常上限：省略 `envelope` 时使用 `maxTokens=100000`、`maxWallMs=300000`；操作者可用正安全整数环境变量 `PI_PLANNER_ONLY_EXECUTION_MAX_TOKENS`、`PI_PLANNER_ONLY_EXECUTION_MAX_WALL_MS` 替换对应默认值。账本来源记为 `default`、`operator-config` 或 `delegation-param`。显式 `envelope: { maxTokens?, maxWallMs? }` 只保留调用者给出的维度和值。reviewer 仍只受所属 Request 限制，不声称拥有执行 envelope。会话证据导出只携带 `statuses`（task / workerReport / reviewResult / rootVerdict / refusalKind）、`findings`、`usage`、`breakdown`、`unattributed`；linkage / requirements / evidenceMatrix / analysis 块已移除。
+ 
+ **替代方案：** 推荐直接在 `~/.pi/agent/models.json` 里配置 `cost`。这样 Pi 和 `pi-subagents` 的原生命令（如 `/subagent-cost`）都能直接计价。插件自带的定价表仅作为不需要改动 `models.json` 时的备用与覆盖机制。
+ 
+@@ -288,3 +283,15 @@ npm run test:release  # 发布门禁：typecheck + 单元测试
+ | `index.ts` | hook、工具、命令 |
+ 
+ 不引入后台 Advisor、调度队列或外部 telemetry。Task、Request 与用量按上述规则保存在本地。
++
++### 操作者配置委派模型
++
++`PI_PLANNER_ONLY_ROLE_MODELS=1` 启用 typed 委派工具的角色路由。通过
++`PI_PLANNER_ONLY_MODEL_WORKER=provider/model` 和 `PI_PLANNER_ONLY_THINKING_WORKER=low`
++配置 worker；`EXPLORER`、`VALIDATOR`、`REVIEWER` 同理。未启用时沿用 launcher 的选择。
++工具参数不能覆盖操作者策略；创建 Task/child 前必须由宿主可用模型列表确认。
++仅显式配置的 `PI_PLANNER_ONLY_MODEL_WORKER_FALLBACK` 可以替换不可用模型。
++
++终态必须报告匹配的实际模型和 thinking（独立字段或已知的 `:thinking` 后缀）。缺失或冲突时不采纳 completed 报告，但保留 usage 和诊断报告。
++工具 `details.modelRoute` 和 `planner-only-model-route` 会话条目记录期望与实际身份。
++当前接线已通过 fixture；真实模型路由和成本收益仍需普通终端测量。
+diff --git a/delegate.test.mjs b/delegate.test.mjs
+index 5e1131c..825d563 100644
+--- a/delegate.test.mjs
++++ b/delegate.test.mjs
+@@ -212,8 +212,8 @@ async function expectRefusal(promise, code) {
+ }
+ 
+ // ---------------------------------------------------------------------------
+-// Re-delegating an existing Task: stored spec is verbatim, this call's spec
+-// only enters the packet (ticket 53 rule).
++// Re-delegating an existing Task: stored spec is verbatim and is what the
++// child packet carries; legacy definition fields on the call are ignored (P1-A).
+ // ---------------------------------------------------------------------------
+ {
+ 	const dir = initRealRepo();
+@@ -242,7 +242,9 @@ async function expectRefusal(promise, code) {
+ 	assert.equal(outcome.task.spec.objective, "original objective", "stored spec unchanged");
+ 	assert.deepEqual(outcome.task.spec, original, "stored spec verbatim");
+ 	const packet = JSON.parse(launches[0].task);
+-	assert.equal(packet.spec.objective, "revised objective for this run", "packet carries this call's spec");
++	assert.equal(packet.spec.objective, "original objective", "packet carries the stored spec, not this call's objective");
++	assert.deepEqual(packet.spec, original, "packet spec is the stored spec verbatim");
++	assert.match(outcome.warnings.join("\n"), /ignored legacy TaskSpec field\(s\).*objective/);
+ 	assert.equal(packet.spec.taskId, "T-20260915-100");
+ 	assert.equal(deps.concurrency.status().reservations.length, 0);
+ }
+@@ -490,7 +492,7 @@ async function expectRefusal(promise, code) {
+ 		assert.deepEqual(childPacket.spec.validation.commands, initialCommands, "commands preserve ordering and string verbatim to child");
+ 		assert.deepEqual(outcome.task.spec?.validation.commands, initialCommands, "stored task has initial commands");
+ 
+-		// 2. Redelegate with different commands passes new commands to child but preserves stored spec
++		// 2. Legacy definition fields on redelegate are ignored; the stored spec is authoritative.
+ 		const reCommands = ["npm test", incidentCommand];
+ 		const reOutcome = await runDelegation(
+ 			deps,
+@@ -503,14 +505,14 @@ async function expectRefusal(promise, code) {
+ 		);
+ 		assert.equal(launches.length, 2);
+ 		const reChildPacket = JSON.parse(launches[1].task);
+-		assert.deepEqual(reChildPacket.spec.validation.commands, reCommands, "redelegate commands reach child unchanged");
++		assert.deepEqual(reChildPacket.spec.validation.commands, initialCommands, "redelegate uses stored commands");
++		assert.match(reOutcome.warnings.join("\n"), /ignored legacy TaskSpec field\(s\).*validation/);
+ 		// Stored original TaskSpec is not rewritten (ticket 53/incident spec)
+ 		const storedTask = store.require(outcome.task.taskId);
+ 		assert.deepEqual(storedTask.spec?.validation.commands, initialCommands, "stored TaskSpec is never rewritten on redelegate");
+ 
+-		// 3. Redelegate with missing commands is refused before launch, doesn't silently borrow old commands
+-		await assert.rejects(
+-			runDelegation(
++		// 3. Even a forged incomplete replacement cannot weaken the stored validation contract.
++		await runDelegation(
+ 				deps,
+ 				makeParams({
+ 					taskId: outcome.task.taskId,
+@@ -518,13 +520,9 @@ async function expectRefusal(promise, code) {
+ 				}),
+ 				dir,
+ 				{ executionId: "call-redelegate-missing" },
+-			),
+-			(error) => {
+-				assert.equal(error?.code, "TASKSPEC_VALIDATION_INCOMPLETE");
+-				return true;
+-			},
+-		);
+-		assert.equal(launches.length, 2, "child was not launched on missing commands");
++			);
++		assert.equal(launches.length, 3);
++		assert.deepEqual(JSON.parse(launches[2].task).spec.validation.commands, initialCommands);
+ 	}
+ }
+ 
+@@ -557,6 +555,7 @@ assert.equal(
+ 	);
+ 	assert.match(rebind.properties.taskId.description, /Never construct one/);
+ 	assert.match(rebind.properties.taskId.description, /details\.taskId/);
++	assert.deepEqual(Object.keys(rebind.properties).sort(), ["envelope", "instructions", "recovery", "role", "taskId"]);
+ }
+ 
+ // acceptanceMode is a creation-time contract: planner_delegate carries it,
+@@ -2137,7 +2136,7 @@ for (const [index, [status, expectedState]] of [
+ }
+ 
+ // ---------------------------------------------------------------------------
+-// P0-B.3 — without an envelope the monitor never cancels, even at high tokens.
++// P1-A — omitted envelope uses finite defaults and persists its provenance.
+ // ---------------------------------------------------------------------------
+ {
+ 	const dir = initRealRepo();
+@@ -2145,8 +2144,8 @@ for (const [index, [status, expectedState]] of [
+ 		gitRunner: async (args, cwd) => realGit(dir, ...args),
+ 		launch: async (request, signal, hooks) => {
+ 			const base = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
+-			hooks.onUpdate({ ...base, tokens: 999_999 });
+-			assert.equal(signal.aborted, false, "no envelope → observe-only, never abort");
++			hooks.onUpdate({ ...base, tokens: 99_999 });
++			assert.equal(signal.aborted, false, "default token envelope is not yet exceeded");
+ 			return {
+ 				...base,
+ 				status: "completed",
+@@ -2161,6 +2160,7 @@ for (const [index, [status, expectedState]] of [
+ 	assert.ok(outcome.report, "unconfigured delegation completes untouched");
+ 	assert.equal(outcome.termination, undefined);
+ 	assert.equal(outcome.task.recovery, undefined);
++	assert.deepEqual(outcome.task.executions[0].envelope, { maxTokens: 100_000, maxWallMs: 300_000, source: "default" });
+ }
+ 
+ // ---------------------------------------------------------------------------
+diff --git a/delegate.ts b/delegate.ts
+index 4b0e707..1d6b7eb 100644
+--- a/delegate.ts
++++ b/delegate.ts
+@@ -55,6 +55,7 @@ import {
+ import type { FreshReviewerTaskInput, ReviewDecision } from "./review.ts";
+ import { childUsageFromValue } from "./usage.ts";
+ import type { UsageLedger } from "./usage.ts";
++import { loadExecutionDefaults } from "./execution-defaults.ts";
+ import { acceptanceModeOf, isFinalTaskState, isTerminalTaskState } from "./types.ts";
+ import type {
+ 	AcceptanceMode,
+@@ -211,13 +212,13 @@ function worktreeSamplesQuiet(a: EvidenceRef, b: EvidenceRef): boolean {
+ 	return aKeys.every((key) => aHashes[key] === bHashes[key]);
+ }
+ 
+-/** P0-B — validate the explicit envelope before launch (spec §4: no defaults). */
++/** Validate an explicit envelope without raising either caller-supplied bound. */
+ function validateEnvelope(raw: PlannerDelegationParams["envelope"], toolName = "planner_delegate"): ExecutionEnvelope | undefined {
+ 	if (raw === undefined) return undefined;
+ 	const check = (name: string, value: number | undefined): number | undefined => {
+ 		if (value === undefined) return undefined;
+ 		const normalized = Math.floor(value);
+-		if (!Number.isFinite(value) || normalized <= 0) {
++		if (!Number.isFinite(value) || !Number.isSafeInteger(normalized) || normalized <= 0) {
+ 			throw new DelegationRefused("ENVELOPE_INVALID", `${toolName} refused: envelope.${name} must normalize to a positive finite integer, got ${value}`);
+ 		}
+ 		return normalized;
+@@ -324,17 +325,11 @@ const DELEGATION_SPEC_PARAMETERS = {
+ 			maxTokens: Type.Optional(Type.Number({ description: "Cancel the child when cumulative UPDATE tokens exceed this. Snapshot input+output, no cache." })),
+ 			maxWallMs: Type.Optional(Type.Number({ description: "Cancel the child when wall-clock since launch exceeds this many ms." })),
+ 		}, {
+-			description: "P0-B runaway envelope. Explicit only — when omitted the monitor observes but never cancels.",
++			description: "Runaway envelope. When omitted on an ordinary execution, finite program/operator defaults apply.",
+ 		}),
+ 	),
+ };
+ 
+-// Ticket 03 — acceptanceMode is a creation-time contract: it stays on the
+-// mint schema but is deliberately absent from the rebind surface. The
+-// runtime guard (ACCEPTANCE_MODE_IMMUTABLE) still refuses pass-through from
+-// hosts that do not validate parameters.
+-const { acceptanceMode: _creationOnlyAcceptanceMode, ...DELEGATION_REBIND_SPEC_PARAMETERS } = DELEGATION_SPEC_PARAMETERS;
+-
+ const DELEGATION_RECOVERY_PARAMETER = Type.Optional(
+ 	Type.Object({
+ 		executionId: Type.String({ minLength: 1 }),
+@@ -360,10 +355,9 @@ export const PLANNER_DELEGATE_PARAMETERS = Type.Object({
+ });
+ 
+ /**
+- * planner_redelegate — bind-only surface over an existing Task: correction
+- * rounds, reviewer invocations, and recovery re-executions. taskId is
+- * required and must name a real record; the explicit id binds verbatim
+- * (delegate.ts binding contract, ticket 53).
++ * planner_redelegate — bind-only surface over an existing Task. The stored
++ * TaskSpec is authoritative; this surface only selects an invocation role and
++ * may add temporary instructions, an explicit envelope, or recovery.
+  */
+ export const PLANNER_REDELEGATE_PARAMETERS = Type.Object({
+ 	taskId: Type.String({
+@@ -371,9 +365,10 @@ export const PLANNER_REDELEGATE_PARAMETERS = Type.Object({
+ 		description: "Canonical id of an existing Task, verbatim from a prior planner_delegate result's details.taskId. Never construct one.",
+ 	}),
+ 	role: Type.Union([Type.Literal("worker"), Type.Literal("explorer"), Type.Literal("validator"), Type.Literal("reviewer")], {
+-		description: "Delegation role. worker implements a correction round; explorer does read-only recon (restricted-reader agent, no shell/edit/write); validator runs an oracle verdict; reviewer reviews the bound Task's latest WorkerReport — objective / scope / constraints / acceptanceCriteria / validation / instructions are ignored, the Task's stored spec is the reviewer's context.",
++		description: "Invocation role. worker implements a correction round; explorer does read-only recon (restricted-reader agent, no shell/edit/write); validator runs an oracle verdict; reviewer reviews the bound Task's latest WorkerReport. This never changes the stored TaskSpec role.",
+ 	}),
+-	...DELEGATION_REBIND_SPEC_PARAMETERS,
++	instructions: Type.Optional(Type.String({ description: "Temporary prose appended to this child packet only; it never changes the stored TaskSpec." })),
++	envelope: DELEGATION_SPEC_PARAMETERS.envelope,
+ 	recovery: DELEGATION_RECOVERY_PARAMETER,
+ });
+ 
+@@ -386,9 +381,16 @@ export type PlannerRedelegateParams = Static<typeof PLANNER_REDELEGATE_PARAMETER
+  * `acceptanceMode` is declared here (not on the rebind schema) so the runtime
+  * can still refuse a pass-through from a non-validating host.
+  */
+-export type PlannerDelegationParams = Omit<PlannerRedelegateParams, "taskId"> & {
++export type PlannerDelegationParams = Partial<Omit<PlannerDelegateParams, "role">> & Omit<PlannerRedelegateParams, "taskId"> & {
+ 	taskId?: string;
+ 	acceptanceMode?: AcceptanceMode;
++	/** Legacy passthrough fields accepted only for runtime stripping on rebind. */
++	objective?: string;
++	cwd?: string;
++	scope?: { allowedPaths?: string[]; forbiddenPaths?: string[] };
++	constraints?: string[];
++	acceptanceCriteria?: string[];
++	validation?: { required: boolean; commands?: string[] };
+ };
+ 
+ /**
+@@ -532,6 +534,8 @@ export interface DelegationDeps {
+ 	quiescenceWaitMs?: number;
+ 	/** Gap between the two confirmatory worktree samples. */
+ 	quiescenceSampleGapMs?: number;
++	/** One validated default snapshot for this invocation. */
++	executionDefaults?: ExecutionEnvelope;
+ }
+ 
+ /** WRC P0-A — structured abnormal-termination details returned instead of a thrown refusal (spec §3). */
+@@ -647,6 +651,10 @@ export class DelegationAborted extends Error {
+ }
+ 
+ function specFromParams(params: PlannerDelegationParams, taskId: string, cwd: string): TaskSpec {
++	if (params.objective === undefined || params.scope === undefined || params.constraints === undefined
++		|| params.acceptanceCriteria === undefined || params.validation === undefined) {
++		throw new DelegationRefused("TASKSPEC_REQUIRED", "planner_delegate refused: a new Task requires objective, scope, constraints, acceptanceCriteria, and validation");
++	}
+ 	return createTaskSpec({
+ 		taskId,
+ 		objective: params.objective,
+@@ -694,7 +702,7 @@ export async function runDelegation(
+ 	options: DelegationOptions = {},
+ ): Promise<DelegationOutcome> {
+ 	const role = params.role;
+-	const effectiveCwd = params.cwd ?? cwd;
++	const effectiveCwd = params.taskId ? cwd : (params.cwd ?? cwd);
+ 	const requestId = randomUUID();
+ 	const executionId = options.executionId ?? requestId;
+ 	const warnings: string[] = [];
+@@ -724,9 +732,9 @@ export async function runDelegation(
+ 	}
+ 	const isRestrictedReader = classification.capability === "restricted-reader";
+ 
+-	// 1. Task binding: an explicit id binds the existing record verbatim —
+-	//    its stored spec is never rewritten (ticket 53); this call's spec
+-	//    only goes into the packet.
++	// 1. Task binding: an explicit id binds the existing record verbatim. Its
++	//    stored spec is both immutable and authoritative for every child packet;
++	//    only this invocation's instructions are appended separately.
+ 	let task!: TaskRecord;
+ 	let thisSpec: TaskSpec;
+ 	let recoveryDecision: RecoveryDecision | undefined;
+@@ -751,6 +759,11 @@ export async function runDelegation(
+ 			);
+ 		}
+ 		task = record;
++		const ignoredDefinitionFields = ["objective", "cwd", "scope", "constraints", "acceptanceCriteria", "validation"]
++			.filter((field) => (params as unknown as Record<string, unknown>)[field] !== undefined);
++		if (ignoredDefinitionFields.length > 0) {
++			warnings.push(`planner_redelegate ignored legacy TaskSpec field(s): ${ignoredDefinitionFields.join(", ")}; Task ${record.taskId} runs from its stored immutable spec`);
++		}
+ 		// Ticket 03 (wrc-incident-followups) — reject a stray decision for
+ 		// every role before role-specific dispatch. In particular, reviewers
+ 		// must not bypass this gate through the early return below.
+@@ -788,7 +801,11 @@ export async function runDelegation(
+ 		// The reviewer fork: binding is identical, but the call mints no spec
+ 		// of its own — the stored spec is the reviewer's read-only context.
+ 		if (role === "reviewer") {
+-			return runReviewInvocation(deps, task, { requestId, executionId }, options);
++			if (params.envelope !== undefined) {
++				warnings.push("planner_redelegate ignored envelope for role=reviewer; reviewer invocations remain bounded by the enclosing Request");
++			}
++			const reviewed = await runReviewInvocation(deps, task, { requestId, executionId }, options);
++			return { ...reviewed, warnings: [...warnings, ...reviewed.warnings] };
+ 		}
+ 		if (
+ 			task.pendingRevalidationKey
+@@ -800,11 +817,10 @@ export async function runDelegation(
+ 				task.taskId,
+ 			);
+ 		}
+-		// The packet spec inherits the stored acceptance contract — the child
+-		// sees the same mode the ledger enforces (params.acceptanceMode was
+-		// refused above).
+-		const boundMode = record.spec?.acceptanceMode;
+-		thisSpec = specFromParams(boundMode !== undefined ? { ...params, acceptanceMode: boundMode } : params, record.taskId, record.cwd || effectiveCwd);
++		if (!record.spec) {
++			throw new DelegationRefused("TASKSPEC_MISSING", `${toolName} refused: Task ${record.taskId} has no stored TaskSpec`, record.taskId);
++		}
++		thisSpec = record.spec;
+ 
+ 		if (isFinalTaskState(task.state)) {
+ 			if (task.state === "blocked" && task.recovery?.required === true) {
+@@ -828,8 +844,11 @@ export async function runDelegation(
+ 		thisSpec = specFromParams(params, taskId, effectiveCwd);
+ 	}
+ 
+-	// P0-B — the explicit anomaly envelope; validated before launch, never defaulted.
+-	const envelope = validateEnvelope(params.envelope, toolName);
++	// Reviewers returned above and remain Request-bounded. Every ordinary
++	// execution gets a finite envelope; explicit dimensions stay exact.
++	const envelope = validateEnvelope(params.envelope, toolName)
++		?? deps.executionDefaults
++		?? loadExecutionDefaults();
+ 
+ 	// 2. Write lock: capability decides, not the role name — a proven
+ 	//    restricted reader holds no workspace claim; writers, shell-capable
+@@ -1170,12 +1189,14 @@ export async function runDelegation(
+ 				const onWallDeadline = () => {
+ 					const elapsed = wallNow() - launchStartedAt;
+ 					if (elapsed < wallLimit) {
+-						wallTimer = armWallTimer(onWallDeadline, Math.min(wallLimit, Math.ceil(wallLimit - elapsed)));
++						wallTimer = armWallTimer(onWallDeadline, Math.min(2_147_483_647, wallLimit, Math.ceil(wallLimit - elapsed)));
+ 						return;
+ 					}
+ 					breach("wall", Math.floor(elapsed), wallLimit);
+ 				};
+-				wallTimer = armWallTimer(onWallDeadline, wallLimit);
++				// Node overflows longer delays to 1ms. Bound each wake-up;
++				// the elapsed-time check still owns the full configured limit.
++				wallTimer = armWallTimer(onWallDeadline, Math.min(2_147_483_647, wallLimit));
+ 			}
+ 			response = await deps.launch(request, runController.signal, {
+ 				beforeDispatch: (outbound) => {
+@@ -1275,7 +1296,7 @@ export async function runDelegation(
+ 						executionStatus: emitted ? "stop_unconfirmed" : "stopped",
+ 						terminationConfirmed: !emitted,
+ 						...(emitted ? {} : { confirmationBasis: "no-launch" }),
+-						...(runaway ? { anomaly: { ...runaway, source: "delegation-param" } } : {}),
++						...(runaway ? { anomaly: { ...runaway, source: envelope.source } } : {}),
+ 						quiescenceWaitMs,
+ 						quiescenceWaitSource,
+ 						usageComplete: false,
+@@ -1421,7 +1442,7 @@ export async function runDelegation(
+ 					reason: endedReason,
+ 					executionStatus: q.confirmed ? "stopped" : "stop_unconfirmed",
+ 					terminationConfirmed: q.confirmed,
+-					...(runaway ? { anomaly: { ...runaway, source: "delegation-param" } } : {}),
++					...(runaway ? { anomaly: { ...runaway, source: envelope.source } } : {}),
+ 					...(q.confirmed ? { confirmationBasis: q.basis, ...(q.cTerminal ? { cTerminal: q.cTerminal } : {}) } : {}),
+ 					quiescenceWaitMs,
+ 					quiescenceWaitSource,
+diff --git a/docs/pi-planner-only-stability-and-delegation-plan.md b/docs/pi-planner-only-stability-and-delegation-plan.md
+index 06b8435..2214fbd 100644
+--- a/docs/pi-planner-only-stability-and-delegation-plan.md
++++ b/docs/pi-planner-only-stability-and-delegation-plan.md
+@@ -1,6 +1,8 @@
+ # pi-planner-only 稳定性与委派演进计划
+ 
+-状态：提案，2026-09-19。本文整理现有证据、外部项目可借鉴的机制及分阶段路线；它不是实现说明，也不批准具体阈值或政策变更。
++状态：路线图，2026-09-20 更新。P0 已在 `85bdd2a` 完成并提交；P1–P3 按用户授权继续实施。本文保留 2026-09-19 的调查依据与原始提案，下文“已确认的当前事实”是当时基线 `3991c5c` 的历史快照，不代表 P0 修复后的现状。
++
++当前结果以 [P0 验收记录](../.scratch/request-stop-p0-20260919/evidence/acceptance.md)为准：完整 release、真实 CLI + pi-subagents 0.69.0 和 strict delta review 已通过；strict launcher 的 124 超时及原始 PASS/只读证据分别保留。完整 Root stop 仅在已测 print 强制到期场景成立；TUI 未验证；当时 SDK 队列探针曾多一次模型调用。后续工作树已加入新 agent_start 的 abort 重申，并在相同 SDK/假模型场景观察到额外调用为 0；尚未完成本轮 release/真实 TUI/strict gate。P1–P3 的实施与后续能力验证见 [后续工作](../.scratch/stability-next-20260920/README.md)，不沿用 P0 的测试结果冒充新版本验收。
+ 
+ ## 目标与优先级
+ 
+diff --git a/index.test.mjs b/index.test.mjs
+index 7a7f482..0a6370a 100644
+--- a/index.test.mjs
++++ b/index.test.mjs
+@@ -2675,7 +2675,9 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
+ 	assert.equal(abandonedAfter.reports.length, 0, "no fake WorkerReport minted");
+ 	assert.equal(abandonedAfter.stateReason, "operator chose to abandon unstarted legacy task");
+ 
+-	// 4b. Refusal breaker triggered by malformed redelegate does not block query or verdict
++	// 4b. Refusal breaker triggered by malformed redelegate does not block query or verdict.
++	// P1-A: legacy definition fields are ignored on rebind, so the malformed input is an
++	// invalid envelope — refused before any reservation or launch.
+ 	const abandonId2 = "T-20260918-097";
+ 	ledger.write({
+ 		taskId: abandonId2,
+@@ -2695,25 +2697,22 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
+ 		updatedAt: "2026-09-18T10:00:00.000Z",
+ 	});
+ 
+-	// Attempt 1: malformed redelegate (validation.required true but no commands)
++	// Attempt 1: malformed redelegate (envelope.maxTokens is not a positive integer)
+ 	await assert.rejects(
+ 		redelegateTool.execute(
+ 			"call-t04-malformed-1",
+ 			{
+ 				taskId: abandonId2,
+ 				role: "worker",
+-				objective: "missing commands",
+-				scope: {},
+-				constraints: [],
+-				acceptanceCriteria: [],
+-				validation: { required: true },
++				envelope: { maxTokens: 0 },
+ 			},
+ 			undefined,
+ 			() => {},
+ 			ctx,
+ 		),
+-		(err) => err.message.includes("validation.commands must be a non-empty array"),
++		(err) => err.message.includes("envelope.maxTokens must normalize to a positive finite integer"),
+ 	);
++	assert.equal(ledger.read(abandonId2).record.executions.length, 0, "malformed redelegate launched nothing");
+ 
+ 	// Attempt 2: identical malformed redelegate -> refusal breaker notice
+ 	await assert.rejects(
+@@ -2722,11 +2721,7 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
+ 			{
+ 				taskId: abandonId2,
+ 				role: "worker",
+-				objective: "missing commands",
+-				scope: {},
+-				constraints: [],
+-				acceptanceCriteria: [],
+-				validation: { required: true },
++				envelope: { maxTokens: 0 },
+ 			},
+ 			undefined,
+ 			() => {},
+diff --git a/index.ts b/index.ts
+index 428389b..16ccd6e 100644
+--- a/index.ts
++++ b/index.ts
+@@ -47,6 +47,8 @@ import {
+ 	sessionRootBudgetWithEnabled,
+ } from "./floors.ts";
+ import { configuredRoleModelSummaries, loadRoleModelPolicy } from "./role-models.ts";
++import { enforceDelegationModel, observeDelegationModel, resolveDelegationModel } from "./delegation-model.ts";
++import type { ModelRouteObservation } from "./delegation-model.ts";
+ import { ConcurrencyController, loadConcurrencyDefault, saveConcurrencyDefault, parseConcurrencyLimit } from "./concurrency.ts";
+ import {
+ 	DelegationRefused,
+@@ -66,6 +68,7 @@ import type { RecoveryDecision } from "./types.ts";
+ import { normalizeWorkspaceIdentity } from "./task.ts";
+ import { FileRequestStorage, RequestClosed, RequestController } from "./request-control.ts";
+ import { acceptedExecution, correctionPredecessor, delegationFailureFamily, requestErrorFamily, reviewFailureFamily, structuralIssues } from "./request-events.ts";
++import { loadExecutionDefaults } from "./execution-defaults.ts";
+ 
+ /** P0-B — the only recovery action wired through planner_abort (spec §5, ADR-0003). */
+ const ABORT_RECOVERY_ACTIONS = new Set(["abort"]);
+@@ -192,7 +195,9 @@ export function computeLoadedFingerprint(dir = PLUGIN_DIR): string {
+ 	const hasher = createHash("sha256");
+ 	const files = [
+ 		"concurrency.ts",
++		"delegation-model.ts",
+ 		"evidence.ts",
++		"execution-defaults.ts",
+ 		"floors.ts",
+ 		"git-audit.ts",
+ 		"index.ts",
+@@ -1077,12 +1082,19 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 						orchestrator.resolveVerdictTask(params.taskId, ctx.cwd || process.cwd());
+ 					}
+ 					let outcome: DelegationOutcome;
++					// Parse once per invocation, before Task allocation, claims,
++					// reservations, evidence sampling, or transport launch.
++					const executionDefaults = effectiveParams.role === "reviewer"
++						? undefined
++						: loadExecutionDefaults(process.env);
+ 					const requestControl = requestFor(ctx);
+ 					const requestScope = requestControl.requestId;
++					let modelRoute: ModelRouteObservation | undefined;
+ 					const predecessor = correctionPredecessor(
+ 						effectiveParams.taskId ? orchestrator.store.get(effectiveParams.taskId) : undefined, effectiveParams,
+ 					);
+ 					try {
++						const route = resolveDelegationModel(effectiveParams.role, ctx.modelRegistry);
+ 						ensureRestrictedReaderAgent();
+ 						outcome = await runDelegation(
+ 							{
+@@ -1091,7 +1103,16 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 								concurrency,
+ 								usage: ledger,
+ 								launch: async (outbound, launchSignal, hooks) => {
+-									return delegationLaunch(outbound, launchSignal, {
++									const routed = route ? { ...outbound, model: route.model, thinking: route.thinking } : outbound;
++									const recordRoute = (terminal: Parameters<typeof observeDelegationModel>[1]) => {
++										if (!route) return terminal;
++										modelRoute = observeDelegationModel(route, terminal);
++										try { pi.appendEntry("planner-only-model-route", { requestId: outbound.requestId, taskId: outbound.nodeId,
++											workspace: normalizeWorkspaceIdentity(ctx.cwd || process.cwd()), ...modelRoute }); }
++										catch { ignoredWarnings.push("model route session evidence could not be persisted; see this tool result"); }
++										return enforceDelegationModel(modelRoute, terminal);
++									};
++									return delegationLaunch(routed, launchSignal, {
+ 										...hooks,
+ 										beforeDispatch: packet => {
+ 											requestControl.canClaim(packet.requestId, requestScope);
+@@ -1101,14 +1122,16 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 										onDispatch: packet => { requestControl.emitted(packet.requestId, requestScope); hooks?.onDispatch?.(packet); },
+ 										onLateTerminal: terminal => {
+ 											requestControl.terminal(outbound.requestId, requestScope);
++											recordRoute(terminal);
+ 											hooks?.onLateTerminal?.(terminal);
+ 											if (effectiveParams.role === "reviewer") requestControl.finishChild(toolCallId, true, requestScope);
+ 										},
+-									}).then(terminal => { requestControl.terminal(outbound.requestId, requestScope); return terminal; });
++									}).then(terminal => { requestControl.terminal(outbound.requestId, requestScope); return recordRoute(terminal); });
+ 								},
+ 								...(restrictedReaderAgent !== undefined ? { restrictedReaderAgent } : {}),
+ 								...(quiescenceWaitMs !== undefined ? { quiescenceWaitMs } : {}),
+ 								ownerRunId: ctx.sessionManager?.getSessionId?.() || PROCESS_OWNER_RUN_ID,
++								...(executionDefaults ? { executionDefaults } : {}),
+ 							},
+ 							effectiveParams,
+ 							ctx.cwd || process.cwd(),
+@@ -1153,8 +1176,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 					const warnings = [...ignoredWarnings, ...outcome.warnings];
+ 					return {
+ 						content: [{ type: "text", text: renderDelegationOutcome({ ...outcome, warnings }, surface.name) }],
+-						details: {
+-							taskId: outcome.task.taskId,
++							details: {
++								taskId: outcome.task.taskId,
++								...(modelRoute ? { modelRoute } : {}),
+ 							executionId: outcome.executionId,
+ 							runId: outcome.runId,
+ 							state: outcome.task.state,
+@@ -1186,7 +1210,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 			"The child's WorkerReport arrives schema-validated in details.report; a non-completed status returns structured details.termination, not a parse failure.",
+ 			"planner_delegate always mints a new Task and returns its canonical taskId in details.taskId; a correction round, a review, or a recovery re-execution of that Task goes through planner_redelegate with that exact taskId.",
+ 			"role=explorer pairs with acceptanceMode='observation' for read-only informational tasks — the intended path in non-Git directories; it never claims code-change verification. A worktree-mode Task in a non-Git directory refuses writer launches with structured diagnostics instead.",
+-			"Optional envelope{maxTokens,maxWallMs} bounds a runaway execution.",
++			"Omitting envelope uses the finite execution defaults; an explicit envelope{maxTokens,maxWallMs} replaces them for that execution.",
+ 		],
+ 		parameters: PLANNER_DELEGATE_PARAMETERS,
+ 	});
+@@ -1197,13 +1221,14 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 		description: [
+ 			"Re-enter an existing Task through the structured delegation API: a correction round after request_changes (worker/explorer/validator), a review of its latest WorkerReport (reviewer), or a recovery re-execution of a blocked Task.",
+ 			"taskId is required — the canonical id verbatim from a prior planner_delegate result's details.taskId; never construct one.",
+-			"The launcher-validated ReviewResult arrives in details.review; a WorkerReport arrives in details.report.",
++			"The stored TaskSpec is authoritative; only temporary instructions, envelope, and recovery may supplement this invocation. The launcher-validated ReviewResult arrives in details.review; a WorkerReport arrives in details.report.",
+ 		].join(" "),
+ 		promptSnippet: "planner_redelegate: re-enter an existing Task by canonical taskId — correction, review, recovery",
+ 		promptGuidelines: [
+ 			"planner_redelegate binds an existing Task: pass the canonical taskId from a prior planner_delegate result's details.taskId verbatim. Never construct a taskId.",
+ 			"role=reviewer reviews the bound Task's latest WorkerReport; the launcher-validated ReviewResult arrives in details.review.",
+-			"Optional envelope{maxTokens,maxWallMs} bounds a runaway execution; a Task flagged recovery.required re-executes only with a matching recovery decision (retry_same_plan / fix_environment) or is aborted via planner_abort.",
++			"Do not repeat objective, cwd, scope, constraints, acceptanceCriteria, validation, or acceptanceMode: the stored TaskSpec is authoritative. instructions apply to this child packet only and do not mutate it.",
++			"Omitting envelope uses the finite execution defaults; an explicit envelope{maxTokens,maxWallMs} replaces them for that execution. A Task flagged recovery.required re-executes only with a matching recovery decision (retry_same_plan / fix_environment) or is aborted via planner_abort.",
+ 			"recovery.executionId names the abnormal execution's details.executionId — never a child runId; a stray recovery on a Task without a pending requirement is refused (RECOVERY_NOT_APPLICABLE), not ignored.",
+ 		],
+ 		parameters: PLANNER_REDELEGATE_PARAMETERS,
+diff --git a/ledger-store.ts b/ledger-store.ts
+index 44db681..271eefc 100644
+--- a/ledger-store.ts
++++ b/ledger-store.ts
+@@ -67,6 +67,21 @@ function executionShapeError(value: unknown, index: number): string | undefined
+ 	}
+ 	if (typeof value.executionId !== "string") return `${label}.executionId must be a string`;
+ 	if (!isPlainObject(value.aRun)) return `${label}.aRun must be an object`;
++	if (value.envelope !== undefined) {
++		if (!isPlainObject(value.envelope)) return `${label}.envelope must be an object`;
++		if (!["delegation-param", "default", "operator-config"].includes(value.envelope.source as string)) {
++			return `${label}.envelope.source must be delegation-param, default, or operator-config`;
++		}
++		for (const field of ["maxTokens", "maxWallMs"] as const) {
++			const bound = value.envelope[field];
++			if (bound !== undefined && (!Number.isSafeInteger(bound) || (bound as number) <= 0)) {
++				return `${label}.envelope.${field} must be a positive finite safe integer`;
++			}
++		}
++		if (value.envelope.maxTokens === undefined && value.envelope.maxWallMs === undefined) {
++			return `${label}.envelope requires maxTokens or maxWallMs`;
++		}
++	}
+ 	const probeFailuresError = (sample: Record<string, unknown>, sampleLabel: string): string | undefined => {
+ 		if (sample.probeFailures === undefined) return undefined;
+ 		if (!Array.isArray(sample.probeFailures)) return `${sampleLabel}.probeFailures must be an array`;
+diff --git a/package.json b/package.json
+index 475ec64..1da3e44 100644
+--- a/package.json
++++ b/package.json
+@@ -22,6 +22,7 @@
+     "README.md",
+     "README.zh-CN.md",
+     "evidence.ts",
++    "execution-defaults.ts",
+     "floors.ts",
+     "role-models.ts",
+     "git-audit.ts",
+@@ -38,6 +39,7 @@
+     "workspace-snapshot.ts",
+     "concurrency.ts",
+     "delegate.ts",
++    "delegation-model.ts",
+     "refusal-breaker.ts",
+     "subagent-delegation-contract.ts",
+     "pricing.defaults.json",
+@@ -54,9 +56,10 @@
+     "piHost": ">=0.84 <1"
+   },
+   "scripts": {
++    "test:p1": "node --experimental-strip-types p1-delegation.test.mjs",
+     "test": "node --experimental-strip-types policy.test.mjs && node --experimental-strip-types policy-cutover.test.mjs && node --experimental-strip-types roles.test.mjs && node --experimental-strip-types floors.test.mjs && node --experimental-strip-types role-models.test.mjs && node --experimental-strip-types task.test.mjs && node --experimental-strip-types ledger-store.test.mjs && node --experimental-strip-types report.test.mjs && node --experimental-strip-types review.test.mjs && node --experimental-strip-types usage.test.mjs && node --experimental-strip-types orchestrate.test.mjs && node --experimental-strip-types evidence.test.mjs && node --experimental-strip-types git-audit.test.mjs && node --experimental-strip-types index.test.mjs && node --experimental-strip-types diagnostics-regression.test.mjs && node --experimental-strip-types workspace-snapshot.test.mjs && node --experimental-strip-types architecture.test.mjs && node --experimental-strip-types naming.test.mjs && node --experimental-strip-types concurrency.test.mjs && node --experimental-strip-types rs01.test.mjs && node --experimental-strip-types rs02.test.mjs && node --experimental-strip-types rs02-concurrency.test.mjs && node --experimental-strip-types rs03.test.mjs && node --experimental-strip-types rt06.test.mjs && node --experimental-strip-types nx04-06.test.mjs && node --experimental-strip-types nx09-scope.test.mjs && node --experimental-strip-types nx10-attribution.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types refusal-breaker.test.mjs && node --experimental-strip-types diffstat-acceptance.test.mjs && node --experimental-strip-types revalidation-accounting.test.mjs && node --experimental-strip-types request-control.test.mjs && node --experimental-strip-types request-stop.test.mjs",
+     "typecheck": "tsc --noEmit",
+-    "test:release": "npm run typecheck && npm test"
++    "test:release": "npm run typecheck && npm run test:p1 && npm test"
+   },
+   "peerDependencies": {
+     "@earendil-works/pi-coding-agent": ">=0.84 <1",
+diff --git a/request-control.test.mjs b/request-control.test.mjs
+index 0c79277..cdec5ac 100644
+--- a/request-control.test.mjs
++++ b/request-control.test.mjs
+@@ -79,9 +79,9 @@ try {
+ 	assert.equal(request.resume(false), false);
+ 	assert.equal(request.resume(true), true);
+ 
+-	let now = 1000, callback;
++	let now = 1000, callback, rootAborts = 0;
+ 	const timedStore = new MemoryStorage();
+-	const timed = make(timedStore, { now: () => now, setTimer: fn => { callback = fn; return { unref() {} }; }, clearTimer() {}, stopRoot: () => "requested" });
++	const timed = make(timedStore, { now: () => now, setTimer: fn => { callback = fn; return { unref() {} }; }, clearTimer() {}, stopRoot: () => { rootAborts++; return "requested"; } });
+ 	tool(timed, "start");
+ 	assert.equal(timed.snapshot().deadline, 901000);
+ 	now = 901000; callback();
+@@ -89,6 +89,11 @@ try {
+ 	assert.equal(timed.snapshot().rootStop, "requested");
+ 	timed.modelCall(); assert.equal(timed.snapshot().rootStop, "requested", "another call never proves stop");
+ 	timed.settle(); assert.equal(timed.snapshot().rootStop, "confirmed");
++	const priorAborts = rootAborts;
++	timed.rootActive();
++	assert.equal(rootAborts, priorAborts + 1, "a queued run with a new abort signal receives a new stop request");
++	assert.equal(timed.snapshot().rootStop, "requested", "old settlement is not proof that a new run stopped");
++	timed.settle();
+ 	const restoredTime = make(timedStore, { now: () => now });
+ 	assert.equal(restoredTime.snapshot().deadline, 901000);
+ 
+diff --git a/request-control.ts b/request-control.ts
+index 58f78d0..0c42dad 100644
+--- a/request-control.ts
++++ b/request-control.ts
+@@ -397,8 +397,15 @@ export class RequestController {
+ 	 * not invoke before_provider_request (including the SDK faux provider). */
+ 	rootActive(): void {
+ 		this.current.settled = false;
+-		if (this.current.closedReason) this.current.rootStop = "unconfirmed";
++		if (this.current.closedReason) {
++			this.current.rootStop = "unconfirmed";
++			// Queued/extension continuations can create a fresh host abort signal.
++			// Stop that run again; a previous abort cannot cancel a future signal.
++			this.stopRoot();
++		}
+ 		this.save();
++		this.checkDeadline();
++		this.arm();
+ 	}
+ 	settle(): void {
+ 		if (this.executing.size > 0) return;
+diff --git a/types.ts b/types.ts
+index 61ef35b..3d88730 100644
+--- a/types.ts
++++ b/types.ts
+@@ -302,14 +302,14 @@ export interface RunawayObservation {
+ }
+ 
+ /**
+- * P0-B — explicit per-delegation anomaly envelope (spec §4: no production
+- * defaults; unconfigured means observe-only, never cancel). `source` is
+- * persisted so later readers know where the numbers came from.
++ * Per-execution anomaly envelope. Explicit caller bounds retain
++ * `delegation-param`; omitted bounds on ordinary executions are filled from
++ * finite program/operator defaults. `source` is persisted for provenance.
+  */
+ export interface ExecutionEnvelope {
+ 	maxTokens?: number;
+ 	maxWallMs?: number;
+-	source: "delegation-param";
++	source: "delegation-param" | "default" | "operator-config";
+ }
+ 
+ /**
+@@ -382,7 +382,7 @@ export interface TaskExecutionRecord {
+ 	evidenceIncomplete?: boolean;
+ 	/** True when the terminal's usage was accounted; false keeps the known lower bound instead of inventing a cost. */
+ 	usageComplete?: boolean;
+-	/** P0-B — the explicit runaway envelope this execution ran under (absent = observe-only). */
++	/** The finite runaway envelope this ordinary execution ran under. */
+ 	envelope?: ExecutionEnvelope;
+ 	/** P0-B — which envelope bound tripped, with the observed value. */
+ 	runawayObservation?: RunawayObservation;

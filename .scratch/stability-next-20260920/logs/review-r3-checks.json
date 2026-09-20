@@ -1,0 +1,29 @@
+[
+  {
+    "name": "r3-typecheck",
+    "cmd": [
+      "npm",
+      "run",
+      "typecheck"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "r3-entry",
+    "cmd": [
+      "node",
+      "--experimental-strip-types",
+      "p1-delegation.test.mjs"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "r3-diff",
+    "cmd": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit": 0
+  }
+]

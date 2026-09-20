@@ -1,0 +1,126 @@
+{
+  "status": "PASS",
+  "recordedAtUtc": "2026-09-20T05:09:42.770Z",
+  "environment": {
+    "execution": "normal host via require_escalated",
+    "repo": "/home/tcuni-claw/pi/pi-planner-only",
+    "hostVersion": "0.85.1",
+    "launcherVersion": "0.69.0",
+    "rootModel": "kimi-coding/kimi-for-coding",
+    "childModel": "tcuni-luna/gpt-5.6-luna",
+    "thinking": "low",
+    "hostPreflight": ".scratch/stability-next-20260920/continuation-20260920-0502/host-preflight.json",
+    "exclusiveWriter": "host_validation validator; Root reported writes frozen"
+  },
+  "commands": [
+    {
+      "stage": "smoke",
+      "command": "env STUDY_ROOT_MODEL=kimi-coding/kimi-for-coding STUDY_CHILD_MODEL=tcuni-luna/gpt-5.6-luna STUDY_THINKING=low STUDY_ARM=optimized STUDY_CASE=count node .scratch/stability-next-20260920/run-study.mjs",
+      "exitCode": 0,
+      "signal": null,
+      "firstObservedEventUtc": "2026-09-20T05:06:15.793Z",
+      "lastObservedEventUtc": "2026-09-20T05:06:50.051Z",
+      "harnessDurationMs": 39062,
+      "stdout": ".scratch/stability-next-20260920/continuation-20260920-0502/smoke-command.stdout",
+      "stderr": ".scratch/stability-next-20260920/continuation-20260920-0502/smoke-command.stderr",
+      "evidence": ".scratch/stability-next-20260920/study-run-D1Lacq",
+      "privateRuntime": "/project/tmp/planner-study-GHqm1a",
+      "result": {
+        "quality": true,
+        "answerSuffix": "ANSWER=10",
+        "actualRootModels": ["kimi-coding/kimi-for-coding"],
+        "actualChildModels": ["tcuni-luna/gpt-5.6-luna:low:low"],
+        "childClaims": 1,
+        "childTerminalStatus": "completed",
+        "childUsagePresent": true,
+        "rootUsageIncomplete": false,
+        "childUsageIncomplete": false,
+        "failedAttempts": 0,
+        "slotAuditExit": 0,
+        "slotStatusExit": 0,
+        "slotAuditClear": true
+      }
+    },
+    {
+      "stage": "tui",
+      "command": "env STUDY_ROOT_MODEL=kimi-coding/kimi-for-coding STUDY_CHILD_MODEL=tcuni-luna/gpt-5.6-luna STUDY_THINKING=low node .scratch/stability-next-20260920/run-study.mjs --tui",
+      "exitCode": 0,
+      "signal": null,
+      "firstObservedEventUtc": "2026-09-20T05:07:39.733Z",
+      "lastObservedEventUtc": "2026-09-20T05:08:35.092Z",
+      "harnessDurationMs": 64228,
+      "stdout": ".scratch/stability-next-20260920/continuation-20260920-0502/tui-command.stdout",
+      "stderr": ".scratch/stability-next-20260920/continuation-20260920-0502/tui-command.stderr",
+      "evidence": ".scratch/stability-next-20260920/study-run-g9NOIF",
+      "privateRuntime": "/project/tmp/planner-study-ALAZ8M",
+      "result": {
+        "ptyVerdict": "PASS",
+        "hasUI": true,
+        "closureObserved": true,
+        "closedReason": "active-time-limit",
+        "cancelObserved": true,
+        "cancelledTerminal": true,
+        "sameIdentity": {
+          "requestId": "9766c233-cefa-40d7-8dbf-904e624c138c",
+          "ownerRunId": "01a0bd36-66a7-744b-8e75-1ce698b719b0",
+          "nodeId": "T-20260920-001"
+        },
+        "agentSettled": true,
+        "afterClosure": {"modelHooks": 0, "toolCalls": 0, "requests": 0},
+        "quietBeforeCtrlDms": 3000,
+        "naturalExitCode": 0,
+        "forcedCleanup": false,
+        "actualRootModels": ["kimi-coding/kimi-for-coding"],
+        "actualChildModels": ["tcuni-luna/gpt-5.6-luna:low:low"],
+        "cancelledChildUsagePresent": true,
+        "slotAuditExit": 0,
+        "slotStatusExit": 0,
+        "slotAuditClear": true
+      }
+    }
+  ],
+  "integrity": {
+    "before": {
+      "sourceSnapshot": ".scratch/stability-next-20260920/continuation-20260920-0502/source-at-start.json",
+      "sourceCount": 66,
+      "sourceManifestSha256": "243dcc7491f8fab3ce15b78ede3a295f56d420200d0374bef0d0fe0c4ec147ae",
+      "sourceScopeSha256": "3fa9532e2695665f8f681a252876c49965f40564e5a4d22783895277d942ef2b",
+      "harnessSnapshot": ".scratch/stability-next-20260920/continuation-20260920-0502/harness-before-host.json",
+      "harnessCount": 11,
+      "harnessManifestSha256": "a378fe9d5e7d8e5af6f5067957f07783fe58c8a12c529c1748d4a355b7fe85df",
+      "harnessScopeSha256": "73539250943bc588d449cc459bf1f7745f570ca15a91430352025d4678a12b84"
+    },
+    "after": {
+      "verifiedAtUtc": "2026-09-20T05:09:42.770Z",
+      "sourceCount": 66,
+      "sourceIncludesAdr0008": true,
+      "sourceMismatches": [],
+      "sourceManifestSha256": "243dcc7491f8fab3ce15b78ede3a295f56d420200d0374bef0d0fe0c4ec147ae",
+      "sourceScopeSha256": "3fa9532e2695665f8f681a252876c49965f40564e5a4d22783895277d942ef2b",
+      "harnessCount": 11,
+      "harnessMismatches": [],
+      "harnessManifestSha256": "a378fe9d5e7d8e5af6f5067957f07783fe58c8a12c529c1748d4a355b7fe85df",
+      "harnessScopeSha256": "73539250943bc588d449cc459bf1f7745f570ca15a91430352025d4678a12b84"
+    }
+  },
+  "mutations": {
+    "sourceOrHarnessEdits": [],
+    "generatedEvidence": [
+      ".scratch/stability-next-20260920/study-run-D1Lacq",
+      ".scratch/stability-next-20260920/study-run-g9NOIF",
+      ".scratch/stability-next-20260920/continuation-20260920-0502"
+    ],
+    "privateRuntimes": [
+      "/project/tmp/planner-study-GHqm1a",
+      "/project/tmp/planner-study-ALAZ8M"
+    ],
+    "privateRuntimeModes": {"directories": "0700", "copiedModelAndAuthFiles": "0600"},
+    "ownedProcessResidue": [],
+    "tuiDoneFileCreated": false
+  },
+  "limitations": [
+    "This is one provider-route smoke and one bounded TUI deadline-stop scenario.",
+    "No price or savings conclusion is supported; monetaryCost remains null.",
+    "P1-B, the nine-case comparison, full P3 calibration, release rerun, and strict review gate are outside this validation scope."
+  ]
+}

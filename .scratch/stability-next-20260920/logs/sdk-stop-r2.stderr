@@ -1,0 +1,8 @@
+file:///home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/sdk-stop-probe.mjs:139
+  console.log(JSON.stringify({ status: result.status, hostVersion: result.hostVersion, extraModelCallsAfterClose, queuedSignalAborted, modelCallsTotal: result.modelCallsTotal, launches: launches.length, run }));
+                                                                                                                  ^
+
+ReferenceError: queuedSignalAborted is not defined
+    at file:///home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/sdk-stop-probe.mjs:139:115
+
+Node.js v24.14.0

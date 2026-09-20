@@ -1,0 +1,18 @@
+[
+  {
+    "cmd": [
+      "node",
+      "--experimental-strip-types",
+      "architecture.test.mjs"
+    ],
+    "exit": 0
+  },
+  {
+    "cmd": [
+      "node",
+      "--experimental-strip-types",
+      "naming.test.mjs"
+    ],
+    "exit": 0
+  }
+]

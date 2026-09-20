@@ -1,0 +1,12 @@
+{
+  "source-manifest.json": {
+    "count": 65,
+    "drift": []
+  },
+  "harness-manifest.json": {
+    "count": 10,
+    "drift": []
+  },
+  "head": "85bdd2a93b994d3e4894e7534ab91cf6b16c9043",
+  "checkedAt": "2026-09-20T03:15:54.741279+00:00"
+}

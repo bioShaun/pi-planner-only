@@ -80,23 +80,18 @@ Root 把 `TaskSpec` 作为 `planner_delegate` 的参数传入——该工具没�
 }
 ```
 
-重进一个已有 Task——`request_changes` 后的修正轮、对其最新 WorkerReport 的 reviewer 调用、或一次 recovery 重执行——走 `planner_redelegate`：`taskId` 必填，逐字取自上一次结果的 `details.taskId`（绝不自行构造），role 含 `reviewer`，并可携带 `recovery` 决策：
+重进一个已有 Task——`request_changes` 后的修正轮、对其最新 WorkerReport 的 reviewer 调用、或一次 recovery 重执行——走 `planner_redelegate`：`taskId` 必填，逐字取自上一次结果的 `details.taskId`（绝不自行构造）。公开输入只保留 `taskId`、本次调用的 `role`，以及可选的 `instructions`、`envelope`、`recovery`：
 
 ```json
 {
   "taskId": "T-20260831-001",
-  "role": "reviewer",
-  "objective": "review the latest WorkerReport",
-  "scope": {},
-  "constraints": [],
-  "acceptanceCriteria": [],
-  "validation": { "required": false }
+  "role": "reviewer"
 }
 ```
 
 当 canonical id 不在上下文里（压缩或 session 恢复后），`planner_tasks` 会列出本 workspace 的 live Task——非终态，以及挂着 recovery 决策的 blocked——含 `taskId`、`state`、`role`、`recoveryRequired` 与来源（`memory` 或 `ledger`；restore cap 可能让 live Task 只留在磁盘上）。它只读：不铸新、不绑定、不恢复、不启动。
 
-`planner_delegate` 登记任务、采样工作区；同一 cwd 上第二个 `worker` 委派会被拒绝（每个 cwd 至多一个 worker）；`subagent` 与 `bg_wait` 调用一律拒绝。铸出的 id 会在共享 ledger 命名空间中以跨进程原子 claim 保留；恢复过、终态、超恢复上限或快照损坏的 id 都不会再次分配。`planner_redelegate` 逐字绑定既有记录——其存下的 spec 绝不重写——并校验 workspace；id 冲突不会被当作继续。受限角色会 remap 到工具面匹配的 builtin agent：
+`planner_delegate` 登记任务、采样工作区；同一 cwd 上第二个 `worker` 委派会被拒绝（每个 cwd 至多一个 worker）；`subagent` 与 `bg_wait` 调用一律拒绝。铸出的 id 会在共享 ledger 命名空间中以跨进程原子 claim 保留；恢复过、终态、超恢复上限或快照损坏的 id 都不会再次分配。`planner_redelegate` 逐字绑定既有记录——完整已存 spec（包括 workspace 与 validation）是下行契约，绝不重写——并按宿主上下文校验 workspace。旧客户端重复提供的定义字段会被忽略并告警；`instructions` 只补充本次 child packet。id 冲突不会被当作继续。受限角色会 remap 到工具面匹配的 builtin agent：
 
 ### 只读恢复与诊断
 
@@ -131,7 +126,7 @@ hold，直到恢复条件解决。
 
 验证运行由 Root 显式委派（`planner_delegate` + role=validator 新建验证 Task，`planner_redelegate` 复验既有 Task）；没有任何自动派发。
 
-`planner_delegate` 与 `planner_redelegate` 不在委派请求里设置 `model`、`thinking`、`toolBudget`、`timeoutMs`，子进程按宿主默认值运行；usage 行里的 `model` / `thinking` 是从子进程响应读回、只用于归因。
+`planner_delegate` / `planner_redelegate` 在角色路由关闭时沿用 launcher 的 `model` / `thinking` 默认值；启用操作者策略后，发送精确确认可用的 `provider/model` 与 thinking，并在采纳完成报告前核对终态实际身份。两个工具不设置 `toolBudget` / `timeoutMs`；执行 envelope 由插件控制。usage 按 child 返回的实际身份归因。
 
 `reviewer` 子进程一律 `context: "fresh"`，携带 `ReviewRequest`——Task 的 spec、最新 WorkerReport、Root 采集的 Git 证据、有界补丁——不会 fork 父会话。ReviewRequest 是对 Task 的一次调用，绝不是新的 TaskSpec；reviewer 调用只能经 `planner_redelegate`（新铸的 Task 上没有东西可审）。Task 的原始 role、objective、spec 在 worker / reviewer / validation 各轮中保持不变。经 `planner_redelegate` 的 validator 调用是对被审 Task 的调用，其报告记录在该 Task 的 validatorReports。
 
@@ -192,7 +187,7 @@ operator 可通过环境变量配置正有限整数，请求创建时冻结；�
 
 状态保存在 agent 目录下的 `planner-only/requests/`，区分 claim 已提交、REQUEST
 已观察发出、terminal 已收到和停止已确认。不要用删除状态的方式解除未确认 writer。
-Root abort 属于尽力停止；宿主仍可能消费排队消息并产生模型调用。provider-request
+Request 封锁后，每次新的 agent_start 都会重新发出 abort。真实 SDK 0.85.1 / 假模型队列探针已观察到额外模型调用为 0；交互 TUI 尚未验证，其他宿主路径仍可能需要额外停止支持。provider-request
 hook 的观测取决于 provider，不承诺全局模型次数、token 或费用硬上限。
 
 ### 复合工作流
@@ -238,7 +233,7 @@ Token 数为准，美元/人民币金额是推导值。扩展跟踪 Root 各生�
 - 以 `_` 开头的键会被忽略（可用于注释）。
 - 可在会话内通过 `/planner-only usage reload` 重新加载费率表。
 
-会话级 root 累计预算**默认关闭**。`/planner-only budget on` 打开（标记文件 `~/.pi/agent/planner-only/session-root-budget.on`），`/planner-only budget off` 关闭。开启后按 worker 初始 floor 的 ×3 软顶警告；×5 硬顶目前只披露、不拦截委派。`PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` 或 `=0` 会覆盖标记。单次执行的异常上限走显式 `envelope` 参数（`planner_delegate` 与 `planner_redelegate`），无默认线——未配置时只观测不取消。会话证据导出只携带 `statuses`（task / workerReport / reviewResult / rootVerdict / refusalKind）、`findings`、`usage`、`breakdown`、`unattributed`；linkage / requirements / evidenceMatrix / analysis 块已移除。
+会话级 root 累计预算**默认关闭**。`/planner-only budget on` 打开（标记文件 `~/.pi/agent/planner-only/session-root-budget.on`），`/planner-only budget off` 关闭。开启后按 worker 初始 floor 的 ×3 软顶警告；×5 硬顶目前只披露、不拦截委派。`PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` 或 `=0` 会覆盖标记。普通 worker、explorer、validator 执行始终有有限异常上限：省略 `envelope` 时使用 `maxTokens=100000`、`maxWallMs=600000`（10 分钟，在 15 分钟 Request 截止之内；见 ADR-0008）；重编码类 worker 应由 Root 显式传 envelope，且 `maxTokens`、`maxWallMs` **两个都传**：显式 envelope 会整体替换默认值，只传 `maxWallMs` 会丢掉 token 上限；`maxWallMs` 要按 Request 剩余时间（截止从 Request 首次活动起算）并给验证、评审留余量；操作者可用正安全整数环境变量 `PI_PLANNER_ONLY_EXECUTION_MAX_TOKENS`、`PI_PLANNER_ONLY_EXECUTION_MAX_WALL_MS` 替换对应默认值。账本来源记为 `default`、`operator-config` 或 `delegation-param`。显式 `envelope: { maxTokens?, maxWallMs? }` 只保留调用者给出的维度和值。reviewer 仍只受所属 Request 限制，不声称拥有执行 envelope。会话证据导出只携带 `statuses`（task / workerReport / reviewResult / rootVerdict / refusalKind）、`findings`、`usage`、`breakdown`、`unattributed`；linkage / requirements / evidenceMatrix / analysis 块已移除。
 
 **替代方案：** 推荐直接在 `~/.pi/agent/models.json` 里配置 `cost`。这样 Pi 和 `pi-subagents` 的原生命令（如 `/subagent-cost`）都能直接计价。插件自带的定价表仅作为不需要改动 `models.json` 时的备用与覆盖机制。
 
@@ -288,3 +283,15 @@ npm run test:release  # 发布门禁：typecheck + 单元测试
 | `index.ts` | hook、工具、命令 |
 
 不引入后台 Advisor、调度队列或外部 telemetry。Task、Request 与用量按上述规则保存在本地。
+
+### 操作者配置委派模型
+
+`PI_PLANNER_ONLY_ROLE_MODELS=1` 启用 typed 委派工具的角色路由。通过
+`PI_PLANNER_ONLY_MODEL_WORKER=provider/model` 和 `PI_PLANNER_ONLY_THINKING_WORKER=low`
+配置 worker；`EXPLORER`、`VALIDATOR`、`REVIEWER` 同理。未启用时沿用 launcher 的选择。
+工具参数不能覆盖操作者策略；创建 Task/child 前必须由宿主可用模型列表确认。
+仅显式配置的 `PI_PLANNER_ONLY_MODEL_WORKER_FALLBACK` 可以替换不可用模型。
+
+终态必须报告匹配的实际模型和 thinking（独立字段或已知的 `:thinking` 后缀）。缺失或冲突时不采纳 completed 报告，但保留 usage 和诊断报告。
+工具 `details.modelRoute` 和 `planner-only-model-route` 会话条目记录期望与实际身份。
+当前接线已通过 fixture；真实模型路由和成本收益仍需普通终端测量。

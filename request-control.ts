@@ -397,8 +397,15 @@ export class RequestController {
 	 * not invoke before_provider_request (including the SDK faux provider). */
 	rootActive(): void {
 		this.current.settled = false;
-		if (this.current.closedReason) this.current.rootStop = "unconfirmed";
+		if (this.current.closedReason) {
+			this.current.rootStop = "unconfirmed";
+			// Queued/extension continuations can create a fresh host abort signal.
+			// Stop that run again; a previous abort cannot cancel a future signal.
+			this.stopRoot();
+		}
 		this.save();
+		this.checkDeadline();
+		this.arm();
 	}
 	settle(): void {
 		if (this.executing.size > 0) return;

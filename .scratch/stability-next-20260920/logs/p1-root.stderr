@@ -1,0 +1,29 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+
+Caught error:
+
+ExecutionDefaultsConfigError: PI_PLANNER_ONLY_EXECUTION_MAX_TOKENS must be a positive finite safe integer, got " "
+    at async file:///home/tcuni-claw/pi/pi-planner-only/p1-delegation.test.mjs:243:2 {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: ExecutionDefaultsConfigError: PI_PLANNER_ONLY_EXECUTION_MAX_TOKENS must be a positive finite safe integer, got " "
+      at positiveSafeInteger (file:///home/tcuni-claw/pi/pi-planner-only/execution-defaults.ts:25:9)
+      at loadExecutionDefaults (file:///home/tcuni-claw/pi/pi-planner-only/execution-defaults.ts:36:17)
+      at file:///home/tcuni-claw/pi/pi-planner-only/index.ts:1086:9
+      at withRefusalBreaker (file:///home/tcuni-claw/pi/pi-planner-only/index.ts:615:25)
+      at Object.execute (file:///home/tcuni-claw/pi/pi-planner-only/index.ts:1055:12)
+      at Object.execute (file:///home/tcuni-claw/pi/pi-planner-only/index.ts:578:32)
+      at f.call (file:///home/tcuni-claw/pi/pi-planner-only/p1-delegation.test.mjs:156:68)
+      at file:///home/tcuni-claw/pi/pi-planner-only/p1-delegation.test.mjs:243:31 {
+    code: 'EXECUTION_DEFAULTS_INVALID'
+  },
+  expected: [Function (anonymous)],
+  operator: 'rejects',
+  diff: 'simple'
+}
+
+Node.js v24.14.0

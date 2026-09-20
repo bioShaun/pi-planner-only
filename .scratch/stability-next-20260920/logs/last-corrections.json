@@ -1,0 +1,23 @@
+[
+  {
+    "name": "available-registry fixture first run",
+    "exit": 1,
+    "stdout": "p1-p2-available-registry.stdout",
+    "stderr": "p1-p2-available-registry.stderr",
+    "cause": "30ms Request expired during real ledger setup before launch"
+  },
+  {
+    "name": "available-registry fixture corrected timing",
+    "exit": 0,
+    "command": "node --experimental-strip-types p1-delegation.test.mjs",
+    "stdout": "p1-p2-available-registry-r2.stdout",
+    "stderr": "p1-p2-available-registry-r2.stderr"
+  },
+  {
+    "name": "typecheck after registry guard",
+    "exit": 0,
+    "command": "npm run typecheck",
+    "stdout": "typecheck-registry-final.stdout",
+    "stderr": "typecheck-registry-final.stderr"
+  }
+]

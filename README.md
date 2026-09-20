@@ -139,18 +139,14 @@ id in `details.taskId`:
 Re-entering an existing Task — a correction round after `request_changes`, a
 reviewer invocation over its latest WorkerReport, or a recovery re-execution —
 goes through `planner_redelegate`, which requires the canonical `taskId`
-verbatim from a prior result's `details.taskId` (never construct one) and
-accepts `role` including `reviewer` plus an optional `recovery` decision:
+verbatim from a prior result's `details.taskId` (never construct one). Its
+public input is only `taskId`, invocation `role`, and optional `instructions`,
+`envelope`, and `recovery`:
 
 ```json
 {
   "taskId": "T-20260831-001",
-  "role": "reviewer",
-  "objective": "review the latest WorkerReport",
-  "scope": {},
-  "constraints": [],
-  "acceptanceCriteria": [],
-  "validation": { "required": false }
+  "role": "reviewer"
 }
 ```
 
@@ -166,8 +162,11 @@ second `worker` for the same cwd (at most one worker per cwd); `subagent` and
 `bg_wait` calls are refused outright. The minted id is reserved in the shared ledger
 namespace with an atomic cross-process claim: restored, terminal, over-cap, and
 unreadable snapshot ids remain occupied. `planner_redelegate` binds the
-existing record verbatim — its stored spec is never rewritten — and checks the
-workspace; an id collision is never treated as continuation. Restricted roles remap onto builtin agents:
+existing record verbatim — its full stored spec, including workspace and
+validation, is the child contract and is never rewritten — and checks the host
+context workspace. Legacy repeated definition fields are ignored with a
+warning; `instructions` augments only that child packet. An id collision is
+never treated as continuation. Restricted roles remap onto builtin agents:
 
 Invalid TaskSpec refusals show a repair summary that preserves the trusted
 role and validation intent. A command-list shorthand becomes explicit mandatory
@@ -190,7 +189,7 @@ Validation runs are delegated by Root explicitly (`planner_delegate` with
 role=validator for a fresh validation Task, `planner_redelegate` to re-validate
 an existing Task); nothing is auto-dispatched.
 
-`planner_delegate` and `planner_redelegate` do not set `model`, `thinking`, `toolBudget`, or `timeoutMs` on the delegation request; the child runs with the host's defaults for all four. The `model` and `thinking` values in usage rows are read back from the child's response for attribution only.
+`planner_delegate` and `planner_redelegate` use launcher defaults for `model` and `thinking` unless operator role routing is enabled. Enabled routing sends an exactly verified available `provider/model` and thinking, then checks actual terminal identity before accepting completion. Neither tool sets `toolBudget` or `timeoutMs`; the plugin owns its execution envelope. Usage rows retain the child response identity for attribution.
 
 A `reviewer` child always launches with `context: "fresh"` carrying a
 `ReviewRequest` — the Task's spec, the latest WorkerReport, Root's Git
@@ -329,8 +328,10 @@ request starts. Zero, empty, negative, fractional, or unlimited values are inval
 The durable state lives under the agent directory's `planner-only/requests/`.
 Committed claims, observed sends, terminal receipt, and confirmed stop remain
 separate diagnostics. Do not delete this state to recover an unconfirmed writer.
-Root abort is best effort: a host may still process queued messages and incur
-model calls. Provider-request hooks are observations, may be absent for some
+Root abort is reasserted at every subsequent agent start while the Request is closed.
+The real SDK 0.85.1 / faux-provider queue probe observes zero extra model calls
+with this guard; interactive TUI behavior remains unverified. Other host paths
+may still require additional stop support. Provider-request hooks are observations, may be absent for some
 providers, and are not a token, cost, or exact model-call hard limit.
 
 ### Composite workflows
@@ -379,7 +380,7 @@ The pricing table format:
 - Keys starting with `_` are ignored (useful for comments).
 - Reload rates in-session with `/planner-only usage reload`.
 
-Session-level root spend gating is **off by default**. `/planner-only budget on` turns it on for this machine (marker: `~/.pi/agent/planner-only/session-root-budget.on`); `/planner-only budget off` turns it off. Soft cap warns at 3× the worker-initial floor; the 5× hard threshold is reported only — it does not refuse delegations yet. `PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` or `=0` overrides the marker. Per-execution anomaly bounds are explicit-only: `planner_delegate` and `planner_redelegate` accept `envelope: { maxTokens?, maxWallMs? }` and cancel the child (via the same CANCEL path as Esc) when a bound trips; with no envelope the monitor only observes. The session evidence export carries `statuses` (task / workerReport / reviewResult / rootVerdict / refusalKind), `findings`, `usage`, `breakdown`, and `unattributed`; the linkage / requirements / evidenceMatrix / analysis blocks are gone.
+Session-level root spend gating is **off by default**. `/planner-only budget on` turns it on for this machine (marker: `~/.pi/agent/planner-only/session-root-budget.on`); `/planner-only budget off` turns it off. Soft cap warns at 3× the worker-initial floor; the 5× hard threshold is reported only — it does not refuse delegations yet. `PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` or `=0` overrides the marker. Ordinary worker, explorer, and validator executions always have finite anomaly bounds. Omitting `envelope` uses `maxTokens=100000` and `maxWallMs=600000` (ten minutes, inside the fifteen-minute Request deadline; ADR-0008); for a heavy coding worker Root should pass an explicit envelope with **both** `maxTokens` and `maxWallMs`, because an explicit envelope replaces the defaults entirely and a lone `maxWallMs` would drop the token bound; size `maxWallMs` to the Request's remaining time (the deadline runs from the Request's first activity) with room left for validation and review; operators may replace either default with the positive safe-integer environment variables `PI_PLANNER_ONLY_EXECUTION_MAX_TOKENS` and `PI_PLANNER_ONLY_EXECUTION_MAX_WALL_MS`. The persisted source is `default`, `operator-config`, or `delegation-param`. An explicit `envelope: { maxTokens?, maxWallMs? }` keeps only its caller-supplied dimensions and values. Reviewer invocations remain bounded by the enclosing Request and do not claim an execution envelope. The session evidence export carries `statuses` (task / workerReport / reviewResult / rootVerdict / refusalKind), `findings`, `usage`, `breakdown`, and `unattributed`; the linkage / requirements / evidenceMatrix / analysis blocks are gone.
 
 **Alternative:** The preferred approach is to specify `cost` directly in `~/.pi/agent/models.json`. This enables native cost calculation across both Pi and `pi-subagents` (e.g. `/subagent-cost`). The plugin table serves as a fallback or override when you prefer not to modify `models.json`.
 
@@ -435,3 +436,20 @@ runs, not as a release-gate suite.
 | `index.ts` | hooks, tool, commands |
 
 No background advisor or telemetry. Persistence includes Task ledger snapshots, Request control records, session custom entries, and the local append-only usage log.
+
+### Operator-selected delegation models
+
+`PI_PLANNER_ONLY_ROLE_MODELS=1` enables routing on the typed delegation tools.
+Set `PI_PLANNER_ONLY_MODEL_WORKER=provider/model` and
+`PI_PLANNER_ONLY_THINKING_WORKER=low` (likewise `EXPLORER`, `VALIDATOR`, or
+`REVIEWER`). With routing disabled, the launcher retains its existing selection.
+Tool arguments cannot override operator routing. The configured model must be
+available in the host registry before a Task or child is allocated. Only explicitly
+configured `PI_PLANNER_ONLY_MODEL_WORKER_FALLBACK` candidates may replace it.
+
+The launcher terminal must report the expected qualified model and thinking
+(either a separate field or a known `:thinking` suffix). Missing or conflicting
+identity prevents completed reports from being accepted; usage and diagnostic
+reports remain recorded. Tool `details.modelRoute` and session entries of type
+`planner-only-model-route` preserve expected and actual identity. This wiring has
+fixture coverage; real provider routing and cost savings still require measurement.

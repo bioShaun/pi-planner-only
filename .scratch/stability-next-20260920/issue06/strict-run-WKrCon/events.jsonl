@@ -1,0 +1,7 @@
+{"type":"thread.started","thread_id":"01a0bd5b-ce3d-7a33-b4b1-a0172c3f2da9"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I’ll prove the parent’s runtime filesystem permissions, then delegate the audit once and wait for the reviewer’s result.\n"}}
+{"type":"item.started","item":{"id":"item_1","type":"collab_tool_call","tool":"wait","sender_thread_id":"01a0bd5b-ce3d-7a33-b4b1-a0172c3f2da9","receiver_thread_ids":[],"prompt":null,"agents_states":{},"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"collab_tool_call","tool":"wait","sender_thread_id":"01a0bd5b-ce3d-7a33-b4b1-a0172c3f2da9","receiver_thread_ids":[],"prompt":null,"agents_states":{},"status":"completed"}}
+{"type":"item.started","item":{"id":"item_2","type":"collab_tool_call","tool":"wait","sender_thread_id":"01a0bd5b-ce3d-7a33-b4b1-a0172c3f2da9","receiver_thread_ids":[],"prompt":null,"agents_states":{},"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"collab_tool_call","tool":"wait","sender_thread_id":"01a0bd5b-ce3d-7a33-b4b1-a0172c3f2da9","receiver_thread_ids":[],"prompt":null,"agents_states":{},"status":"completed"}}

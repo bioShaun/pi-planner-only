@@ -1,0 +1,1 @@
+review-readonly: session completed; inspect the emitted reviewer verdict and runtime-permission evidence

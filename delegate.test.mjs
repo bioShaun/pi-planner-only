@@ -212,8 +212,8 @@ async function expectRefusal(promise, code) {
 }
 
 // ---------------------------------------------------------------------------
-// Re-delegating an existing Task: stored spec is verbatim, this call's spec
-// only enters the packet (ticket 53 rule).
+// Re-delegating an existing Task: stored spec is verbatim and is what the
+// child packet carries; legacy definition fields on the call are ignored (P1-A).
 // ---------------------------------------------------------------------------
 {
 	const dir = initRealRepo();
@@ -242,7 +242,9 @@ async function expectRefusal(promise, code) {
 	assert.equal(outcome.task.spec.objective, "original objective", "stored spec unchanged");
 	assert.deepEqual(outcome.task.spec, original, "stored spec verbatim");
 	const packet = JSON.parse(launches[0].task);
-	assert.equal(packet.spec.objective, "revised objective for this run", "packet carries this call's spec");
+	assert.equal(packet.spec.objective, "original objective", "packet carries the stored spec, not this call's objective");
+	assert.deepEqual(packet.spec, original, "packet spec is the stored spec verbatim");
+	assert.match(outcome.warnings.join("\n"), /ignored legacy TaskSpec field\(s\).*objective/);
 	assert.equal(packet.spec.taskId, "T-20260915-100");
 	assert.equal(deps.concurrency.status().reservations.length, 0);
 }
@@ -490,7 +492,7 @@ async function expectRefusal(promise, code) {
 		assert.deepEqual(childPacket.spec.validation.commands, initialCommands, "commands preserve ordering and string verbatim to child");
 		assert.deepEqual(outcome.task.spec?.validation.commands, initialCommands, "stored task has initial commands");
 
-		// 2. Redelegate with different commands passes new commands to child but preserves stored spec
+		// 2. Legacy definition fields on redelegate are ignored; the stored spec is authoritative.
 		const reCommands = ["npm test", incidentCommand];
 		const reOutcome = await runDelegation(
 			deps,
@@ -503,14 +505,14 @@ async function expectRefusal(promise, code) {
 		);
 		assert.equal(launches.length, 2);
 		const reChildPacket = JSON.parse(launches[1].task);
-		assert.deepEqual(reChildPacket.spec.validation.commands, reCommands, "redelegate commands reach child unchanged");
+		assert.deepEqual(reChildPacket.spec.validation.commands, initialCommands, "redelegate uses stored commands");
+		assert.match(reOutcome.warnings.join("\n"), /ignored legacy TaskSpec field\(s\).*validation/);
 		// Stored original TaskSpec is not rewritten (ticket 53/incident spec)
 		const storedTask = store.require(outcome.task.taskId);
 		assert.deepEqual(storedTask.spec?.validation.commands, initialCommands, "stored TaskSpec is never rewritten on redelegate");
 
-		// 3. Redelegate with missing commands is refused before launch, doesn't silently borrow old commands
-		await assert.rejects(
-			runDelegation(
+		// 3. Even a forged incomplete replacement cannot weaken the stored validation contract.
+		await runDelegation(
 				deps,
 				makeParams({
 					taskId: outcome.task.taskId,
@@ -518,13 +520,9 @@ async function expectRefusal(promise, code) {
 				}),
 				dir,
 				{ executionId: "call-redelegate-missing" },
-			),
-			(error) => {
-				assert.equal(error?.code, "TASKSPEC_VALIDATION_INCOMPLETE");
-				return true;
-			},
-		);
-		assert.equal(launches.length, 2, "child was not launched on missing commands");
+			);
+		assert.equal(launches.length, 3);
+		assert.deepEqual(JSON.parse(launches[2].task).spec.validation.commands, initialCommands);
 	}
 }
 
@@ -557,6 +555,7 @@ assert.equal(
 	);
 	assert.match(rebind.properties.taskId.description, /Never construct one/);
 	assert.match(rebind.properties.taskId.description, /details\.taskId/);
+	assert.deepEqual(Object.keys(rebind.properties).sort(), ["envelope", "instructions", "recovery", "role", "taskId"]);
 }
 
 // acceptanceMode is a creation-time contract: planner_delegate carries it,
@@ -1192,11 +1191,14 @@ function reviewerParams(taskId, overrides = {}) {
 
 // ---------------------------------------------------------------------------
 // 截断包: a declared root that cannot be sampled truncates the packet; a pass
-// over it is refused, request_changes still records.
+// over it is refused, request_changes still records. P1-A runs the worker from
+// the stored spec too, so the extra root must be a readable worktree at launch
+// (a missing root is refused pre-launch as ENVIRONMENT_UNVERIFIABLE) and goes
+// missing only before the reviewer samples it.
 // ---------------------------------------------------------------------------
 {
 	const dir = initCommittedRepo();
-	const missing = join(dir, "missing-root");
+	const missing = initCommittedRepo();
 	const store = new TaskStore();
 	store.create(createTaskSpec({
 		taskId: "T-20260915-400",
@@ -1219,6 +1221,8 @@ function reviewerParams(taskId, overrides = {}) {
 	];
 	const { deps, launches } = makeReviewDeps(dir, { store, reviewFor: (request, i) => reviewResults[i](request) });
 	await runDelegation(deps, makeParams({ taskId: "T-20260915-400" }), dir, { executionId: "call-w" });
+	assert.equal(launches.length, 1, "worker launched while every declared root was sampleable");
+	rmSync(missing, { recursive: true, force: true });
 
 	await expectRefusal(
 		runDelegation(deps, reviewerParams("T-20260915-400"), dir, { executionId: "call-r1" }),
@@ -2137,7 +2141,7 @@ for (const [index, [status, expectedState]] of [
 }
 
 // ---------------------------------------------------------------------------
-// P0-B.3 — without an envelope the monitor never cancels, even at high tokens.
+// P1-A — omitted envelope uses finite defaults and persists its provenance.
 // ---------------------------------------------------------------------------
 {
 	const dir = initRealRepo();
@@ -2145,8 +2149,8 @@ for (const [index, [status, expectedState]] of [
 		gitRunner: async (args, cwd) => realGit(dir, ...args),
 		launch: async (request, signal, hooks) => {
 			const base = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
-			hooks.onUpdate({ ...base, tokens: 999_999 });
-			assert.equal(signal.aborted, false, "no envelope → observe-only, never abort");
+			hooks.onUpdate({ ...base, tokens: 99_999 });
+			assert.equal(signal.aborted, false, "default token envelope is not yet exceeded");
 			return {
 				...base,
 				status: "completed",
@@ -2161,6 +2165,7 @@ for (const [index, [status, expectedState]] of [
 	assert.ok(outcome.report, "unconfigured delegation completes untouched");
 	assert.equal(outcome.termination, undefined);
 	assert.equal(outcome.task.recovery, undefined);
+	assert.deepEqual(outcome.task.executions[0].envelope, { maxTokens: 100_000, maxWallMs: 600_000, source: "default" });
 }
 
 // ---------------------------------------------------------------------------

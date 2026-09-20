@@ -1,0 +1,5 @@
+
+> pi-planner-only@0.9.0 test:p1
+> node --experimental-strip-types p1-delegation.test.mjs
+
+p1-delegation: PASS (real plugin/tools/transport/ledger; fake Git and child source; no subprocess)

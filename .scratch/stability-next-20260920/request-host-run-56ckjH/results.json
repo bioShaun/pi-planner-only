@@ -1,0 +1,434 @@
+{
+  "status": "PASS",
+  "host": "/home/tcuni-claw/.nvm/versions/node/v24.14.0/lib/node_modules/@earendil-works/pi-coding-agent",
+  "hostVersion": "0.85.1",
+  "modelCallsAtClosure": 3,
+  "modelCallsAtFirstSettlement": 3,
+  "extraModelCallsAfterClose": 0,
+  "queuedProviderEntered": false,
+  "modelCallsTotal": 12,
+  "stopped": {
+    "id": "16c991c1-b8ad-49a6-8b73-399a2f362e35",
+    "limits": {
+      "toolAttempts": 32,
+      "childLaunches": 8,
+      "failures": 3,
+      "repairs": 2,
+      "activeMs": 900000
+    },
+    "startedAt": 1789872510730,
+    "deadline": 1789873410730,
+    "toolAttempts": 3,
+    "childLaunches": 0,
+    "repairs": 0,
+    "modelCallsObserved": 0,
+    "tools": [
+      {
+        "id": "bad-1",
+        "name": "planner_verdict",
+        "phase": "settled"
+      },
+      {
+        "id": "bad-2",
+        "name": "planner_verdict",
+        "phase": "settled"
+      },
+      {
+        "id": "bad-3",
+        "name": "planner_verdict",
+        "phase": "settled"
+      }
+    ],
+    "claims": [],
+    "failures": [
+      {
+        "id": "tool:bad-1",
+        "family": "contract:planner_verdict:TASK_NOT_FOUND",
+        "resolved": false
+      },
+      {
+        "id": "tool:bad-2",
+        "family": "contract:planner_verdict:TASK_NOT_FOUND",
+        "resolved": false
+      },
+      {
+        "id": "tool:bad-3",
+        "family": "contract:planner_verdict:TASK_NOT_FOUND",
+        "resolved": false
+      }
+    ],
+    "structures": [
+      {
+        "operation": "planner_verdict",
+        "issues": []
+      }
+    ],
+    "settled": true,
+    "rootStop": "confirmed",
+    "closedReason": "no-progress:contract:planner_verdict:TASK_NOT_FOUND"
+  },
+  "next": {
+    "id": "e75d68c3-6ff0-440d-b5ab-58597bd38271",
+    "limits": {
+      "toolAttempts": 32,
+      "childLaunches": 8,
+      "failures": 3,
+      "repairs": 2,
+      "activeMs": 900000
+    },
+    "startedAt": 1789872511041,
+    "deadline": 1789873411041,
+    "toolAttempts": 1,
+    "childLaunches": 1,
+    "repairs": 0,
+    "modelCallsObserved": 0,
+    "tools": [
+      {
+        "id": "fresh-interactive",
+        "name": "planner_delegate",
+        "phase": "settled"
+      }
+    ],
+    "claims": [
+      {
+        "key": "90a6ab31-1e5d-48d2-8a37-00466f8020e2",
+        "taskId": "T-20260920-001",
+        "executionId": "fresh-interactive",
+        "committedAt": 1789872511108,
+        "stop": "confirmed",
+        "waitSettled": true,
+        "emittedAt": 1789872511113,
+        "terminalAt": 1789872511118
+      }
+    ],
+    "failures": [],
+    "structures": [
+      {
+        "operation": "planner_delegate",
+        "issues": []
+      }
+    ],
+    "settled": true,
+    "rootStop": "not-requested"
+  },
+  "unknown": {
+    "id": "bd3b80f8-8204-4bcc-a97a-7d89c11d8195",
+    "limits": {
+      "toolAttempts": 32,
+      "childLaunches": 8,
+      "failures": 3,
+      "repairs": 2,
+      "activeMs": 900000
+    },
+    "startedAt": 1789872521590,
+    "deadline": 1789873421590,
+    "toolAttempts": 3,
+    "childLaunches": 0,
+    "repairs": 0,
+    "modelCallsObserved": 0,
+    "tools": [
+      {
+        "id": "unknown-1",
+        "name": "never_registered",
+        "phase": "settled"
+      },
+      {
+        "id": "unknown-2",
+        "name": "never_registered",
+        "phase": "settled"
+      },
+      {
+        "id": "unknown-3",
+        "name": "never_registered",
+        "phase": "settled"
+      }
+    ],
+    "claims": [],
+    "failures": [
+      {
+        "id": "tool:unknown-1",
+        "family": "unknown-failure",
+        "resolved": false
+      },
+      {
+        "id": "tool:unknown-2",
+        "family": "unknown-failure",
+        "resolved": false
+      },
+      {
+        "id": "tool:unknown-3",
+        "family": "unknown-failure",
+        "resolved": false
+      }
+    ],
+    "structures": [],
+    "settled": true,
+    "rootStop": "confirmed",
+    "closedReason": "no-progress:unknown-failure"
+  },
+  "repaired": {
+    "id": "973f3676-7d75-482a-aa58-04e8526dbe9f",
+    "limits": {
+      "toolAttempts": 32,
+      "childLaunches": 8,
+      "failures": 3,
+      "repairs": 2,
+      "activeMs": 900000
+    },
+    "startedAt": 1789872521696,
+    "deadline": 1789873421696,
+    "toolAttempts": 3,
+    "childLaunches": 0,
+    "repairs": 2,
+    "modelCallsObserved": 0,
+    "tools": [
+      {
+        "id": "schema-two",
+        "name": "planner_tasks",
+        "phase": "settled"
+      },
+      {
+        "id": "schema-one",
+        "name": "planner_tasks",
+        "phase": "settled"
+      },
+      {
+        "id": "schema-fixed",
+        "name": "planner_tasks",
+        "phase": "settled"
+      }
+    ],
+    "claims": [],
+    "failures": [
+      {
+        "id": "tool:schema-two",
+        "family": "contract:planner_tasks:arguments",
+        "resolved": false
+      },
+      {
+        "id": "tool:schema-one",
+        "family": "contract:planner_tasks:arguments",
+        "resolved": false
+      }
+    ],
+    "structures": [
+      {
+        "operation": "planner_tasks",
+        "issues": []
+      }
+    ],
+    "settled": true,
+    "rootStop": "not-requested"
+  },
+  "trace": [
+    {
+      "event": "input",
+      "source": "interactive",
+      "modelCalls": 0,
+      "idle": true
+    },
+    {
+      "event": "agent_start",
+      "modelCalls": 0,
+      "idle": false
+    },
+    {
+      "event": "tool_call",
+      "toolCallId": "bad-1",
+      "toolName": "planner_verdict",
+      "modelCalls": 1,
+      "idle": false
+    },
+    {
+      "event": "tool_result",
+      "toolCallId": "bad-1",
+      "toolName": "planner_verdict",
+      "modelCalls": 1,
+      "idle": false
+    },
+    {
+      "event": "tool_call",
+      "toolCallId": "bad-2",
+      "toolName": "planner_verdict",
+      "modelCalls": 2,
+      "idle": false
+    },
+    {
+      "event": "tool_result",
+      "toolCallId": "bad-2",
+      "toolName": "planner_verdict",
+      "modelCalls": 2,
+      "idle": false
+    },
+    {
+      "event": "tool_call",
+      "toolCallId": "bad-3",
+      "toolName": "planner_verdict",
+      "modelCalls": 3,
+      "idle": false
+    },
+    {
+      "event": "tool_result",
+      "toolCallId": "bad-3",
+      "toolName": "planner_verdict",
+      "modelCalls": 3,
+      "idle": false
+    },
+    {
+      "event": "agent_end",
+      "modelCalls": 3,
+      "idle": false
+    },
+    {
+      "event": "agent_start",
+      "modelCalls": 3,
+      "idle": false
+    },
+    {
+      "event": "agent_end",
+      "modelCalls": 3,
+      "idle": false
+    },
+    {
+      "event": "agent_settled",
+      "modelCalls": 3,
+      "idle": true
+    },
+    {
+      "event": "input",
+      "source": "extension",
+      "modelCalls": 3,
+      "idle": true
+    },
+    {
+      "event": "agent_start",
+      "modelCalls": 3,
+      "idle": false
+    },
+    {
+      "event": "agent_end",
+      "modelCalls": 3,
+      "idle": false
+    },
+    {
+      "event": "agent_settled",
+      "modelCalls": 3,
+      "idle": true
+    },
+    {
+      "event": "input",
+      "source": "extension",
+      "modelCalls": 3,
+      "idle": true
+    },
+    {
+      "event": "agent_start",
+      "modelCalls": 3,
+      "idle": false
+    },
+    {
+      "event": "agent_end",
+      "modelCalls": 3,
+      "idle": false
+    },
+    {
+      "event": "agent_settled",
+      "modelCalls": 3,
+      "idle": true
+    },
+    {
+      "event": "input",
+      "source": "interactive",
+      "modelCalls": 3,
+      "idle": true
+    },
+    {
+      "event": "agent_start",
+      "modelCalls": 3,
+      "idle": false
+    },
+    {
+      "event": "tool_call",
+      "toolCallId": "fresh-interactive",
+      "toolName": "planner_delegate",
+      "modelCalls": 4,
+      "idle": false
+    },
+    {
+      "event": "tool_result",
+      "toolCallId": "fresh-interactive",
+      "toolName": "planner_delegate",
+      "modelCalls": 4,
+      "idle": false
+    },
+    {
+      "event": "agent_end",
+      "modelCalls": 5,
+      "idle": false
+    },
+    {
+      "event": "agent_settled",
+      "modelCalls": 5,
+      "idle": true
+    },
+    {
+      "event": "input",
+      "source": "interactive",
+      "modelCalls": 5,
+      "idle": true
+    },
+    {
+      "event": "agent_start",
+      "modelCalls": 5,
+      "idle": false
+    },
+    {
+      "event": "agent_end",
+      "modelCalls": 8,
+      "idle": false
+    },
+    {
+      "event": "agent_settled",
+      "modelCalls": 8,
+      "idle": true
+    },
+    {
+      "event": "input",
+      "source": "interactive",
+      "modelCalls": 8,
+      "idle": true
+    },
+    {
+      "event": "agent_start",
+      "modelCalls": 8,
+      "idle": false
+    },
+    {
+      "event": "tool_call",
+      "toolCallId": "schema-fixed",
+      "toolName": "planner_tasks",
+      "modelCalls": 11,
+      "idle": false
+    },
+    {
+      "event": "tool_result",
+      "toolCallId": "schema-fixed",
+      "toolName": "planner_tasks",
+      "modelCalls": 11,
+      "idle": false
+    },
+    {
+      "event": "agent_end",
+      "modelCalls": 12,
+      "idle": false
+    },
+    {
+      "event": "agent_settled",
+      "modelCalls": 12,
+      "idle": true
+    }
+  ],
+  "scope": "Real SDK/ExtensionRunner and real plugin; faux provider, fake Git and launcher events; no subprocess/network/paid model; SDK retry disabled.",
+  "limitations": "No real CLI/TUI or pi-subagents 0.69.0 runtime acceptance; no provider billing or all-mode Root stop guarantee.",
+  "run": "/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/request-host-run-56ckjH"
+}

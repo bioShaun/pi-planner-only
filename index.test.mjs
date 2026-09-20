@@ -2675,7 +2675,9 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 	assert.equal(abandonedAfter.reports.length, 0, "no fake WorkerReport minted");
 	assert.equal(abandonedAfter.stateReason, "operator chose to abandon unstarted legacy task");
 
-	// 4b. Refusal breaker triggered by malformed redelegate does not block query or verdict
+	// 4b. Refusal breaker triggered by malformed redelegate does not block query or verdict.
+	// P1-A: legacy definition fields are ignored on rebind, so the malformed input is an
+	// invalid envelope — refused before any reservation or launch.
 	const abandonId2 = "T-20260918-097";
 	ledger.write({
 		taskId: abandonId2,
@@ -2695,25 +2697,22 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 		updatedAt: "2026-09-18T10:00:00.000Z",
 	});
 
-	// Attempt 1: malformed redelegate (validation.required true but no commands)
+	// Attempt 1: malformed redelegate (envelope.maxTokens is not a positive integer)
 	await assert.rejects(
 		redelegateTool.execute(
 			"call-t04-malformed-1",
 			{
 				taskId: abandonId2,
 				role: "worker",
-				objective: "missing commands",
-				scope: {},
-				constraints: [],
-				acceptanceCriteria: [],
-				validation: { required: true },
+				envelope: { maxTokens: 0 },
 			},
 			undefined,
 			() => {},
 			ctx,
 		),
-		(err) => err.message.includes("validation.commands must be a non-empty array"),
+		(err) => err.message.includes("envelope.maxTokens must normalize to a positive finite integer"),
 	);
+	assert.equal(ledger.read(abandonId2).record.executions.length, 0, "malformed redelegate launched nothing");
 
 	// Attempt 2: identical malformed redelegate -> refusal breaker notice
 	await assert.rejects(
@@ -2722,11 +2721,7 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 			{
 				taskId: abandonId2,
 				role: "worker",
-				objective: "missing commands",
-				scope: {},
-				constraints: [],
-				acceptanceCriteria: [],
-				validation: { required: true },
+				envelope: { maxTokens: 0 },
 			},
 			undefined,
 			() => {},

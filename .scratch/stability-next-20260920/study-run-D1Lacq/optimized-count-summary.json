@@ -1,0 +1,36 @@
+{
+  "arm": "optimized",
+  "case": "count",
+  "status": 0,
+  "signal": null,
+  "durationMs": 39062,
+  "quality": true,
+  "root": {
+    "input": 7168,
+    "output": 872,
+    "cacheRead": 48128,
+    "cacheWrite": 0
+  },
+  "child": {
+    "input": 13047,
+    "output": 348,
+    "cacheRead": 5632,
+    "cacheWrite": 0
+  },
+  "rootMessages": 5,
+  "childClaims": 1,
+  "failedAttempts": 0,
+  "rootUsageIncomplete": false,
+  "childUsageIncomplete": false,
+  "actualRootModels": [
+    "kimi-coding/kimi-for-coding"
+  ],
+  "actualChildModels": [
+    "tcuni-luna/gpt-5.6-luna:low:low"
+  ],
+  "monetaryCost": null,
+  "priceStatus": "unverified; no cost-savings claim",
+  "closureObserved": false,
+  "afterClosure": null,
+  "finalAnswer": "fixture.txt contains 10 words.\n\nANSWER=10"
+}

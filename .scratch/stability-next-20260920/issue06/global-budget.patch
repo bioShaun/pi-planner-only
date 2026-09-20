@@ -1,0 +1,70 @@
+--- .scratch/stability-next-20260920/issue06/review-readonly-current.sh	2026-09-20 13:48:13.827498639 +0800
++++ .scratch/stability-next-20260920/issue06/review-readonly-proposed-budget.sh	2026-09-20 15:39:32.494689610 +0800
+@@ -11,6 +11,13 @@
+     exit 127
+   fi
+ done
++# The parent is a relay: probe, spawn, wait, relay. Its own reasoning latency is
++# charged against the same external deadline as the child's review, so it runs
++# at low effort. The child keeps the effort fixed in its role file; verify from
++# the child's turn_context, never from the parent's self-report.
++parent_effort="${REVIEW_READONLY_PARENT_EFFORT:-low}"
++# External deadline in seconds; see astra-planner.md for the default and its evidence.
++review_timeout="${REVIEW_READONLY_TIMEOUT:-420}"
+ set +e
+ {
+   cat <<'PROMPT'
+@@ -19,20 +26,29 @@
+ with fork_turns="none". Do not override the role model or effort. Use no other agents.
+ Provide the request as a self-contained task. The child must not delegate further.
+ Wait for the child to finish and return its verdict, evidence, and limitations faithfully.
+-Do not edit files or run implementation work. The entire run has a 240-second external deadline.
++Do not edit files or run implementation work. The external deadline in seconds is stated below, just before the ReviewRequest.
+ If the role cannot load, report BLOCKED with the actual error; do not impersonate it.
+ Confirm the parent and child actual runtime filesystem permissions with evidence. A role TOML
+ or behavioral refusal is not proof of read-only enforcement. Missing executable evidence is BLOCKED.
++Budget: the deadline covers your own steps too. Prove your permission with one command that
++needs no writable filesystem: python3 -c '...' with the probe inline. Do not use here-documents
++or temp files; the sandbox has no writable TMPDIR and a here-document fails before the probe
++runs. If the command itself fails to start, retry once in that inline form, then spawn at once.
++Pass the child TaskSpec from the ReviewRequest verbatim. Do not add your own probe result,
++findings, hypotheses, or verdict proposals to the child's task; your probe result belongs only
++in your final answer. While waiting, only call wait; send no messages to the child. When the
++child completes, relay its final message immediately in your final answer, followed by your own
++probe evidence, without any further command, verification, or message.
+ 
+-ReviewRequest:
+ PROMPT
++  printf 'External deadline: %s seconds.\n\nReviewRequest:\n' "$review_timeout"
+   cat -- "$1"
+-} | python3 "$(dirname "$0")/run-bounded.py" --timeout 240 --grace 10 codex exec --sandbox read-only --json -
++} | python3 "$(dirname "$0")/run-bounded.py" --timeout "$review_timeout" --grace 10 codex exec --sandbox read-only -c "model_reasoning_effort=\"$parent_effort\"" --json -
+ launcher_status=$?
+ set -e
+ case "$launcher_status" in
+   0) printf 'review-readonly: session completed; inspect the emitted reviewer verdict and runtime-permission evidence\n' >&2 ;;
+-  124) printf 'review-readonly: 240-second deadline exceeded\n' >&2 ;;
++  124) printf 'review-readonly: %s-second deadline exceeded\n' "$review_timeout" >&2 ;;
+   137) printf 'review-readonly: process killed after grace period; confirm no residual process before continuing\n' >&2 ;;
+   *) printf 'review-readonly: launch/session failed (exit %s)\n' "$launcher_status" >&2 ;;
+ esac
+--- .scratch/stability-next-20260920/issue06/astra-planner-current.md	2026-09-20 13:59:54.575175631 +0800
++++ /home/tcuni-claw/.codex/astra-planner.md	2026-09-20 15:31:12.793628968 +0800
+@@ -89,7 +89,7 @@
+ 
+ - advisory：到评估时间检查已有证据和剩余工作，决定继续、缩小范围或接手；继续时记录原因和下一次评估时间，不因到点自动中断有进展的任务。
+ - hard：启动前明确 UTC `startedAt`、`deadline` 和取消能力；调度边界检查时钟，等待最多 `min(60 秒, deadline 剩余时间)`。到期立即发出中断并确认终态；如需延长，必须在原 deadline 前记录新 deadline 和原因，不能事后追认。阻塞工具可能延迟调度，不能把提示词中的截止时间宣称为精确硬限制。
+-- 两种模式下，取消或接手都必须先确认原写入者及相关进程停止，再转交写入权。严格只读 launcher 仍有独立的 240 秒外部时限，不因 advisory 模式自动延长。
++- 两种模式下，取消或接手都必须先确认原写入者及相关进程停止，再转交写入权。严格只读 launcher 仍有独立的外部时限（`REVIEW_READONLY_TIMEOUT`，默认 420 秒，依据 2026-09-20 工单 06 的实测：astra_reviewer 在 gpt-5.6-sol/high 下完成一次 strict 审查需 115–>203 秒，父入口自身约 30 秒），不因 advisory 模式自动延长。
+ 
+ 这是 native Root 的主动调度协议，不是 TOML 自动硬限制，也不保证消除模型错误。文本 `STOP` 和用于记录中断消息的配置项 `agents.interrupt_message` 都不是预算执行器，也不是取消工具。没有硬取消能力时记录能力缺口；外部 CLI 进程组时限不能证明每个 Worker 的取消机制。取消后检查残留进程；停止未确认时保留写入占用。
+ 
+@@ -109,7 +109,7 @@
+ bash /home/tcuni-claw/.codex/review-readonly.sh /path/to/review-request.md > /path/to/review-events.jsonl
+ ```
+ 
+-入口以 `codex exec --sandbox read-only` 启动独立 Root，再以无历史方式调用 astra_reviewer。必须以实际权限探测证明 Root/Reviewer 的运行时隔离；角色 TOML 或模型拒绝写入不是证据。入口要求 Bash、Python 3 和 Codex；stdlib watchdog 建立独立进程组，240 秒后 TERM，宽限 10 秒后对进程组 KILL。退出 0 仅表示 session 完成，仍需检查 Reviewer verdict 与权限证据；124 表示超时后终止，137 表示已强杀且仍需确认无残留进程。依赖缺失是 BLOCKED；strict 失败不能降级为 behavior-only PASS。
++入口以 `codex exec --sandbox read-only` 启动独立 Root，再以无历史方式调用 astra_reviewer。必须以实际权限探测证明 Root/Reviewer 的运行时隔离；角色 TOML 或模型拒绝写入不是证据。入口要求 Bash、Python 3 和 Codex；stdlib watchdog 建立独立进程组，`REVIEW_READONLY_TIMEOUT`（默认 420）秒后 TERM，宽限 10 秒后对进程组 KILL。父 Root 以 low effort 运行，只做权限探针、spawn、wait 和转述；Reviewer 的 model/effort 仍由角色文件固定，须以子会话 turn_context 核对。每次 strict 运行记录 child 实际耗时，用于日后收紧默认值；子契约应写明软预算（例如 300 秒），超时时带覆盖范围返回 BLOCKED 而不是被截断。退出 0 仅表示 session 完成，仍需检查 Reviewer verdict 与权限证据；124 表示超时后终止，137 表示已强杀且仍需确认无残留进程。依赖缺失是 BLOCKED；strict 失败不能降级为 behavior-only PASS。
+ 
+ ## 全局使用与项目约束
+ 

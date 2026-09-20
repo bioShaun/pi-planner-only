@@ -1,0 +1,29 @@
+[
+  {
+    "name": "request-stop-final",
+    "cmd": [
+      "node",
+      "--experimental-strip-types",
+      "request-stop.test.mjs"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "revalidation-final",
+    "cmd": [
+      "node",
+      "--experimental-strip-types",
+      "revalidation-accounting.test.mjs"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "sdk-final",
+    "cmd": [
+      "node",
+      "--experimental-strip-types",
+      ".scratch/stability-next-20260920/sdk-stop-probe.mjs"
+    ],
+    "exit": 0
+  }
+]

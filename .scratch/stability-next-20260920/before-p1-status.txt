@@ -1,0 +1,5 @@
+ M .scratch/request-stop-p0-20260919/README.md
+ M .scratch/request-stop-p0-20260919/evidence/acceptance.md
+ M .scratch/request-stop-p0-20260919/issues/05-host-and-release-acceptance.md
+ M docs/pi-planner-only-stability-and-delegation-plan.md
+?? .scratch/stability-next-20260920/

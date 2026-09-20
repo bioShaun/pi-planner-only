@@ -47,6 +47,8 @@ import {
 	sessionRootBudgetWithEnabled,
 } from "./floors.ts";
 import { configuredRoleModelSummaries, loadRoleModelPolicy } from "./role-models.ts";
+import { enforceDelegationModel, observeDelegationModel, resolveDelegationModel } from "./delegation-model.ts";
+import type { ModelRouteObservation } from "./delegation-model.ts";
 import { ConcurrencyController, loadConcurrencyDefault, saveConcurrencyDefault, parseConcurrencyLimit } from "./concurrency.ts";
 import {
 	DelegationRefused,
@@ -66,6 +68,7 @@ import type { RecoveryDecision } from "./types.ts";
 import { normalizeWorkspaceIdentity } from "./task.ts";
 import { FileRequestStorage, RequestClosed, RequestController } from "./request-control.ts";
 import { acceptedExecution, correctionPredecessor, delegationFailureFamily, requestErrorFamily, reviewFailureFamily, structuralIssues } from "./request-events.ts";
+import { loadExecutionDefaults } from "./execution-defaults.ts";
 
 /** P0-B — the only recovery action wired through planner_abort (spec §5, ADR-0003). */
 const ABORT_RECOVERY_ACTIONS = new Set(["abort"]);
@@ -192,7 +195,9 @@ export function computeLoadedFingerprint(dir = PLUGIN_DIR): string {
 	const hasher = createHash("sha256");
 	const files = [
 		"concurrency.ts",
+		"delegation-model.ts",
 		"evidence.ts",
+		"execution-defaults.ts",
 		"floors.ts",
 		"git-audit.ts",
 		"index.ts",
@@ -1077,12 +1082,19 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 						orchestrator.resolveVerdictTask(params.taskId, ctx.cwd || process.cwd());
 					}
 					let outcome: DelegationOutcome;
+					// Parse once per invocation, before Task allocation, claims,
+					// reservations, evidence sampling, or transport launch.
+					const executionDefaults = effectiveParams.role === "reviewer"
+						? undefined
+						: loadExecutionDefaults(process.env);
 					const requestControl = requestFor(ctx);
 					const requestScope = requestControl.requestId;
+					let modelRoute: ModelRouteObservation | undefined;
 					const predecessor = correctionPredecessor(
 						effectiveParams.taskId ? orchestrator.store.get(effectiveParams.taskId) : undefined, effectiveParams,
 					);
 					try {
+						const route = resolveDelegationModel(effectiveParams.role, ctx.modelRegistry);
 						ensureRestrictedReaderAgent();
 						outcome = await runDelegation(
 							{
@@ -1091,7 +1103,16 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 								concurrency,
 								usage: ledger,
 								launch: async (outbound, launchSignal, hooks) => {
-									return delegationLaunch(outbound, launchSignal, {
+									const routed = route ? { ...outbound, model: route.model, thinking: route.thinking } : outbound;
+									const recordRoute = (terminal: Parameters<typeof observeDelegationModel>[1]) => {
+										if (!route) return terminal;
+										modelRoute = observeDelegationModel(route, terminal);
+										try { pi.appendEntry("planner-only-model-route", { requestId: outbound.requestId, taskId: outbound.nodeId,
+											workspace: normalizeWorkspaceIdentity(ctx.cwd || process.cwd()), ...modelRoute }); }
+										catch { ignoredWarnings.push("model route session evidence could not be persisted; see this tool result"); }
+										return enforceDelegationModel(modelRoute, terminal);
+									};
+									return delegationLaunch(routed, launchSignal, {
 										...hooks,
 										beforeDispatch: packet => {
 											requestControl.canClaim(packet.requestId, requestScope);
@@ -1101,14 +1122,16 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 										onDispatch: packet => { requestControl.emitted(packet.requestId, requestScope); hooks?.onDispatch?.(packet); },
 										onLateTerminal: terminal => {
 											requestControl.terminal(outbound.requestId, requestScope);
+											recordRoute(terminal);
 											hooks?.onLateTerminal?.(terminal);
 											if (effectiveParams.role === "reviewer") requestControl.finishChild(toolCallId, true, requestScope);
 										},
-									}).then(terminal => { requestControl.terminal(outbound.requestId, requestScope); return terminal; });
+									}).then(terminal => { requestControl.terminal(outbound.requestId, requestScope); return recordRoute(terminal); });
 								},
 								...(restrictedReaderAgent !== undefined ? { restrictedReaderAgent } : {}),
 								...(quiescenceWaitMs !== undefined ? { quiescenceWaitMs } : {}),
 								ownerRunId: ctx.sessionManager?.getSessionId?.() || PROCESS_OWNER_RUN_ID,
+								...(executionDefaults ? { executionDefaults } : {}),
 							},
 							effectiveParams,
 							ctx.cwd || process.cwd(),
@@ -1153,8 +1176,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					const warnings = [...ignoredWarnings, ...outcome.warnings];
 					return {
 						content: [{ type: "text", text: renderDelegationOutcome({ ...outcome, warnings }, surface.name) }],
-						details: {
-							taskId: outcome.task.taskId,
+							details: {
+								taskId: outcome.task.taskId,
+								...(modelRoute ? { modelRoute } : {}),
 							executionId: outcome.executionId,
 							runId: outcome.runId,
 							state: outcome.task.state,
@@ -1186,7 +1210,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			"The child's WorkerReport arrives schema-validated in details.report; a non-completed status returns structured details.termination, not a parse failure.",
 			"planner_delegate always mints a new Task and returns its canonical taskId in details.taskId; a correction round, a review, or a recovery re-execution of that Task goes through planner_redelegate with that exact taskId.",
 			"role=explorer pairs with acceptanceMode='observation' for read-only informational tasks — the intended path in non-Git directories; it never claims code-change verification. A worktree-mode Task in a non-Git directory refuses writer launches with structured diagnostics instead.",
-			"Optional envelope{maxTokens,maxWallMs} bounds a runaway execution.",
+			"Omitting envelope uses the finite execution defaults (10 minutes wall clock, 100000 tokens). An explicit envelope replaces them entirely, so for a heavy coding worker pass BOTH maxTokens and maxWallMs; size maxWallMs to the Request's remaining time (deadline = first activity + 15 min) leaving room for validation and review. A breach cancels the child and requires a recovery decision.",
 		],
 		parameters: PLANNER_DELEGATE_PARAMETERS,
 	});
@@ -1197,13 +1221,14 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		description: [
 			"Re-enter an existing Task through the structured delegation API: a correction round after request_changes (worker/explorer/validator), a review of its latest WorkerReport (reviewer), or a recovery re-execution of a blocked Task.",
 			"taskId is required — the canonical id verbatim from a prior planner_delegate result's details.taskId; never construct one.",
-			"The launcher-validated ReviewResult arrives in details.review; a WorkerReport arrives in details.report.",
+			"The stored TaskSpec is authoritative; only temporary instructions, envelope, and recovery may supplement this invocation. The launcher-validated ReviewResult arrives in details.review; a WorkerReport arrives in details.report.",
 		].join(" "),
 		promptSnippet: "planner_redelegate: re-enter an existing Task by canonical taskId — correction, review, recovery",
 		promptGuidelines: [
 			"planner_redelegate binds an existing Task: pass the canonical taskId from a prior planner_delegate result's details.taskId verbatim. Never construct a taskId.",
 			"role=reviewer reviews the bound Task's latest WorkerReport; the launcher-validated ReviewResult arrives in details.review.",
-			"Optional envelope{maxTokens,maxWallMs} bounds a runaway execution; a Task flagged recovery.required re-executes only with a matching recovery decision (retry_same_plan / fix_environment) or is aborted via planner_abort.",
+			"Do not repeat objective, cwd, scope, constraints, acceptanceCriteria, validation, or acceptanceMode: the stored TaskSpec is authoritative. instructions apply to this child packet only and do not mutate it.",
+			"Omitting envelope uses the finite execution defaults (10 minutes wall clock, 100000 tokens). An explicit envelope replaces them entirely, so pass BOTH maxTokens and maxWallMs, with maxWallMs sized to the Request's remaining time. A Task flagged recovery.required re-executes only with a matching recovery decision (retry_same_plan / fix_environment) or is aborted via planner_abort.",
 			"recovery.executionId names the abnormal execution's details.executionId — never a child runId; a stray recovery on a Task without a pending requirement is refused (RECOVERY_NOT_APPLICABLE), not ignored.",
 		],
 		parameters: PLANNER_REDELEGATE_PARAMETERS,

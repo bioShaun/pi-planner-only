@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"01a0bd60-8d0e-72e1-b4ed-6b1e7b097b67"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I’ll prove the parent’s runtime permissions with one command, then launch the sole reviewer and wait for its result.\n"}}
+{"type":"item.started","item":{"id":"item_1","type":"collab_tool_call","tool":"wait","sender_thread_id":"01a0bd60-8d0e-72e1-b4ed-6b1e7b097b67","receiver_thread_ids":[],"prompt":null,"agents_states":{},"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"collab_tool_call","tool":"wait","sender_thread_id":"01a0bd60-8d0e-72e1-b4ed-6b1e7b097b67","receiver_thread_ids":[],"prompt":null,"agents_states":{},"status":"completed"}}

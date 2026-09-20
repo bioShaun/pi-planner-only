@@ -302,14 +302,14 @@ export interface RunawayObservation {
 }
 
 /**
- * P0-B — explicit per-delegation anomaly envelope (spec §4: no production
- * defaults; unconfigured means observe-only, never cancel). `source` is
- * persisted so later readers know where the numbers came from.
+ * Per-execution anomaly envelope. Explicit caller bounds retain
+ * `delegation-param`; omitted bounds on ordinary executions are filled from
+ * finite program/operator defaults. `source` is persisted for provenance.
  */
 export interface ExecutionEnvelope {
 	maxTokens?: number;
 	maxWallMs?: number;
-	source: "delegation-param";
+	source: "delegation-param" | "default" | "operator-config";
 }
 
 /**
@@ -382,7 +382,7 @@ export interface TaskExecutionRecord {
 	evidenceIncomplete?: boolean;
 	/** True when the terminal's usage was accounted; false keeps the known lower bound instead of inventing a cost. */
 	usageComplete?: boolean;
-	/** P0-B — the explicit runaway envelope this execution ran under (absent = observe-only). */
+	/** The finite runaway envelope this ordinary execution ran under. */
 	envelope?: ExecutionEnvelope;
 	/** P0-B — which envelope bound tripped, with the observed value. */
 	runawayObservation?: RunawayObservation;

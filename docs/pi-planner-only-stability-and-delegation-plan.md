@@ -1,6 +1,8 @@
 # pi-planner-only 稳定性与委派演进计划
 
-状态：提案，2026-09-19。本文整理现有证据、外部项目可借鉴的机制及分阶段路线；它不是实现说明，也不批准具体阈值或政策变更。
+状态：路线图，2026-09-20 更新。P0 已在 `85bdd2a` 完成并提交；P1–P3 按用户授权继续实施。本文保留 2026-09-19 的调查依据与原始提案，下文“已确认的当前事实”是当时基线 `3991c5c` 的历史快照，不代表 P0 修复后的现状。
+
+[P0 验收记录](../.scratch/request-stop-p0-20260919/evidence/acceptance.md)保留基线的 release、真实 CLI 与 strict delta review 证据及 launcher 124 限制。后续工作树已加入新 agent_start 的 abort 重申，SDK 队列场景额外调用为 0；本轮 release、Kimi Root / Luna child 真实路由 smoke 和真实 TUI 到期停止场景也已通过。独立只读父进程下的严格代码审查与后续验收核验均返回 PASS，但外层 launcher 三次均在 240 秒退出 124，完整自动门禁尚未闭环。当前结论见[后续验收记录](../.scratch/stability-next-20260920/acceptance.md)，launcher 问题单独记入[工单 06](../.scratch/stability-next-20260920/issues/06-strict-launcher-relay-timeout.md)。P1-B 和完整 P3 保持待办，不把已测场景外推到所有续跑模式，也不据单个 smoke 宣称节省。
 
 ## 目标与优先级
 

@@ -1,0 +1,38 @@
+{
+  "checkedAtUtc": "2026-09-20T05:42:59.681722+00:00",
+  "head": "85bdd2a93b994d3e4894e7534ab91cf6b16c9043",
+  "manifests": {
+    "source-manifest.json": {
+      "files": 66,
+      "mismatches": [],
+      "sha256": "243dcc7491f8fab3ce15b78ede3a295f56d420200d0374bef0d0fe0c4ec147ae"
+    },
+    "harness-manifest.json": {
+      "files": 11,
+      "mismatches": [],
+      "sha256": "a378fe9d5e7d8e5af6f5067957f07783fe58c8a12c529c1748d4a355b7fe85df"
+    }
+  },
+  "release": {
+    "directory": "release-run-dWGu9v",
+    "exit": 0,
+    "beforeEqualsAfter": true,
+    "currentFiles": 60,
+    "mismatches": []
+  },
+  "productionScopeChangedSinceContinuationStart": [],
+  "strict": [
+    {
+      "directory": "strict-run-qE6emR",
+      "exit": 124
+    },
+    {
+      "directory": "strict-run-snUQhK",
+      "exit": 124
+    },
+    {
+      "directory": "strict-run-jYl0O1",
+      "exit": 124
+    }
+  ]
+}

@@ -55,6 +55,7 @@ import {
 import type { FreshReviewerTaskInput, ReviewDecision } from "./review.ts";
 import { childUsageFromValue } from "./usage.ts";
 import type { UsageLedger } from "./usage.ts";
+import { loadExecutionDefaults } from "./execution-defaults.ts";
 import { acceptanceModeOf, isFinalTaskState, isTerminalTaskState } from "./types.ts";
 import type {
 	AcceptanceMode,
@@ -211,13 +212,13 @@ function worktreeSamplesQuiet(a: EvidenceRef, b: EvidenceRef): boolean {
 	return aKeys.every((key) => aHashes[key] === bHashes[key]);
 }
 
-/** P0-B — validate the explicit envelope before launch (spec §4: no defaults). */
+/** Validate an explicit envelope without raising either caller-supplied bound. */
 function validateEnvelope(raw: PlannerDelegationParams["envelope"], toolName = "planner_delegate"): ExecutionEnvelope | undefined {
 	if (raw === undefined) return undefined;
 	const check = (name: string, value: number | undefined): number | undefined => {
 		if (value === undefined) return undefined;
 		const normalized = Math.floor(value);
-		if (!Number.isFinite(value) || normalized <= 0) {
+		if (!Number.isFinite(value) || !Number.isSafeInteger(normalized) || normalized <= 0) {
 			throw new DelegationRefused("ENVELOPE_INVALID", `${toolName} refused: envelope.${name} must normalize to a positive finite integer, got ${value}`);
 		}
 		return normalized;
@@ -324,16 +325,10 @@ const DELEGATION_SPEC_PARAMETERS = {
 			maxTokens: Type.Optional(Type.Number({ description: "Cancel the child when cumulative UPDATE tokens exceed this. Snapshot input+output, no cache." })),
 			maxWallMs: Type.Optional(Type.Number({ description: "Cancel the child when wall-clock since launch exceeds this many ms." })),
 		}, {
-			description: "P0-B runaway envelope. Explicit only — when omitted the monitor observes but never cancels.",
+			description: "Runaway envelope. When omitted on an ordinary execution, finite program/operator defaults apply (maxTokens 100000, maxWallMs 600000 unless operator-configured). An explicit envelope replaces the defaults entirely: for a heavy coding worker pass BOTH maxTokens and maxWallMs, sizing maxWallMs to the Request's remaining time (deadline = first activity + 15 min) with room for validation and review; a lone maxWallMs drops the token bound.",
 		}),
 	),
 };
-
-// Ticket 03 — acceptanceMode is a creation-time contract: it stays on the
-// mint schema but is deliberately absent from the rebind surface. The
-// runtime guard (ACCEPTANCE_MODE_IMMUTABLE) still refuses pass-through from
-// hosts that do not validate parameters.
-const { acceptanceMode: _creationOnlyAcceptanceMode, ...DELEGATION_REBIND_SPEC_PARAMETERS } = DELEGATION_SPEC_PARAMETERS;
 
 const DELEGATION_RECOVERY_PARAMETER = Type.Optional(
 	Type.Object({
@@ -360,10 +355,9 @@ export const PLANNER_DELEGATE_PARAMETERS = Type.Object({
 });
 
 /**
- * planner_redelegate — bind-only surface over an existing Task: correction
- * rounds, reviewer invocations, and recovery re-executions. taskId is
- * required and must name a real record; the explicit id binds verbatim
- * (delegate.ts binding contract, ticket 53).
+ * planner_redelegate — bind-only surface over an existing Task. The stored
+ * TaskSpec is authoritative; this surface only selects an invocation role and
+ * may add temporary instructions, an explicit envelope, or recovery.
  */
 export const PLANNER_REDELEGATE_PARAMETERS = Type.Object({
 	taskId: Type.String({
@@ -371,9 +365,10 @@ export const PLANNER_REDELEGATE_PARAMETERS = Type.Object({
 		description: "Canonical id of an existing Task, verbatim from a prior planner_delegate result's details.taskId. Never construct one.",
 	}),
 	role: Type.Union([Type.Literal("worker"), Type.Literal("explorer"), Type.Literal("validator"), Type.Literal("reviewer")], {
-		description: "Delegation role. worker implements a correction round; explorer does read-only recon (restricted-reader agent, no shell/edit/write); validator runs an oracle verdict; reviewer reviews the bound Task's latest WorkerReport — objective / scope / constraints / acceptanceCriteria / validation / instructions are ignored, the Task's stored spec is the reviewer's context.",
+		description: "Invocation role. worker implements a correction round; explorer does read-only recon (restricted-reader agent, no shell/edit/write); validator runs an oracle verdict; reviewer reviews the bound Task's latest WorkerReport. This never changes the stored TaskSpec role.",
 	}),
-	...DELEGATION_REBIND_SPEC_PARAMETERS,
+	instructions: Type.Optional(Type.String({ description: "Temporary prose appended to this child packet only; it never changes the stored TaskSpec." })),
+	envelope: DELEGATION_SPEC_PARAMETERS.envelope,
 	recovery: DELEGATION_RECOVERY_PARAMETER,
 });
 
@@ -386,9 +381,16 @@ export type PlannerRedelegateParams = Static<typeof PLANNER_REDELEGATE_PARAMETER
  * `acceptanceMode` is declared here (not on the rebind schema) so the runtime
  * can still refuse a pass-through from a non-validating host.
  */
-export type PlannerDelegationParams = Omit<PlannerRedelegateParams, "taskId"> & {
+export type PlannerDelegationParams = Partial<Omit<PlannerDelegateParams, "role">> & Omit<PlannerRedelegateParams, "taskId"> & {
 	taskId?: string;
 	acceptanceMode?: AcceptanceMode;
+	/** Legacy passthrough fields accepted only for runtime stripping on rebind. */
+	objective?: string;
+	cwd?: string;
+	scope?: { allowedPaths?: string[]; forbiddenPaths?: string[] };
+	constraints?: string[];
+	acceptanceCriteria?: string[];
+	validation?: { required: boolean; commands?: string[] };
 };
 
 /**
@@ -532,6 +534,8 @@ export interface DelegationDeps {
 	quiescenceWaitMs?: number;
 	/** Gap between the two confirmatory worktree samples. */
 	quiescenceSampleGapMs?: number;
+	/** One validated default snapshot for this invocation. */
+	executionDefaults?: ExecutionEnvelope;
 }
 
 /** WRC P0-A — structured abnormal-termination details returned instead of a thrown refusal (spec §3). */
@@ -647,6 +651,10 @@ export class DelegationAborted extends Error {
 }
 
 function specFromParams(params: PlannerDelegationParams, taskId: string, cwd: string): TaskSpec {
+	if (params.objective === undefined || params.scope === undefined || params.constraints === undefined
+		|| params.acceptanceCriteria === undefined || params.validation === undefined) {
+		throw new DelegationRefused("TASKSPEC_REQUIRED", "planner_delegate refused: a new Task requires objective, scope, constraints, acceptanceCriteria, and validation");
+	}
 	return createTaskSpec({
 		taskId,
 		objective: params.objective,
@@ -694,7 +702,7 @@ export async function runDelegation(
 	options: DelegationOptions = {},
 ): Promise<DelegationOutcome> {
 	const role = params.role;
-	const effectiveCwd = params.cwd ?? cwd;
+	const effectiveCwd = params.taskId ? cwd : (params.cwd ?? cwd);
 	const requestId = randomUUID();
 	const executionId = options.executionId ?? requestId;
 	const warnings: string[] = [];
@@ -724,9 +732,9 @@ export async function runDelegation(
 	}
 	const isRestrictedReader = classification.capability === "restricted-reader";
 
-	// 1. Task binding: an explicit id binds the existing record verbatim —
-	//    its stored spec is never rewritten (ticket 53); this call's spec
-	//    only goes into the packet.
+	// 1. Task binding: an explicit id binds the existing record verbatim. Its
+	//    stored spec is both immutable and authoritative for every child packet;
+	//    only this invocation's instructions are appended separately.
 	let task!: TaskRecord;
 	let thisSpec: TaskSpec;
 	let recoveryDecision: RecoveryDecision | undefined;
@@ -751,6 +759,11 @@ export async function runDelegation(
 			);
 		}
 		task = record;
+		const ignoredDefinitionFields = ["objective", "cwd", "scope", "constraints", "acceptanceCriteria", "validation"]
+			.filter((field) => (params as unknown as Record<string, unknown>)[field] !== undefined);
+		if (ignoredDefinitionFields.length > 0) {
+			warnings.push(`planner_redelegate ignored legacy TaskSpec field(s): ${ignoredDefinitionFields.join(", ")}; Task ${record.taskId} runs from its stored immutable spec`);
+		}
 		// Ticket 03 (wrc-incident-followups) — reject a stray decision for
 		// every role before role-specific dispatch. In particular, reviewers
 		// must not bypass this gate through the early return below.
@@ -788,7 +801,11 @@ export async function runDelegation(
 		// The reviewer fork: binding is identical, but the call mints no spec
 		// of its own — the stored spec is the reviewer's read-only context.
 		if (role === "reviewer") {
-			return runReviewInvocation(deps, task, { requestId, executionId }, options);
+			if (params.envelope !== undefined) {
+				warnings.push("planner_redelegate ignored envelope for role=reviewer; reviewer invocations remain bounded by the enclosing Request");
+			}
+			const reviewed = await runReviewInvocation(deps, task, { requestId, executionId }, options);
+			return { ...reviewed, warnings: [...warnings, ...reviewed.warnings] };
 		}
 		if (
 			task.pendingRevalidationKey
@@ -800,11 +817,10 @@ export async function runDelegation(
 				task.taskId,
 			);
 		}
-		// The packet spec inherits the stored acceptance contract — the child
-		// sees the same mode the ledger enforces (params.acceptanceMode was
-		// refused above).
-		const boundMode = record.spec?.acceptanceMode;
-		thisSpec = specFromParams(boundMode !== undefined ? { ...params, acceptanceMode: boundMode } : params, record.taskId, record.cwd || effectiveCwd);
+		if (!record.spec) {
+			throw new DelegationRefused("TASKSPEC_MISSING", `${toolName} refused: Task ${record.taskId} has no stored TaskSpec`, record.taskId);
+		}
+		thisSpec = record.spec;
 
 		if (isFinalTaskState(task.state)) {
 			if (task.state === "blocked" && task.recovery?.required === true) {
@@ -828,8 +844,11 @@ export async function runDelegation(
 		thisSpec = specFromParams(params, taskId, effectiveCwd);
 	}
 
-	// P0-B — the explicit anomaly envelope; validated before launch, never defaulted.
-	const envelope = validateEnvelope(params.envelope, toolName);
+	// Reviewers returned above and remain Request-bounded. Every ordinary
+	// execution gets a finite envelope; explicit dimensions stay exact.
+	const envelope = validateEnvelope(params.envelope, toolName)
+		?? deps.executionDefaults
+		?? loadExecutionDefaults();
 
 	// 2. Write lock: capability decides, not the role name — a proven
 	//    restricted reader holds no workspace claim; writers, shell-capable
@@ -1170,12 +1189,14 @@ export async function runDelegation(
 				const onWallDeadline = () => {
 					const elapsed = wallNow() - launchStartedAt;
 					if (elapsed < wallLimit) {
-						wallTimer = armWallTimer(onWallDeadline, Math.min(wallLimit, Math.ceil(wallLimit - elapsed)));
+						wallTimer = armWallTimer(onWallDeadline, Math.min(2_147_483_647, wallLimit, Math.ceil(wallLimit - elapsed)));
 						return;
 					}
 					breach("wall", Math.floor(elapsed), wallLimit);
 				};
-				wallTimer = armWallTimer(onWallDeadline, wallLimit);
+				// Node overflows longer delays to 1ms. Bound each wake-up;
+				// the elapsed-time check still owns the full configured limit.
+				wallTimer = armWallTimer(onWallDeadline, Math.min(2_147_483_647, wallLimit));
 			}
 			response = await deps.launch(request, runController.signal, {
 				beforeDispatch: (outbound) => {
@@ -1275,7 +1296,7 @@ export async function runDelegation(
 						executionStatus: emitted ? "stop_unconfirmed" : "stopped",
 						terminationConfirmed: !emitted,
 						...(emitted ? {} : { confirmationBasis: "no-launch" }),
-						...(runaway ? { anomaly: { ...runaway, source: "delegation-param" } } : {}),
+						...(runaway ? { anomaly: { ...runaway, source: envelope.source } } : {}),
 						quiescenceWaitMs,
 						quiescenceWaitSource,
 						usageComplete: false,
@@ -1421,7 +1442,7 @@ export async function runDelegation(
 					reason: endedReason,
 					executionStatus: q.confirmed ? "stopped" : "stop_unconfirmed",
 					terminationConfirmed: q.confirmed,
-					...(runaway ? { anomaly: { ...runaway, source: "delegation-param" } } : {}),
+					...(runaway ? { anomaly: { ...runaway, source: envelope.source } } : {}),
 					...(q.confirmed ? { confirmationBasis: q.basis, ...(q.cTerminal ? { cTerminal: q.cTerminal } : {}) } : {}),
 					quiescenceWaitMs,
 					quiescenceWaitSource,

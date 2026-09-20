@@ -1,0 +1,31 @@
+--- .scratch/stability-next-20260920/issue06/review-readonly-current.sh	2026-09-20 13:48:13.827498639 +0800
++++ .scratch/stability-next-20260920/issue06/review-readonly-proposed.sh	2026-09-20 13:48:13.829398797 +0800
+@@ -11,6 +11,11 @@
+     exit 127
+   fi
+ done
++# The parent is a relay: probe, spawn, wait, relay. Its own reasoning latency is
++# charged against the same 240-second deadline as the child's review, so it runs
++# at low effort. The child keeps the effort fixed in its role file; verify from
++# the child's turn_context, never from the parent's self-report.
++parent_effort="${REVIEW_READONLY_PARENT_EFFORT:-low}"
+ set +e
+ {
+   cat <<'PROMPT'
+@@ -23,11 +28,15 @@
+ If the role cannot load, report BLOCKED with the actual error; do not impersonate it.
+ Confirm the parent and child actual runtime filesystem permissions with evidence. A role TOML
+ or behavioral refusal is not proof of read-only enforcement. Missing executable evidence is BLOCKED.
++Budget: the deadline covers your own steps too. Prove your permission with one command, then
++spawn at once. While waiting, only call wait; send no messages to the child. When the child
++completes, relay its final message immediately in your final answer, without any further
++command, verification, or message.
+ 
+ ReviewRequest:
+ PROMPT
+   cat -- "$1"
+-} | python3 "$(dirname "$0")/run-bounded.py" --timeout 240 --grace 10 codex exec --sandbox read-only --json -
++} | python3 "$(dirname "$0")/run-bounded.py" --timeout 240 --grace 10 codex exec --sandbox read-only -c "model_reasoning_effort=\"$parent_effort\"" --json -
+ launcher_status=$?
+ set -e
+ case "$launcher_status" in

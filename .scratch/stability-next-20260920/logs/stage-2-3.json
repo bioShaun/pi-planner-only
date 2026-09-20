@@ -1,0 +1,32 @@
+[
+  {
+    "name": "p1-root",
+    "command": [
+      "npm",
+      "run",
+      "test:p1"
+    ],
+    "startedAt": "2026-09-20T02:28:14.677724+00:00",
+    "exit": 1
+  },
+  {
+    "name": "request-control",
+    "command": [
+      "node",
+      "--experimental-strip-types",
+      "request-control.test.mjs"
+    ],
+    "startedAt": "2026-09-20T02:28:16.855606+00:00",
+    "exit": 0
+  },
+  {
+    "name": "sdk-stop",
+    "command": [
+      "node",
+      "--experimental-strip-types",
+      "/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/sdk-stop-probe.mjs"
+    ],
+    "startedAt": "2026-09-20T02:28:16.990443+00:00",
+    "exit": 1
+  }
+]

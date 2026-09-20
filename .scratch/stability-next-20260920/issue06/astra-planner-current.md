@@ -1,0 +1,131 @@
+# Codex Subagent 配置方案（Astra Planner）
+
+本协议为当前 Linux 用户的原生 Codex 提供默认委派规则。Root 负责需求、范围、路由和最终判断；子角色完成有边界的任务。模型分配是试运行起点，后续以成功率、返工轮数、总耗时和总成本调整。
+
+## 配置入口与角色
+
+实际配置是唯一来源：[`config.toml`](/home/tcuni-claw/.codex/config.toml) 和 [`agents/`](/home/tcuni-claw/.codex/agents/)。本文规定用户级默认执行协议；目标项目的 AGENTS.md 和每轮 TaskSpec 提供项目特有的约束、测试命令和验收要求。角色使用 `astra_` 前缀，并与其他用户角色共存。
+
+| Codex agent_type | 模型 | effort | 职责 |
+|---|---|---|---|
+| Root（主会话） | gpt-6-astra | high | 需求、架构边界、复杂实现、TaskSpec、调度、最终整合 |
+| astra_locator | gpt-5.6-luna | low | 符号、配置、测试定位 |
+| astra_explorer | gpt-5.6-terra | medium | 跨文件调用链、状态流和约束 |
+| astra_worker | gpt-5.6-sol | medium | 有边界、需要推理的实现 |
+| astra_worker_fast | gpt-5.6-luna | medium | 文件明确的机械性修改 |
+| astra_validator | gpt-5.6-luna | low | 精确确定性命令、断言及结果证据 |
+| astra_validator_complex | gpt-5.6-sol | medium | 多阶段 host 行为与关联证据解释 |
+| astra_reviewer | gpt-5.6-sol | high | 独立正确性审查 |
+
+模型标识必须与实际运行目录对应，不能把 `gpt-5.6` 默认当成 Sol 的可靠别名。角色文件固定模型和 effort；需要升级时由 Root 明确调整配置/角色，不能假设 spawn 参数一定覆盖角色文件。
+
+用户配置的 `max_concurrent_threads_per_session = 4` 不计 Root；实际宿主可能采用不同计数方式或更低上限，始终服从当前工具的实际限制。需要委派时通常同时使用 1–3 个子代理，不为了用满额度而派发。完成的线程按宿主提供的机制释放，不因容量耗尽扩大并发。已有会话可能持有旧角色列表，配置变更后从目标项目启动新的主会话。
+
+## 委派与上下文
+
+- 简单任务由 Root 直接完成；高度依赖主会话上下文的复杂实现也可由 Root 完成。只有存在可独立交付的子任务，且并行能减少等待或隔离大量探索上下文时才派发。不要为满足角色清单而串行交接。
+- 使用当前宿主实际暴露的子代理工具和 `astra_*` 角色，不要求特定工具名（如 `create_thread`）。所有委派默认显式使用 `fork_turns="none"`；其他宿主使用对应的无历史机制。仅在连续对话确有必要且工具支持时使用有限历史，不默认继承全部历史。独立审查始终无实现历史。
+- 每份 TaskSpec 必须自包含，提供路径、已知事实、项目限制与完成条件；不要让子代理重复检索已经充分确认的问题。无历史启动时也必须显式传入 slot 和临时目录规则。
+- 同类后续问题优先复用已有代理，但不复用已参与实现或受结论污染的代理作独立 Reviewer。审查修复轮次遵守下文 fresh 规则。
+- 子代理不得派生、调用或请求新的子代理；需要额外工作时只向 Root 返回范围或证据缺口。七个角色均设置 `[agents] enabled = false`，并以新会话实际工具可用性确认生效。
+- 派发后 Root 先做不依赖该结果的工作；只有下一步确实依赖未完成结果时才等待。结果到达即处理；超时后评估进展、缩小范围或接手，不机械循环等待。独立工作仍须遵守唯一写入者规则。
+- 通常只回传最终结论、证据和限制。阻塞、重大反证或可解除 Root 依赖的阶段性结论及时发送，不发送固定进度心跳。Root 对用户的必要进度沟通不受此限制。
+- Root 采纳充分、可信的常规证据，不默认重读全部文件或重跑全部检查；重点复核冲突、关键高风险结论和修改后的最终行为。独立审查对指定范围的核实、必要状态采集及项目要求的检查仍须执行。
+
+当前会话宿主示例：`collaboration.spawn_agent` 新建子代理（显式 `fork_turns="none"`），`followup_task` 复用已有代理，`send_message` 发送阶段性信息，`wait_agent` 等待依赖，`interrupt_agent` 发出中断；中断后仍须确认实际停止。当前宿主声明四个总并发槽位，包含 Root，因此最多同时运行三个子代理。此示例不固定其他宿主的名称和容量，每个新会话均以实际工具元数据为准。
+
+## Root 的执行顺序
+
+1. 读用户目标、AGENTS.md 和相关域文档，确定信息缺口及是否值得委派。需要委派时，窄定位用 Locator，跨文件理解用 Explorer；只有独立问题才并行探索。
+2. 按下文任务层级准备自包含 TaskSpec。范围或公共接口未确定时由 Root 先解决，不把模糊需求直接交给 Worker-fast。
+3. 修改前采集本轮执行前状态，登记唯一写入者（Root 或 Worker），再实施。Root 可直接实现，也可把边界明确、可独立交付的实现交给 Worker。保留已有未提交修改，不把整个工作树差异归因于本轮。
+4. 实现结束后确认写入停止，采集结果状态并比较实际修改与实现报告。Root 可直接运行必要检查；检查可独立交付且委派有收益时，精确确定性命令交给 Validator，多阶段 host 操作或关联证据解释交给 Validator-complex。保留原始命令、退出码、stdout/stderr、失败尝试和修正证据；实现者自测不能冒称独立验证。
+5. 有实质行为变化时冻结中性证据并启动 fresh Reviewer；普通文案或明确机械配置调整无需自动进入完整审查流程。项目要求优先。必需 strict gate 时必须使用下文的只读父 launcher，并确认实际运行时权限；同一父会话中的行为约束审查不能替代 strict gate。Root 根据证据作最终判断。REQUEST_CHANGES 进入有边界的纠正轮次；BLOCKED 先解决证据或环境缺口。
+6. 接受前再次采集状态，确认审查对象没有漂移。汇报实际完成、验证和限制。
+
+小改动无需强制经历所有角色。角色分离用于降低不确定性；重复读取和重复测试没有新增证据时停止。
+
+## TaskSpec
+
+按任务需要提供字段，不为窄任务填写无关模板：
+
+- 普通只读任务：Goal、只读 Scope、Context（路径、已知事实、未决问题和项目约束）、Acceptance、Return（状态、证据位置、限制）。默认使用 advisory 预算，由 Root 记录开始和下次评估时间即可。
+- 修改任务：在上述基础上增加具体文件 ownership、Out of scope、Verification（必要命令、预期结果及真实使用场景）和预算安排。Worker-fast 必须另有明确转换规则、排除项、命中范围和验收方法。
+- 验证任务：给出完整命令或操作流程、环境和前提、通过条件、允许产生的文件及独占执行窗口；明确 ordinary 或 strict 证据要求。测试不得因名称看似本地就被假定无生产访问或外部副作用。
+- 严格验收任务：额外明确冻结证据范围、前后哈希或快照、完整日志位置、独立审查及运行时权限要求。Budget 写入模式、无进展判定和纠正轮数；advisory 使用 UTC `startedAt` 与 `nextAssessmentAt`，hard 使用 UTC `startedAt`、`deadline` 与取消能力。任何层级使用 hard 截止时都必须提供上述 hard 预算字段。
+
+实现路由：Root 处理简单任务、范围决策及依赖主上下文的复杂实现；明确机械转换用 Worker-fast；边界清晰且委派有收益的行为实现用 Worker。Worker 可自主选择边界内的命名、局部算法和既有模式；Worker-fast 不承担行为设计、跨项目语义重命名、公共接口变更或复杂实现。
+
+原生 Codex 的任务说明与报告是文本协议，不提供额外的 schema 校验保证。结构化外观不等于结构化传输。
+
+## 报告、证据和独立审查
+
+Locator、Explorer 的结果第一行使用 complete / partial / blocked，附结论、证据位置及未覆盖范围；partial 明确证据缺口，由 Root 决定下一步。事实抽取升级到架构分析不由子代理自行派发。
+
+实现报告包含 status、changes、files_changed、checks、risks、blockers。Worker 状态为 COMPLETED / ESCALATE / BLOCKED；COMPLETED 只表示实现者报告完成。Root 直接实现时提供同等事实摘要，作为审查包中的实现报告，不要求另建报告文件。
+
+普通任务不为内部通信另建报告文件；项目、审查流程或 TaskSpec 明确要求的日志和证据产物照常保存。工具输出本身可作为普通检查证据；长日志存于授权路径，回传状态、关键片段和位置即可。strict 验证保留时间、证据路径及规定范围的前后哈希；ordinary 验证保留实际命令、退出码、输出、失败尝试及范围内文件变化，不默认要求逐文件哈希。
+
+Validator 只处理已给出的精确确定性检查；Validator-complex 处理多阶段 host 流程和证据解释。后者遇到缺失或歧义步骤应 BLOCKED，不能自行补程序或宣称 host 不支持。TaskSpec 必须保留目标项目要求的完整调用形式，包括 CLI 输出模式、provider 和参数。两者区分请求的 tool call、实际 tool result 和 ledger/file 变化，保留失败尝试与修正后的重跑。只有所有要求都有当前通过证据才能 PASS；exit 0 本身不构成 PASS。缺依赖、无法运行或跳过必需检查返回 BLOCKED。禁止自动修复，披露生成物和意外变化。
+
+Reviewer 返回 PASS / REQUEST_CHANGES / BLOCKED，包含独立核实内容、限制，以及按严重性排序的 findings。初次审查包保持中性，不携带 Root 缺陷假设、建议 verdict 或当前 peer findings；污染后的报告不能作为独立 gate。每个 finding 必须有位置、问题、影响、证据和最小修正方向。缺少必需可执行证据用 BLOCKED，不能以猜测制造修改请求或用 behavior-only review 替代证据。
+
+Fresh 的必要条件：
+
+- 新会话，未参与本轮实现。
+- 在提供 `fork_turns` 的宿主中显式传 `fork_turns="none"`；其他宿主采用对应的无历史启动机制。默认继承不可视为隔离。
+- 仅提供原始 TaskSpec、实现报告（Worker 或 Root）、Root 采集的执行前后证据、验证结果、上轮 findings；不提供 Root/Worker 的完整推理对话。
+- 修复后新建 Reviewer，并携带待关闭 findings；fresh 不意味着遗忘缺陷。
+
+Root 自行采集每轮 `A_run`、`C_report`，用两者差异判断范围和报告真实性；审查及接受时采集 `C_now`，检查结果是否漂移。原生测试可保存受控文件的执行前副本与哈希；证据格式和验证命令由目标项目 AGENTS.md 与 TaskSpec 明确。
+
+## 升级、预算与终止
+
+以下情况升级：需要决定需求/公共接口/架构边界；修改实质超出 ownership；同一假设连续两次失败且无新证据。普通局部实现选择不升级。
+
+升级报告应说明失败假设、证据、已产生的修改和待决问题。Root 区分任务拆分、环境故障、工具失败与任务固有难度，然后选择补充探索、修订范围、修复环境或调整模型。
+
+默认使用 advisory 预算；180 秒仅作为窄任务首次进展评估的起点，复杂探索、实现、审查和长验证按实际范围安排预算。默认最多 2 次纠正；同一假设连续两次失败且无新证据时先升级，不机械重试。
+
+- advisory：到评估时间检查已有证据和剩余工作，决定继续、缩小范围或接手；继续时记录原因和下一次评估时间，不因到点自动中断有进展的任务。
+- hard：启动前明确 UTC `startedAt`、`deadline` 和取消能力；调度边界检查时钟，等待最多 `min(60 秒, deadline 剩余时间)`。到期立即发出中断并确认终态；如需延长，必须在原 deadline 前记录新 deadline 和原因，不能事后追认。阻塞工具可能延迟调度，不能把提示词中的截止时间宣称为精确硬限制。
+- 两种模式下，取消或接手都必须先确认原写入者及相关进程停止，再转交写入权。严格只读 launcher 仍有独立的 240 秒外部时限，不因 advisory 模式自动延长。
+
+这是 native Root 的主动调度协议，不是 TOML 自动硬限制，也不保证消除模型错误。文本 `STOP` 和用于记录中断消息的配置项 `agents.interrupt_message` 都不是预算执行器，也不是取消工具。没有硬取消能力时记录能力缺口；外部 CLI 进程组时限不能证明每个 Worker 的取消机制。取消后检查残留进程；停止未确认时保留写入占用。
+
+## 并发与权限
+
+同一 cwd 同时最多一个写入者，包括会生成文件的 Validator；Validator 与 Worker 顺序运行。文件不重叠也不能绕过该规则。并行写入必须使用隔离工作目录，并有单独的整合与验证任务。
+
+Explorer、Locator、Reviewer 的配置默认 read-only；Worker、Validator 默认 workspace-write。Validator 禁止源码修改仍是行为约定，必须由状态比较检测。Root 的 workspace-write 也不提供“只能规划”的工具层强制限制。
+
+父会话 `/permissions` 或命令行权限覆盖可能覆盖角色默认沙箱。测试应检查实际生效权限；不能仅根据 TOML 宣称隔离。不要用 `--yolo` 测试 read-only 角色。外部连接器/网络副作用不由文件系统 read-only 自动约束。
+
+历史观察（配置源服务器的 Codex CLI 0.154.0，非本次安装服务器的验证结果）：即使未传 `--yolo`，workspace-write Root 下的 astra_reviewer 仍能写入工作区，角色文件中的 read-only 没有形成运行时隔离。Locator/Explorer 的元数据也显示 workspace-write。该历史结果不证明当前服务器或当前版本的行为。在取得当前运行时证据前，同一写入会话中的“只读角色”仅按行为约定处理。
+
+需要文件系统隔离的 strict 审查必须使用全局安装的独立只读父入口：先将自包含、中性的 ReviewRequest 写入文件，再从目标项目 cwd 执行：
+
+```sh
+bash /home/tcuni-claw/.codex/review-readonly.sh /path/to/review-request.md > /path/to/review-events.jsonl
+```
+
+入口以 `codex exec --sandbox read-only` 启动独立 Root，再以无历史方式调用 astra_reviewer。必须以实际权限探测证明 Root/Reviewer 的运行时隔离；角色 TOML 或模型拒绝写入不是证据。入口要求 Bash、Python 3 和 Codex；stdlib watchdog 建立独立进程组，240 秒后 TERM，宽限 10 秒后对进程组 KILL。退出 0 仅表示 session 完成，仍需检查 Reviewer verdict 与权限证据；124 表示超时后终止，137 表示已强杀且仍需确认无残留进程。依赖缺失是 BLOCKED；strict 失败不能降级为 behavior-only PASS。
+
+## 全局使用与项目约束
+
+每个会话首次执行原生 Codex 实现、验证或独立审查时读取本协议；当前上下文已有时复用。仅在协议发生变化或上下文压缩导致关键规则丢失时补读相关章节。普通问答不触发完整委派流程。
+
+七个角色安装于 `/home/tcuni-claw/.codex/agents/`，不固定项目路径和测试命令。每次通过自包含 TaskSpec 提供目标项目的约束、ownership、验收和验证命令。模型和 effort 是默认路由策略，不是所有项目成本最优的保证；模型不可用时报告阻碍，不擅自更换。
+
+保留现有七个角色及模型分配，不新增通用 default。复杂调用链或高风险审查是否升级模型/effort，由 Root 根据任务证据和同类任务表现决定；固定角色参数不能假定被 spawn 参数覆盖。另有 `lazycodex-*` 角色时，只在对应工作流调用，不默认与 Astra 的验证、审查重复叠加；项目明确要求的门禁不得省略。
+
+全局审查脚本 `/home/tcuni-claw/.codex/review-readonly.sh` 与 `/home/tcuni-claw/.codex/run-bounded.py` 必须保持相邻。始终从被审查项目 cwd 调用审查入口，由该 cwd 决定加载的项目配置。
+
+项目配置可能覆盖用户级配置，同名角色的不同版本不能假设会合并。配置层级、provider 或宿主版本变化后，重新确认实际加载的角色、模型、effort 和权限；以实际元数据和工具结果为证据，不采信模型自述。不批量提升项目的信任级别。区分静态检查、实际运行和未验证能力；安装成功不等于严格只读隔离已经验证。
+
+遵循用户级和项目级的资源约束。预计超过一分钟、内存超过 2G 或大量读写 /data_0 的命令必须走 slot；启动前运行 slot audit 和 slot status 并将输出写入项目日志。不擅自终止其他任务或扩大槽位。中间文件放在经确认的任务目录，必要时使用 /project/tmp，禁止使用 /tmp。将这些约束显式纳入相关子任务的 Context。
+
+## 参考
+
+- [OpenAI Subagents 文档](https://learn.chatgpt.com/docs/agent-configuration/subagents)
+- [OpenAI 配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)

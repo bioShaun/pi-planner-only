@@ -1,0 +1,21 @@
+ M .scratch/request-stop-p0-20260919/README.md
+ M .scratch/request-stop-p0-20260919/evidence/acceptance.md
+ M .scratch/request-stop-p0-20260919/issues/05-host-and-release-acceptance.md
+ M CONTEXT.md
+ M README.md
+ M README.zh-CN.md
+ M delegate.test.mjs
+ M delegate.ts
+ M docs/pi-planner-only-stability-and-delegation-plan.md
+ M index.ts
+ M ledger-store.ts
+ M package.json
+ M request-control.test.mjs
+ M request-control.ts
+ M types.ts
+?? .scratch/stability-next-20260920/
+?? delegation-model.ts
+?? docs/adr/0006-stored-spec-rebinding.md
+?? docs/adr/0007-verify-delegation-model-identity.md
+?? execution-defaults.ts
+?? p1-delegation.test.mjs
