@@ -1,0 +1,46 @@
+
+> pi-planner-only@0.8.0 test:release
+> npm run typecheck && npm test
+
+
+> pi-planner-only@0.8.0 typecheck
+> tsc --noEmit
+
+
+> pi-planner-only@0.8.0 test
+> node --experimental-strip-types policy.test.mjs && node --experimental-strip-types policy-cutover.test.mjs && node --experimental-strip-types roles.test.mjs && node --experimental-strip-types floors.test.mjs && node --experimental-strip-types role-models.test.mjs && node --experimental-strip-types task.test.mjs && node --experimental-strip-types ledger-store.test.mjs && node --experimental-strip-types report.test.mjs && node --experimental-strip-types review.test.mjs && node --experimental-strip-types usage.test.mjs && node --experimental-strip-types orchestrate.test.mjs && node --experimental-strip-types evidence.test.mjs && node --experimental-strip-types git-audit.test.mjs && node --experimental-strip-types index.test.mjs && node --experimental-strip-types diagnostics-regression.test.mjs && node --experimental-strip-types workspace-snapshot.test.mjs && node --experimental-strip-types architecture.test.mjs && node --experimental-strip-types naming.test.mjs && node --experimental-strip-types concurrency.test.mjs && node --experimental-strip-types rs01.test.mjs && node --experimental-strip-types rs02.test.mjs && node --experimental-strip-types rs02-concurrency.test.mjs && node --experimental-strip-types rs03.test.mjs && node --experimental-strip-types rt06.test.mjs && node --experimental-strip-types nx04-06.test.mjs && node --experimental-strip-types nx09-scope.test.mjs && node --experimental-strip-types nx10-attribution.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types refusal-breaker.test.mjs && node --experimental-strip-types diffstat-acceptance.test.mjs && node --experimental-strip-types revalidation-accounting.test.mjs && node --experimental-strip-types request-control.test.mjs && node --experimental-strip-types request-stop.test.mjs
+
+planner-only policy: PASS
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: planner_delegate passes while live
++ actual - expected
+
++ {
++   block: true,
++   reason: 'planner-only request closed: request-persistence: request record missing from an established session. Inspect /planner-only request status; only a trusted next input or operator resume can open a new request.',
++   terminate: true
++ }
+- undefined
+
+    at file:///home/tcuni-claw/pi/pi-planner-only/policy-cutover.test.mjs:178:9 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: {
+    block: true,
+    terminate: true,
+    reason: 'planner-only request closed: request-persistence: request record missing from an established session. Inspect /planner-only request status; only a trusted next input or operator resume can open a new request.'
+  },
+  expected: undefined,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.14.0
+npm notice
+npm notice New minor version of npm available! 11.9.0 -> 11.19.1
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.19.1
+npm notice To update run: npm install -g npm@11.19.1
+npm notice

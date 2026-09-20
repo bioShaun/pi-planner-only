@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { Type } from "typebox";
+import { Type, type TSchema } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	ROOT_TOOLS,
@@ -63,6 +63,9 @@ import {
 import type { DelegationOutcome, PlannerDelegationParams } from "./delegate.ts";
 import { RefusalBreaker, isRefusal } from "./refusal-breaker.ts";
 import type { RecoveryDecision } from "./types.ts";
+import { normalizeWorkspaceIdentity } from "./task.ts";
+import { FileRequestStorage, RequestClosed, RequestController } from "./request-control.ts";
+import { acceptedExecution, correctionPredecessor, delegationFailureFamily, requestErrorFamily, reviewFailureFamily, structuralIssues } from "./request-events.ts";
 
 /** P0-B — the only recovery action wired through planner_abort (spec §5, ADR-0003). */
 const ABORT_RECOVERY_ACTIONS = new Set(["abort"]);
@@ -199,6 +202,8 @@ export function computeLoadedFingerprint(dir = PLUGIN_DIR): string {
 		"policy.ts",
 		"pricing.defaults.json",
 		"refusal-breaker.ts",
+		"request-control.ts",
+		"request-events.ts",
 		"report.ts",
 		"review.ts",
 		"role-models.ts",
@@ -507,6 +512,87 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	// Ticket 16 — session-scoped repeat-refusal breaker. Only pre-launch
 	// refusals count (isRefusal); aborts, terminations, and store errors do not.
 	const refusalBreaker = new RefusalBreaker();
+	const requests = new Map<string, RequestController>();
+	const requestContexts = new Map<string, ExtensionContext>();
+	const toolOwners = new Map<string, { request: RequestController; requestId: string; failureFamily?: string }>();
+	const rootToolSchemas = new Map<string, TSchema>();
+	let sessionBinding: string | undefined;
+	const requestKey = (ctx: ExtensionContext): [string, string, string] => {
+		const sessionId = ctx.sessionManager?.getSessionId?.() || ctx.sessionManager?.getSessionFile?.() || "unidentified-host";
+		const workspace = normalizeWorkspaceIdentity(ctx.cwd || process.cwd());
+		return [JSON.stringify([sessionId, workspace]), sessionId, workspace];
+	};
+	function requestFor(ctx: ExtensionContext): RequestController {
+		const [key, sessionId, workspace] = requestKey(ctx);
+		requestContexts.set(key, ctx);
+		let request = requests.get(key);
+		if (!request) {
+			const entries = ctx.sessionManager?.getEntries?.() ?? [];
+			request = new RequestController({
+				sessionId, workspace, storage: new FileRequestStorage(AGENT_DIR, sessionId, workspace),
+				// Only an entry for THIS (session, workspace) namespace proves a lost
+				// directory. Another workspace's entry in the same session is first
+				// contact here, not a missing record.
+				previouslyManaged: entries.some(e => e.type === "custom" && e.customType === "planner-only-request"
+					&& (e as { data?: { sessionId?: unknown; workspace?: unknown } }).data?.sessionId === sessionId
+					&& (e as { data?: { sessionId?: unknown; workspace?: unknown } }).data?.workspace === workspace),
+				stopRoot: () => {
+					const host = requestContexts.get(key);
+					if (typeof host?.abort !== "function") return "unsupported";
+					host.abort();
+					return "requested";
+				},
+			});
+			requests.set(key, request);
+			try { pi.appendEntry("planner-only-request", { sessionId, workspace, requestId: request.requestId }); } catch { /* old host: filesystem namespace still distinguishes absence */ }
+		}
+		if (sessionBinding !== undefined && sessionBinding !== key) {
+			requests.get(sessionBinding)?.close("session-switch");
+			request.close("session-boundary-unverified");
+		}
+		sessionBinding = key;
+		return request;
+	}
+	function recordAcceptance(request: RequestController, taskId: string, requestId = request.requestId): void {
+		const task = orchestrator.store.get(taskId);
+		const executionId = task && acceptedExecution(task);
+		if (executionId) request.accepted(task!.taskId, executionId, requestId);
+	}
+	// All registered tools, including diagnostics and Git reads, have the same
+	// execute gate. Host prechecks of a parallel batch cannot authorize a later
+	// direct execute after the request closes.
+	const registerRootTool: ExtensionAPI["registerTool"] = (tool) => {
+		rootToolSchemas.set(tool.name, tool.parameters);
+		pi.registerTool({
+			...tool,
+			async execute(toolCallId, params, signal, onUpdate, ctx) {
+				latestCtx = ctx;
+				const request = requestFor(ctx);
+				toolOwners.set(toolCallId, { request, requestId: request.requestId });
+				const requestId = request.beginTool(toolCallId, tool.name);
+				try {
+					const issues = structuralIssues(tool.parameters, params);
+					request.structure(tool.name, issues);
+					const result = await tool.execute(toolCallId, params, signal, onUpdate, ctx);
+					const details = result.details as { ok?: boolean; error?: string } | undefined;
+					if (details?.ok === false || typeof details?.error === "string") {
+						request.observeFailure({ id: `tool:${toolCallId}`, family: issues.length
+							? requestErrorFamily(tool.name, { code: "ARGUMENTS_INVALID" })
+							: details?.error ? requestErrorFamily(tool.name, { code: details.error }) : "environment" }, requestId);
+					}
+					return result;
+				} catch (error) {
+					if (!(error instanceof RequestClosed)) {
+						const candidate = (error as { taskId?: string } | null)?.taskId ?? (params as { taskId?: string } | null)?.taskId;
+						const task = typeof candidate === "string" ? orchestrator.store.get(candidate) : undefined;
+						request.observeFailure({ id: `tool:${toolCallId}`, family: requestErrorFamily(tool.name, error),
+							...(task ? { taskId: task.taskId } : {}) }, requestId);
+					}
+					throw error;
+				} finally { request.endTool(toolCallId, requestId); }
+			},
+		});
+	};
 
 	/**
 	 * Every Root tool execute runs through this wrapper: a thrown refusal is
@@ -802,7 +888,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		if (!sameToolOrder(activeTools, nextTools)) pi.setActiveTools(nextTools);
 	};
 
-	pi.registerTool({
+	registerRootTool({
 		name: "git_audit",
 		label: "Git Audit",
 		description: [
@@ -838,7 +924,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerTool({
+	registerRootTool({
 		name: "git_commit",
 		label: "Git Commit",
 		description: "Policy-governed commit for the truth paths of one completed, validated Task. External dirty paths and failed validation gates are rejected.",
@@ -955,7 +1041,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		/** planner_delegate strips a passthrough taskId/recovery instead of binding; planner_redelegate requires a real taskId. */
 		mintOnly: boolean;
 	}): void => {
-		pi.registerTool({
+		registerRootTool({
 			name: surface.name,
 			label: surface.mintOnly ? "Planner Delegate" : "Planner Redelegate",
 			description: surface.description,
@@ -991,6 +1077,11 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 						orchestrator.resolveVerdictTask(params.taskId, ctx.cwd || process.cwd());
 					}
 					let outcome: DelegationOutcome;
+					const requestControl = requestFor(ctx);
+					const requestScope = requestControl.requestId;
+					const predecessor = correctionPredecessor(
+						effectiveParams.taskId ? orchestrator.store.get(effectiveParams.taskId) : undefined, effectiveParams,
+					);
 					try {
 						ensureRestrictedReaderAgent();
 						outcome = await runDelegation(
@@ -999,16 +1090,34 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 								gitRunner,
 								concurrency,
 								usage: ledger,
-								launch: delegationLaunch,
+								launch: async (outbound, launchSignal, hooks) => {
+									return delegationLaunch(outbound, launchSignal, {
+										...hooks,
+										beforeDispatch: packet => {
+											requestControl.canClaim(packet.requestId, requestScope);
+											hooks?.beforeDispatch?.(packet);
+											requestControl.claim(packet.requestId, packet.nodeId, toolCallId, predecessor, requestScope);
+										},
+										onDispatch: packet => { requestControl.emitted(packet.requestId, requestScope); hooks?.onDispatch?.(packet); },
+										onLateTerminal: terminal => {
+											requestControl.terminal(outbound.requestId, requestScope);
+											hooks?.onLateTerminal?.(terminal);
+											if (effectiveParams.role === "reviewer") requestControl.finishChild(toolCallId, true, requestScope);
+										},
+									}).then(terminal => { requestControl.terminal(outbound.requestId, requestScope); return terminal; });
+								},
 								...(restrictedReaderAgent !== undefined ? { restrictedReaderAgent } : {}),
 								...(quiescenceWaitMs !== undefined ? { quiescenceWaitMs } : {}),
 								ownerRunId: ctx.sessionManager?.getSessionId?.() || PROCESS_OWNER_RUN_ID,
 							},
 							effectiveParams,
 							ctx.cwd || process.cwd(),
-							{ signal, executionId: toolCallId, onUpdate, toolName: surface.name },
+							{ signal: signal ? AbortSignal.any([signal, requestControl.signal]) : requestControl.signal,
+								executionId: toolCallId, onUpdate, toolName: surface.name, previousExecutionId: predecessor,
+								onLateStopConfirmed: () => requestControl.finishChild(toolCallId, true, requestScope) },
 						);
 					} catch (error) {
+						requestControl.finishChild(toolCallId, false, requestScope);
 						// Refused/aborted delegations carry the Task id on the error — sync
 						// the usage snapshot now so the ledger file sees the G4 row too
 						// (message_end attribution never sees this toolCallId).
@@ -1023,6 +1132,17 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 						throw error;
 					}
 					rootTurnTaskIds.add(outcome.task.taskId);
+					requestControl.finishChild(toolCallId, outcome.termination?.terminationConfirmed ?? true, requestScope);
+					const family = delegationFailureFamily(outcome);
+					// A review judges the worker's bound report revision. Its own
+					// invocation has no Task execution and cannot be a correction's
+					// predecessor; attach actionable findings to the judged worker.
+					const failedExecution = effectiveParams.role === "reviewer"
+						? outcome.review ? outcome.task.executions.find(e => !e.auxiliary && e.reportIndex === outcome.task.reports.length - 1)?.executionId : undefined
+						: outcome.executionId;
+					if (family) requestControl.observeFailure({ id: `tool:${toolCallId}`, family, taskId: outcome.task.taskId,
+						...(failedExecution ? { executionId: failedExecution } : {}) }, requestScope);
+					recordAcceptance(requestControl, outcome.task.taskId, requestScope);
 					// P0-A — abnormal terminations return instead of throwing; sync the
 					// usage snapshot here so the ledger file sees the child's row, same
 					// as the former throw path did.
@@ -1094,7 +1214,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	// session resume) can query instead of constructing one. Listing merges
 	// the session store with ledger snapshots the restore cap left out —
 	// never restoring them, never minting, never launching.
-	pi.registerTool({
+	registerRootTool({
 		name: "planner_tasks",
 		label: "Planner Tasks",
 		description: [
@@ -1181,7 +1301,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerTool({
+	registerRootTool({
 		name: "planner_verdict",
 		label: "Planner Verdict",
 		description: [
@@ -1265,20 +1385,20 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			const task = params.taskId ? verdictResolution?.task : orchestrator.store.active();
 			const missNote = verdictResolution?.note;
 			if (!task) {
-				throw new Error(
+				throw Object.assign(new Error(
 					[
 						params.taskId
 							? `planner_verdict: unknown task ${params.taskId}.${missNote ? ` ${missNote}.` : ""}`
 							: "planner_verdict: no active planner-only task.",
 						'Usage: planner_verdict({ verdict: "pass" | "request_changes" | "blocked", summary, taskId?, findings? }).',
 					].join(" "),
-				);
+				), { code: "TASK_NOT_FOUND" });
 			}
 			latestCtx = ctx;
 			const refusal = orchestrator.rootVerdictRefusal(task, params.verdict);
 			if (refusal) {
 				orchestrator.recordRootVerdictRefusal(task, params.verdict, refusal);
-				throw new Error(`planner_verdict refused (${refusal.kind}, task=${task.taskId}, verdict=${params.verdict}): ${refusal.reason}`);
+				throw Object.assign(new Error(`planner_verdict refused (${refusal.kind}, task=${task.taskId}, verdict=${params.verdict}): ${refusal.reason}`), { code: `VERDICT_${refusal.kind.toUpperCase().replaceAll("-", "_")}`, taskId: task.taskId });
 			}
 			try {
 				const before = task.state;
@@ -1287,6 +1407,14 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					...(params.acknowledgeDrift ? { acknowledgeDrift: params.acknowledgeDrift } : {}),
 					source: "root",
 				});
+				const request = requestFor(ctx);
+				const family = reviewFailureFamily(outcome.decision);
+				if (family) {
+					const execution = task.executions.find(e => !e.auxiliary && e.reportIndex === task.reports.length - 1);
+					request.observeFailure({ id: `tool:${toolCallId}`, family, taskId: task.taskId,
+						...(execution ? { executionId: execution.executionId } : {}) });
+				}
+				recordAcceptance(request, outcome.task.taskId);
 				let text = orchestrator.renderDecisionBlock(orchestrator.store.require(task.taskId), outcome.decision, outcome.evidence);
 				text = enrichDecisionText(text, outcome.task.taskId);
 				for (const warning of stripWarnings) text = `${text}\nwarning: ${warning}`;
@@ -1308,9 +1436,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					},
 				};
 			} catch (error) {
-				throw new Error(
+				throw Object.assign(new Error(
 					`planner_verdict refused (store-error, task=${task.taskId}, verdict=${params.verdict}): ${error instanceof Error ? error.message : String(error)}`,
-				);
+				), { code: "STORE_ERROR", taskId: task.taskId });
 			}
 			});
 		},
@@ -1321,7 +1449,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	// recovery" combination is inexpressible. planner_abort is the blocked
 	// verdict + abort RecoveryDecision as one atomic call — no `action` field
 	// exists because the tool's identity is the action.
-	pi.registerTool({
+	registerRootTool({
 		name: "planner_abort",
 		label: "Planner Abort",
 		description: [
@@ -1418,9 +1546,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					},
 				};
 			} catch (error) {
-				throw new Error(
+				throw Object.assign(new Error(
 					`planner_abort refused (store-error, task=${task.taskId}): ${error instanceof Error ? error.message : String(error)}`,
-				);
+				), { code: "STORE_ERROR", taskId: task.taskId });
 			}
 			});
 		},
@@ -1428,6 +1556,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		latestCtx = ctx;
+		requestFor(ctx);
 		refusalBreaker.reset();
 		loadedFingerprintInfo = createLoadedPluginFingerprint(ctx);
 		orchestrator.setLoadedFingerprint(loadedFingerprintInfo);
@@ -1451,6 +1580,10 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async (event, ctx) => {
+		for (const request of requests.values()) {
+			if (request.snapshot().claims.some(c => !c.waitSettled)) request.close("session-shutdown");
+			request.dispose();
+		}
 		// Restore tools for reload/replace. Usage snapshot is separate: only
 		// reasons that tear this session down without a same-file successor.
 		restoreSuppressedTools();
@@ -1466,7 +1599,16 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		await flushOpenUsageOnShutdown(shutdownHost);
 	});
 
-	pi.on("before_agent_start", async (event) => {
+	pi.on("input", async (event, ctx) => {
+		latestCtx = ctx;
+		if (requestFor(ctx).input(event.source, event.streamingBehavior, ctx.isIdle?.() === true)) refusalBreaker.reset();
+	});
+	pi.on("agent_start", async (_event, ctx) => { requestFor(ctx).rootActive(); });
+	pi.on("agent_settled", async (_event, ctx) => { requestFor(ctx).settle(); });
+	pi.on("before_provider_request", async (_event, ctx) => { requestFor(ctx).modelCall(); });
+	pi.on("before_agent_start", async (event, ctx) => {
+		latestCtx = ctx;
+		try { requestFor(ctx).activity(); } catch { requestFor(ctx).close(requestFor(ctx).snapshot().closedReason ?? "request-closed"); }
 		if (isDisabled()) return;
 		return { systemPrompt: `${event.systemPrompt}\n\n${PLANNER_PROMPT}` };
 	});
@@ -1477,13 +1619,22 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		// memory, and a failure would read as Idle: fail closed).
 		const policyCwd = ctx?.cwd || process.cwd();
 		latestCtx = ctx;
+		const request = requestFor(ctx);
+		toolOwners.set(event.toolCallId, { request, requestId: request.requestId });
+		try { request.attempt(event.toolCallId, event.toolName); }
+		catch (error) { request.endTool(event.toolCallId); return { block: true, terminate: true, reason: error instanceof Error ? error.message : String(error) }; }
+		const refuse = (reason: string, family: string) => {
+			request.observeFailure({ id: `tool:${event.toolCallId}`, family });
+			request.endTool(event.toolCallId);
+			return { block: true, reason, ...(request.snapshot().closedReason ? { terminate: true } : {}) };
+		};
 		if (!IS_SUBAGENT && !isDisabled() && event.toolName === "read") {
 			const input = event.input && typeof event.input === "object" ? event.input as Record<string, unknown> : undefined;
 			if (input) Object.assign(input, applyRootReadCeiling(input));
 			const readNotice = rootReadLimitNotice(input);
 			if (readNotice) {
 				if (ctx.hasUI) ctx.ui.notify(readNotice, "warning");
-				return { block: true, reason: readNotice };
+				return refuse(readNotice, "contract:read:ceiling");
 			}
 		}
 		// Ticket 16 — an identical call already refused HARD_STOP_AT times is
@@ -1492,7 +1643,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			const breakerBlock = refusalBreaker.shouldBlock(event.toolName, event.input);
 			if (breakerBlock.block) {
 				if (ctx.hasUI) ctx.ui.notify(`Blocked parent tool: ${event.toolName} (repeated identical refusal)`, "warning");
-				return breakerBlock;
+				return refuse(breakerBlock.reason, "contract:repeated-refusal");
 			}
 		}
 		if (!IS_SUBAGENT && ["subagent", "bg_wait", "planner_verdict", "planner_abort", "git_audit", "planner_delegate", "planner_redelegate", "planner_tasks"].includes(event.toolName)) {
@@ -1517,10 +1668,14 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		});
 		if (!decision.block) return;
 		if (ctx.hasUI) ctx.ui.notify(`Blocked parent tool: ${event.toolName}`, "warning");
-		return { block: true, reason: decision.reason };
+		return refuse(decision.reason ?? "planner-only policy refused this tool", `policy:${event.toolName}`);
 	});
 
 	pi.on("tool_result", async (event, ctx) => {
+		const owner = toolOwners.get(event.toolCallId);
+		const request = owner?.request ?? requestFor(ctx);
+		if (event.isError) request.observeFailure({ id: `tool:${event.toolCallId}`, family: owner?.failureFamily ?? "unknown-failure" }, owner?.requestId);
+		request.endTool(event.toolCallId, owner?.requestId);
 		if (isDisabled()) return;
 		latestCtx = ctx;
 		if (REVIEW_LEAK_TOOLS.has(event.toolName)) {
@@ -1535,6 +1690,33 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	});
 
 	pi.on("message_end", async (event, ctx) => {
+		// The host can reject unknown tools or malformed arguments before its
+		// tool_call hook. Observe the public structured message as a fallback;
+		// the normal hook/execute path deduplicates by the same call identity.
+		const structured = event.message as { role?: string; content?: unknown; toolCallId?: string; isError?: boolean };
+		if (structured.role === "assistant" && Array.isArray(structured.content)) {
+			const request = requestFor(ctx);
+			for (const block of structured.content) {
+				if (block?.type !== "toolCall" || typeof block.id !== "string" || typeof block.name !== "string") continue;
+				toolOwners.set(block.id, { request, requestId: request.requestId });
+				try {
+					request.attempt(block.id, block.name);
+					const schema = rootToolSchemas.get(block.name);
+					if (schema) {
+						const issues = structuralIssues(schema, block.arguments);
+						request.structure(block.name, issues);
+						if (issues.length) toolOwners.get(block.id)!.failureFamily = requestErrorFamily(block.name, { code: "ARGUMENTS_INVALID" });
+					}
+				}
+				catch { break; }
+			}
+		} else if (structured.role === "toolResult" && typeof structured.toolCallId === "string") {
+			const owner = toolOwners.get(structured.toolCallId);
+			if (owner) {
+				if (structured.isError) owner.request.observeFailure({ id: `tool:${structured.toolCallId}`, family: owner.failureFamily ?? "unknown-failure" }, owner.requestId);
+				owner.request.endTool(structured.toolCallId, owner.requestId);
+			}
+		}
 		if (isDisabled()) return;
 		latestCtx = ctx;
 		const host = ctx ?? ({ hasUI: false, cwd: process.cwd() } as ExtensionContext);
@@ -1616,6 +1798,27 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			const parts = args.trim().split(/\s+/).filter(Boolean);
 			const action = (parts[0] ?? "status").toLowerCase();
 			const store = orchestrator.store;
+			if (action === "request") {
+				const request = requestFor(ctx);
+				const operation = parts[1] ?? "status";
+				if (operation === "resume" && parts.length === 2) {
+					// Command contexts expose no input source. Extensions can ask the
+					// host to expand slash commands, so command text alone is not proof
+					// of operator intent. Require the public human UI confirmation.
+					if (!ctx.hasUI || typeof ctx.ui.confirm !== "function") {
+						notify(ctx, "Request resume requires an operator confirmation UI; this host cannot prove command provenance. Admission remains closed.", "warning");
+						return;
+					}
+					if (!ctx.isIdle() || !(await ctx.ui.confirm("Resume planner request?", "Open a fresh request budget. Existing unconfirmed Writer holds remain."))) return;
+					if (request.resume(ctx.isIdle())) refusalBreaker.reset();
+					else notify(ctx, "Request could not resume: active calls or invalid persisted state must be resolved first.", "warning");
+				} else if (operation !== "status" || parts.length > 2) {
+					notify(ctx, "Usage: /planner-only request status | /planner-only request resume", "warning");
+					return;
+				}
+				notify(ctx, request.render());
+				return;
+			}
 
 			if (action === "status") {
 				const log = usageLogPath();
@@ -1634,6 +1837,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					: ["无模型成本保证"];
 				const lines = [
 					`Planner-only mode is ${isDisabled() ? "off" : "on"} (source: ${guardDecisionSource()}).`,
+					requestFor(ctx).render(),
 					...configuredLines,
 					`实际运行的 root: ${actualRootDisplay}`,
 				];
@@ -1866,6 +2070,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				}
 				const before = task.state;
 				const outcome = await orchestrator.recordRootVerdict(task, verdict, summary, { source: "operator" });
+				recordAcceptance(requestFor(ctx), outcome.task.taskId);
 				notify(ctx, enrichDecisionText(orchestrator.renderDecisionBlock(outcome.task, outcome.decision, outcome.evidence), outcome.task.taskId));
 				persistSessionEntries();
 				await flushIfTerminal(outcome.task.taskId, before, ctx);

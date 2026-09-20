@@ -1,0 +1,1 @@
+Read fixture.txt in the current workspace and report its word count. Make no changes.

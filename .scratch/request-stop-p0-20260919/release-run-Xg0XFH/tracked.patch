@@ -1,0 +1,1155 @@
+diff --git a/CONTEXT.md b/CONTEXT.md
+index af18f75..133c183 100644
+--- a/CONTEXT.md
++++ b/CONTEXT.md
+@@ -26,6 +26,24 @@ A child that may run a shell to check work, but may not edit files.
+ One unit of delegated work with a lifecycle (planning → executing → reviewing → completed | changes_requested | blocked | failed).
+ _Avoid_: job, ticket, unit of work
+ 
++**Request**:
++One independently initiated unit of Root work, spanning its Tasks, corrections,
++recoveries, and automatic continuations. Its finite allowance and closure survive
++reloads until a trusted next input or confirmed operator action opens another Request.
++_Avoid_: Task, assistant turn, model call
++
++**Request stop**:
++Closure of new Root tool and child admission, accompanied by cancellation of
++active children and a request to stop Root. Admission closure, confirmed child
++stop, and confirmed Root stop are separate facts.
++_Avoid_: abort called, full termination without host evidence
++
++**Failure chain**:
++Unresolved failures of one program-classified family within a Request, including
++failures on different Tasks. Only a fully accepted correction resolves its
++causally linked predecessors on the same Task and in the same family.
++_Avoid_: repeated wording, report validity, success on an unrelated Task
++
+ **TaskSpec**:
+ The downward contract: what a Worker is allowed and required to do.
+ _Avoid_: prompt, brief, ticket body
+@@ -75,7 +93,7 @@ The persisted `task.writerHold` left when an execution's stop was never confirme
+ _Avoid_: lock, mutex
+ 
+ **RecoveryDecision**:
+-Root's structured decision (`planner_redelegate.recovery`, or the dedicated `planner_abort` surface for `action:"abort"` — ADR-0003; `planner_verdict` has no recovery key) that authorizes one new bounded execution on a Task flagged `recovery.required`, or abandons it for the operator; consumed once, never reworded-retried. Distinct from evidence revalidation, which is the workspace re-sampling behind a `revalidate` verdict action on ordinary Tasks — no `recovery` key, no `recovery.required` gate, nothing consumed.
++Root's structured decision (`planner_redelegate.recovery`, or the dedicated `planner_abort` surface for `action:"abort"` — ADR-0003; `planner_verdict` has no recovery key) that authorizes one new bounded execution on a Task flagged `recovery.required`, or abandons it for the operator; consumed once, never reworded-retried. Distinct from evidence revalidation: a `revalidate` verdict grants a workspace re-sampling attempt, consumed once at durable dispatch, with a separate limit of three attempts per Task.
+ _Avoid_: replan, retry policy
+ 
+ **Review loop**:
+diff --git a/README.md b/README.md
+index a085182..777fea5 100644
+--- a/README.md
++++ b/README.md
+@@ -290,6 +290,49 @@ Review states: `planning → executing → reviewing → completed | changes_req
+ Root records verdicts with `planner_verdict`: tasks in `blocked` or `failed` state can directly pass as long as they have a recorded report; `completed` is the sole terminal state. At most three corrections (`MAX_REVIEW_ROUNDS`). Stale in-scope evidence cannot
+ PASS. Root may override a reviewer; the override is recorded in memory.
+ 
++### Request limits and recovery
++
++Each Root request shares a durable allowance across all Tasks and child roles:
++32 tool attempts, 8 child launch claims, 3 unresolved failures in the same family,
++2 genuine parameter repairs, and a 15-minute deadline from its first activity.
++Changing wording, Task IDs, policies, or recovery execution IDs does not reset it.
++The next tool/launch over its allowance is refused before execution; the third
++same-family failure closes admission immediately. Only an accepted correction
++resolves its own same-Task, same-family failure ancestors. An unrelated success
++or a structurally valid report does not clear failures.
++
++Use `/planner-only request status` to inspect admission, child stop, and Root stop
++separately. Closure is persisted before active children are cancelled. A launch
++claim is persisted before REQUEST emission and is not refunded after an uncertain
++send, failed child, or cancellation. An unconfirmed writer keeps its Writer hold,
++including after reload or request recovery. Evidence revalidation also consumes
++its existing per-Task allowance once per dispatch; a fourth attempt is refused.
++
++After `agent_settled`, a new idle interactive input opens a fresh request.
++Extension messages, queued continuations, steering, RPC input, and reload do not.
++`/planner-only request resume` is a command-only recovery path, requires an idle
++host and human UI confirmation, and never clears Writer holds. Hosts without a
++confirmation UI cannot use it. Missing/corrupt/interrupted request records stay
++closed for operator reconciliation instead of silently granting a fresh allowance.
++
++Operator environment settings are positive finite integers and freeze when a
++request starts. Zero, empty, negative, fractional, or unlimited values are invalid:
++
++| Environment variable | Default |
++|---|---:|
++| `PI_PLANNER_ONLY_REQUEST_TOOL_ATTEMPTS` | 32 |
++| `PI_PLANNER_ONLY_REQUEST_CHILD_LAUNCHES` | 8 |
++| `PI_PLANNER_ONLY_REQUEST_FAILURES` | 3 |
++| `PI_PLANNER_ONLY_REQUEST_REPAIRS` | 2 |
++| `PI_PLANNER_ONLY_REQUEST_ACTIVE_MS` | 900000 |
++
++The durable state lives under the agent directory's `planner-only/requests/`.
++Committed claims, observed sends, terminal receipt, and confirmed stop remain
++separate diagnostics. Do not delete this state to recover an unconfirmed writer.
++Root abort is best effort: a host may still process queued messages and incur
++model calls. Provider-request hooks are observations, may be absent for some
++providers, and are not a token, cost, or exact model-call hard limit.
++
+ ### Composite workflows
+ 
+ Execution `subagent` calls that carry a non-empty `workflowScript`,
+@@ -378,6 +421,8 @@ runs, not as a release-gate suite.
+ |---|---|
+ | `types.ts` | `TaskSpec`, `WorkerReport`, `EvidenceRef`, `ReviewResult`, `ReviewRequest` |
+ | `policy.ts` | parent tool allowlist and `tool_call` decisions |
++| `request-control.ts` | durable Request limits, closure, lifecycle and failure chains |
++| `request-events.ts` | typed Task/host observations for Request control |
+ | `task.ts` | validation, compaction, state machine |
+ | `report.ts` | `WorkerReport` schema validation and identity |
+ | `review.ts` | verdicts, review loop, fresh-review packet |
+@@ -389,4 +434,4 @@ runs, not as a release-gate suite.
+ | `usage.ts` | pure usage ledger, cost resolution, report rendering |
+ | `index.ts` | hooks, tool, commands |
+ 
+-No background advisor, queues, or telemetry. The only persistence is usage: session custom entries and a local append-only `usage.jsonl`.
++No background advisor or telemetry. Persistence includes Task ledger snapshots, Request control records, session custom entries, and the local append-only usage log.
+diff --git a/README.zh-CN.md b/README.zh-CN.md
+index 85c9138..4c3bfe6 100644
+--- a/README.zh-CN.md
++++ b/README.zh-CN.md
+@@ -158,6 +158,43 @@ reviewer 的 PASS 与快照摘要绑定：必须写明它看到的报告版本
+ 
+ Review 状态：`planning → executing → reviewing → completed | changes_requested | blocked`。Root 使用 `planner_verdict` 记录裁决：blocked / failed 的 Task 只要有已记录的报告就可以直接 pass；completed 是唯一终态。最多 3 轮修正（`MAX_REVIEW_ROUNDS`）。范围内 stale evidence 不能直接 PASS。Root 可以覆盖 reviewer，覆盖记录只留在内存。
+ 
++### 请求额度、停止与恢复
++
++每个 Root 请求跨所有 Task、角色、纠正与恢复共享：32 次工具尝试、8 次 child
++启动 claim、同类未解决失败 3 次、真实参数修复 2 次，以及首次活动起 15 分钟的
++绝对截止。第 33 次工具尝试、第 9 次 child 派发在执行前被拒；第三次同类失败
++立即封锁。改文案、换 Task、切政策或换 recovery executionId 都不能重置额度。
++只有经过最终验收的关联纠正，才能解决同 Task、同 family 的因果前序失败；
++无关成功和结构合法的报告不清零。
++
++`/planner-only request status` 分别显示新准入、child 停止和 Root 停止状态。
++封锁先持久化再取消活动 child；每次 child claim 在 REQUEST 发出前持久提交，
++失败、取消或发送状态未知均不返还。停止未确认时保留 Writer hold，重载和新请求
++都不清除。每 Task 的 evidence revalidation 另有既存三次上限，现已在真实派发时
++消费 grant 并准确递增，第四次不再启动 child。
++
++只有旧请求 settled 后的下一条 idle interactive 输入自动开启新请求。
++extension、排队续跑、steering、RPC、compaction 和 reload 都不能解锁。
++`/planner-only request resume` 只注册为用户命令，需要宿主空闲并在 UI 中人工确认；
++无确认 UI 的模式保持封锁。记录缺失、损坏或写盘中断须由 operator 核对后处理，
++不会静默归零。Request 恢复不替代 Writer hold 的既有人工处理契约。
++
++operator 可通过环境变量配置正有限整数，请求创建时冻结；空值、零、负值、
++小数或 unlimited 均无效：
++
++| 环境变量 | 默认值 |
++|---|---:|
++| `PI_PLANNER_ONLY_REQUEST_TOOL_ATTEMPTS` | 32 |
++| `PI_PLANNER_ONLY_REQUEST_CHILD_LAUNCHES` | 8 |
++| `PI_PLANNER_ONLY_REQUEST_FAILURES` | 3 |
++| `PI_PLANNER_ONLY_REQUEST_REPAIRS` | 2 |
++| `PI_PLANNER_ONLY_REQUEST_ACTIVE_MS` | 900000 |
++
++状态保存在 agent 目录下的 `planner-only/requests/`，区分 claim 已提交、REQUEST
++已观察发出、terminal 已收到和停止已确认。不要用删除状态的方式解除未确认 writer。
++Root abort 属于尽力停止；宿主仍可能消费排队消息并产生模型调用。provider-request
++hook 的观测取决于 provider，不承诺全局模型次数、token 或费用硬上限。
++
+ ### 复合工作流
+ 
+ 执行型 `subagent` 调用若带有非空的 `workflowScript`、`workflowScriptPath`、
+@@ -237,6 +274,8 @@ npm run test:release  # 发布门禁：typecheck + 单元测试
+ |---|---|
+ | `types.ts` | `TaskSpec`、`WorkerReport`、`EvidenceRef`、`ReviewResult`、`ReviewRequest` |
+ | `policy.ts` | 父进程工具白名单与 `tool_call` 决策 |
++| `request-control.ts` | 请求额度、持久封锁、生命周期与失败链 |
++| `request-events.ts` | Task/宿主结构化事实转换 |
+ | `task.ts` | 校验、状态机 |
+ | `report.ts` | `WorkerReport` schema 校验与身份校验 |
+ | `review.ts` | 裁决、review 循环、fresh-review 任务包 |
+@@ -248,4 +287,4 @@ npm run test:release  # 发布门禁：typecheck + 单元测试
+ | `usage.ts` | 纯用量账本、Token 与成本核算、报告渲染 |
+ | `index.ts` | hook、工具、命令 |
+ 
+-不做后台 Advisor、持久化、队列或 telemetry。
++不引入后台 Advisor、调度队列或外部 telemetry。Task、Request 与用量按上述规则保存在本地。
+diff --git a/delegate.ts b/delegate.ts
+index 42f4f36..4b0e707 100644
+--- a/delegate.ts
++++ b/delegate.ts
+@@ -488,6 +488,10 @@ export const REVIEW_RESULT_SCHEMA = structuredClone(Type.Object(
+ )) as unknown as SubagentDelegationJsonSchemaObject;
+ 
+ export interface DelegationLaunchHooks {
++	/** Synchronous final-admission hook, called immediately before REQUEST emit. */
++	beforeDispatch?: (request: SubagentDelegationRequest) => void;
++	/** Best-effort notification that REQUEST emit returned. Must not throw. */
++	onDispatch?: (request: SubagentDelegationRequest) => void;
+ 	/** 每条按身份三元组过滤后的 UPDATE。调用方不得阻塞。 */
+ 	onUpdate?: (update: SubagentDelegationUpdate) => void;
+ 	/**
+@@ -559,6 +563,8 @@ export interface DelegationTermination {
+ 	/** P0-B — which envelope bound tripped (signal/observed/limit) plus its config source. */
+ 	anomaly?: RunawayObservation & { source: string };
+ 	error?: string;
++	/** Program-owned launcher exception code, never extracted from error prose. */
++	errorCode?: string;
+ }
+ 
+ export interface DelegationOutcome {
+@@ -590,6 +596,10 @@ export interface DelegationProgressDetails {
+ /** Per-call inputs that are not part of the TypeBox parameters. */
+ export interface DelegationOptions {
+ 	signal?: AbortSignal;
++	/** Program-selected causal predecessor; never a tool parameter. */
++	previousExecutionId?: string;
++	/** An old execution's late terminal passed the existing quiescence check. */
++	onLateStopConfirmed?: () => void;
+ 	/**
+ 	 * Host tool-call id; binds the TaskExecutionRecord and the usage entry.
+ 	 * Falls back to the delegation requestId when absent (unit tests).
+@@ -780,6 +790,16 @@ export async function runDelegation(
+ 		if (role === "reviewer") {
+ 			return runReviewInvocation(deps, task, { requestId, executionId }, options);
+ 		}
++		if (
++			task.pendingRevalidationKey
++			&& task.revalidationDispatches?.some((item) => item.executionId === executionId)
++		) {
++			throw new DelegationRefused(
++				"REVALIDATION_DISPATCH_REPLAY",
++				`${toolName} refused: revalidation execution ${executionId} was already dispatched for Task ${task.taskId}`,
++				task.taskId,
++			);
++		}
+ 		// The packet spec inherits the stored acceptance contract — the child
+ 		// sees the same mode the ledger enforces (params.acceptanceMode was
+ 		// refused above).
+@@ -956,6 +976,7 @@ export async function runDelegation(
+ 		const aRun = await captureEvidence(deps.gitRunner, sampleOptions(executionId));
+ 		deps.store.beginExecution(task.taskId, {
+ 			executionId,
++			...(options.previousExecutionId ? { previousExecutionId: options.previousExecutionId } : {}),
+ 			kind: role as DelegationKind,
+ 			cwd: task.cwd || effectiveCwd,
+ 			worktreeRoots,
+@@ -1128,6 +1149,7 @@ export async function runDelegation(
+ 						deps.store.clearWriterHold(task.taskId);
+ 					}
+ 				}
++				if (q.confirmed) options.onLateStopConfirmed?.();
+ 			})().catch(() => {
+ 				/* late finalization is best-effort: the record stays stop_unconfirmed */
+ 			});
+@@ -1156,6 +1178,23 @@ export async function runDelegation(
+ 				wallTimer = armWallTimer(onWallDeadline, wallLimit);
+ 			}
+ 			response = await deps.launch(request, runController.signal, {
++				beforeDispatch: (outbound) => {
++					const committed = deps.store.commitRevalidationDispatch(
++						task.taskId,
++						executionId,
++						outbound.requestId,
++					);
++					if (committed.status === "duplicate") {
++						throw new DelegationRefused(
++							"REVALIDATION_DISPATCH_REPLAY",
++							`${toolName} refused: revalidation execution ${executionId} was already dispatched for Task ${task.taskId}`,
++							task.taskId,
++						);
++					}
++				},
++				onDispatch: (outbound) => {
++					deps.store.markRevalidationRequestObserved(task.taskId, executionId, outbound.requestId);
++				},
+ 				onUpdate: (update) => {
+ 					// P0-B monitor — cumulative token snapshot, max not sum;
+ 					// unknown/regressing counts never reset the observed level.
+@@ -1272,6 +1311,7 @@ export async function runDelegation(
+ 					quiescenceWaitSource,
+ 					usageComplete: false,
+ 					error: reason,
++					...(typeof (error as { code?: unknown })?.code === "string" ? { errorCode: (error as { code: string }).code } : {}),
+ 				},
+ 				warnings,
+ 			};
+@@ -1619,11 +1659,14 @@ export async function runDelegation(
+ 			...(reportError ? { reportError } : {}),
+ 			...(comparison ? { comparison } : {}),
+ 		});
++		if (decision.action === "revalidate" && decision.evidenceKey) {
++			deps.store.markRevalidationGranted(task.taskId, decision.evidenceKey);
++		}
+ 
+ 		// 10. Outcome.
+ 		releaseReservation = true;
+ 		return {
+-			task: reviewed,
++			task: deps.store.require(reviewed.taskId),
+ 			executionId,
+ 			...(runId ? { runId } : {}),
+ 			...(report ? { report } : {}),
+@@ -1965,6 +2008,8 @@ export interface HostLauncherOptions {
+ 	 * DelegationAborted.
+ 	 */
+ 	cancelGraceMs?: number;
++	/** Optional synchronous admission wrapper used by request-global accounting. */
++	beforeDispatch?: (request: SubagentDelegationRequest, local?: DelegationLaunchHooks["beforeDispatch"]) => void;
+ }
+ 
+ /**
+@@ -2046,7 +2091,8 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
+ 		const onAbort = () => {
+ 			if (settled || aborting) return;
+ 			aborting = true;
+-			pi.events.emit(SUBAGENT_DELEGATION_CANCEL_EVENT, cancelPayload);
++			try { pi.events.emit(SUBAGENT_DELEGATION_CANCEL_EVENT, cancelPayload); } catch { /* cancellation remains unconfirmed until terminal */ }
++			if (settled) return;
+ 			graceTimer = setTimeout(() => {
+ 				if (settled) return;
+ 				settled = true;
+@@ -2060,8 +2106,30 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
+ 			}, cancelGraceMs);
+ 		};
+ 		signal?.addEventListener("abort", onAbort, { once: true });
++		try {
++			if (options.beforeDispatch) options.beforeDispatch(request, hooks?.beforeDispatch);
++			else hooks?.beforeDispatch?.(request);
++		} catch (error) {
++			cleanup();
++			reject(signal?.aborted ? new DelegationAborted(request.nodeId, false) : error);
++			return;
++		}
+ 		inFlight.set(request.requestId, cancelPayload);
+-		pi.events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, request);
++		try {
++			pi.events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, request);
++		} catch {
++			// A listener may have started the child before a later listener threw.
++			// Keep the committed charge and RESPONSE subscription; treat the send as
++			// unknown/emitted so runDelegation retains the writer reservation.
++			settled = true;
++			try { pi.events.emit(SUBAGENT_DELEGATION_CANCEL_EVENT, cancelPayload); } catch { /* retain the hold */ }
++			unsubscribeUpdate();
++			signal?.removeEventListener("abort", onAbort);
++			inFlight.delete(request.requestId);
++			reject(new DelegationAborted(request.nodeId, true));
++			return;
++		}
++		try { hooks?.onDispatch?.(request); } catch { /* observation cannot undo an emitted request */ }
+ 		// An abort landing between the early check and addEventListener never
+ 		// fires the listener — catch it here so the grace path still runs.
+ 		if (signal?.aborted) onAbort();
+diff --git a/index.test.mjs b/index.test.mjs
+index 199b057..7a7f482 100644
+--- a/index.test.mjs
++++ b/index.test.mjs
+@@ -20,6 +20,12 @@ process.env.PI_PLANNER_ONLY_SEED_PRICING = "0";
+ process.env.PI_PLANNER_ONLY_QUIESCENCE_MS = "0";
+ // Keep the cancel grace near-instant so the stop_unconfirmed/writerHold path is testable; default is 5 s.
+ process.env.PI_PLANNER_ONLY_CANCEL_GRACE_MS = "50";
++// This legacy fixture exercises many independent lifecycle cases in one host.
++// Isolate its Task/refusal-breaker assertions from Request quotas; P0 defaults
++// and bounded recovery are exercised by request-stop.test.mjs.
++for (const limit of ["TOOL_ATTEMPTS", "CHILD_LAUNCHES", "FAILURES", "REPAIRS"]) {
++	process.env[`PI_PLANNER_ONLY_REQUEST_${limit}`] = "1000";
++}
+ // ticket 05 → 08: this file drives the pre-cutover subagent chain through the hook; deleted with it.
+ 
+ delete process.env.PI_SUBAGENT_CHILD;
+@@ -73,10 +79,13 @@ function tinyEmitter() {
+ 	};
+ }
+ const piEvents = tinyEmitter();
++let fixtureToolCallSequence = 0;
+ 
+ const pi = {
+ 	on(name, handler) {
+-		handlers.set(name, handler);
++		handlers.set(name, name === "tool_call"
++			? (event, context) => handler({ ...event, toolCallId: event.toolCallId ?? `fixture-hook-${++fixtureToolCallSequence}` }, context)
++			: handler);
+ 	},
+ 	registerCommand(name, definition) {
+ 		commands.set(name, definition);
+@@ -123,6 +132,7 @@ const ui = {
+ };
+ const ctx = {
+ 	hasUI: true,
++	isIdle() { return true; },
+ 	ui,
+ 	cwd: process.cwd(),
+ 	sessionManager: {
+@@ -192,10 +202,10 @@ const verdictAllowed = await handlers.get("tool_call")(
+ assert.equal(verdictAllowed, undefined, "the policy never blocks planner_verdict");
+ 
+ activeTools.push("edit");
+-await handlers.get("before_agent_start")({ systemPrompt: "BASE" });
++await handlers.get("before_agent_start")({ systemPrompt: "BASE" }, ctx);
+ assert.equal(activeTools.includes("edit"), true, "setActiveTools is not used; policy blocks Root mutators");
+ 
+-const prompt = await handlers.get("before_agent_start")({ systemPrompt: "BASE" });
++const prompt = await handlers.get("before_agent_start")({ systemPrompt: "BASE" }, ctx);
+ assert.match(prompt.systemPrompt, /^BASE/);
+ assert.match(prompt.systemPrompt, /plan, delegate, inspect read-only, review, and arbitrate/);
+ assert.match(prompt.systemPrompt, /WorkerReport/);
+@@ -1242,6 +1252,10 @@ try {
+ 	const snapshot = JSON.parse(readFileSync(ledgerPath, "utf8"));
+ 	assert.equal(snapshot.task.usage.children.length, 1, "ledger file carries the cancelled child's usage row");
+ 	assert.equal(snapshot.task.usage.children[0].outcome, "failed", "non-completed terminal lands as outcome=failed in the file");
++	// The shutdown case closed its Request. Subsequent independent cases start
++	// through the same trusted host boundary as a new operator prompt.
++	await handlers.get("agent_settled")({}, ctx);
++	await handlers.get("input")({ source: "interactive" }, ctx);
+ }
+ 
+ // --------------------------------------------------------------------------
+@@ -1740,10 +1754,17 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
+ 	assert.equal(requestCount18(), requestsBefore18, "listing never reaches the launcher");
+ 	assert.equal(ledgerCount18(), ledgerBefore18, "listing writes nothing to the ledger");
+ 
+-	// A workspace with no live Tasks gets the mint-hint text.
+-	const emptyListed = await tasksTool.execute("call-tasks-2", {}, undefined, () => {}, { ...ctx, cwd: join(tmpdir(), "planner-only-no-live-cwd") });
++	// A workspace with no live Tasks gets the mint-hint text. Another workspace
++	// is another Request namespace: the host crosses the trusted boundary into
++	// it (settled + idle interactive input) and back, exactly like a new prompt.
++	const noLiveCtx = { ...ctx, cwd: join(tmpdir(), "planner-only-no-live-cwd") };
++	await handlers.get("agent_settled")({}, noLiveCtx);
++	await handlers.get("input")({ source: "interactive" }, noLiveCtx);
++	const emptyListed = await tasksTool.execute("call-tasks-2", {}, undefined, () => {}, noLiveCtx);
+ 	assert.deepEqual(emptyListed.details.tasks, []);
+ 	assert.match(emptyListed.content[0].text, /No live Tasks in .+\. planner_delegate mints a new one\./);
++	await handlers.get("agent_settled")({}, ctx);
++	await handlers.get("input")({ source: "interactive" }, ctx);
+ }
+ 
+ // ---------------------------------------------------------------------------
+@@ -2551,7 +2572,13 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
+ 		...ctx,
+ 		sessionManager: { getEntries() { return sessionEntries; } },
+ 	};
++	// No session file means a different Request identity: cross the trusted
++	// boundary into it, and back to the primary identity afterwards.
++	await handlers.get("agent_settled")({}, noSessionCtx);
++	await handlers.get("input")({ source: "interactive" }, noSessionCtx);
+ 	const noSession = await tasksTool.execute("call-t06-nosession", { taskId: "T-20200101-900" }, undefined, () => {}, noSessionCtx);
++	await handlers.get("agent_settled")({}, ctx);
++	await handlers.get("input")({ source: "interactive" }, ctx);
+ 	const ns = noSession.details.diagnostics;
+ 	assert.equal(ns.sessionLog.status, "unknown", "without a host sessionFile the log location is unknown, not a directory hint");
+ 	assert.equal(ns.sessionLog.path, undefined, "no path is claimed");
+diff --git a/index.ts b/index.ts
+index 7ded3a3..428389b 100644
+--- a/index.ts
++++ b/index.ts
+@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
+ import { fileURLToPath } from "node:url";
+ import { homedir } from "node:os";
+ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+-import { Type } from "typebox";
++import { Type, type TSchema } from "typebox";
+ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+ import {
+ 	ROOT_TOOLS,
+@@ -63,6 +63,9 @@ import {
+ import type { DelegationOutcome, PlannerDelegationParams } from "./delegate.ts";
+ import { RefusalBreaker, isRefusal } from "./refusal-breaker.ts";
+ import type { RecoveryDecision } from "./types.ts";
++import { normalizeWorkspaceIdentity } from "./task.ts";
++import { FileRequestStorage, RequestClosed, RequestController } from "./request-control.ts";
++import { acceptedExecution, correctionPredecessor, delegationFailureFamily, requestErrorFamily, reviewFailureFamily, structuralIssues } from "./request-events.ts";
+ 
+ /** P0-B — the only recovery action wired through planner_abort (spec §5, ADR-0003). */
+ const ABORT_RECOVERY_ACTIONS = new Set(["abort"]);
+@@ -199,6 +202,8 @@ export function computeLoadedFingerprint(dir = PLUGIN_DIR): string {
+ 		"policy.ts",
+ 		"pricing.defaults.json",
+ 		"refusal-breaker.ts",
++		"request-control.ts",
++		"request-events.ts",
+ 		"report.ts",
+ 		"review.ts",
+ 		"role-models.ts",
+@@ -507,6 +512,87 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 	// Ticket 16 — session-scoped repeat-refusal breaker. Only pre-launch
+ 	// refusals count (isRefusal); aborts, terminations, and store errors do not.
+ 	const refusalBreaker = new RefusalBreaker();
++	const requests = new Map<string, RequestController>();
++	const requestContexts = new Map<string, ExtensionContext>();
++	const toolOwners = new Map<string, { request: RequestController; requestId: string; failureFamily?: string }>();
++	const rootToolSchemas = new Map<string, TSchema>();
++	let sessionBinding: string | undefined;
++	const requestKey = (ctx: ExtensionContext): [string, string, string] => {
++		const sessionId = ctx.sessionManager?.getSessionId?.() || ctx.sessionManager?.getSessionFile?.() || "unidentified-host";
++		const workspace = normalizeWorkspaceIdentity(ctx.cwd || process.cwd());
++		return [JSON.stringify([sessionId, workspace]), sessionId, workspace];
++	};
++	function requestFor(ctx: ExtensionContext): RequestController {
++		const [key, sessionId, workspace] = requestKey(ctx);
++		requestContexts.set(key, ctx);
++		let request = requests.get(key);
++		if (!request) {
++			const entries = ctx.sessionManager?.getEntries?.() ?? [];
++			request = new RequestController({
++				sessionId, workspace, storage: new FileRequestStorage(AGENT_DIR, sessionId, workspace),
++				// Only an entry for THIS (session, workspace) namespace proves a lost
++				// directory. Another workspace's entry in the same session is first
++				// contact here, not a missing record.
++				previouslyManaged: entries.some(e => e.type === "custom" && e.customType === "planner-only-request"
++					&& (e as { data?: { sessionId?: unknown; workspace?: unknown } }).data?.sessionId === sessionId
++					&& (e as { data?: { sessionId?: unknown; workspace?: unknown } }).data?.workspace === workspace),
++				stopRoot: () => {
++					const host = requestContexts.get(key);
++					if (typeof host?.abort !== "function") return "unsupported";
++					host.abort();
++					return "requested";
++				},
++			});
++			requests.set(key, request);
++			try { pi.appendEntry("planner-only-request", { sessionId, workspace, requestId: request.requestId }); } catch { /* old host: filesystem namespace still distinguishes absence */ }
++		}
++		if (sessionBinding !== undefined && sessionBinding !== key) {
++			requests.get(sessionBinding)?.close("session-switch");
++			request.close("session-boundary-unverified");
++		}
++		sessionBinding = key;
++		return request;
++	}
++	function recordAcceptance(request: RequestController, taskId: string, requestId = request.requestId): void {
++		const task = orchestrator.store.get(taskId);
++		const executionId = task && acceptedExecution(task);
++		if (executionId) request.accepted(task!.taskId, executionId, requestId);
++	}
++	// All registered tools, including diagnostics and Git reads, have the same
++	// execute gate. Host prechecks of a parallel batch cannot authorize a later
++	// direct execute after the request closes.
++	const registerRootTool: ExtensionAPI["registerTool"] = (tool) => {
++		rootToolSchemas.set(tool.name, tool.parameters);
++		pi.registerTool({
++			...tool,
++			async execute(toolCallId, params, signal, onUpdate, ctx) {
++				latestCtx = ctx;
++				const request = requestFor(ctx);
++				toolOwners.set(toolCallId, { request, requestId: request.requestId });
++				const requestId = request.beginTool(toolCallId, tool.name);
++				try {
++					const issues = structuralIssues(tool.parameters, params);
++					request.structure(tool.name, issues);
++					const result = await tool.execute(toolCallId, params, signal, onUpdate, ctx);
++					const details = result.details as { ok?: boolean; error?: string } | undefined;
++					if (details?.ok === false || typeof details?.error === "string") {
++						request.observeFailure({ id: `tool:${toolCallId}`, family: issues.length
++							? requestErrorFamily(tool.name, { code: "ARGUMENTS_INVALID" })
++							: details?.error ? requestErrorFamily(tool.name, { code: details.error }) : "environment" }, requestId);
++					}
++					return result;
++				} catch (error) {
++					if (!(error instanceof RequestClosed)) {
++						const candidate = (error as { taskId?: string } | null)?.taskId ?? (params as { taskId?: string } | null)?.taskId;
++						const task = typeof candidate === "string" ? orchestrator.store.get(candidate) : undefined;
++						request.observeFailure({ id: `tool:${toolCallId}`, family: requestErrorFamily(tool.name, error),
++							...(task ? { taskId: task.taskId } : {}) }, requestId);
++					}
++					throw error;
++				} finally { request.endTool(toolCallId, requestId); }
++			},
++		});
++	};
+ 
+ 	/**
+ 	 * Every Root tool execute runs through this wrapper: a thrown refusal is
+@@ -802,7 +888,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 		if (!sameToolOrder(activeTools, nextTools)) pi.setActiveTools(nextTools);
+ 	};
+ 
+-	pi.registerTool({
++	registerRootTool({
+ 		name: "git_audit",
+ 		label: "Git Audit",
+ 		description: [
+@@ -838,7 +924,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 		},
+ 	});
+ 
+-	pi.registerTool({
++	registerRootTool({
+ 		name: "git_commit",
+ 		label: "Git Commit",
+ 		description: "Policy-governed commit for the truth paths of one completed, validated Task. External dirty paths and failed validation gates are rejected.",
+@@ -955,7 +1041,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 		/** planner_delegate strips a passthrough taskId/recovery instead of binding; planner_redelegate requires a real taskId. */
+ 		mintOnly: boolean;
+ 	}): void => {
+-		pi.registerTool({
++		registerRootTool({
+ 			name: surface.name,
+ 			label: surface.mintOnly ? "Planner Delegate" : "Planner Redelegate",
+ 			description: surface.description,
+@@ -991,6 +1077,11 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 						orchestrator.resolveVerdictTask(params.taskId, ctx.cwd || process.cwd());
+ 					}
+ 					let outcome: DelegationOutcome;
++					const requestControl = requestFor(ctx);
++					const requestScope = requestControl.requestId;
++					const predecessor = correctionPredecessor(
++						effectiveParams.taskId ? orchestrator.store.get(effectiveParams.taskId) : undefined, effectiveParams,
++					);
+ 					try {
+ 						ensureRestrictedReaderAgent();
+ 						outcome = await runDelegation(
+@@ -999,16 +1090,34 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 								gitRunner,
+ 								concurrency,
+ 								usage: ledger,
+-								launch: delegationLaunch,
++								launch: async (outbound, launchSignal, hooks) => {
++									return delegationLaunch(outbound, launchSignal, {
++										...hooks,
++										beforeDispatch: packet => {
++											requestControl.canClaim(packet.requestId, requestScope);
++											hooks?.beforeDispatch?.(packet);
++											requestControl.claim(packet.requestId, packet.nodeId, toolCallId, predecessor, requestScope);
++										},
++										onDispatch: packet => { requestControl.emitted(packet.requestId, requestScope); hooks?.onDispatch?.(packet); },
++										onLateTerminal: terminal => {
++											requestControl.terminal(outbound.requestId, requestScope);
++											hooks?.onLateTerminal?.(terminal);
++											if (effectiveParams.role === "reviewer") requestControl.finishChild(toolCallId, true, requestScope);
++										},
++									}).then(terminal => { requestControl.terminal(outbound.requestId, requestScope); return terminal; });
++								},
+ 								...(restrictedReaderAgent !== undefined ? { restrictedReaderAgent } : {}),
+ 								...(quiescenceWaitMs !== undefined ? { quiescenceWaitMs } : {}),
+ 								ownerRunId: ctx.sessionManager?.getSessionId?.() || PROCESS_OWNER_RUN_ID,
+ 							},
+ 							effectiveParams,
+ 							ctx.cwd || process.cwd(),
+-							{ signal, executionId: toolCallId, onUpdate, toolName: surface.name },
++							{ signal: signal ? AbortSignal.any([signal, requestControl.signal]) : requestControl.signal,
++								executionId: toolCallId, onUpdate, toolName: surface.name, previousExecutionId: predecessor,
++								onLateStopConfirmed: () => requestControl.finishChild(toolCallId, true, requestScope) },
+ 						);
+ 					} catch (error) {
++						requestControl.finishChild(toolCallId, false, requestScope);
+ 						// Refused/aborted delegations carry the Task id on the error — sync
+ 						// the usage snapshot now so the ledger file sees the G4 row too
+ 						// (message_end attribution never sees this toolCallId).
+@@ -1023,6 +1132,17 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 						throw error;
+ 					}
+ 					rootTurnTaskIds.add(outcome.task.taskId);
++					requestControl.finishChild(toolCallId, outcome.termination?.terminationConfirmed ?? true, requestScope);
++					const family = delegationFailureFamily(outcome);
++					// A review judges the worker's bound report revision. Its own
++					// invocation has no Task execution and cannot be a correction's
++					// predecessor; attach actionable findings to the judged worker.
++					const failedExecution = effectiveParams.role === "reviewer"
++						? outcome.review ? outcome.task.executions.find(e => !e.auxiliary && e.reportIndex === outcome.task.reports.length - 1)?.executionId : undefined
++						: outcome.executionId;
++					if (family) requestControl.observeFailure({ id: `tool:${toolCallId}`, family, taskId: outcome.task.taskId,
++						...(failedExecution ? { executionId: failedExecution } : {}) }, requestScope);
++					recordAcceptance(requestControl, outcome.task.taskId, requestScope);
+ 					// P0-A — abnormal terminations return instead of throwing; sync the
+ 					// usage snapshot here so the ledger file sees the child's row, same
+ 					// as the former throw path did.
+@@ -1094,7 +1214,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 	// session resume) can query instead of constructing one. Listing merges
+ 	// the session store with ledger snapshots the restore cap left out —
+ 	// never restoring them, never minting, never launching.
+-	pi.registerTool({
++	registerRootTool({
+ 		name: "planner_tasks",
+ 		label: "Planner Tasks",
+ 		description: [
+@@ -1181,7 +1301,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 		},
+ 	});
+ 
+-	pi.registerTool({
++	registerRootTool({
+ 		name: "planner_verdict",
+ 		label: "Planner Verdict",
+ 		description: [
+@@ -1265,20 +1385,20 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 			const task = params.taskId ? verdictResolution?.task : orchestrator.store.active();
+ 			const missNote = verdictResolution?.note;
+ 			if (!task) {
+-				throw new Error(
++				throw Object.assign(new Error(
+ 					[
+ 						params.taskId
+ 							? `planner_verdict: unknown task ${params.taskId}.${missNote ? ` ${missNote}.` : ""}`
+ 							: "planner_verdict: no active planner-only task.",
+ 						'Usage: planner_verdict({ verdict: "pass" | "request_changes" | "blocked", summary, taskId?, findings? }).',
+ 					].join(" "),
+-				);
++				), { code: "TASK_NOT_FOUND" });
+ 			}
+ 			latestCtx = ctx;
+ 			const refusal = orchestrator.rootVerdictRefusal(task, params.verdict);
+ 			if (refusal) {
+ 				orchestrator.recordRootVerdictRefusal(task, params.verdict, refusal);
+-				throw new Error(`planner_verdict refused (${refusal.kind}, task=${task.taskId}, verdict=${params.verdict}): ${refusal.reason}`);
++				throw Object.assign(new Error(`planner_verdict refused (${refusal.kind}, task=${task.taskId}, verdict=${params.verdict}): ${refusal.reason}`), { code: `VERDICT_${refusal.kind.toUpperCase().replaceAll("-", "_")}`, taskId: task.taskId });
+ 			}
+ 			try {
+ 				const before = task.state;
+@@ -1287,6 +1407,14 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 					...(params.acknowledgeDrift ? { acknowledgeDrift: params.acknowledgeDrift } : {}),
+ 					source: "root",
+ 				});
++				const request = requestFor(ctx);
++				const family = reviewFailureFamily(outcome.decision);
++				if (family) {
++					const execution = task.executions.find(e => !e.auxiliary && e.reportIndex === task.reports.length - 1);
++					request.observeFailure({ id: `tool:${toolCallId}`, family, taskId: task.taskId,
++						...(execution ? { executionId: execution.executionId } : {}) });
++				}
++				recordAcceptance(request, outcome.task.taskId);
+ 				let text = orchestrator.renderDecisionBlock(orchestrator.store.require(task.taskId), outcome.decision, outcome.evidence);
+ 				text = enrichDecisionText(text, outcome.task.taskId);
+ 				for (const warning of stripWarnings) text = `${text}\nwarning: ${warning}`;
+@@ -1308,9 +1436,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 					},
+ 				};
+ 			} catch (error) {
+-				throw new Error(
++				throw Object.assign(new Error(
+ 					`planner_verdict refused (store-error, task=${task.taskId}, verdict=${params.verdict}): ${error instanceof Error ? error.message : String(error)}`,
+-				);
++				), { code: "STORE_ERROR", taskId: task.taskId });
+ 			}
+ 			});
+ 		},
+@@ -1321,7 +1449,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 	// recovery" combination is inexpressible. planner_abort is the blocked
+ 	// verdict + abort RecoveryDecision as one atomic call — no `action` field
+ 	// exists because the tool's identity is the action.
+-	pi.registerTool({
++	registerRootTool({
+ 		name: "planner_abort",
+ 		label: "Planner Abort",
+ 		description: [
+@@ -1418,9 +1546,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 					},
+ 				};
+ 			} catch (error) {
+-				throw new Error(
++				throw Object.assign(new Error(
+ 					`planner_abort refused (store-error, task=${task.taskId}): ${error instanceof Error ? error.message : String(error)}`,
+-				);
++				), { code: "STORE_ERROR", taskId: task.taskId });
+ 			}
+ 			});
+ 		},
+@@ -1428,6 +1556,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 
+ 	pi.on("session_start", async (_event, ctx) => {
+ 		latestCtx = ctx;
++		requestFor(ctx);
+ 		refusalBreaker.reset();
+ 		loadedFingerprintInfo = createLoadedPluginFingerprint(ctx);
+ 		orchestrator.setLoadedFingerprint(loadedFingerprintInfo);
+@@ -1451,6 +1580,10 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 	});
+ 
+ 	pi.on("session_shutdown", async (event, ctx) => {
++		for (const request of requests.values()) {
++			if (request.snapshot().claims.some(c => !c.waitSettled)) request.close("session-shutdown");
++			request.dispose();
++		}
+ 		// Restore tools for reload/replace. Usage snapshot is separate: only
+ 		// reasons that tear this session down without a same-file successor.
+ 		restoreSuppressedTools();
+@@ -1466,7 +1599,16 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 		await flushOpenUsageOnShutdown(shutdownHost);
+ 	});
+ 
+-	pi.on("before_agent_start", async (event) => {
++	pi.on("input", async (event, ctx) => {
++		latestCtx = ctx;
++		if (requestFor(ctx).input(event.source, event.streamingBehavior, ctx.isIdle?.() === true)) refusalBreaker.reset();
++	});
++	pi.on("agent_start", async (_event, ctx) => { requestFor(ctx).rootActive(); });
++	pi.on("agent_settled", async (_event, ctx) => { requestFor(ctx).settle(); });
++	pi.on("before_provider_request", async (_event, ctx) => { requestFor(ctx).modelCall(); });
++	pi.on("before_agent_start", async (event, ctx) => {
++		latestCtx = ctx;
++		try { requestFor(ctx).activity(); } catch { requestFor(ctx).close(requestFor(ctx).snapshot().closedReason ?? "request-closed"); }
+ 		if (isDisabled()) return;
+ 		return { systemPrompt: `${event.systemPrompt}\n\n${PLANNER_PROMPT}` };
+ 	});
+@@ -1477,13 +1619,22 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 		// memory, and a failure would read as Idle: fail closed).
+ 		const policyCwd = ctx?.cwd || process.cwd();
+ 		latestCtx = ctx;
++		const request = requestFor(ctx);
++		toolOwners.set(event.toolCallId, { request, requestId: request.requestId });
++		try { request.attempt(event.toolCallId, event.toolName); }
++		catch (error) { request.endTool(event.toolCallId); return { block: true, terminate: true, reason: error instanceof Error ? error.message : String(error) }; }
++		const refuse = (reason: string, family: string) => {
++			request.observeFailure({ id: `tool:${event.toolCallId}`, family });
++			request.endTool(event.toolCallId);
++			return { block: true, reason, ...(request.snapshot().closedReason ? { terminate: true } : {}) };
++		};
+ 		if (!IS_SUBAGENT && !isDisabled() && event.toolName === "read") {
+ 			const input = event.input && typeof event.input === "object" ? event.input as Record<string, unknown> : undefined;
+ 			if (input) Object.assign(input, applyRootReadCeiling(input));
+ 			const readNotice = rootReadLimitNotice(input);
+ 			if (readNotice) {
+ 				if (ctx.hasUI) ctx.ui.notify(readNotice, "warning");
+-				return { block: true, reason: readNotice };
++				return refuse(readNotice, "contract:read:ceiling");
+ 			}
+ 		}
+ 		// Ticket 16 — an identical call already refused HARD_STOP_AT times is
+@@ -1492,7 +1643,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 			const breakerBlock = refusalBreaker.shouldBlock(event.toolName, event.input);
+ 			if (breakerBlock.block) {
+ 				if (ctx.hasUI) ctx.ui.notify(`Blocked parent tool: ${event.toolName} (repeated identical refusal)`, "warning");
+-				return breakerBlock;
++				return refuse(breakerBlock.reason, "contract:repeated-refusal");
+ 			}
+ 		}
+ 		if (!IS_SUBAGENT && ["subagent", "bg_wait", "planner_verdict", "planner_abort", "git_audit", "planner_delegate", "planner_redelegate", "planner_tasks"].includes(event.toolName)) {
+@@ -1517,10 +1668,14 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 		});
+ 		if (!decision.block) return;
+ 		if (ctx.hasUI) ctx.ui.notify(`Blocked parent tool: ${event.toolName}`, "warning");
+-		return { block: true, reason: decision.reason };
++		return refuse(decision.reason ?? "planner-only policy refused this tool", `policy:${event.toolName}`);
+ 	});
+ 
+ 	pi.on("tool_result", async (event, ctx) => {
++		const owner = toolOwners.get(event.toolCallId);
++		const request = owner?.request ?? requestFor(ctx);
++		if (event.isError) request.observeFailure({ id: `tool:${event.toolCallId}`, family: owner?.failureFamily ?? "unknown-failure" }, owner?.requestId);
++		request.endTool(event.toolCallId, owner?.requestId);
+ 		if (isDisabled()) return;
+ 		latestCtx = ctx;
+ 		if (REVIEW_LEAK_TOOLS.has(event.toolName)) {
+@@ -1535,6 +1690,33 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 	});
+ 
+ 	pi.on("message_end", async (event, ctx) => {
++		// The host can reject unknown tools or malformed arguments before its
++		// tool_call hook. Observe the public structured message as a fallback;
++		// the normal hook/execute path deduplicates by the same call identity.
++		const structured = event.message as { role?: string; content?: unknown; toolCallId?: string; isError?: boolean };
++		if (structured.role === "assistant" && Array.isArray(structured.content)) {
++			const request = requestFor(ctx);
++			for (const block of structured.content) {
++				if (block?.type !== "toolCall" || typeof block.id !== "string" || typeof block.name !== "string") continue;
++				toolOwners.set(block.id, { request, requestId: request.requestId });
++				try {
++					request.attempt(block.id, block.name);
++					const schema = rootToolSchemas.get(block.name);
++					if (schema) {
++						const issues = structuralIssues(schema, block.arguments);
++						request.structure(block.name, issues);
++						if (issues.length) toolOwners.get(block.id)!.failureFamily = requestErrorFamily(block.name, { code: "ARGUMENTS_INVALID" });
++					}
++				}
++				catch { break; }
++			}
++		} else if (structured.role === "toolResult" && typeof structured.toolCallId === "string") {
++			const owner = toolOwners.get(structured.toolCallId);
++			if (owner) {
++				if (structured.isError) owner.request.observeFailure({ id: `tool:${structured.toolCallId}`, family: owner.failureFamily ?? "unknown-failure" }, owner.requestId);
++				owner.request.endTool(structured.toolCallId, owner.requestId);
++			}
++		}
+ 		if (isDisabled()) return;
+ 		latestCtx = ctx;
+ 		const host = ctx ?? ({ hasUI: false, cwd: process.cwd() } as ExtensionContext);
+@@ -1616,6 +1798,27 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 			const parts = args.trim().split(/\s+/).filter(Boolean);
+ 			const action = (parts[0] ?? "status").toLowerCase();
+ 			const store = orchestrator.store;
++			if (action === "request") {
++				const request = requestFor(ctx);
++				const operation = parts[1] ?? "status";
++				if (operation === "resume" && parts.length === 2) {
++					// Command contexts expose no input source. Extensions can ask the
++					// host to expand slash commands, so command text alone is not proof
++					// of operator intent. Require the public human UI confirmation.
++					if (!ctx.hasUI || typeof ctx.ui.confirm !== "function") {
++						notify(ctx, "Request resume requires an operator confirmation UI; this host cannot prove command provenance. Admission remains closed.", "warning");
++						return;
++					}
++					if (!ctx.isIdle() || !(await ctx.ui.confirm("Resume planner request?", "Open a fresh request budget. Existing unconfirmed Writer holds remain."))) return;
++					if (request.resume(ctx.isIdle())) refusalBreaker.reset();
++					else notify(ctx, "Request could not resume: active calls or invalid persisted state must be resolved first.", "warning");
++				} else if (operation !== "status" || parts.length > 2) {
++					notify(ctx, "Usage: /planner-only request status | /planner-only request resume", "warning");
++					return;
++				}
++				notify(ctx, request.render());
++				return;
++			}
+ 
+ 			if (action === "status") {
+ 				const log = usageLogPath();
+@@ -1634,6 +1837,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 					: ["无模型成本保证"];
+ 				const lines = [
+ 					`Planner-only mode is ${isDisabled() ? "off" : "on"} (source: ${guardDecisionSource()}).`,
++					requestFor(ctx).render(),
+ 					...configuredLines,
+ 					`实际运行的 root: ${actualRootDisplay}`,
+ 				];
+@@ -1866,6 +2070,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 				}
+ 				const before = task.state;
+ 				const outcome = await orchestrator.recordRootVerdict(task, verdict, summary, { source: "operator" });
++				recordAcceptance(requestFor(ctx), outcome.task.taskId);
+ 				notify(ctx, enrichDecisionText(orchestrator.renderDecisionBlock(outcome.task, outcome.decision, outcome.evidence), outcome.task.taskId));
+ 				persistSessionEntries();
+ 				await flushIfTerminal(outcome.task.taskId, before, ctx);
+diff --git a/ledger-store.ts b/ledger-store.ts
+index 852ebde..44db681 100644
+--- a/ledger-store.ts
++++ b/ledger-store.ts
+@@ -183,6 +183,16 @@ function recordShapeError(task: unknown): string | undefined {
+ 			if (error) return error;
+ 		}
+ 	}
++	if (task.revalidationDispatches !== undefined) {
++		if (!Array.isArray(task.revalidationDispatches)) return "task.revalidationDispatches must be an array";
++		for (const dispatch of task.revalidationDispatches) {
++			if (!isPlainObject(dispatch)) return "revalidation dispatch must be an object";
++			for (const field of ["executionId", "requestId", "evidenceKey", "committedAt"] as const) {
++				if (typeof dispatch[field] !== "string" || !dispatch[field]) return `revalidation dispatch.${field} must be a non-empty string`;
++			}
++			if (dispatch.requestObservedAt !== undefined && typeof dispatch.requestObservedAt !== "string") return "revalidation dispatch.requestObservedAt must be a string";
++		}
++	}
+ 	return undefined;
+ }
+ 
+diff --git a/package.json b/package.json
+index 26b3a86..475ec64 100644
+--- a/package.json
++++ b/package.json
+@@ -40,7 +40,9 @@
+     "delegate.ts",
+     "refusal-breaker.ts",
+     "subagent-delegation-contract.ts",
+-    "pricing.defaults.json"
++    "pricing.defaults.json",
++    "request-control.ts",
++    "request-events.ts"
+   ],
+   "pi": {
+     "extensions": [
+@@ -52,7 +54,7 @@
+     "piHost": ">=0.84 <1"
+   },
+   "scripts": {
+-    "test": "node --experimental-strip-types policy.test.mjs && node --experimental-strip-types policy-cutover.test.mjs && node --experimental-strip-types roles.test.mjs && node --experimental-strip-types floors.test.mjs && node --experimental-strip-types role-models.test.mjs && node --experimental-strip-types task.test.mjs && node --experimental-strip-types ledger-store.test.mjs && node --experimental-strip-types report.test.mjs && node --experimental-strip-types review.test.mjs && node --experimental-strip-types usage.test.mjs && node --experimental-strip-types orchestrate.test.mjs && node --experimental-strip-types evidence.test.mjs && node --experimental-strip-types git-audit.test.mjs && node --experimental-strip-types index.test.mjs && node --experimental-strip-types diagnostics-regression.test.mjs && node --experimental-strip-types workspace-snapshot.test.mjs && node --experimental-strip-types architecture.test.mjs && node --experimental-strip-types naming.test.mjs && node --experimental-strip-types concurrency.test.mjs && node --experimental-strip-types rs01.test.mjs && node --experimental-strip-types rs02.test.mjs && node --experimental-strip-types rs02-concurrency.test.mjs && node --experimental-strip-types rs03.test.mjs && node --experimental-strip-types rt06.test.mjs && node --experimental-strip-types nx04-06.test.mjs && node --experimental-strip-types nx09-scope.test.mjs && node --experimental-strip-types nx10-attribution.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types refusal-breaker.test.mjs && node --experimental-strip-types diffstat-acceptance.test.mjs",
++    "test": "node --experimental-strip-types policy.test.mjs && node --experimental-strip-types policy-cutover.test.mjs && node --experimental-strip-types roles.test.mjs && node --experimental-strip-types floors.test.mjs && node --experimental-strip-types role-models.test.mjs && node --experimental-strip-types task.test.mjs && node --experimental-strip-types ledger-store.test.mjs && node --experimental-strip-types report.test.mjs && node --experimental-strip-types review.test.mjs && node --experimental-strip-types usage.test.mjs && node --experimental-strip-types orchestrate.test.mjs && node --experimental-strip-types evidence.test.mjs && node --experimental-strip-types git-audit.test.mjs && node --experimental-strip-types index.test.mjs && node --experimental-strip-types diagnostics-regression.test.mjs && node --experimental-strip-types workspace-snapshot.test.mjs && node --experimental-strip-types architecture.test.mjs && node --experimental-strip-types naming.test.mjs && node --experimental-strip-types concurrency.test.mjs && node --experimental-strip-types rs01.test.mjs && node --experimental-strip-types rs02.test.mjs && node --experimental-strip-types rs02-concurrency.test.mjs && node --experimental-strip-types rs03.test.mjs && node --experimental-strip-types rt06.test.mjs && node --experimental-strip-types nx04-06.test.mjs && node --experimental-strip-types nx09-scope.test.mjs && node --experimental-strip-types nx10-attribution.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types refusal-breaker.test.mjs && node --experimental-strip-types diffstat-acceptance.test.mjs && node --experimental-strip-types revalidation-accounting.test.mjs && node --experimental-strip-types request-control.test.mjs && node --experimental-strip-types request-stop.test.mjs",
+     "typecheck": "tsc --noEmit",
+     "test:release": "npm run typecheck && npm test"
+   },
+diff --git a/policy-cutover.test.mjs b/policy-cutover.test.mjs
+index cfe1acd..45bb433 100644
+--- a/policy-cutover.test.mjs
++++ b/policy-cutover.test.mjs
+@@ -14,6 +14,10 @@ import { join } from "node:path";
+ const isolatedAgentDir = mkdtempSync(join(tmpdir(), "planner-only-cutover-"));
+ process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
+ process.env.PI_PLANNER_ONLY_SEED_PRICING = "0";
++// This file tests policy decisions across many independent refused calls;
++// request-stop.test.mjs owns the default Request failure/attempt limits.
++process.env.PI_PLANNER_ONLY_REQUEST_TOOL_ATTEMPTS = "1000";
++process.env.PI_PLANNER_ONLY_REQUEST_FAILURES = "1000";
+ delete process.env.PI_SUBAGENT_CHILD;
+ 
+ const { default: plannerOnly } = await import("./index.ts");
+@@ -59,6 +63,7 @@ const ui = {
+ };
+ const ctx = {
+ 	hasUI: true,
++	isIdle() { return true; },
+ 	ui,
+ 	cwd: process.cwd(),
+ 	sessionManager: {
+@@ -69,6 +74,17 @@ const ctx = {
+ 
+ await handlers.get("session_start")({}, ctx);
+ 
++// This file drives several synthetic workspaces through one host session.
++// Every Request is bound to (session, workspace); crossing to another
++// workspace closes admission on both sides until the host observes a settled
++// idle interactive input for the new one — the same boundary a fresh operator
++// prompt crosses. Policy assertions below are unchanged; each switch simply
++// passes through that boundary first.
++const enterWorkspace = async (workspaceCtx) => {
++	await handlers.get("agent_settled")({}, workspaceCtx);
++	await handlers.get("input")({ source: "interactive" }, workspaceCtx);
++};
++
+ const ledgerDir = join(isolatedAgentDir, "planner-only", "ledger");
+ const ledgerTaskCount = () =>
+ 	(existsSync(ledgerDir) ? readdirSync(ledgerDir) : []).filter((name) => name.endsWith(".json")).length;
+@@ -163,6 +179,7 @@ const pendingCwd = "/fixture/cutover-05b";
+ {
+ 	// The worker Task minted in check 3 is still executing for pendingCwd.
+ 	const liveCtx = { ...ctx, cwd: pendingCwd };
++	await enterWorkspace(liveCtx);
+ 	const liveCall = await handlers.get("tool_call")(
+ 		{
+ 			toolCallId: "call-05b-pd-live",
+@@ -172,13 +189,15 @@ const pendingCwd = "/fixture/cutover-05b";
+ 		liveCtx,
+ 	);
+ 	assert.equal(liveCall, undefined, "planner_delegate passes while live");
++	const idleCtx = { ...ctx, cwd: "/fixture/cutover-05b-idle" };
++	await enterWorkspace(idleCtx);
+ 	const idleCall = await handlers.get("tool_call")(
+ 		{
+ 			toolCallId: "call-05b-pd-idle",
+ 			toolName: "planner_delegate",
+ 			input: { role: "worker", objective: "x", scope: { allowedPaths: ["x.txt"] }, constraints: [], acceptanceCriteria: ["x"], validation: { required: false } },
+ 		},
+-		{ ...ctx, cwd: "/fixture/cutover-05b-idle" },
++		idleCtx,
+ 	);
+ 	assert.equal(idleCall, undefined, "planner_delegate passes while Idle");
+ }
+@@ -239,6 +258,8 @@ const pendingCwd = "/fixture/cutover-05b";
+ // 7. /planner-only off lets subagent through; on refuses it again.
+ // --------------------------------------------------------------------------
+ {
++	// Back in the primary workspace: cross the boundary once more.
++	await enterWorkspace(ctx);
+ 	await commands.get("planner-only").handler("off", ctx);
+ 	const allowed = await handlers.get("tool_call")(
+ 		{ toolCallId: "call-05b-off", toolName: "subagent", input: { agent: "worker", task: "anything" } },
+diff --git a/task.ts b/task.ts
+index 4612204..d62c6b8 100644
+--- a/task.ts
++++ b/task.ts
+@@ -20,6 +20,7 @@ import {
+ import { join, resolve } from "node:path";
+ import {
+ 	MAX_REPORT_CORRECTIONS,
++	MAX_RECOVERY_ATTEMPTS,
+ 	MAX_REVIEW_ROUNDS,
+ 	EXECUTING_STALE_MS,
+ 	isFinalTaskState,
+@@ -1277,6 +1278,14 @@ export interface TaskRecord {
+ 	 * dispatch outcome.
+ 	 */
+ 	recoveryDispatches?: string[];
++	/** Durable dispatch identities for automatic evidence revalidation. */
++	revalidationDispatches?: Array<{
++		executionId: string;
++		requestId: string;
++		evidenceKey: string;
++		committedAt: string;
++		requestObservedAt?: string;
++	}>;
+ 	/** E02 — a granted-but-not-yet-dispatched revalidation evidence key. */
+ 	pendingRevalidationKey?: string;
+ 	/** E02 — the most recent automatic recovery attempt, for no-progress checks. */
+@@ -1636,6 +1645,8 @@ export class TaskStore {
+ 		if (!Array.isArray(record.findings)) record.findings = [];
+ 		if (!Array.isArray(record.successors)) record.successors = [];
+ 		if (!Array.isArray(record.recoveryStates)) record.recoveryStates = [];
++		if (!Array.isArray(record.recoveryDispatches)) record.recoveryDispatches = [];
++		if (!Array.isArray(record.revalidationDispatches)) record.revalidationDispatches = [];
+ 		if (!Array.isArray(record.aliases)) record.aliases = [];
+ 		if (!Array.isArray(record.reports)) record.reports = [];
+ 		if (!Array.isArray(record.reviews)) record.reviews = [];
+@@ -1901,11 +1912,13 @@ export class TaskStore {
+ 	 * E02 (spec L106) — a revalidate decision grants one bounded revalidation
+ 	 * for this evidence state: the key joins recoveryStates for no-progress
+ 	 * detection immediately, but the budget counter is only spent when the
+-	 * revalidation run is actually dispatched (recordRecoveryAttempt). A
++	 * revalidation run is actually dispatched (commitRevalidationDispatch). A
+ 	 * restart or a rewritten reason text cannot reset either.
+ 	 */
+ 	markRevalidationGranted(taskId: string, evidenceKey: string): TaskRecord {
+ 		const record = this.require(taskId);
++		if (record.recoveryDispatches?.includes(evidenceKey)) return record;
++		if (record.pendingRevalidationKey === evidenceKey) return record;
+ 		if (!record.recoveryStates.includes(evidenceKey)) record.recoveryStates.push(evidenceKey);
+ 		record.pendingRevalidationKey = evidenceKey;
+ 		record.lastRecovery = {
+@@ -1916,32 +1929,65 @@ export class TaskStore {
+ 		return this.touch(record);
+ 	}
+ 
+-	/** Consume the pending revalidation key at the successful dispatch boundary. */
+-	takePendingRevalidation(taskId: string): string | undefined {
+-		const record = this.get(taskId);
+-		if (!record?.pendingRevalidationKey) return undefined;
+-		const evidenceKey = record.pendingRevalidationKey;
+-		delete record.pendingRevalidationKey;
+-		return evidenceKey;
+-	}
+-
+ 	/**
+-	 * E02 (spec L106) — +1 only here, at the real automatic-revalidation
+-	 * dispatch. Pure verdict rewrites, refused dispatches, and duplicate
+-	 * requests never reach this; replaying the same dispatch is idempotent
+-	 * by evidence key.
++	 * E02 (spec L106) — atomically consume a grant and durably bind its charge
++	 * to the execution/request identity at the final dispatch boundary. The
++	 * launcher calls this synchronously immediately before emitting REQUEST.
+ 	 */
+-	recordRecoveryAttempt(taskId: string, evidenceKey: string): TaskRecord {
++	commitRevalidationDispatch(
++		taskId: string,
++		executionId: string,
++		requestId: string,
++	): { status: "none" | "committed" | "duplicate"; record: TaskRecord } {
+ 		const record = this.require(taskId);
++		const records = record.revalidationDispatches ?? (record.revalidationDispatches = []);
++		if (records.some((item) => item.executionId === executionId || item.requestId === requestId)) {
++			return { status: "duplicate", record };
++		}
++		const evidenceKey = record.pendingRevalidationKey;
++		if (!evidenceKey) return { status: "none", record };
++		if (record.recoveryAttempts >= MAX_RECOVERY_ATTEMPTS) {
++			throw new Error(`automatic recovery limit reached (${record.recoveryAttempts}/${MAX_RECOVERY_ATTEMPTS} attempts used)`);
++		}
+ 		const dispatches = record.recoveryDispatches ?? (record.recoveryDispatches = []);
+-		if (dispatches.includes(evidenceKey)) return record;
++		if (dispatches.includes(evidenceKey)) {
++			throw new Error(`revalidation grant ${evidenceKey} was already dispatched`);
++		}
++
++		const previousUpdatedAt = record.updatedAt;
++		const previousLastRecovery = record.lastRecovery;
+ 		dispatches.push(evidenceKey);
++		records.push({ executionId, requestId, evidenceKey, committedAt: this.now().toISOString() });
+ 		record.recoveryAttempts += 1;
++		delete record.pendingRevalidationKey;
+ 		record.lastRecovery = {
+ 			reportRevision: record.reports.length,
+ 			evidenceKey,
+ 			at: this.now().toISOString(),
+ 		};
++		record.updatedAt = this.now().toISOString();
++		try {
++			this.onPersist?.(record);
++		} catch (error) {
++			dispatches.pop();
++			records.pop();
++			record.recoveryAttempts -= 1;
++			record.pendingRevalidationKey = evidenceKey;
++			record.lastRecovery = previousLastRecovery;
++			record.updatedAt = previousUpdatedAt;
++			throw error;
++		}
++		return { status: "committed", record };
++	}
++
++	/** Record that the already-committed dispatch crossed the host REQUEST seam. */
++	markRevalidationRequestObserved(taskId: string, executionId: string, requestId: string): TaskRecord {
++		const record = this.require(taskId);
++		const dispatch = record.revalidationDispatches?.find(
++			(item) => item.executionId === executionId && item.requestId === requestId,
++		);
++		if (!dispatch || dispatch.requestObservedAt) return record;
++		dispatch.requestObservedAt = this.now().toISOString();
+ 		return this.touch(record);
+ 	}
+ 

@@ -1,0 +1,7 @@
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/evidence/final-validation/tmp
+node=v24.14.0
+npm=11.9.0
+exclusive_window=root_declared_sole_writer
+network=not_used
+slot=not_required_each_check_expected_under_60s_under_2GB_no_data_0

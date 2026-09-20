@@ -1,0 +1,45 @@
+{
+  "launches": 5,
+  "rounds": [
+    {
+      "round": 1,
+      "grant": "{\"boundary\":\"abc1235\",\"drift\":[],\"extra\":[],\"headChanged\":true,\"missing\":[],\"overlapping\":[],\"revision\":1,\"truth\":[],\"undeclared\":[],\"unrelated\":[],\"verifiable\":true}",
+      "launches": 2,
+      "recoveryAttempts": 0,
+      "recoveryDispatches": [],
+      "pendingRevalidationKey": "{\"boundary\":\"abc1235\",\"drift\":[],\"extra\":[],\"headChanged\":true,\"missing\":[],\"overlapping\":[],\"revision\":1,\"truth\":[],\"undeclared\":[],\"unrelated\":[],\"verifiable\":true}",
+      "reviewRound": 0
+    },
+    {
+      "round": 2,
+      "grant": "{\"boundary\":\"abc1236\",\"drift\":[],\"extra\":[],\"headChanged\":true,\"missing\":[],\"overlapping\":[],\"revision\":2,\"truth\":[],\"undeclared\":[],\"unrelated\":[],\"verifiable\":true}",
+      "launches": 3,
+      "recoveryAttempts": 0,
+      "recoveryDispatches": [],
+      "pendingRevalidationKey": "{\"boundary\":\"abc1236\",\"drift\":[],\"extra\":[],\"headChanged\":true,\"missing\":[],\"overlapping\":[],\"revision\":2,\"truth\":[],\"undeclared\":[],\"unrelated\":[],\"verifiable\":true}",
+      "reviewRound": 0
+    },
+    {
+      "round": 3,
+      "grant": "{\"boundary\":\"abc1237\",\"drift\":[],\"extra\":[],\"headChanged\":true,\"missing\":[],\"overlapping\":[],\"revision\":3,\"truth\":[],\"undeclared\":[],\"unrelated\":[],\"verifiable\":true}",
+      "launches": 4,
+      "recoveryAttempts": 0,
+      "recoveryDispatches": [],
+      "pendingRevalidationKey": "{\"boundary\":\"abc1237\",\"drift\":[],\"extra\":[],\"headChanged\":true,\"missing\":[],\"overlapping\":[],\"revision\":3,\"truth\":[],\"undeclared\":[],\"unrelated\":[],\"verifiable\":true}",
+      "reviewRound": 0
+    },
+    {
+      "round": 4,
+      "grant": "{\"boundary\":\"abc1238\",\"drift\":[],\"extra\":[],\"headChanged\":true,\"missing\":[],\"overlapping\":[],\"revision\":4,\"truth\":[],\"undeclared\":[],\"unrelated\":[],\"verifiable\":true}",
+      "launches": 5,
+      "recoveryAttempts": 0,
+      "recoveryDispatches": [],
+      "pendingRevalidationKey": "{\"boundary\":\"abc1238\",\"drift\":[],\"extra\":[],\"headChanged\":true,\"missing\":[],\"overlapping\":[],\"revision\":4,\"truth\":[],\"undeclared\":[],\"unrelated\":[],\"verifiable\":true}",
+      "reviewRound": 0
+    }
+  ],
+  "ledgerPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/revalidation-run-Hv5QTr/agent/planner-only/ledger/T-20260919-001.json",
+  "run": "/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/revalidation-run-Hv5QTr",
+  "scope": "Real plugin hook, registered tools, transport adapter, lifecycle and ledger; injected Git/child events; no model/network/subprocess.",
+  "conclusion": "Four actual revalidation dispatches exceed the defined cap of three; counter stays zero."
+}

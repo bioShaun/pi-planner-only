@@ -1,0 +1,11 @@
+file:///home/tcuni-claw/.nvm/versions/node/v24.14.0/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-agent-core/dist/agent.js:228
+            throw new Error("Agent is already processing a prompt. Use steer() or followUp() to queue messages, or wait for completion.");
+                  ^
+
+Error: Agent is already processing a prompt. Use steer() or followUp() to queue messages, or wait for completion.
+    at Agent.prompt (file:///home/tcuni-claw/.nvm/versions/node/v24.14.0/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-agent-core/dist/agent.js:228:19)
+    at AgentSession._runAgentPrompt (file:///home/tcuni-claw/.nvm/versions/node/v24.14.0/lib/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js:775:30)
+    at AgentSession.prompt (file:///home/tcuni-claw/.nvm/versions/node/v24.14.0/lib/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js:949:20)
+    at async file:///home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/host-probe.mjs:81:5
+
+Node.js v24.14.0

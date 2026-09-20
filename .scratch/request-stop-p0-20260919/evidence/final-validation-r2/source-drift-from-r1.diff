@@ -1,0 +1,26 @@
+--- .scratch/request-stop-p0-20260919/evidence/final-validation/source-sha256-after.txt	2026-09-20 08:14:52.317620648 +0800
++++ .scratch/request-stop-p0-20260919/evidence/final-validation-r2/source-sha256-before.txt	2026-09-20 08:19:23.858279221 +0800
+@@ -1,4 +1,4 @@
+-229ce4883b5b1e63ce29f58dbd40c04974f9632d32e19305a2b9f6f1591188e4  .scratch/request-stop-p0-20260919/request-host-probe.mjs
++6938cb5feebab72bfd5d3b2cc00e111c6cf54cbbe371f916f3a953f536a23c7f  .scratch/request-stop-p0-20260919/request-host-probe.mjs
+ e706727cc33f4900df380ac7180641db58cea21bde22327164fa7d98c79af4b2  architecture.test.mjs
+ 918620290821d09ac8135e2d5a71f36591e2f5952c92f3c7039c24c83debafe8  concurrency.test.mjs
+ 8d594ce8db234f2a08e127f366f1b16b08383f762c5fa7661fec7c3a95d2ea7a  concurrency.ts
+@@ -15,7 +15,7 @@
+ 87c2f2425010665ddf96e76b1042bdfa644f5716c4b53d3b0e5f0ac584e2f6e4  git-audit.test.mjs
+ 121f541b20f86ea432838eb8456ee44d9a999d0d46da760c1547ee11ee461dd1  git-audit.ts
+ d8d129dd4e8e50305c65ba746478ba4390f52597ec87fcfb5689788c5f51c856  index.test.mjs
+-ada2f3f6822af7eabe575624f6818bc8121d9d8bde96e55dd1ed1d41d9411bf3  index.ts
++5ad2c8193a2250820d3222c24d13a533686cb6547bd7aa7e13480041cc84a11f  index.ts
+ e6782af30ca54550c917f09919f916463cf01675321320b0dee53a092cf07012  ledger-store.test.mjs
+ e9f56ffc36bcb778e9944ada87ed213fa3a129dd1f088a2566b6f9f1f0f2e05d  ledger-store.ts
+ 4a9bcdeb607835971a034c3926daf446349690b56c1ac1b7cd621e73bc20a178  naming.test.mjs
+@@ -36,7 +36,7 @@
+ cd4d94a9e4db7922adfe91cf294614d50de4816269b7be131434aa0b22fe888a  request-control.ts
+ 752b1371421f43a3ad6d4de6d85db890e0a8456f7081ac50c0ccfc04ae337391  request-events.ts
+ 16c95aedc7a4e56a5af17bd3863c54b48f74343e418e9ee47989a264eca106e3  request-stop.test.mjs
+-2a7b1e14db44a9e8382c6aadbb3bc1fa185d6fcee478d46da7523f2c41e99bcd  revalidation-accounting.test.mjs
++3b47cdb95440f401dbf5bd8f105be9c47f0d86d862d48145e11828c2dae14713  revalidation-accounting.test.mjs
+ 8b437d0c8f52bde99b28f21ffd86b2dc1ee145b68df926ef6705e7992e9c41da  review.test.mjs
+ 2250f0ef32b4196a32fea55e7d3be8432e9ca3a815b9aff5c85d58077d9ffea4  review.ts
+ e0ce4068d84ba2b35e8866a926bb1c320e14db029c675c2432234d328228dd3f  role-models.test.mjs

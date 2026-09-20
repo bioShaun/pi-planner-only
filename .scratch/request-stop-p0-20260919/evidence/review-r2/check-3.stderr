@@ -1,0 +1,10 @@
+file:///home/tcuni-claw/pi/pi-planner-only/request-stop.test.mjs:29
+const watchdog = setTimeout(() => { throw new Error("request-stop fixture timed out"); }, 15_000);
+                                    ^
+
+Error: request-stop fixture timed out
+    at Timeout._onTimeout (file:///home/tcuni-claw/pi/pi-planner-only/request-stop.test.mjs:29:43)
+    at listOnTimeout (node:internal/timers:605:17)
+    at process.processTimers (node:internal/timers:541:7)
+
+Node.js v24.14.0

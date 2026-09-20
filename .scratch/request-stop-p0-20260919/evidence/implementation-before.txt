@@ -1,0 +1,4 @@
+?? .scratch/request-loop-verification-20260919/
+?? .scratch/request-stop-p0-20260919/
+?? docs/pi-planner-only-stability-and-delegation-plan.md
+3991c5c762584cbbc235576359734259f69931ce

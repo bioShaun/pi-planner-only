@@ -1,0 +1,240 @@
+[
+  {
+    "event": "child-launch",
+    "executionId": "eb2c20aa-e182-453f-9b3c-815337c18d9e",
+    "taskId": "T-20260919-001"
+  },
+  {
+    "event": "tool-result",
+    "name": "planner_delegate",
+    "details": {
+      "taskId": "T-20260919-001",
+      "executionId": "revalidate-1",
+      "runId": "fixture-run-1",
+      "state": "reviewing",
+      "decision": "review_pending",
+      "report": {
+        "version": 1,
+        "taskId": "T-20260919-001",
+        "status": "completed",
+        "summary": "read fixture; no changes",
+        "changedFiles": [],
+        "validation": [],
+        "risks": [],
+        "unresolved": [],
+        "evidence": {
+          "cwd": "/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/revalidation-run-c5DD0c/workspace",
+          "taskId": "T-20260919-001",
+          "gitAvailable": true,
+          "baseGitRef": "abc1234",
+          "finalGitRef": "abc1234",
+          "gitStatusHash": "e3b0c44298fc1c14",
+          "changedPaths": [],
+          "generatedAt": "2026-09-19T15:57:24.166Z",
+          "workerRunId": "fixture-run-1"
+        }
+      },
+      "warnings": []
+    }
+  },
+  {
+    "event": "tool-result",
+    "name": "planner_verdict",
+    "details": {
+      "taskId": "T-20260919-001",
+      "verdict": "pass",
+      "action": "revalidate",
+      "state": "changes_requested",
+      "round": 0,
+      "warnings": []
+    }
+  },
+  {
+    "event": "child-launch",
+    "executionId": "ef8c142f-6fd7-4201-a125-f404b93c4aea",
+    "taskId": "T-20260919-001"
+  },
+  {
+    "event": "tool-result",
+    "name": "planner_redelegate",
+    "details": {
+      "taskId": "T-20260919-001",
+      "executionId": "revalidate-3",
+      "runId": "fixture-run-2",
+      "state": "reviewing",
+      "decision": "review_pending",
+      "report": {
+        "version": 1,
+        "taskId": "T-20260919-001",
+        "status": "completed",
+        "summary": "read fixture; no changes",
+        "changedFiles": [],
+        "validation": [],
+        "risks": [],
+        "unresolved": [],
+        "evidence": {
+          "cwd": "/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/revalidation-run-c5DD0c/workspace",
+          "taskId": "T-20260919-001",
+          "gitAvailable": true,
+          "baseGitRef": "abc1235",
+          "finalGitRef": "abc1235",
+          "gitStatusHash": "e3b0c44298fc1c14",
+          "changedPaths": [],
+          "generatedAt": "2026-09-19T15:57:24.429Z",
+          "workerRunId": "fixture-run-2"
+        }
+      },
+      "warnings": []
+    }
+  },
+  {
+    "event": "tool-result",
+    "name": "planner_verdict",
+    "details": {
+      "taskId": "T-20260919-001",
+      "verdict": "pass",
+      "action": "revalidate",
+      "state": "changes_requested",
+      "round": 0,
+      "warnings": []
+    }
+  },
+  {
+    "event": "child-launch",
+    "executionId": "2dbbf378-5024-46f3-aef5-0bc72dc3323a",
+    "taskId": "T-20260919-001"
+  },
+  {
+    "event": "tool-result",
+    "name": "planner_redelegate",
+    "details": {
+      "taskId": "T-20260919-001",
+      "executionId": "revalidate-5",
+      "runId": "fixture-run-3",
+      "state": "reviewing",
+      "decision": "review_pending",
+      "report": {
+        "version": 1,
+        "taskId": "T-20260919-001",
+        "status": "completed",
+        "summary": "read fixture; no changes",
+        "changedFiles": [],
+        "validation": [],
+        "risks": [],
+        "unresolved": [],
+        "evidence": {
+          "cwd": "/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/revalidation-run-c5DD0c/workspace",
+          "taskId": "T-20260919-001",
+          "gitAvailable": true,
+          "baseGitRef": "abc1236",
+          "finalGitRef": "abc1236",
+          "gitStatusHash": "e3b0c44298fc1c14",
+          "changedPaths": [],
+          "generatedAt": "2026-09-19T15:57:24.688Z",
+          "workerRunId": "fixture-run-3"
+        }
+      },
+      "warnings": []
+    }
+  },
+  {
+    "event": "tool-result",
+    "name": "planner_verdict",
+    "details": {
+      "taskId": "T-20260919-001",
+      "verdict": "pass",
+      "action": "revalidate",
+      "state": "changes_requested",
+      "round": 0,
+      "warnings": []
+    }
+  },
+  {
+    "event": "child-launch",
+    "executionId": "fcdc2ac1-d882-4224-b6ed-46145d9d5d15",
+    "taskId": "T-20260919-001"
+  },
+  {
+    "event": "tool-result",
+    "name": "planner_redelegate",
+    "details": {
+      "taskId": "T-20260919-001",
+      "executionId": "revalidate-7",
+      "runId": "fixture-run-4",
+      "state": "reviewing",
+      "decision": "review_pending",
+      "report": {
+        "version": 1,
+        "taskId": "T-20260919-001",
+        "status": "completed",
+        "summary": "read fixture; no changes",
+        "changedFiles": [],
+        "validation": [],
+        "risks": [],
+        "unresolved": [],
+        "evidence": {
+          "cwd": "/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/revalidation-run-c5DD0c/workspace",
+          "taskId": "T-20260919-001",
+          "gitAvailable": true,
+          "baseGitRef": "abc1237",
+          "finalGitRef": "abc1237",
+          "gitStatusHash": "e3b0c44298fc1c14",
+          "changedPaths": [],
+          "generatedAt": "2026-09-19T15:57:24.948Z",
+          "workerRunId": "fixture-run-4"
+        }
+      },
+      "warnings": []
+    }
+  },
+  {
+    "event": "tool-result",
+    "name": "planner_verdict",
+    "details": {
+      "taskId": "T-20260919-001",
+      "verdict": "pass",
+      "action": "revalidate",
+      "state": "changes_requested",
+      "round": 0,
+      "warnings": []
+    }
+  },
+  {
+    "event": "child-launch",
+    "executionId": "e4a18bb6-54bb-4c9e-bf7e-9c6211a6dd94",
+    "taskId": "T-20260919-001"
+  },
+  {
+    "event": "tool-result",
+    "name": "planner_redelegate",
+    "details": {
+      "taskId": "T-20260919-001",
+      "executionId": "revalidate-9",
+      "runId": "fixture-run-5",
+      "state": "reviewing",
+      "decision": "review_pending",
+      "report": {
+        "version": 1,
+        "taskId": "T-20260919-001",
+        "status": "completed",
+        "summary": "read fixture; no changes",
+        "changedFiles": [],
+        "validation": [],
+        "risks": [],
+        "unresolved": [],
+        "evidence": {
+          "cwd": "/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/revalidation-run-c5DD0c/workspace",
+          "taskId": "T-20260919-001",
+          "gitAvailable": true,
+          "baseGitRef": "abc1238",
+          "finalGitRef": "abc1238",
+          "gitStatusHash": "e3b0c44298fc1c14",
+          "changedPaths": [],
+          "generatedAt": "2026-09-19T15:57:25.209Z",
+          "workerRunId": "fixture-run-5"
+        }
+      },
+      "warnings": []
+    }
+  }
+]

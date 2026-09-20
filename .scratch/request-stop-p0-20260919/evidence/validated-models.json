@@ -1,0 +1,64 @@
+{
+  "versionsNow": {
+    "plugin": "0.8.0",
+    "localTestHost": "0.84.4",
+    "cliHost": "0.85.1",
+    "installedLauncher": "0.69.0"
+  },
+  "historicalEvidence": {
+    "plugin": "0.8.0",
+    "host": "0.85.1",
+    "launcher": "0.68.0",
+    "baseline": "84cced4372700cac3051312b4867615820c696b2"
+  },
+  "rows": [
+    {
+      "scenario": "A",
+      "runId": "df3ddf82-030e-4518-b4d3-199ce352e0c9",
+      "actual": "tcuni-luna/gpt-5.6-luna",
+      "expected": "qwen-local/qwen3.8-27b",
+      "verdict": "routing-absent",
+      "basis": "Historical baseline records scout override; planner-scout has no route wiring.",
+      "terminalAvailable": false
+    },
+    {
+      "scenario": "A",
+      "runId": "ffbe1911-5130-40a8-8c50-588a72e08ebd",
+      "actual": "tcuni-luna/gpt-5.6-luna",
+      "expected": "qwen-local/qwen3.8-27b",
+      "verdict": "routing-absent",
+      "basis": "Historical baseline records scout override; planner-scout has no route wiring.",
+      "terminalAvailable": false
+    },
+    {
+      "scenario": "A",
+      "runId": "1a505c38-41b2-48cd-9032-6b9b46e22c8d",
+      "actual": "tcuni-luna/gpt-5.6-luna",
+      "expected": "qwen-local/qwen3.8-27b",
+      "verdict": "routing-absent",
+      "basis": "Historical baseline records scout override; planner-scout has no route wiring.",
+      "terminalAvailable": true
+    },
+    {
+      "scenario": "B",
+      "runId": "b5609fb4-c8a6-417c-a7db-221b7a3afe4b",
+      "actual": "tcuni-luna/gpt-5.6-luna:high",
+      "expected": "tcuni-luna/gpt-5.6-luna",
+      "verdict": "match",
+      "basis": "Saved requestedModel and terminal model, correlated by runId.",
+      "terminalAvailable": true
+    },
+    {
+      "scenario": "B",
+      "runId": "69482789-6408-472f-87c3-ea30ed9de33f",
+      "actual": "tcuni-luna/gpt-5.6-luna:high",
+      "expected": "tcuni-luna/gpt-5.6-luna",
+      "verdict": "match",
+      "basis": "Saved requestedModel and terminal model, correlated by runId.",
+      "terminalAvailable": true
+    }
+  ],
+  "current069RuntimeIdentity": "unknown-no-new-host-run",
+  "costConclusion": "none",
+  "scenarioC": "No child launched; copied B ledger is not a third sample."
+}

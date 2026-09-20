@@ -1,0 +1,1 @@
+{"status":"PASS","hostVersion":"0.85.1","extraModelCallsAfterClose":1,"modelCallsTotal":15,"launches":1,"run":"/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/request-host-run-X60LCM"}

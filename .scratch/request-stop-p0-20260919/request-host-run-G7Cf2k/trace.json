@@ -1,0 +1,23 @@
+[
+  {
+    "event": "input",
+    "source": "interactive",
+    "modelCalls": 0,
+    "idle": true
+  },
+  {
+    "event": "agent_start",
+    "modelCalls": 0,
+    "idle": false
+  },
+  {
+    "event": "agent_end",
+    "modelCalls": 5,
+    "idle": false
+  },
+  {
+    "event": "agent_settled",
+    "modelCalls": 5,
+    "idle": true
+  }
+]

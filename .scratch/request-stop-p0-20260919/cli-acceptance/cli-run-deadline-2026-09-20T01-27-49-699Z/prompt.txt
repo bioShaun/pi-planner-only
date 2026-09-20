@@ -1,0 +1,1 @@
+Call planner_delegate with role='worker', objective='Run the shell command: sleep 90 ; then create done.txt containing the single word done', validation={required:false}, envelope={maxTokens:50000, maxWallMs:300000}. When it completes, call planner_verdict with the taskId, verdict='pass', summary='done'.

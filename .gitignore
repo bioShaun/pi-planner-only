@@ -50,3 +50,11 @@ node_modules/
 .scratch/*/validation/snapshot/
 .scratch/*/validation-tmp/
 .scratch/*/node-compile-cache/
+
+# P0 request-admission acceptance (2026-09-20): isolated agent dirs carry provider
+# credentials and raw sessions; workspaces are embedded git repos; temp roots hold
+# node compile caches. The small evidence next to them stays committed.
+.scratch/request-stop-p0-20260919/cli-acceptance/cli-run-*/agent/
+.scratch/request-stop-p0-20260919/cli-acceptance/cli-run-*/workspace/
+.scratch/**/tmp/node-compile-cache/
+.scratch/**/npm-cache/

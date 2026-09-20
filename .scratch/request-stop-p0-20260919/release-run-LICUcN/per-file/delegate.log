@@ -1,0 +1,2 @@
+Planner-only: failed to persist ledger snapshot: EISDIR: illegal operation on a directory, rename '/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/release-run-LICUcN/tmp/planner-only-admission-ledger-svbrfu/planner-only/ledger/.tmp-914994-2' -> '/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/release-run-LICUcN/tmp/planner-only-admission-ledger-svbrfu/planner-only/ledger/T-20260918-001.json'
+delegate.test.mjs: all cases passed

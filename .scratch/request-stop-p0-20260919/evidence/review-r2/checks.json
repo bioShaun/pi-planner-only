@@ -1,0 +1,42 @@
+[
+  {
+    "command": [
+      "npm",
+      "run",
+      "typecheck"
+    ],
+    "exit": 0,
+    "startedAt": "2026-09-20T00:31:22.630205+00:00",
+    "endedAt": "2026-09-20T00:31:25.406625+00:00"
+  },
+  {
+    "command": [
+      "node",
+      "--experimental-strip-types",
+      "request-control.test.mjs"
+    ],
+    "exit": 0,
+    "startedAt": "2026-09-20T00:31:25.406692+00:00",
+    "endedAt": "2026-09-20T00:31:25.555895+00:00"
+  },
+  {
+    "command": [
+      "node",
+      "--experimental-strip-types",
+      "request-stop.test.mjs"
+    ],
+    "exit": 1,
+    "startedAt": "2026-09-20T00:31:25.555941+00:00",
+    "endedAt": "2026-09-20T00:31:40.745235+00:00"
+  },
+  {
+    "command": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit": 0,
+    "startedAt": "2026-09-20T00:31:40.745262+00:00",
+    "endedAt": "2026-09-20T00:31:40.754065+00:00"
+  }
+]

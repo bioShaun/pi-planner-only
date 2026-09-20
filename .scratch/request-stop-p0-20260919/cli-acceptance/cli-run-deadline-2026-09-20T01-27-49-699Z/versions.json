@@ -1,0 +1,21 @@
+{
+  "scenario": "deadline",
+  "startedAt": "2026-09-20T01:27:49.699Z",
+  "node": "v24.14.0",
+  "piBinary": "/home/tcuni-claw/.nvm/versions/node/v24.14.0/bin/pi",
+  "piVersion": "0.85.1",
+  "hostPackage": "0.85.1",
+  "launcherPackage": "0.69.0",
+  "localPeerPackage": "0.84.4",
+  "pluginVersion": "0.8.0",
+  "pluginHead": "3991c5c762584cbbc235576359734259f69931ce",
+  "pluginSourceSha256": {
+    "index.ts": "1f9b4de540bb2d704e256a3b18be2042bcc40c68b603df7819d105fa1a8159d1",
+    "request-control.ts": "3c40d98c38f6ccda1bf8987c43353a9da08d4914f3b9a5576d56362a73ea82f3",
+    "request-events.ts": "d2407f825d2f311034c0e454f4d459417fa2abf965f8448a937aa8ccc9d6d58c",
+    "delegate.ts": "ede30ab922ac8a6c478b91cf11d8189d2dd9d4299256ad199d53c88d731ac4a8",
+    "task.ts": "6d64375b465d9b5a7d36a371e476c9eaa72dd9474086ce284a0a2024616fb2d6"
+  },
+  "launcherIndexSha256": "6b4c7b56da768a02a9bb581efb0b492a6bc1b6c65ec594c6b79754c8ec7a0592",
+  "tmpRoot": "/project/tmp/pi-planner-only-cli-deadline-bumllb"
+}

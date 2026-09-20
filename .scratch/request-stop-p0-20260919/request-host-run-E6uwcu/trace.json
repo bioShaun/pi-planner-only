@@ -1,0 +1,75 @@
+[
+  {
+    "event": "input",
+    "source": "interactive",
+    "modelCalls": 0,
+    "idle": true
+  },
+  {
+    "event": "agent_start",
+    "modelCalls": 0,
+    "idle": false
+  },
+  {
+    "event": "tool_call",
+    "toolCallId": "bad-1",
+    "toolName": "planner_verdict",
+    "modelCalls": 1,
+    "idle": false
+  },
+  {
+    "event": "tool_result",
+    "toolCallId": "bad-1",
+    "toolName": "planner_verdict",
+    "modelCalls": 1,
+    "idle": false
+  },
+  {
+    "event": "tool_call",
+    "toolCallId": "bad-2",
+    "toolName": "planner_verdict",
+    "modelCalls": 2,
+    "idle": false
+  },
+  {
+    "event": "tool_result",
+    "toolCallId": "bad-2",
+    "toolName": "planner_verdict",
+    "modelCalls": 2,
+    "idle": false
+  },
+  {
+    "event": "tool_call",
+    "toolCallId": "bad-3",
+    "toolName": "planner_verdict",
+    "modelCalls": 3,
+    "idle": false
+  },
+  {
+    "event": "tool_result",
+    "toolCallId": "bad-3",
+    "toolName": "planner_verdict",
+    "modelCalls": 3,
+    "idle": false
+  },
+  {
+    "event": "agent_end",
+    "modelCalls": 3,
+    "idle": false
+  },
+  {
+    "event": "agent_start",
+    "modelCalls": 3,
+    "idle": false
+  },
+  {
+    "event": "agent_end",
+    "modelCalls": 4,
+    "idle": false
+  },
+  {
+    "event": "agent_settled",
+    "modelCalls": 4,
+    "idle": true
+  }
+]

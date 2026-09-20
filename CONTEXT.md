@@ -26,6 +26,24 @@ A child that may run a shell to check work, but may not edit files.
 One unit of delegated work with a lifecycle (planning → executing → reviewing → completed | changes_requested | blocked | failed).
 _Avoid_: job, ticket, unit of work
 
+**Request**:
+One independently initiated unit of Root work, spanning its Tasks, corrections,
+recoveries, and automatic continuations. Its finite allowance and closure survive
+reloads until a trusted next input or confirmed operator action opens another Request.
+_Avoid_: Task, assistant turn, model call
+
+**Request stop**:
+Closure of new Root tool and child admission, accompanied by cancellation of
+active children and a request to stop Root. Admission closure, confirmed child
+stop, and confirmed Root stop are separate facts.
+_Avoid_: abort called, full termination without host evidence
+
+**Failure chain**:
+Unresolved failures of one program-classified family within a Request, including
+failures on different Tasks. Only a fully accepted correction resolves its
+causally linked predecessors on the same Task and in the same family.
+_Avoid_: repeated wording, report validity, success on an unrelated Task
+
 **TaskSpec**:
 The downward contract: what a Worker is allowed and required to do.
 _Avoid_: prompt, brief, ticket body
@@ -75,7 +93,7 @@ The persisted `task.writerHold` left when an execution's stop was never confirme
 _Avoid_: lock, mutex
 
 **RecoveryDecision**:
-Root's structured decision (`planner_redelegate.recovery`, or the dedicated `planner_abort` surface for `action:"abort"` — ADR-0003; `planner_verdict` has no recovery key) that authorizes one new bounded execution on a Task flagged `recovery.required`, or abandons it for the operator; consumed once, never reworded-retried. Distinct from evidence revalidation, which is the workspace re-sampling behind a `revalidate` verdict action on ordinary Tasks — no `recovery` key, no `recovery.required` gate, nothing consumed.
+Root's structured decision (`planner_redelegate.recovery`, or the dedicated `planner_abort` surface for `action:"abort"` — ADR-0003; `planner_verdict` has no recovery key) that authorizes one new bounded execution on a Task flagged `recovery.required`, or abandons it for the operator; consumed once, never reworded-retried. Distinct from evidence revalidation: a `revalidate` verdict grants a workspace re-sampling attempt, consumed once at durable dispatch, with a separate limit of three attempts per Task.
 _Avoid_: replan, retry policy
 
 **Review loop**:

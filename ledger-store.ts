@@ -183,6 +183,16 @@ function recordShapeError(task: unknown): string | undefined {
 			if (error) return error;
 		}
 	}
+	if (task.revalidationDispatches !== undefined) {
+		if (!Array.isArray(task.revalidationDispatches)) return "task.revalidationDispatches must be an array";
+		for (const dispatch of task.revalidationDispatches) {
+			if (!isPlainObject(dispatch)) return "revalidation dispatch must be an object";
+			for (const field of ["executionId", "requestId", "evidenceKey", "committedAt"] as const) {
+				if (typeof dispatch[field] !== "string" || !dispatch[field]) return `revalidation dispatch.${field} must be a non-empty string`;
+			}
+			if (dispatch.requestObservedAt !== undefined && typeof dispatch.requestObservedAt !== "string") return "revalidation dispatch.requestObservedAt must be a string";
+		}
+	}
 	return undefined;
 }
 

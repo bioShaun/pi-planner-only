@@ -1,0 +1,266 @@
+{
+  "status": "PASS",
+  "host": "/home/tcuni-claw/.nvm/versions/node/v24.14.0/lib/node_modules/@earendil-works/pi-coding-agent",
+  "hostVersion": "0.85.1",
+  "callsAfterClosure": 4,
+  "modelCallsTotal": 8,
+  "stopped": {
+    "id": "fe02af40-4f9e-48b6-881d-fcb8e3502b84",
+    "limits": {
+      "toolAttempts": 32,
+      "childLaunches": 8,
+      "failures": 3,
+      "repairs": 2,
+      "activeMs": 900000
+    },
+    "startedAt": 1789861801129,
+    "deadline": 1789862701129,
+    "toolAttempts": 4,
+    "childLaunches": 0,
+    "repairs": 0,
+    "modelCallsObserved": 0,
+    "tools": [
+      {
+        "id": "bad-1",
+        "name": "planner_verdict",
+        "phase": "settled"
+      },
+      {
+        "id": "bad-2",
+        "name": "planner_verdict",
+        "phase": "settled"
+      },
+      {
+        "id": "bad-3",
+        "name": "planner_verdict",
+        "phase": "settled"
+      }
+    ],
+    "claims": [],
+    "failures": [
+      {
+        "id": "tool:bad-1",
+        "family": "contract:planner_verdict:TASK_NOT_FOUND",
+        "resolved": false
+      },
+      {
+        "id": "tool:bad-2",
+        "family": "contract:planner_verdict:TASK_NOT_FOUND",
+        "resolved": false
+      },
+      {
+        "id": "tool:bad-3",
+        "family": "contract:planner_verdict:TASK_NOT_FOUND",
+        "resolved": false
+      }
+    ],
+    "structures": [
+      {
+        "operation": "planner_verdict",
+        "issues": []
+      }
+    ],
+    "settled": true,
+    "rootStop": "confirmed",
+    "closedReason": "no-progress:contract:planner_verdict:TASK_NOT_FOUND"
+  },
+  "next": {
+    "id": "c34724c4-28a9-4057-97e7-20376fc8366e",
+    "limits": {
+      "toolAttempts": 32,
+      "childLaunches": 8,
+      "failures": 3,
+      "repairs": 2,
+      "activeMs": 900000
+    },
+    "startedAt": 1789861801444,
+    "deadline": 1789862701444,
+    "toolAttempts": 1,
+    "childLaunches": 1,
+    "repairs": 0,
+    "modelCallsObserved": 0,
+    "tools": [
+      {
+        "id": "fresh-interactive",
+        "name": "planner_delegate",
+        "phase": "settled"
+      }
+    ],
+    "claims": [
+      {
+        "key": "f9cd8115-3173-4f27-af51-bc5c2b68de45",
+        "taskId": "T-20260920-001",
+        "executionId": "fresh-interactive",
+        "committedAt": 1789861801508,
+        "stop": "confirmed",
+        "waitSettled": true,
+        "emittedAt": 1789861801516,
+        "terminalAt": 1789861801527
+      }
+    ],
+    "failures": [],
+    "structures": [
+      {
+        "operation": "planner_delegate",
+        "issues": []
+      }
+    ],
+    "settled": true,
+    "rootStop": "not-requested"
+  },
+  "trace": [
+    {
+      "event": "input",
+      "source": "interactive",
+      "modelCalls": 0,
+      "idle": true
+    },
+    {
+      "event": "agent_start",
+      "modelCalls": 0,
+      "idle": false
+    },
+    {
+      "event": "tool_call",
+      "toolCallId": "bad-1",
+      "toolName": "planner_verdict",
+      "modelCalls": 1,
+      "idle": false
+    },
+    {
+      "event": "tool_result",
+      "toolCallId": "bad-1",
+      "toolName": "planner_verdict",
+      "modelCalls": 1,
+      "idle": false
+    },
+    {
+      "event": "tool_call",
+      "toolCallId": "bad-2",
+      "toolName": "planner_verdict",
+      "modelCalls": 2,
+      "idle": false
+    },
+    {
+      "event": "tool_result",
+      "toolCallId": "bad-2",
+      "toolName": "planner_verdict",
+      "modelCalls": 2,
+      "idle": false
+    },
+    {
+      "event": "tool_call",
+      "toolCallId": "bad-3",
+      "toolName": "planner_verdict",
+      "modelCalls": 3,
+      "idle": false
+    },
+    {
+      "event": "tool_result",
+      "toolCallId": "bad-3",
+      "toolName": "planner_verdict",
+      "modelCalls": 3,
+      "idle": false
+    },
+    {
+      "event": "agent_end",
+      "modelCalls": 3,
+      "idle": false
+    },
+    {
+      "event": "agent_start",
+      "modelCalls": 3,
+      "idle": false
+    },
+    {
+      "event": "agent_end",
+      "modelCalls": 4,
+      "idle": false
+    },
+    {
+      "event": "agent_settled",
+      "modelCalls": 4,
+      "idle": true
+    },
+    {
+      "event": "input",
+      "source": "extension",
+      "modelCalls": 4,
+      "idle": true
+    },
+    {
+      "event": "agent_start",
+      "modelCalls": 4,
+      "idle": false
+    },
+    {
+      "event": "agent_end",
+      "modelCalls": 5,
+      "idle": false
+    },
+    {
+      "event": "agent_settled",
+      "modelCalls": 5,
+      "idle": true
+    },
+    {
+      "event": "input",
+      "source": "extension",
+      "modelCalls": 5,
+      "idle": true
+    },
+    {
+      "event": "agent_start",
+      "modelCalls": 5,
+      "idle": false
+    },
+    {
+      "event": "agent_end",
+      "modelCalls": 6,
+      "idle": false
+    },
+    {
+      "event": "agent_settled",
+      "modelCalls": 6,
+      "idle": true
+    },
+    {
+      "event": "input",
+      "source": "interactive",
+      "modelCalls": 6,
+      "idle": true
+    },
+    {
+      "event": "agent_start",
+      "modelCalls": 6,
+      "idle": false
+    },
+    {
+      "event": "tool_call",
+      "toolCallId": "fresh-interactive",
+      "toolName": "planner_delegate",
+      "modelCalls": 7,
+      "idle": false
+    },
+    {
+      "event": "tool_result",
+      "toolCallId": "fresh-interactive",
+      "toolName": "planner_delegate",
+      "modelCalls": 7,
+      "idle": false
+    },
+    {
+      "event": "agent_end",
+      "modelCalls": 8,
+      "idle": false
+    },
+    {
+      "event": "agent_settled",
+      "modelCalls": 8,
+      "idle": true
+    }
+  ],
+  "scope": "Real SDK/ExtensionRunner and real plugin; faux provider, fake Git and launcher events; no subprocess/network/paid model; SDK retry disabled.",
+  "limitations": "No real CLI/TUI or pi-subagents 0.69.0 runtime acceptance; no provider billing or all-mode Root stop guarantee.",
+  "run": "/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/request-host-run-1Ttxkq"
+}

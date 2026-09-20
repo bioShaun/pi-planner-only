@@ -1,0 +1,4 @@
+error: open("src/parser.ts"): Permission denied
+fatal: cannot hash src/parser.ts
+fatal: could not open 'src/parser.ts' for reading: Permission denied
+planner-only orchestration: PASS

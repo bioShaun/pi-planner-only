@@ -1,0 +1,19 @@
+ M CONTEXT.md
+ M README.md
+ M README.zh-CN.md
+ M delegate.ts
+ M index.test.mjs
+ M index.ts
+ M ledger-store.ts
+ M package.json
+ M policy-cutover.test.mjs
+ M task.ts
+?? .scratch/request-loop-verification-20260919/
+?? .scratch/request-stop-p0-20260919/
+?? docs/adr/0005-durable-request-admission.md
+?? docs/pi-planner-only-stability-and-delegation-plan.md
+?? request-control.test.mjs
+?? request-control.ts
+?? request-events.ts
+?? request-stop.test.mjs
+?? revalidation-accounting.test.mjs

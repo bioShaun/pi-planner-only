@@ -1,0 +1,11 @@
+{
+  "command": [
+    "node",
+    "--experimental-strip-types",
+    "request-stop.test.mjs"
+  ],
+  "exit": 0,
+  "startedAt": "2026-09-20T00:39:16.892486+00:00",
+  "endedAt": "2026-09-20T00:39:36.439335+00:00",
+  "reason": "complete zero-use fixture metadata with contract-required toolCalls:0"
+}

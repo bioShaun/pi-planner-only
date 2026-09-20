@@ -1,0 +1,10 @@
+✔ A01: Loaded plugin fingerprint is recorded from loaded build, distinct from disk HEAD (6.5035ms)
+✔ A05: Multi-process shared ledger allocation, quarantine, and cross-workspace checks pass (2.369268ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 12.207857

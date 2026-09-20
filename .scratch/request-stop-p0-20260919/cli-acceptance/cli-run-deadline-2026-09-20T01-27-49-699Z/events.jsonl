@@ -1,0 +1,16 @@
+{"t":1789867675133,"kind":"host","hook":"session_start"}
+{"t":1789867675134,"kind":"host","hook":"input","source":"interactive"}
+{"t":1789867675152,"kind":"host","hook":"agent_start"}
+{"t":1789867675172,"kind":"host","hook":"before_provider_request"}
+{"t":1789867683173,"kind":"host","hook":"tool_call","toolCallId":"call_mvVEdOGvfcgFyBJ7iTTH37l0|fc_03d456d5778bc13a016aaf369f6bb087d0a21f57b814c59383","toolName":"planner_delegate"}
+{"t":1789867683265,"kind":"launcher","event":"prompt-template:subagent:started","requestId":"2c1e996a-09bc-4bd3-bc97-c241d2b531aa","ownerRunId":"01a0bc6d-3adc-75c7-9544-3daf4a17726c","nodeId":"T-20260920-001"}
+{"t":1789867683296,"kind":"launcher","event":"prompt-template:subagent:request","requestId":"2c1e996a-09bc-4bd3-bc97-c241d2b531aa","ownerRunId":"01a0bc6d-3adc-75c7-9544-3daf4a17726c","nodeId":"T-20260920-001","agent":"worker","resultKind":"structured"}
+{"t":1789867683327,"kind":"launcher","event":"prompt-template:subagent:update","requestId":"2c1e996a-09bc-4bd3-bc97-c241d2b531aa","ownerRunId":"01a0bc6d-3adc-75c7-9544-3daf4a17726c","nodeId":"T-20260920-001","runId":"f4d73c25-d20e-4dff-95cd-c07c1dfc6ba4","model":"tcuni-luna/gpt-5.6-luna:high"}
+{"t":1789867688963,"kind":"launcher","event":"prompt-template:subagent:update","requestId":"2c1e996a-09bc-4bd3-bc97-c241d2b531aa","ownerRunId":"01a0bc6d-3adc-75c7-9544-3daf4a17726c","nodeId":"T-20260920-001","runId":"f4d73c25-d20e-4dff-95cd-c07c1dfc6ba4","model":"tcuni-luna/gpt-5.6-luna:high"}
+{"t":1789867688964,"kind":"launcher","event":"prompt-template:subagent:update","requestId":"2c1e996a-09bc-4bd3-bc97-c241d2b531aa","ownerRunId":"01a0bc6d-3adc-75c7-9544-3daf4a17726c","nodeId":"T-20260920-001","runId":"f4d73c25-d20e-4dff-95cd-c07c1dfc6ba4","model":"tcuni-luna/gpt-5.6-luna:high"}
+{"t":1789867720152,"kind":"launcher","event":"prompt-template:subagent:cancel","requestId":"2c1e996a-09bc-4bd3-bc97-c241d2b531aa","ownerRunId":"01a0bc6d-3adc-75c7-9544-3daf4a17726c","nodeId":"T-20260920-001"}
+{"t":1789867720162,"kind":"launcher","event":"prompt-template:subagent:update","requestId":"2c1e996a-09bc-4bd3-bc97-c241d2b531aa","ownerRunId":"01a0bc6d-3adc-75c7-9544-3daf4a17726c","nodeId":"T-20260920-001","runId":"f4d73c25-d20e-4dff-95cd-c07c1dfc6ba4","model":"tcuni-luna/gpt-5.6-luna:high"}
+{"t":1789867720176,"kind":"launcher","event":"prompt-template:subagent:response","requestId":"2c1e996a-09bc-4bd3-bc97-c241d2b531aa","ownerRunId":"01a0bc6d-3adc-75c7-9544-3daf4a17726c","nodeId":"T-20260920-001","agent":"worker","status":"cancelled","runId":"f4d73c25-d20e-4dff-95cd-c07c1dfc6ba4","model":"tcuni-luna/gpt-5.6-luna:high","usage":{"input":8932,"output":151,"cacheRead":0,"cacheWrite":0,"cost":0,"turns":2,"toolCalls":1,"durationMs":36846}}
+{"t":1789867720501,"kind":"host","hook":"tool_result","toolCallId":"call_mvVEdOGvfcgFyBJ7iTTH37l0|fc_03d456d5778bc13a016aaf369f6bb087d0a21f57b814c59383","toolName":"planner_delegate","isError":false}
+{"t":1789867720513,"kind":"host","hook":"agent_settled"}
+{"t":1789867720514,"kind":"host","hook":"session_shutdown","reason":"quit"}

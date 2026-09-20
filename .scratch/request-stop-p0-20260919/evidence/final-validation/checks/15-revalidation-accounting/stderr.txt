@@ -1,0 +1,16 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: planner-only request closed: tool-call-replay. Inspect /planner-only request status; only a trusted next input or operator resume can open a new request.
+    at call (file:///home/tcuni-claw/pi/pi-planner-only/revalidation-accounting.test.mjs:153:10)
+    at async file:///home/tcuni-claw/pi/pi-planner-only/revalidation-accounting.test.mjs:201:3 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: '==',
+  diff: 'simple'
+}
+
+Node.js v24.14.0

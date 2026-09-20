@@ -488,6 +488,10 @@ export const REVIEW_RESULT_SCHEMA = structuredClone(Type.Object(
 )) as unknown as SubagentDelegationJsonSchemaObject;
 
 export interface DelegationLaunchHooks {
+	/** Synchronous final-admission hook, called immediately before REQUEST emit. */
+	beforeDispatch?: (request: SubagentDelegationRequest) => void;
+	/** Best-effort notification that REQUEST emit returned. Must not throw. */
+	onDispatch?: (request: SubagentDelegationRequest) => void;
 	/** 每条按身份三元组过滤后的 UPDATE。调用方不得阻塞。 */
 	onUpdate?: (update: SubagentDelegationUpdate) => void;
 	/**
@@ -559,6 +563,8 @@ export interface DelegationTermination {
 	/** P0-B — which envelope bound tripped (signal/observed/limit) plus its config source. */
 	anomaly?: RunawayObservation & { source: string };
 	error?: string;
+	/** Program-owned launcher exception code, never extracted from error prose. */
+	errorCode?: string;
 }
 
 export interface DelegationOutcome {
@@ -590,6 +596,10 @@ export interface DelegationProgressDetails {
 /** Per-call inputs that are not part of the TypeBox parameters. */
 export interface DelegationOptions {
 	signal?: AbortSignal;
+	/** Program-selected causal predecessor; never a tool parameter. */
+	previousExecutionId?: string;
+	/** An old execution's late terminal passed the existing quiescence check. */
+	onLateStopConfirmed?: () => void;
 	/**
 	 * Host tool-call id; binds the TaskExecutionRecord and the usage entry.
 	 * Falls back to the delegation requestId when absent (unit tests).
@@ -780,6 +790,16 @@ export async function runDelegation(
 		if (role === "reviewer") {
 			return runReviewInvocation(deps, task, { requestId, executionId }, options);
 		}
+		if (
+			task.pendingRevalidationKey
+			&& task.revalidationDispatches?.some((item) => item.executionId === executionId)
+		) {
+			throw new DelegationRefused(
+				"REVALIDATION_DISPATCH_REPLAY",
+				`${toolName} refused: revalidation execution ${executionId} was already dispatched for Task ${task.taskId}`,
+				task.taskId,
+			);
+		}
 		// The packet spec inherits the stored acceptance contract — the child
 		// sees the same mode the ledger enforces (params.acceptanceMode was
 		// refused above).
@@ -956,6 +976,7 @@ export async function runDelegation(
 		const aRun = await captureEvidence(deps.gitRunner, sampleOptions(executionId));
 		deps.store.beginExecution(task.taskId, {
 			executionId,
+			...(options.previousExecutionId ? { previousExecutionId: options.previousExecutionId } : {}),
 			kind: role as DelegationKind,
 			cwd: task.cwd || effectiveCwd,
 			worktreeRoots,
@@ -1128,6 +1149,7 @@ export async function runDelegation(
 						deps.store.clearWriterHold(task.taskId);
 					}
 				}
+				if (q.confirmed) options.onLateStopConfirmed?.();
 			})().catch(() => {
 				/* late finalization is best-effort: the record stays stop_unconfirmed */
 			});
@@ -1156,6 +1178,23 @@ export async function runDelegation(
 				wallTimer = armWallTimer(onWallDeadline, wallLimit);
 			}
 			response = await deps.launch(request, runController.signal, {
+				beforeDispatch: (outbound) => {
+					const committed = deps.store.commitRevalidationDispatch(
+						task.taskId,
+						executionId,
+						outbound.requestId,
+					);
+					if (committed.status === "duplicate") {
+						throw new DelegationRefused(
+							"REVALIDATION_DISPATCH_REPLAY",
+							`${toolName} refused: revalidation execution ${executionId} was already dispatched for Task ${task.taskId}`,
+							task.taskId,
+						);
+					}
+				},
+				onDispatch: (outbound) => {
+					deps.store.markRevalidationRequestObserved(task.taskId, executionId, outbound.requestId);
+				},
 				onUpdate: (update) => {
 					// P0-B monitor — cumulative token snapshot, max not sum;
 					// unknown/regressing counts never reset the observed level.
@@ -1272,6 +1311,7 @@ export async function runDelegation(
 					quiescenceWaitSource,
 					usageComplete: false,
 					error: reason,
+					...(typeof (error as { code?: unknown })?.code === "string" ? { errorCode: (error as { code: string }).code } : {}),
 				},
 				warnings,
 			};
@@ -1619,11 +1659,14 @@ export async function runDelegation(
 			...(reportError ? { reportError } : {}),
 			...(comparison ? { comparison } : {}),
 		});
+		if (decision.action === "revalidate" && decision.evidenceKey) {
+			deps.store.markRevalidationGranted(task.taskId, decision.evidenceKey);
+		}
 
 		// 10. Outcome.
 		releaseReservation = true;
 		return {
-			task: reviewed,
+			task: deps.store.require(reviewed.taskId),
 			executionId,
 			...(runId ? { runId } : {}),
 			...(report ? { report } : {}),
@@ -1965,6 +2008,8 @@ export interface HostLauncherOptions {
 	 * DelegationAborted.
 	 */
 	cancelGraceMs?: number;
+	/** Optional synchronous admission wrapper used by request-global accounting. */
+	beforeDispatch?: (request: SubagentDelegationRequest, local?: DelegationLaunchHooks["beforeDispatch"]) => void;
 }
 
 /**
@@ -2046,7 +2091,8 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
 		const onAbort = () => {
 			if (settled || aborting) return;
 			aborting = true;
-			pi.events.emit(SUBAGENT_DELEGATION_CANCEL_EVENT, cancelPayload);
+			try { pi.events.emit(SUBAGENT_DELEGATION_CANCEL_EVENT, cancelPayload); } catch { /* cancellation remains unconfirmed until terminal */ }
+			if (settled) return;
 			graceTimer = setTimeout(() => {
 				if (settled) return;
 				settled = true;
@@ -2060,8 +2106,30 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
 			}, cancelGraceMs);
 		};
 		signal?.addEventListener("abort", onAbort, { once: true });
+		try {
+			if (options.beforeDispatch) options.beforeDispatch(request, hooks?.beforeDispatch);
+			else hooks?.beforeDispatch?.(request);
+		} catch (error) {
+			cleanup();
+			reject(signal?.aborted ? new DelegationAborted(request.nodeId, false) : error);
+			return;
+		}
 		inFlight.set(request.requestId, cancelPayload);
-		pi.events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, request);
+		try {
+			pi.events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, request);
+		} catch {
+			// A listener may have started the child before a later listener threw.
+			// Keep the committed charge and RESPONSE subscription; treat the send as
+			// unknown/emitted so runDelegation retains the writer reservation.
+			settled = true;
+			try { pi.events.emit(SUBAGENT_DELEGATION_CANCEL_EVENT, cancelPayload); } catch { /* retain the hold */ }
+			unsubscribeUpdate();
+			signal?.removeEventListener("abort", onAbort);
+			inFlight.delete(request.requestId);
+			reject(new DelegationAborted(request.nodeId, true));
+			return;
+		}
+		try { hooks?.onDispatch?.(request); } catch { /* observation cannot undo an emitted request */ }
 		// An abort landing between the early check and addEventListener never
 		// fires the listener — catch it here so the grace path still runs.
 		if (signal?.aborted) onAbort();

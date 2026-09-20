@@ -1,0 +1,13 @@
+✔ normalizeRepoRelativePath (0.539773ms)
+✔ matchesScopePath (0.138492ms)
+✔ isPathInDeclaredScope routes every entry form through the one matcher (0.243502ms)
+✔ validateTaskSpec rejects scope escaping workspace (0.264421ms)
+✔ real git e2e scope cases (62.688519ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 67.569495

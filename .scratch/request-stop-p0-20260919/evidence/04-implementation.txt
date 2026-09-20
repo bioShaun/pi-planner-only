@@ -1,0 +1,6 @@
+Worker report: COMPLETED; writer stopped.
+Checks: node --experimental-strip-types revalidation-accounting.test.mjs PASS; npm run typecheck exit 0; git diff --check exit 0.
+Limitation: REQUEST emit failure retains hold but best-effort CANCEL needs integration.
+ delegate.ts | 61 +++++++++++++++++++++++++++++++++++++++++++++--
+ task.ts     | 78 ++++++++++++++++++++++++++++++++++++++++++++++++-------------
+ 2 files changed, 121 insertions(+), 18 deletions(-)

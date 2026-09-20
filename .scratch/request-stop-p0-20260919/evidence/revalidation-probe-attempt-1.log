@@ -1,0 +1,10 @@
+file:///home/tcuni-claw/pi/pi-planner-only/index.ts:370
+	ctx.ui.setStatus(
+	       ^
+
+TypeError: Cannot read properties of undefined (reading 'setStatus')
+    at updateStatus (file:///home/tcuni-claw/pi/pi-planner-only/index.ts:370:9)
+    at file:///home/tcuni-claw/pi/pi-planner-only/index.ts:1441:3
+    at file:///home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/revalidation-probe.mjs:55:36
+
+Node.js v24.14.0

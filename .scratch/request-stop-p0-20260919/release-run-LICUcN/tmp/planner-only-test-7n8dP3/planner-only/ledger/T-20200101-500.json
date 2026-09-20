@@ -1,0 +1,1 @@
+{"version":1,"writtenAt":"2026-09-20T01:16:03.043Z","task":{"taskId":"T-20200101-500","state":"blocked","role":"worker","cwd":"/home/tcuni-claw/pi/pi-planner-only","spec":{"objective":"aged blocked Task the restore cap left out"},"recovery":{"required":true,"executionId":"exec-18","reason":"worker_runaway"},"updatedAt":"2020-01-01T00:00:00.000Z"}}

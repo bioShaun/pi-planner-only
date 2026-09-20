@@ -1,0 +1,11 @@
+{
+  "attempt": 1,
+  "runDir": ".scratch/request-stop-p0-20260919/strict-run-QRchAR",
+  "launcherExit": 124,
+  "status": "BLOCKED-timeout",
+  "parentReadOnlyProof": "parent write-open probes returned EROFS on project files; mount table shows read-only root; CapEff 0 (events.jsonl command_execution)",
+  "manifest": "parent verified all 63 review-r4 files and HEAD before delegating",
+  "reviewerChild": "astra_reviewer spawned via spawn_agent fork_turns=none; did not return a verdict before the 240 s watchdog TERM",
+  "residualProcesses": "pgrep 'codex exec' count 0 after exit",
+  "verdict": null
+}

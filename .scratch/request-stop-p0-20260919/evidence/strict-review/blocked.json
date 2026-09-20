@@ -1,0 +1,14 @@
+{
+  "status": "BLOCKED",
+  "time": "2026-09-20T00:24:44.425570+00:00",
+  "action": "slot cpu -- bash /home/tcuni-claw/.codex/review-readonly.sh request.md",
+  "exit": 255,
+  "eventsBytes": 0,
+  "reason": [
+    "slot jobs/audit paths are read-only",
+    "cpu queue socket connection denied"
+  ],
+  "strictParentLaunched": false,
+  "runtimePermissionProof": false,
+  "frozenSourceMismatches": []
+}

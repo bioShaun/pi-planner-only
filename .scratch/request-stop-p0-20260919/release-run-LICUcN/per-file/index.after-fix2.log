@@ -1,0 +1,16 @@
+file:///home/tcuni-claw/pi/pi-planner-only/request-control.ts:278
+		if (this.current.closedReason) throw new RequestClosed(this.current.closedReason);
+		                                     ^
+
+RequestClosed: planner-only request closed: session-boundary-unverified. Inspect /planner-only request status; only a trusted next input or operator resume can open a new request.
+    at RequestController.assertOpen (file:///home/tcuni-claw/pi/pi-planner-only/request-control.ts:278:40)
+    at RequestController.activity (file:///home/tcuni-claw/pi/pi-planner-only/request-control.ts:281:8)
+    at RequestController.attempt (file:///home/tcuni-claw/pi/pi-planner-only/request-control.ts:303:8)
+    at RequestController.beginTool (file:///home/tcuni-claw/pi/pi-planner-only/request-control.ts:306:8)
+    at Object.execute (file:///home/tcuni-claw/pi/pi-planner-only/index.ts:572:31)
+    at file:///home/tcuni-claw/pi/pi-planner-only/index.test.mjs:2575:36 {
+  code: 'REQUEST_CLOSED',
+  reason: 'session-boundary-unverified'
+}
+
+Node.js v24.14.0

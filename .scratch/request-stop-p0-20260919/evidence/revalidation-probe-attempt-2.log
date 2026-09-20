@@ -1,0 +1,20 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: {"content":[{"type":"text","text":"[PLANNER-ONLY REVIEW STATE]\ntaskId: T-20260919-001\nstate: completed\nround: 0/3\nreview mode: root\ndecision: accept\nfailure: implementation (review-pass)\nevidence: fresh (attributed 0 paths)\nreason: inspect current revision 1\n\nTask accepted. Summarize the outcome and evidence for the user."}],"details":{"taskId":"T-20260919-001","verdict":"pass","action":"accept","state":"completed","round":0,"warnings":[]}}
++ actual - expected
+
++ 'accept'
+- 'revalidate'
+
+    at file:///home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/revalidation-probe.mjs:75:10 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 'accept',
+  expected: 'revalidate',
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.14.0

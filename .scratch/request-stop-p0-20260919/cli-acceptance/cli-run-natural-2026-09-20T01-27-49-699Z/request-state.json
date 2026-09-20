@@ -1,0 +1,113 @@
+[
+  {
+    "namespace": "cce43b7863dfa149565af4230e8736a31c8414eb1837f808019e5d113de9e2fb",
+    "version": 1,
+    "sessionId": "01a0bc6d-3adf-7078-baf4-a3f2bf106865",
+    "workspace": "/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/cli-acceptance/cli-run-natural-2026-09-20T01-27-49-699Z/workspace",
+    "current": {
+      "id": "d6c0e61a-d207-46f2-a9f8-3cc6361c531e",
+      "limits": {
+        "toolAttempts": 32,
+        "childLaunches": 8,
+        "failures": 3,
+        "repairs": 2,
+        "activeMs": 900000
+      },
+      "startedAt": 1789867675278,
+      "deadline": 1789868575278,
+      "toolAttempts": 5,
+      "childLaunches": 2,
+      "repairs": 0,
+      "modelCallsObserved": 6,
+      "tools": [
+        {
+          "id": "call_AgNc3ZUEYlqkLHYdBIs0j1Bs|fc_0934c5f021676466016aaf369dc8a887d09d9b089dbda40da9",
+          "name": "read",
+          "phase": "settled"
+        },
+        {
+          "id": "call_P2BSdcIzwLbZ2PY5sy1E1qTY|fc_0934c5f021676466016aaf36a0860c87d083ddd1d717736205",
+          "name": "read",
+          "phase": "settled"
+        },
+        {
+          "id": "call_YmVEt4QLf0pBuQdwdxLKdhuE|fc_0934c5f021676466016aaf36a424e887d0911a925d28117154",
+          "name": "planner_delegate",
+          "phase": "settled"
+        },
+        {
+          "id": "call_QCeja3HwyYqJXAwwB8DMXhkF|fc_0934c5f021676466016aaf36af670087d0b45f10a5562019c2",
+          "name": "planner_redelegate",
+          "phase": "settled"
+        },
+        {
+          "id": "call_o8zzMo2NPp6HRPidA51x3wVa|fc_0934c5f021676466016aaf36c4f5e087d0ae62d8b4c6974945",
+          "name": "planner_verdict",
+          "phase": "settled"
+        }
+      ],
+      "claims": [
+        {
+          "key": "bd843721-edaa-4d13-b495-c41afe2db82d",
+          "taskId": "T-20260920-001",
+          "executionId": "call_YmVEt4QLf0pBuQdwdxLKdhuE|fc_0934c5f021676466016aaf36a424e887d0911a925d28117154",
+          "committedAt": 1789867688009,
+          "stop": "confirmed",
+          "waitSettled": true,
+          "emittedAt": 1789867688050,
+          "terminalAt": 1789867692707
+        },
+        {
+          "key": "35f83b33-cc8d-45fb-8e59-4bba4145e542",
+          "taskId": "T-20260920-001",
+          "executionId": "call_QCeja3HwyYqJXAwwB8DMXhkF|fc_0934c5f021676466016aaf36af670087d0b45f10a5562019c2",
+          "committedAt": 1789867701179,
+          "stop": "confirmed",
+          "waitSettled": true,
+          "correction": {
+            "executionId": "call_YmVEt4QLf0pBuQdwdxLKdhuE|fc_0934c5f021676466016aaf36a424e887d0911a925d28117154",
+            "family": "budget"
+          },
+          "emittedAt": 1789867701194,
+          "terminalAt": 1789867714873
+        }
+      ],
+      "failures": [
+        {
+          "id": "tool:call_AgNc3ZUEYlqkLHYdBIs0j1Bs|fc_0934c5f021676466016aaf369dc8a887d09d9b089dbda40da9",
+          "family": "contract:read:ceiling",
+          "resolved": false
+        },
+        {
+          "id": "tool:call_P2BSdcIzwLbZ2PY5sy1E1qTY|fc_0934c5f021676466016aaf36a0860c87d083ddd1d717736205",
+          "family": "policy:read",
+          "resolved": false
+        },
+        {
+          "id": "tool:call_YmVEt4QLf0pBuQdwdxLKdhuE|fc_0934c5f021676466016aaf36a424e887d0911a925d28117154",
+          "family": "budget",
+          "taskId": "T-20260920-001",
+          "executionId": "call_YmVEt4QLf0pBuQdwdxLKdhuE|fc_0934c5f021676466016aaf36a424e887d0911a925d28117154",
+          "resolved": true
+        }
+      ],
+      "structures": [
+        {
+          "operation": "planner_delegate",
+          "issues": []
+        },
+        {
+          "operation": "planner_redelegate",
+          "issues": []
+        },
+        {
+          "operation": "planner_verdict",
+          "issues": []
+        }
+      ],
+      "settled": true,
+      "rootStop": "not-requested"
+    },
+    "history": []
+  }
+]

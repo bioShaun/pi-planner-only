@@ -1,0 +1,26 @@
+{
+  "sameArguments": {
+    "attempts": 12,
+    "executedRefusals": 3,
+    "preExecutionBlocks": 9
+  },
+  "changedSummary": {
+    "attempts": 12,
+    "executedRefusals": 12,
+    "preExecutionBlocks": 0
+  },
+  "repeatedRunaway": {
+    "launches": 12,
+    "cancelEvents": 12,
+    "reports": 0,
+    "reviewRound": 0,
+    "recoveryHistory": 11,
+    "recoveryRequired": true
+  },
+  "sameRecoveryBasisRefused": true,
+  "rootAbortCalls": 0,
+  "run": "/home/tcuni-claw/pi/pi-planner-only/.scratch/request-loop-verification-20260919/run-2z9A6F",
+  "ledgerPath": "/home/tcuni-claw/pi/pi-planner-only/.scratch/request-loop-verification-20260919/run-2z9A6F/agent/planner-only/ledger/T-20260919-001.json",
+  "scope": "Actual plugin hooks, tool execute, transport adapter, lifecycle and ledger; injected host and child events. No real Pi model loop."
+}
+REPRODUCED: child cancellation and exact-call refusal blocking do not terminate the Root request in this fixture.

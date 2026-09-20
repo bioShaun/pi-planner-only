@@ -1,0 +1,476 @@
+{
+  "hostVersion": "0.85.1",
+  "host": "/home/tcuni-claw/.nvm/versions/node/v24.14.0/lib/node_modules/@earendil-works/pi-coding-agent",
+  "scenarios": [
+    {
+      "mode": "plain",
+      "afterFirst": 1,
+      "finalCalls": 3,
+      "inputs": [
+        "interactive",
+        "extension",
+        "interactive"
+      ],
+      "trace": [
+        {
+          "event": "input",
+          "source": "interactive",
+          "calls": 0,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "before_agent_start",
+          "calls": 0,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "agent_start",
+          "calls": 0,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "turn_start",
+          "calls": 0,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "turn_end",
+          "calls": 1,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "agent_end",
+          "calls": 1,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "agent_settled",
+          "calls": 1,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "input",
+          "source": "extension",
+          "calls": 1,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "before_agent_start",
+          "calls": 1,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "agent_start",
+          "calls": 1,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "turn_start",
+          "calls": 1,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "turn_end",
+          "calls": 2,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "agent_end",
+          "calls": 2,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "agent_settled",
+          "calls": 2,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "input",
+          "source": "interactive",
+          "calls": 2,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "before_agent_start",
+          "calls": 2,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "agent_start",
+          "calls": 2,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "turn_start",
+          "calls": 2,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "turn_end",
+          "calls": 3,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "agent_end",
+          "calls": 3,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "agent_settled",
+          "calls": 3,
+          "idle": true,
+          "pending": false
+        }
+      ]
+    },
+    {
+      "mode": "abort-queued",
+      "afterFirst": 2,
+      "finalCalls": 4,
+      "inputs": [
+        "interactive",
+        "extension",
+        "interactive"
+      ],
+      "trace": [
+        {
+          "event": "input",
+          "source": "interactive",
+          "calls": 0,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "before_agent_start",
+          "calls": 0,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "agent_start",
+          "calls": 0,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "turn_start",
+          "calls": 0,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "turn_end",
+          "calls": 1,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "agent_end",
+          "calls": 1,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "queued-by-agent-end",
+          "calls": 1
+        },
+        {
+          "event": "abort-called",
+          "calls": 1,
+          "pending": false,
+          "clearQueueOnContext": "undefined"
+        },
+        {
+          "event": "agent_start",
+          "calls": 1,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "turn_start",
+          "calls": 1,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "turn_end",
+          "calls": 2,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "agent_end",
+          "calls": 2,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "agent_settled",
+          "calls": 2,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "input",
+          "source": "extension",
+          "calls": 2,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "before_agent_start",
+          "calls": 2,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "agent_start",
+          "calls": 2,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "turn_start",
+          "calls": 2,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "turn_end",
+          "calls": 3,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "agent_end",
+          "calls": 3,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "agent_settled",
+          "calls": 3,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "input",
+          "source": "interactive",
+          "calls": 3,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "before_agent_start",
+          "calls": 3,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "agent_start",
+          "calls": 3,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "turn_start",
+          "calls": 3,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "turn_end",
+          "calls": 4,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "agent_end",
+          "calls": 4,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "agent_settled",
+          "calls": 4,
+          "idle": true,
+          "pending": false
+        }
+      ]
+    },
+    {
+      "mode": "clear-abort-queued",
+      "afterFirst": 1,
+      "finalCalls": 3,
+      "inputs": [
+        "interactive",
+        "extension",
+        "interactive"
+      ],
+      "trace": [
+        {
+          "event": "input",
+          "source": "interactive",
+          "calls": 0,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "before_agent_start",
+          "calls": 0,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "agent_start",
+          "calls": 0,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "turn_start",
+          "calls": 0,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "turn_end",
+          "calls": 1,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "agent_end",
+          "calls": 1,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "queued-by-agent-end",
+          "calls": 1
+        },
+        {
+          "event": "abort-called",
+          "calls": 1,
+          "pending": false,
+          "clearQueueOnContext": "undefined"
+        },
+        {
+          "event": "agent_settled",
+          "calls": 1,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "input",
+          "source": "extension",
+          "calls": 1,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "before_agent_start",
+          "calls": 1,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "agent_start",
+          "calls": 1,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "turn_start",
+          "calls": 1,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "turn_end",
+          "calls": 2,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "agent_end",
+          "calls": 2,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "agent_settled",
+          "calls": 2,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "input",
+          "source": "interactive",
+          "calls": 2,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "before_agent_start",
+          "calls": 2,
+          "idle": true,
+          "pending": false
+        },
+        {
+          "event": "agent_start",
+          "calls": 2,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "turn_start",
+          "calls": 2,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "turn_end",
+          "calls": 3,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "agent_end",
+          "calls": 3,
+          "idle": false,
+          "pending": false
+        },
+        {
+          "event": "agent_settled",
+          "calls": 3,
+          "idle": true,
+          "pending": false
+        }
+      ]
+    }
+  ],
+  "scope": "Actual SDK AgentSession/ExtensionRunner; faux provider; no planner plugin, launcher, network, or subprocess.",
+  "conclusion": "ctx.abort alone permits queued continuation; clearQueue works only through session API, absent from extension context.",
+  "run": "/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/host-run-FXoQsZ"
+}

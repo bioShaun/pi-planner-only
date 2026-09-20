@@ -1,0 +1,236 @@
+[
+  {
+    "event": "input",
+    "source": "interactive",
+    "modelCalls": 0,
+    "idle": true
+  },
+  {
+    "event": "agent_start",
+    "modelCalls": 0,
+    "idle": false
+  },
+  {
+    "event": "tool_call",
+    "toolCallId": "bad-1",
+    "toolName": "planner_verdict",
+    "modelCalls": 1,
+    "idle": false
+  },
+  {
+    "event": "tool_result",
+    "toolCallId": "bad-1",
+    "toolName": "planner_verdict",
+    "modelCalls": 1,
+    "idle": false
+  },
+  {
+    "event": "tool_call",
+    "toolCallId": "bad-2",
+    "toolName": "planner_verdict",
+    "modelCalls": 2,
+    "idle": false
+  },
+  {
+    "event": "tool_result",
+    "toolCallId": "bad-2",
+    "toolName": "planner_verdict",
+    "modelCalls": 2,
+    "idle": false
+  },
+  {
+    "event": "tool_call",
+    "toolCallId": "bad-3",
+    "toolName": "planner_verdict",
+    "modelCalls": 3,
+    "idle": false
+  },
+  {
+    "event": "tool_result",
+    "toolCallId": "bad-3",
+    "toolName": "planner_verdict",
+    "modelCalls": 3,
+    "idle": false
+  },
+  {
+    "event": "agent_end",
+    "modelCalls": 3,
+    "idle": false
+  },
+  {
+    "event": "agent_start",
+    "modelCalls": 3,
+    "idle": false
+  },
+  {
+    "event": "agent_end",
+    "modelCalls": 4,
+    "idle": false
+  },
+  {
+    "event": "agent_settled",
+    "modelCalls": 4,
+    "idle": true
+  },
+  {
+    "event": "input",
+    "source": "extension",
+    "modelCalls": 4,
+    "idle": true
+  },
+  {
+    "event": "agent_start",
+    "modelCalls": 4,
+    "idle": false
+  },
+  {
+    "event": "agent_end",
+    "modelCalls": 5,
+    "idle": false
+  },
+  {
+    "event": "agent_settled",
+    "modelCalls": 5,
+    "idle": true
+  },
+  {
+    "event": "input",
+    "source": "extension",
+    "modelCalls": 5,
+    "idle": true
+  },
+  {
+    "event": "agent_start",
+    "modelCalls": 5,
+    "idle": false
+  },
+  {
+    "event": "agent_end",
+    "modelCalls": 6,
+    "idle": false
+  },
+  {
+    "event": "agent_settled",
+    "modelCalls": 6,
+    "idle": true
+  },
+  {
+    "event": "input",
+    "source": "interactive",
+    "modelCalls": 6,
+    "idle": true
+  },
+  {
+    "event": "agent_start",
+    "modelCalls": 6,
+    "idle": false
+  },
+  {
+    "event": "tool_call",
+    "toolCallId": "fresh-interactive",
+    "toolName": "planner_delegate",
+    "modelCalls": 7,
+    "idle": false
+  },
+  {
+    "event": "tool_result",
+    "toolCallId": "fresh-interactive",
+    "toolName": "planner_delegate",
+    "modelCalls": 7,
+    "idle": false
+  },
+  {
+    "event": "agent_end",
+    "modelCalls": 8,
+    "idle": false
+  },
+  {
+    "event": "agent_settled",
+    "modelCalls": 8,
+    "idle": true
+  },
+  {
+    "event": "input",
+    "source": "interactive",
+    "modelCalls": 8,
+    "idle": true
+  },
+  {
+    "event": "agent_start",
+    "modelCalls": 8,
+    "idle": false
+  },
+  {
+    "event": "agent_end",
+    "modelCalls": 11,
+    "idle": false
+  },
+  {
+    "event": "agent_settled",
+    "modelCalls": 11,
+    "idle": true
+  },
+  {
+    "event": "input",
+    "source": "interactive",
+    "modelCalls": 11,
+    "idle": true
+  },
+  {
+    "event": "agent_start",
+    "modelCalls": 11,
+    "idle": false
+  },
+  {
+    "event": "tool_call",
+    "toolCallId": "schema-two",
+    "toolName": "planner_tasks",
+    "modelCalls": 12,
+    "idle": false
+  },
+  {
+    "event": "tool_result",
+    "toolCallId": "schema-two",
+    "toolName": "planner_tasks",
+    "modelCalls": 12,
+    "idle": false
+  },
+  {
+    "event": "tool_call",
+    "toolCallId": "schema-one",
+    "toolName": "planner_tasks",
+    "modelCalls": 13,
+    "idle": false
+  },
+  {
+    "event": "tool_result",
+    "toolCallId": "schema-one",
+    "toolName": "planner_tasks",
+    "modelCalls": 13,
+    "idle": false
+  },
+  {
+    "event": "tool_call",
+    "toolCallId": "schema-fixed",
+    "toolName": "planner_tasks",
+    "modelCalls": 14,
+    "idle": false
+  },
+  {
+    "event": "tool_result",
+    "toolCallId": "schema-fixed",
+    "toolName": "planner_tasks",
+    "modelCalls": 14,
+    "idle": false
+  },
+  {
+    "event": "agent_end",
+    "modelCalls": 15,
+    "idle": false
+  },
+  {
+    "event": "agent_settled",
+    "modelCalls": 15,
+    "idle": true
+  }
+]

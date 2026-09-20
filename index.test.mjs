@@ -20,6 +20,12 @@ process.env.PI_PLANNER_ONLY_SEED_PRICING = "0";
 process.env.PI_PLANNER_ONLY_QUIESCENCE_MS = "0";
 // Keep the cancel grace near-instant so the stop_unconfirmed/writerHold path is testable; default is 5 s.
 process.env.PI_PLANNER_ONLY_CANCEL_GRACE_MS = "50";
+// This legacy fixture exercises many independent lifecycle cases in one host.
+// Isolate its Task/refusal-breaker assertions from Request quotas; P0 defaults
+// and bounded recovery are exercised by request-stop.test.mjs.
+for (const limit of ["TOOL_ATTEMPTS", "CHILD_LAUNCHES", "FAILURES", "REPAIRS"]) {
+	process.env[`PI_PLANNER_ONLY_REQUEST_${limit}`] = "1000";
+}
 // ticket 05 → 08: this file drives the pre-cutover subagent chain through the hook; deleted with it.
 
 delete process.env.PI_SUBAGENT_CHILD;
@@ -73,10 +79,13 @@ function tinyEmitter() {
 	};
 }
 const piEvents = tinyEmitter();
+let fixtureToolCallSequence = 0;
 
 const pi = {
 	on(name, handler) {
-		handlers.set(name, handler);
+		handlers.set(name, name === "tool_call"
+			? (event, context) => handler({ ...event, toolCallId: event.toolCallId ?? `fixture-hook-${++fixtureToolCallSequence}` }, context)
+			: handler);
 	},
 	registerCommand(name, definition) {
 		commands.set(name, definition);
@@ -123,6 +132,7 @@ const ui = {
 };
 const ctx = {
 	hasUI: true,
+	isIdle() { return true; },
 	ui,
 	cwd: process.cwd(),
 	sessionManager: {
@@ -192,10 +202,10 @@ const verdictAllowed = await handlers.get("tool_call")(
 assert.equal(verdictAllowed, undefined, "the policy never blocks planner_verdict");
 
 activeTools.push("edit");
-await handlers.get("before_agent_start")({ systemPrompt: "BASE" });
+await handlers.get("before_agent_start")({ systemPrompt: "BASE" }, ctx);
 assert.equal(activeTools.includes("edit"), true, "setActiveTools is not used; policy blocks Root mutators");
 
-const prompt = await handlers.get("before_agent_start")({ systemPrompt: "BASE" });
+const prompt = await handlers.get("before_agent_start")({ systemPrompt: "BASE" }, ctx);
 assert.match(prompt.systemPrompt, /^BASE/);
 assert.match(prompt.systemPrompt, /plan, delegate, inspect read-only, review, and arbitrate/);
 assert.match(prompt.systemPrompt, /WorkerReport/);
@@ -1242,6 +1252,10 @@ try {
 	const snapshot = JSON.parse(readFileSync(ledgerPath, "utf8"));
 	assert.equal(snapshot.task.usage.children.length, 1, "ledger file carries the cancelled child's usage row");
 	assert.equal(snapshot.task.usage.children[0].outcome, "failed", "non-completed terminal lands as outcome=failed in the file");
+	// The shutdown case closed its Request. Subsequent independent cases start
+	// through the same trusted host boundary as a new operator prompt.
+	await handlers.get("agent_settled")({}, ctx);
+	await handlers.get("input")({ source: "interactive" }, ctx);
 }
 
 // --------------------------------------------------------------------------
@@ -1740,10 +1754,17 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 	assert.equal(requestCount18(), requestsBefore18, "listing never reaches the launcher");
 	assert.equal(ledgerCount18(), ledgerBefore18, "listing writes nothing to the ledger");
 
-	// A workspace with no live Tasks gets the mint-hint text.
-	const emptyListed = await tasksTool.execute("call-tasks-2", {}, undefined, () => {}, { ...ctx, cwd: join(tmpdir(), "planner-only-no-live-cwd") });
+	// A workspace with no live Tasks gets the mint-hint text. Another workspace
+	// is another Request namespace: the host crosses the trusted boundary into
+	// it (settled + idle interactive input) and back, exactly like a new prompt.
+	const noLiveCtx = { ...ctx, cwd: join(tmpdir(), "planner-only-no-live-cwd") };
+	await handlers.get("agent_settled")({}, noLiveCtx);
+	await handlers.get("input")({ source: "interactive" }, noLiveCtx);
+	const emptyListed = await tasksTool.execute("call-tasks-2", {}, undefined, () => {}, noLiveCtx);
 	assert.deepEqual(emptyListed.details.tasks, []);
 	assert.match(emptyListed.content[0].text, /No live Tasks in .+\. planner_delegate mints a new one\./);
+	await handlers.get("agent_settled")({}, ctx);
+	await handlers.get("input")({ source: "interactive" }, ctx);
 }
 
 // ---------------------------------------------------------------------------
@@ -2551,7 +2572,13 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 		...ctx,
 		sessionManager: { getEntries() { return sessionEntries; } },
 	};
+	// No session file means a different Request identity: cross the trusted
+	// boundary into it, and back to the primary identity afterwards.
+	await handlers.get("agent_settled")({}, noSessionCtx);
+	await handlers.get("input")({ source: "interactive" }, noSessionCtx);
 	const noSession = await tasksTool.execute("call-t06-nosession", { taskId: "T-20200101-900" }, undefined, () => {}, noSessionCtx);
+	await handlers.get("agent_settled")({}, ctx);
+	await handlers.get("input")({ source: "interactive" }, ctx);
 	const ns = noSession.details.diagnostics;
 	assert.equal(ns.sessionLog.status, "unknown", "without a host sessionFile the log location is unknown, not a directory hint");
 	assert.equal(ns.sessionLog.path, undefined, "no path is claimed");

@@ -1,0 +1,54 @@
+[
+  {
+    "namespace": "48ee5985947b4c5951a890f24c8e3353a7508e306990e0ff347efe047ba6b7dd",
+    "version": 1,
+    "sessionId": "01a0bc6d-3adc-75c7-9544-3daf4a17726c",
+    "workspace": "/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/cli-acceptance/cli-run-deadline-2026-09-20T01-27-49-699Z/workspace",
+    "current": {
+      "id": "31175375-826c-4472-ba42-e65364c5a43f",
+      "limits": {
+        "toolAttempts": 32,
+        "childLaunches": 8,
+        "failures": 3,
+        "repairs": 2,
+        "activeMs": 45000
+      },
+      "startedAt": 1789867675135,
+      "deadline": 1789867720135,
+      "toolAttempts": 1,
+      "childLaunches": 1,
+      "repairs": 0,
+      "modelCallsObserved": 1,
+      "tools": [
+        {
+          "id": "call_mvVEdOGvfcgFyBJ7iTTH37l0|fc_03d456d5778bc13a016aaf369f6bb087d0a21f57b814c59383",
+          "name": "planner_delegate",
+          "phase": "settled"
+        }
+      ],
+      "claims": [
+        {
+          "key": "2c1e996a-09bc-4bd3-bc97-c241d2b531aa",
+          "taskId": "T-20260920-001",
+          "executionId": "call_mvVEdOGvfcgFyBJ7iTTH37l0|fc_03d456d5778bc13a016aaf369f6bb087d0a21f57b814c59383",
+          "committedAt": 1789867683255,
+          "stop": "confirmed",
+          "waitSettled": true,
+          "emittedAt": 1789867683296,
+          "terminalAt": 1789867720176
+        }
+      ],
+      "failures": [],
+      "structures": [
+        {
+          "operation": "planner_delegate",
+          "issues": []
+        }
+      ],
+      "settled": true,
+      "rootStop": "confirmed",
+      "closedReason": "active-time-limit"
+    },
+    "history": []
+  }
+]

@@ -1,0 +1,52 @@
+{
+  "recordedAt": "2026-09-20T00:47:36.062851+00:00",
+  "baseline": "3991c5c762584cbbc235576359734259f69931ce",
+  "frozenFiles": 63,
+  "sourceMismatches": [],
+  "checks": [
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit": 0
+    },
+    {
+      "command": [
+        "bash",
+        "-n",
+        ".scratch/request-stop-p0-20260919/run-release-terminal.sh",
+        ".scratch/request-stop-p0-20260919/run-review-terminal.sh"
+      ],
+      "exit": 0
+    }
+  ],
+  "soleWriter": "Root; all three behavioral reviewers completed without file writes",
+  "behavioralCodeReview": "PASS (bounded final correction; earlier findings closed)",
+  "fullAcceptance": "BLOCKED: normal-terminal release, real CLI/TUI/launcher, default calibration and strict runtime isolation evidence outstanding",
+  "committed": false,
+  "published": false,
+  "terminalScriptSyntaxChecks": [
+    {
+      "command": [
+        "bash",
+        "-n",
+        ".scratch/request-stop-p0-20260919/run-release-terminal.sh"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "bash",
+        "-n",
+        ".scratch/request-stop-p0-20260919/run-review-terminal.sh"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ]
+}

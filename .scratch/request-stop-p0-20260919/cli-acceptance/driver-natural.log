@@ -1,0 +1,146 @@
+{
+  "scenario": "natural",
+  "exit": {
+    "status": 0,
+    "signal": null,
+    "error": null,
+    "durationMs": 50487
+  },
+  "limits": {
+    "toolAttempts": 32,
+    "childLaunches": 8,
+    "failures": 3,
+    "repairs": 2,
+    "activeMs": 900000
+  },
+  "request": {
+    "id": "d6c0e61a-d207-46f2-a9f8-3cc6361c531e",
+    "closedReason": null,
+    "rootStop": "not-requested",
+    "settled": true,
+    "toolAttempts": 5,
+    "childLaunches": 2,
+    "repairs": 0,
+    "modelCallsObserved": 6,
+    "failures": [
+      {
+        "id": "tool:call_AgNc3ZUEYlqkLHYdBIs0j1Bs|fc_0934c5f021676466016aaf369dc8a887d09d9b089dbda40da9",
+        "family": "contract:read:ceiling",
+        "resolved": false
+      },
+      {
+        "id": "tool:call_P2BSdcIzwLbZ2PY5sy1E1qTY|fc_0934c5f021676466016aaf36a0860c87d083ddd1d717736205",
+        "family": "policy:read",
+        "resolved": false
+      },
+      {
+        "id": "tool:call_YmVEt4QLf0pBuQdwdxLKdhuE|fc_0934c5f021676466016aaf36a424e887d0911a925d28117154",
+        "family": "budget",
+        "taskId": "T-20260920-001",
+        "executionId": "call_YmVEt4QLf0pBuQdwdxLKdhuE|fc_0934c5f021676466016aaf36a424e887d0911a925d28117154",
+        "resolved": true
+      }
+    ],
+    "claims": 2,
+    "historyRequests": 0
+  },
+  "transport": {
+    "requestsObserved": 2,
+    "terminalsObserved": 2,
+    "cancelsObserved": 1,
+    "correlation": [
+      {
+        "requestId": "bd843721-edaa-4d13-b495-c41afe2db82d",
+        "nodeId": "T-20260920-001",
+        "agent": "planner-scout",
+        "requestAt": 1789867688049,
+        "terminalStatus": "cancelled",
+        "terminalAt": 1789867692707,
+        "terminalModel": "tcuni-luna/gpt-5.6-luna",
+        "terminalUsage": {
+          "input": 7955,
+          "output": 92,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "cost": 0,
+          "turns": 2,
+          "toolCalls": 1,
+          "durationMs": 4553
+        },
+        "cancelAt": 1789867692620,
+        "cancelReason": null,
+        "claim": {
+          "committedAt": 1789867688009,
+          "emittedAt": 1789867688050,
+          "terminalAt": 1789867692707,
+          "stop": "confirmed",
+          "waitSettled": true
+        }
+      },
+      {
+        "requestId": "35f83b33-cc8d-45fb-8e59-4bba4145e542",
+        "nodeId": "T-20260920-001",
+        "agent": "planner-scout",
+        "requestAt": 1789867701194,
+        "terminalStatus": "completed",
+        "terminalAt": 1789867714873,
+        "terminalModel": "tcuni-luna/gpt-5.6-luna",
+        "terminalUsage": {
+          "input": 8825,
+          "output": 514,
+          "cacheRead": 15360,
+          "cacheWrite": 0,
+          "cost": 0,
+          "turns": 3,
+          "toolCalls": 3,
+          "durationMs": 13614
+        },
+        "cancelAt": null,
+        "cancelReason": null,
+        "claim": {
+          "committedAt": 1789867701179,
+          "emittedAt": 1789867701194,
+          "terminalAt": 1789867714873,
+          "stop": "confirmed",
+          "waitSettled": true
+        }
+      }
+    ]
+  },
+  "rootModelCalls": 6,
+  "rootModelCallsAfterClosure": 3,
+  "requestsAfterClosure": 1,
+  "toolCallsAfterClosure": [
+    "planner_redelegate",
+    "planner_verdict"
+  ],
+  "toolCalls": [
+    "planner_delegate",
+    "planner_redelegate",
+    "planner_verdict"
+  ],
+  "toolResultErrors": 0,
+  "agentSettledObserved": true,
+  "ledgerTasks": [
+    {
+      "taskId": "T-20260920-001",
+      "state": "completed",
+      "executions": 2,
+      "children": [
+        {
+          "model": "tcuni-luna/gpt-5.6-luna",
+          "outcome": "failed"
+        },
+        {
+          "model": "tcuni-luna/gpt-5.6-luna"
+        }
+      ]
+    }
+  ],
+  "stdoutEvents": 753,
+  "workspaceAfter": [
+    "fixture.txt"
+  ]
+}
+
+Run directory: /home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/cli-acceptance/cli-run-natural-2026-09-20T01-27-49-699Z

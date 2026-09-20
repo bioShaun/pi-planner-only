@@ -1,0 +1,28 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: planner_delegate passes while live
++ actual - expected
+
++ {
++   block: true,
++   reason: 'planner-only request closed: session-boundary-unverified. Inspect /planner-only request status; only a trusted next input or operator resume can open a new request.',
++   terminate: true
++ }
+- undefined
+
+    at file:///home/tcuni-claw/pi/pi-planner-only/policy-cutover.test.mjs:178:9 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: {
+    block: true,
+    terminate: true,
+    reason: 'planner-only request closed: session-boundary-unverified. Inspect /planner-only request status; only a trusted next input or operator resume can open a new request.'
+  },
+  expected: undefined,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.14.0

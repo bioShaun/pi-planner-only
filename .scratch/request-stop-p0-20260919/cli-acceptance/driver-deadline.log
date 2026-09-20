@@ -1,0 +1,92 @@
+{
+  "scenario": "deadline",
+  "exit": {
+    "status": 0,
+    "signal": null,
+    "error": null,
+    "durationMs": 50570
+  },
+  "limits": {
+    "toolAttempts": 32,
+    "childLaunches": 8,
+    "failures": 3,
+    "repairs": 2,
+    "activeMs": 45000
+  },
+  "request": {
+    "id": "31175375-826c-4472-ba42-e65364c5a43f",
+    "closedReason": "active-time-limit",
+    "rootStop": "confirmed",
+    "settled": true,
+    "toolAttempts": 1,
+    "childLaunches": 1,
+    "repairs": 0,
+    "modelCallsObserved": 1,
+    "failures": [],
+    "claims": 1,
+    "historyRequests": 0
+  },
+  "transport": {
+    "requestsObserved": 1,
+    "terminalsObserved": 1,
+    "cancelsObserved": 1,
+    "correlation": [
+      {
+        "requestId": "2c1e996a-09bc-4bd3-bc97-c241d2b531aa",
+        "nodeId": "T-20260920-001",
+        "agent": "worker",
+        "requestAt": 1789867683296,
+        "terminalStatus": "cancelled",
+        "terminalAt": 1789867720176,
+        "terminalModel": "tcuni-luna/gpt-5.6-luna:high",
+        "terminalUsage": {
+          "input": 8932,
+          "output": 151,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "cost": 0,
+          "turns": 2,
+          "toolCalls": 1,
+          "durationMs": 36846
+        },
+        "cancelAt": 1789867720152,
+        "cancelReason": null,
+        "claim": {
+          "committedAt": 1789867683255,
+          "emittedAt": 1789867683296,
+          "terminalAt": 1789867720176,
+          "stop": "confirmed",
+          "waitSettled": true
+        }
+      }
+    ]
+  },
+  "rootModelCalls": 1,
+  "rootModelCallsAfterClosure": 0,
+  "requestsAfterClosure": 0,
+  "toolCallsAfterClosure": [],
+  "toolCalls": [
+    "planner_delegate"
+  ],
+  "toolResultErrors": 0,
+  "agentSettledObserved": true,
+  "ledgerTasks": [
+    {
+      "taskId": "T-20260920-001",
+      "state": "blocked",
+      "executions": 1,
+      "children": [
+        {
+          "model": "tcuni-luna/gpt-5.6-luna:high",
+          "outcome": "failed"
+        }
+      ]
+    }
+  ],
+  "stdoutEvents": 249,
+  "workspaceAfter": [
+    "hello.txt"
+  ]
+}
+
+Run directory: /home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/cli-acceptance/cli-run-deadline-2026-09-20T01-27-49-699Z

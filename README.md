@@ -290,6 +290,49 @@ Review states: `planning → executing → reviewing → completed | changes_req
 Root records verdicts with `planner_verdict`: tasks in `blocked` or `failed` state can directly pass as long as they have a recorded report; `completed` is the sole terminal state. At most three corrections (`MAX_REVIEW_ROUNDS`). Stale in-scope evidence cannot
 PASS. Root may override a reviewer; the override is recorded in memory.
 
+### Request limits and recovery
+
+Each Root request shares a durable allowance across all Tasks and child roles:
+32 tool attempts, 8 child launch claims, 3 unresolved failures in the same family,
+2 genuine parameter repairs, and a 15-minute deadline from its first activity.
+Changing wording, Task IDs, policies, or recovery execution IDs does not reset it.
+The next tool/launch over its allowance is refused before execution; the third
+same-family failure closes admission immediately. Only an accepted correction
+resolves its own same-Task, same-family failure ancestors. An unrelated success
+or a structurally valid report does not clear failures.
+
+Use `/planner-only request status` to inspect admission, child stop, and Root stop
+separately. Closure is persisted before active children are cancelled. A launch
+claim is persisted before REQUEST emission and is not refunded after an uncertain
+send, failed child, or cancellation. An unconfirmed writer keeps its Writer hold,
+including after reload or request recovery. Evidence revalidation also consumes
+its existing per-Task allowance once per dispatch; a fourth attempt is refused.
+
+After `agent_settled`, a new idle interactive input opens a fresh request.
+Extension messages, queued continuations, steering, RPC input, and reload do not.
+`/planner-only request resume` is a command-only recovery path, requires an idle
+host and human UI confirmation, and never clears Writer holds. Hosts without a
+confirmation UI cannot use it. Missing/corrupt/interrupted request records stay
+closed for operator reconciliation instead of silently granting a fresh allowance.
+
+Operator environment settings are positive finite integers and freeze when a
+request starts. Zero, empty, negative, fractional, or unlimited values are invalid:
+
+| Environment variable | Default |
+|---|---:|
+| `PI_PLANNER_ONLY_REQUEST_TOOL_ATTEMPTS` | 32 |
+| `PI_PLANNER_ONLY_REQUEST_CHILD_LAUNCHES` | 8 |
+| `PI_PLANNER_ONLY_REQUEST_FAILURES` | 3 |
+| `PI_PLANNER_ONLY_REQUEST_REPAIRS` | 2 |
+| `PI_PLANNER_ONLY_REQUEST_ACTIVE_MS` | 900000 |
+
+The durable state lives under the agent directory's `planner-only/requests/`.
+Committed claims, observed sends, terminal receipt, and confirmed stop remain
+separate diagnostics. Do not delete this state to recover an unconfirmed writer.
+Root abort is best effort: a host may still process queued messages and incur
+model calls. Provider-request hooks are observations, may be absent for some
+providers, and are not a token, cost, or exact model-call hard limit.
+
 ### Composite workflows
 
 Execution `subagent` calls that carry a non-empty `workflowScript`,
@@ -378,6 +421,8 @@ runs, not as a release-gate suite.
 |---|---|
 | `types.ts` | `TaskSpec`, `WorkerReport`, `EvidenceRef`, `ReviewResult`, `ReviewRequest` |
 | `policy.ts` | parent tool allowlist and `tool_call` decisions |
+| `request-control.ts` | durable Request limits, closure, lifecycle and failure chains |
+| `request-events.ts` | typed Task/host observations for Request control |
 | `task.ts` | validation, compaction, state machine |
 | `report.ts` | `WorkerReport` schema validation and identity |
 | `review.ts` | verdicts, review loop, fresh-review packet |
@@ -389,4 +434,4 @@ runs, not as a release-gate suite.
 | `usage.ts` | pure usage ledger, cost resolution, report rendering |
 | `index.ts` | hooks, tool, commands |
 
-No background advisor, queues, or telemetry. The only persistence is usage: session custom entries and a local append-only `usage.jsonl`.
+No background advisor or telemetry. Persistence includes Task ledger snapshots, Request control records, session custom entries, and the local append-only usage log.

@@ -1,0 +1,15 @@
+{
+  "attempt": 2,
+  "runDir": ".scratch/request-stop-p0-20260919/strict-run-5j4u9K",
+  "launcherExit": 124,
+  "parentThread": "01a0bc75-8e43-7360-a5c1-be1c5ac06f81",
+  "childThread": "01a0bc77-45a5-7330-bc0f-3b111386a9af",
+  "childRollout": "rollout-2026-09-20T09-38-48-01a0bc77-45a5-7330-bc0f-3b111386a9af.jsonl",
+  "parentReadOnlyProof": "write-open on index.ts denied EROFS; sha256 unchanged; covering mount ro (events.jsonl)",
+  "childReadOnlyProof": "child's own probe: write_open DENIED errno=30 EROFS, hash unchanged, mount ro (strict-verdict.md)",
+  "manifestVerified": "parent and child: 63/63 match, HEAD == baseline",
+  "verdict": "PASS",
+  "findings": 0,
+  "relayCompleted": false,
+  "residualProcesses": "pgrep 'codex exec' count 0"
+}

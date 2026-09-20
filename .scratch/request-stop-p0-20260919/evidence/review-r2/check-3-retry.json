@@ -1,0 +1,10 @@
+{
+  "command": [
+    "node",
+    "--experimental-strip-types",
+    "request-stop.test.mjs"
+  ],
+  "exit": 0,
+  "startedAt": "2026-09-20T00:32:58.694854+00:00",
+  "endedAt": "2026-09-20T00:33:17.101499+00:00"
+}

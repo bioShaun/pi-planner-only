@@ -1,0 +1,164 @@
+[
+  {
+    "version": 1,
+    "writtenAt": "2026-09-20T01:28:40.502Z",
+    "task": {
+      "taskId": "T-20260920-001",
+      "spec": {
+        "taskId": "T-20260920-001",
+        "objective": "Run the shell command: sleep 90 ; then create done.txt containing the single word done",
+        "cwd": "/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/cli-acceptance/cli-run-deadline-2026-09-20T01-27-49-699Z/workspace",
+        "role": "worker",
+        "acceptanceMode": "worktree",
+        "scope": {
+          "allowedPaths": [
+            "done.txt"
+          ],
+          "forbiddenPaths": [
+            ".git",
+            "*"
+          ]
+        },
+        "constraints": [
+          "Follow the requested command order exactly.",
+          "Do not modify unrelated files."
+        ],
+        "acceptanceCriteria": [
+          "Run `sleep 90` and then create `done.txt` containing exactly the single word `done`."
+        ],
+        "validation": {
+          "required": false
+        },
+        "expectedEvidence": {},
+        "stopConditions": []
+      },
+      "role": "worker",
+      "successors": [],
+      "cwd": "/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/cli-acceptance/cli-run-deadline-2026-09-20T01-27-49-699Z/workspace",
+      "state": "blocked",
+      "reviewRound": 0,
+      "reviewMode": "root",
+      "reports": [],
+      "validatorReports": [],
+      "reviews": [],
+      "verdictRefusals": [],
+      "overrides": [],
+      "aliases": [],
+      "reportCorrections": 0,
+      "executions": [
+        {
+          "status": "stopped",
+          "executionId": "call_mvVEdOGvfcgFyBJ7iTTH37l0|fc_03d456d5778bc13a016aaf369f6bb087d0a21f57b814c59383",
+          "kind": "worker",
+          "cwd": "/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/cli-acceptance/cli-run-deadline-2026-09-20T01-27-49-699Z/workspace",
+          "worktreeRoots": [
+            "/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/cli-acceptance/cli-run-deadline-2026-09-20T01-27-49-699Z/workspace"
+          ],
+          "aRun": {
+            "cwd": "/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/cli-acceptance/cli-run-deadline-2026-09-20T01-27-49-699Z/workspace",
+            "taskId": "T-20260920-001",
+            "workerRunId": "call_mvVEdOGvfcgFyBJ7iTTH37l0|fc_03d456d5778bc13a016aaf369f6bb087d0a21f57b814c59383",
+            "finalGitRef": "c77dfff511931ff98f2578496d9dba4232537f76",
+            "gitStatusHash": "e3b0c44298fc1c14",
+            "repoRoot": "/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/cli-acceptance/cli-run-deadline-2026-09-20T01-27-49-699Z/workspace",
+            "changedPaths": [],
+            "gitAvailable": true,
+            "generatedAt": "2026-09-20T01:28:03.223Z"
+          },
+          "capability": "writer",
+          "capabilityBasis": "child retains shell/edit/write tools; writer isolation applies",
+          "envelope": {
+            "maxTokens": 50000,
+            "maxWallMs": 300000,
+            "source": "delegation-param"
+          },
+          "taskId": "T-20260920-001",
+          "cancelRequestedAt": "2026-09-20T01:28:40.151Z",
+          "endedReason": "operator_cancel",
+          "endedAt": "2026-09-20T01:28:40.481Z",
+          "terminationConfirmed": true,
+          "confirmationBasis": "terminal+quiet-worktree",
+          "cTerminal": {
+            "cwd": "/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/cli-acceptance/cli-run-deadline-2026-09-20T01-27-49-699Z/workspace",
+            "taskId": "T-20260920-001",
+            "workerRunId": "f4d73c25-d20e-4dff-95cd-c07c1dfc6ba4",
+            "finalGitRef": "c77dfff511931ff98f2578496d9dba4232537f76",
+            "gitStatusHash": "e3b0c44298fc1c14",
+            "repoRoot": "/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/cli-acceptance/cli-run-deadline-2026-09-20T01-27-49-699Z/workspace",
+            "changedPaths": [],
+            "gitAvailable": true,
+            "generatedAt": "2026-09-20T01:28:40.461Z"
+          },
+          "usageComplete": true,
+          "runId": "f4d73c25-d20e-4dff-95cd-c07c1dfc6ba4"
+        }
+      ],
+      "findings": [],
+      "recoveryAttempts": 0,
+      "recoveryStates": [],
+      "usage": {
+        "root": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "turns": 1,
+          "tokensUnknownTurns": 1,
+          "byPhase": {
+            "planning": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "turns": 0
+            },
+            "executing": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "turns": 0
+            },
+            "reviewing": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "turns": 0
+            }
+          },
+          "reviewLeakBytes": 0,
+          "injectedBytes": 0
+        },
+        "children": [
+          {
+            "input": 8932,
+            "output": 151,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "kind": "worker",
+            "pending": false,
+            "source": "sync-details",
+            "runId": "f4d73c25-d20e-4dff-95cd-c07c1dfc6ba4",
+            "toolCallId": "call_mvVEdOGvfcgFyBJ7iTTH37l0|fc_03d456d5778bc13a016aaf369f6bb087d0a21f57b814c59383",
+            "agent": "worker",
+            "model": "tcuni-luna/gpt-5.6-luna:high",
+            "thinking": "high",
+            "ownerRootSessionId": "01a0bc6d-3adc-75c7-9544-3daf4a17726c",
+            "taskId": "T-20260920-001",
+            "executionId": "call_mvVEdOGvfcgFyBJ7iTTH37l0|fc_03d456d5778bc13a016aaf369f6bb087d0a21f57b814c59383",
+            "turns": 2,
+            "outcome": "failed"
+          }
+        ],
+        "costUnknown": true,
+        "rootModel": "gpt-5.6-luna"
+      },
+      "createdAt": "2026-09-20T01:28:03.222Z",
+      "updatedAt": "2026-09-20T01:28:40.481Z",
+      "revalidationDispatches": [],
+      "sealedAt": "2026-09-20T01:28:40.185Z",
+      "stateReason": "delegation cancelled: This operation was aborted"
+    }
+  }
+]

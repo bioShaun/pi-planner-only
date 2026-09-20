@@ -158,6 +158,43 @@ reviewer 的 PASS 与快照摘要绑定：必须写明它看到的报告版本�
 
 Review 状态：`planning → executing → reviewing → completed | changes_requested | blocked`。Root 使用 `planner_verdict` 记录裁决：blocked / failed 的 Task 只要有已记录的报告就可以直接 pass；completed 是唯一终态。最多 3 轮修正（`MAX_REVIEW_ROUNDS`）。范围内 stale evidence 不能直接 PASS。Root 可以覆盖 reviewer，覆盖记录只留在内存。
 
+### 请求额度、停止与恢复
+
+每个 Root 请求跨所有 Task、角色、纠正与恢复共享：32 次工具尝试、8 次 child
+启动 claim、同类未解决失败 3 次、真实参数修复 2 次，以及首次活动起 15 分钟的
+绝对截止。第 33 次工具尝试、第 9 次 child 派发在执行前被拒；第三次同类失败
+立即封锁。改文案、换 Task、切政策或换 recovery executionId 都不能重置额度。
+只有经过最终验收的关联纠正，才能解决同 Task、同 family 的因果前序失败；
+无关成功和结构合法的报告不清零。
+
+`/planner-only request status` 分别显示新准入、child 停止和 Root 停止状态。
+封锁先持久化再取消活动 child；每次 child claim 在 REQUEST 发出前持久提交，
+失败、取消或发送状态未知均不返还。停止未确认时保留 Writer hold，重载和新请求
+都不清除。每 Task 的 evidence revalidation 另有既存三次上限，现已在真实派发时
+消费 grant 并准确递增，第四次不再启动 child。
+
+只有旧请求 settled 后的下一条 idle interactive 输入自动开启新请求。
+extension、排队续跑、steering、RPC、compaction 和 reload 都不能解锁。
+`/planner-only request resume` 只注册为用户命令，需要宿主空闲并在 UI 中人工确认；
+无确认 UI 的模式保持封锁。记录缺失、损坏或写盘中断须由 operator 核对后处理，
+不会静默归零。Request 恢复不替代 Writer hold 的既有人工处理契约。
+
+operator 可通过环境变量配置正有限整数，请求创建时冻结；空值、零、负值、
+小数或 unlimited 均无效：
+
+| 环境变量 | 默认值 |
+|---|---:|
+| `PI_PLANNER_ONLY_REQUEST_TOOL_ATTEMPTS` | 32 |
+| `PI_PLANNER_ONLY_REQUEST_CHILD_LAUNCHES` | 8 |
+| `PI_PLANNER_ONLY_REQUEST_FAILURES` | 3 |
+| `PI_PLANNER_ONLY_REQUEST_REPAIRS` | 2 |
+| `PI_PLANNER_ONLY_REQUEST_ACTIVE_MS` | 900000 |
+
+状态保存在 agent 目录下的 `planner-only/requests/`，区分 claim 已提交、REQUEST
+已观察发出、terminal 已收到和停止已确认。不要用删除状态的方式解除未确认 writer。
+Root abort 属于尽力停止；宿主仍可能消费排队消息并产生模型调用。provider-request
+hook 的观测取决于 provider，不承诺全局模型次数、token 或费用硬上限。
+
 ### 复合工作流
 
 执行型 `subagent` 调用若带有非空的 `workflowScript`、`workflowScriptPath`、
@@ -237,6 +274,8 @@ npm run test:release  # 发布门禁：typecheck + 单元测试
 |---|---|
 | `types.ts` | `TaskSpec`、`WorkerReport`、`EvidenceRef`、`ReviewResult`、`ReviewRequest` |
 | `policy.ts` | 父进程工具白名单与 `tool_call` 决策 |
+| `request-control.ts` | 请求额度、持久封锁、生命周期与失败链 |
+| `request-events.ts` | Task/宿主结构化事实转换 |
 | `task.ts` | 校验、状态机 |
 | `report.ts` | `WorkerReport` schema 校验与身份校验 |
 | `review.ts` | 裁决、review 循环、fresh-review 任务包 |
@@ -248,4 +287,4 @@ npm run test:release  # 发布门禁：typecheck + 单元测试
 | `usage.ts` | 纯用量账本、Token 与成本核算、报告渲染 |
 | `index.ts` | hook、工具、命令 |
 
-不做后台 Advisor、持久化、队列或 telemetry。
+不引入后台 Advisor、调度队列或外部 telemetry。Task、Request 与用量按上述规则保存在本地。

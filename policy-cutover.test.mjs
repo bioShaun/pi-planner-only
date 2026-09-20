@@ -14,6 +14,10 @@ import { join } from "node:path";
 const isolatedAgentDir = mkdtempSync(join(tmpdir(), "planner-only-cutover-"));
 process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
 process.env.PI_PLANNER_ONLY_SEED_PRICING = "0";
+// This file tests policy decisions across many independent refused calls;
+// request-stop.test.mjs owns the default Request failure/attempt limits.
+process.env.PI_PLANNER_ONLY_REQUEST_TOOL_ATTEMPTS = "1000";
+process.env.PI_PLANNER_ONLY_REQUEST_FAILURES = "1000";
 delete process.env.PI_SUBAGENT_CHILD;
 
 const { default: plannerOnly } = await import("./index.ts");
@@ -59,6 +63,7 @@ const ui = {
 };
 const ctx = {
 	hasUI: true,
+	isIdle() { return true; },
 	ui,
 	cwd: process.cwd(),
 	sessionManager: {
@@ -68,6 +73,17 @@ const ctx = {
 };
 
 await handlers.get("session_start")({}, ctx);
+
+// This file drives several synthetic workspaces through one host session.
+// Every Request is bound to (session, workspace); crossing to another
+// workspace closes admission on both sides until the host observes a settled
+// idle interactive input for the new one — the same boundary a fresh operator
+// prompt crosses. Policy assertions below are unchanged; each switch simply
+// passes through that boundary first.
+const enterWorkspace = async (workspaceCtx) => {
+	await handlers.get("agent_settled")({}, workspaceCtx);
+	await handlers.get("input")({ source: "interactive" }, workspaceCtx);
+};
 
 const ledgerDir = join(isolatedAgentDir, "planner-only", "ledger");
 const ledgerTaskCount = () =>
@@ -163,6 +179,7 @@ const pendingCwd = "/fixture/cutover-05b";
 {
 	// The worker Task minted in check 3 is still executing for pendingCwd.
 	const liveCtx = { ...ctx, cwd: pendingCwd };
+	await enterWorkspace(liveCtx);
 	const liveCall = await handlers.get("tool_call")(
 		{
 			toolCallId: "call-05b-pd-live",
@@ -172,13 +189,15 @@ const pendingCwd = "/fixture/cutover-05b";
 		liveCtx,
 	);
 	assert.equal(liveCall, undefined, "planner_delegate passes while live");
+	const idleCtx = { ...ctx, cwd: "/fixture/cutover-05b-idle" };
+	await enterWorkspace(idleCtx);
 	const idleCall = await handlers.get("tool_call")(
 		{
 			toolCallId: "call-05b-pd-idle",
 			toolName: "planner_delegate",
 			input: { role: "worker", objective: "x", scope: { allowedPaths: ["x.txt"] }, constraints: [], acceptanceCriteria: ["x"], validation: { required: false } },
 		},
-		{ ...ctx, cwd: "/fixture/cutover-05b-idle" },
+		idleCtx,
 	);
 	assert.equal(idleCall, undefined, "planner_delegate passes while Idle");
 }
@@ -239,6 +258,8 @@ const pendingCwd = "/fixture/cutover-05b";
 // 7. /planner-only off lets subagent through; on refuses it again.
 // --------------------------------------------------------------------------
 {
+	// Back in the primary workspace: cross the boundary once more.
+	await enterWorkspace(ctx);
 	await commands.get("planner-only").handler("off", ctx);
 	const allowed = await handlers.get("tool_call")(
 		{ toolCallId: "call-05b-off", toolName: "subagent", input: { agent: "worker", task: "anything" } },

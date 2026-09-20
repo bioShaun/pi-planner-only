@@ -1,0 +1,114 @@
+--- r3/index.ts
++++ r4/index.ts
+@@ -530,7 +530,12 @@
+ 			const entries = ctx.sessionManager?.getEntries?.() ?? [];
+ 			request = new RequestController({
+ 				sessionId, workspace, storage: new FileRequestStorage(AGENT_DIR, sessionId, workspace),
+-				previouslyManaged: entries.some(e => e.type === "custom" && e.customType === "planner-only-request"),
++				// Only an entry for THIS (session, workspace) namespace proves a lost
++				// directory. Another workspace's entry in the same session is first
++				// contact here, not a missing record.
++				previouslyManaged: entries.some(e => e.type === "custom" && e.customType === "planner-only-request"
++					&& (e as { data?: { sessionId?: unknown; workspace?: unknown } }).data?.sessionId === sessionId
++					&& (e as { data?: { sessionId?: unknown; workspace?: unknown } }).data?.workspace === workspace),
+ 				stopRoot: () => {
+ 					const host = requestContexts.get(key);
+ 					if (typeof host?.abort !== "function") return "unsupported";
+--- r3/index.test.mjs
++++ r4/index.test.mjs
+@@ -1754,10 +1754,17 @@
+ 	assert.equal(requestCount18(), requestsBefore18, "listing never reaches the launcher");
+ 	assert.equal(ledgerCount18(), ledgerBefore18, "listing writes nothing to the ledger");
+ 
+-	// A workspace with no live Tasks gets the mint-hint text.
+-	const emptyListed = await tasksTool.execute("call-tasks-2", {}, undefined, () => {}, { ...ctx, cwd: join(tmpdir(), "planner-only-no-live-cwd") });
++	// A workspace with no live Tasks gets the mint-hint text. Another workspace
++	// is another Request namespace: the host crosses the trusted boundary into
++	// it (settled + idle interactive input) and back, exactly like a new prompt.
++	const noLiveCtx = { ...ctx, cwd: join(tmpdir(), "planner-only-no-live-cwd") };
++	await handlers.get("agent_settled")({}, noLiveCtx);
++	await handlers.get("input")({ source: "interactive" }, noLiveCtx);
++	const emptyListed = await tasksTool.execute("call-tasks-2", {}, undefined, () => {}, noLiveCtx);
+ 	assert.deepEqual(emptyListed.details.tasks, []);
+ 	assert.match(emptyListed.content[0].text, /No live Tasks in .+\. planner_delegate mints a new one\./);
++	await handlers.get("agent_settled")({}, ctx);
++	await handlers.get("input")({ source: "interactive" }, ctx);
+ }
+ 
+ // ---------------------------------------------------------------------------
+@@ -2565,7 +2572,13 @@
+ 		...ctx,
+ 		sessionManager: { getEntries() { return sessionEntries; } },
+ 	};
++	// No session file means a different Request identity: cross the trusted
++	// boundary into it, and back to the primary identity afterwards.
++	await handlers.get("agent_settled")({}, noSessionCtx);
++	await handlers.get("input")({ source: "interactive" }, noSessionCtx);
+ 	const noSession = await tasksTool.execute("call-t06-nosession", { taskId: "T-20200101-900" }, undefined, () => {}, noSessionCtx);
++	await handlers.get("agent_settled")({}, ctx);
++	await handlers.get("input")({ source: "interactive" }, ctx);
+ 	const ns = noSession.details.diagnostics;
+ 	assert.equal(ns.sessionLog.status, "unknown", "without a host sessionFile the log location is unknown, not a directory hint");
+ 	assert.equal(ns.sessionLog.path, undefined, "no path is claimed");
+--- r3/policy-cutover.test.mjs
++++ r4/policy-cutover.test.mjs
+@@ -63,6 +63,7 @@
+ };
+ const ctx = {
+ 	hasUI: true,
++	isIdle() { return true; },
+ 	ui,
+ 	cwd: process.cwd(),
+ 	sessionManager: {
+@@ -73,6 +74,17 @@
+ 
+ await handlers.get("session_start")({}, ctx);
+ 
++// This file drives several synthetic workspaces through one host session.
++// Every Request is bound to (session, workspace); crossing to another
++// workspace closes admission on both sides until the host observes a settled
++// idle interactive input for the new one — the same boundary a fresh operator
++// prompt crosses. Policy assertions below are unchanged; each switch simply
++// passes through that boundary first.
++const enterWorkspace = async (workspaceCtx) => {
++	await handlers.get("agent_settled")({}, workspaceCtx);
++	await handlers.get("input")({ source: "interactive" }, workspaceCtx);
++};
++
+ const ledgerDir = join(isolatedAgentDir, "planner-only", "ledger");
+ const ledgerTaskCount = () =>
+ 	(existsSync(ledgerDir) ? readdirSync(ledgerDir) : []).filter((name) => name.endsWith(".json")).length;
+@@ -167,6 +179,7 @@
+ {
+ 	// The worker Task minted in check 3 is still executing for pendingCwd.
+ 	const liveCtx = { ...ctx, cwd: pendingCwd };
++	await enterWorkspace(liveCtx);
+ 	const liveCall = await handlers.get("tool_call")(
+ 		{
+ 			toolCallId: "call-05b-pd-live",
+@@ -176,13 +189,15 @@
+ 		liveCtx,
+ 	);
+ 	assert.equal(liveCall, undefined, "planner_delegate passes while live");
++	const idleCtx = { ...ctx, cwd: "/fixture/cutover-05b-idle" };
++	await enterWorkspace(idleCtx);
+ 	const idleCall = await handlers.get("tool_call")(
+ 		{
+ 			toolCallId: "call-05b-pd-idle",
+ 			toolName: "planner_delegate",
+ 			input: { role: "worker", objective: "x", scope: { allowedPaths: ["x.txt"] }, constraints: [], acceptanceCriteria: ["x"], validation: { required: false } },
+ 		},
+-		{ ...ctx, cwd: "/fixture/cutover-05b-idle" },
++		idleCtx,
+ 	);
+ 	assert.equal(idleCall, undefined, "planner_delegate passes while Idle");
+ }
+@@ -243,6 +258,8 @@
+ // 7. /planner-only off lets subagent through; on refuses it again.
+ // --------------------------------------------------------------------------
+ {
++	// Back in the primary workspace: cross the boundary once more.
++	await enterWorkspace(ctx);
+ 	await commands.get("planner-only").handler("off", ctx);
+ 	const allowed = await handlers.get("tool_call")(
+ 		{ toolCallId: "call-05b-off", toolName: "subagent", input: { agent: "worker", task: "anything" } },

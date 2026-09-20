@@ -20,6 +20,7 @@ import {
 import { join, resolve } from "node:path";
 import {
 	MAX_REPORT_CORRECTIONS,
+	MAX_RECOVERY_ATTEMPTS,
 	MAX_REVIEW_ROUNDS,
 	EXECUTING_STALE_MS,
 	isFinalTaskState,
@@ -1277,6 +1278,14 @@ export interface TaskRecord {
 	 * dispatch outcome.
 	 */
 	recoveryDispatches?: string[];
+	/** Durable dispatch identities for automatic evidence revalidation. */
+	revalidationDispatches?: Array<{
+		executionId: string;
+		requestId: string;
+		evidenceKey: string;
+		committedAt: string;
+		requestObservedAt?: string;
+	}>;
 	/** E02 — a granted-but-not-yet-dispatched revalidation evidence key. */
 	pendingRevalidationKey?: string;
 	/** E02 — the most recent automatic recovery attempt, for no-progress checks. */
@@ -1636,6 +1645,8 @@ export class TaskStore {
 		if (!Array.isArray(record.findings)) record.findings = [];
 		if (!Array.isArray(record.successors)) record.successors = [];
 		if (!Array.isArray(record.recoveryStates)) record.recoveryStates = [];
+		if (!Array.isArray(record.recoveryDispatches)) record.recoveryDispatches = [];
+		if (!Array.isArray(record.revalidationDispatches)) record.revalidationDispatches = [];
 		if (!Array.isArray(record.aliases)) record.aliases = [];
 		if (!Array.isArray(record.reports)) record.reports = [];
 		if (!Array.isArray(record.reviews)) record.reviews = [];
@@ -1901,11 +1912,13 @@ export class TaskStore {
 	 * E02 (spec L106) — a revalidate decision grants one bounded revalidation
 	 * for this evidence state: the key joins recoveryStates for no-progress
 	 * detection immediately, but the budget counter is only spent when the
-	 * revalidation run is actually dispatched (recordRecoveryAttempt). A
+	 * revalidation run is actually dispatched (commitRevalidationDispatch). A
 	 * restart or a rewritten reason text cannot reset either.
 	 */
 	markRevalidationGranted(taskId: string, evidenceKey: string): TaskRecord {
 		const record = this.require(taskId);
+		if (record.recoveryDispatches?.includes(evidenceKey)) return record;
+		if (record.pendingRevalidationKey === evidenceKey) return record;
 		if (!record.recoveryStates.includes(evidenceKey)) record.recoveryStates.push(evidenceKey);
 		record.pendingRevalidationKey = evidenceKey;
 		record.lastRecovery = {
@@ -1916,32 +1929,65 @@ export class TaskStore {
 		return this.touch(record);
 	}
 
-	/** Consume the pending revalidation key at the successful dispatch boundary. */
-	takePendingRevalidation(taskId: string): string | undefined {
-		const record = this.get(taskId);
-		if (!record?.pendingRevalidationKey) return undefined;
-		const evidenceKey = record.pendingRevalidationKey;
-		delete record.pendingRevalidationKey;
-		return evidenceKey;
-	}
-
 	/**
-	 * E02 (spec L106) — +1 only here, at the real automatic-revalidation
-	 * dispatch. Pure verdict rewrites, refused dispatches, and duplicate
-	 * requests never reach this; replaying the same dispatch is idempotent
-	 * by evidence key.
+	 * E02 (spec L106) — atomically consume a grant and durably bind its charge
+	 * to the execution/request identity at the final dispatch boundary. The
+	 * launcher calls this synchronously immediately before emitting REQUEST.
 	 */
-	recordRecoveryAttempt(taskId: string, evidenceKey: string): TaskRecord {
+	commitRevalidationDispatch(
+		taskId: string,
+		executionId: string,
+		requestId: string,
+	): { status: "none" | "committed" | "duplicate"; record: TaskRecord } {
 		const record = this.require(taskId);
+		const records = record.revalidationDispatches ?? (record.revalidationDispatches = []);
+		if (records.some((item) => item.executionId === executionId || item.requestId === requestId)) {
+			return { status: "duplicate", record };
+		}
+		const evidenceKey = record.pendingRevalidationKey;
+		if (!evidenceKey) return { status: "none", record };
+		if (record.recoveryAttempts >= MAX_RECOVERY_ATTEMPTS) {
+			throw new Error(`automatic recovery limit reached (${record.recoveryAttempts}/${MAX_RECOVERY_ATTEMPTS} attempts used)`);
+		}
 		const dispatches = record.recoveryDispatches ?? (record.recoveryDispatches = []);
-		if (dispatches.includes(evidenceKey)) return record;
+		if (dispatches.includes(evidenceKey)) {
+			throw new Error(`revalidation grant ${evidenceKey} was already dispatched`);
+		}
+
+		const previousUpdatedAt = record.updatedAt;
+		const previousLastRecovery = record.lastRecovery;
 		dispatches.push(evidenceKey);
+		records.push({ executionId, requestId, evidenceKey, committedAt: this.now().toISOString() });
 		record.recoveryAttempts += 1;
+		delete record.pendingRevalidationKey;
 		record.lastRecovery = {
 			reportRevision: record.reports.length,
 			evidenceKey,
 			at: this.now().toISOString(),
 		};
+		record.updatedAt = this.now().toISOString();
+		try {
+			this.onPersist?.(record);
+		} catch (error) {
+			dispatches.pop();
+			records.pop();
+			record.recoveryAttempts -= 1;
+			record.pendingRevalidationKey = evidenceKey;
+			record.lastRecovery = previousLastRecovery;
+			record.updatedAt = previousUpdatedAt;
+			throw error;
+		}
+		return { status: "committed", record };
+	}
+
+	/** Record that the already-committed dispatch crossed the host REQUEST seam. */
+	markRevalidationRequestObserved(taskId: string, executionId: string, requestId: string): TaskRecord {
+		const record = this.require(taskId);
+		const dispatch = record.revalidationDispatches?.find(
+			(item) => item.executionId === executionId && item.requestId === requestId,
+		);
+		if (!dispatch || dispatch.requestObservedAt) return record;
+		dispatch.requestObservedAt = this.now().toISOString();
 		return this.touch(record);
 	}
 

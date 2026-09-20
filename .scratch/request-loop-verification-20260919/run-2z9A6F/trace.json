@@ -1,0 +1,1071 @@
+[
+  {
+    "toolCallId": "probe-1",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task"
+    },
+    "error": "planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? })."
+  },
+  {
+    "toolCallId": "probe-2",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task"
+    },
+    "error": "planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? }).\n\nRepeat notice: 本边界收到的规范化参数相同 (observed boundary: root tool input; previous toolCallId: probe-1; refusal code: planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? }).; missing fields: none). Read back the arguments actually received at this boundary before calling again."
+  },
+  {
+    "toolCallId": "probe-3",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task"
+    },
+    "error": "planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? }).\n\nSTOP: this exact call has now been refused 3 times with planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? }).. Do not call planner_verdict again with these arguments. Report the received arguments verbatim to the user and wait for instruction.\nRepeat notice: 本边界收到的规范化参数相同 (observed boundary: root tool input; previous toolCallId: probe-2; refusal code: planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? }).; missing fields: none). Read back the arguments actually received at this boundary before calling again."
+  },
+  {
+    "toolCallId": "probe-4",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task"
+    },
+    "blocked": true,
+    "error": "planner-only: identical call refused 3 times with planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? }).; blocked. Change the arguments or ask the user."
+  },
+  {
+    "toolCallId": "probe-5",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task"
+    },
+    "blocked": true,
+    "error": "planner-only: identical call refused 3 times with planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? }).; blocked. Change the arguments or ask the user."
+  },
+  {
+    "toolCallId": "probe-6",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task"
+    },
+    "blocked": true,
+    "error": "planner-only: identical call refused 3 times with planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? }).; blocked. Change the arguments or ask the user."
+  },
+  {
+    "toolCallId": "probe-7",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task"
+    },
+    "blocked": true,
+    "error": "planner-only: identical call refused 3 times with planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? }).; blocked. Change the arguments or ask the user."
+  },
+  {
+    "toolCallId": "probe-8",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task"
+    },
+    "blocked": true,
+    "error": "planner-only: identical call refused 3 times with planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? }).; blocked. Change the arguments or ask the user."
+  },
+  {
+    "toolCallId": "probe-9",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task"
+    },
+    "blocked": true,
+    "error": "planner-only: identical call refused 3 times with planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? }).; blocked. Change the arguments or ask the user."
+  },
+  {
+    "toolCallId": "probe-10",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task"
+    },
+    "blocked": true,
+    "error": "planner-only: identical call refused 3 times with planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? }).; blocked. Change the arguments or ask the user."
+  },
+  {
+    "toolCallId": "probe-11",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task"
+    },
+    "blocked": true,
+    "error": "planner-only: identical call refused 3 times with planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? }).; blocked. Change the arguments or ask the user."
+  },
+  {
+    "toolCallId": "probe-12",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task"
+    },
+    "blocked": true,
+    "error": "planner-only: identical call refused 3 times with planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? }).; blocked. Change the arguments or ask the user."
+  },
+  {
+    "toolCallId": "probe-13",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task, wording 0"
+    },
+    "error": "planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? })."
+  },
+  {
+    "toolCallId": "probe-14",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task, wording 1"
+    },
+    "error": "planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? })."
+  },
+  {
+    "toolCallId": "probe-15",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task, wording 2"
+    },
+    "error": "planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? })."
+  },
+  {
+    "toolCallId": "probe-16",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task, wording 3"
+    },
+    "error": "planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? })."
+  },
+  {
+    "toolCallId": "probe-17",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task, wording 4"
+    },
+    "error": "planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? })."
+  },
+  {
+    "toolCallId": "probe-18",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task, wording 5"
+    },
+    "error": "planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? })."
+  },
+  {
+    "toolCallId": "probe-19",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task, wording 6"
+    },
+    "error": "planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? })."
+  },
+  {
+    "toolCallId": "probe-20",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task, wording 7"
+    },
+    "error": "planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? })."
+  },
+  {
+    "toolCallId": "probe-21",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task, wording 8"
+    },
+    "error": "planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? })."
+  },
+  {
+    "toolCallId": "probe-22",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task, wording 9"
+    },
+    "error": "planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? })."
+  },
+  {
+    "toolCallId": "probe-23",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task, wording 10"
+    },
+    "error": "planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? })."
+  },
+  {
+    "toolCallId": "probe-24",
+    "name": "planner_verdict",
+    "params": {
+      "taskId": "T-99999999-001",
+      "verdict": "pass",
+      "summary": "same missing task, wording 11"
+    },
+    "error": "planner_verdict: unknown task T-99999999-001. Usage: planner_verdict({ verdict: \"pass\" | \"request_changes\" | \"blocked\", summary, taskId?, findings? })."
+  },
+  {
+    "toolCallId": "probe-25",
+    "name": "planner_delegate",
+    "params": {
+      "role": "explorer",
+      "acceptanceMode": "observation",
+      "objective": "Read one fixture; injected child never progresses",
+      "scope": {
+        "allowedPaths": [
+          "fixture.txt"
+        ]
+      },
+      "constraints": [
+        "Read only"
+      ],
+      "acceptanceCriteria": [
+        "Return a word count"
+      ],
+      "validation": {
+        "required": false
+      },
+      "envelope": {
+        "maxTokens": 100
+      }
+    },
+    "value": {
+      "content": [
+        {
+          "type": "text",
+          "text": "planner_delegate: T-20260919-001 blocked run=fake-run-1\ntermination: cancelled — reason=worker_runaway, confirmed=true (terminal+restricted-reader), execution=stopped\nanomaly: tokens observed=101 limit=100 (source: delegation-param)\nrecovery.required: worker runaway: tokens 101 exceeded envelope 100 — submit planner_redelegate.recovery{executionId=probe-25, action, reason, worktreeDecision} or planner_abort{executionId=probe-25, reason, worktreeDecision}"
+        }
+      ],
+      "details": {
+        "taskId": "T-20260919-001",
+        "executionId": "probe-25",
+        "runId": "fake-run-1",
+        "state": "blocked",
+        "termination": {
+          "status": "cancelled",
+          "reason": "worker_runaway",
+          "executionStatus": "stopped",
+          "terminationConfirmed": true,
+          "anomaly": {
+            "signal": "tokens",
+            "observed": 101,
+            "limit": 100,
+            "source": "delegation-param"
+          },
+          "confirmationBasis": "terminal+restricted-reader",
+          "quiescenceWaitMs": 0,
+          "quiescenceWaitSource": "config",
+          "usageComplete": true
+        },
+        "warnings": []
+      }
+    }
+  },
+  {
+    "toolCallId": "probe-26",
+    "name": "planner_redelegate",
+    "params": {
+      "role": "explorer",
+      "objective": "Read one fixture; injected child never progresses",
+      "scope": {
+        "allowedPaths": [
+          "fixture.txt"
+        ]
+      },
+      "constraints": [
+        "Read only"
+      ],
+      "acceptanceCriteria": [
+        "Return a word count"
+      ],
+      "validation": {
+        "required": false
+      },
+      "envelope": {
+        "maxTokens": 100
+      },
+      "taskId": "T-20260919-001",
+      "recovery": {
+        "executionId": "probe-25",
+        "action": "retry_same_plan",
+        "reason": "Retry after the latest identical failure",
+        "worktreeDecision": "keep",
+        "evidenceRefs": [
+          "execution:probe-25:tokens=101:limit=100"
+        ]
+      }
+    },
+    "value": {
+      "content": [
+        {
+          "type": "text",
+          "text": "planner_redelegate: T-20260919-001 blocked run=fake-run-2\ntermination: cancelled — reason=worker_runaway, confirmed=true (terminal+restricted-reader), execution=stopped\nanomaly: tokens observed=101 limit=100 (source: delegation-param)\nrecovery.required: worker runaway: tokens 101 exceeded envelope 100 — submit planner_redelegate.recovery{executionId=probe-26, action, reason, worktreeDecision} or planner_abort{executionId=probe-26, reason, worktreeDecision}"
+        }
+      ],
+      "details": {
+        "taskId": "T-20260919-001",
+        "executionId": "probe-26",
+        "runId": "fake-run-2",
+        "state": "blocked",
+        "termination": {
+          "status": "cancelled",
+          "reason": "worker_runaway",
+          "executionStatus": "stopped",
+          "terminationConfirmed": true,
+          "anomaly": {
+            "signal": "tokens",
+            "observed": 101,
+            "limit": 100,
+            "source": "delegation-param"
+          },
+          "confirmationBasis": "terminal+restricted-reader",
+          "quiescenceWaitMs": 0,
+          "quiescenceWaitSource": "config",
+          "usageComplete": true
+        },
+        "warnings": []
+      }
+    }
+  },
+  {
+    "toolCallId": "probe-27",
+    "name": "planner_redelegate",
+    "params": {
+      "role": "explorer",
+      "objective": "Read one fixture; injected child never progresses",
+      "scope": {
+        "allowedPaths": [
+          "fixture.txt"
+        ]
+      },
+      "constraints": [
+        "Read only"
+      ],
+      "acceptanceCriteria": [
+        "Return a word count"
+      ],
+      "validation": {
+        "required": false
+      },
+      "envelope": {
+        "maxTokens": 100
+      },
+      "taskId": "T-20260919-001",
+      "recovery": {
+        "executionId": "probe-26",
+        "action": "retry_same_plan",
+        "reason": "Retry after the latest identical failure",
+        "worktreeDecision": "keep",
+        "evidenceRefs": [
+          "execution:probe-26:tokens=101:limit=100"
+        ]
+      }
+    },
+    "value": {
+      "content": [
+        {
+          "type": "text",
+          "text": "planner_redelegate: T-20260919-001 blocked run=fake-run-3\ntermination: cancelled — reason=worker_runaway, confirmed=true (terminal+restricted-reader), execution=stopped\nanomaly: tokens observed=101 limit=100 (source: delegation-param)\nrecovery.required: worker runaway: tokens 101 exceeded envelope 100 — submit planner_redelegate.recovery{executionId=probe-27, action, reason, worktreeDecision} or planner_abort{executionId=probe-27, reason, worktreeDecision}"
+        }
+      ],
+      "details": {
+        "taskId": "T-20260919-001",
+        "executionId": "probe-27",
+        "runId": "fake-run-3",
+        "state": "blocked",
+        "termination": {
+          "status": "cancelled",
+          "reason": "worker_runaway",
+          "executionStatus": "stopped",
+          "terminationConfirmed": true,
+          "anomaly": {
+            "signal": "tokens",
+            "observed": 101,
+            "limit": 100,
+            "source": "delegation-param"
+          },
+          "confirmationBasis": "terminal+restricted-reader",
+          "quiescenceWaitMs": 0,
+          "quiescenceWaitSource": "config",
+          "usageComplete": true
+        },
+        "warnings": []
+      }
+    }
+  },
+  {
+    "toolCallId": "probe-28",
+    "name": "planner_redelegate",
+    "params": {
+      "role": "explorer",
+      "objective": "Read one fixture; injected child never progresses",
+      "scope": {
+        "allowedPaths": [
+          "fixture.txt"
+        ]
+      },
+      "constraints": [
+        "Read only"
+      ],
+      "acceptanceCriteria": [
+        "Return a word count"
+      ],
+      "validation": {
+        "required": false
+      },
+      "envelope": {
+        "maxTokens": 100
+      },
+      "taskId": "T-20260919-001",
+      "recovery": {
+        "executionId": "probe-27",
+        "action": "retry_same_plan",
+        "reason": "Retry after the latest identical failure",
+        "worktreeDecision": "keep",
+        "evidenceRefs": [
+          "execution:probe-27:tokens=101:limit=100"
+        ]
+      }
+    },
+    "value": {
+      "content": [
+        {
+          "type": "text",
+          "text": "planner_redelegate: T-20260919-001 blocked run=fake-run-4\ntermination: cancelled — reason=worker_runaway, confirmed=true (terminal+restricted-reader), execution=stopped\nanomaly: tokens observed=101 limit=100 (source: delegation-param)\nrecovery.required: worker runaway: tokens 101 exceeded envelope 100 — submit planner_redelegate.recovery{executionId=probe-28, action, reason, worktreeDecision} or planner_abort{executionId=probe-28, reason, worktreeDecision}"
+        }
+      ],
+      "details": {
+        "taskId": "T-20260919-001",
+        "executionId": "probe-28",
+        "runId": "fake-run-4",
+        "state": "blocked",
+        "termination": {
+          "status": "cancelled",
+          "reason": "worker_runaway",
+          "executionStatus": "stopped",
+          "terminationConfirmed": true,
+          "anomaly": {
+            "signal": "tokens",
+            "observed": 101,
+            "limit": 100,
+            "source": "delegation-param"
+          },
+          "confirmationBasis": "terminal+restricted-reader",
+          "quiescenceWaitMs": 0,
+          "quiescenceWaitSource": "config",
+          "usageComplete": true
+        },
+        "warnings": []
+      }
+    }
+  },
+  {
+    "toolCallId": "probe-29",
+    "name": "planner_redelegate",
+    "params": {
+      "role": "explorer",
+      "objective": "Read one fixture; injected child never progresses",
+      "scope": {
+        "allowedPaths": [
+          "fixture.txt"
+        ]
+      },
+      "constraints": [
+        "Read only"
+      ],
+      "acceptanceCriteria": [
+        "Return a word count"
+      ],
+      "validation": {
+        "required": false
+      },
+      "envelope": {
+        "maxTokens": 100
+      },
+      "taskId": "T-20260919-001",
+      "recovery": {
+        "executionId": "probe-28",
+        "action": "retry_same_plan",
+        "reason": "Retry after the latest identical failure",
+        "worktreeDecision": "keep",
+        "evidenceRefs": [
+          "execution:probe-28:tokens=101:limit=100"
+        ]
+      }
+    },
+    "value": {
+      "content": [
+        {
+          "type": "text",
+          "text": "planner_redelegate: T-20260919-001 blocked run=fake-run-5\ntermination: cancelled — reason=worker_runaway, confirmed=true (terminal+restricted-reader), execution=stopped\nanomaly: tokens observed=101 limit=100 (source: delegation-param)\nrecovery.required: worker runaway: tokens 101 exceeded envelope 100 — submit planner_redelegate.recovery{executionId=probe-29, action, reason, worktreeDecision} or planner_abort{executionId=probe-29, reason, worktreeDecision}"
+        }
+      ],
+      "details": {
+        "taskId": "T-20260919-001",
+        "executionId": "probe-29",
+        "runId": "fake-run-5",
+        "state": "blocked",
+        "termination": {
+          "status": "cancelled",
+          "reason": "worker_runaway",
+          "executionStatus": "stopped",
+          "terminationConfirmed": true,
+          "anomaly": {
+            "signal": "tokens",
+            "observed": 101,
+            "limit": 100,
+            "source": "delegation-param"
+          },
+          "confirmationBasis": "terminal+restricted-reader",
+          "quiescenceWaitMs": 0,
+          "quiescenceWaitSource": "config",
+          "usageComplete": true
+        },
+        "warnings": []
+      }
+    }
+  },
+  {
+    "toolCallId": "probe-30",
+    "name": "planner_redelegate",
+    "params": {
+      "role": "explorer",
+      "objective": "Read one fixture; injected child never progresses",
+      "scope": {
+        "allowedPaths": [
+          "fixture.txt"
+        ]
+      },
+      "constraints": [
+        "Read only"
+      ],
+      "acceptanceCriteria": [
+        "Return a word count"
+      ],
+      "validation": {
+        "required": false
+      },
+      "envelope": {
+        "maxTokens": 100
+      },
+      "taskId": "T-20260919-001",
+      "recovery": {
+        "executionId": "probe-29",
+        "action": "retry_same_plan",
+        "reason": "Retry after the latest identical failure",
+        "worktreeDecision": "keep",
+        "evidenceRefs": [
+          "execution:probe-29:tokens=101:limit=100"
+        ]
+      }
+    },
+    "value": {
+      "content": [
+        {
+          "type": "text",
+          "text": "planner_redelegate: T-20260919-001 blocked run=fake-run-6\ntermination: cancelled — reason=worker_runaway, confirmed=true (terminal+restricted-reader), execution=stopped\nanomaly: tokens observed=101 limit=100 (source: delegation-param)\nrecovery.required: worker runaway: tokens 101 exceeded envelope 100 — submit planner_redelegate.recovery{executionId=probe-30, action, reason, worktreeDecision} or planner_abort{executionId=probe-30, reason, worktreeDecision}"
+        }
+      ],
+      "details": {
+        "taskId": "T-20260919-001",
+        "executionId": "probe-30",
+        "runId": "fake-run-6",
+        "state": "blocked",
+        "termination": {
+          "status": "cancelled",
+          "reason": "worker_runaway",
+          "executionStatus": "stopped",
+          "terminationConfirmed": true,
+          "anomaly": {
+            "signal": "tokens",
+            "observed": 101,
+            "limit": 100,
+            "source": "delegation-param"
+          },
+          "confirmationBasis": "terminal+restricted-reader",
+          "quiescenceWaitMs": 0,
+          "quiescenceWaitSource": "config",
+          "usageComplete": true
+        },
+        "warnings": []
+      }
+    }
+  },
+  {
+    "toolCallId": "probe-31",
+    "name": "planner_redelegate",
+    "params": {
+      "role": "explorer",
+      "objective": "Read one fixture; injected child never progresses",
+      "scope": {
+        "allowedPaths": [
+          "fixture.txt"
+        ]
+      },
+      "constraints": [
+        "Read only"
+      ],
+      "acceptanceCriteria": [
+        "Return a word count"
+      ],
+      "validation": {
+        "required": false
+      },
+      "envelope": {
+        "maxTokens": 100
+      },
+      "taskId": "T-20260919-001",
+      "recovery": {
+        "executionId": "probe-30",
+        "action": "retry_same_plan",
+        "reason": "Retry after the latest identical failure",
+        "worktreeDecision": "keep",
+        "evidenceRefs": [
+          "execution:probe-30:tokens=101:limit=100"
+        ]
+      }
+    },
+    "value": {
+      "content": [
+        {
+          "type": "text",
+          "text": "planner_redelegate: T-20260919-001 blocked run=fake-run-7\ntermination: cancelled — reason=worker_runaway, confirmed=true (terminal+restricted-reader), execution=stopped\nanomaly: tokens observed=101 limit=100 (source: delegation-param)\nrecovery.required: worker runaway: tokens 101 exceeded envelope 100 — submit planner_redelegate.recovery{executionId=probe-31, action, reason, worktreeDecision} or planner_abort{executionId=probe-31, reason, worktreeDecision}"
+        }
+      ],
+      "details": {
+        "taskId": "T-20260919-001",
+        "executionId": "probe-31",
+        "runId": "fake-run-7",
+        "state": "blocked",
+        "termination": {
+          "status": "cancelled",
+          "reason": "worker_runaway",
+          "executionStatus": "stopped",
+          "terminationConfirmed": true,
+          "anomaly": {
+            "signal": "tokens",
+            "observed": 101,
+            "limit": 100,
+            "source": "delegation-param"
+          },
+          "confirmationBasis": "terminal+restricted-reader",
+          "quiescenceWaitMs": 0,
+          "quiescenceWaitSource": "config",
+          "usageComplete": true
+        },
+        "warnings": []
+      }
+    }
+  },
+  {
+    "toolCallId": "probe-32",
+    "name": "planner_redelegate",
+    "params": {
+      "role": "explorer",
+      "objective": "Read one fixture; injected child never progresses",
+      "scope": {
+        "allowedPaths": [
+          "fixture.txt"
+        ]
+      },
+      "constraints": [
+        "Read only"
+      ],
+      "acceptanceCriteria": [
+        "Return a word count"
+      ],
+      "validation": {
+        "required": false
+      },
+      "envelope": {
+        "maxTokens": 100
+      },
+      "taskId": "T-20260919-001",
+      "recovery": {
+        "executionId": "probe-31",
+        "action": "retry_same_plan",
+        "reason": "Retry after the latest identical failure",
+        "worktreeDecision": "keep",
+        "evidenceRefs": [
+          "execution:probe-31:tokens=101:limit=100"
+        ]
+      }
+    },
+    "value": {
+      "content": [
+        {
+          "type": "text",
+          "text": "planner_redelegate: T-20260919-001 blocked run=fake-run-8\ntermination: cancelled — reason=worker_runaway, confirmed=true (terminal+restricted-reader), execution=stopped\nanomaly: tokens observed=101 limit=100 (source: delegation-param)\nrecovery.required: worker runaway: tokens 101 exceeded envelope 100 — submit planner_redelegate.recovery{executionId=probe-32, action, reason, worktreeDecision} or planner_abort{executionId=probe-32, reason, worktreeDecision}"
+        }
+      ],
+      "details": {
+        "taskId": "T-20260919-001",
+        "executionId": "probe-32",
+        "runId": "fake-run-8",
+        "state": "blocked",
+        "termination": {
+          "status": "cancelled",
+          "reason": "worker_runaway",
+          "executionStatus": "stopped",
+          "terminationConfirmed": true,
+          "anomaly": {
+            "signal": "tokens",
+            "observed": 101,
+            "limit": 100,
+            "source": "delegation-param"
+          },
+          "confirmationBasis": "terminal+restricted-reader",
+          "quiescenceWaitMs": 0,
+          "quiescenceWaitSource": "config",
+          "usageComplete": true
+        },
+        "warnings": []
+      }
+    }
+  },
+  {
+    "toolCallId": "probe-33",
+    "name": "planner_redelegate",
+    "params": {
+      "role": "explorer",
+      "objective": "Read one fixture; injected child never progresses",
+      "scope": {
+        "allowedPaths": [
+          "fixture.txt"
+        ]
+      },
+      "constraints": [
+        "Read only"
+      ],
+      "acceptanceCriteria": [
+        "Return a word count"
+      ],
+      "validation": {
+        "required": false
+      },
+      "envelope": {
+        "maxTokens": 100
+      },
+      "taskId": "T-20260919-001",
+      "recovery": {
+        "executionId": "probe-32",
+        "action": "retry_same_plan",
+        "reason": "Retry after the latest identical failure",
+        "worktreeDecision": "keep",
+        "evidenceRefs": [
+          "execution:probe-32:tokens=101:limit=100"
+        ]
+      }
+    },
+    "value": {
+      "content": [
+        {
+          "type": "text",
+          "text": "planner_redelegate: T-20260919-001 blocked run=fake-run-9\ntermination: cancelled — reason=worker_runaway, confirmed=true (terminal+restricted-reader), execution=stopped\nanomaly: tokens observed=101 limit=100 (source: delegation-param)\nrecovery.required: worker runaway: tokens 101 exceeded envelope 100 — submit planner_redelegate.recovery{executionId=probe-33, action, reason, worktreeDecision} or planner_abort{executionId=probe-33, reason, worktreeDecision}"
+        }
+      ],
+      "details": {
+        "taskId": "T-20260919-001",
+        "executionId": "probe-33",
+        "runId": "fake-run-9",
+        "state": "blocked",
+        "termination": {
+          "status": "cancelled",
+          "reason": "worker_runaway",
+          "executionStatus": "stopped",
+          "terminationConfirmed": true,
+          "anomaly": {
+            "signal": "tokens",
+            "observed": 101,
+            "limit": 100,
+            "source": "delegation-param"
+          },
+          "confirmationBasis": "terminal+restricted-reader",
+          "quiescenceWaitMs": 0,
+          "quiescenceWaitSource": "config",
+          "usageComplete": true
+        },
+        "warnings": []
+      }
+    }
+  },
+  {
+    "toolCallId": "probe-34",
+    "name": "planner_redelegate",
+    "params": {
+      "role": "explorer",
+      "objective": "Read one fixture; injected child never progresses",
+      "scope": {
+        "allowedPaths": [
+          "fixture.txt"
+        ]
+      },
+      "constraints": [
+        "Read only"
+      ],
+      "acceptanceCriteria": [
+        "Return a word count"
+      ],
+      "validation": {
+        "required": false
+      },
+      "envelope": {
+        "maxTokens": 100
+      },
+      "taskId": "T-20260919-001",
+      "recovery": {
+        "executionId": "probe-33",
+        "action": "retry_same_plan",
+        "reason": "Retry after the latest identical failure",
+        "worktreeDecision": "keep",
+        "evidenceRefs": [
+          "execution:probe-33:tokens=101:limit=100"
+        ]
+      }
+    },
+    "value": {
+      "content": [
+        {
+          "type": "text",
+          "text": "planner_redelegate: T-20260919-001 blocked run=fake-run-10\ntermination: cancelled — reason=worker_runaway, confirmed=true (terminal+restricted-reader), execution=stopped\nanomaly: tokens observed=101 limit=100 (source: delegation-param)\nrecovery.required: worker runaway: tokens 101 exceeded envelope 100 — submit planner_redelegate.recovery{executionId=probe-34, action, reason, worktreeDecision} or planner_abort{executionId=probe-34, reason, worktreeDecision}"
+        }
+      ],
+      "details": {
+        "taskId": "T-20260919-001",
+        "executionId": "probe-34",
+        "runId": "fake-run-10",
+        "state": "blocked",
+        "termination": {
+          "status": "cancelled",
+          "reason": "worker_runaway",
+          "executionStatus": "stopped",
+          "terminationConfirmed": true,
+          "anomaly": {
+            "signal": "tokens",
+            "observed": 101,
+            "limit": 100,
+            "source": "delegation-param"
+          },
+          "confirmationBasis": "terminal+restricted-reader",
+          "quiescenceWaitMs": 0,
+          "quiescenceWaitSource": "config",
+          "usageComplete": true
+        },
+        "warnings": []
+      }
+    }
+  },
+  {
+    "toolCallId": "probe-35",
+    "name": "planner_redelegate",
+    "params": {
+      "role": "explorer",
+      "objective": "Read one fixture; injected child never progresses",
+      "scope": {
+        "allowedPaths": [
+          "fixture.txt"
+        ]
+      },
+      "constraints": [
+        "Read only"
+      ],
+      "acceptanceCriteria": [
+        "Return a word count"
+      ],
+      "validation": {
+        "required": false
+      },
+      "envelope": {
+        "maxTokens": 100
+      },
+      "taskId": "T-20260919-001",
+      "recovery": {
+        "executionId": "probe-34",
+        "action": "retry_same_plan",
+        "reason": "Retry after the latest identical failure",
+        "worktreeDecision": "keep",
+        "evidenceRefs": [
+          "execution:probe-34:tokens=101:limit=100"
+        ]
+      }
+    },
+    "value": {
+      "content": [
+        {
+          "type": "text",
+          "text": "planner_redelegate: T-20260919-001 blocked run=fake-run-11\ntermination: cancelled — reason=worker_runaway, confirmed=true (terminal+restricted-reader), execution=stopped\nanomaly: tokens observed=101 limit=100 (source: delegation-param)\nrecovery.required: worker runaway: tokens 101 exceeded envelope 100 — submit planner_redelegate.recovery{executionId=probe-35, action, reason, worktreeDecision} or planner_abort{executionId=probe-35, reason, worktreeDecision}"
+        }
+      ],
+      "details": {
+        "taskId": "T-20260919-001",
+        "executionId": "probe-35",
+        "runId": "fake-run-11",
+        "state": "blocked",
+        "termination": {
+          "status": "cancelled",
+          "reason": "worker_runaway",
+          "executionStatus": "stopped",
+          "terminationConfirmed": true,
+          "anomaly": {
+            "signal": "tokens",
+            "observed": 101,
+            "limit": 100,
+            "source": "delegation-param"
+          },
+          "confirmationBasis": "terminal+restricted-reader",
+          "quiescenceWaitMs": 0,
+          "quiescenceWaitSource": "config",
+          "usageComplete": true
+        },
+        "warnings": []
+      }
+    }
+  },
+  {
+    "toolCallId": "probe-36",
+    "name": "planner_redelegate",
+    "params": {
+      "role": "explorer",
+      "objective": "Read one fixture; injected child never progresses",
+      "scope": {
+        "allowedPaths": [
+          "fixture.txt"
+        ]
+      },
+      "constraints": [
+        "Read only"
+      ],
+      "acceptanceCriteria": [
+        "Return a word count"
+      ],
+      "validation": {
+        "required": false
+      },
+      "envelope": {
+        "maxTokens": 100
+      },
+      "taskId": "T-20260919-001",
+      "recovery": {
+        "executionId": "probe-35",
+        "action": "retry_same_plan",
+        "reason": "Retry after the latest identical failure",
+        "worktreeDecision": "keep",
+        "evidenceRefs": [
+          "execution:probe-35:tokens=101:limit=100"
+        ]
+      }
+    },
+    "value": {
+      "content": [
+        {
+          "type": "text",
+          "text": "planner_redelegate: T-20260919-001 blocked run=fake-run-12\ntermination: cancelled — reason=worker_runaway, confirmed=true (terminal+restricted-reader), execution=stopped\nanomaly: tokens observed=101 limit=100 (source: delegation-param)\nrecovery.required: worker runaway: tokens 101 exceeded envelope 100 — submit planner_redelegate.recovery{executionId=probe-36, action, reason, worktreeDecision} or planner_abort{executionId=probe-36, reason, worktreeDecision}"
+        }
+      ],
+      "details": {
+        "taskId": "T-20260919-001",
+        "executionId": "probe-36",
+        "runId": "fake-run-12",
+        "state": "blocked",
+        "termination": {
+          "status": "cancelled",
+          "reason": "worker_runaway",
+          "executionStatus": "stopped",
+          "terminationConfirmed": true,
+          "anomaly": {
+            "signal": "tokens",
+            "observed": 101,
+            "limit": 100,
+            "source": "delegation-param"
+          },
+          "confirmationBasis": "terminal+restricted-reader",
+          "quiescenceWaitMs": 0,
+          "quiescenceWaitSource": "config",
+          "usageComplete": true
+        },
+        "warnings": []
+      }
+    }
+  },
+  {
+    "toolCallId": "probe-37",
+    "name": "planner_redelegate",
+    "params": {
+      "role": "explorer",
+      "objective": "Read one fixture; injected child never progresses",
+      "scope": {
+        "allowedPaths": [
+          "fixture.txt"
+        ]
+      },
+      "constraints": [
+        "Read only"
+      ],
+      "acceptanceCriteria": [
+        "Return a word count"
+      ],
+      "validation": {
+        "required": false
+      },
+      "envelope": {
+        "maxTokens": 100
+      },
+      "taskId": "T-20260919-001",
+      "recovery": {
+        "executionId": "probe-36",
+        "action": "retry_same_plan",
+        "reason": "Different wording only",
+        "worktreeDecision": "keep",
+        "evidenceRefs": [
+          "execution:probe-35:tokens=101:limit=100"
+        ]
+      }
+    },
+    "error": "planner_redelegate refused: an equivalent recovery decision (retry_same_plan / same evidence and worktree decision) was already consumed by probe-36; rewording the reason is not a new basis",
+    "code": "RECOVERY_REQUIRED"
+  }
+]

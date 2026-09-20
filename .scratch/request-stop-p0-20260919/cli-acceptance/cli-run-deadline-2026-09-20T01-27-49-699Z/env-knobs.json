@@ -1,0 +1,7 @@
+{
+  "PI_CODING_AGENT_DIR": "/home/tcuni-claw/pi/pi-planner-only/.scratch/request-stop-p0-20260919/cli-acceptance/cli-run-deadline-2026-09-20T01-27-49-699Z/agent",
+  "TMPDIR": "/project/tmp/pi-planner-only-cli-deadline-bumllb",
+  "PI_PLANNER_ONLY_SEED_PRICING": "0",
+  "PI_PLANNER_ONLY_QUIESCENCE_MS": "0",
+  "PI_PLANNER_ONLY_REQUEST_ACTIVE_MS": "45000"
+}
