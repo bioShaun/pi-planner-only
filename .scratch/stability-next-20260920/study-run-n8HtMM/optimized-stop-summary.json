@@ -1,0 +1,42 @@
+{
+  "arm": "optimized",
+  "case": "stop",
+  "repeat": 1,
+  "label": "optimized-stop",
+  "status": 255,
+  "signal": null,
+  "durationMs": 86990,
+  "quality": null,
+  "changed": "",
+  "sentinelExists": false,
+  "root": {
+    "input": 0,
+    "output": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0
+  },
+  "child": {
+    "input": 0,
+    "output": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0
+  },
+  "rootMessages": 4,
+  "childClaims": 0,
+  "failedAttempts": 0,
+  "rootUsageIncomplete": false,
+  "childUsageIncomplete": false,
+  "actualRootModels": [
+    "tcuni-ds/deepseek/deepseek-v4.1-flash"
+  ],
+  "actualChildModels": [],
+  "monetaryCost": null,
+  "priceStatus": "unverified; no cost-savings claim",
+  "closureObserved": true,
+  "afterClosure": {
+    "modelHooks": 0,
+    "toolCalls": 0,
+    "requests": 0
+  },
+  "finalAnswer": ""
+}

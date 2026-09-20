@@ -1,0 +1,37 @@
+{
+  "verdict": "PASS",
+  "scenario": "combined",
+  "injections": [
+    {
+      "kind": "queued",
+      "atMs": 1789895987238.7026,
+      "requestId": "909cbbf7-cd45-4849-bfe4-80beb72f2674"
+    }
+  ],
+  "quietBeforeQuitMs": 3000,
+  "quitKeys": [
+    "Ctrl-C (clear editor)",
+    "Ctrl-D"
+  ],
+  "forcedCleanup": false,
+  "exitStatus": 0,
+  "observations": {
+    "ready": true,
+    "hasUI": true,
+    "closureObserved": true,
+    "cancelObserved": true,
+    "cancelledTerminal": true,
+    "settled": true,
+    "originalRequestId": "909cbbf7-cd45-4849-bfe4-80beb72f2674",
+    "requestUnchanged": true,
+    "queuedInputObserved": true,
+    "scheduledInputObserved": true,
+    "afterClosure": {
+      "modelHooks": 0,
+      "toolCalls": 0,
+      "requests": 0
+    },
+    "afterClosureCalls": 0,
+    "lastEventMs": 1789896035902
+  }
+}

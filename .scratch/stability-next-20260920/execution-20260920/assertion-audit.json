@@ -1,0 +1,22 @@
+{
+  "base": "83a0ad4351300e4537435ce637a995207e221ed0",
+  "removedAssertionLines": [
+    "-\tassert.equal(reportOnlyOver.unexplained, false, \"28-A: report-only over-report is not unexplained\");",
+    "-\tassert.equal(evidenceAction(reportOnlyOver), \"review\", \"28-A: report-only may continue to review\");"
+  ],
+  "addedAssertionLines": 95,
+  "assertionsDropped": 0,
+  "explanations": [
+    {
+      "old": "reportOnlyOver.unexplained === false",
+      "new": "reportOnlyOver.unexplained === true",
+      "why": "Strengthened: invented ownership of unchanged dirty paths has no origin/prior truth and is unexplained."
+    },
+    {
+      "old": "evidenceAction(reportOnlyOver) === review",
+      "new": "evidenceAction(reportOnlyOver) === revalidate",
+      "why": "Strengthened: report-only is no longer a bypass; valid prior-truth positive control added."
+    }
+  ],
+  "passed": true
+}

@@ -18,3 +18,5 @@
 审查冻结范围为 66 个 source 项和 11 个 harness 项，含 ADR-0008；旧清单保留在 before-*。本轮更新了审查入口、证据索引、验收记录和工单状态。最终文件核验见 final-integrity.json。
 
 未闭环项：P1-B partial/report-only repair、P3 完整对照/价格/默认值校准、Request 剩余时间可见性及更广的 scheduled continuation 场景。一个 smoke 与一个 TUI 场景不足以证明费用节省或所有宿主模式正确。
+
+2026-09-20 清单第 0 步：实现已提交为 `83a0ad4351300e4537435ce637a995207e221ed0`；磁盘 77 项冻结哈希零漂移。提交树包含其中 75 项；另 2 项是 2026-09-18 明确排除的旧 explorer-model 原型，已按原字节归档至 execution-20260920/ignored-freeze/，未恢复为产品源码。见 execution-20260920/baseline-freeze.json；未提交 tmp/。

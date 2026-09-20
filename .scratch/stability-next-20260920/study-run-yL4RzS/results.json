@@ -1,0 +1,1361 @@
+[
+  {
+    "arm": "direct",
+    "case": "count",
+    "repeat": 1,
+    "label": "r1-direct-count",
+    "status": 0,
+    "signal": null,
+    "durationMs": 7560,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 3,
+      "childTerminals": 0
+    },
+    "changed": "",
+    "root": {
+      "input": 5013,
+      "output": 66,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "rootMessages": 3,
+    "childClaims": 0,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "The file `fixture.txt` contains 10 words:\n\"The quick brown fox jumps over the lazy dog today.\"\n\nANSWER=10"
+  },
+  {
+    "arm": "baseline",
+    "case": "count",
+    "repeat": 1,
+    "label": "r1-baseline-count",
+    "status": 0,
+    "signal": null,
+    "durationMs": 43876,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 5,
+      "childTerminals": 1
+    },
+    "changed": "",
+    "root": {
+      "input": 59920,
+      "output": 271,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 6901,
+      "output": 412,
+      "cacheRead": 11264,
+      "cacheWrite": 0
+    },
+    "rootMessages": 5,
+    "childClaims": 1,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [
+      "tcuni-luna/gpt-5.6-luna:low:low"
+    ],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "The file `fixture.txt` contains the following text:\n> The quick brown fox jumps over the lazy dog today.\n\nThe file has 10 words.\n\nANSWER=10"
+  },
+  {
+    "arm": "optimized",
+    "case": "count",
+    "repeat": 1,
+    "label": "r1-optimized-count",
+    "status": 0,
+    "signal": null,
+    "durationMs": 62709,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 8,
+      "childTerminals": 2
+    },
+    "changed": "",
+    "root": {
+      "input": 97596,
+      "output": 481,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 13723,
+      "output": 853,
+      "cacheRead": 22528,
+      "cacheWrite": 0
+    },
+    "rootMessages": 8,
+    "childClaims": 2,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [
+      "tcuni-luna/gpt-5.6-luna:low:low"
+    ],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "The file `fixture.txt` contains the following text:\n\n```\nThe quick brown fox jumps over the lazy dog today.\n```\n\nThe exact word count is 10.\n\nANSWER=10"
+  },
+  {
+    "arm": "baseline",
+    "case": "json",
+    "repeat": 1,
+    "label": "r1-baseline-json",
+    "status": 0,
+    "signal": null,
+    "durationMs": 24165,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 3,
+      "childTerminals": 1
+    },
+    "changed": "",
+    "root": {
+      "input": 35058,
+      "output": 184,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 12342,
+      "output": 325,
+      "cacheRead": 5632,
+      "cacheWrite": 0
+    },
+    "rootMessages": 3,
+    "childClaims": 1,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [
+      "tcuni-luna/gpt-5.6-luna:low:low"
+    ],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "The `fixture.json` file was inspected and the value of `service.port` is 4317.\n\nANSWER=4317"
+  },
+  {
+    "arm": "optimized",
+    "case": "json",
+    "repeat": 1,
+    "label": "r1-optimized-json",
+    "status": 0,
+    "signal": null,
+    "durationMs": 34477,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 4,
+      "childTerminals": 1
+    },
+    "changed": "",
+    "root": {
+      "input": 48130,
+      "output": 274,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 6897,
+      "output": 322,
+      "cacheRead": 11264,
+      "cacheWrite": 0
+    },
+    "rootMessages": 4,
+    "childClaims": 1,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [
+      "tcuni-luna/gpt-5.6-luna:low:low"
+    ],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "The `fixture.json` file was inspected and the `service.port` value was identified.\n\nANSWER=4317"
+  },
+  {
+    "arm": "direct",
+    "case": "json",
+    "repeat": 1,
+    "label": "r1-direct-json",
+    "status": 0,
+    "signal": null,
+    "durationMs": 5393,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 2,
+      "childTerminals": 0
+    },
+    "changed": "",
+    "root": {
+      "input": 3347,
+      "output": 123,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "rootMessages": 2,
+    "childClaims": 0,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "The value of `service.port` in `fixture.json` is 4317.\n\nANSWER=4317"
+  },
+  {
+    "arm": "optimized",
+    "case": "edit",
+    "repeat": 1,
+    "label": "r1-optimized-edit",
+    "status": 0,
+    "signal": null,
+    "durationMs": 60995,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 7,
+      "childTerminals": 1
+    },
+    "changed": "M value.json",
+    "root": {
+      "input": 84466,
+      "output": 519,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 16439,
+      "output": 706,
+      "cacheRead": 19968,
+      "cacheWrite": 0
+    },
+    "rootMessages": 7,
+    "childClaims": 1,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [
+      "tcuni-luna/gpt-5.6-luna:low:low"
+    ],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "The task has been completed and verified.\n\n- `value.json` was updated so that `\"enabled\"` is changed from `false` to `true`.\n- The file remains valid JSON (`{\"enabled\":true}`).\n- No other files were modified, as verified via git audit.\n- Acceptance criteria and validation gates passed, and the review verdict was recorded.\n\nANSWER=enabled"
+  },
+  {
+    "arm": "direct",
+    "case": "edit",
+    "repeat": 1,
+    "label": "r1-direct-edit",
+    "status": 0,
+    "signal": null,
+    "durationMs": 16773,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 5,
+      "childTerminals": 0
+    },
+    "changed": "M value.json",
+    "root": {
+      "input": 9077,
+      "output": 292,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "rootMessages": 5,
+    "childClaims": 0,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "`value.json` has been updated with `\"enabled\": true`.\n\nVerification output:\n```json\n{\"enabled\": true}\n```\nValid JSON verified via parser, and no other files were modified.\n\nANSWER=enabled"
+  },
+  {
+    "arm": "baseline",
+    "case": "edit",
+    "repeat": 1,
+    "label": "r1-baseline-edit",
+    "status": 0,
+    "signal": null,
+    "durationMs": 59495,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 7,
+      "childTerminals": 1
+    },
+    "changed": "M value.json",
+    "root": {
+      "input": 82845,
+      "output": 368,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 10022,
+      "output": 764,
+      "cacheRead": 26624,
+      "cacheWrite": 0
+    },
+    "rootMessages": 7,
+    "childClaims": 1,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [
+      "tcuni-luna/gpt-5.6-luna:low:low"
+    ],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "Task T-20260920-001 has been completed and verified.\n\n- `value.json` was updated so that `\"enabled\"` is set to `true`.\n- The file was verified to be valid JSON.\n- No other files were changed.\n\nANSWER=enabled"
+  },
+  {
+    "arm": "baseline",
+    "case": "count",
+    "repeat": 2,
+    "label": "r2-baseline-count",
+    "status": 0,
+    "signal": null,
+    "durationMs": 32376,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 4,
+      "childTerminals": 1
+    },
+    "changed": "",
+    "root": {
+      "input": 38714,
+      "output": 203,
+      "cacheRead": 8127,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 2129,
+      "output": 366,
+      "cacheRead": 15872,
+      "cacheWrite": 0
+    },
+    "rootMessages": 4,
+    "childClaims": 1,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [
+      "tcuni-luna/gpt-5.6-luna:low:low"
+    ],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "`fixture.txt` contains 10 words:\n\"The quick brown fox jumps over the lazy dog today.\"\n\nANSWER=10"
+  },
+  {
+    "arm": "optimized",
+    "case": "count",
+    "repeat": 2,
+    "label": "r2-optimized-count",
+    "status": 0,
+    "signal": null,
+    "durationMs": 24879,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 4,
+      "childTerminals": 1
+    },
+    "changed": "",
+    "root": {
+      "input": 47319,
+      "output": 241,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 12457,
+      "output": 353,
+      "cacheRead": 5632,
+      "cacheWrite": 0
+    },
+    "rootMessages": 4,
+    "childClaims": 1,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [
+      "tcuni-luna/gpt-5.6-luna:low:low"
+    ],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "The file `fixture.txt` contains the text:\n> \"The quick brown fox jumps over the lazy dog today.\"\n\nThis corresponds to 10 words.\n\nANSWER=10"
+  },
+  {
+    "arm": "direct",
+    "case": "count",
+    "repeat": 2,
+    "label": "r2-direct-count",
+    "status": 0,
+    "signal": null,
+    "durationMs": 5363,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 3,
+      "childTerminals": 0
+    },
+    "changed": "",
+    "root": {
+      "input": 5122,
+      "output": 182,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "rootMessages": 3,
+    "childClaims": 0,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "The file `fixture.txt` contains 10 words:\n\n\"The quick brown fox jumps over the lazy dog today.\"\n\nANSWER=10"
+  },
+  {
+    "arm": "optimized",
+    "case": "json",
+    "repeat": 2,
+    "label": "r2-optimized-json",
+    "status": 0,
+    "signal": null,
+    "durationMs": 26273,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 4,
+      "childTerminals": 1
+    },
+    "changed": "",
+    "root": {
+      "input": 48160,
+      "output": 296,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 6959,
+      "output": 332,
+      "cacheRead": 11264,
+      "cacheWrite": 0
+    },
+    "rootMessages": 4,
+    "childClaims": 1,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [
+      "tcuni-luna/gpt-5.6-luna:low:low"
+    ],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "The value of `service.port` in `fixture.json` is `4317`. No changes were made.\n\nANSWER=4317"
+  },
+  {
+    "arm": "direct",
+    "case": "json",
+    "repeat": 2,
+    "label": "r2-direct-json",
+    "status": 0,
+    "signal": null,
+    "durationMs": 4141,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 2,
+      "childTerminals": 0
+    },
+    "changed": "",
+    "root": {
+      "input": 3309,
+      "output": 44,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "rootMessages": 2,
+    "childClaims": 0,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "The value of `service.port` in `fixture.json` is `4317`.\n\nANSWER=4317"
+  },
+  {
+    "arm": "baseline",
+    "case": "json",
+    "repeat": 2,
+    "label": "r2-baseline-json",
+    "status": 0,
+    "signal": null,
+    "durationMs": 19460,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 3,
+      "childTerminals": 1
+    },
+    "changed": "",
+    "root": {
+      "input": 27022,
+      "output": 226,
+      "cacheRead": 8122,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 6868,
+      "output": 334,
+      "cacheRead": 11264,
+      "cacheWrite": 0
+    },
+    "rootMessages": 3,
+    "childClaims": 1,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [
+      "tcuni-luna/gpt-5.6-luna:low:low"
+    ],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "The file `fixture.json` was read and the `service.port` value was extracted.\n\nANSWER=4317"
+  },
+  {
+    "arm": "direct",
+    "case": "edit",
+    "repeat": 2,
+    "label": "r2-direct-edit",
+    "status": 0,
+    "signal": null,
+    "durationMs": 11867,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 5,
+      "childTerminals": 0
+    },
+    "changed": "M value.json",
+    "root": {
+      "input": 8681,
+      "output": 171,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "rootMessages": 5,
+    "childClaims": 0,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "I have changed `\"enabled\"` from `false` to `true` in `value.json`, preserved valid JSON, and verified the saved contents:\n\n```json\n{\"enabled\":true}\n```\n\nANSWER=enabled"
+  },
+  {
+    "arm": "baseline",
+    "case": "edit",
+    "repeat": 2,
+    "label": "r2-baseline-edit",
+    "status": 0,
+    "signal": null,
+    "durationMs": 65902,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 8,
+      "childTerminals": 1
+    },
+    "changed": "M value.json",
+    "root": {
+      "input": 87209,
+      "output": 389,
+      "cacheRead": 8091,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 11728,
+      "output": 610,
+      "cacheRead": 24576,
+      "cacheWrite": 0
+    },
+    "rootMessages": 8,
+    "childClaims": 1,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [
+      "tcuni-luna/gpt-5.6-luna:low:low"
+    ],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "Task T-20260920-001 has been completed and verified.\n\n- `value.json` was updated so that `\"enabled\"` is set to `true`.\n- The file content is valid JSON (`{\"enabled\":true}`).\n- No other files were modified in the repository.\n\nANSWER=enabled"
+  },
+  {
+    "arm": "optimized",
+    "case": "edit",
+    "repeat": 2,
+    "label": "r2-optimized-edit",
+    "status": 0,
+    "signal": null,
+    "durationMs": 64503,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 9,
+      "childTerminals": 1
+    },
+    "changed": "M value.json",
+    "root": {
+      "input": 109002,
+      "output": 551,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 10115,
+      "output": 747,
+      "cacheRead": 26624,
+      "cacheWrite": 0
+    },
+    "rootMessages": 9,
+    "childClaims": 1,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [
+      "tcuni-luna/gpt-5.6-luna:low:low"
+    ],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "The `value.json` file has been updated with `\"enabled\": true`. The JSON structure has been preserved, no other files were modified, and the value was verified.\n\nANSWER=enabled"
+  },
+  {
+    "arm": "optimized",
+    "case": "count",
+    "repeat": 3,
+    "label": "r3-optimized-count",
+    "status": 0,
+    "signal": null,
+    "durationMs": 34580,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 4,
+      "childTerminals": 1
+    },
+    "changed": "",
+    "root": {
+      "input": 47398,
+      "output": 261,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 2185,
+      "output": 372,
+      "cacheRead": 15872,
+      "cacheWrite": 0
+    },
+    "rootMessages": 4,
+    "childClaims": 1,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [
+      "tcuni-luna/gpt-5.6-luna:low:low"
+    ],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "The file `fixture.txt` contains:\n\"The quick brown fox jumps over the lazy dog today.\"\n\nThe text contains 10 words.\n\nANSWER=10"
+  },
+  {
+    "arm": "direct",
+    "case": "count",
+    "repeat": 3,
+    "label": "r3-direct-count",
+    "status": 0,
+    "signal": null,
+    "durationMs": 4757,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 3,
+      "childTerminals": 0
+    },
+    "changed": "",
+    "root": {
+      "input": 5013,
+      "output": 53,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "rootMessages": 3,
+    "childClaims": 0,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "The file `fixture.txt` contains 10 words.\n\nANSWER=10"
+  },
+  {
+    "arm": "baseline",
+    "case": "count",
+    "repeat": 3,
+    "label": "r3-baseline-count",
+    "status": 0,
+    "signal": null,
+    "durationMs": 35585,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 6,
+      "childTerminals": 1
+    },
+    "changed": "",
+    "root": {
+      "input": 54710,
+      "output": 354,
+      "cacheRead": 16207,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 6879,
+      "output": 364,
+      "cacheRead": 11264,
+      "cacheWrite": 0
+    },
+    "rootMessages": 6,
+    "childClaims": 1,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [
+      "tcuni-luna/gpt-5.6-luna:low:low"
+    ],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "The file `fixture.txt` contains the text:\n> \"The quick brown fox jumps over the lazy dog today.\"\n\nThe total word count is 10 words. No changes were made to the repository.\n\nANSWER=10"
+  },
+  {
+    "arm": "direct",
+    "case": "json",
+    "repeat": 3,
+    "label": "r3-direct-json",
+    "status": 0,
+    "signal": null,
+    "durationMs": 10465,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 2,
+      "childTerminals": 0
+    },
+    "changed": "",
+    "root": {
+      "input": 3309,
+      "output": 43,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "rootMessages": 2,
+    "childClaims": 0,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "The `service.port` value in `fixture.json` is `4317`.\n\nANSWER=4317"
+  },
+  {
+    "arm": "baseline",
+    "case": "json",
+    "repeat": 3,
+    "label": "r3-baseline-json",
+    "status": 0,
+    "signal": null,
+    "durationMs": 29257,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 4,
+      "childTerminals": 1
+    },
+    "changed": "",
+    "root": {
+      "input": 43817,
+      "output": 356,
+      "cacheRead": 4061,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 7410,
+      "output": 341,
+      "cacheRead": 11264,
+      "cacheWrite": 0
+    },
+    "rootMessages": 4,
+    "childClaims": 1,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [
+      "tcuni-luna/gpt-5.6-luna:low:low"
+    ],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "The value of `service.port` in `fixture.json` was inspected and verified to be `4317`. No changes were made to any files.\n\nANSWER=4317"
+  },
+  {
+    "arm": "optimized",
+    "case": "json",
+    "repeat": 3,
+    "label": "r3-optimized-json",
+    "status": 0,
+    "signal": null,
+    "durationMs": 34879,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 4,
+      "childTerminals": 1
+    },
+    "changed": "",
+    "root": {
+      "input": 40018,
+      "output": 279,
+      "cacheRead": 8123,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 7992,
+      "output": 326,
+      "cacheRead": 10240,
+      "cacheWrite": 0
+    },
+    "rootMessages": 4,
+    "childClaims": 1,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [
+      "tcuni-luna/gpt-5.6-luna:low:low"
+    ],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "The inspection of `fixture.json` confirmed that `service.port` is 4317.\n\nANSWER=4317"
+  },
+  {
+    "arm": "baseline",
+    "case": "edit",
+    "repeat": 3,
+    "label": "r3-baseline-edit",
+    "status": 0,
+    "signal": null,
+    "durationMs": 94617,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 7,
+      "childTerminals": 2
+    },
+    "changed": "M value.json",
+    "root": {
+      "input": 85936,
+      "output": 459,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 26008,
+      "output": 1350,
+      "cacheRead": 39936,
+      "cacheWrite": 0
+    },
+    "rootMessages": 7,
+    "childClaims": 2,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [
+      "tcuni-luna/gpt-5.6-luna:low:low"
+    ],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "The `value.json` file has been updated with `enabled` set to `true` and verified to be valid JSON with no other files modified.\n\nANSWER=enabled"
+  },
+  {
+    "arm": "optimized",
+    "case": "edit",
+    "repeat": 3,
+    "label": "r3-optimized-edit",
+    "status": 0,
+    "signal": null,
+    "durationMs": 57198,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 6,
+      "childTerminals": 1
+    },
+    "changed": "M value.json",
+    "root": {
+      "input": 71892,
+      "output": 440,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 9642,
+      "output": 624,
+      "cacheRead": 26624,
+      "cacheWrite": 0
+    },
+    "rootMessages": 6,
+    "childClaims": 1,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [
+      "tcuni-luna/gpt-5.6-luna:low:low"
+    ],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "The modification has been delegated, verified, and accepted:\n\n- `value.json` was updated to set `\"enabled\": true`.\n- Valid JSON was preserved.\n- No other files were changed.\n- Verification confirmed `value.json` contains `{\"enabled\":true}`.\n\nANSWER=enabled"
+  },
+  {
+    "arm": "direct",
+    "case": "edit",
+    "repeat": 3,
+    "label": "r3-direct-edit",
+    "status": 0,
+    "signal": null,
+    "durationMs": 11863,
+    "quality": true,
+    "identity": {
+      "verified": true,
+      "rootVerified": true,
+      "childVerified": true,
+      "expected": {
+        "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+        "childModel": "tcuni-luna/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "rootObservations": 6,
+      "childTerminals": 0
+    },
+    "changed": "M value.json",
+    "root": {
+      "input": 10501,
+      "output": 178,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "child": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "rootMessages": 6,
+    "childClaims": 0,
+    "failedAttempts": 0,
+    "rootUsageIncomplete": false,
+    "childUsageIncomplete": false,
+    "actualRootModels": [
+      "tcuni-agy/gemini-3.8-flash-high"
+    ],
+    "actualChildModels": [],
+    "monetaryCost": null,
+    "priceStatus": "unverified; no cost-savings claim",
+    "closureObserved": false,
+    "afterClosure": null,
+    "finalAnswer": "The file `value.json` has been updated to set `\"enabled\"` to `true` while preserving valid JSON. The saved value has been verified.\n\nANSWER=enabled"
+  }
+]

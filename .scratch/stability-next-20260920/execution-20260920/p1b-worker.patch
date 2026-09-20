@@ -1,0 +1,475 @@
+diff --git a/.scratch/stability-next-20260920/acceptance.md b/.scratch/stability-next-20260920/acceptance.md
+index 613d85a..50f34f2 100644
+--- a/.scratch/stability-next-20260920/acceptance.md
++++ b/.scratch/stability-next-20260920/acceptance.md
+@@ -94,3 +94,5 @@ strict 三次均通过独立只读父入口、先记录 slot audit/status 再进
+ ### 2026-09-20 工单 06 关闭：strict gate 完整通过
+ 
+ 用户裁定接受方案 A+B 后，全局 `~/.codex/review-readonly.sh` 与 `astra-planner.md` 已修订（父 low effort、`REVIEW_READONLY_TIMEOUT` 默认 420、子契约软预算；diff 与前后哈希在 issue06/applied 与 issue06/global-budget.patch）。正式第 4 轮（strict-run-IGfEci）exit 0 但 child BLOCKED，原因是父 here-document 探针在只读沙箱失败且把结论塞进子任务；入口提示词随即二次修订。第 5 轮（strict-run-Y59nSS）exit 0：父 gpt-6-astra/low 探针 EROFS、哈希不变；child gpt-5.6-sol/high 独立 EROFS，207 秒后 PASS；总时长 253 秒；无残留，HEAD 85bdd2a，66/11 冻结项零漂移。**当前实施（P1-A、stop、P2）的完整自动 strict gate 为 PASS。** P1-B、完整 P3、定时输入矩阵仍未完成，见 handoff-20260920.md。
++
++2026-09-20 清单第 0 步：实现已提交为 `83a0ad4351300e4537435ce637a995207e221ed0`；磁盘 77 项冻结哈希零漂移。提交树包含其中 75 项；另 2 项是 2026-09-18 明确排除的旧 explorer-model 原型，已按原字节归档至 execution-20260920/ignored-freeze/，未恢复为产品源码。见 execution-20260920/baseline-freeze.json；未提交 tmp/。
+diff --git a/.scratch/stability-next-20260920/continuation-20260920-0502/closeout.md b/.scratch/stability-next-20260920/continuation-20260920-0502/closeout.md
+index 078ddfd..fc6958f 100644
+--- a/.scratch/stability-next-20260920/continuation-20260920-0502/closeout.md
++++ b/.scratch/stability-next-20260920/continuation-20260920-0502/closeout.md
+@@ -18,3 +18,5 @@
+ 审查冻结范围为 66 个 source 项和 11 个 harness 项，含 ADR-0008；旧清单保留在 before-*。本轮更新了审查入口、证据索引、验收记录和工单状态。最终文件核验见 final-integrity.json。
+ 
+ 未闭环项：P1-B partial/report-only repair、P3 完整对照/价格/默认值校准、Request 剩余时间可见性及更广的 scheduled continuation 场景。一个 smoke 与一个 TUI 场景不足以证明费用节省或所有宿主模式正确。
++
++2026-09-20 清单第 0 步：实现已提交为 `83a0ad4351300e4537435ce637a995207e221ed0`；磁盘 77 项冻结哈希零漂移。提交树包含其中 75 项；另 2 项是 2026-09-18 明确排除的旧 explorer-model 原型，已按原字节归档至 execution-20260920/ignored-freeze/，未恢复为产品源码。见 execution-20260920/baseline-freeze.json；未提交 tmp/。
+diff --git a/.scratch/stability-next-20260920/transport-capabilities.md b/.scratch/stability-next-20260920/transport-capabilities.md
+index 2eaee33..9c7d3c9 100644
+--- a/.scratch/stability-next-20260920/transport-capabilities.md
++++ b/.scratch/stability-next-20260920/transport-capabilities.md
+@@ -8,12 +8,12 @@
+ | 单次 token/墙钟 envelope | UPDATE 快照 + 本地单调计时器；P1 提供有限默认 | 插件执行 monitor；不同时发送重复 timeout 给 launcher |
+ | REQUEST/terminal/CANCEL/usage | 85bdd2a 的真实 print 验收已证明 | launcher 执行 CANCEL；插件保留持久 claim/Writer hold |
+ | `model` / `thinking` | 公共 Request 支持；adapter 直接映射到执行参数 | operator 配置决定意图，launcher 决定实际模型，terminal 对照才验证生效 |
+-| `toolBudget.soft/hard` | soft 是停止探索的提示；hard 可拦指定工具，非独立的 partial-grace 控制 | launcher；本轮不默认启用未经对照校准的工具预算 |
++| `toolBudget.soft/hard` | 0.69.0 接受 `hard:0`；`block:"*"` 拦全部工具。仅 report-only 修复发送该精确预算；普通执行省略 | launcher 强制；插件持久化实际发送预算与原始公共终态 |
+ | session spawn budget | 可配置；session 计数跨 compaction，operator grant 独立 | launcher；范围大于插件 Request，不同步或替换 Request 计数 |
+ | run spawn budget | 默认 64、claim 不返还，retained resume 复用原 claim | launcher run tree；不能覆盖 Root 发起的多个独立委派 |
+ | 预算触发前的 partial grace | 没有公开 steer/grace 控制事件或字段 | unsupported；需要上游协议扩展 |
+ | 原始格式错误报告 | adapter 只在 `status=completed` 投影 result；`structured_output_failed` 不返回原文 | unsupported；不能从 transcript/UPDATE 猜测 typed 报告 |
+-| report-only correction | 现有一次 correction 计数/指导并不等于强制只读修复派发 | 仍需专门的 grant→只读执行→报告来源/累计证据绑定实现；不能用普通 worker 指令冒称强制 |
++| report-only correction | 已实现一次 grant→不可变执行标记→零工具预算→终态/失败家族落账；该轮不增加 Truth paths | 插件 + launcher；第二次畸形报告直接 block，不再派发 |
+ 
+ 源码依据（均为安装版，不引用浮动 main）：`src/slash/delegation-adapters.ts` 的 `toSubagentDelegationExecutionParams` / `toSubagentDelegationResponse`；`src/runs/shared/tool-budget.ts`；`spawn-budget.ts`；`run-fanout-budget.ts`；`model-resolution.ts`。
+ 
+@@ -21,4 +21,4 @@
+ 
+ 要实现完整预算前收尾，先增加可探测的版本能力，并提供按 requestId/ownerRunId/nodeId 关联的一次 finish 请求、剩余时间/额度、明确 ACK、以及最终 terminal。收尾没有新 Request 或新 claim，也不得延长原截止；超时继续走 CANCEL/Writer hold。原始格式错误结果若返回，必须有独立 diagnostic 字段和大小上限，与 typed `result` 分离；修复最多一次且同样计入总额度。旧 launcher 必须显式报告不支持，不做文本降级。
+ 
+-P1-B 保持未完成；本轮对现有 0.69.0 不虚构能力，也不修改系统安装包。P2 的新增接线只有单进程证据时同样保持真实模型验证待办。
++P1-B 在 0.69.0 能支持的范围内只完成 report-only 零工具修复。预算前 partial grace 与原始格式错误诊断仍明确 unsupported；本轮不虚构能力、不从文本降级，也不修改系统安装包或导入其 raw TypeScript。P2 的新增接线只有单进程证据时同样保持真实模型验证待办。
+diff --git a/CONTEXT.md b/CONTEXT.md
+index e280fe3..26b68d9 100644
+--- a/CONTEXT.md
++++ b/CONTEXT.md
+@@ -64,6 +64,10 @@ _Avoid_: role, readOnly claim
+ The upward contract: the only structured thing a Worker returns. It declares Task identity (`taskId` / `evidence.taskId`) and the Git facts the child observed; the execution identity producing it (`evidence.workerRunId`) is Root-stamped at admission (ADR-0004), never child-declared.
+ _Avoid_: transcript, log, result blob, child-reported runId
+ 
++**Report-only correction**:
++The Task's single opportunity to replace a missing or invalid WorkerReport without changing the delivered work. Its execution contributes no new Truth paths; another missing or invalid report blocks the Task.
++_Avoid_: code correction, caller-selected read-only mode
++
+ **ReviewResult**:
+ The structured verdict a Reviewer returns.
+ _Avoid_: review comments, PR review
+diff --git a/README.md b/README.md
+index dd93775..af91dd4 100644
+--- a/README.md
++++ b/README.md
+@@ -189,7 +189,7 @@ Validation runs are delegated by Root explicitly (`planner_delegate` with
+ role=validator for a fresh validation Task, `planner_redelegate` to re-validate
+ an existing Task); nothing is auto-dispatched.
+ 
+-`planner_delegate` and `planner_redelegate` use launcher defaults for `model` and `thinking` unless operator role routing is enabled. Enabled routing sends an exactly verified available `provider/model` and thinking, then checks actual terminal identity before accepting completion. Neither tool sets `toolBudget` or `timeoutMs`; the plugin owns its execution envelope. Usage rows retain the child response identity for attribution.
++`planner_delegate` and `planner_redelegate` use launcher defaults for `model` and `thinking` unless operator role routing is enabled. Enabled routing sends an exactly verified available `provider/model` and thinking, then checks actual terminal identity before accepting completion. Ordinary worker, explorer, validator, and reviewer requests omit `toolBudget`; the Task's one report-only correction sends `toolBudget: { hard: 0, block: "*" }`. The immutable execution record, not re-delegation arguments, selects that mode and persists both the sent budget and raw terminal. `timeoutMs` remains unset because the plugin owns its execution envelope. Usage rows retain the child response identity for attribution.
+ 
+ A `reviewer` child always launches with `context: "fresh"` carrying a
+ `ReviewRequest` — the Task's spec, the latest WorkerReport, Root's Git
+@@ -209,6 +209,14 @@ failure. A reviewer works only from its invocation payload and may use read,
+ grep, find, and ls: it must not `git log`, run `npm test`, or re-probe the
+ tree.
+ 
++A missing or invalid report grants exactly one report-only correction. The
++launcher blocks its first attempted tool call with the zero-tool budget; a
++`tool_budget_exhausted` terminal is recorded as a report-only budget failure
++and can never admit a WorkerReport. A malformed correction blocks the Task,
++and the correction execution cannot add Truth paths. pi-subagents 0.69.0 does
++not expose a pre-budget partial grace or the raw malformed structured output,
++so those capabilities remain unsupported rather than inferred from text.
++
+ Validators (`oracle`) default to a bounded check when the worker's validation
+ already exited 0: `git rev-parse HEAD`, `git status --porcelain`, and that
+ named tests exist. Set `PI_PLANNER_ONLY_ORACLE=full` to re-run the full
+diff --git a/README.zh-CN.md b/README.zh-CN.md
+index 681aab2..73f7fb2 100644
+--- a/README.zh-CN.md
++++ b/README.zh-CN.md
+@@ -126,12 +126,14 @@ hold，直到恢复条件解决。
+ 
+ 验证运行由 Root 显式委派（`planner_delegate` + role=validator 新建验证 Task，`planner_redelegate` 复验既有 Task）；没有任何自动派发。
+ 
+-`planner_delegate` / `planner_redelegate` 在角色路由关闭时沿用 launcher 的 `model` / `thinking` 默认值；启用操作者策略后，发送精确确认可用的 `provider/model` 与 thinking，并在采纳完成报告前核对终态实际身份。两个工具不设置 `toolBudget` / `timeoutMs`；执行 envelope 由插件控制。usage 按 child 返回的实际身份归因。
++`planner_delegate` / `planner_redelegate` 在角色路由关闭时沿用 launcher 的 `model` / `thinking` 默认值；启用操作者策略后，发送精确确认可用的 `provider/model` 与 thinking，并在采纳完成报告前核对终态实际身份。普通 worker、explorer、validator、reviewer 请求不设置 `toolBudget`；Task 唯一一次 report-only 修复发送 `toolBudget: { hard: 0, block: "*" }`。该模式由不可变执行记录决定，不能被重入参数翻转；账本保存实际发送的预算与原始终态。`timeoutMs` 仍不设置，执行 envelope 由插件控制。usage 按 child 返回的实际身份归因。
+ 
+ `reviewer` 子进程一律 `context: "fresh"`，携带 `ReviewRequest`——Task 的 spec、最新 WorkerReport、Root 采集的 Git 证据、有界补丁——不会 fork 父会话。ReviewRequest 是对 Task 的一次调用，绝不是新的 TaskSpec；reviewer 调用只能经 `planner_redelegate`（新铸的 Task 上没有东西可审）。Task 的原始 role、objective、spec 在 worker / reviewer / validation 各轮中保持不变。经 `planner_redelegate` 的 validator 调用是对被审 Task 的调用，其报告记录在该 Task 的 validatorReports。
+ 
+ Worker 返回带 version 的 `WorkerReport`；launcher 按 schema 校验后落在 `details.report`，不会从子代理文本里再解析。非 completed 的 launcher 状态是工具错误（抛出），不是解析失败。Reviewer 只读它的调用载荷，只能用 read、grep、find、ls：不得 `git log`、跑 `npm test` 或重探整棵树。
+ 
++报告缺失或格式错误只授予一次 report-only 修复。零工具预算会让 launcher 拦住该轮第一次工具调用；`tool_budget_exhausted` 以 report-only 预算失败单独记录，携带的报告绝不接纳。修复报告再次畸形会直接 block，且该执行不能增加 Truth paths。pi-subagents 0.69.0 没有公开预算前 partial grace，也不返回格式错误的原始结构化输出；插件明确标为 unsupported，不从文本猜测。
++
+ Validator（`oracle`）在 Worker 校验已 exit 0 时默认做有界复核：`git rev-parse HEAD`、`git status --porcelain`，以及确认报告里点名的测试存在。设 `PI_PLANNER_ONLY_ORACLE=full` 才重跑全量。Worker 校验失败时仍会重跑列出的命令。
+ 
+ ### 任务身份与 PASS 边界
+diff --git a/delegate.test.mjs b/delegate.test.mjs
+index 56e3589..957f9d9 100644
+--- a/delegate.test.mjs
++++ b/delegate.test.mjs
+@@ -1723,6 +1723,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+ 	assert.ok(execAfter.cTerminal?.gitStatusHash, "C_terminal recorded from the late terminal");
+ 	assert.equal(execAfter.runId, "run-late");
+ 	assert.equal(execAfter.usageComplete, true);
++	assert.equal(execAfter.rawTerminal?.status, "cancelled", "late public terminal is retained on the execution");
++	assert.equal(execAfter.rawTerminal?.runId, "run-late");
+ 	assert.equal(after.writerHold, undefined, "confirmed late stop clears the hold");
+ 	assert.equal(concurrency.status().reservations.length, 0, "reservation released exactly once");
+ 	const children = usage.taskUsage(taskId)?.children ?? [];
+diff --git a/delegate.ts b/delegate.ts
+index 1b9ea89..825ef74 100644
+--- a/delegate.ts
++++ b/delegate.ts
+@@ -64,6 +64,7 @@ import type {
+ 	ExecutionCapability,
+ 	ExecutionEndedReason,
+ 	ExecutionEnvelope,
++	ExecutionToolBudget,
+ 	ExecutionLifecycleStatus,
+ 	FindingCategory,
+ 	FindingSeverity,
+@@ -100,6 +101,8 @@ const TERMINAL_ENDED_REASON: Record<string, ExecutionEndedReason> = {
+ 	duplicate_node: "launch_failure",
+ };
+ 
++const REPORT_ONLY_TOOL_BUDGET: Readonly<ExecutionToolBudget> = Object.freeze({ hard: 0, block: "*" });
++
+ /** A `failed` terminal whose child never ran (no turn, no wall time) is a launch-time rejection, not a provider fault. */
+ function terminalEndedReason(terminal: { status: string; usage?: { turns: number; durationMs: number } }): ExecutionEndedReason {
+ 	if (terminal.status === "failed" && terminal.usage && terminal.usage.turns === 0 && terminal.usage.durationMs === 0) return "launch_failure";
+@@ -738,6 +741,7 @@ export async function runDelegation(
+ 	let task!: TaskRecord;
+ 	let thisSpec: TaskSpec;
+ 	let recoveryDecision: RecoveryDecision | undefined;
++	let reportOnlyGrant = false;
+ 	if (params.taskId) {
+ 		const record = deps.store.get(params.taskId);
+ 		if (!record) {
+@@ -821,6 +825,11 @@ export async function runDelegation(
+ 			throw new DelegationRefused("TASKSPEC_MISSING", `${toolName} refused: Task ${record.taskId} has no stored TaskSpec`, record.taskId);
+ 		}
+ 		thisSpec = record.spec;
++		// A report-correction grant is durable Task state. The next Worker
++		// execution consumes it by stamping its immutable execution record; no
++		// caller-supplied re-delegation field can enable or disable this mode.
++		reportOnlyGrant = role === "worker"
++			&& task.reportCorrections > task.executions.filter((item) => item.reportOnly).length;
+ 
+ 		if (isFinalTaskState(task.state)) {
+ 			if (task.state === "blocked" && task.recovery?.required === true) {
+@@ -1003,9 +1012,11 @@ export async function runDelegation(
+ 			capability: classification.capability,
+ 			capabilityBasis: classification.basis,
+ 			...(envelope ? { envelope } : {}),
++			...(reportOnlyGrant ? { reportOnly: true, toolBudget: { ...REPORT_ONLY_TOOL_BUDGET } } : {}),
+ 			...(role !== "worker" ? { readOnly: true } : {}),
+ 			...(role === "validator" ? { auxiliary: true } : {}),
+ 		});
++		const reportOnly = deps.store.executionById(task.taskId, executionId)?.reportOnly === true;
+ 		// Ticket 04 — a writer-capable execution cannot be verified once its
+ 		//    required evidence base is already known unusable: refuse before
+ 		//    launch instead of minting a "started but stop unconfirmed" record
+@@ -1057,6 +1068,7 @@ export async function runDelegation(
+ 			task: buildTaskPacket(thisSpec, params.instructions ?? ""),
+ 			context: "fresh",
+ 			cwd: task.cwd || effectiveCwd,
++			...(reportOnly ? { toolBudget: { ...REPORT_ONLY_TOOL_BUDGET } } : {}),
+ 			result: { kind: "structured", schema: WORKER_REPORT_SCHEMA },
+ 		};
+ 		// A2 — spec §3 predicate: an identity-matched terminal plus a quiet
+@@ -1144,7 +1156,9 @@ export async function runDelegation(
+ 					? "worker_runaway"
+ 					: cancelRequestedAt
+ 						? "operator_cancel"
+-						: terminalEndedReason(late);
++						: reportOnly && late.status === "tool_budget_exhausted"
++							? "report_only_tool_budget"
++							: terminalEndedReason(late);
+ 				deps.store.finalizeExecution(task.taskId, executionId, {
+ 					status: q.confirmed ? "stopped" : "stop_unconfirmed",
+ 					endedReason,
+@@ -1155,6 +1169,7 @@ export async function runDelegation(
+ 						: { interimSample: q.interim, stopSamples: q.samples }),
+ 					...(q.confirmed === false && q.evidenceIncomplete ? { evidenceIncomplete: true } : {}),
+ 					usageComplete,
++					rawTerminal: structuredClone(late) as unknown as Record<string, unknown>,
+ 					...(late.runId ? { runId: late.runId } : {}),
+ 					...(lateSuccess && late.result?.kind === "structured"
+ 						? { lateReport: stampWorkerReport(late.result.value as WorkerReport, late.runId ?? executionId, warnings) }
+@@ -1394,7 +1409,9 @@ export async function runDelegation(
+ 				? "operator_cancel"
+ 				: runaway
+ 					? "worker_runaway"
+-					: terminalEndedReason(terminal);
++					: reportOnly && terminal.status === "tool_budget_exhausted"
++						? "report_only_tool_budget"
++						: terminalEndedReason(terminal);
+ 			deps.store.finalizeExecution(task.taskId, executionId, {
+ 				status: q.confirmed ? "stopped" : "stop_unconfirmed",
+ 				endedReason,
+@@ -1405,6 +1422,7 @@ export async function runDelegation(
+ 					: { interimSample: q.interim, stopSamples: q.samples }),
+ 				...(q.confirmed === false && q.evidenceIncomplete ? { evidenceIncomplete: true } : {}),
+ 				usageComplete,
++				rawTerminal: structuredClone(terminal) as unknown as Record<string, unknown>,
+ 				...(responseRunId ? { runId: responseRunId } : {}),
+ 				...(lateSuccess && terminalReport
+ 					? { lateReport: terminalReport }
+@@ -1500,6 +1518,7 @@ export async function runDelegation(
+ 				stopSamples: completionQuiescence.samples,
+ 				...(completionQuiescence.evidenceIncomplete ? { evidenceIncomplete: true } : {}),
+ 				usageComplete,
++				rawTerminal: structuredClone(response) as unknown as Record<string, unknown>,
+ 				...(runId ? { runId } : {}),
+ 				// Ticket 05 — the terminal carried a valid report but the stop was
+ 				//    never confirmed: keep it bound to this execution, out of the
+@@ -1555,7 +1574,10 @@ export async function runDelegation(
+ 			...(thisSpec.additionalWorktreeRoots?.length
+ 				? { additionalWorktreeRoots: thisSpec.additionalWorktreeRoots }
+ 				: {}),
+-			...(role !== "worker" ? { readOnly: true } : {}),
++			...(reportOnly ? { reportOnly: true } : {}),
++			...(reportOnly
++				? { readOnly: task.executions.find((item) => item.executionId === options.previousExecutionId)?.readOnly === true }
++				: role !== "worker" ? { readOnly: true } : {}),
+ 			...(priorTruthPaths.length > 0 ? { priorTruthPaths } : {}),
+ 		});
+ 		// Ticket 03 — an observation Task never pretends Git freshness exists:
+@@ -1568,6 +1590,10 @@ export async function runDelegation(
+ 				...(thisSpec.additionalWorktreeRoots?.length
+ 					? { additionalWorktreeRoots: thisSpec.additionalWorktreeRoots }
+ 					: {}),
++				...(reportOnly ? { reportOnly: true } : {}),
++				...(reportOnly
++					? { readOnly: task.executions.find((item) => item.executionId === options.previousExecutionId)?.readOnly === true }
++					: role !== "worker" ? { readOnly: true } : {}),
+ 				...(priorTruthPaths.length > 0 ? { priorTruthPaths } : {}),
+ 			})
+ 			: undefined;
+@@ -1633,12 +1659,13 @@ export async function runDelegation(
+ 			terminationConfirmed: true,
+ 			confirmationBasis: completionQuiescence.basis,
+ 			usageComplete: response.usage !== undefined,
++			rawTerminal: structuredClone(response) as unknown as Record<string, unknown>,
+ 			cReport,
+ 			// A reader's confirmed stop keeps the result-receive sample as its
+ 			//    residual record; writers get the second quiescence sample.
+ 			cTerminal: completionQuiescence.cTerminal ?? cReport,
+ 			...(runId ? { runId } : {}),
+-			truthPaths: truth.truthPaths,
++			truthPaths: reportOnly ? [] : truth.truthPaths,
+ 			executionChangedPaths: truth.executionChangedPaths,
+ 			committedPaths: truth.committedPaths,
+ 			observedExternalPaths: truth.observedExternalPaths,
+diff --git a/ledger-store.ts b/ledger-store.ts
+index 271eefc..be3464e 100644
+--- a/ledger-store.ts
++++ b/ledger-store.ts
+@@ -82,6 +82,22 @@ function executionShapeError(value: unknown, index: number): string | undefined
+ 			return `${label}.envelope requires maxTokens or maxWallMs`;
+ 		}
+ 	}
++	if (value.toolBudget !== undefined) {
++		if (!isPlainObject(value.toolBudget)) return `${label}.toolBudget must be an object`;
++		if (!Number.isSafeInteger(value.toolBudget.hard) || (value.toolBudget.hard as number) < 0) {
++			return `${label}.toolBudget.hard must be a non-negative finite safe integer`;
++		}
++		if (value.toolBudget.soft !== undefined && (!Number.isSafeInteger(value.toolBudget.soft) || (value.toolBudget.soft as number) < 0)) {
++			return `${label}.toolBudget.soft must be a non-negative finite safe integer`;
++		}
++		if (value.toolBudget.block !== undefined && value.toolBudget.block !== "*"
++			&& (!Array.isArray(value.toolBudget.block) || value.toolBudget.block.some((item) => typeof item !== "string"))) {
++			return `${label}.toolBudget.block must be "*" or an array of strings`;
++		}
++	}
++	if (value.rawTerminal !== undefined && !isPlainObject(value.rawTerminal)) {
++		return `${label}.rawTerminal must be an object`;
++	}
+ 	const probeFailuresError = (sample: Record<string, unknown>, sampleLabel: string): string | undefined => {
+ 		if (sample.probeFailures === undefined) return undefined;
+ 		if (!Array.isArray(sample.probeFailures)) return `${sampleLabel}.probeFailures must be an array`;
+diff --git a/p1-delegation.test.mjs b/p1-delegation.test.mjs
+index 073dfe8..a7c4b90 100644
+--- a/p1-delegation.test.mjs
++++ b/p1-delegation.test.mjs
+@@ -67,6 +67,15 @@ function ledgerFiles() {
+ 	return existsSync(dir) ? readdirSync(dir).filter((name) => name.endsWith(".json")) : [];
+ }
+ 
++function requestRecords() {
++	const dir = join(agentDir, "planner-only", "requests");
++	if (!existsSync(dir)) return [];
++	return readdirSync(dir).flatMap((name) => {
++		const path = join(dir, name, "state.json");
++		return existsSync(path) ? [JSON.parse(readFileSync(path, "utf8"))] : [];
++	});
++}
++
+ async function fixture(name, options = {}) {
+ 	clearConfig();
+ 	for (const [key, value] of Object.entries(options.requestLimits ?? {})) {
+@@ -95,7 +104,8 @@ async function fixture(name, options = {}) {
+ 			for (const fn of [...(listeners.get(event) ?? [])]) fn(value);
+ 		},
+ 	};
+-	f.respond = (request, status = "completed") => events.emit(RESPONSE, {
++	f.respond = (request, status = "completed") => {
++		const terminal = {
+ 		requestId: request.requestId,
+ 		ownerRunId: request.ownerRunId,
+ 		nodeId: request.nodeId,
+@@ -113,7 +123,10 @@ async function fixture(name, options = {}) {
+ 					evidence: { cwd: request.cwd, taskId: request.nodeId, gitAvailable: true,
+ 						baseGitRef: "abc1234", finalGitRef: "abc1234", gitStatusHash: hashStatus(""), changedPaths: [] } } },
+ 		} : {}),
+-	});
++		};
++		const override = options.responseFor?.(request, f.launches.length, terminal);
++		events.emit(RESPONSE, override ? { ...terminal, ...override } : terminal);
++	};
+ 	events.on("pi-subagents:runtime-agent-register:v1", request => { request.result = { ok: true, registration: {} }; });
+ 	events.on(REQUEST, request => {
+ 		f.launches.push(request);
+@@ -172,8 +185,10 @@ try {
+ 	assert.deepEqual(schemaKeys, ["envelope", "instructions", "recovery", "role", "taskId"]);
+ 	const created = await bound.call("planner_delegate", { ...definition, cwd: bound.cwd });
+ 	const taskId = created.details.taskId;
++	assert.equal(bound.launches[0].toolBudget, undefined, "ordinary worker omits launcher toolBudget");
+ 	assert.deepEqual(bound.task(taskId).executions[0].envelope,
+ 		{ maxTokens: 100_000, maxWallMs: 600_000, source: "default" });
++	assert.equal(bound.task(taskId).executions[0].rawTerminal.status, "completed", "normal public terminal is persisted verbatim");
+ 	const storedBefore = structuredClone(bound.task(taskId).spec);
+ 	const rebound = await bound.call("planner_redelegate", {
+ 		taskId,
+@@ -204,6 +219,7 @@ try {
+ 	assert.equal(review.details.review.taskId, taskId);
+ 	assert.match(review.details.warnings.join("\n"), /ignored envelope for role=reviewer/);
+ 	assert.equal(bound.launches.at(-1).agent, "reviewer");
++	assert.equal(bound.launches.at(-1).toolBudget, undefined, "reviewer omits launcher toolBudget");
+ 	assert.match(bound.launches.at(-1).task, /Preserve this stored objective/);
+ 	assert.doesNotMatch(bound.launches.at(-1).task, /forged objective/);
+ 	assert.equal(bound.task(taskId).executions.length, 2, "reviewer does not add an execution envelope record");
+@@ -216,6 +232,7 @@ try {
+ 		validation: { required: false },
+ 	});
+ 	await observation.call("planner_redelegate", { taskId: observed.details.taskId, role: "explorer" });
++	assert.ok(observation.launches.every((request) => request.toolBudget === undefined), "ordinary explorer omits launcher toolBudget");
+ 	assert.equal(observation.task(observed.details.taskId).spec.role, "explorer");
+ 	await assert.rejects(observation.call("planner_redelegate", { taskId: observed.details.taskId, role: "reviewer" }),
+ 		error => error?.code === "OBSERVATION_EXPLORER_ONLY");
+@@ -250,6 +267,60 @@ try {
+ 		error => error?.code === "ENVELOPE_INVALID");
+ 	assert.equal(ledgerFiles().length, beforeInvalid, "an unsafe explicit integer cannot create an unrestorable ledger");
+ 
++	const reportBudget = await fixture("report-only-budget", {
++		responseFor(request, launch) {
++			if (launch === 1) return { result: undefined };
++			if (launch === 2) return {
++				status: "tool_budget_exhausted",
++				error: "Tool budget exhausted: hard limit 0",
++			};
++		},
++	});
++	const malformed = await reportBudget.call("planner_delegate", { ...definition, reportOnly: true });
++	assert.equal(malformed.details.decision, "report_correction");
++	assert.equal(reportBudget.launches[0].toolBudget, undefined, "caller cannot opt an ordinary execution into report-only mode");
++	const correction = await reportBudget.call("planner_redelegate", {
++		taskId: malformed.details.taskId,
++		role: "worker",
++		reportOnly: false,
++	});
++	assert.deepEqual(reportBudget.launches[1].toolBudget, { hard: 0, block: "*" }, "report-only correction sends the exact public zero-tool budget");
++	assert.equal(correction.details.termination.status, "tool_budget_exhausted");
++	assert.equal(correction.details.termination.reason, "report_only_tool_budget");
++	assert.equal(correction.details.termination.reportAccepted, false, "a report on a failed terminal is never admitted");
++	const budgetTask = reportBudget.task(malformed.details.taskId);
++	const budgetExecution = budgetTask.executions[1];
++	assert.equal(budgetExecution.reportOnly, true, "durable correction state stamps the execution despite forged redelegation args");
++	assert.deepEqual(budgetExecution.toolBudget, { hard: 0, block: "*" });
++	assert.equal(budgetExecution.rawTerminal.status, "tool_budget_exhausted");
++	assert.equal(budgetExecution.rawTerminal.error, "Tool budget exhausted: hard limit 0");
++	assert.deepEqual(budgetExecution.truthPaths ?? [], [], "report-only failure adds no truth paths");
++	assert.equal(budgetTask.reports.length, 0, "failed report-only terminal cannot become a valid WorkerReport");
++	const budgetFamilies = requestRecords()
++		.filter((record) => record.workspace === reportBudget.cwd)
++		.flatMap((record) => record.current.failures.map((failure) => failure.family));
++	assert.ok(budgetFamilies.includes("report-only-tool-budget"), "Request records the explicit non-task-quality failure family");
++
++	const malformedTwice = await fixture("report-only-malformed-twice", {
++		responseFor() { return { result: undefined }; },
++	});
++	const firstMalformed = await malformedTwice.call("planner_delegate", definition);
++	assert.equal(firstMalformed.details.decision, "report_correction");
++	const secondMalformed = await malformedTwice.call("planner_redelegate", {
++		taskId: firstMalformed.details.taskId,
++		role: "worker",
++		reportOnly: false,
++	});
++	assert.deepEqual(malformedTwice.launches[1].toolBudget, { hard: 0, block: "*" });
++	assert.equal(secondMalformed.details.state, "blocked", "a malformed report-only correction exhausts the single repair");
++	assert.deepEqual(malformedTwice.task(firstMalformed.details.taskId).executions[1].truthPaths, [], "report-only completion adds no truth paths");
++	const launchesBeforeRefusal = malformedTwice.launches.length;
++	await assert.rejects(
++		malformedTwice.call("planner_redelegate", { taskId: firstMalformed.details.taskId, role: "worker", reportOnly: true }),
++		error => error?.code === "TASK_CLOSED",
++	);
++	assert.equal(malformedTwice.launches.length, launchesBeforeRefusal, "second malformed repair blocks without another dispatch");
++
+ 	const longWall = await fixture("large-wall-config", { executionDefaults: { MAX_WALL_MS: 2_147_483_648 } });
+ 	const originalTimer = globalThis.setTimeout;
+ 	const delays = [];
+diff --git a/request-events.ts b/request-events.ts
+index 829ffd1..dec19ed 100644
+--- a/request-events.ts
++++ b/request-events.ts
+@@ -50,8 +50,10 @@ export function reviewFailureFamily(decision?: ReviewDecision): string | undefin
+ export function delegationFailureFamily(outcome: DelegationOutcome): string | undefined {
+ 	const t = outcome.termination;
+ 	if (t) {
++		const execution = outcome.task.executions.find((item) => item.executionId === outcome.executionId);
+ 		if (!t.terminationConfirmed) return "stop-unconfirmed";
+ 		if (t.evidenceIncomplete || t.probeFailures?.length) return "environment";
++		if (t.status === "tool_budget_exhausted" && execution?.reportOnly) return "report-only-tool-budget";
+ 		if (t.anomaly || t.reason === "worker_runaway" || t.status === "tool_budget_exhausted" || t.status === "timed_out") return "budget";
+ 		if (t.reason === "operator_cancel" || t.status === "cancelled" || t.status === "interrupted") return "cancel";
+ 		if (t.errorCode) return requestErrorFamily("transport", { code: t.errorCode });
+diff --git a/types.ts b/types.ts
+index 3d88730..9f7451f 100644
+--- a/types.ts
++++ b/types.ts
+@@ -287,6 +287,7 @@ export type ExecutionEndedReason =
+ 	| "operator_cancel"
+ 	| "timeout"
+ 	| "tool_budget"
++	| "report_only_tool_budget"
+ 	| "provider_failure"
+ 	| "tool_error"
+ 	| "launch_failure";
+@@ -312,6 +313,13 @@ export interface ExecutionEnvelope {
+ 	source: "delegation-param" | "default" | "operator-config";
+ }
+ 
++/** The exact public launcher tool budget sent with one execution. */
++export interface ExecutionToolBudget {
++	soft?: number;
++	hard: number;
++	block?: string[] | "*";
++}
++
+ /**
+  * P0-B — a Root recovery decision (spec §5). P0 wires retry_same_plan /
+  * fix_environment through planner_redelegate and abort through
+@@ -384,6 +392,10 @@ export interface TaskExecutionRecord {
+ 	usageComplete?: boolean;
+ 	/** The finite runaway envelope this ordinary execution ran under. */
+ 	envelope?: ExecutionEnvelope;
++	/** Public launcher capability sent on REQUEST; absent for ordinary executions. */
++	toolBudget?: ExecutionToolBudget;
++	/** Unmodified terminal payload received over the versioned launcher contract. */
++	rawTerminal?: Record<string, unknown>;
+ 	/** P0-B — which envelope bound tripped, with the observed value. */
+ 	runawayObservation?: RunawayObservation;
+ 	/**

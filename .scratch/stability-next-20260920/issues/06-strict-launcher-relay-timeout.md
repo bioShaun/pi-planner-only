@@ -47,3 +47,13 @@ Acceptance:
 2026-09-20（后续）：工单从 ready-for-agent 转为 needs-decision。不再用现有 240 秒预算重跑；下一步取决于用户对 global-budget.patch 的裁定。
 
 2026-09-20（裁定后）：用户接受 A+B。全局入口与协议已按 issue06/global-budget.patch 应用（父 low effort、`REVIEW_READONLY_TIMEOUT` 默认 420、子契约软预算 300 秒），并因第 4 轮暴露的 here-document 探针失败再修订一次提示词。正式门禁第 5 轮（../strict-run-Y59nSS，continuation-20260920-0502/strict-attempt-5-*）exit 0、父子各自 EROFS 证据、child PASS、总时长 253 秒，无残留、零漂移。第 4 轮（../strict-run-IGfEci，strict-attempt-4-*）exit 0 但 BLOCKED，原因与修正见 issue06/diagnosis.md。四条验收项全部满足；工单关闭。
+
+2026-09-20（P1-B 新轮）：strict-run-qgpWLM 外层退出 0，父 low；直接 child Sol/high 实际 278.5 秒，但它额外派生 reviewer，违反单层委派契约。本次不是 strict PASS。嵌套 reviewer 实际 204.5 秒，返回 REQUEST_CHANGES；自报约 250 秒未用于预算统计。已保留 contract/manifests/runtime/verdict，并改为仅子任务的 ReviewRequest；全局入口及角色配置未改。下一轮必须 fresh。
+
+第二个 P1-B 新轮 strict-run-HRTA2r 外层 124；父委派前 55.0 秒，child Sol/high 362.4 秒到最后记录，未完成 verdict，无残留。本次完整源码加全部宿主/P3证据的契约未在预算内完成。下一步将契约拆为代码和证据两个独立门禁，保持全局 420 秒，不机械重复完整契约。
+
+第三个 P1-B 新轮 strict-run-XlcaPu：父委派前45.3秒，child361.5秒返回 REQUEST_CHANGES，外层420秒在转述前超时。PID 泛筛记录1498966在后续检查时已不存在。修复已加入红绿回归及release-run-piF9Rd。代码审查仅单次600秒、child软420；证据审查仍420/300，全局入口/协议/角色未变。
+
+第四轮 strict-run-2FEEMJ：单次600秒，父49.8秒、child469.1秒（超过软420）、父转述完成，外层0，无残留；结果REQUEST_CHANGES，不是PASS。保留实际时间，不宣称软预算强制生效。下一轮审剩余三文件修正，沿用已独立核实的未变化范围。
+
+P1-B最终收尾：ed0kfI代码修正PASS/exit0，child166.3秒。完整证据Bg1P0s child523.9秒PASS，但外层600秒在父转述阶段exit124；原状态保留。fresh收尾dihsWK核验完整审查链及无漂移，child417.6秒PASS，父转述成功、外层0、无残留。soft预算超时如实记录；全局默认420和角色未变，本轮重审使用单次600秒。最终实现与证据详见execution-20260920/closeout.md。

@@ -1,0 +1,11 @@
+{"t":1789896974276,"requests":[],"kind":"host","hook":"input","hasUI":false,"source":"interactive"}
+{"t":1789896974276,"requests":[],"kind":"host","hook":"agent_start","hasUI":false,"mode":"json"}
+{"t":1789896974277,"requests":[],"kind":"host","hook":"message_end","hasUI":false,"mode":"json"}
+{"t":1789896974295,"requests":[],"kind":"host","hook":"before_provider_request","hasUI":false,"mode":"json"}
+{"t":1789896976340,"requests":[],"kind":"host","hook":"message_end","hasUI":false,"mode":"json","model":"gemini-3.8-flash-high","provider":"tcuni-agy","usage":{"input":1633,"output":16,"cacheRead":0,"cacheWrite":0,"reasoning":0,"totalTokens":1649,"cost":{"input":0.00122475,"output":0.00006,"cacheRead":0,"cacheWrite":0,"total":0.0012847499999999999}},"answer":""}
+{"t":1789896976341,"requests":[],"kind":"host","hook":"tool_call","hasUI":false,"mode":"json","toolName":"read"}
+{"t":1789896976343,"requests":[],"kind":"host","hook":"tool_result","hasUI":false,"mode":"json","toolName":"read","isError":false}
+{"t":1789896976343,"requests":[],"kind":"host","hook":"message_end","hasUI":false,"mode":"json"}
+{"t":1789896976344,"requests":[],"kind":"host","hook":"before_provider_request","hasUI":false,"mode":"json"}
+{"t":1789896984393,"requests":[],"kind":"host","hook":"message_end","hasUI":false,"mode":"json","model":"gemini-3.8-flash-high","provider":"tcuni-agy","usage":{"input":1676,"output":27,"cacheRead":0,"cacheWrite":0,"reasoning":0,"totalTokens":1703,"cost":{"input":0.001257,"output":0.00010125000000000001,"cacheRead":0,"cacheWrite":0,"total":0.00135825}},"answer":"The `service.port` value in `fixture.json` is `4317`.\n\nANSWER=4317"}
+{"t":1789896984394,"requests":[],"kind":"host","hook":"agent_settled","hasUI":false,"mode":"json"}

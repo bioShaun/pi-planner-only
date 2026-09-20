@@ -1,0 +1,49 @@
+ M .scratch/stability-next-20260920/ReviewRequest.md
+ M .scratch/stability-next-20260920/acceptance.md
+ M .scratch/stability-next-20260920/continuation-20260920-0502/closeout.md
+ M .scratch/stability-next-20260920/issues/02-delegation.md
+ M .scratch/stability-next-20260920/issues/03-host-stop.md
+ M .scratch/stability-next-20260920/run-study.mjs
+ M .scratch/stability-next-20260920/study-observer.ts
+ M .scratch/stability-next-20260920/study-summary.mjs
+ M .scratch/stability-next-20260920/study-summary.test.mjs
+ M .scratch/stability-next-20260920/transport-capabilities.md
+ M .scratch/stability-next-20260920/tui-driver.py
+ M CONTEXT.md
+ M README.md
+ M README.zh-CN.md
+ M delegate.test.mjs
+ M delegate.ts
+ M evidence.ts
+ M index.ts
+ M ledger-store.ts
+ M orchestrate.ts
+ M p1-delegation.test.mjs
+ M request-events.ts
+ M types.ts
+?? .scratch/stability-next-20260920/.gitignore
+?? .scratch/stability-next-20260920/baseline-model-pin.ts
+?? .scratch/stability-next-20260920/check-harness.mjs
+?? .scratch/stability-next-20260920/execution-20260920/
+?? .scratch/stability-next-20260920/issues/07-execution-duration-and-request-remaining.md
+?? .scratch/stability-next-20260920/release-run-ZrJioW/
+?? .scratch/stability-next-20260920/release-run-ysqfcU/
+?? .scratch/stability-next-20260920/report-only-probe.ts
+?? .scratch/stability-next-20260920/report-only-run-3zZ7ry/
+?? .scratch/stability-next-20260920/report-only-run-xMGYAr/
+?? .scratch/stability-next-20260920/report-only-tool-observer.ts
+?? .scratch/stability-next-20260920/run-execution-terminal.sh
+?? .scratch/stability-next-20260920/run-report-only.mjs
+?? .scratch/stability-next-20260920/study-report.mjs
+?? .scratch/stability-next-20260920/study-report.test.mjs
+?? .scratch/stability-next-20260920/study-run-2VtAyF/
+?? .scratch/stability-next-20260920/study-run-MPl9z4/
+?? .scratch/stability-next-20260920/study-run-PIGkya/
+?? .scratch/stability-next-20260920/study-run-TupxIs/
+?? .scratch/stability-next-20260920/study-run-n8HtMM/
+?? .scratch/stability-next-20260920/study-run-nXFeoe/
+?? .scratch/stability-next-20260920/study-run-vsHbSx/
+?? .scratch/stability-next-20260920/study-run-yL4RzS/
+?? .scratch/stability-next-20260920/tui-proof.test.py
+?? .scratch/stability-next-20260920/tui_proof.py
+?? docs/adr/0009-report-only-submission-capability.md

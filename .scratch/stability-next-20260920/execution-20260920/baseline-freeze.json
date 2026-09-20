@@ -1,0 +1,404 @@
+{
+  "commit": "83a0ad4351300e4537435ce637a995207e221ed0",
+  "checked": 77,
+  "drift": [],
+  "tracked": 75,
+  "note": "Two reverted explorer-model files were intentionally ignored since 2026-09-18. Preserve as byte-identical evidence snapshots, not production files.",
+  "files": [
+    {
+      "path": "CONTEXT.md",
+      "sha256": "3ad38c15a13a803928e9a8f56e9f72ea443accf4f99fb88e8d0524d885640cfb",
+      "inCommit": true
+    },
+    {
+      "path": "README.md",
+      "sha256": "780431e21d4d5fb33b07e3d083f030ed9e57138f2bbc9f66b9659ce33fe2505c",
+      "inCommit": true
+    },
+    {
+      "path": "README.zh-CN.md",
+      "sha256": "0cf3f9cda6433eb52ec8d6cf405bf4488f8e3f9f53bf18f7acf12608bc8344af",
+      "inCommit": true
+    },
+    {
+      "path": "architecture.test.mjs",
+      "sha256": "e706727cc33f4900df380ac7180641db58cea21bde22327164fa7d98c79af4b2",
+      "inCommit": true
+    },
+    {
+      "path": "concurrency.test.mjs",
+      "sha256": "918620290821d09ac8135e2d5a71f36591e2f5952c92f3c7039c24c83debafe8",
+      "inCommit": true
+    },
+    {
+      "path": "concurrency.ts",
+      "sha256": "8d594ce8db234f2a08e127f366f1b16b08383f762c5fa7661fec7c3a95d2ea7a",
+      "inCommit": true
+    },
+    {
+      "path": "delegate.test.mjs",
+      "sha256": "eeb9cb20bd03a68d81d50d585afef0ef8724d761e0ac02f44815a3ed5ebdaee1",
+      "inCommit": true
+    },
+    {
+      "path": "delegate.ts",
+      "sha256": "c8169016e4fc0dea7d4c66f296668884a884037c6ca9326c3dd3f43d578ff78a",
+      "inCommit": true
+    },
+    {
+      "path": "delegation-model.ts",
+      "sha256": "9399d30340addfa3b47ba44aa7dde6c514ea7defe3cf15b45d64297b1a289b6f",
+      "inCommit": true
+    },
+    {
+      "path": "diagnostics-regression.test.mjs",
+      "sha256": "25a1ee22e91453b794c954269347e0248ca470387cb15aaa6c7b0b438924f86f",
+      "inCommit": true
+    },
+    {
+      "path": "diffstat-acceptance.test.mjs",
+      "sha256": "cef01b87e83e7bf371c1e76d871c6e910ed271b06d99c0826be194f1962b8f79",
+      "inCommit": true
+    },
+    {
+      "path": "docs/adr/0006-stored-spec-rebinding.md",
+      "sha256": "790b3fe65cb540312c3a4f1076ff722bc549ae9b707dccec28b8102fa6fb7385",
+      "inCommit": true
+    },
+    {
+      "path": "docs/adr/0007-verify-delegation-model-identity.md",
+      "sha256": "b3c2fe7d2639dd10d5d7a52be03c8e86a2941eea7a819948bf7762e38aaca8dd",
+      "inCommit": true
+    },
+    {
+      "path": "docs/adr/0008-default-execution-wall-clock-ten-minutes.md",
+      "sha256": "8ef749c133d5704e439bfe9f54a8b25a13343258eeac31341916bd116ba50a33",
+      "inCommit": true
+    },
+    {
+      "path": "evidence.test.mjs",
+      "sha256": "0e3ae416c69484146caf40811e9dfddada8bfb43ad4836ee2b1e0cd9d7e2ba94",
+      "inCommit": true
+    },
+    {
+      "path": "evidence.ts",
+      "sha256": "bc1c9f55c834b13330641d430a3652bc7f045f142905f483c73aa89fd34c22d1",
+      "inCommit": true
+    },
+    {
+      "path": "execution-defaults.ts",
+      "sha256": "3c66e87d22c981191da9d6705fcae6d9bcf71438d27023d91de3f2efda376890",
+      "inCommit": true
+    },
+    {
+      "path": "explorer-model-config.test.mjs",
+      "sha256": "60ae2215cd7b219adfeeac33d5f312a3a2ab5e61f9b331e08e726cd80a20a824",
+      "inCommit": false,
+      "snapshot": ".scratch/stability-next-20260920/execution-20260920/ignored-freeze/explorer-model-config.test.mjs.snapshot"
+    },
+    {
+      "path": "explorer-model.ts",
+      "sha256": "bf8c861e81c63e257ceb60ef46fa5da3aedd72f8be63d9e8ae819a18592ebb2c",
+      "inCommit": false,
+      "snapshot": ".scratch/stability-next-20260920/execution-20260920/ignored-freeze/explorer-model.ts.snapshot"
+    },
+    {
+      "path": "floors.test.mjs",
+      "sha256": "496c05ef2da8adce3cda20e92bbdeec8c3fe56088667bc432b51dc7d87c0699b",
+      "inCommit": true
+    },
+    {
+      "path": "floors.ts",
+      "sha256": "9e6fb78e9f07e77ab71ad84065955d4a264bacc5290bcfe9ade48c10dd702ef8",
+      "inCommit": true
+    },
+    {
+      "path": "git-audit.test.mjs",
+      "sha256": "87c2f2425010665ddf96e76b1042bdfa644f5716c4b53d3b0e5f0ac584e2f6e4",
+      "inCommit": true
+    },
+    {
+      "path": "git-audit.ts",
+      "sha256": "121f541b20f86ea432838eb8456ee44d9a999d0d46da760c1547ee11ee461dd1",
+      "inCommit": true
+    },
+    {
+      "path": "index.test.mjs",
+      "sha256": "1976b2afe55dd28585b93d0c9ecaa0777ca7d33539c08a2acbccffa702caa494",
+      "inCommit": true
+    },
+    {
+      "path": "index.ts",
+      "sha256": "86a22a23bef962592540c2538e07c94b144b9d0678c78569b6f7424e347c306c",
+      "inCommit": true
+    },
+    {
+      "path": "ledger-store.test.mjs",
+      "sha256": "e6782af30ca54550c917f09919f916463cf01675321320b0dee53a092cf07012",
+      "inCommit": true
+    },
+    {
+      "path": "ledger-store.ts",
+      "sha256": "cdb89b5bbbe1bce82ede7f322cad82aca4cf0ea2cb007c2025a4899b830bf8c5",
+      "inCommit": true
+    },
+    {
+      "path": "naming.test.mjs",
+      "sha256": "4a9bcdeb607835971a034c3926daf446349690b56c1ac1b7cd621e73bc20a178",
+      "inCommit": true
+    },
+    {
+      "path": "nx04-06.test.mjs",
+      "sha256": "4d65f21008b7f7fea97781721dd025366f3c3dd3e666399e6952d2e11a27ee52",
+      "inCommit": true
+    },
+    {
+      "path": "nx09-scope.test.mjs",
+      "sha256": "1fa4c2129bd64416553620d478e382ccca7402b6c19df2641fb170e8afb8ae07",
+      "inCommit": true
+    },
+    {
+      "path": "nx10-attribution.test.mjs",
+      "sha256": "336299628549837e3bb60089e2f4cddbb0f9b2e7c55439ccc8aa46cdfa75497e",
+      "inCommit": true
+    },
+    {
+      "path": "orchestrate.test.mjs",
+      "sha256": "11cf51a9638f5eba5b1e0951cfdc323370d66f58a2ea3915ea3ed62b5c38039c",
+      "inCommit": true
+    },
+    {
+      "path": "orchestrate.ts",
+      "sha256": "931bac892402648129792c5858139bf9dced34fd35eaf8d1a213b41056548f78",
+      "inCommit": true
+    },
+    {
+      "path": "p1-delegation.test.mjs",
+      "sha256": "cf5aa58cfe211b1dbaa5480680dea0ba0351ee81721d6f0187213f81be3fd291",
+      "inCommit": true
+    },
+    {
+      "path": "package.json",
+      "sha256": "4dfc6c5c9fc995e0bd124ef433e415056a0dac3cb180285749279fd6d95243cf",
+      "inCommit": true
+    },
+    {
+      "path": "policy-cutover.test.mjs",
+      "sha256": "6c3c39710348e3bcf12709d69a0e1d92b9a83fb7a6d809bb88da0977e06a2d3b",
+      "inCommit": true
+    },
+    {
+      "path": "policy.test.mjs",
+      "sha256": "6e3f6fd5f67aff4bbfab38fb46197fe64ea14ddec5c0edcf54dac77c37ae0ae2",
+      "inCommit": true
+    },
+    {
+      "path": "policy.ts",
+      "sha256": "695cd2f7a9d2980d11e928f6ee4a8a2a89eaab82211fede31162fe599ea72483",
+      "inCommit": true
+    },
+    {
+      "path": "refusal-breaker.test.mjs",
+      "sha256": "9eb4e606fc046b34cc2721489e7936e0087c46676c6782ab03126914e6eefb9d",
+      "inCommit": true
+    },
+    {
+      "path": "refusal-breaker.ts",
+      "sha256": "4ace3298fe7b29bf96486229b6647825f12cdd7e693857e5d3aca43d6c331f2e",
+      "inCommit": true
+    },
+    {
+      "path": "report.test.mjs",
+      "sha256": "ecff8fe68fb5e08fd96047e314803c78e95f1927e24ab4ac2be2da88cf5458cf",
+      "inCommit": true
+    },
+    {
+      "path": "report.ts",
+      "sha256": "9f87ff3a9c5b90eca4372a1df6cd03de0fec1089a2c971e64af2657433adda3d",
+      "inCommit": true
+    },
+    {
+      "path": "request-control.test.mjs",
+      "sha256": "82864b08adcc9807b076b970a91eaae84bcb7b3becd86aa34c726728afacec6e",
+      "inCommit": true
+    },
+    {
+      "path": "request-control.ts",
+      "sha256": "b6ed2df27c6c201df5883ed08d47104eb6bc62e2989512ef6eef9065265ae292",
+      "inCommit": true
+    },
+    {
+      "path": "request-events.ts",
+      "sha256": "d2407f825d2f311034c0e454f4d459417fa2abf965f8448a937aa8ccc9d6d58c",
+      "inCommit": true
+    },
+    {
+      "path": "request-stop.test.mjs",
+      "sha256": "3475ef5079aa1469e6d60eb3a19db1c23b28918d63941413c5b7244c2982bd0a",
+      "inCommit": true
+    },
+    {
+      "path": "revalidation-accounting.test.mjs",
+      "sha256": "3b47cdb95440f401dbf5bd8f105be9c47f0d86d862d48145e11828c2dae14713",
+      "inCommit": true
+    },
+    {
+      "path": "review.test.mjs",
+      "sha256": "8b437d0c8f52bde99b28f21ffd86b2dc1ee145b68df926ef6705e7992e9c41da",
+      "inCommit": true
+    },
+    {
+      "path": "review.ts",
+      "sha256": "2250f0ef32b4196a32fea55e7d3be8432e9ca3a815b9aff5c85d58077d9ffea4",
+      "inCommit": true
+    },
+    {
+      "path": "role-models.test.mjs",
+      "sha256": "e0ce4068d84ba2b35e8866a926bb1c320e14db029c675c2432234d328228dd3f",
+      "inCommit": true
+    },
+    {
+      "path": "role-models.ts",
+      "sha256": "51137790860a8033f479539dea34c315cc701216ab11c7df5fa2a688ac27ec9b",
+      "inCommit": true
+    },
+    {
+      "path": "roles.test.mjs",
+      "sha256": "202fbc3fc3f33938dcae0c7b95df11585b2f2a2393651f2b66f242d8f6e086b1",
+      "inCommit": true
+    },
+    {
+      "path": "roles.ts",
+      "sha256": "8fcc1dce02f399c082f742ce30a11450e80dc2b2e8320305483656ae372d9aba",
+      "inCommit": true
+    },
+    {
+      "path": "rs01.test.mjs",
+      "sha256": "53faf7d2310501d19e01b6673c9282c1d3aeb105dfd23436d31b9881cc85cd2d",
+      "inCommit": true
+    },
+    {
+      "path": "rs02-concurrency.test.mjs",
+      "sha256": "016e741ce72f60cab52480a70f7bd403099dec1e7ad407f03dbdfc5ef2808192",
+      "inCommit": true
+    },
+    {
+      "path": "rs02.test.mjs",
+      "sha256": "6430ef0fd53600efa98bb312ce98976702648ce6d4610b0cadd58db8b5e5ce51",
+      "inCommit": true
+    },
+    {
+      "path": "rs03.test.mjs",
+      "sha256": "ff147067a71d44e8d1d2b870a1be27ca95f6e13493b03dbc845cce8403e3a563",
+      "inCommit": true
+    },
+    {
+      "path": "rt06.test.mjs",
+      "sha256": "52dc95cfff9f79a4200c8009fcfb6af69d7f107851226f6d7a4106c740baf18e",
+      "inCommit": true
+    },
+    {
+      "path": "subagent-delegation-contract.ts",
+      "sha256": "01959ff9637552fb351cdf21999bfaf6b73d2191ef2d861dfd183d32cbc5267a",
+      "inCommit": true
+    },
+    {
+      "path": "task.test.mjs",
+      "sha256": "c520a30b72eef791a66eb09fe3f71a6ee22da1d3dade90f988e9d357aee7d1f3",
+      "inCommit": true
+    },
+    {
+      "path": "task.ts",
+      "sha256": "6d64375b465d9b5a7d36a371e476c9eaa72dd9474086ce284a0a2024616fb2d6",
+      "inCommit": true
+    },
+    {
+      "path": "types.ts",
+      "sha256": "2d8a6d3d2c1161927e6487d21a8e4adb1ddc65de12f909c198e7e02fd82d4878",
+      "inCommit": true
+    },
+    {
+      "path": "usage.test.mjs",
+      "sha256": "92aab9ae17cf9f351dad7c15d173352b2d23edab86211217b13268bb8262253a",
+      "inCommit": true
+    },
+    {
+      "path": "usage.ts",
+      "sha256": "bbeb092a06cce76adfb34cb39a4dc04c5bf4f0a27f2b09fe3148506cb8634c71",
+      "inCommit": true
+    },
+    {
+      "path": "workspace-snapshot.test.mjs",
+      "sha256": "bb8ac0ac0af881c55c71a34883a15ff55d6eb19c343e528f44ca5299ba44a5a2",
+      "inCommit": true
+    },
+    {
+      "path": "workspace-snapshot.ts",
+      "sha256": "fca7f06682705f4af8e050a7a2e8eca9a00007528d0463e21ef053b12f5d5280",
+      "inCommit": true
+    },
+    {
+      "path": ".scratch/stability-next-20260920/run-study.mjs",
+      "sha256": "094990c8c6b4cad08d97cbc2e5455f0a289fc86ba16d901b5e3646bc4d013dd7",
+      "inCommit": true
+    },
+    {
+      "path": ".scratch/stability-next-20260920/study-observer.ts",
+      "sha256": "163378a13922c2cc9c8e24fd527a7ed68b901a1d2ca7473e88ea158544e16a40",
+      "inCommit": true
+    },
+    {
+      "path": ".scratch/stability-next-20260920/study-summary.mjs",
+      "sha256": "853639ad5a2b6a3b01c2e4e7bac01ba9b0858de63479e2e1d0316f6b684ad666",
+      "inCommit": true
+    },
+    {
+      "path": ".scratch/stability-next-20260920/study-summary.test.mjs",
+      "sha256": "c9a52b60cda6a5c8a25e442851dea04c1d4ae969ff3b2495486b647eea9e04d7",
+      "inCommit": true
+    },
+    {
+      "path": ".scratch/stability-next-20260920/tui-driver.py",
+      "sha256": "7c3b333e96f0ca5907dd80d702f8b88fb1b9737fd9eeeac3bf1898d597a0b958",
+      "inCommit": true
+    },
+    {
+      "path": ".scratch/stability-next-20260920/run-release-terminal.sh",
+      "sha256": "cf8dbc487101ef922cf6cfbd74deac82f4007e706cb307ac374460ee372dae44",
+      "inCommit": true
+    },
+    {
+      "path": ".scratch/stability-next-20260920/sdk-stop-probe.mjs",
+      "sha256": "22e1d9354976f61bfdbf0ccc4df5cad3a8016588013452f705206d7d903061db",
+      "inCommit": true
+    },
+    {
+      "path": ".scratch/stability-next-20260920/slot-audit-gate.mjs",
+      "sha256": "6b86fcb1a0ae07c1e135d195451bd6629506cbd9d2a5c2788e83fa84224f7a65",
+      "inCommit": true
+    },
+    {
+      "path": ".scratch/stability-next-20260920/slot-audit-gate.test.mjs",
+      "sha256": "c12835e4779775a178a4c057b68073cb6468f19bb4859377cdc77b7988e1ea8a",
+      "inCommit": true
+    },
+    {
+      "path": ".scratch/stability-next-20260920/run-strict-terminal.sh",
+      "sha256": "ebd9d23f2d887706a4660582ebaf72e1b1eac295aa1bbb4ced632f6cd06d1ab0",
+      "inCommit": true
+    },
+    {
+      "path": ".scratch/stability-next-20260920/terminal-validation.md",
+      "sha256": "1d42b44362d61e040f83c6edc76dc42226fcfcc41066951346eb235e35fbeb51",
+      "inCommit": true
+    }
+  ],
+  "startedAt": "2026-09-20T08:18:36.454112+00:00",
+  "measurement": {
+    "root": "kimi-coding/kimi-for-coding",
+    "child": "tcuni-luna/gpt-5.6-luna",
+    "thinking": "low",
+    "monetaryCost": null,
+    "userChoice": "token/completion/latency only"
+  }
+}

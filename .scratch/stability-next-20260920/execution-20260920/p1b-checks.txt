@@ -1,0 +1,11 @@
+npm run typecheck
+TMPDIR=/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/execution-20260920/p1b-tmp
+exit=0
+raw_log=.scratch/stability-next-20260920/execution-20260920/p1b-typecheck.log
+
+npm run test:p1
+TMPDIR=/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/execution-20260920/p1b-tmp
+exit=0
+raw_log=.scratch/stability-next-20260920/execution-20260920/p1b-test-p1.log
+
+delegate.test.mjs was not run in the sandbox because project instructions require child-process tests to run from a normal terminal or CI.

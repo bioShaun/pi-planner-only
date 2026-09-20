@@ -1,20 +1,24 @@
 // Ordinary terminal ONLY. Never execute in a sandboxed agent executor.
 // Required env: STUDY_ROOT_MODEL=provider/model, STUDY_CHILD_MODEL=provider/model.
 // Optional: STUDY_THINKING=low, STUDY_MODELS_FILE, STUDY_AUTH_FILE, STUDY_ARM,
-// STUDY_CASE=count|json|edit. --tui runs only optimized deadline-stop via real PTY.
+// STUDY_CASE=count|json|edit, STUDY_REPEATS=1..5. --tui --tui-scenario=queued|scheduled|combined uses the real PTY.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { summarize, assessQuality } from './study-summary.mjs';
+import { summarize, assessQuality, verifyModelIdentity } from './study-summary.mjs';
 import { assertClearSlotAudit } from './slot-audit-gate.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '../..');
 const launcher = path.join(os.homedir(), '.pi/agent/npm/node_modules/pi-subagents');
 const baseline = '85bdd2a93b994d3e4894e7534ab91cf6b16c9043';
 const tui = process.argv.includes('--tui');
+const tuiScenario = process.argv.find(a=>a.startsWith('--tui-scenario='))?.split('=')[1] ?? 'plain';
+if (!['plain','queued','scheduled','combined'].includes(tuiScenario)) throw new Error('invalid TUI scenario');
+const repeats = tui ? 1 : Number(process.env.STUDY_REPEATS ?? 1);
+if (!Number.isInteger(repeats) || repeats < 1 || repeats > 5) throw new Error('STUDY_REPEATS must be 1..5');
 function model(key) {
  const raw = process.env[key];
  if (!raw || !/^[^/\s]+\/\S+$/.test(raw)) throw new Error(`${key}=provider/model is required`);
@@ -62,9 +66,20 @@ cases.json.prompt = cases.json.prompt.replace('ANSWER=4317','ANSWER=<port>');
 const arms = tui ? ['optimized'] : process.env.STUDY_ARM ? [process.env.STUDY_ARM] : ['direct','baseline','optimized'];
 const names = tui ? ['stop'] : process.env.STUDY_CASE ? [process.env.STUDY_CASE] : ['count','json','edit'];
 if (arms.some(a=>!['direct','baseline','optimized'].includes(a)) || names.some(n=>!cases[n])) throw new Error('invalid arm/case');
+const schedule=[];
+for(let repeat=0;repeat<repeats;repeat++) for(const [caseIndex,name] of names.entries()) {
+ const rotation=(repeat+caseIndex)%arms.length;
+ const order=[...arms.slice(rotation),...arms.slice(0,rotation)];
+ for(const arm of order) schedule.push({repeat:repeat+1,arm,name});
+}
+write('design.json',{repeats,tuiScenario,baseline,rootModel:rootModel.raw,childModel:childModel.raw,thinking,
+ order:'Deterministic rotation by repetition and task; fixed before the first trial',
+ localCache:'Fresh isolated workspace and agent session per trial',providerCache:'Uncontrolled; cache usage retained',
+ prices:'User selected token/completion/latency only; monetaryCost=null',
+ baselineModelControl:'Private agentOverrides for builtins; public runtime-agent-register:v1 model/thinking fields for planner-scout, applied before launcher. Baseline source and tools unchanged.',schedule});
 const results=[];
-for (const arm of arms) for (const name of names) {
- const label=`${arm}-${name}`, c=cases[name];
+for (const {arm,name,repeat} of schedule) {
+ const label=`${repeats>1?'r'+repeat+'-':''}${arm}-${name}`, c=cases[name];
  const dir=path.join(runtime,label);fs.mkdirSync(dir);
  const work=path.join(dir,'workspace'), agent=path.join(dir,'agent');fs.mkdirSync(work);fs.mkdirSync(agent,{mode:0o700});
  for(const [file,body] of Object.entries(c.files)) fs.writeFileSync(path.join(work,file),body);
@@ -74,15 +89,18 @@ for (const arm of arms) for (const name of names) {
  for(const [file,source] of [['models.json',process.env.STUDY_MODELS_FILE??path.join(os.homedir(),'.pi/agent/models.json')],['auth.json',process.env.STUDY_AUTH_FILE??path.join(os.homedir(),'.pi/agent/auth.json')]]) {
   if(fs.existsSync(source)) {fs.copyFileSync(source,path.join(agent,file));fs.chmodSync(path.join(agent,file),0o600);}
  }
- fs.writeFileSync(path.join(agent,'settings.json'),'{}\n');
+ const settings=arm==='baseline'?{subagents:{agentOverrides:Object.fromEntries(['worker','oracle','reviewer'].map(name=>[name,{model:childModel.raw,thinking}]))}}:{};
+ fs.writeFileSync(path.join(agent,'settings.json'),JSON.stringify(settings)+'\n');
+ write(`${label}-model-control.json`,{settings,runtimeScout:arm==='baseline'?{model:childModel.raw,thinking}:null});
  const eventFile=path.join(evidence,`${label}-events.jsonl`);
  const env={...cleanEnv,PI_CODING_AGENT_DIR:agent,PI_PLANNER_ONLY:arm==='direct'?'0':'1',PI_PLANNER_ONLY_SEED_PRICING:'0',STUDY_EVENTS:eventFile};
  if(arm==='optimized') {
   env.PI_PLANNER_ONLY_ROLE_MODELS='1';
   for(const role of ['WORKER','EXPLORER','VALIDATOR','REVIEWER']) {env[`PI_PLANNER_ONLY_MODEL_${role}`]=childModel.raw;env[`PI_PLANNER_ONLY_THINKING_${role}`]=thinking;}
  }
- if(tui) env.PI_PLANNER_ONLY_REQUEST_ACTIVE_MS='45000';
+ if(tui) { env.PI_PLANNER_ONLY_REQUEST_ACTIVE_MS='45000'; env.STUDY_TUI_SCENARIO=tuiScenario; env.PYTHONDONTWRITEBYTECODE='1'; }
  const args=[...(tui?[]:['-p','--mode','json']),'--no-extensions','--no-skills','--no-prompt-templates',
+  ...(arm==='baseline'?['-e',path.join(here,'baseline-model-pin.ts')]:[]),
   ...(arm==='direct'?[]:['-e',path.join(launcher,'index.ts'),'-e',path.join(arm==='baseline'?old:repo,'index.ts')]),
   '-e',path.join(here,'study-observer.ts'),'--provider',rootModel.provider,'--model',rootModel.id,'--thinking',thinking,c.prompt];
  // Capture both preflights before each paid/heavy run. Do not kill other jobs.
@@ -97,18 +115,24 @@ for (const arm of arms) for (const name of names) {
  let commandArgs=['cpu','--','timeout','300','pi',...args];
  if(tui) {
   const commandFile=path.join(dir,'command.json');fs.writeFileSync(commandFile,JSON.stringify(['pi',...args]));
-  commandArgs=['cpu','--','python3',path.join(here,'tui-driver.py'),commandFile,eventFile,path.join(evidence,`${label}-pty.json`)];
+  commandArgs=['cpu','--','python3',path.join(here,'tui-driver.py'),commandFile,eventFile,path.join(evidence,`${label}-pty.json`),tuiScenario];
  }
  const started=Date.now();
  const result=spawnSync('slot',commandArgs,{cwd:work,env,stdio:['ignore',stdout,stderr]});fs.closeSync(stdout);fs.closeSync(stderr);
  const events=fs.existsSync(eventFile)?fs.readFileSync(eventFile,'utf8').trim().split('\n').filter(Boolean).map(l=>JSON.parse(l)):[];
  const summary=summarize(events);
+ const identity=verifyModelIdentity(events,{rootModel:rootModel.raw,childModel:childModel.raw,thinking});
  const changed=run('git',['status','--porcelain'],{cwd:work}).trim();
  const quality=tui?null:assessQuality({name, expected:c.expected, answer:summary.finalAnswer, changed,
   fileText:name==='edit' && fs.existsSync(path.join(work,'value.json')) ? fs.readFileSync(path.join(work,'value.json'),'utf8') : undefined});
- const row={arm,case:name,status:result.status,signal:result.signal,error:result.error?.code,durationMs:Date.now()-started,quality,...summary};
- results.push(row);write(`${label}-summary.json`,row);
+ const row={arm,case:name,repeat,label,status:result.status,signal:result.signal,error:result.error?.code,durationMs:Date.now()-started,quality,identity,changed,sentinelExists:tui?fs.existsSync(path.join(work,'done.txt')):undefined,...summary};
+ results.push(row);write(`${label}-summary.json`,row);write('results.json',results);
+ console.log(JSON.stringify({label,status:row.status,quality,childClaims:row.childClaims,durationMs:row.durationMs,evidence}));
+ if(!identity.verified) { console.error('Actual model identity is unproven; stopping the predefined schedule. Retain this incomplete run.'); break; }
 }
 write('results.json',results);
+const sourceAfter=Object.fromEntries(Object.keys(versions.source).map(f=>[f,createHash('sha256').update(fs.readFileSync(path.join(repo,f))).digest('hex')]));
+write('source-after.json',sourceAfter);
+if(JSON.stringify(sourceAfter)!==JSON.stringify(versions.source)) throw new Error('Source drift during study');
 console.log(`Evidence: ${evidence}\nPrivate runtime: ${runtime}\nNo price/savings conclusion; examine each quality, usage completeness, route identity and TUI trace.`);
-if(results.some(r=>r.status!==0 || r.signal || r.error || r.quality===false)) process.exitCode=1;
+if(results.length!==schedule.length || results.some(r=>r.status!==0 || r.signal || r.error || r.quality===false || !r.identity.verified || r.sentinelExists===true || (tui&&r.changed!==''))) process.exitCode=1;

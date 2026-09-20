@@ -1,0 +1,4 @@
+{"label":"optimized-stop","status":2,"quality":null,"childClaims":0,"durationMs":150190,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-nXFeoe"}
+Evidence: /home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-nXFeoe
+Private runtime: /project/tmp/planner-study-ACaK9C
+No price/savings conclusion; examine each quality, usage completeness, route identity and TUI trace.

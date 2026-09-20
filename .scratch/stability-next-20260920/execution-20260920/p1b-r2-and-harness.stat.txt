@@ -1,0 +1,17 @@
+ .scratch/stability-next-20260920/acceptance.md     |   2 +
+ .../continuation-20260920-0502/closeout.md         |   2 +
+ .scratch/stability-next-20260920/run-study.mjs     |  34 +++-
+ .scratch/stability-next-20260920/study-observer.ts |  46 +++--
+ .../transport-capabilities.md                      |   6 +-
+ .scratch/stability-next-20260920/tui-driver.py     |  65 +++---
+ CONTEXT.md                                         |   4 +
+ README.md                                          |  11 +-
+ README.zh-CN.md                                    |   4 +-
+ delegate.test.mjs                                  |   2 +
+ delegate.ts                                        | 194 ++++++++++++++++--
+ index.ts                                           |  22 +++
+ ledger-store.ts                                    |  18 +-
+ p1-delegation.test.mjs                             | 218 ++++++++++++++++++++-
+ request-events.ts                                  |   2 +
+ types.ts                                           |  16 ++
+ 16 files changed, 571 insertions(+), 75 deletions(-)

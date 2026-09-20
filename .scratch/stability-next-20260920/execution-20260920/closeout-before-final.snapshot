@@ -1,0 +1,35 @@
+# 执行清单收尾（2026-09-20）
+
+任务：`../handoff-20260920.md`。原 P1-A / stop / P2 已先提交为 `83a0ad4351300e4537435ce637a995207e221ed0`。77 项磁盘哈希零漂移，75 项在该提交；两份原先已忽略的旧 explorer-model 原型以相同字节归档，见 baseline-freeze.json。未推送或发布。
+
+本轮 P1-B 按用户确认改成仅允许报告提交的能力，普通请求不带该预算，修复轮持久化预算、来源身份与原始终态，拒绝角色/并发绕过，不新增 Truth paths。有效修复经 review 后可完成；第二次畸形报告及虚报路径不能完成。预算前 partial grace 与原始 malformed-output 诊断仍 unsupported。ADR-0009 和能力矩阵同步。
+
+| 验收项 | 命令 / 退出码 | 原始证据 |
+|---|---|---|
+| 专用报告工具 | `bash run-execution-terminal.sh probe` / 0 | `../report-only-run-3zZ7ry`；唯一工具 structured_output，一次成功调用，无文件变化 |
+| TUI queued | `bash run-execution-terminal.sh tui queued` / 0 | `../study-run-vsHbSx` |
+| TUI scheduled | `bash run-execution-terminal.sh tui scheduled` / 0 | `../study-run-TupxIs` |
+| TUI combined | `bash run-execution-terminal.sh tui combined` / 0 | `../study-run-2VtAyF` |
+| P3 三组对照 | `bash run-execution-terminal.sh study` / 0 | `../study-run-yL4RzS`；27 次完整执行 |
+| 文件快照/汇总 | `node execution-20260920/finalize-study.mjs study-run-yL4RzS` / 0 | `p3-finalize.log`、run 中 quality-audit.json、study-summary.json/md |
+| 最终全量 release | `bash run-execution-terminal.sh release` / 0 | `../release-run-GJqscr`；`npm run test:release`，60 个受检文件前后无漂移 |
+| 最终 harness | `bash run-execution-terminal.sh harness` / 0 | `harness-run-20260920T103158Z.log` |
+| strict gate | 待本次独立只读 launcher 结果 | 冻结范围见 source-manifest.json / harness-manifest.json |
+
+表中 shell 命令的入口都位于 `../`，完整 argv、起止时间、stdout/stderr、exit、slot audit/status 及前后哈希在 execution-20260920 和相应 run 目录。子进程测试与真实宿主均在普通终端运行；重任务按 slot 排队；运行时仅在 /project/tmp，凭据未复制进证据目录。
+
+TUI 三场景均为真实 hasUI/mode:tui，关闭前 queued 输入和关闭并 settled 后 scheduled 输入分别有原始钩子；按时间顺序计算关闭后 provider/tool/REQUEST 0/0/0，Request 身份不变、CANCEL/terminal 匹配，最终 confirmed/settled，静默三秒后自然退出 0、无强制清理。独立复杂验证见 host-validation.md；不外推到所有宿主模式。
+
+P3 最终模型为 Gemini Root / Luna child、low。direct / baseline / optimized 均 9/9 完成，总 token 分别 54,524 / 815,498 / 846,506；延迟中位数 7.56 / 35.59 / 34.88 秒。缓存量、逐任务结果、实际身份及文件质量见原始 summary 和 quality-audit。只作小任务描述，不宣称省钱或优化组整体更省 token；Root 读取政策未放宽。
+
+ADR-0008 将十分钟保留为操作默认值定稿，明确未证明统计最优；20 个 child launcher duration 最大 29,839ms，这组短任务无法区分五分钟和十分钟。插件时长与 Request 剩余时间可见性、长任务校准独立列为工单 07，本轮不近似实现。
+
+源码版本边界：报告工具真实探针后只改了来源比较；TUI/P3 后又补强 `evidence.ts` / `orchestrate.ts` 的虚报路径边界。各运行保存自己的源码/脚本哈希，`pre-truth-hardening.patch` 与同名 source.json 保留 P3 所测版本。之后又补齐 delegated reviewer 的修复来源绑定、当前文件新鲜度，以及原执行结束到修复派发之间的连续性检查；最终虚报路径及 reviewer 入口用真实插件入口红绿回归和新的全量 release 验证，不能把旧 run 哈希描述为最终代码。严格审查须同时核对差异和证据适用范围。
+
+失败均保留：零预算 probe 同时拦住报告工具；首个 queued TUI 因 editor 恢复文字没有自然退出；Kimi 403 与 DeepSeek 502/503 在 REQUEST 前失败；新增身份测试变量重名；虚报路径红例；第一次补强后的 release-run-ZrJioW 暴露旧断言仍要求放行。首次新 strict 的额外子代理违反契约，且发现 reviewer 路径缺少修复来源绑定；红例和 release-run-gHbmWh 的漂移拒绝失败均保留，最终 release-run-GJqscr 通过。最终断言审计没有删除断言，两条旧期望被加强，逐条解释在 assertion-audit.json。
+
+最终提交号：待 strict gate 完成后冻结提交并回填。
+
+后续门禁记录：qgpWLM 为 REQUEST_CHANGES 且误派生额外子代理；HRTA2r 超时 124、无最终 verdict；XlcaPu child 在 361.5 秒返回 REQUEST_CHANGES（修复派发前漂移），父转述仍超时 124。原始证据均在对应 strict-run。上述缺口已复现并修复；最后全量 release 为 piF9Rd。当前改用独立代码/证据两轮，代码单次 600 秒、证据 420 秒；全局默认与角色不变。
+
+第四个代码门禁 strict-run-2FEEMJ 正常退出0、child REQUEST_CHANGES；发现只读 Explorer 修复可虚报变化。已补齐只读修复声明校验及两条验收路径的四种反例，保留 prior-Truth 正例；最新完整 release 为 GJqscr。该 reviewer 实际469.1秒，超过软420，未宣称软预算有效。下一轮仅审相对其冻结状态的三文件修正，未变化的广泛代码审查证据保留。

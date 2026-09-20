@@ -1,0 +1,14 @@
+{
+  "accepted": true,
+  "scope": "final acceptance closure of completed independent code and host/P3 reviews",
+  "launcherExit": 0,
+  "parentEffort": "low",
+  "childModel": "gpt-5.6-sol",
+  "childEffort": "high",
+  "childElapsedSeconds": 417.6,
+  "forkTurns": "none",
+  "nestedDelegation": false,
+  "sourceFiles": 66,
+  "harnessFiles": 25,
+  "failedOuterExitPreserved": "strict-run-Bg1P0s:124"
+}

@@ -1,0 +1,3 @@
+{"at":"2026-09-20T09:06:52.863Z","hook":"agent_start","sessionId":"01a0be11-7f3c-75c7-99cc-28c70478d010","tools":["structured_output"]}
+{"at":"2026-09-20T09:06:57.745Z","hook":"tool_call","toolName":"structured_output"}
+{"at":"2026-09-20T09:06:57.745Z","hook":"tool_result","toolName":"structured_output","isError":false}

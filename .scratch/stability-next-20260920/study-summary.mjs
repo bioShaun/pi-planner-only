@@ -34,3 +34,17 @@ export function assessQuality({ name, expected, answer, changed, fileText }) {
  try { return JSON.stringify(JSON.parse(fileText)) === '{"enabled":true}' && changed === 'M value.json'; }
  catch { return false; }
 }
+
+/** Verify actual terminal identities, including every failed attempt. */
+export function verifyModelIdentity(events, {rootModel, childModel, thinking}) {
+ const roots=events.filter(e=>e.kind==="host"&&e.hook==="message_end"&&e.model);
+ const requests=events.filter(e=>e.kind==="launcher"&&e.event==="request");
+ const terminals=events.filter(e=>e.kind==="launcher"&&e.event==="response");
+ const same=(a,b)=>["requestId","ownerRunId","nodeId"].every(k=>a[k]&&a[k]===b[k]);
+ const rootVerified=roots.length>0&&roots.every(e=>`${e.provider}/${e.model}`===rootModel);
+ const childVerified=requests.every(r=>terminals.some(t=>same(r,t)))
+  &&terminals.every(t=>requests.some(r=>same(r,t))
+   &&[childModel,childModel+":"+thinking].includes(t.model)&&t.thinking===thinking);
+ return {verified:rootVerified&&childVerified,rootVerified,childVerified,
+  expected:{rootModel,childModel,thinking},rootObservations:roots.length,childTerminals:terminals.length};
+}

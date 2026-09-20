@@ -1,0 +1,23 @@
+{
+  "accepted": true,
+  "scope": "bounded correction; unchanged broad implementation reviewed in strict-run-2FEEMJ",
+  "launcherExit": 0,
+  "runtime": {
+    "parent": {
+      "spawns": [
+        {
+          "agent_type": "astra_reviewer",
+          "task_name": "independent_review",
+          "fork_turns": "none"
+        }
+      ],
+      "runtimeProbeEvidence": "parent-permission-evidence.jsonl"
+    },
+    "child": {
+      "spawns": [],
+      "runtimeProbeEvidence": "child-permission-evidence.jsonl"
+    }
+  },
+  "sourceFiles": 66,
+  "harnessFiles": 25
+}

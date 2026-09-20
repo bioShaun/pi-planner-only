@@ -62,7 +62,7 @@ const OPTIONAL_BOOLEAN_FIELDS = ["standaloneExplorer", "isPlaceholder", "titleAl
 function executionShapeError(value: unknown, index: number): string | undefined {
 	const label = `task.executions[${index}]`;
 	if (!isPlainObject(value)) return `${label} must be an object`;
-	for (const field of ["executionId", "kind", "status", "capability", "capabilityBasis", "runId", "cwd", "endedReason", "endedAt", "confirmationBasis", "unacceptedReportReason"] as const) {
+	for (const field of ["executionId", "kind", "status", "capability", "capabilityBasis", "reportOnlyAgent", "reportOnlyCapabilityBasis", "runId", "cwd", "endedReason", "endedAt", "confirmationBasis", "unacceptedReportReason"] as const) {
 		if (value[field] !== undefined && typeof value[field] !== "string") return `${label}.${field} must be a string`;
 	}
 	if (typeof value.executionId !== "string") return `${label}.executionId must be a string`;
@@ -81,6 +81,22 @@ function executionShapeError(value: unknown, index: number): string | undefined 
 		if (value.envelope.maxTokens === undefined && value.envelope.maxWallMs === undefined) {
 			return `${label}.envelope requires maxTokens or maxWallMs`;
 		}
+	}
+	if (value.toolBudget !== undefined) {
+		if (!isPlainObject(value.toolBudget)) return `${label}.toolBudget must be an object`;
+		if (!Number.isSafeInteger(value.toolBudget.hard) || (value.toolBudget.hard as number) < 0) {
+			return `${label}.toolBudget.hard must be a non-negative finite safe integer`;
+		}
+		if (value.toolBudget.soft !== undefined && (!Number.isSafeInteger(value.toolBudget.soft) || (value.toolBudget.soft as number) < 0)) {
+			return `${label}.toolBudget.soft must be a non-negative finite safe integer`;
+		}
+		if (value.toolBudget.block !== undefined && value.toolBudget.block !== "*"
+			&& (!Array.isArray(value.toolBudget.block) || value.toolBudget.block.some((item) => typeof item !== "string"))) {
+			return `${label}.toolBudget.block must be "*" or an array of strings`;
+		}
+	}
+	if (value.rawTerminal !== undefined && !isPlainObject(value.rawTerminal)) {
+		return `${label}.rawTerminal must be an object`;
 	}
 	const probeFailuresError = (sample: Record<string, unknown>, sampleLabel: string): string | undefined => {
 		if (sample.probeFailures === undefined) return undefined;

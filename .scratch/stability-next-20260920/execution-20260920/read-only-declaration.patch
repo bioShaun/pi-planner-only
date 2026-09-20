@@ -1,0 +1,125 @@
+--- .scratch/stability-next-20260920/strict-run-2FEEMJ/evidence.ts.snapshot	2026-09-20 18:57:06.574475672 +0800
++++ evidence.ts	2026-09-20 18:57:59.936257481 +0800
+@@ -1509,9 +1509,10 @@
+ 		),
+ 	);
+ 	const extraDeclaredPaths: string[] = [];
+-	if (!options.readOnly) {
++	if (!options.readOnly || options.reportOnly) {
+ 		for (const path of inRepoDeclared) {
+-			if (!truthSet.has(path) && !gapAffectedPaths.has(path) && !priorTruth.has(path)) extraDeclaredPaths.push(path);
++			const originBasis = !options.readOnly && (truthSet.has(path) || gapAffectedPaths.has(path));
++			if (!originBasis && !priorTruth.has(path)) extraDeclaredPaths.push(path);
+ 		}
+ 	}
+ 
+@@ -1522,7 +1523,7 @@
+ 	}
+ 
+ 	const missingPaths: string[] = [];
+-	if (verifiable && !headChanged && !options.readOnly) {
++	if (verifiable && !headChanged && (!options.readOnly || options.reportOnly)) {
+ 		for (const path of inRepoDeclared) {
+ 			if (currentPaths.has(path)) continue;
+ 			// RF-1 — paths committed (T2) or content-changed on a baseline-dirty
+@@ -1757,7 +1758,7 @@
+ 		const inAllowList = hasAllowList && inScopeEarly(path);
+ 		// A read-only execution may overlap a writer in the same worktree. Its
+ 		// window is still useful evidence, but observed paths are never charged
+-		// to the read-only report or turned into declaration findings.
++		// as its mutations. Explicit repair declarations are checked below.
+ 		if (options.readOnly) {
+ 			observedExternalPaths.push(path);
+ 			externalPaths.push(path);
+@@ -1823,7 +1824,7 @@
+ 
+ 	// Branch 3 (unchanged): evidence complete and no task change, or out-of-scope/undeclared-without-basis
+ 	const extraDeclaredPaths = options.readOnly
+-		? []
++		? options.reportOnly ? inRepoDeclared.filter((path) => !priorTruth.has(path)) : []
+ 		: inRepoDeclared.filter(
+ 			(path) => !attributed.has(path) && !truthSet.has(path) && !attributionGapPaths.includes(path) && !priorTruth.has(path),
+ 		);
+@@ -1832,7 +1833,7 @@
+ 		aRun.finalGitRef && cReport.finalGitRef && aRun.finalGitRef !== cReport.finalGitRef,
+ 	);
+ 	const missingPaths: string[] = [];
+-	if (verifiable && !headChanged && !options.readOnly) {
++	if (verifiable && !headChanged && (!options.readOnly || options.reportOnly)) {
+ 		for (const path of inRepoDeclared) {
+ 			if (currentPaths.has(path)) continue;
+ 			if (committedPaths.has(path) || t3.includes(path)) continue;
+@@ -1868,7 +1869,7 @@
+ 	}
+ 
+ 	const findings: TruthFindingDraft[] = [];
+-	if (verifiable && !options.readOnly) {
++	if (verifiable && (!options.readOnly || options.reportOnly)) {
+ 		if (undeclaredPaths.length > 0) findings.push({ kind: "undeclared", paths: sorted(undeclaredPaths) });
+ 		if (outOfScopePaths.length > 0) findings.push({ kind: "scope", paths: sorted(outOfScopePaths) });
+ 		// Attribution gaps remain an execution-window concern. A report-only
+--- .scratch/stability-next-20260920/strict-run-2FEEMJ/evidence.test.mjs.snapshot	2026-09-20 18:57:06.574557296 +0800
++++ evidence.test.mjs	2026-09-20 18:58:32.303819478 +0800
+@@ -1350,6 +1350,21 @@
+ 	assert.deepEqual(readOnly.observedExternalPaths, ["/repo/src/a.ts", "/repo/src/other.ts"]);
+ }
+ 
++// Report correction validates declarations even for a read-only origin.
++// Observing another writer's change does not establish ownership; prior
++// Task Truth is still a valid basis for a cumulative declaration.
++for (const compare of [compareEvidence, compareExecutionTruth]) {
++	const base = makeBase({ changedPaths: [] });
++	const current = makeCurrent({ changedPaths: ["src/a.ts"] });
++	const report = makeReport({ changedPaths: ["src/a.ts"] });
++	const options = { readOnly: true, reportOnly: true };
++	const unsupported = compare(base, current, report, options);
++	assert.deepEqual(unsupported.extraDeclaredPaths, ["/repo/src/a.ts"], "read-only observation cannot justify a repair declaration");
++	const supported = compare(base, current, report, { ...options, priorTruthPaths: ["/repo/src/a.ts"] });
++	assert.deepEqual(supported.extraDeclaredPaths, [], "recorded prior Truth still supports cumulative declarations");
++	assert.deepEqual(supported.missingPaths, []);
++}
++
+ console.log("planner-only evidence: PASS");
+ 
+ // --------------------------------------------------------------------------
+--- .scratch/stability-next-20260920/strict-run-2FEEMJ/p1-delegation.test.mjs.snapshot	2026-09-20 18:57:06.574632038 +0800
++++ p1-delegation.test.mjs	2026-09-20 18:57:06.770334362 +0800
+@@ -499,6 +499,38 @@
+ 		}
+ 	}
+ 
++	for (const ending of ["root", "reviewer"]) {
++		for (const initialState of ["absent", "preexisting"]) {
++			const name = `report-only-explorer-${ending}-${initialState}`;
++			const explorerRepair = await fixture(name, {
++				responseFor(_request, launch, terminal) {
++					if (launch === 1) return { result: undefined };
++					if (launch === 2) {
++						const value = structuredClone(terminal.result.value);
++						value.changedFiles = ["invented.txt"];
++						value.evidence.changedPaths = ["invented.txt"];
++						return { result: { kind: "structured", value } };
++					}
++				},
++			});
++			if (initialState === "preexisting") explorerRepair.gitPaths = ["invented.txt"];
++			const malformed = await explorerRepair.call("planner_delegate", { ...definition, role: "explorer" });
++			await explorerRepair.call("planner_redelegate", { taskId: malformed.details.taskId, role: "explorer" });
++			if (ending === "root") {
++				await explorerRepair.call("planner_verdict", { taskId: malformed.details.taskId, verdict: "pass", summary: "review readonly correction" });
++			} else {
++				await explorerRepair.call("planner_redelegate", { taskId: malformed.details.taskId, role: "reviewer" });
++			}
++			const finalTask = explorerRepair.task(malformed.details.taskId);
++			assert.equal(finalTask.executions[0].readOnly, true, `${name}: immutable origin is read-only`);
++			assert.deepEqual(finalTask.executions[1].truthPaths, [], `${name}: repair adds no Truth`);
++			assert.notEqual(finalTask.state, "completed", `${name}: fabricated readonly declaration cannot complete`);
++			assert.ok(finalTask.findings.some((finding) => finding.status === "open"
++				&& (finding.kind === "over-declared" || finding.kind === "missing")
++				&& finding.paths.some((path) => path.endsWith("/invented.txt"))), `${name}: declaration finding remains open`);
++		}
++	}
++
+ 	async function assertFabricatedReportPathRejected(name, initialPaths, declaredPaths) {
+ 		let fabricatedRepair;
+ 		fabricatedRepair = await fixture(name, {

@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/tui-driver.py", line 27, in <module>
+    ready, _, _ = select.select([fd], [], [], 0.05)
+                  ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt

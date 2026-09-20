@@ -1,0 +1,8 @@
+{
+  "host": "0.85.1",
+  "launcher": "0.69.0",
+  "rootModel": "kimi-coding/kimi-for-coding",
+  "childModel": "tcuni-luna/gpt-5.6-luna",
+  "thinking": "low",
+  "runtime": "/project/tmp/planner-zero-tools-palS4M"
+}

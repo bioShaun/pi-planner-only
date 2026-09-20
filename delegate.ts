@@ -33,7 +33,7 @@ import {
 } from "./subagent-delegation-contract.ts";
 import type { GitRunner } from "./git-audit.ts";
 import type { ConcurrencyController, ConcurrencyReservation } from "./concurrency.ts";
-import { captureEvidence, captureReviewEvidencePacket, compareEvidence, compareExecutionTruth, describeComparison, describeProbeFailures, environmentFailureOf } from "./evidence.ts";
+import { captureEvidence, captureReviewEvidencePacket, compareEvidence, compareExecutionTruth, compareFreshness, describeComparison, describeProbeFailures, environmentFailureOf } from "./evidence.ts";
 import type { ExecutionTruthComparison } from "./evidence.ts";
 import { buildTaskPacket, ROLE_AGENTS } from "./roles.ts";
 import { createTaskSpec, normalizeWorkspaceIdentity } from "./task.ts";
@@ -64,6 +64,7 @@ import type {
 	ExecutionCapability,
 	ExecutionEndedReason,
 	ExecutionEnvelope,
+	ExecutionToolBudget,
 	ExecutionLifecycleStatus,
 	FindingCategory,
 	FindingSeverity,
@@ -74,6 +75,7 @@ import type {
 	RunawayObservation,
 	RunawaySignal,
 	TaskFinding,
+	TaskExecutionRecord,
 	TaskSpec,
 	WorkerReport,
 } from "./types.ts";
@@ -99,6 +101,65 @@ const TERMINAL_ENDED_REASON: Record<string, ExecutionEndedReason> = {
 	unavailable_context: "provider_failure",
 	duplicate_node: "launch_failure",
 };
+
+export const REPORT_ONLY_AGENT = "planner-report-only";
+export const REPORT_ONLY_TOOL_BUDGET: Readonly<ExecutionToolBudget> = Object.freeze({ hard: 1, block: "*" });
+export const REPORT_ONLY_DEFINITION = {
+	description: "Planner-only report correction: submits one structured WorkerReport and has no other tools",
+	systemPromptMode: "replace" as const,
+	inheritProjectContext: false,
+	inheritGlobalContext: false,
+	inheritSkills: false,
+	allowNestedSubagents: false,
+	completionGuard: false,
+	tools: [] as string[],
+	systemPrompt: [
+		"Return only the structured WorkerReport requested by the supplied task context.",
+		"Do not inspect or modify the workspace and do not perform any other action.",
+	].join("\n"),
+};
+
+const REPORT_DECLARATION_FINDINGS = new Set<TaskFinding["kind"]>(["undeclared", "over-declared", "missing"]);
+
+/**
+ * A closed report-only child cannot inspect the workspace. Give it only the
+ * typed report material and bounded Root evidence already held by the Task.
+ * Caller prose is diagnostic input inside this envelope, never authority for
+ * the origin or evidence facts.
+ */
+function buildReportOnlyRepairInstructions(
+	task: TaskRecord,
+	origin: TaskExecutionRecord,
+	callerInstructions: string,
+): string {
+	const priorReport = origin.unacceptedReport
+		?? origin.lateReport
+		?? (origin.reportIndex !== undefined ? task.reports[origin.reportIndex] : task.reports.at(-1));
+	const cumulativeTruthPaths = [...new Set(task.executions
+		.filter((item) => !item.auxiliary && !item.reportOnly)
+		.flatMap((item) => item.truthPaths ?? []))];
+	return JSON.stringify({
+		kind: "report-only-correction-context",
+		originExecutionId: origin.executionId,
+		priorTypedReport: priorReport ?? null,
+		rootEvidence: {
+			aRun: origin.aRun,
+			cReport: origin.cReport,
+			originTruthPaths: origin.truthPaths ?? [],
+			cumulativeTruthPaths,
+			declarationFindings: task.findings
+				.filter((finding) => finding.executionId === origin.executionId && finding.status === "open"
+					&& REPORT_DECLARATION_FINDINGS.has(finding.kind))
+				.map((finding) => ({ kind: finding.kind, paths: finding.paths, note: finding.note })),
+		},
+		callerInstructions: callerInstructions.trim(),
+		rules: [
+			"Repair only the WorkerReport declaration from the supplied typed report and Root evidence.",
+			"Do not invent missing work, validation, evidence, or workspace facts.",
+			"Submit exactly one structured WorkerReport and perform no other action.",
+		],
+	}, null, 2);
+}
 
 /** A `failed` terminal whose child never ran (no turn, no wall time) is a launch-time rejection, not a provider fault. */
 function terminalEndedReason(terminal: { status: string; usage?: { turns: number; durationMs: number } }): ExecutionEndedReason {
@@ -519,6 +580,8 @@ export interface DelegationDeps {
 	 * read-only binding to prove the execution cannot mutate.
 	 */
 	restrictedReaderAgent?: string;
+	/** Registered tools:[] agent used exclusively for a pending report correction. */
+	reportOnlyAgent?: string;
 	now?: () => Date;
 	/**
 	 * Wall-envelope clock: a monotonic `now()` plus the timer pair. Tests
@@ -738,6 +801,8 @@ export async function runDelegation(
 	let task!: TaskRecord;
 	let thisSpec: TaskSpec;
 	let recoveryDecision: RecoveryDecision | undefined;
+	let reportOnlyGrant = false;
+	let reportOnlyOrigin: TaskExecutionRecord | undefined;
 	if (params.taskId) {
 		const record = deps.store.get(params.taskId);
 		if (!record) {
@@ -759,6 +824,7 @@ export async function runDelegation(
 			);
 		}
 		task = record;
+		const reportCorrectionPending = task.reportCorrections > task.executions.filter((item) => item.reportOnly).length;
 		const ignoredDefinitionFields = ["objective", "cwd", "scope", "constraints", "acceptanceCriteria", "validation"]
 			.filter((field) => (params as unknown as Record<string, unknown>)[field] !== undefined);
 		if (ignoredDefinitionFields.length > 0) {
@@ -776,6 +842,13 @@ export async function runDelegation(
 					`received executionId=${typeof stray.executionId === "string" ? stray.executionId : "(missing)"}, action=${typeof stray.action === "string" ? stray.action : "(missing)"}; executionId names the abnormal execution's details.executionId, not a child runId.`,
 					"For a correction or review round omit recovery; to abandon a flagged execution use planner_abort.",
 				].join(" "),
+				task.taskId,
+			);
+		}
+		if (reportCorrectionPending && (role === "validator" || role === "reviewer")) {
+			throw new DelegationRefused(
+				"REPORT_CORRECTION_ROLE_REQUIRED",
+				`${toolName} refused: Task ${task.taskId} has one pending report-only correction; role=${role} cannot bypass or consume it — use worker, or explorer for an observation Task`,
 				task.taskId,
 			);
 		}
@@ -821,6 +894,29 @@ export async function runDelegation(
 			throw new DelegationRefused("TASKSPEC_MISSING", `${toolName} refused: Task ${record.taskId} has no stored TaskSpec`, record.taskId);
 		}
 		thisSpec = record.spec;
+		// A report-correction grant is durable Task state. The next Worker
+		// execution consumes it by stamping its immutable execution record; no
+		// caller-supplied re-delegation field can enable or disable this mode.
+		reportOnlyGrant = reportCorrectionPending && (role === "worker" || role === "explorer");
+		if (reportOnlyGrant) {
+			reportOnlyOrigin = [...task.executions].reverse().find(
+				(item) => !item.auxiliary && !item.reportOnly && item.status !== "running" && item.status !== "cancel_requested",
+			);
+			if (!reportOnlyOrigin?.cReport) {
+				throw new DelegationRefused(
+					"REPORT_CORRECTION_ORIGIN_MISSING",
+					`${toolName} refused: Task ${task.taskId} has a pending report correction but no completed prior execution with A_run/C_report evidence`,
+					task.taskId,
+				);
+			}
+			if (deps.reportOnlyAgent !== REPORT_ONLY_AGENT) {
+				throw new DelegationRefused(
+					"REPORT_ONLY_CAPABILITY_UNPROVEN",
+					`${toolName} refused: report-only correction requires the registered ${REPORT_ONLY_AGENT} tools:[] capability; no child was launched`,
+					task.taskId,
+				);
+			}
+		}
 
 		if (isFinalTaskState(task.state)) {
 			if (task.state === "blocked" && task.recovery?.required === true) {
@@ -993,9 +1089,38 @@ export async function runDelegation(
 
 		// 3. A_run + execution record.
 		const aRun = await captureEvidence(deps.gitRunner, sampleOptions(executionId));
+		if (reportOnlyGrant) {
+			// Evidence capture yields. Re-read the durable record immediately
+			// before the synchronous beginExecution so concurrent observation
+			// calls cannot both consume the Task's single correction grant.
+			const freshTask = deps.store.require(task.taskId);
+			const correctionStillPending = freshTask.reportCorrections
+				> freshTask.executions.filter((item) => item.reportOnly).length;
+			if (!correctionStillPending) {
+				throw new DelegationRefused(
+					"REPORT_CORRECTION_ALREADY_CONSUMED",
+					`${toolName} refused: Task ${task.taskId}'s report-only correction was already consumed; no child was launched`,
+					task.taskId,
+				);
+			}
+			const freshOrigin = [...freshTask.executions].reverse().find(
+				(item) => !item.auxiliary && !item.reportOnly && item.status !== "running" && item.status !== "cancel_requested",
+			);
+			if (!freshOrigin?.cReport) {
+				throw new DelegationRefused(
+					"REPORT_CORRECTION_ORIGIN_MISSING",
+					`${toolName} refused: Task ${task.taskId} no longer has a completed correction origin; no child was launched`,
+					task.taskId,
+				);
+			}
+			task = freshTask;
+			reportOnlyOrigin = freshOrigin;
+		}
 		deps.store.beginExecution(task.taskId, {
 			executionId,
-			...(options.previousExecutionId ? { previousExecutionId: options.previousExecutionId } : {}),
+			...((reportOnlyOrigin?.executionId ?? options.previousExecutionId)
+				? { previousExecutionId: reportOnlyOrigin?.executionId ?? options.previousExecutionId }
+				: {}),
 			kind: role as DelegationKind,
 			cwd: task.cwd || effectiveCwd,
 			worktreeRoots,
@@ -1003,9 +1128,16 @@ export async function runDelegation(
 			capability: classification.capability,
 			capabilityBasis: classification.basis,
 			...(envelope ? { envelope } : {}),
+			...(reportOnlyGrant ? {
+				reportOnly: true,
+				toolBudget: { ...REPORT_ONLY_TOOL_BUDGET },
+				reportOnlyAgent: REPORT_ONLY_AGENT,
+				reportOnlyCapabilityBasis: `runtime registration accepted agent '${REPORT_ONLY_AGENT}' with declared tools []`,
+			} : {}),
 			...(role !== "worker" ? { readOnly: true } : {}),
 			...(role === "validator" ? { auxiliary: true } : {}),
 		});
+		const reportOnly = deps.store.executionById(task.taskId, executionId)?.reportOnly === true;
 		// Ticket 04 — a writer-capable execution cannot be verified once its
 		//    required evidence base is already known unusable: refuse before
 		//    launch instead of minting a "started but stop unconfirmed" record
@@ -1049,14 +1181,18 @@ export async function runDelegation(
 		}
 
 		// 4. Structured delegation: the packet is rendered once, downward only.
+		const requestInstructions = reportOnly && reportOnlyOrigin
+			? buildReportOnlyRepairInstructions(task, reportOnlyOrigin, params.instructions ?? "")
+			: params.instructions ?? "";
 		const request: SubagentDelegationRequest = {
 			requestId,
 			ownerRunId: deps.ownerRunId,
 			nodeId: task.taskId,
-			agent: classification.agent ?? ROLE_AGENTS[role] ?? "worker",
-			task: buildTaskPacket(thisSpec, params.instructions ?? ""),
+			agent: reportOnly ? REPORT_ONLY_AGENT : classification.agent ?? ROLE_AGENTS[role] ?? "worker",
+			task: buildTaskPacket(thisSpec, requestInstructions),
 			context: "fresh",
 			cwd: task.cwd || effectiveCwd,
+			...(reportOnly ? { toolBudget: { ...REPORT_ONLY_TOOL_BUDGET } } : {}),
 			result: { kind: "structured", schema: WORKER_REPORT_SCHEMA },
 		};
 		// A2 — spec §3 predicate: an identity-matched terminal plus a quiet
@@ -1144,7 +1280,9 @@ export async function runDelegation(
 					? "worker_runaway"
 					: cancelRequestedAt
 						? "operator_cancel"
-						: terminalEndedReason(late);
+						: reportOnly && late.status === "tool_budget_exhausted"
+							? "report_only_tool_budget"
+							: terminalEndedReason(late);
 				deps.store.finalizeExecution(task.taskId, executionId, {
 					status: q.confirmed ? "stopped" : "stop_unconfirmed",
 					endedReason,
@@ -1155,6 +1293,7 @@ export async function runDelegation(
 						: { interimSample: q.interim, stopSamples: q.samples }),
 					...(q.confirmed === false && q.evidenceIncomplete ? { evidenceIncomplete: true } : {}),
 					usageComplete,
+					rawTerminal: structuredClone(late) as unknown as Record<string, unknown>,
 					...(late.runId ? { runId: late.runId } : {}),
 					...(lateSuccess && late.result?.kind === "structured"
 						? { lateReport: stampWorkerReport(late.result.value as WorkerReport, late.runId ?? executionId, warnings) }
@@ -1394,7 +1533,9 @@ export async function runDelegation(
 				? "operator_cancel"
 				: runaway
 					? "worker_runaway"
-					: terminalEndedReason(terminal);
+					: reportOnly && terminal.status === "tool_budget_exhausted"
+						? "report_only_tool_budget"
+						: terminalEndedReason(terminal);
 			deps.store.finalizeExecution(task.taskId, executionId, {
 				status: q.confirmed ? "stopped" : "stop_unconfirmed",
 				endedReason,
@@ -1405,6 +1546,7 @@ export async function runDelegation(
 					: { interimSample: q.interim, stopSamples: q.samples }),
 				...(q.confirmed === false && q.evidenceIncomplete ? { evidenceIncomplete: true } : {}),
 				usageComplete,
+				rawTerminal: structuredClone(terminal) as unknown as Record<string, unknown>,
 				...(responseRunId ? { runId: responseRunId } : {}),
 				...(lateSuccess && terminalReport
 					? { lateReport: terminalReport }
@@ -1500,6 +1642,7 @@ export async function runDelegation(
 				stopSamples: completionQuiescence.samples,
 				...(completionQuiescence.evidenceIncomplete ? { evidenceIncomplete: true } : {}),
 				usageComplete,
+				rawTerminal: structuredClone(response) as unknown as Record<string, unknown>,
 				...(runId ? { runId } : {}),
 				// Ticket 05 — the terminal carried a valid report but the stop was
 				//    never confirmed: keep it bound to this execution, out of the
@@ -1547,15 +1690,20 @@ export async function runDelegation(
 			};
 		}
 		const priorTruthPaths = task.executions
-			.filter((item) => item.executionId !== executionId && !item.auxiliary && !item.reportOnly && item.truthPaths?.length)
+			.filter((item) => item.executionId !== executionId && item.executionId !== reportOnlyOrigin?.executionId && !item.auxiliary && !item.reportOnly && item.truthPaths?.length)
 			.flatMap((item) => item.truthPaths ?? []);
 		const observation = acceptanceModeOf(task) === "observation";
-		const truth = compareExecutionTruth(aRun, cReport, report, {
+		const truthRun = reportOnlyOrigin?.aRun ?? aRun;
+		const truthResult = reportOnlyOrigin?.cReport ?? cReport;
+		const truth = compareExecutionTruth(truthRun, truthResult, report, {
 			...(thisSpec.scope ? { scope: thisSpec.scope } : {}),
 			...(thisSpec.additionalWorktreeRoots?.length
 				? { additionalWorktreeRoots: thisSpec.additionalWorktreeRoots }
 				: {}),
-			...(role !== "worker" ? { readOnly: true } : {}),
+			...(reportOnly ? { reportOnly: true } : {}),
+			...(reportOnly
+				? { readOnly: reportOnlyOrigin?.readOnly === true }
+				: role !== "worker" ? { readOnly: true } : {}),
 			...(priorTruthPaths.length > 0 ? { priorTruthPaths } : {}),
 		});
 		// Ticket 03 — an observation Task never pretends Git freshness exists:
@@ -1563,11 +1711,15 @@ export async function runDelegation(
 		//    report's identity/schema and any declared evidence requirements
 		//    are still judged at acceptance.
 		const comparison = report && !observation
-			? compareEvidence(aRun, cReport, report, {
+			? compareEvidence(truthRun, truthResult, report, {
 				...(thisSpec.scope ? { scope: thisSpec.scope } : {}),
 				...(thisSpec.additionalWorktreeRoots?.length
 					? { additionalWorktreeRoots: thisSpec.additionalWorktreeRoots }
 					: {}),
+				...(reportOnly ? { reportOnly: true } : {}),
+				...(reportOnly
+					? { readOnly: reportOnlyOrigin?.readOnly === true }
+					: role !== "worker" ? { readOnly: true } : {}),
 				...(priorTruthPaths.length > 0 ? { priorTruthPaths } : {}),
 			})
 			: undefined;
@@ -1633,12 +1785,13 @@ export async function runDelegation(
 			terminationConfirmed: true,
 			confirmationBasis: completionQuiescence.basis,
 			usageComplete: response.usage !== undefined,
+			rawTerminal: structuredClone(response) as unknown as Record<string, unknown>,
 			cReport,
 			// A reader's confirmed stop keeps the result-receive sample as its
 			//    residual record; writers get the second quiescence sample.
 			cTerminal: completionQuiescence.cTerminal ?? cReport,
 			...(runId ? { runId } : {}),
-			truthPaths: truth.truthPaths,
+			truthPaths: reportOnly ? [] : truth.truthPaths,
 			executionChangedPaths: truth.executionChangedPaths,
 			committedPaths: truth.committedPaths,
 			observedExternalPaths: truth.observedExternalPaths,
@@ -1662,14 +1815,31 @@ export async function runDelegation(
 			task.taskId,
 			executionId,
 			truth.findings
-				.filter((finding) => finding.kind !== "attribution-gap")
+				.filter((finding) => finding.kind !== "attribution-gap"
+					&& (!reportOnly || REPORT_DECLARATION_FINDINGS.has(finding.kind as TaskFinding["kind"])))
 				.map((finding) => ({
 					kind: finding.kind as Exclude<typeof finding.kind, "attribution-gap"> as TaskFinding["kind"],
 					paths: finding.paths,
 				})),
 			deps.store.now().toISOString(),
-			["undeclared", "scope", "over-declared", "missing"],
+			reportOnly
+				? ["undeclared", "over-declared", "missing"]
+				: ["undeclared", "scope", "over-declared", "missing"],
 		);
+		if (reportOnly && admittedReport && truth.verifiable) {
+			const mismatchPaths: Record<"undeclared" | "over-declared" | "missing", Set<string>> = {
+				undeclared: new Set(truth.undeclaredPaths),
+				"over-declared": new Set(truth.extraDeclaredPaths),
+				missing: new Set(truth.missingPaths),
+			};
+			for (const kind of ["undeclared", "over-declared", "missing"] as const) {
+				const resolvedPaths = deps.store.openFindings(task.taskId)
+					.filter((finding) => finding.executionId !== executionId && finding.kind === kind
+						&& finding.paths.every((path) => !mismatchPaths[kind].has(path)))
+					.flatMap((finding) => finding.paths);
+				deps.store.markFindingEvidenceResolved(task.taskId, resolvedPaths, executionId, [kind]);
+			}
+		}
 		if (!admittedReport && reportError) warnings.push(reportError);
 
 		// 9. Review loop decides what this report means for the Task.
@@ -1890,23 +2060,58 @@ async function runReviewInvocation(
 		...(scopePaths.length > 0 ? { scopePaths } : {}),
 	});
 	const latest = fresh.executions
-		.filter((item) => !item.auxiliary && !item.reportOnly && item.reportIndex === fresh.reports.length - 1)
+		.filter((item) => !item.auxiliary && item.reportIndex === fresh.reports.length - 1)
 		.at(-1);
-	const priorTruthPaths = latest
+	// A corrected revision belongs to the report-only execution, while its
+	// work and read-only classification remain bound to the immutable origin.
+	const origin = latest?.reportOnly
+		? fresh.executions.find((item) => item.executionId === latest.previousExecutionId && !item.auxiliary && !item.reportOnly)
+		: latest;
+	const priorTruthPaths = origin
 		? fresh.executions
-			.filter((item) => item.executionId !== latest.executionId && !item.auxiliary && !item.reportOnly && item.truthPaths?.length)
+			.filter((item) => item.executionId !== origin.executionId && !item.auxiliary && !item.reportOnly && item.truthPaths?.length)
 			.flatMap((item) => item.truthPaths ?? [])
 		: [];
-	const comparison = latest
-		? compareEvidence(latest.aRun, current, report, {
+	let comparison = origin && (!latest?.reportOnly || (origin.cReport && latest.cReport))
+		? compareEvidence(origin.aRun, current, report, {
 			...(fresh.spec?.scope ? { scope: fresh.spec.scope } : {}),
 			...(roots?.length ? { additionalWorktreeRoots: roots } : {}),
-			...(latest.readOnly ? { readOnly: true } : {}),
+			...(latest?.reportOnly ? { reportOnly: true } : {}),
+			...(origin.readOnly ? { readOnly: true } : {}),
 			...(priorTruthPaths.length > 0 ? { priorTruthPaths } : {}),
 		})
 		: undefined;
+	if (comparison && latest?.reportOnly && origin?.cReport && latest.cReport) {
+		const evidenceOptions = {
+			...(fresh.spec?.scope ? { scope: fresh.spec.scope } : {}),
+			...(roots?.length ? { additionalWorktreeRoots: roots } : {}),
+		};
+		const truth = compareExecutionTruth(origin.aRun, origin.cReport, report, {
+			...evidenceOptions,
+			reportOnly: true,
+			readOnly: origin.readOnly === true,
+			priorTruthPaths,
+		});
+		const correctionWindowFresh = compareFreshness(origin.cReport, latest.aRun, evidenceOptions).fresh
+			&& compareFreshness(latest.aRun, latest.cReport, evidenceOptions).fresh;
+		const freshness = compareFreshness(correctionWindowFresh ? latest.cReport : origin.cReport, current, evidenceOptions);
+		comparison = {
+			...comparison,
+			verifiable: comparison.verifiable && truth.verifiable && freshness.verifiable,
+			fresh: comparison.fresh && truth.findings.length === 0 && !truth.declarationMismatch && freshness.fresh,
+			unexplained: comparison.unexplained || !freshness.verifiable || !freshness.fresh
+				|| truth.declarationMismatch || truth.extraDeclaredPaths.length > 0 || truth.missingPaths.length > 0,
+			truthPaths: [...new Set([...priorTruthPaths, ...truth.truthPaths])].sort(),
+			undeclaredPaths: truth.undeclaredPaths,
+			extraDeclaredPaths: truth.extraDeclaredPaths,
+			missingPaths: truth.missingPaths,
+			truthFindings: truth.findings.map(({ kind, paths }) => ({ kind, paths })),
+			freshness,
+			reasons: [...comparison.reasons, ...truth.reasons, ...freshness.reasons],
+		};
+	}
 	if (comparison) deps.store.setLastComparison(task.taskId, comparison);
-	if (!latest) {
+	if (!comparison) {
 		// decideReview accepts a pass with no comparison at all, so the
 		// missing per-execution binding must refuse here — a pass over
 		// unverifiable material is never eligible.

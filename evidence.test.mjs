@@ -919,9 +919,8 @@ assert.equal(isOutsideWorkspacePath("/home/user/.pi/agent/planner-only/pricing.j
 assert.equal(isOutsideWorkspacePath("/repo/src/a.ts", "/repo"), false);
 assert.equal(isOutsideWorkspacePath("src/a.ts", "/repo"), false);
 
-// Variant A — report-only restates prior-run dirty files that are not in the
-// per-run truthSet (already dirty at the re-sampled base). Without reportOnly,
-// extraDeclared marks unexplained and deadlocks schema-only corrections.
+// Variant A — report-only cannot invent ownership of pre-existing dirty files.
+// A valid restatement needs origin truth or an explicit cumulative prior basis.
 {
 	const reportOnlyOver = compareEvidence(
 		makeBase({ changedPaths: ["src/a.ts", "src/b.ts"], dirtyPathHashes: { "src/a.ts": "h1", "src/b.ts": "h2" }, gitStatusHash: "hash-base" }),
@@ -935,9 +934,23 @@ assert.equal(isOutsideWorkspacePath("src/a.ts", "/repo"), false);
 	);
 	assert.deepEqual(reportOnlyOver.truthPaths, []);
 	assert.deepEqual(reportOnlyOver.extraDeclaredPaths, ["/repo/src/a.ts", "/repo/src/b.ts"]);
-	assert.equal(reportOnlyOver.unexplained, false, "28-A: report-only over-report is not unexplained");
-	assert.equal(evidenceAction(reportOnlyOver), "review", "28-A: report-only may continue to review");
+	assert.equal(reportOnlyOver.unexplained, true, "28-A: report-only over-report remains unexplained without origin truth");
+	assert.equal(evidenceAction(reportOnlyOver), "revalidate", "28-A: report-only cannot bypass declaration evidence");
 	assert.match(describeComparison(reportOnlyOver), /over-reported/);
+}
+
+// A genuine cumulative prior basis permits a report-only restatement.
+{
+	const prior = { changedPaths: ["src/a.ts"], dirtyPathHashes: { "src/a.ts": "h1" }, gitStatusHash: "hash-base" };
+	const knownPrior = compareEvidence(
+		makeBase(prior),
+		makeCurrent(prior),
+		makeReport({ finalGitRef: "abc1234", gitStatusHash: "hash-base", changedPaths: ["src/a.ts"] }),
+		{ reportOnly: true, priorTruthPaths: ["/repo/src/a.ts"] },
+	);
+	assert.deepEqual(knownPrior.extraDeclaredPaths, [], "known prior truth is not fabricated ownership");
+	assert.equal(knownPrior.unexplained, false);
+	assert.equal(evidenceAction(knownPrior), "review");
 }
 
 // Same shape without reportOnly stays unexplained (regression pin).
@@ -1335,6 +1348,21 @@ assert.equal(
 	assert.deepEqual(readOnly.undeclaredPaths, []);
 	assert.deepEqual(readOnly.findings, []);
 	assert.deepEqual(readOnly.observedExternalPaths, ["/repo/src/a.ts", "/repo/src/other.ts"]);
+}
+
+// Report correction validates declarations even for a read-only origin.
+// Observing another writer's change does not establish ownership; prior
+// Task Truth is still a valid basis for a cumulative declaration.
+for (const compare of [compareEvidence, compareExecutionTruth]) {
+	const base = makeBase({ changedPaths: [] });
+	const current = makeCurrent({ changedPaths: ["src/a.ts"] });
+	const report = makeReport({ changedPaths: ["src/a.ts"] });
+	const options = { readOnly: true, reportOnly: true };
+	const unsupported = compare(base, current, report, options);
+	assert.deepEqual(unsupported.extraDeclaredPaths, ["/repo/src/a.ts"], "read-only observation cannot justify a repair declaration");
+	const supported = compare(base, current, report, { ...options, priorTruthPaths: ["/repo/src/a.ts"] });
+	assert.deepEqual(supported.extraDeclaredPaths, [], "recorded prior Truth still supports cumulative declarations");
+	assert.deepEqual(supported.missingPaths, []);
 }
 
 console.log("planner-only evidence: PASS");

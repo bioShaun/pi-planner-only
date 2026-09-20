@@ -1,0 +1,42 @@
+{
+  "arm": "optimized",
+  "case": "stop",
+  "repeat": 1,
+  "label": "optimized-stop",
+  "status": 2,
+  "signal": null,
+  "durationMs": 73747,
+  "quality": null,
+  "root": {
+    "input": 4751,
+    "output": 294,
+    "cacheRead": 5376,
+    "cacheWrite": 0
+  },
+  "child": {
+    "input": 7022,
+    "output": 95,
+    "cacheRead": 0,
+    "cacheWrite": 0
+  },
+  "rootMessages": 2,
+  "childClaims": 1,
+  "failedAttempts": 1,
+  "rootUsageIncomplete": false,
+  "childUsageIncomplete": false,
+  "actualRootModels": [
+    "kimi-coding/kimi-for-coding"
+  ],
+  "actualChildModels": [
+    "tcuni-luna/gpt-5.6-luna:low:low"
+  ],
+  "monetaryCost": null,
+  "priceStatus": "unverified; no cost-savings claim",
+  "closureObserved": true,
+  "afterClosure": {
+    "modelHooks": 0,
+    "toolCalls": 0,
+    "requests": 0
+  },
+  "finalAnswer": ""
+}

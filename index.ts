@@ -56,6 +56,8 @@ import {
 	PLANNER_REDELEGATE_PARAMETERS,
 	RESTRICTED_READER_AGENT,
 	RESTRICTED_READER_DEFINITION,
+	REPORT_ONLY_AGENT,
+	REPORT_ONLY_DEFINITION,
 	cancelInFlightDelegations,
 	createHostLauncher,
 	renderDelegationOutcome,
@@ -466,6 +468,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	// unlocks explorer launches; while it stays unregistered, explorer
 	// delegations refuse with READER_CAPABILITY_UNPROVEN.
 	let restrictedReaderAgent: string | undefined;
+	let reportOnlyAgent: string | undefined;
 	const ensureRestrictedReaderAgent = (): void => {
 		if (restrictedReaderAgent !== undefined) return;
 		try {
@@ -486,6 +489,23 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		} catch {
 			// No registry listener (pi-subagents absent or older): explorer
 			// delegations refuse with READER_CAPABILITY_UNPROVEN.
+		}
+	};
+	const ensureReportOnlyAgent = (): void => {
+		if (reportOnlyAgent !== undefined) return;
+		try {
+			const request: {
+				version: number;
+				name: string;
+				definition: unknown;
+				result?: { ok?: boolean; registration?: unknown };
+			} = { version: 1, name: REPORT_ONLY_AGENT, definition: REPORT_ONLY_DEFINITION };
+			pi.events.emit("pi-subagents:runtime-agent-register:v1", request);
+			if (request.result?.ok === true && request.result.registration !== undefined) {
+				reportOnlyAgent = REPORT_ONLY_AGENT;
+			}
+		} catch {
+			// A pending report correction refuses before REQUEST without this proof.
 		}
 	};
 	// WRC P0-A — spec §3 quiescenceWaitMs; env override exists for tests and
@@ -1096,6 +1116,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					try {
 						const route = resolveDelegationModel(effectiveParams.role, ctx.modelRegistry);
 						ensureRestrictedReaderAgent();
+						ensureReportOnlyAgent();
 						outcome = await runDelegation(
 							{
 								store: orchestrator.store,
@@ -1129,6 +1150,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 									}).then(terminal => { requestControl.terminal(outbound.requestId, requestScope); return recordRoute(terminal); });
 								},
 								...(restrictedReaderAgent !== undefined ? { restrictedReaderAgent } : {}),
+								...(reportOnlyAgent !== undefined ? { reportOnlyAgent } : {}),
 								...(quiescenceWaitMs !== undefined ? { quiescenceWaitMs } : {}),
 								ownerRunId: ctx.sessionManager?.getSessionId?.() || PROCESS_OWNER_RUN_ID,
 								...(executionDefaults ? { executionDefaults } : {}),

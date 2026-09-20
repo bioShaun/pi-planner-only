@@ -1871,8 +1871,8 @@ export class PlannerOrchestrator {
 		const origin = latest.reportOnly
 			? this.store.executionById(task.taskId, latest.previousExecutionId ?? "")
 			: latest;
-		if (latest.reportOnly && !origin) {
-			const reason = `report-only execution ${latest.executionId} has no linked prior execution ${latest.previousExecutionId ?? "(missing)"}; attribution cannot be verified`;
+		if (latest.reportOnly && (!origin || !origin.cReport)) {
+			const reason = `report-only execution ${latest.executionId} has no linked prior execution ${latest.previousExecutionId ?? "(missing)"} with C_report; attribution cannot be verified`;
 			this.store.completeExecution(task.taskId, latest.executionId, {
 				freshness: { verifiable: false, fresh: false, reasons: [reason], driftPaths: [] },
 			});
@@ -1897,18 +1897,19 @@ export class PlannerOrchestrator {
 			...(origin?.readOnly === true ? { readOnly: true } : {}),
 			...(priorTruthPaths.length > 0 ? { priorTruthPaths } : {}),
 		});
-		const correctionWindowFresh = latest.reportOnly && latest.cReport
-			? compareFreshness(latest.aRun, latest.cReport, {
-				...(roots ? { additionalWorktreeRoots: roots } : {}),
-				...(task.spec?.scope ? { scope: task.spec.scope } : {}),
-			}).fresh
+		const freshnessOptions = {
+			...(roots ? { additionalWorktreeRoots: roots } : {}),
+			...(task.spec?.scope ? { scope: task.spec.scope } : {}),
+		};
+		// Rebasing must preserve the entire interval since the original work,
+		// including changes that arrived before the report-only child started.
+		const correctionWindowFresh = latest.reportOnly && latest.cReport && origin?.cReport
+			? compareFreshness(origin.cReport, latest.aRun, freshnessOptions).fresh
+				&& compareFreshness(latest.aRun, latest.cReport, freshnessOptions).fresh
 			: false;
 		const freshnessBase = latest.reportOnly && correctionWindowFresh ? latest.cReport : truthBase;
 		let freshness: FreshnessComparison = freshnessBase
-			? compareFreshness(freshnessBase, currentSample, {
-				...(roots ? { additionalWorktreeRoots: roots } : {}),
-				...(task.spec?.scope ? { scope: task.spec.scope } : {}),
-			})
+			? compareFreshness(freshnessBase, currentSample, freshnessOptions)
 			: {
 				verifiable: false,
 				fresh: false,
@@ -2012,6 +2013,8 @@ export class PlannerOrchestrator {
 		// revalidations, and stay unexplained=false. A report that claims
 		// another cwd than the one its result arrived in is equally unreliable.
 		const unreliable = truth.declarationMismatch
+			|| truth.extraDeclaredPaths.length > 0
+			|| truth.missingPaths.length > 0
 			|| truth.findings.some(
 				(finding) => finding.kind === "over-declared" || finding.kind === "missing" || finding.kind === "attribution-gap",
 			);

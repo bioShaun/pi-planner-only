@@ -1,18 +1,25 @@
 # 05 固定版本对照与读取政策
 
-Status: ready-for-agent
-Blocked by: actual-provider measurements
+Status: ready-for-human
+Blocked by: none for the token/completion/latency comparison
+Completion: completed within the recorded build and small-task scope
 
-固定版本、模型与质量要求，比较隔离环境直接 Root、当前委派与 P1 优化委派。逐尝试保留 Root/child usage、失败重试、延迟和完成率，价格未知时不报费用节省。先跑小型有界任务组，保留异常样本，再决定是否扩大。
+用户最终指定 Root `tcuni-agy/gemini-3.8-flash-high` / child `tcuni-luna/gpt-5.6-luna`，thinking low；只比较 token、完成率和延迟，monetaryCost 全部 null。Kimi 配额 403 与 DeepSeek 上游错误的失败尝试保留，未混入 Gemini 的正式对照。
 
-有界 Root 读取需以单次输出、Request 累计字节、连续探索数统一约束 Idle/live，不能通过新 Task 或改措辞刷新。仅当与真实廉价 child 对照支持时再决定默认政策；写入、通用 shell、Writer hold 与高风险复核不放宽。政策决定必须有 CONTEXT/ADR 和验证证据。
+`study-run-yL4RzS` 固定 host 0.85.1 / launcher 0.69.0 / baseline 85bdd2a；三组 × 词数/JSON/小修改 × 三次重复，共 27 次。顺序在首个试验前写入 design.json，按 repetition/task 旋转；每次新建本地 session 和工作区，远端缓存不可控且如实统计。baseline 通过独立配置和公共 runtime-agent 注册字段固定 child 模型；旧版源码与工具定义不改。
 
-Completion: partial — 一个真实 optimized smoke 和一个真实 TUI 场景已通过；三组完整对照、价格、默认值校准与读取政策决策待办。
+| 组 | 完成 | Root + child 总 token | 延迟中位数 |
+|---|---:|---:|---:|
+| direct | 9/9 | 54,524 | 7.56 秒 |
+| baseline | 9/9 | 815,498 | 35.59 秒 |
+| optimized | 9/9 | 846,506 | 34.88 秒 |
 
-run-study.mjs 固定 baseline=85bdd2a、host=0.85.1、launcher=0.69.0；三组×词数/JSON/小修改，逐失败尝试保留 usage，未知价格 null，模型配置必填。study-summary.test.mjs exit 0 验证失败计费、terminal 去重、missing usage 与 child CANCEL 不等于 Root closure。JS 语法/Python AST 通过；未声称完整 harness 已运行。
+总 token 包含 input、output、cacheRead、cacheWrite；不是价格加权费用。全部 usage 完整，20 个 child terminal 无失败，实际模型身份全部核验。延迟从 slot 提交至 host 退出，含可能的排队、启动、工具、quiescence 和 review。质量按最终答案、JSON 内容及修改范围验证，原始内容保存在 quality-audit.json；不等同真实项目交付质量。
 
-单格一个样本只用于 smoke。正式成本决策还需预先固定交错顺序/重复次数、缓存条件与实际价格，再比较质量、成功率、总 token/费用/延迟。Idle/live 共用有界读取预算尚未实现，须由上述结果支持单独政策决策；当前严格读取规则未放开。
+结果不支持“优化委派整体更省 token”的结论，也不足以外推总体成本/延迟优势。原始事件、逐尝试 summary、汇总、文件快照、预检与前后哈希均保留。详细数据见 [study-summary](../study-run-yL4RzS/study-summary.md)，独立验证和最终源码差异见 [closeout](../execution-20260920/closeout.md)。本次测量早于最后的虚报声明校验补强，不能把测量哈希冒称最终哈希；该异常路径另有先失败后通过的回归与最终 release。
 
-## Comments
+ADR-0008 将十分钟保留为操作默认值定稿，明确不宣称统计最优。20 个 child 的 launcher duration 最大 29,839ms，五分钟与十分钟对这组样本无法区分。插件自身时长、Request 剩余时间可见性与代表性长任务校准另列 [工单 07](07-execution-duration-and-request-remaining.md)。
 
-2026-09-20：study-run-D1Lacq/ 与 study-run-g9NOIF/ 已保留真实 Kimi/Luna 的 usage、身份和成功/取消尝试。未运行三组九格对照；monetaryCost 仍为 null。ADR-0008 的十分钟默认值保持 provisional，启动时间/耗时口径、Request 剩余时间可见性及三项联合校准仍待实施。
+Root 读取政策未放宽。Idle/live 共同的有界读取机制不在本轮实现；未来若要改变权限，需另有 CONTEXT/ADR、额度设计与相关对照证据。写入、通用 shell、Writer hold 和高风险复核边界保持原契约。
+
+2026-09-20最终验收：完整release GJqscr、代码修正ed0kfI及收尾dihsWK通过；各自范围与原始证据见 ../execution-20260920/closeout.md。

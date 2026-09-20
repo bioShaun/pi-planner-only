@@ -1,0 +1,547 @@
+diff --git a/.scratch/stability-next-20260920/ReviewRequest.md b/.scratch/stability-next-20260920/ReviewRequest.md
+index 680faed..943b723 100644
+--- a/.scratch/stability-next-20260920/ReviewRequest.md
++++ b/.scratch/stability-next-20260920/ReviewRequest.md
+@@ -1,16 +1,19 @@
+-# Strict independent review launcher
+-
+-Parent duties only: prove your own runtime read-only permission for index.ts (O_WRONLY without create/truncate/write, errno, covering mount options, unchanged SHA256). Immediately spawn one astra_reviewer with fork_turns="none" and no model/effort override, passing the child contract below. Wait for the child and relay its verdict promptly. Do not duplicate its review, edit files, run tests, call providers, or add children. No /tmp. The ordinary outer wrapper already logged slot audit/status and owns the slot; no nested heavy work. Global watchdog is 420 seconds. Child soft review budget is 300 seconds; missing required evidence is BLOCKED.
+-
+-Child contract:
+-Goal: independently review the final P1-B report-submission-only implementation and its actual-host/P3 acceptance, including material correctness and documented requirements, in /home/tcuni-claw/pi/pi-planner-only.
+-Read-only scope: production/code/test diff since 83a0ad4351300e4537435ce637a995207e221ed0, current source-manifest.json and harness-manifest.json under .scratch/stability-next-20260920, and the named neutral evidence package. Do not edit, run tests, call models/providers, read credentials/private auth, terminate processes or spawn agents. No /tmp. Do not broaden into unrelated old commits or global configuration. No extra heavy commands.
+-Original task: .scratch/stability-next-20260920/handoff-20260920.md. Authorized revisions: report-only must expose only structured report submission, because the original hard-zero budget blocked the report tool; only token/completion/latency are compared, no monetary claim; final Root is tcuni-agy/gemini-3.8-flash-high, child tcuni-luna/gpt-5.6-luna, thinking low. See execution-20260920/plan-correction.md for concrete observed failures and scope changes.
+-Implementation facts and checks: execution-20260920/implementation-report.md, host-validation.md, closeout.md, and measurement-validation.md. Treat summaries as navigation, independently inspect relevant raw evidence.
+-Required checks:
+-1. Prove your own actual read-only isolation via the same index.ts no-write open probe, covering mount and unchanged hash. Metadata alone is insufficient.
+-2. Verify both final manifests against disk and the final release against current executable sources. Verify actual-host/P3 before-after hashes and inspect the explicitly recorded differences from final code: the report capability probe preceded immutable-origin comparison changes; TUI/P3 preceded declaration-reliability hardening. Assess which paths those runs cover rather than treating older hashes as current. The two pre-existing ignored explorer-model prototypes are historical snapshots, not product files; baseline-freeze.json explains the original 77-entry check and 75 committed files.
+-3. Review immutable correction grant/origin, permission closure, registration failure, role/concurrency enforcement, persisted budget/raw terminal/failure family, corrected declaration attribution and zero new Truth paths; tests must retain existing assertions. Full release result must be actual normal-terminal exit 0, not a prior commit's test result.
+-4. Spot-check actual 0.69.0 report capability (public registration, tools exactly structured_output, one successful call, matched identity and no workspace changes), and each queued/scheduled/combined actual TUI proof (input timing, matching Request/CANCEL/terminal, chronological post-close counts, settled, natural exit with no forced cleanup). No SDK/replica substitution.
+-5. Verify the P3 predefined schedule, all 27 rows, actual models, usage completeness/deduplication, failures retained, quality conditions, latency basis and all monetaryCost values null. Baseline model pin changes only public runtime registration model/thinking and private builtin agent settings; baseline source/tools remain original. Interpret the small sample and ADR-0008 honestly; no Root read policy expansion or empirical optimum claims.
+-Return first line PASS / REQUEST_CHANGES / BLOCKED, independently checked facts, limitations and artifact-backed findings ordered by severity. Every finding needs location, impact, evidence and minimum correction. At 300 seconds, return BLOCKED if required checks remain unfinished, rather than extending or guessing. Your runtime model/effort, elapsed time and read-only proof will be audited.
++# Child TaskSpec: final implementation review
++
++You are the terminal astra_reviewer, already below the independent read-only parent. Review directly; do not spawn, delegate, call another launcher, or request another agent. No edits, tests, providers, credentials, process termination, /tmp, or heavy commands. The ordinary wrapper already logged slot audit/status and owns the slot. Soft budget 420 seconds; if unfinished, return BLOCKED with exact missing coverage. This code review uses a per-run 600-second watchdog; the global default remains 420 seconds. Use inline Python/Node for permission probes: no here-documents or temporary files. Do not diff or list the entire scratch tree.
++
++First prove runtime isolation on index.ts: attempt O_WRONLY only, without create/truncate/write; report errno, the covering mount options, and unchanged SHA256. Metadata alone is insufficient.
++
++Project: /home/tcuni-claw/pi/pi-planner-only. Evidence root: .scratch/stability-next-20260920. source-manifest.json paths are relative to PROJECT ROOT; harness-manifest.json paths are relative to EVIDENCE ROOT. Verify both manifests against disk. Return PASS / REQUEST_CHANGES / BLOCKED on line one, checked facts, limitations, and artifact-backed findings with location, impact, and minimum correction. Do not self-estimate elapsed time: the outer collector records timestamps.
++
++Scope is code correctness and final release only. Actual-host/TUI/P3 measurements have a separate independent strict evidence review; do not re-audit their raw runs here.
++
++Original requirement: handoff-20260920.md section 1, revised by the user to allow only structured report submission because hard:0 blocks structured_output. One durable report correction, immutable origin, no additional Truth paths, no ordinary tools, explicit unsupported partial grace/raw malformed diagnostics, normal delegations unchanged.
++
++Review production/test/doc changes from 83a0ad4351300e4537435ce637a995207e221ed0. Restrict git diff to: delegate.ts, index.ts, types.ts, ledger-store.ts, request-events.ts, evidence.ts, orchestrate.ts, delegate.test.mjs, p1-delegation.test.mjs, evidence.test.mjs, CONTEXT.md, README.md, README.zh-CN.md, docs/adr/0008-default-execution-wall-clock-ten-minutes.md, docs/adr/0009-report-only-submission-capability.md. Review registration acknowledgement/failure, permission closure, grant consumption and immutable origin, role/concurrency enforcement, budget/raw terminal/failure mapping, declaration reliability, normal reviewer acceptance, and current freshness. Do not review unrelated old commits.
++
++Prior finding to close: strict-run-qgpWLM/unexpected-grandchild-verdict.md identifies exclusion of report-only revisions in runReviewInvocation; that session's nested delegation was invalid for the gate, but its concrete finding was reproduced. Current new regressions cover valid worker/explorer repair, drift after repair, and fabricated declarations through role:reviewer. The earlier normal-terminal reviewer-binding-red.log and release-run-gHbmWh failures remain in execution-20260920 / the named run.
++
++Use execution-20260920/implementation-report.md as facts/navigation; inspect the actual diff. Final normal-terminal npm run test:release is release-run-piF9Rd, exit 0; verify its before/after source hashes against current executable sources. Inspect execution-20260920/assertion-audit.json: two old expectations were strengthened, none dropped. Check the strict wrapper's bounded code/evidence request selection and the child-only contracts as harness changes. Current source/harness manifests define the freeze.
++
++Additional prior finding to close: strict-run-XlcaPu/child-verdict.md found that drift in origin.C_report -> repair.A_run was lost on the Root verdict path. It is now explicitly checked before rebasing freshness in both orchestrate.ts and delegate.ts; missing origin C_report also fails closed. New pre-repair-root/pre-repair-reviewer real plugin-entry regressions complement the prior post-repair drift cases. Expected red: execution-20260920/p1-run-20260920T104110Z.log (exit 1). Final full release: release-run-piF9Rd (exit 0). The previous child completed its review in 361.5 seconds, but outer 420 expired before parent relay. The per-run allowance is based on that observed runtime; no role/global configuration changed.
+diff --git a/.scratch/stability-next-20260920/acceptance.md b/.scratch/stability-next-20260920/acceptance.md
+index 4d91a27..bb83c47 100644
+--- a/.scratch/stability-next-20260920/acceptance.md
++++ b/.scratch/stability-next-20260920/acceptance.md
+@@ -14,6 +14,6 @@
+ 
+ P1-B 的预算前 partial grace 和原始畸形报告诊断仍明确 unsupported。0.69.0 原 hard:0/block:* 同时拦住报告工具，用户已批准改为专用 tools:[] agent 加一次报告提交预算。原失败、Kimi 配额失败、DeepSeek 上游失败、TUI driver 修正、测试先失败后修复的记录均保留。
+ 
+-P3 的 direct / baseline / optimized 总 token 分别为 54,524 / 815,498 / 846,506；三组均 9/9 完成，延迟中位数 7.56 / 35.59 / 34.88 秒。输入、输出及缓存 token 全部计入，没有价格加权或费用节省结论。测量覆盖的是每个运行目录中冻结的版本；P3 和 TUI 之后补强了虚报声明的验收边界，不能把此前哈希写成最终源码哈希。差异、路径覆盖和最终回归见 implementation-report.md 与独立验证记录。
++P3 的 direct / baseline / optimized 总 token 分别为 54,524 / 815,498 / 846,506；三组均 9/9 完成，延迟中位数 7.56 / 35.59 / 34.88 秒。输入、输出及缓存 token 全部计入，没有价格加权或费用节省结论。测量覆盖的是每个运行目录中冻结的版本；P3 和 TUI 之后补强了虚报声明的验收边界及修复报告的 delegated reviewer 来源/新鲜度校验，不能把此前哈希写成最终源码哈希。差异、路径覆盖和最终回归见 implementation-report.md 与独立验证记录。
+ 
+ 最终提交号在 strict 完成并冻结后回填本文件与 closeout；未推送或发布。
+diff --git a/.scratch/stability-next-20260920/execution-20260920/assertion-audit.json b/.scratch/stability-next-20260920/execution-20260920/assertion-audit.json
+index 5afeb62..96e679a 100644
+--- a/.scratch/stability-next-20260920/execution-20260920/assertion-audit.json
++++ b/.scratch/stability-next-20260920/execution-20260920/assertion-audit.json
+@@ -4,7 +4,7 @@
+     "-\tassert.equal(reportOnlyOver.unexplained, false, \"28-A: report-only over-report is not unexplained\");",
+     "-\tassert.equal(evidenceAction(reportOnlyOver), \"review\", \"28-A: report-only may continue to review\");"
+   ],
+-  "addedAssertionLines": 70,
++  "addedAssertionLines": 88,
+   "assertionsDropped": 0,
+   "explanations": [
+     {
+diff --git a/.scratch/stability-next-20260920/execution-20260920/closeout.md b/.scratch/stability-next-20260920/execution-20260920/closeout.md
+index 994f109..aee70c1 100644
+--- a/.scratch/stability-next-20260920/execution-20260920/closeout.md
++++ b/.scratch/stability-next-20260920/execution-20260920/closeout.md
+@@ -12,8 +12,8 @@
+ | TUI combined | `bash run-execution-terminal.sh tui combined` / 0 | `../study-run-2VtAyF` |
+ | P3 三组对照 | `bash run-execution-terminal.sh study` / 0 | `../study-run-yL4RzS`；27 次完整执行 |
+ | 文件快照/汇总 | `node execution-20260920/finalize-study.mjs study-run-yL4RzS` / 0 | `p3-finalize.log`、run 中 quality-audit.json、study-summary.json/md |
+-| 最终全量 release | `bash run-execution-terminal.sh release` / 0 | `../release-run-GurHBj`；`npm run test:release`，60 个受检文件前后无漂移 |
+-| 最终 harness | `bash run-execution-terminal.sh harness` / 0 | `harness-run-20260920T094955Z.log` |
++| 最终全量 release | `bash run-execution-terminal.sh release` / 0 | `../release-run-piF9Rd`；`npm run test:release`，60 个受检文件前后无漂移 |
++| 最终 harness | `bash run-execution-terminal.sh harness` / 0 | `harness-run-20260920T103158Z.log` |
+ | strict gate | 待本次独立只读 launcher 结果 | 冻结范围见 source-manifest.json / harness-manifest.json |
+ 
+ 表中 shell 命令的入口都位于 `../`，完整 argv、起止时间、stdout/stderr、exit、slot audit/status 及前后哈希在 execution-20260920 和相应 run 目录。子进程测试与真实宿主均在普通终端运行；重任务按 slot 排队；运行时仅在 /project/tmp，凭据未复制进证据目录。
+@@ -24,8 +24,10 @@ P3 最终模型为 Gemini Root / Luna child、low。direct / baseline / optimize
+ 
+ ADR-0008 将十分钟保留为操作默认值定稿，明确未证明统计最优；20 个 child launcher duration 最大 29,839ms，这组短任务无法区分五分钟和十分钟。插件时长与 Request 剩余时间可见性、长任务校准独立列为工单 07，本轮不近似实现。
+ 
+-源码版本边界：报告工具真实探针后只改了来源比较；TUI/P3 后又补强 `evidence.ts` / `orchestrate.ts` 的虚报路径边界。各运行保存自己的源码/脚本哈希，`pre-truth-hardening.patch` 与同名 source.json 保留 P3 所测版本。最终虚报路径用真实插件入口红绿回归和新的全量 release 验证，不能把旧 run 哈希描述为最终代码。严格审查须同时核对差异和证据适用范围。
++源码版本边界：报告工具真实探针后只改了来源比较；TUI/P3 后又补强 `evidence.ts` / `orchestrate.ts` 的虚报路径边界。各运行保存自己的源码/脚本哈希，`pre-truth-hardening.patch` 与同名 source.json 保留 P3 所测版本。之后又补齐 delegated reviewer 的修复来源绑定、当前文件新鲜度，以及原执行结束到修复派发之间的连续性检查；最终虚报路径及 reviewer 入口用真实插件入口红绿回归和新的全量 release 验证，不能把旧 run 哈希描述为最终代码。严格审查须同时核对差异和证据适用范围。
+ 
+-失败均保留：零预算 probe 同时拦住报告工具；首个 queued TUI 因 editor 恢复文字没有自然退出；Kimi 403 与 DeepSeek 502/503 在 REQUEST 前失败；新增身份测试变量重名；虚报路径红例；第一次补强后的 release-run-ZrJioW 暴露旧断言仍要求放行。最终断言审计没有删除断言，两条旧期望被加强，逐条解释在 assertion-audit.json。
++失败均保留：零预算 probe 同时拦住报告工具；首个 queued TUI 因 editor 恢复文字没有自然退出；Kimi 403 与 DeepSeek 502/503 在 REQUEST 前失败；新增身份测试变量重名；虚报路径红例；第一次补强后的 release-run-ZrJioW 暴露旧断言仍要求放行。首次新 strict 的额外子代理违反契约，且发现 reviewer 路径缺少修复来源绑定；红例和 release-run-gHbmWh 的漂移拒绝失败均保留，最终 release-run-piF9Rd 通过。最终断言审计没有删除断言，两条旧期望被加强，逐条解释在 assertion-audit.json。
+ 
+ 最终提交号：待 strict gate 完成后冻结提交并回填。
++
++后续门禁记录：qgpWLM 为 REQUEST_CHANGES 且误派生额外子代理；HRTA2r 超时 124、无最终 verdict；XlcaPu child 在 361.5 秒返回 REQUEST_CHANGES（修复派发前漂移），父转述仍超时 124。原始证据均在对应 strict-run。上述缺口已复现并修复；最后全量 release 为 piF9Rd。当前改用独立代码/证据两轮，代码单次 600 秒、证据 420 秒；全局默认与角色不变。
+diff --git a/.scratch/stability-next-20260920/execution-20260920/freeze-scope.json b/.scratch/stability-next-20260920/execution-20260920/freeze-scope.json
+index f28bb08..5622965 100644
+--- a/.scratch/stability-next-20260920/execution-20260920/freeze-scope.json
++++ b/.scratch/stability-next-20260920/execution-20260920/freeze-scope.json
+@@ -1,10 +1,10 @@
+ {
+   "sourceFiles": 66,
+-  "harnessFiles": 24,
++  "harnessFiles": 25,
+   "baseCommit": "83a0ad4351300e4537435ce637a995207e221ed0",
+-  "latestRelease": "release-run-GurHBj",
++  "latestRelease": "release-run-piF9Rd",
+   "p3MeasuredBuild": "study-run-yL4RzS (before final declaration hardening)",
+   "historicalIgnoredFiles": "baseline-freeze.json + ignored-freeze/",
+-  "sourceManifestSha256": "4829d7e2baf826158ab66ad91291dd01d6e120e78de87bb44eeddf5d1177cd98",
+-  "harnessManifestSha256": "4dc68356c887408c455c5b0a6e8171b852d341e87fcc299abcf1076c13af7d56"
++  "sourceManifestSha256": "961fbeb212c0cb052393e90fab2f55267243a445db0417752ab53c101fe3d171",
++  "harnessManifestSha256": "a61d5a4894432a96ecb4154f1a2ab393480ee4524bcabf4a101e2566d41874e0"
+ }
+diff --git a/.scratch/stability-next-20260920/execution-20260920/implementation-report.md b/.scratch/stability-next-20260920/execution-20260920/implementation-report.md
+index 55e1b87..56e2f2f 100644
+--- a/.scratch/stability-next-20260920/execution-20260920/implementation-report.md
++++ b/.scratch/stability-next-20260920/execution-20260920/implementation-report.md
+@@ -21,3 +21,9 @@ Checks: worker typecheck/test:p1/diff-check exit 0 (`p1b-r2-*`); final full norm
+ Superseding final checks after declaration hardening and strengthened legacy expectations: `../release-run-GurHBj` is full `npm run test:release` exit 0; `harness-run-20260920T094955Z.log` is current harness exit 0. The earlier ysqfcU pass remains historical for the prior code. Independent P3 recomputation is in measurement-validation.md; all 27 measured rows are quality/identity passing, with no report-only execution in those paths.
+ 
+ Limitations: pi-subagents 0.69.0 does not expose pre-budget partial grace or raw malformed structured-output diagnostics. No transcript fallback or system package patch is used. Real capability proof uses the production definition with an observation-only child extension; plugin entry tests separately cover grant, ledger and attribution behavior. P3 is a small-task comparison, not evidence for broader reading-policy changes or monetary savings.
++
++Final reviewer-binding correction: runReviewInvocation now includes report-only revisions, resolves their immutable non-auxiliary/non-report-only origin, requires origin and repair C_report samples, preserves origin readOnly/prior-truth semantics, and compares origin Truth plus repair-window/current freshness. Normal reviewer acceptance of a valid worker/explorer repair is covered; later drift and fabricated paths remain rejected. reviewer-binding-red.log reproduces REVIEW_NO_EXECUTION_EVIDENCE (exit 1). release-run-gHbmWh exposed the new drift rejection assertion (exit 1). Final release-run-e2fRVf passes npm run test:release with unchanged source hashes. These supersede prior final release references. The first new strict attempt returned REQUEST_CHANGES and also violated no-nested-delegation, so the next gate is fresh and uses only a child TaskSpec.
++
++Gate scheduling correction: strict-run-HRTA2r timed out (124) without a completed verdict; child elapsed 362.4s to last record and no owned process remained. The unchanged product now has two bounded fresh strict contracts: code/release and host/P3 evidence. Both keep the same 420s global launcher and actual parent/child read-only probes. Only local harness request selection changed; global configuration is unchanged.
++
++Final freshness-bridge correction (Root writer): both Root verdict and delegated reviewer require a fresh origin.C_report -> repair.A_run bridge plus a clean repair window before rebasing to repair.C_report. Missing original C_report fails closed. Added pre-repair drift regressions for both paths; expected red p1-run-20260920T104110Z exit 1, then full release-run-piF9Rd exit 0 with all 60 hashes unchanged. Final release references above are superseded by piF9Rd. Code strict uses per-run 600s / child soft420 based on XlcaPu actual parent45.3s + child361.5s plus relay; evidence strict stays420/300. The global launcher and roles are untouched.
+diff --git a/.scratch/stability-next-20260920/execution-20260920/writer-log.md b/.scratch/stability-next-20260920/execution-20260920/writer-log.md
+index b78ecab..d43859f 100644
+--- a/.scratch/stability-next-20260920/execution-20260920/writer-log.md
++++ b/.scratch/stability-next-20260920/execution-20260920/writer-log.md
+@@ -7,3 +7,4 @@
+ - p1b_worker round 2 COMPLETED; typecheck/test:p1/diff-check exit 0. Root resumes exclusive writing for real-host harness, acceptance, freezes and commit. All native helpers read-only.
+ - P3 finished 27/27; final capture complete. Exclusive writer transfers to p1b_worker for bounded fabricated-declaration acceptance correction in evidence/orchestrate/tests. Root is read-only until completion.
+ - Truth-hardening worker COMPLETED and stopped: expected red exit 1, fixed test:p1/typecheck/diff-check exit 0. Root resumes exclusive writing and final normal-terminal release/strict acceptance.
++- First final strict launcher ended (exit 0, REQUEST_CHANGES; nested delegation invalidates gate). Root remains sole writer for reviewer-evidence binding correction and a child-only fresh ReviewRequest. Source before this correction is frozen in strict-run-qgpWLM.
+diff --git a/.scratch/stability-next-20260920/harness-manifest.json b/.scratch/stability-next-20260920/harness-manifest.json
+index 5c4a5dc..c288d3d 100644
+--- a/.scratch/stability-next-20260920/harness-manifest.json
++++ b/.scratch/stability-next-20260920/harness-manifest.json
+@@ -1,15 +1,16 @@
+ {
+-  "ReviewRequest.md": "72a233ebfdbd71bd08d838f7fb7913014c8c3081c765b06d1d84704a0468256d",
++  "ReviewEvidenceRequest.md": "41e5f6339e2eeb1be679e5a8fc450d499f2d27a417579942876c9fb6172f86e2",
++  "ReviewRequest.md": "48e9863657545bd4add4605dfb965232491ec35d736f855f646f61dec746c92e",
+   "baseline-model-pin.ts": "ab51ae2100ee845357e1b4092e265bd5388016c642a1b69580fd9603237fb62b",
+   "check-harness.mjs": "835f515e73c1e4c0f7cfb48d59ab7a04f1dfe0ec9e34d3a96ed9c684ba68d453",
+   "execution-20260920/finalize-study.mjs": "1da4ce36b5c8969b6bd00c0a68fe5d1480928fdfa4580d02453415411db86ed1",
+   "issue06/summarize-run.mjs": "dab72e970d50ce7ebc7e60f146b9310f16606d18f307d327497ddf61164a001b",
+   "report-only-probe.ts": "00afacc2571a89f74544f7891c8342bbd434aa4d70c23ce19cc97f9fddb89c9d",
+   "report-only-tool-observer.ts": "907042a68fb335166c7e1d615205d4620d593736cca34362b24805d7ff8c3fe8",
+-  "run-execution-terminal.sh": "18a51a2854e9a1850eb3121b540c9ccb90e4ce3d486d99ca7ce53f8736ae3bfb",
++  "run-execution-terminal.sh": "29a392636a73146d0f3efb5614286ee2fa1a43b242d627576ee095fef25c817a",
+   "run-release-terminal.sh": "cf8dbc487101ef922cf6cfbd74deac82f4007e706cb307ac374460ee372dae44",
+   "run-report-only.mjs": "3ba4a153c21c8076f53fa4080ccd75180f07e594e81314212017362d9d56d0e5",
+-  "run-strict-terminal.sh": "ebd9d23f2d887706a4660582ebaf72e1b1eac295aa1bbb4ced632f6cd06d1ab0",
++  "run-strict-terminal.sh": "67a7e22ab5aba1e2ec4b6b67952dd20b48c87128c6dec1f13a740acd3bba41ce",
+   "run-study.mjs": "7fd4ea34e744385b4a39dcb7e2d2e840a983df351245545e9ff0f9bbf5b55cfe",
+   "sdk-stop-probe.mjs": "22e1d9354976f61bfdbf0ccc4df5cad3a8016588013452f705206d7d903061db",
+   "slot-audit-gate.mjs": "6b86fcb1a0ae07c1e135d195451bd6629506cbd9d2a5c2788e83fa84224f7a65",
+diff --git a/.scratch/stability-next-20260920/issues/06-strict-launcher-relay-timeout.md b/.scratch/stability-next-20260920/issues/06-strict-launcher-relay-timeout.md
+index ca9edea..46bb18d 100644
+--- a/.scratch/stability-next-20260920/issues/06-strict-launcher-relay-timeout.md
++++ b/.scratch/stability-next-20260920/issues/06-strict-launcher-relay-timeout.md
+@@ -47,3 +47,9 @@ Acceptance:
+ 2026-09-20（后续）：工单从 ready-for-agent 转为 needs-decision。不再用现有 240 秒预算重跑；下一步取决于用户对 global-budget.patch 的裁定。
+ 
+ 2026-09-20（裁定后）：用户接受 A+B。全局入口与协议已按 issue06/global-budget.patch 应用（父 low effort、`REVIEW_READONLY_TIMEOUT` 默认 420、子契约软预算 300 秒），并因第 4 轮暴露的 here-document 探针失败再修订一次提示词。正式门禁第 5 轮（../strict-run-Y59nSS，continuation-20260920-0502/strict-attempt-5-*）exit 0、父子各自 EROFS 证据、child PASS、总时长 253 秒，无残留、零漂移。第 4 轮（../strict-run-IGfEci，strict-attempt-4-*）exit 0 但 BLOCKED，原因与修正见 issue06/diagnosis.md。四条验收项全部满足；工单关闭。
++
++2026-09-20（P1-B 新轮）：strict-run-qgpWLM 外层退出 0，父 low；直接 child Sol/high 实际 278.5 秒，但它额外派生 reviewer，违反单层委派契约。本次不是 strict PASS。嵌套 reviewer 实际 204.5 秒，返回 REQUEST_CHANGES；自报约 250 秒未用于预算统计。已保留 contract/manifests/runtime/verdict，并改为仅子任务的 ReviewRequest；全局入口及角色配置未改。下一轮必须 fresh。
++
++第二个 P1-B 新轮 strict-run-HRTA2r 外层 124；父委派前 55.0 秒，child Sol/high 362.4 秒到最后记录，未完成 verdict，无残留。本次完整源码加全部宿主/P3证据的契约未在预算内完成。下一步将契约拆为代码和证据两个独立门禁，保持全局 420 秒，不机械重复完整契约。
++
++第三个 P1-B 新轮 strict-run-XlcaPu：父委派前45.3秒，child361.5秒返回 REQUEST_CHANGES，外层420秒在转述前超时。PID 泛筛记录1498966在后续检查时已不存在。修复已加入红绿回归及release-run-piF9Rd。代码审查仅单次600秒、child软420；证据审查仍420/300，全局入口/协议/角色未变。
+diff --git a/.scratch/stability-next-20260920/run-execution-terminal.sh b/.scratch/stability-next-20260920/run-execution-terminal.sh
+index f6bbc01..01c5500 100644
+--- a/.scratch/stability-next-20260920/run-execution-terminal.sh
++++ b/.scratch/stability-next-20260920/run-execution-terminal.sh
+@@ -16,13 +16,27 @@ unset STUDY_ARM STUDY_CASE STUDY_TUI_SCENARIO
+ export npm_config_cache="$evidence_dir/npm-cache"
+ mkdir -p -- "$npm_config_cache"
+ cd -- "$repo_dir"
+-action="${1:?probe|tui|study|release|strict|harness}"
++action="${1:?probe|tui|study|release|p1|strict|strict-summary|harness}"
+ case "$action" in
+  probe) command=(node "$task_dir/run-report-only.mjs");;
+  tui) scenario="${2:?queued|scheduled|combined}"; command=(node "$task_dir/run-study.mjs" --tui "--tui-scenario=$scenario");;
+  study) export STUDY_REPEATS=3; command=(node "$task_dir/run-study.mjs");;
+  release) command=(bash "$task_dir/run-release-terminal.sh");;
+- strict) command=(bash "$task_dir/run-strict-terminal.sh");;
++ p1) command=(npm run test:p1);;
++ strict)
++  case "${2:-code}" in
++   code) review_request="$task_dir/ReviewRequest.md"; export REVIEW_READONLY_TIMEOUT=600;;
++   evidence) review_request="$task_dir/ReviewEvidenceRequest.md"; export REVIEW_READONLY_TIMEOUT=420;;
++   *) echo "invalid strict scope" >&2; exit 2;;
++  esac
++  command=(bash "$task_dir/run-strict-terminal.sh" "$review_request");;
++ strict-summary)
++  [[ "${2:-}" =~ ^strict-run-[A-Za-z0-9]+$ ]] || exit 2
++  if [[ -f "$task_dir/$2/review-timeout.txt" ]]; then
++   read -r REVIEW_READONLY_TIMEOUT < "$task_dir/$2/review-timeout.txt"
++   export REVIEW_READONLY_TIMEOUT
++  fi
++  command=(node "$task_dir/issue06/summarize-run.mjs" "$task_dir/$2");;
+  harness) command=(node "$task_dir/check-harness.mjs");;
+  *) echo "invalid action" >&2; exit 2;;
+ esac
+diff --git a/.scratch/stability-next-20260920/run-strict-terminal.sh b/.scratch/stability-next-20260920/run-strict-terminal.sh
+index 71a71df..7093cb9 100644
+--- a/.scratch/stability-next-20260920/run-strict-terminal.sh
++++ b/.scratch/stability-next-20260920/run-strict-terminal.sh
+@@ -6,14 +6,17 @@ repo_dir="$(cd -- "$task_dir/../.." && pwd)"
+ cd -- "$repo_dir"
+ test -d "$task_dir"
+ test -d /project/tmp
++review_request="${1:-$task_dir/ReviewRequest.md}"
++test -f "$review_request"
+ run_dir="$(mktemp -d "$task_dir/strict-run-XXXXXX")"
++printf '%s\n' "${REVIEW_READONLY_TIMEOUT:-420}" > "$run_dir/review-timeout.txt"
+ tmp_root="$(mktemp -d /project/tmp/planner-strict-XXXXXX)"
+ export TMPDIR="$tmp_root" TMP="$tmp_root" TEMP="$tmp_root"
+ slot audit > "$run_dir/slot-audit.txt" 2> "$run_dir/slot-audit.stderr"
+ slot status > "$run_dir/slot-status.txt" 2>&1
+ node "$task_dir/slot-audit-gate.mjs" "$run_dir/slot-audit.txt" "$run_dir/slot-audit.stderr"
+ set +e
+-slot cpu -- bash /home/tcuni-claw/.codex/review-readonly.sh "$task_dir/ReviewRequest.md" > "$run_dir/events.jsonl" 2> "$run_dir/stderr.txt"
++slot cpu -- bash /home/tcuni-claw/.codex/review-readonly.sh "$review_request" > "$run_dir/events.jsonl" 2> "$run_dir/stderr.txt"
+ review_status=$?
+ set -e
+ printf '%s\n' "$review_status" > "$run_dir/exit-code.txt"
+diff --git a/.scratch/stability-next-20260920/source-manifest.json b/.scratch/stability-next-20260920/source-manifest.json
+index feb29a9..77b0947 100644
+--- a/.scratch/stability-next-20260920/source-manifest.json
++++ b/.scratch/stability-next-20260920/source-manifest.json
+@@ -7,7 +7,7 @@
+   "concurrency.test.mjs": "918620290821d09ac8135e2d5a71f36591e2f5952c92f3c7039c24c83debafe8",
+   "concurrency.ts": "8d594ce8db234f2a08e127f366f1b16b08383f762c5fa7661fec7c3a95d2ea7a",
+   "delegate.test.mjs": "4807f7a6697119c354557bd20c19f3d380e35f9eec22c0bb276ab21bf323c786",
+-  "delegate.ts": "0c001055d2e4952eb1f4e530a7f6e63cb0f6878896b9650b4b1cfeac42ba7f76",
++  "delegate.ts": "9f228a871dfc7f6fbb4201e68ada82eba907f8565560b7b27b4429f1173012a6",
+   "delegation-model.ts": "9399d30340addfa3b47ba44aa7dde6c514ea7defe3cf15b45d64297b1a289b6f",
+   "diagnostics-regression.test.mjs": "25a1ee22e91453b794c954269347e0248ca470387cb15aaa6c7b0b438924f86f",
+   "diffstat-acceptance.test.mjs": "cef01b87e83e7bf371c1e76d871c6e910ed271b06d99c0826be194f1962b8f79",
+@@ -31,8 +31,8 @@
+   "nx09-scope.test.mjs": "1fa4c2129bd64416553620d478e382ccca7402b6c19df2641fb170e8afb8ae07",
+   "nx10-attribution.test.mjs": "336299628549837e3bb60089e2f4cddbb0f9b2e7c55439ccc8aa46cdfa75497e",
+   "orchestrate.test.mjs": "11cf51a9638f5eba5b1e0951cfdc323370d66f58a2ea3915ea3ed62b5c38039c",
+-  "orchestrate.ts": "763fa07548d9ea22cb4ec71341953269789355785ee45c678b56f84a13536004",
+-  "p1-delegation.test.mjs": "9346aeefae8a5f186ab7d2553a788c1ac91fa3594158a86993537a0961d40ede",
++  "orchestrate.ts": "efadd6fd47d12723fb45a6703a7fb757c9580e8f02c955d625a984365327c736",
++  "p1-delegation.test.mjs": "bdc93088e90efd018ed1bfca513b8a5f32fc12994d67f8f6f39f1820d4d3853a",
+   "package.json": "4dfc6c5c9fc995e0bd124ef433e415056a0dac3cb180285749279fd6d95243cf",
+   "policy-cutover.test.mjs": "6c3c39710348e3bcf12709d69a0e1d92b9a83fb7a6d809bb88da0977e06a2d3b",
+   "policy.test.mjs": "6e3f6fd5f67aff4bbfab38fb46197fe64ea14ddec5c0edcf54dac77c37ae0ae2",
+diff --git a/delegate.ts b/delegate.ts
+index 9022643..838470b 100644
+--- a/delegate.ts
++++ b/delegate.ts
+@@ -33,7 +33,7 @@ import {
+ } from "./subagent-delegation-contract.ts";
+ import type { GitRunner } from "./git-audit.ts";
+ import type { ConcurrencyController, ConcurrencyReservation } from "./concurrency.ts";
+-import { captureEvidence, captureReviewEvidencePacket, compareEvidence, compareExecutionTruth, describeComparison, describeProbeFailures, environmentFailureOf } from "./evidence.ts";
++import { captureEvidence, captureReviewEvidencePacket, compareEvidence, compareExecutionTruth, compareFreshness, describeComparison, describeProbeFailures, environmentFailureOf } from "./evidence.ts";
+ import type { ExecutionTruthComparison } from "./evidence.ts";
+ import { buildTaskPacket, ROLE_AGENTS } from "./roles.ts";
+ import { createTaskSpec, normalizeWorkspaceIdentity } from "./task.ts";
+@@ -2060,23 +2060,58 @@ async function runReviewInvocation(
+ 		...(scopePaths.length > 0 ? { scopePaths } : {}),
+ 	});
+ 	const latest = fresh.executions
+-		.filter((item) => !item.auxiliary && !item.reportOnly && item.reportIndex === fresh.reports.length - 1)
++		.filter((item) => !item.auxiliary && item.reportIndex === fresh.reports.length - 1)
+ 		.at(-1);
+-	const priorTruthPaths = latest
++	// A corrected revision belongs to the report-only execution, while its
++	// work and read-only classification remain bound to the immutable origin.
++	const origin = latest?.reportOnly
++		? fresh.executions.find((item) => item.executionId === latest.previousExecutionId && !item.auxiliary && !item.reportOnly)
++		: latest;
++	const priorTruthPaths = origin
+ 		? fresh.executions
+-			.filter((item) => item.executionId !== latest.executionId && !item.auxiliary && !item.reportOnly && item.truthPaths?.length)
++			.filter((item) => item.executionId !== origin.executionId && !item.auxiliary && !item.reportOnly && item.truthPaths?.length)
+ 			.flatMap((item) => item.truthPaths ?? [])
+ 		: [];
+-	const comparison = latest
+-		? compareEvidence(latest.aRun, current, report, {
++	let comparison = origin && (!latest?.reportOnly || (origin.cReport && latest.cReport))
++		? compareEvidence(origin.aRun, current, report, {
+ 			...(fresh.spec?.scope ? { scope: fresh.spec.scope } : {}),
+ 			...(roots?.length ? { additionalWorktreeRoots: roots } : {}),
+-			...(latest.readOnly ? { readOnly: true } : {}),
++			...(latest?.reportOnly ? { reportOnly: true } : {}),
++			...(origin.readOnly ? { readOnly: true } : {}),
+ 			...(priorTruthPaths.length > 0 ? { priorTruthPaths } : {}),
+ 		})
+ 		: undefined;
++	if (comparison && latest?.reportOnly && origin?.cReport && latest.cReport) {
++		const evidenceOptions = {
++			...(fresh.spec?.scope ? { scope: fresh.spec.scope } : {}),
++			...(roots?.length ? { additionalWorktreeRoots: roots } : {}),
++		};
++		const truth = compareExecutionTruth(origin.aRun, origin.cReport, report, {
++			...evidenceOptions,
++			reportOnly: true,
++			readOnly: origin.readOnly === true,
++			priorTruthPaths,
++		});
++		const correctionWindowFresh = compareFreshness(origin.cReport, latest.aRun, evidenceOptions).fresh
++			&& compareFreshness(latest.aRun, latest.cReport, evidenceOptions).fresh;
++		const freshness = compareFreshness(correctionWindowFresh ? latest.cReport : origin.cReport, current, evidenceOptions);
++		comparison = {
++			...comparison,
++			verifiable: comparison.verifiable && truth.verifiable && freshness.verifiable,
++			fresh: comparison.fresh && truth.findings.length === 0 && !truth.declarationMismatch && freshness.fresh,
++			unexplained: comparison.unexplained || !freshness.verifiable || !freshness.fresh
++				|| truth.declarationMismatch || truth.extraDeclaredPaths.length > 0 || truth.missingPaths.length > 0,
++			truthPaths: [...new Set([...priorTruthPaths, ...truth.truthPaths])].sort(),
++			undeclaredPaths: truth.undeclaredPaths,
++			extraDeclaredPaths: truth.extraDeclaredPaths,
++			missingPaths: truth.missingPaths,
++			truthFindings: truth.findings.map(({ kind, paths }) => ({ kind, paths })),
++			freshness,
++			reasons: [...comparison.reasons, ...truth.reasons, ...freshness.reasons],
++		};
++	}
+ 	if (comparison) deps.store.setLastComparison(task.taskId, comparison);
+-	if (!latest) {
++	if (!comparison) {
+ 		// decideReview accepts a pass with no comparison at all, so the
+ 		// missing per-execution binding must refuse here — a pass over
+ 		// unverifiable material is never eligible.
+diff --git a/evidence.test.mjs b/evidence.test.mjs
+index 5f838c2..d9eaf5d 100644
+--- a/evidence.test.mjs
++++ b/evidence.test.mjs
+@@ -1350,6 +1350,21 @@ assert.equal(
+ 	assert.deepEqual(readOnly.observedExternalPaths, ["/repo/src/a.ts", "/repo/src/other.ts"]);
+ }
+ 
++// Report correction validates declarations even for a read-only origin.
++// Observing another writer's change does not establish ownership; prior
++// Task Truth is still a valid basis for a cumulative declaration.
++for (const compare of [compareEvidence, compareExecutionTruth]) {
++	const base = makeBase({ changedPaths: [] });
++	const current = makeCurrent({ changedPaths: ["src/a.ts"] });
++	const report = makeReport({ changedPaths: ["src/a.ts"] });
++	const options = { readOnly: true, reportOnly: true };
++	const unsupported = compare(base, current, report, options);
++	assert.deepEqual(unsupported.extraDeclaredPaths, ["/repo/src/a.ts"], "read-only observation cannot justify a repair declaration");
++	const supported = compare(base, current, report, { ...options, priorTruthPaths: ["/repo/src/a.ts"] });
++	assert.deepEqual(supported.extraDeclaredPaths, [], "recorded prior Truth still supports cumulative declarations");
++	assert.deepEqual(supported.missingPaths, []);
++}
++
+ console.log("planner-only evidence: PASS");
+ 
+ // --------------------------------------------------------------------------
+diff --git a/evidence.ts b/evidence.ts
+index 94c3022..3b4d91c 100644
+--- a/evidence.ts
++++ b/evidence.ts
+@@ -1509,9 +1509,10 @@ export function compareEvidence(
+ 		),
+ 	);
+ 	const extraDeclaredPaths: string[] = [];
+-	if (!options.readOnly) {
++	if (!options.readOnly || options.reportOnly) {
+ 		for (const path of inRepoDeclared) {
+-			if (!truthSet.has(path) && !gapAffectedPaths.has(path) && !priorTruth.has(path)) extraDeclaredPaths.push(path);
++			const originBasis = !options.readOnly && (truthSet.has(path) || gapAffectedPaths.has(path));
++			if (!originBasis && !priorTruth.has(path)) extraDeclaredPaths.push(path);
+ 		}
+ 	}
+ 
+@@ -1522,7 +1523,7 @@ export function compareEvidence(
+ 	}
+ 
+ 	const missingPaths: string[] = [];
+-	if (verifiable && !headChanged && !options.readOnly) {
++	if (verifiable && !headChanged && (!options.readOnly || options.reportOnly)) {
+ 		for (const path of inRepoDeclared) {
+ 			if (currentPaths.has(path)) continue;
+ 			// RF-1 — paths committed (T2) or content-changed on a baseline-dirty
+@@ -1757,7 +1758,7 @@ export function compareExecutionTruth(
+ 		const inAllowList = hasAllowList && inScopeEarly(path);
+ 		// A read-only execution may overlap a writer in the same worktree. Its
+ 		// window is still useful evidence, but observed paths are never charged
+-		// to the read-only report or turned into declaration findings.
++		// as its mutations. Explicit repair declarations are checked below.
+ 		if (options.readOnly) {
+ 			observedExternalPaths.push(path);
+ 			externalPaths.push(path);
+@@ -1823,7 +1824,7 @@ export function compareExecutionTruth(
+ 
+ 	// Branch 3 (unchanged): evidence complete and no task change, or out-of-scope/undeclared-without-basis
+ 	const extraDeclaredPaths = options.readOnly
+-		? []
++		? options.reportOnly ? inRepoDeclared.filter((path) => !priorTruth.has(path)) : []
+ 		: inRepoDeclared.filter(
+ 			(path) => !attributed.has(path) && !truthSet.has(path) && !attributionGapPaths.includes(path) && !priorTruth.has(path),
+ 		);
+@@ -1832,7 +1833,7 @@ export function compareExecutionTruth(
+ 		aRun.finalGitRef && cReport.finalGitRef && aRun.finalGitRef !== cReport.finalGitRef,
+ 	);
+ 	const missingPaths: string[] = [];
+-	if (verifiable && !headChanged && !options.readOnly) {
++	if (verifiable && !headChanged && (!options.readOnly || options.reportOnly)) {
+ 		for (const path of inRepoDeclared) {
+ 			if (currentPaths.has(path)) continue;
+ 			if (committedPaths.has(path) || t3.includes(path)) continue;
+@@ -1868,7 +1869,7 @@ export function compareExecutionTruth(
+ 	}
+ 
+ 	const findings: TruthFindingDraft[] = [];
+-	if (verifiable && !options.readOnly) {
++	if (verifiable && (!options.readOnly || options.reportOnly)) {
+ 		if (undeclaredPaths.length > 0) findings.push({ kind: "undeclared", paths: sorted(undeclaredPaths) });
+ 		if (outOfScopePaths.length > 0) findings.push({ kind: "scope", paths: sorted(outOfScopePaths) });
+ 		// Attribution gaps remain an execution-window concern. A report-only
+diff --git a/orchestrate.ts b/orchestrate.ts
+index e57b7ea..4b2852a 100644
+--- a/orchestrate.ts
++++ b/orchestrate.ts
+@@ -1871,8 +1871,8 @@ export class PlannerOrchestrator {
+ 		const origin = latest.reportOnly
+ 			? this.store.executionById(task.taskId, latest.previousExecutionId ?? "")
+ 			: latest;
+-		if (latest.reportOnly && !origin) {
+-			const reason = `report-only execution ${latest.executionId} has no linked prior execution ${latest.previousExecutionId ?? "(missing)"}; attribution cannot be verified`;
++		if (latest.reportOnly && (!origin || !origin.cReport)) {
++			const reason = `report-only execution ${latest.executionId} has no linked prior execution ${latest.previousExecutionId ?? "(missing)"} with C_report; attribution cannot be verified`;
+ 			this.store.completeExecution(task.taskId, latest.executionId, {
+ 				freshness: { verifiable: false, fresh: false, reasons: [reason], driftPaths: [] },
+ 			});
+@@ -1897,18 +1897,19 @@ export class PlannerOrchestrator {
+ 			...(origin?.readOnly === true ? { readOnly: true } : {}),
+ 			...(priorTruthPaths.length > 0 ? { priorTruthPaths } : {}),
+ 		});
+-		const correctionWindowFresh = latest.reportOnly && latest.cReport
+-			? compareFreshness(latest.aRun, latest.cReport, {
+-				...(roots ? { additionalWorktreeRoots: roots } : {}),
+-				...(task.spec?.scope ? { scope: task.spec.scope } : {}),
+-			}).fresh
++		const freshnessOptions = {
++			...(roots ? { additionalWorktreeRoots: roots } : {}),
++			...(task.spec?.scope ? { scope: task.spec.scope } : {}),
++		};
++		// Rebasing must preserve the entire interval since the original work,
++		// including changes that arrived before the report-only child started.
++		const correctionWindowFresh = latest.reportOnly && latest.cReport && origin?.cReport
++			? compareFreshness(origin.cReport, latest.aRun, freshnessOptions).fresh
++				&& compareFreshness(latest.aRun, latest.cReport, freshnessOptions).fresh
+ 			: false;
+ 		const freshnessBase = latest.reportOnly && correctionWindowFresh ? latest.cReport : truthBase;
+ 		let freshness: FreshnessComparison = freshnessBase
+-			? compareFreshness(freshnessBase, currentSample, {
+-				...(roots ? { additionalWorktreeRoots: roots } : {}),
+-				...(task.spec?.scope ? { scope: task.spec.scope } : {}),
+-			})
++			? compareFreshness(freshnessBase, currentSample, freshnessOptions)
+ 			: {
+ 				verifiable: false,
+ 				fresh: false,
+diff --git a/p1-delegation.test.mjs b/p1-delegation.test.mjs
+index 7f76c2d..fbb8368 100644
+--- a/p1-delegation.test.mjs
++++ b/p1-delegation.test.mjs
+@@ -460,6 +460,77 @@ try {
+ 	await successfulRepair.call("planner_verdict", { taskId: successMalformed.details.taskId, verdict: "pass", summary: "corrected report matches origin evidence" });
+ 	assert.equal(successfulRepair.task(successMalformed.details.taskId).state, "completed", "valid repaired report can complete after review");
+ 
++	for (const scenario of ["worker", "explorer", "drift", "fabricated", "pre-repair-root", "pre-repair-reviewer"]) {
++		let reviewerRepair;
++		reviewerRepair = await fixture(`report-only-reviewer-${scenario}`, {
++			responseFor(_request, launch, terminal) {
++				if (launch === 1) {
++					reviewerRepair.gitPaths = [...new Set([...reviewerRepair.gitPaths, "fixture.txt"])];
++					return { result: undefined };
++				}
++				if (launch === 2) {
++					const value = structuredClone(terminal.result.value);
++					value.changedFiles = scenario === "explorer" ? []
++						: scenario === "fabricated" ? ["fixture.txt", "invented.txt"] : ["fixture.txt"];
++					value.evidence.changedPaths = [...value.changedFiles];
++					return { result: { kind: "structured", value } };
++				}
++			},
++		});
++		if (scenario === "fabricated") reviewerRepair.gitPaths = ["invented.txt"];
++		const role = scenario === "explorer" ? "explorer" : "worker";
++		const malformed = await reviewerRepair.call("planner_delegate", { ...definition, role });
++		if (scenario.startsWith("pre-repair")) reviewerRepair.gitPaths.push("between.txt");
++		await reviewerRepair.call("planner_redelegate", { taskId: malformed.details.taskId, role });
++		if (scenario === "drift") reviewerRepair.gitPaths.push("later.txt");
++		const reviewed = scenario === "pre-repair-root"
++			? await reviewerRepair.call("planner_verdict", { taskId: malformed.details.taskId, verdict: "pass", summary: "review origin work after repair" })
++			: await reviewerRepair.call("planner_redelegate", { taskId: malformed.details.taskId, role: "reviewer" });
++		const finalTask = reviewerRepair.task(malformed.details.taskId);
++		if (scenario !== "pre-repair-root") {
++			assert.equal(reviewed.details.review.source, "reviewer", `${scenario}: exercises the delegated reviewer path`);
++		}
++		assert.deepEqual(finalTask.executions[1].truthPaths, [], `${scenario}: reviewer acceptance does not add repair Truth paths`);
++		assert.equal(finalTask.executions[1].previousExecutionId, malformed.details.executionId);
++		if (scenario === "worker" || scenario === "explorer") {
++			assert.equal(finalTask.state, "completed", `${scenario}: reviewer PASS accepts an origin-bound report correction`);
++		} else {
++			assert.notEqual(finalTask.state, "completed", `${scenario}: reviewer PASS cannot accept unreliable repair evidence`);
++		}
++	}
++
++	for (const ending of ["root", "reviewer"]) {
++		for (const initialState of ["absent", "preexisting"]) {
++			const name = `report-only-explorer-${ending}-${initialState}`;
++			const explorerRepair = await fixture(name, {
++				responseFor(_request, launch, terminal) {
++					if (launch === 1) return { result: undefined };
++					if (launch === 2) {
++						const value = structuredClone(terminal.result.value);
++						value.changedFiles = ["invented.txt"];
++						value.evidence.changedPaths = ["invented.txt"];
++						return { result: { kind: "structured", value } };
++					}
++				},
++			});
++			if (initialState === "preexisting") explorerRepair.gitPaths = ["invented.txt"];
++			const malformed = await explorerRepair.call("planner_delegate", { ...definition, role: "explorer" });
++			await explorerRepair.call("planner_redelegate", { taskId: malformed.details.taskId, role: "explorer" });
++			if (ending === "root") {
++				await explorerRepair.call("planner_verdict", { taskId: malformed.details.taskId, verdict: "pass", summary: "review readonly correction" });
++			} else {
++				await explorerRepair.call("planner_redelegate", { taskId: malformed.details.taskId, role: "reviewer" });
++			}
++			const finalTask = explorerRepair.task(malformed.details.taskId);
++			assert.equal(finalTask.executions[0].readOnly, true, `${name}: immutable origin is read-only`);
++			assert.deepEqual(finalTask.executions[1].truthPaths, [], `${name}: repair adds no Truth`);
++			assert.notEqual(finalTask.state, "completed", `${name}: fabricated readonly declaration cannot complete`);
++			assert.ok(finalTask.findings.some((finding) => finding.status === "open"
++				&& (finding.kind === "over-declared" || finding.kind === "missing")
++				&& finding.paths.some((path) => path.endsWith("/invented.txt"))), `${name}: declaration finding remains open`);
++		}
++	}
++
+ 	async function assertFabricatedReportPathRejected(name, initialPaths, declaredPaths) {
+ 		let fabricatedRepair;
+ 		fabricatedRepair = await fixture(name, {

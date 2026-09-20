@@ -1,0 +1,19 @@
+{
+  "repeats": 1,
+  "tuiScenario": "queued",
+  "baseline": "85bdd2a93b994d3e4894e7534ab91cf6b16c9043",
+  "rootModel": "kimi-coding/kimi-for-coding",
+  "childModel": "tcuni-luna/gpt-5.6-luna",
+  "thinking": "low",
+  "order": "Deterministic rotation by repetition and task; fixed before the first trial",
+  "localCache": "Fresh isolated workspace and agent session per trial",
+  "providerCache": "Uncontrolled; cache usage retained",
+  "prices": "User selected token/completion/latency only; monetaryCost=null",
+  "schedule": [
+    {
+      "repeat": 1,
+      "arm": "optimized",
+      "name": "stop"
+    }
+  ]
+}

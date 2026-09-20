@@ -1,0 +1,31 @@
+{
+  "verdict": "PASS",
+  "scenario": "scheduled",
+  "injections": [],
+  "quietBeforeQuitMs": 3000,
+  "quitKeys": [
+    "Ctrl-C (clear editor)",
+    "Ctrl-D"
+  ],
+  "forcedCleanup": false,
+  "exitStatus": 0,
+  "observations": {
+    "ready": true,
+    "hasUI": true,
+    "closureObserved": true,
+    "cancelObserved": true,
+    "cancelledTerminal": true,
+    "settled": true,
+    "originalRequestId": "91c81386-c27f-4bca-a953-52b2a6adf85e",
+    "requestUnchanged": true,
+    "queuedInputObserved": false,
+    "scheduledInputObserved": true,
+    "afterClosure": {
+      "modelHooks": 0,
+      "toolCalls": 0,
+      "requests": 0
+    },
+    "afterClosureCalls": 0,
+    "lastEventMs": 1789895845233
+  }
+}

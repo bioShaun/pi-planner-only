@@ -1,0 +1,999 @@
+import assert from "node:assert/strict";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+	SUBAGENT_DELEGATION_REQUEST_EVENT,
+	SUBAGENT_DELEGATION_RESPONSE_EVENT,
+	SUBAGENT_DELEGATION_UPDATE_EVENT,
+} from "./subagent-delegation-contract.ts";
+
+// T-20260918-004 — the operator's subagent model/thinking configuration must
+// reach the Explorer launch through the structured Delegation request, and
+// redelegation must re-read it per launch. Root model A, scout model B,
+// subagent default model C are distinct values. Assertions run on observable
+// REQUEST payloads, refusals and persisted records through the registered
+// planner tools — fixtures drive the production loading path; no homemade
+// resolver stands in for the oracle.
+const testScratchRoot = join(process.cwd(), ".scratch");
+mkdirSync(testScratchRoot, { recursive: true });
+const isolatedAgentDir = mkdtempSync(join(testScratchRoot, "explorer-model-config-test-"));
+const cleanupFixture = () => rmSync(isolatedAgentDir, { recursive: true, force: true });
+process.once("exit", cleanupFixture);
+process.once("SIGINT", () => { cleanupFixture(); process.exit(130); });
+process.once("SIGTERM", () => { cleanupFixture(); process.exit(143); });
+process.env.PI_CODING_AGENT_DIR = isolatedAgentDir;
+process.env.PI_PLANNER_ONLY_SEED_PRICING = "0";
+process.env.PI_PLANNER_ONLY_QUIESCENCE_MS = "0";
+process.env.PI_PLANNER_ONLY_CANCEL_GRACE_MS = "50";
+delete process.env.PI_SUBAGENT_CHILD;
+const { default: plannerOnly } = await import("./index.ts");
+
+const mkMaps = () => ({ handlers: new Map(), commands: new Map(), tools: new Map() });
+const globalMaps = mkMaps();
+const sessionEntries = [];
+
+function tinyEmitter() {
+	const listeners = new Map();
+	const emitted = [];
+	return {
+		emitted,
+		on(event, fn) {
+			let set = listeners.get(event);
+			if (!set) {
+				set = new Set();
+				listeners.set(event, set);
+			}
+			set.add(fn);
+			return () => set.delete(fn);
+		},
+		emit(event, payload) {
+			emitted.push({ event, payload });
+			for (const fn of [...(listeners.get(event) ?? [])]) fn(payload);
+		},
+	};
+}
+const piEvents = tinyEmitter();
+
+const fakePi = (maps = globalMaps, events = piEvents) => {
+	const state = { activeTools: ["read", "bash", "write", "subagent", "git_audit", "planner_verdict"] };
+	return {
+		state,
+		on(name, handler) {
+			maps.handlers.set(name, handler);
+		},
+		registerCommand(name, definition) {
+			maps.commands.set(name, definition);
+		},
+		registerTool(definition) {
+			maps.tools.set(definition.name, definition);
+		},
+		getActiveTools() {
+			return [...state.activeTools];
+		},
+		getAllTools() {
+			return [
+				{ name: "read" },
+				{ name: "grep" },
+				{ name: "find" },
+				{ name: "ls" },
+				{ name: "bash" },
+				{ name: "write" },
+				{ name: "edit" },
+				{ name: "subagent" },
+			];
+		},
+		setActiveTools(names) {
+			state.activeTools = [...names];
+		},
+		appendEntry(customType, data) {
+			sessionEntries.push({ type: "custom", customType, data });
+		},
+		events,
+		async exec(command, args) {
+			if (command !== "git") return { stdout: "", stderr: "", code: 1 };
+			return { stdout: "", stderr: "", code: 0 };
+		},
+	};
+};
+
+const pi = fakePi();
+plannerOnly(pi);
+assert.equal(globalMaps.tools.has("planner_delegate"), true);
+assert.equal(globalMaps.tools.has("planner_redelegate"), true);
+assert.equal(globalMaps.tools.has("planner_tasks"), true);
+
+const ui = {
+	notify() {},
+	setStatus() {},
+	theme: { fg(_color, text) { return text; } },
+};
+// Root model A. The fake registry hosts every model the fixtures name; the
+// production adapter consults it for the availability check.
+const availableModels = [
+	{ provider: "rootp", id: "root-a" },
+	{ provider: "rootp", id: "root-a2" },
+	{ provider: "scoutp", id: "model-b" },
+	{ provider: "scoutp", id: "model-b2" },
+	{ provider: "scoutp", id: "model-ps" },
+	{ provider: "scoutp", id: "model-pv" },
+	{ provider: "scoutp", id: "model-p" },
+	{ provider: "scoutp", id: "nested/model-d" },
+	{ provider: "defp", id: "model-c" },
+];
+const rootModel = { provider: "rootp", id: "root-a" };
+const ctx = {
+	hasUI: true,
+	ui,
+	cwd: process.cwd(),
+	model: rootModel,
+	modelRegistry: {
+		getAll: () => availableModels,
+		getAvailable: () => availableModels,
+	},
+	sessionManager: {
+		getEntries() { return sessionEntries; },
+		getSessionFile() { return join(isolatedAgentDir, "sessions", "explorer-model.jsonl"); },
+	},
+};
+await globalMaps.handlers.get("session_start")({}, ctx);
+
+// The trusted runtime registration answers for planner-scout (cached once
+// accepted — every later launch must still resolve config per-launch).
+const registrations = [];
+piEvents.on("pi-subagents:runtime-agent-register:v1", (request) => {
+	if (request.name === "planner-scout") {
+		registrations.push(request);
+		request.result = { ok: true, registration: { dispose() {} } };
+	}
+});
+
+// ---------------------------------------------------------------------------
+// Fixture helpers — user settings live under the isolated PI_CODING_AGENT_DIR,
+// project settings in a per-case temp dir discovered as a project root.
+// ---------------------------------------------------------------------------
+const userSettingsPath = join(isolatedAgentDir, "settings.json");
+
+function writeUserSettings(subagents) {
+	rmSync(userSettingsPath, { force: true, recursive: true });
+	if (subagents === undefined) {
+		return;
+	}
+	writeFileSync(userSettingsPath, `${JSON.stringify({ subagents }, null, 2)}\n`, "utf8");
+}
+
+function makeProjectDir(name) {
+	const dir = join(isolatedAgentDir, name);
+	mkdirSync(join(dir, ".pi"), { recursive: true });
+	return dir;
+}
+
+function writeProjectSettings(dir, subagents) {
+	writeFileSync(join(dir, ".pi", "settings.json"), `${JSON.stringify({ subagents }, null, 2)}\n`, "utf8");
+}
+
+function writeAgentDefinition(dir, relativePath, fields) {
+	const path = join(dir, relativePath);
+	mkdirSync(join(path, ".."), { recursive: true });
+	writeFileSync(path, `---\nname: scout\ndescription: test scout\n${fields}\n---\nScout fixture.\n`, "utf8");
+}
+
+const seenRequestIds = [];
+const requestSeen = async () => {
+	const deadline = Date.now() + 2000;
+	let found;
+	while (!found && Date.now() < deadline) {
+		found = piEvents.emitted.find((entry) =>
+			entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT && !seenRequestIds.includes(entry.payload.requestId),
+		)?.payload;
+		if (!found) await new Promise((r) => setTimeout(r, 2));
+	}
+	assert.ok(found, "REQUEST emitted on the delegation bus");
+	seenRequestIds.push(found.requestId);
+	return found;
+};
+
+const requestCount = () => piEvents.emitted.filter((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT).length;
+
+function workerReportValue(request, runId) {
+	return {
+		version: 1,
+		taskId: request.nodeId,
+		status: "completed",
+		summary: "observed",
+		changedFiles: [],
+		validation: [],
+		evidence: { cwd: request.cwd, taskId: request.nodeId, workerRunId: runId },
+		risks: [],
+		unresolved: [],
+	};
+}
+
+function emitCompleted(request, runId, options = {}) {
+	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: request.requestId,
+		ownerRunId: request.ownerRunId,
+		nodeId: request.nodeId,
+		status: "completed",
+		runId,
+		agent: options.agent ?? "planner-scout",
+		...(options.terminalModel ? { model: options.terminalModel } : {}),
+		...(options.terminalThinking ? { thinking: options.terminalThinking } : {}),
+		usage: options.usage ?? { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1, toolCalls: 1, durationMs: 5 },
+		result: { kind: "structured", value: options.resultValue ?? workerReportValue(request, runId) },
+	});
+}
+
+async function launchExplorer(callId, params = {}) {
+	const execPromise = globalMaps.tools.get("planner_delegate").execute(callId, {
+		role: "explorer",
+		objective: "survey the workspace",
+		acceptanceMode: "observation",
+		scope: {},
+		constraints: [],
+		acceptanceCriteria: [],
+		validation: { required: false },
+		...params,
+	}, undefined, () => {}, ctx);
+	const request = await requestSeen();
+	return { execPromise, request };
+}
+
+async function completeExplorer(callId, params = {}, options = {}) {
+	const { execPromise, request } = await launchExplorer(callId, params);
+	emitCompleted(request, `run-${callId}`, options);
+	const outcome = await execPromise;
+	return { request, outcome };
+}
+
+async function completeRedelegate(callId, taskId, role, params = {}, options = {}) {
+	const execPromise = globalMaps.tools.get("planner_redelegate").execute(callId, {
+		taskId,
+		role,
+		objective: "re-enter the task",
+		scope: {},
+		constraints: [],
+		acceptanceCriteria: [],
+		validation: { required: false },
+		...params,
+	}, undefined, () => {}, ctx);
+	const request = await requestSeen();
+	if (options.terminalStatus && options.terminalStatus !== "completed") {
+		piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+			requestId: request.requestId,
+			ownerRunId: request.ownerRunId,
+			nodeId: request.nodeId,
+			status: options.terminalStatus,
+			runId: `run-${callId}`,
+			...(options.terminalModel ? { model: options.terminalModel } : {}),
+		});
+	} else {
+		emitCompleted(request, `run-${callId}`, options);
+	}
+	const outcome = await execPromise;
+	return { request, outcome };
+}
+
+async function assertExplorerRefused(callId, code, params = {}) {
+	const before = requestCount();
+	let caught;
+	try {
+		await globalMaps.tools.get("planner_delegate").execute(callId, {
+			role: "explorer",
+			objective: "survey the workspace",
+			acceptanceMode: "observation",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: false },
+			...params,
+		}, undefined, () => {}, ctx);
+	} catch (error) {
+		caught = error;
+	}
+	assert.ok(caught, `expected a ${code} refusal`);
+	assert.equal(caught.code, code, `refusal code is ${code} (got: ${caught.message})`);
+	assert.equal(requestCount(), before, `${code}: no launch happens`);
+}
+
+const readLedgerTask = (taskId) => JSON.parse(readFileSync(join(isolatedAgentDir, "planner-only", "ledger", `${taskId}.json`), "utf8")).task;
+
+// ============================================================================
+// Ticket 01 — configuration matrix through the registered planner_delegate.
+// ============================================================================
+
+// (1) Red minimal case: Root=A, scout=B/low, default=C — the REQUEST selects
+//     B with thinking low and still binds planner-scout.
+{
+	writeUserSettings({
+		agentOverrides: {
+			scout: { model: "scoutp/model-b", thinking: "low" },
+		},
+		defaultModel: "defp/model-c",
+	});
+	const { request } = await completeExplorer("call-red", {});
+	assert.equal(request.agent, "planner-scout", "explorer binds the trusted restricted reader");
+	assert.equal(request.model, "scoutp/model-b", "scout model config reaches the launch");
+	assert.equal(request.thinking, "low", "scout thinking config reaches the launch");
+}
+
+// (2) An explicit planner-scout override beats the scout config on both fields.
+{
+	writeUserSettings({
+		agentOverrides: {
+			scout: { model: "scoutp/model-b", thinking: "low" },
+			"planner-scout": { model: "scoutp/model-ps", thinking: "high" },
+		},
+		defaultModel: "defp/model-c",
+	});
+	const { request } = await completeExplorer("call-ps-override", {});
+	assert.equal(request.model, "scoutp/model-ps");
+	assert.equal(request.thinking, "high");
+}
+
+// (3) The installed pi-subagents 0.68 builtin scout declares thinking: low,
+//     so only its missing model comes from defaults.
+{
+	writeUserSettings({
+		defaultModel: "defp/model-c",
+		defaultThinking: "medium",
+	});
+	const { request } = await completeExplorer("call-default-only", {});
+	assert.equal(request.model, "defp/model-c");
+	assert.equal(request.thinking, "low");
+}
+
+// (4) No configuration at all: fields are omitted — the host fallback
+//     proceeds and the launch is normal, not a refusal.
+{
+	writeUserSettings(undefined);
+	const { request, outcome } = await completeExplorer("call-no-config", {});
+	assert.equal(request.model, undefined, "no model configured → omitted");
+	assert.equal(request.thinking, "low", "builtin scout thinking is effective without settings");
+	assert.equal(outcome.details.state, "reviewing", "the unconfigured launch completes normally");
+}
+
+// (5) Explicit inherit is terminal and forwards verbatim — the launcher
+//     resolves it against the current parent session model.
+{
+	writeUserSettings({
+		agentOverrides: {
+			scout: { model: "inherit", thinking: "low" },
+		},
+		defaultModel: "defp/model-c",
+	});
+	const { request } = await completeExplorer("call-inherit", {});
+	assert.equal(request.model, "inherit", "explicit inherit forwards verbatim, not resolved to a snapshot");
+	assert.equal(request.thinking, "low", "a lower-priority default cannot displace the inherit-level thinking");
+}
+
+// (6) Model-only override does not erase an applicable thinking default.
+{
+	writeUserSettings({
+		agentOverrides: {
+			scout: { model: "scoutp/model-b" },
+		},
+		defaultThinking: "medium",
+	});
+	const { request } = await completeExplorer("call-model-only", {});
+	assert.equal(request.model, "scoutp/model-b");
+	assert.equal(request.thinking, "low", "builtin scout thinking precedes the default");
+}
+
+// (7) Thinking-only override does not erase an applicable model default;
+//     "off" is a real value, not absence.
+{
+	writeUserSettings({
+		agentOverrides: {
+			scout: { thinking: "off" },
+		},
+		defaultModel: "defp/model-c",
+	});
+	const { request } = await completeExplorer("call-thinking-off", {});
+	assert.equal(request.model, "defp/model-c");
+	assert.equal(request.thinking, "off");
+}
+
+// (8a) Project beats user for the builtin scout semantics.
+{
+	writeUserSettings({
+		agentOverrides: {
+			scout: { model: "scoutp/model-b", thinking: "low" },
+		},
+	});
+	const projectDir = makeProjectDir("proj-precedence");
+	writeProjectSettings(projectDir, {
+		agentOverrides: {
+			scout: { model: "scoutp/model-p", thinking: "high" },
+		},
+	});
+const scoutCase = await completeExplorer("call-proj-scout", { cwd: projectDir });
+	assert.equal(scoutCase.request.model, "scoutp/model-p", "project scout override beats user");
+	assert.equal(scoutCase.request.thinking, "high");
+}
+
+// (8aa) A project builtin override replaces the user override wholesale;
+//       missing project fields retain the builtin/default base.
+{
+	writeUserSettings({
+		defaultModel: "defp/model-c",
+		agentOverrides: { scout: { model: "scoutp/model-b" } },
+	});
+	const projectDir = makeProjectDir("proj-builtin-wholesale");
+	writeProjectSettings(projectDir, { agentOverrides: { scout: { thinking: "high" } } });
+	const { request } = await completeExplorer("call-proj-builtin-wholesale", { cwd: projectDir });
+	assert.equal(request.model, "defp/model-c", "project builtin override does not inherit the user override model");
+	assert.equal(request.thinking, "high");
+}
+
+// (8ab) Standard user/project custom definitions shadow the builtin, and
+//       custom overrides merge user then project per field.
+{
+	writeAgentDefinition(isolatedAgentDir, "agents/nested/scout.md", "model: scoutp/model-pv\nthinking: medium");
+	writeUserSettings(undefined);
+	const definitionOnly = await completeExplorer("call-user-definition-only", {});
+	assert.equal(definitionOnly.request.model, "scoutp/model-pv");
+	assert.equal(definitionOnly.request.thinking, "medium");
+
+	writeUserSettings({ agentOverrides: { scout: { model: "scoutp/model-b" } } });
+	const userCase = await completeExplorer("call-user-definition", {});
+	assert.equal(userCase.request.model, "scoutp/model-b");
+	assert.equal(userCase.request.thinking, "medium");
+
+	const projectDir = makeProjectDir("proj-custom-definition");
+	writeAgentDefinition(projectDir, ".pi/agents/nested/scout.md", "model: scoutp/model-p\nthinking: minimal");
+	writeProjectSettings(projectDir, { agentOverrides: { scout: { thinking: "high" } } });
+	const projectCase = await completeExplorer("call-project-definition", { cwd: projectDir });
+	assert.equal(projectCase.request.model, "scoutp/model-b", "user model override applies to a custom project scout");
+	assert.equal(projectCase.request.thinking, "high", "project field wins after the user override");
+}
+
+// (8ac) `false` is a terminal deletion, not permission to fall through.
+{
+	writeUserSettings({
+		defaultModel: "defp/model-c",
+		agentOverrides: { scout: { model: false }, "planner-scout": { thinking: false } },
+	});
+	const { request } = await completeExplorer("call-false-delete", {});
+	assert.equal(request.model, undefined, "builtin override deletion removes the default model");
+	assert.equal(request.thinking, undefined, "planner-scout deletion removes effective scout thinking");
+}
+
+// (8b) planner-scout merges user then project per field: a project
+//      thinking-only entry does not erase the user model field.
+{
+	writeUserSettings({
+		agentOverrides: {
+			"planner-scout": { model: "scoutp/model-b", thinking: "low" },
+		},
+	});
+	const projectDir = makeProjectDir("proj-ps-merge");
+	writeProjectSettings(projectDir, {
+		agentOverrides: {
+			"planner-scout": { thinking: "minimal" },
+		},
+	});
+	const plannerScoutCase = await completeExplorer("call-proj-ps", { cwd: projectDir });
+	assert.equal(plannerScoutCase.request.model, "scoutp/model-b", "user planner-scout model survives a project thinking-only entry");
+	assert.equal(plannerScoutCase.request.thinking, "minimal", "project planner-scout thinking merges per field");
+}
+
+// (9) Provider-specific overrides apply only to the current Root provider.
+{
+	writeUserSettings({
+		agentOverrides: {
+			scout: { model: "scoutp/model-b", thinking: "low" },
+		},
+		agentOverridesByProvider: {
+			rootp: {
+				scout: { model: "scoutp/model-pv", thinking: "minimal" },
+			},
+		},
+	});
+	const applicable = await completeExplorer("call-prov-applicable", {});
+	assert.equal(applicable.request.model, "scoutp/model-pv", "provider override wins over the generic scout entry");
+	assert.equal(applicable.request.thinking, "minimal");
+	ctx.model = { provider: "otherp", id: "root-a" };
+	try {
+		const foreign = await completeExplorer("call-prov-foreign", {});
+		assert.equal(foreign.request.model, "scoutp/model-b", "a different Root provider does not apply the override");
+		assert.equal(foreign.request.thinking, "low");
+	} finally {
+		ctx.model = rootModel;
+	}
+}
+
+// (10) Provider-qualified identifiers pass through intact, including a model
+//      portion that itself contains a slash.
+{
+	writeUserSettings({
+		agentOverrides: {
+			scout: { model: "scoutp/nested/model-d:high", thinking: "low" },
+		},
+	});
+	const { request } = await completeExplorer("call-slash", {});
+	assert.equal(request.model, "scoutp/nested/model-d:high", "slashes and thinking suffix reach the launcher verbatim");
+}
+
+// ============================================================================
+// Ticket 01 — failure matrix: visible refusals, never a silent Root launch.
+// ============================================================================
+
+// (11) Malformed settings refuse distinctly from "absent" — and the worker
+//      path (which never reads explorer config) still launches.
+{
+	writeFileSync(userSettingsPath, "{ not json", "utf8");
+	await assertExplorerRefused("call-broken-json", "EXPLORER_CONFIG_INVALID");
+
+	const workerExec = globalMaps.tools.get("planner_delegate").execute("call-broken-json-worker", {
+		role: "worker",
+		objective: "implement anyway",
+		scope: {},
+		constraints: [],
+		acceptanceCriteria: [],
+		validation: { required: false },
+	}, undefined, () => {}, ctx);
+	const workerRequest = await requestSeen();
+	assert.equal(workerRequest.agent, "worker");
+	assert.equal(workerRequest.model, undefined, "worker launches carry no explorer model authority");
+	emitCompleted(workerRequest, "run-broken-json-worker", { agent: "worker" });
+	await workerExec;
+}
+
+// (12) A present but unreadable settings source is a refusal, not a fallback.
+{
+	rmSync(userSettingsPath, { force: true });
+	mkdirSync(userSettingsPath, { recursive: true });
+	await assertExplorerRefused("call-unreadable", "EXPLORER_CONFIG_INVALID");
+}
+
+// (13) Ill-typed consumed fields and invalid thinking values refuse.
+{
+	writeUserSettings({ defaultModel: 42 });
+	await assertExplorerRefused("call-bad-default", "EXPLORER_CONFIG_INVALID");
+	writeUserSettings({
+		agentOverrides: {
+			scout: { model: "scoutp/model-b", thinking: "banana" },
+		},
+	});
+	await assertExplorerRefused("call-bad-thinking", "EXPLORER_CONFIG_INVALID");
+}
+
+// (14) A configured model reaches the real launcher unchanged. Its launch-time
+//      rejection is visible and never substitutes Root.
+{
+	writeUserSettings({
+		agentOverrides: {
+			scout: { model: "scoutp/missing", thinking: "low" },
+		},
+	});
+	const { execPromise, request } = await launchExplorer("call-unavailable");
+	assert.equal(request.model, "scoutp/missing");
+	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: request.requestId,
+		ownerRunId: request.ownerRunId,
+		nodeId: request.nodeId,
+		status: "failed",
+		runId: "run-call-unavailable",
+		agent: "planner-scout",
+		error: "Unknown subagent model 'scoutp/missing' in the active Pi model registry.",
+		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0, toolCalls: 0, durationMs: 0 },
+	});
+	const outcome = await execPromise;
+	assert.equal(outcome.details.termination.reason, "launch_failure");
+	assert.match(outcome.details.termination.error, /Unknown subagent model/);
+}
+
+// Host-invalid non-model configuration must not be normalized into a valid
+// model selection and silently fall back to Root.
+{
+	writeUserSettings({ agentOverrides: { scout: { tools: "bash" } } });
+	await assertExplorerRefused("call-invalid-tools-shape", "EXPLORER_CONFIG_INVALID");
+
+	writeUserSettings(undefined);
+	const projectDir = makeProjectDir("proj-invalid-advertise");
+	writeAgentDefinition(projectDir, ".pi/agents/scout.md", "advertise: maybe\nmodel: scoutp/model-p");
+	await assertExplorerRefused("call-invalid-advertise", "EXPLORER_CONFIG_INVALID", { cwd: projectDir });
+
+	const validDir = makeProjectDir("proj-valid-broad-definition");
+	writeAgentDefinition(validDir, ".pi/agents/scout.md", "advertise: true\ntools: bash, write, edit\nallowNestedSubagents: true\nskills: deploy\nextensions: dangerous-ext\nmodel: scoutp/model-p\nthinking: low");
+	const valid = await completeExplorer("call-valid-broad-definition", { cwd: validDir });
+	assert.equal(valid.request.model, "scoutp/model-p");
+	assert.equal(valid.request.agent, "planner-scout", "valid broad definition fields do not replace the restricted runtime agent");
+}
+
+// (14a) Host discovery settings this narrow 0.68 compatibility projection
+//       cannot reproduce fail closed instead of silently selecting builtin.
+for (const [callId, setting] of [
+	["call-unsupported-provider", { defaultProvider: "scoutp" }],
+	["call-unsupported-scan", { agentScanDirs: ["./extra-agents"] }],
+	["call-unsupported-override-provider", { agentOverrides: { scout: { defaultProvider: "scoutp" } } }],
+]) {
+	writeUserSettings(setting);
+	await assertExplorerRefused(callId, "EXPLORER_CONFIG_INVALID");
+}
+
+writeUserSettings(undefined);
+process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = join(isolatedAgentDir, "extra-agents");
+try {
+	await assertExplorerRefused("call-unsupported-extra-dirs", "EXPLORER_CONFIG_INVALID");
+} finally {
+	delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
+}
+
+{
+	const projectDir = makeProjectDir("proj-package-scout");
+	writeFileSync(join(projectDir, "package.json"), `${JSON.stringify({
+		name: "package-scout-fixture",
+		"pi-subagents": { agents: ["package-agents"] },
+	}, null, 2)}\n`, "utf8");
+	writeAgentDefinition(projectDir, "package-agents/scout.md", "model: scoutp/model-p");
+	await assertExplorerRefused("call-unsupported-package-scout", "EXPLORER_CONFIG_INVALID", { cwd: projectDir });
+}
+
+{
+	const ordinaryPackage = join(isolatedAgentDir, "ordinary-plugin");
+	mkdirSync(ordinaryPackage, { recursive: true });
+	writeFileSync(join(ordinaryPackage, "package.json"), `${JSON.stringify({ name: "ordinary-plugin", pi: { extensions: ["index.ts"] } }, null, 2)}\n`, "utf8");
+	writeFileSync(userSettingsPath, `${JSON.stringify({ packages: [{ source: `file:${ordinaryPackage}` }] }, null, 2)}\n`, "utf8");
+	const ordinary = await completeExplorer("call-settings-ordinary-package", {});
+	assert.equal(ordinary.request.agent, "planner-scout", "ordinary settings package does not trigger the package scout guard");
+
+	const scoutPackage = join(isolatedAgentDir, "settings-scout-package");
+	mkdirSync(scoutPackage, { recursive: true });
+	writeFileSync(join(scoutPackage, "package.json"), `${JSON.stringify({ name: "settings-scout-package", "pi-subagents": { agents: ["agents"] } }, null, 2)}\n`, "utf8");
+	writeAgentDefinition(scoutPackage, "agents/scout.md", "model: scoutp/model-p");
+	writeFileSync(userSettingsPath, `${JSON.stringify({ packages: [`file:${scoutPackage}`] }, null, 2)}\n`, "utf8");
+	await assertExplorerRefused("call-settings-package-scout", "EXPLORER_CONFIG_INVALID");
+}
+
+{
+	const projectDir = makeProjectDir("proj-block-model");
+	writeAgentDefinition(projectDir, ".pi/agents/scout.md", "model: |\n  scoutp/model-p");
+	await assertExplorerRefused("call-unsupported-model-block", "EXPLORER_CONFIG_INVALID", { cwd: projectDir });
+}
+
+// (15) Missing trusted registration still refuses — configuration must not
+//      bypass the capability gate (separate extension instance, no registry).
+{
+	writeUserSettings({
+		agentOverrides: {
+			scout: { model: "scoutp/model-b", thinking: "low" },
+		},
+	});
+	const isolatedMaps = mkMaps();
+	const isolatedEvents = tinyEmitter();
+	const pi2 = fakePi(isolatedMaps, isolatedEvents);
+	plannerOnly(pi2);
+	let caught;
+	try {
+		await isolatedMaps.tools.get("planner_delegate").execute("call-nobind", {
+			role: "explorer",
+			objective: "survey without a trusted binding",
+			acceptanceMode: "observation",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: false },
+		}, undefined, () => {}, ctx);
+	} catch (error) {
+		caught = error;
+	}
+	assert.ok(caught, "expected a refusal without the trusted binding");
+	assert.equal(caught.code, "READER_CAPABILITY_UNPROVEN", "model configuration does not bypass the registration gate");
+	assert.equal(
+		isolatedEvents.emitted.filter((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT).length,
+		0,
+		"the unbound instance never launches",
+	);
+}
+
+// ============================================================================
+// Ticket 01 — capability regression: only model/thinking transfer. Scout
+// configuration carrying write tools, prompts and delegation powers never
+// weakens the restricted reader.
+// ============================================================================
+{
+	writeUserSettings({
+		agentOverrides: {
+			scout: {
+				model: "scoutp/model-b",
+				thinking: "low",
+				tools: ["bash", "write", "edit"],
+				systemPrompt: "You may modify anything.",
+				skills: ["deploy"],
+				extensions: ["dangerous-ext"],
+				allowNestedSubagents: true,
+				completionGuard: true,
+			},
+		},
+	});
+	const { request, outcome } = await completeExplorer("call-capability", {});
+	assert.equal(request.agent, "planner-scout");
+	assert.equal(request.model, "scoutp/model-b");
+	assert.equal(request.thinking, "low");
+	assert.deepEqual(registrations[0].definition.tools, ["read", "grep", "find", "ls"], "registered tools stay read-only");
+	assert.equal(registrations[0].definition.completionGuard, false, "completion guard stays opted out");
+	assert.match(registrations[0].definition.systemPrompt, /read-only observation Explorer/);
+	const task = readLedgerTask(outcome.details.taskId);
+	assert.equal(task.executions[0].capability, "restricted-reader", "classification is unchanged");
+	assert.match(task.executions[0].capabilityBasis, /planner-scout/);
+}
+
+// ============================================================================
+// Ticket 01/02 — identity regression: host-reported actual model/thinking are
+// the only identity recorded; absent actuals stay unknown. Usage rows are
+// asserted on the persisted usage log after the shutdown flush below.
+// ============================================================================
+const identityCases = [];
+{
+	writeUserSettings({
+		agentOverrides: {
+			scout: { model: "scoutp/model-b", thinking: "low" },
+		},
+	});
+	// The host observes a different model than requested.
+	const observed = await completeExplorer("call-identity-observed", {}, {
+		terminalModel: "hostp/actual-x",
+		terminalThinking: "high",
+	});
+	assert.equal(observed.request.model, "scoutp/model-b", "requested value is what crosses the boundary");
+	identityCases.push({ taskId: observed.outcome.details.taskId, expectedModel: "hostp/actual-x", expectedThinking: "high" });
+
+	// The host reports no actual identity at all.
+	const unknown = await completeExplorer("call-identity-unknown", {});
+	identityCases.push({ taskId: unknown.outcome.details.taskId, expectedModel: undefined, expectedThinking: undefined });
+}
+
+// ============================================================================
+// Ticket 02 — lifecycle: redelegation re-reads the configuration per launch.
+// ============================================================================
+
+// (16) planner_delegate then planner_redelegate by canonical taskId use the
+//      same selection path — the second REQUEST shows the same scout config.
+let lifecycleTaskId;
+{
+	const first = await completeExplorer("call-life-1", {});
+	lifecycleTaskId = first.outcome.details.taskId;
+	const second = await completeRedelegate("call-life-2", lifecycleTaskId, "explorer");
+	assert.equal(second.request.nodeId, lifecycleTaskId, "redelegation binds the same canonical Task");
+	assert.notEqual(second.request.requestId, first.request.requestId);
+	assert.equal(second.request.agent, "planner-scout");
+	assert.equal(second.request.model, "scoutp/model-b");
+	assert.equal(second.request.thinking, "low");
+}
+
+// (17) Rewriting the settings between launches: the second launch sees the new
+//      values even though the runtime-agent registration stayed cached.
+{
+	writeUserSettings({
+		agentOverrides: {
+			scout: { model: "scoutp/model-b2", thinking: "medium" },
+		},
+	});
+	const third = await completeRedelegate("call-life-3", lifecycleTaskId, "explorer");
+	assert.equal(third.request.model, "scoutp/model-b2", "no frozen cache: the new model reaches the next launch");
+	assert.equal(third.request.thinking, "medium", "no frozen cache: the new thinking reaches the next launch");
+	assert.equal(registrations.length, 1, "the capability registration itself stayed cached");
+}
+
+// (18) Explicit inherit follows the current Root per launch; a configured
+//      scout model is not displaced by Root changes.
+{
+	writeUserSettings({
+		agentOverrides: {
+			scout: { model: "inherit", thinking: "low" },
+		},
+	});
+	const inherited = await completeRedelegate("call-life-inherit-1", lifecycleTaskId, "explorer");
+	assert.equal(inherited.request.model, "inherit");
+	ctx.model = { provider: "rootp", id: "root-a2" };
+	try {
+		const inheritedAgain = await completeRedelegate("call-life-inherit-2", lifecycleTaskId, "explorer");
+		assert.equal(inheritedAgain.request.model, "inherit", "inherit forwards verbatim per launch — the launcher resolves against the current Root, not a snapshot");
+	} finally {
+		ctx.model = rootModel;
+	}
+	writeUserSettings({
+		agentOverrides: {
+			scout: { model: "scoutp/model-b", thinking: "low" },
+		},
+	});
+	ctx.model = { provider: "rootp", id: "root-a2" };
+	try {
+		const configured = await completeRedelegate("call-life-configured", lifecycleTaskId, "explorer");
+		assert.equal(configured.request.model, "scoutp/model-b", "a changed Root does not override an explicit scout model");
+	} finally {
+		ctx.model = rootModel;
+	}
+}
+
+// (19) A blocked recovery.required Task still requires its RecoveryDecision
+//      after the configuration changed; the authorized retry launches with the
+//      then-current configuration and never rewrites the first execution.
+{
+	writeUserSettings({
+		agentOverrides: {
+			scout: { model: "scoutp/model-b", thinking: "low" },
+		},
+	});
+	const runawayExec = globalMaps.tools.get("planner_delegate").execute("call-life-runaway", {
+		role: "explorer",
+		objective: "breach the envelope",
+		acceptanceMode: "observation",
+		scope: {},
+		constraints: [],
+		acceptanceCriteria: [],
+		validation: { required: false },
+		envelope: { maxTokens: 10 },
+	}, undefined, () => {}, ctx);
+	const runawayRequest = await requestSeen();
+	piEvents.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, {
+		requestId: runawayRequest.requestId,
+		ownerRunId: runawayRequest.ownerRunId,
+		nodeId: runawayRequest.nodeId,
+		tokens: 500,
+	});
+	await new Promise((r) => setTimeout(r, 5));
+	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: runawayRequest.requestId,
+		ownerRunId: runawayRequest.ownerRunId,
+		nodeId: runawayRequest.nodeId,
+		status: "cancelled",
+		runId: "run-life-runaway",
+		agent: "planner-scout",
+		model: "hostp/actual-runaway",
+		usage: { input: 5, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1, toolCalls: 1, durationMs: 10 },
+	});
+	const runawayOutcome = await runawayExec;
+	assert.equal(runawayOutcome.details.termination?.reason, "worker_runaway");
+	const runawayTaskId = runawayOutcome.details.taskId;
+	const runawayExecutionId = runawayOutcome.details.executionId;
+
+	writeUserSettings({
+		agentOverrides: {
+			scout: { model: "scoutp/model-b2", thinking: "medium" },
+		},
+	});
+	let caught;
+	try {
+		await globalMaps.tools.get("planner_redelegate").execute("call-life-norecovery", {
+			taskId: runawayTaskId,
+			role: "explorer",
+			objective: "retry without a decision",
+			scope: {},
+			constraints: [],
+			acceptanceCriteria: [],
+			validation: { required: false },
+		}, undefined, () => {}, ctx);
+	} catch (error) {
+		caught = error;
+	}
+	assert.ok(caught, "a config change alone must not reopen the blocked Task");
+	assert.equal(caught.code, "RECOVERY_REQUIRED", "the RecoveryDecision gate still stands after the configuration changed");
+
+	const retry = await completeRedelegate("call-life-retry", runawayTaskId, "explorer", {
+		recovery: { executionId: runawayExecutionId, action: "retry_same_plan", reason: "transient stall; retry with the updated configuration", worktreeDecision: "keep" },
+	}, { terminalModel: "hostp/actual-x", terminalThinking: "high" });
+	assert.equal(retry.request.model, "scoutp/model-b2", "the authorized retry launches with the current configuration");
+	assert.equal(retry.request.thinking, "medium");
+	const ledgerAfterRetry = readLedgerTask(runawayTaskId);
+	assert.equal(ledgerAfterRetry.executions[0].endedReason, "worker_runaway", "the old execution record is not rewritten");
+	identityCases.push({ taskId: runawayTaskId, expectedRunawayModel: "hostp/actual-runaway", expectedRetriedModel: "hostp/actual-x" });
+}
+
+// (20) Worker / Reviewer / Validator launches are unchanged: no model or
+//      thinking authority crosses into their requests, and Explorer selection
+//      never switches the Root model.
+{
+	writeUserSettings({
+		agentOverrides: {
+			scout: { model: "scoutp/model-b", thinking: "low" },
+			worker: { model: "scoutp/model-ps", thinking: "high" },
+		},
+	});
+	const workerRun = globalMaps.tools.get("planner_delegate").execute("call-roles-worker", {
+		role: "worker",
+		objective: "implement a thing",
+		scope: {},
+		constraints: [],
+		acceptanceCriteria: [],
+		validation: { required: false },
+	}, undefined, () => {}, ctx);
+	const workerRequest = await requestSeen();
+	assert.equal(workerRequest.agent, "worker");
+	assert.equal(Object.hasOwn(workerRequest, "model"), false, "worker requests carry no model field");
+	assert.equal(Object.hasOwn(workerRequest, "thinking"), false, "worker requests carry no thinking field");
+	emitCompleted(workerRequest, "run-roles-worker", { agent: "worker" });
+	const workerOutcome = await workerRun;
+
+	const validatorRun = globalMaps.tools.get("planner_delegate").execute("call-roles-validator", {
+		role: "validator",
+		objective: "run the oracle",
+		scope: {},
+		constraints: [],
+		acceptanceCriteria: [],
+		validation: { required: false },
+	}, undefined, () => {}, ctx);
+	const validatorRequest = await requestSeen();
+	assert.equal(validatorRequest.agent, "oracle");
+	assert.equal(Object.hasOwn(validatorRequest, "model"), false, "validator requests carry no model field");
+	emitCompleted(validatorRequest, "run-roles-validator", { agent: "oracle" });
+	await validatorRun;
+
+	const reviewRun = globalMaps.tools.get("planner_redelegate").execute("call-roles-reviewer", {
+		taskId: workerOutcome.details.taskId,
+		role: "reviewer",
+		objective: "review the report",
+		scope: {},
+		constraints: [],
+		acceptanceCriteria: [],
+		validation: { required: false },
+	}, undefined, () => {}, ctx);
+	const reviewRequest = await requestSeen();
+	assert.equal(reviewRequest.agent, "reviewer");
+	assert.equal(Object.hasOwn(reviewRequest, "model"), false, "reviewer requests carry no model field");
+	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: reviewRequest.requestId,
+		ownerRunId: reviewRequest.ownerRunId,
+		nodeId: reviewRequest.nodeId,
+		status: "completed",
+		runId: "run-roles-reviewer",
+		agent: "reviewer",
+		result: {
+			kind: "structured",
+			value: {
+				taskId: workerOutcome.details.taskId,
+				verdict: "request_changes",
+				summary: "needs another round",
+				evidenceFresh: true,
+				findings: [{
+					severity: "minor",
+					category: "correctness",
+					description: "tighten the implementation",
+				}],
+			},
+		},
+	});
+	const reviewOutcome = await reviewRun;
+	assert.equal(reviewOutcome.details.review?.verdict, "request_changes", "the reviewer loop still binds");
+
+	assert.deepEqual(ctx.model, rootModel, "Explorer selection never switches the Root model");
+}
+
+// ---------------------------------------------------------------------------
+// Identity truth on persisted records: flush the usage log on shutdown and
+// assert the host-observed values (never the requested ones) landed.
+// ---------------------------------------------------------------------------
+await globalMaps.handlers.get("session_shutdown")({ reason: "quit" }, ctx);
+{
+	const usageLogPath = join(isolatedAgentDir, "planner-only", "usage.jsonl");
+	assert.ok(existsSync(usageLogPath), "shutdown flushed the usage log");
+	const lines = readFileSync(usageLogPath, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+	const lineFor = (taskId) => lines.find((line) => line.taskId === taskId);
+	for (const testCase of identityCases) {
+		const line = lineFor(testCase.taskId);
+		assert.ok(line, `usage line persisted for ${testCase.taskId}`);
+		if (testCase.expectedRunawayModel) {
+			assert.equal(line.children[0].model, testCase.expectedRunawayModel, "the first execution keeps its observed identity");
+			assert.equal(line.children[1].model, testCase.expectedRetriedModel, "the retried execution records its own observed identity");
+			continue;
+		}
+		assert.equal(
+			line.children[0].model,
+			testCase.expectedModel,
+			testCase.expectedModel
+				? "the observed model is recorded, not the requested one"
+				: "an absent actual model stays unknown — the request value is never back-filled",
+		);
+		assert.equal(
+			line.children[0].thinking,
+			testCase.expectedThinking,
+			testCase.expectedThinking
+				? "the observed thinking is recorded, not the requested one"
+				: "an absent actual thinking stays unknown — the request value is never back-filled",
+		);
+	}
+}
+
+cleanupFixture();
+console.log("explorer-model-config: PASS");

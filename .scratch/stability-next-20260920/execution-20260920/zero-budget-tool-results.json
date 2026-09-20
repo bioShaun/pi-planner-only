@@ -1,0 +1,24 @@
+[
+  {
+    "role": "toolResult",
+    "toolName": "write",
+    "isError": true,
+    "content": [
+      {
+        "type": "text",
+        "text": "Tool budget hard limit reached after 1 tool call (hard 0). The 'write' tool is blocked so you can finalize from the context you already have."
+      }
+    ]
+  },
+  {
+    "role": "toolResult",
+    "toolName": "structured_output",
+    "isError": true,
+    "content": [
+      {
+        "type": "text",
+        "text": "Tool budget hard limit reached after 2 tool calls (hard 0). The 'structured_output' tool is blocked so you can finalize from the context you already have."
+      }
+    ]
+  }
+]

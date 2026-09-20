@@ -1,0 +1,10 @@
+{
+  "priorRun": "strict-run-2FEEMJ",
+  "changedSources": [
+    "evidence.test.mjs",
+    "evidence.ts",
+    "p1-delegation.test.mjs"
+  ],
+  "unchangedSources": 63,
+  "latestRelease": "release-run-GJqscr"
+}

@@ -1,16 +1,17 @@
 # P0 后稳定性与委派演进
 
-用户于 2026-09-20 授权按顺序处理剩余工作。实施基线 `85bdd2a93b994d3e4894e7534ab91cf6b16c9043`，初始工作区干净；Root 为唯一写入者。原计划见 ../../docs/pi-planner-only-stability-and-delegation-plan.md。
+当前执行结果见 [acceptance.md](acceptance.md) 和 [2026-09-20 收尾记录](execution-20260920/closeout.md)。原始任务是 [handoff](handoff-20260920.md)，用户修订和真实失败记录在 [plan-correction](execution-20260920/plan-correction.md)。
 
-| 顺序 | 工单 | 当前状态 |
-|---|---|---|
-| 01 | [同步当前文档状态](issues/01-status.md) | 已实施 |
-| 02 | [P1 普通委派和有界收尾](issues/02-delegation.md) | P1-A 已实现；P1-B 能力与实现缺口明确 |
-| 03 | [宿主停止能力](issues/03-host-stop.md) | SDK 队列与真实 TUI 到期停止场景通过；完整定时输入矩阵待办 |
-| 04 | [上游兼容与路由](issues/04-transport-routing.md) | 路由 fixture 与 Kimi Root / Luna child 真实 smoke 通过 |
-| 05 | [固定版本对照与读取政策](issues/05-measurement.md) | 单个真实 smoke 已通过；完整对照、校准与政策待定 |
-| 06 | [strict launcher 转述超时](issues/06-strict-launcher-relay-timeout.md) | 已关闭：归因为父 max effort + child 固有时长；全局入口改为父 low effort、420 秒；第 5 轮 exit 0、child PASS |
+| 工单 | 当前状态 |
+|---|---|
+| [01 状态同步](issues/01-status.md) | 已完成 |
+| [02 P1 委派与收尾](issues/02-delegation.md) | P1-A 已提交；P1-B 仅报告提交能力已实现，原始 partial/diagnostic 能力 unsupported |
+| [03 宿主停止](issues/03-host-stop.md) | 三种真实 TUI 组合验收通过，不外推至所有模式 |
+| [04 上游与路由](issues/04-transport-routing.md) | 固定版本的实际模型身份有证据 |
+| [05 对照与政策](issues/05-measurement.md) | 27 次三组对照完成；只比 token / 完成率 / 延迟 |
+| [06 strict launcher](issues/06-strict-launcher-relay-timeout.md) | 保留父 low / child Sol high 与 420 秒入口；本轮时长在新 closeout |
+| [07 时长与剩余时间](issues/07-execution-duration-and-request-remaining.md) | 独立后续工单，本轮不修改时间语义 |
 
-各轮独立记录源码、命令、原始结果与限制；不把 P0 旧证据外推到新版本。2026-09-20 用户调整权限后，普通宿主执行的 stdout/PTY、/project/tmp 与 slot 预检通过；真实模型与 TUI 已在解除沙箱限制的宿主中实跑。受限 sandbox executor 仍不能代跑这些验收。所有中间文件位于本任务目录或经验证的 /project/tmp；禁止 /tmp，不绕过 slot。
+P1-A / stop / P2 的原冻结实现和证据已提交为 `83a0ad4351300e4537435ce637a995207e221ed0`。本轮继续保留原始日志、失败尝试、源码与 harness 冻结，普通终端运行真实宿主与子进程测试。重任务全部先记录 slot audit/status 再入队；临时运行目录仅在任务目录或 /project/tmp，凭据不进入证据目录。
 
-当前新增源码没有提交/发布。第五次 release、真实模型路由和 TUI 场景均通过；独立只读父进程下的严格代码审查及后续独立验收核验均返回 PASS。外层 launcher 前三次在 240 秒退出 124；按用户裁定修订全局入口后，第 5 轮（strict-run-Y59nSS）exit 0、父子各自 EROFS、child PASS，完整自动 strict gate 对 P1-A/stop/P2 为 PASS。当前结论见 [acceptance.md](acceptance.md) 和 [本轮证据汇总](continuation-20260920-0502/closeout.md)。P1-B 与完整 P3 保持未完成，详见能力矩阵和工单 05；本轮没有修改生产代码。
+最终验收完成：release-run-GJqscr、代码门禁strict-run-ed0kfI、收尾门禁strict-run-dihsWK通过。完整证据审查在strict-run-Bg1P0s，父超时保留；最终收尾已核验并正常退出。详见[收尾记录](execution-20260920/closeout.md)。

@@ -1,0 +1,20 @@
+
+> pi-planner-only@0.8.0 test:p1
+> node --experimental-strip-types p1-delegation.test.mjs
+
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: report-only-fabricated-preexisting: fabricated declaration cannot pass the final gate
+    at assertFabricatedReportPathRejected (file:///home/tcuni-claw/pi/pi-planner-only/p1-delegation.test.mjs:493:10)
+    at async file:///home/tcuni-claw/pi/pi-planner-only/p1-delegation.test.mjs:501:2 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 'accept',
+  expected: 'accept',
+  operator: 'notStrictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.14.0

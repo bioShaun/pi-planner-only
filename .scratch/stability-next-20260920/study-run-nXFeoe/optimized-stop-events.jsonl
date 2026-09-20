@@ -1,0 +1,6 @@
+{"t":1789895243758,"requests":[{"id":"e7fbb1de-7b21-4513-972c-d2c5462e5341","rootStop":"not-requested","settled":false}],"kind":"host","hook":"input","hasUI":true,"source":"interactive"}
+{"t":1789895243776,"requests":[{"id":"e7fbb1de-7b21-4513-972c-d2c5462e5341","rootStop":"not-requested","settled":false}],"kind":"host","hook":"agent_start","hasUI":true,"mode":"tui"}
+{"t":1789895243778,"requests":[{"id":"e7fbb1de-7b21-4513-972c-d2c5462e5341","rootStop":"not-requested","settled":false}],"kind":"host","hook":"message_end","hasUI":true,"mode":"tui"}
+{"t":1789895243796,"requests":[{"id":"e7fbb1de-7b21-4513-972c-d2c5462e5341","rootStop":"not-requested","settled":false}],"kind":"host","hook":"before_provider_request","hasUI":true,"mode":"tui"}
+{"t":1789895244222,"requests":[{"id":"e7fbb1de-7b21-4513-972c-d2c5462e5341","rootStop":"not-requested","settled":false}],"kind":"host","hook":"message_end","hasUI":true,"mode":"tui","model":"kimi-for-coding","provider":"kimi-coding","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"answer":""}
+{"t":1789895244240,"requests":[{"id":"e7fbb1de-7b21-4513-972c-d2c5462e5341","rootStop":"not-requested","settled":true}],"kind":"host","hook":"agent_settled","hasUI":true,"mode":"tui"}

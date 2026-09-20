@@ -287,6 +287,7 @@ export type ExecutionEndedReason =
 	| "operator_cancel"
 	| "timeout"
 	| "tool_budget"
+	| "report_only_tool_budget"
 	| "provider_failure"
 	| "tool_error"
 	| "launch_failure";
@@ -310,6 +311,13 @@ export interface ExecutionEnvelope {
 	maxTokens?: number;
 	maxWallMs?: number;
 	source: "delegation-param" | "default" | "operator-config";
+}
+
+/** The exact public launcher tool budget sent with one execution. */
+export interface ExecutionToolBudget {
+	soft?: number;
+	hard: number;
+	block?: string[] | "*";
 }
 
 /**
@@ -384,6 +392,14 @@ export interface TaskExecutionRecord {
 	usageComplete?: boolean;
 	/** The finite runaway envelope this ordinary execution ran under. */
 	envelope?: ExecutionEnvelope;
+	/** Public launcher capability sent on REQUEST; absent for ordinary executions. */
+	toolBudget?: ExecutionToolBudget;
+	/** Registered closed-tool agent used for a report-only correction. */
+	reportOnlyAgent?: string;
+	/** Host registration proof behind the report-only agent binding. */
+	reportOnlyCapabilityBasis?: string;
+	/** Unmodified terminal payload received over the versioned launcher contract. */
+	rawTerminal?: Record<string, unknown>;
 	/** P0-B — which envelope bound tripped, with the observed value. */
 	runawayObservation?: RunawayObservation;
 	/**

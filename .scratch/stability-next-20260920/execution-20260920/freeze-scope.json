@@ -1,0 +1,10 @@
+{
+  "sourceFiles": 66,
+  "harnessFiles": 25,
+  "baseCommit": "83a0ad4351300e4537435ce637a995207e221ed0",
+  "latestRelease": "release-run-GJqscr",
+  "p3MeasuredBuild": "study-run-yL4RzS (before final declaration hardening)",
+  "historicalIgnoredFiles": "baseline-freeze.json + ignored-freeze/",
+  "sourceManifestSha256": "99531acc8ce6def4f42a62035f826f0454069c7f4e56ac0828f0ad262825e3af",
+  "harnessManifestSha256": "5746ebe087cda88abb2a09db6a6cebf844b3f58188c22a7ba6dffdcf9376cbda"
+}

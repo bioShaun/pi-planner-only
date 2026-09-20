@@ -1,0 +1,112 @@
+[
+  {
+    "command": [
+      "node",
+      "--check",
+      "/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/run-study.mjs"
+    ],
+    "status": 0,
+    "signal": null,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "node",
+      "--experimental-strip-types",
+      "--check",
+      "/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/baseline-model-pin.ts"
+    ],
+    "status": 0,
+    "signal": null,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "node",
+      "--check",
+      "/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/run-report-only.mjs"
+    ],
+    "status": 0,
+    "signal": null,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "node",
+      "--experimental-strip-types",
+      "--check",
+      "/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/report-only-probe.ts"
+    ],
+    "status": 0,
+    "signal": null,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "node",
+      "--experimental-strip-types",
+      "--check",
+      "/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-observer.ts"
+    ],
+    "status": 0,
+    "signal": null,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "node",
+      "--experimental-strip-types",
+      "--check",
+      "/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/report-only-tool-observer.ts"
+    ],
+    "status": 0,
+    "signal": null,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "node",
+      "/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-summary.test.mjs"
+    ],
+    "status": 0,
+    "signal": null,
+    "stdout": "study-summary: PASS\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "node",
+      "/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-report.test.mjs"
+    ],
+    "status": 0,
+    "signal": null,
+    "stdout": "study-report: PASS\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "node",
+      "/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/slot-audit-gate.test.mjs"
+    ],
+    "status": 0,
+    "signal": null,
+    "stdout": "slot-audit-gate: PASS\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "python3",
+      "/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/tui-proof.test.py"
+    ],
+    "status": 0,
+    "signal": null,
+    "stdout": "",
+    "stderr": ".....\n----------------------------------------------------------------------\nRan 5 tests in 0.000s\n\nOK\n"
+  }
+]

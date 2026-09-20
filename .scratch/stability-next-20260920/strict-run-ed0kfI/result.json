@@ -1,0 +1,39 @@
+{
+  "runDir": "/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/strict-run-ed0kfI",
+  "launcherExit": 0,
+  "launchedAt": "2026-09-20T11:01:00.953Z",
+  "finishedAt": "2026-09-20T11:05:21.164Z",
+  "slotQueueSeconds": 0.4,
+  "parent": {
+    "thread": "01a0be79-fe8e-7391-8f1f-d2f071746b5f",
+    "rollout": "/home/tcuni-claw/.codex/sessions/2026/09/20/rollout-2026-09-20T19-01-01-01a0be79-fe8e-7391-8f1f-d2f071746b5f.jsonl",
+    "model": "gpt-6-astra",
+    "effort": "low",
+    "sandbox": "read-only",
+    "sessionStarted": "2026-09-20T11:01:01.323Z",
+    "spawnAt": "2026-09-20T11:01:48.369Z",
+    "preDelegationSeconds": 47,
+    "taskComplete": "2026-09-20T11:05:04.928Z",
+    "lastRecord": "2026-09-20T11:05:04.928Z"
+  },
+  "child": {
+    "thread": "01a0be7a-b6dd-74b0-9184-ec2721fbfc11",
+    "rollout": "/home/tcuni-claw/.codex/sessions/2026/09/20/rollout-2026-09-20T19-01-48-01a0be7a-b6dd-74b0-9184-ec2721fbfc11.jsonl",
+    "model": "gpt-5.6-sol",
+    "effort": "high",
+    "sandbox": "read-only",
+    "startedAt": "2026-09-20T11:01:48.408Z",
+    "toolCalls": 7,
+    "taskComplete": "2026-09-20T11:04:34.676Z",
+    "lastRecord": "2026-09-20T11:04:34.676Z",
+    "elapsedSeconds": 166.3,
+    "verdictFirstLine": "PASS"
+  },
+  "externalTimeoutSeconds": 600,
+  "gateComplete": true,
+  "residueCodexProcessesStartedAfterLaunch": [],
+  "runtimeTmpPaths": [
+    "/project/tmp/planner-strict-rfkZUW"
+  ],
+  "recordedAtUtc": "2026-09-20T11:06:46.376Z"
+}

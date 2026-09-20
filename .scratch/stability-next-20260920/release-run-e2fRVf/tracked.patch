@@ -1,0 +1,132 @@
+diff --git a/.scratch/stability-next-20260920/execution-20260920/writer-log.md b/.scratch/stability-next-20260920/execution-20260920/writer-log.md
+index b78ecab..d43859f 100644
+--- a/.scratch/stability-next-20260920/execution-20260920/writer-log.md
++++ b/.scratch/stability-next-20260920/execution-20260920/writer-log.md
+@@ -7,3 +7,4 @@
+ - p1b_worker round 2 COMPLETED; typecheck/test:p1/diff-check exit 0. Root resumes exclusive writing for real-host harness, acceptance, freezes and commit. All native helpers read-only.
+ - P3 finished 27/27; final capture complete. Exclusive writer transfers to p1b_worker for bounded fabricated-declaration acceptance correction in evidence/orchestrate/tests. Root is read-only until completion.
+ - Truth-hardening worker COMPLETED and stopped: expected red exit 1, fixed test:p1/typecheck/diff-check exit 0. Root resumes exclusive writing and final normal-terminal release/strict acceptance.
++- First final strict launcher ended (exit 0, REQUEST_CHANGES; nested delegation invalidates gate). Root remains sole writer for reviewer-evidence binding correction and a child-only fresh ReviewRequest. Source before this correction is frozen in strict-run-qgpWLM.
+diff --git a/delegate.ts b/delegate.ts
+index 9022643..4b175da 100644
+--- a/delegate.ts
++++ b/delegate.ts
+@@ -33,7 +33,7 @@ import {
+ } from "./subagent-delegation-contract.ts";
+ import type { GitRunner } from "./git-audit.ts";
+ import type { ConcurrencyController, ConcurrencyReservation } from "./concurrency.ts";
+-import { captureEvidence, captureReviewEvidencePacket, compareEvidence, compareExecutionTruth, describeComparison, describeProbeFailures, environmentFailureOf } from "./evidence.ts";
++import { captureEvidence, captureReviewEvidencePacket, compareEvidence, compareExecutionTruth, compareFreshness, describeComparison, describeProbeFailures, environmentFailureOf } from "./evidence.ts";
+ import type { ExecutionTruthComparison } from "./evidence.ts";
+ import { buildTaskPacket, ROLE_AGENTS } from "./roles.ts";
+ import { createTaskSpec, normalizeWorkspaceIdentity } from "./task.ts";
+@@ -2060,23 +2060,57 @@ async function runReviewInvocation(
+ 		...(scopePaths.length > 0 ? { scopePaths } : {}),
+ 	});
+ 	const latest = fresh.executions
+-		.filter((item) => !item.auxiliary && !item.reportOnly && item.reportIndex === fresh.reports.length - 1)
++		.filter((item) => !item.auxiliary && item.reportIndex === fresh.reports.length - 1)
+ 		.at(-1);
+-	const priorTruthPaths = latest
++	// A corrected revision belongs to the report-only execution, while its
++	// work and read-only classification remain bound to the immutable origin.
++	const origin = latest?.reportOnly
++		? fresh.executions.find((item) => item.executionId === latest.previousExecutionId && !item.auxiliary && !item.reportOnly)
++		: latest;
++	const priorTruthPaths = origin
+ 		? fresh.executions
+-			.filter((item) => item.executionId !== latest.executionId && !item.auxiliary && !item.reportOnly && item.truthPaths?.length)
++			.filter((item) => item.executionId !== origin.executionId && !item.auxiliary && !item.reportOnly && item.truthPaths?.length)
+ 			.flatMap((item) => item.truthPaths ?? [])
+ 		: [];
+-	const comparison = latest
+-		? compareEvidence(latest.aRun, current, report, {
++	let comparison = origin && (!latest?.reportOnly || (origin.cReport && latest.cReport))
++		? compareEvidence(origin.aRun, current, report, {
+ 			...(fresh.spec?.scope ? { scope: fresh.spec.scope } : {}),
+ 			...(roots?.length ? { additionalWorktreeRoots: roots } : {}),
+-			...(latest.readOnly ? { readOnly: true } : {}),
++			...(latest?.reportOnly ? { reportOnly: true } : {}),
++			...(origin.readOnly ? { readOnly: true } : {}),
+ 			...(priorTruthPaths.length > 0 ? { priorTruthPaths } : {}),
+ 		})
+ 		: undefined;
++	if (comparison && latest?.reportOnly && origin?.cReport && latest.cReport) {
++		const evidenceOptions = {
++			...(fresh.spec?.scope ? { scope: fresh.spec.scope } : {}),
++			...(roots?.length ? { additionalWorktreeRoots: roots } : {}),
++		};
++		const truth = compareExecutionTruth(origin.aRun, origin.cReport, report, {
++			...evidenceOptions,
++			reportOnly: true,
++			readOnly: origin.readOnly === true,
++			priorTruthPaths,
++		});
++		const correctionWindowFresh = compareFreshness(latest.aRun, latest.cReport, evidenceOptions).fresh;
++		const freshness = compareFreshness(correctionWindowFresh ? latest.cReport : origin.cReport, current, evidenceOptions);
++		comparison = {
++			...comparison,
++			verifiable: comparison.verifiable && truth.verifiable && freshness.verifiable,
++			fresh: comparison.fresh && truth.findings.length === 0 && !truth.declarationMismatch && freshness.fresh,
++			unexplained: comparison.unexplained || !freshness.verifiable || !freshness.fresh
++				|| truth.declarationMismatch || truth.extraDeclaredPaths.length > 0 || truth.missingPaths.length > 0,
++			truthPaths: [...new Set([...priorTruthPaths, ...truth.truthPaths])].sort(),
++			undeclaredPaths: truth.undeclaredPaths,
++			extraDeclaredPaths: truth.extraDeclaredPaths,
++			missingPaths: truth.missingPaths,
++			truthFindings: truth.findings.map(({ kind, paths }) => ({ kind, paths })),
++			freshness,
++			reasons: [...comparison.reasons, ...truth.reasons, ...freshness.reasons],
++		};
++	}
+ 	if (comparison) deps.store.setLastComparison(task.taskId, comparison);
+-	if (!latest) {
++	if (!comparison) {
+ 		// decideReview accepts a pass with no comparison at all, so the
+ 		// missing per-execution binding must refuse here — a pass over
+ 		// unverifiable material is never eligible.
+diff --git a/p1-delegation.test.mjs b/p1-delegation.test.mjs
+index 7f76c2d..af53c76 100644
+--- a/p1-delegation.test.mjs
++++ b/p1-delegation.test.mjs
+@@ -460,6 +460,40 @@ try {
+ 	await successfulRepair.call("planner_verdict", { taskId: successMalformed.details.taskId, verdict: "pass", summary: "corrected report matches origin evidence" });
+ 	assert.equal(successfulRepair.task(successMalformed.details.taskId).state, "completed", "valid repaired report can complete after review");
+ 
++	for (const scenario of ["worker", "explorer", "drift", "fabricated"]) {
++		let reviewerRepair;
++		reviewerRepair = await fixture(`report-only-reviewer-${scenario}`, {
++			responseFor(_request, launch, terminal) {
++				if (launch === 1) {
++					reviewerRepair.gitPaths = [...new Set([...reviewerRepair.gitPaths, "fixture.txt"])];
++					return { result: undefined };
++				}
++				if (launch === 2) {
++					const value = structuredClone(terminal.result.value);
++					value.changedFiles = scenario === "explorer" ? []
++						: scenario === "fabricated" ? ["fixture.txt", "invented.txt"] : ["fixture.txt"];
++					value.evidence.changedPaths = [...value.changedFiles];
++					return { result: { kind: "structured", value } };
++				}
++			},
++		});
++		if (scenario === "fabricated") reviewerRepair.gitPaths = ["invented.txt"];
++		const role = scenario === "explorer" ? "explorer" : "worker";
++		const malformed = await reviewerRepair.call("planner_delegate", { ...definition, role });
++		await reviewerRepair.call("planner_redelegate", { taskId: malformed.details.taskId, role });
++		if (scenario === "drift") reviewerRepair.gitPaths.push("later.txt");
++		const reviewed = await reviewerRepair.call("planner_redelegate", { taskId: malformed.details.taskId, role: "reviewer" });
++		const finalTask = reviewerRepair.task(malformed.details.taskId);
++		assert.equal(reviewed.details.review.source, "reviewer", `${scenario}: exercises the delegated reviewer path`);
++		assert.deepEqual(finalTask.executions[1].truthPaths, [], `${scenario}: reviewer acceptance does not add repair Truth paths`);
++		assert.equal(finalTask.executions[1].previousExecutionId, malformed.details.executionId);
++		if (scenario === "worker" || scenario === "explorer") {
++			assert.equal(finalTask.state, "completed", `${scenario}: reviewer PASS accepts an origin-bound report correction`);
++		} else {
++			assert.notEqual(finalTask.state, "completed", `${scenario}: reviewer PASS cannot accept unreliable repair evidence`);
++		}
++	}
++
+ 	async function assertFabricatedReportPathRejected(name, initialPaths, declaredPaths) {
+ 		let fabricatedRepair;
+ 		fabricatedRepair = await fixture(name, {

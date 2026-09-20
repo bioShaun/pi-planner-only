@@ -1,0 +1,6 @@
+{
+  "command": "node .scratch/stability-next-20260920/execution-20260920/finalize-study.mjs study-run-yL4RzS",
+  "exitCode": 0,
+  "ordinaryTerminal": true,
+  "log": "p3-finalize.log"
+}

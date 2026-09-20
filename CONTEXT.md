@@ -64,6 +64,10 @@ _Avoid_: role, readOnly claim
 The upward contract: the only structured thing a Worker returns. It declares Task identity (`taskId` / `evidence.taskId`) and the Git facts the child observed; the execution identity producing it (`evidence.workerRunId`) is Root-stamped at admission (ADR-0004), never child-declared.
 _Avoid_: transcript, log, result blob, child-reported runId
 
+**Report-only correction**:
+The Task's single opportunity to replace a missing or invalid WorkerReport without changing the delivered work. A registered report-submission capability exposes only the structured result tool; the execution contributes no new Truth paths, and another missing or invalid report blocks the Task. Pre-budget partial grace and raw malformed-output diagnostics are unsupported by the current launcher contract.
+_Avoid_: code correction, caller-selected read-only mode
+
 **ReviewResult**:
 The structured verdict a Reviewer returns.
 _Avoid_: review comments, PR review

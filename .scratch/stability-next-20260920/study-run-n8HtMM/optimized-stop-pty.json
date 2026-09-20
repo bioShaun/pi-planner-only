@@ -1,0 +1,16 @@
+{
+  "verdict": "NOT_PROVEN",
+  "scenario": "queued",
+  "injections": [],
+  "quietBeforeQuitMs": null,
+  "quitKeys": [
+    "Ctrl-C (clear editor)",
+    "Ctrl-D"
+  ],
+  "forcedCleanup": true,
+  "exitStatus": 0,
+  "observations": {
+    "ready": false,
+    "afterClosureCalls": 0
+  }
+}

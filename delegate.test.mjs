@@ -1723,6 +1723,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 	assert.ok(execAfter.cTerminal?.gitStatusHash, "C_terminal recorded from the late terminal");
 	assert.equal(execAfter.runId, "run-late");
 	assert.equal(execAfter.usageComplete, true);
+	assert.equal(execAfter.rawTerminal?.status, "cancelled", "late public terminal is retained on the execution");
+	assert.equal(execAfter.rawTerminal?.runId, "run-late");
 	assert.equal(after.writerHold, undefined, "confirmed late stop clears the hold");
 	assert.equal(concurrency.status().reservations.length, 0, "reservation released exactly once");
 	const children = usage.taskUsage(taskId)?.children ?? [];

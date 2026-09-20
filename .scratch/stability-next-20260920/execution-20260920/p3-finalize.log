@@ -1,0 +1,101 @@
+{
+  "directory": "/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS",
+  "designComplete": true,
+  "identityVerified": true,
+  "groups": [
+    {
+      "arm": "direct",
+      "trials": 9,
+      "completed": 9,
+      "completionRate": 1,
+      "failedTrials": 0,
+      "childFailedAttempts": 0,
+      "childClaims": 0,
+      "usageComplete": true,
+      "root": {
+        "input": 53372,
+        "output": 1152,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "child": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "tokenLowerBound": 54524,
+      "totalTokens": 54524,
+      "tokensPerCompleted": 6058.222222222223,
+      "durationMs": 78182,
+      "medianDurationMs": 7560,
+      "maxDurationMs": 16773,
+      "monetaryCost": null
+    },
+    {
+      "arm": "baseline",
+      "trials": 9,
+      "completed": 9,
+      "completionRate": 1,
+      "failedTrials": 0,
+      "childFailedAttempts": 0,
+      "childClaims": 10,
+      "usageComplete": true,
+      "root": {
+        "input": 515231,
+        "output": 2810,
+        "cacheRead": 44608,
+        "cacheWrite": 0
+      },
+      "child": {
+        "input": 90287,
+        "output": 4866,
+        "cacheRead": 157696,
+        "cacheWrite": 0
+      },
+      "tokenLowerBound": 815498,
+      "totalTokens": 815498,
+      "tokensPerCompleted": 90610.88888888889,
+      "durationMs": 404733,
+      "medianDurationMs": 35585,
+      "maxDurationMs": 94617,
+      "monetaryCost": null
+    },
+    {
+      "arm": "optimized",
+      "trials": 9,
+      "completed": 9,
+      "completionRate": 1,
+      "failedTrials": 0,
+      "childFailedAttempts": 0,
+      "childClaims": 10,
+      "usageComplete": true,
+      "root": {
+        "input": 593981,
+        "output": 3342,
+        "cacheRead": 8123,
+        "cacheWrite": 0
+      },
+      "child": {
+        "input": 86409,
+        "output": 4635,
+        "cacheRead": 150016,
+        "cacheWrite": 0
+      },
+      "tokenLowerBound": 846506,
+      "totalTokens": 846506,
+      "tokensPerCompleted": 94056.22222222222,
+      "durationMs": 400493,
+      "medianDurationMs": 34879,
+      "maxDurationMs": 64503,
+      "monetaryCost": null
+    }
+  ],
+  "childDurationMs": {
+    "basis": "Launcher terminal usage.durationMs, not TaskExecutionRecord launch timestamps",
+    "observations": 20,
+    "max": 29839,
+    "overFiveMinutes": 0,
+    "overTenMinutes": 0
+  }
+}

@@ -1,0 +1,16 @@
+{"t":1789896933603,"requests":[],"kind":"host","hook":"input","hasUI":false,"source":"interactive"}
+{"t":1789896933604,"requests":[],"kind":"host","hook":"agent_start","hasUI":false,"mode":"json"}
+{"t":1789896933604,"requests":[],"kind":"host","hook":"message_end","hasUI":false,"mode":"json"}
+{"t":1789896933622,"requests":[],"kind":"host","hook":"before_provider_request","hasUI":false,"mode":"json"}
+{"t":1789896935499,"requests":[],"kind":"host","hook":"message_end","hasUI":false,"mode":"json","model":"gemini-3.8-flash-high","provider":"tcuni-agy","usage":{"input":1634,"output":19,"cacheRead":0,"cacheWrite":0,"reasoning":0,"totalTokens":1653,"cost":{"input":0.0012255,"output":0.00007125,"cacheRead":0,"cacheWrite":0,"total":0.00129675}},"answer":""}
+{"t":1789896935501,"requests":[],"kind":"host","hook":"tool_call","hasUI":false,"mode":"json","toolName":"bash"}
+{"t":1789896935509,"requests":[],"kind":"host","hook":"tool_result","hasUI":false,"mode":"json","toolName":"bash","isError":false}
+{"t":1789896935510,"requests":[],"kind":"host","hook":"message_end","hasUI":false,"mode":"json"}
+{"t":1789896935511,"requests":[],"kind":"host","hook":"before_provider_request","hasUI":false,"mode":"json"}
+{"t":1789896936642,"requests":[],"kind":"host","hook":"message_end","hasUI":false,"mode":"json","model":"gemini-3.8-flash-high","provider":"tcuni-agy","usage":{"input":1670,"output":16,"cacheRead":0,"cacheWrite":0,"reasoning":0,"totalTokens":1686,"cost":{"input":0.0012525,"output":0.00006,"cacheRead":0,"cacheWrite":0,"total":0.0013124999999999999}},"answer":""}
+{"t":1789896936643,"requests":[],"kind":"host","hook":"tool_call","hasUI":false,"mode":"json","toolName":"read"}
+{"t":1789896936644,"requests":[],"kind":"host","hook":"tool_result","hasUI":false,"mode":"json","toolName":"read","isError":false}
+{"t":1789896936645,"requests":[],"kind":"host","hook":"message_end","hasUI":false,"mode":"json"}
+{"t":1789896936645,"requests":[],"kind":"host","hook":"before_provider_request","hasUI":false,"mode":"json"}
+{"t":1789896938012,"requests":[],"kind":"host","hook":"message_end","hasUI":false,"mode":"json","model":"gemini-3.8-flash-high","provider":"tcuni-agy","usage":{"input":1709,"output":18,"cacheRead":0,"cacheWrite":0,"reasoning":0,"totalTokens":1727,"cost":{"input":0.0012817500000000001,"output":0.0000675,"cacheRead":0,"cacheWrite":0,"total":0.0013492500000000002}},"answer":"The file `fixture.txt` contains 10 words.\n\nANSWER=10"}
+{"t":1789896938013,"requests":[],"kind":"host","hook":"agent_settled","hasUI":false,"mode":"json"}

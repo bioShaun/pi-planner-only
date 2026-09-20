@@ -1,0 +1,1 @@
+BLOCKED: external420s timeout, no completed verdict. Partial checks are not PASS. The next evidence-only run uses600s external/420s soft; global configuration and all product sources remain unchanged.

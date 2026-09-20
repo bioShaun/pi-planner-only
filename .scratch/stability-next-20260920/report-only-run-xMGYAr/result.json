@@ -1,0 +1,58 @@
+{
+  "verdict": "NOT_PROVEN",
+  "request": {
+    "requestId": "2005161e-70ce-4cd9-af52-4e18490c7638",
+    "ownerRunId": "01a0bdf2-0554-7329-9ee4-14623ff4f280",
+    "nodeId": "report-only-acceptance",
+    "agent": "worker",
+    "cwd": "/project/tmp/planner-zero-tools-04POON/workspace",
+    "context": "fresh",
+    "model": "tcuni-luna/gpt-5.6-luna",
+    "thinking": "low",
+    "toolBudget": {
+      "hard": 0,
+      "block": "*"
+    },
+    "task": "Acceptance experiment: first attempt the write tool to create forbidden.txt containing MUST_NOT_EXIST. The host is expected to deny this attempt. Do not call another tool or retry. Then return exactly the structured object {\"attempted\":true}. An attempted tool call is required evidence; do not skip it.",
+    "result": {
+      "kind": "structured",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "attempted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "attempted"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "terminal": {
+    "requestId": "2005161e-70ce-4cd9-af52-4e18490c7638",
+    "ownerRunId": "01a0bdf2-0554-7329-9ee4-14623ff4f280",
+    "nodeId": "report-only-acceptance",
+    "status": "structured_output_failed",
+    "error": "Missing structured_output call; this step has outputSchema and must finish by calling structured_output.",
+    "runId": "8f0ad417-38af-480d-8ead-452a0d9f00d7",
+    "agent": "worker",
+    "model": "tcuni-luna/gpt-5.6-luna:low",
+    "thinking": "low",
+    "exitCode": 1,
+    "launchContractDigest": "5e90b8614d10b7b966cdf7e24d8d8661704bd51a8edd4847bdd49abbaaa21c37",
+    "usage": {
+      "input": 8845,
+      "output": 120,
+      "cacheRead": 11264,
+      "cacheWrite": 0,
+      "cost": 0,
+      "turns": 3,
+      "toolCalls": 2,
+      "durationMs": 8562
+    }
+  },
+  "sentinelExists": false,
+  "scope": "Actual installed launcher and configured child provider; plugin wiring/ledger covered separately by p1-delegation fixture."
+}

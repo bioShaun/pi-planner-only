@@ -189,7 +189,7 @@ Validation runs are delegated by Root explicitly (`planner_delegate` with
 role=validator for a fresh validation Task, `planner_redelegate` to re-validate
 an existing Task); nothing is auto-dispatched.
 
-`planner_delegate` and `planner_redelegate` use launcher defaults for `model` and `thinking` unless operator role routing is enabled. Enabled routing sends an exactly verified available `provider/model` and thinking, then checks actual terminal identity before accepting completion. Neither tool sets `toolBudget` or `timeoutMs`; the plugin owns its execution envelope. Usage rows retain the child response identity for attribution.
+`planner_delegate` and `planner_redelegate` use launcher defaults for `model` and `thinking` unless operator role routing is enabled. Enabled routing sends an exactly verified available `provider/model` and thinking, then checks actual terminal identity before accepting completion. Ordinary worker, explorer, validator, and reviewer requests omit `toolBudget`; the Task's one report-only correction binds the registered `planner-report-only` agent (`tools: []`, with only the launcher's structured result tool appended) and sends `toolBudget: { hard: 1, block: "*" }`. The immutable execution record, not re-delegation arguments, selects that mode and persists the sent budget, registration proof, agent binding, and raw terminal. `timeoutMs` remains unset because the plugin owns its execution envelope. Usage rows retain the child response identity for attribution.
 
 A `reviewer` child always launches with `context: "fresh"` carrying a
 `ReviewRequest` — the Task's spec, the latest WorkerReport, Root's Git
@@ -208,6 +208,15 @@ text. A non-completed launcher status is a tool error (thrown), not a parse
 failure. A reviewer works only from its invocation payload and may use read,
 grep, find, and ls: it must not `git log`, run `npm test`, or re-probe the
 tree.
+
+A missing or invalid report grants exactly one report-only correction. Its
+closed agent exposes only one structured report submission; any other tool is
+absent, and the hard-one budget blocks calls after that submission. A
+`tool_budget_exhausted` terminal is recorded as a report-only budget failure
+and can never admit a WorkerReport. A malformed correction blocks the Task,
+and the correction execution cannot add Truth paths. pi-subagents 0.69.0 does
+not expose a pre-budget partial grace or the raw malformed structured output,
+so those capabilities remain unsupported rather than inferred from text.
 
 Validators (`oracle`) default to a bounded check when the worker's validation
 already exited 0: `git rev-parse HEAD`, `git status --porcelain`, and that

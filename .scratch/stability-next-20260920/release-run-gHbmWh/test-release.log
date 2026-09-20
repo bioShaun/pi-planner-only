@@ -1,0 +1,32 @@
+
+> pi-planner-only@0.8.0 test:release
+> npm run typecheck && npm run test:p1 && npm test
+
+
+> pi-planner-only@0.8.0 typecheck
+> tsc --noEmit
+
+
+> pi-planner-only@0.8.0 test:p1
+> node --experimental-strip-types p1-delegation.test.mjs
+
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: drift: reviewer PASS cannot accept unreliable repair evidence
+    at file:///home/tcuni-claw/pi/pi-planner-only/p1-delegation.test.mjs:493:11 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 'completed',
+  expected: 'completed',
+  operator: 'notStrictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.14.0
+npm notice
+npm notice New minor version of npm available! 11.9.0 -> 11.19.1
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.19.1
+npm notice To update run: npm install -g npm@11.19.1
+npm notice

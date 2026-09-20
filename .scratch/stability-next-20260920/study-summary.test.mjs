@@ -29,3 +29,16 @@ assert.equal(assessQuality({name:'edit',expected:'ANSWER=enabled',answer:'ANSWER
 
 assert.equal(summarize([{kind:'host',hook:'before_provider_request'}]).rootUsageIncomplete,true);
 assert.equal(assessQuality({name:'edit',expected:'ANSWER=enabled',answer:'ANSWER=enabled',changed:'D value.json'}),false);
+
+const {verifyModelIdentity}=await import("./study-summary.mjs");
+const models={rootModel:"root/r",childModel:"child/c",thinking:"low"};
+const modelId={requestId:"request",ownerRunId:"owner",nodeId:"node"};
+const actual=[
+ {kind:"host",hook:"message_end",provider:"root",model:"r"},
+ {kind:"launcher",event:"request",...modelId},
+ {kind:"launcher",event:"response",...modelId,status:"failed",model:"child/c:low",thinking:"low"}
+];
+assert.equal(verifyModelIdentity(actual,models).verified,true,"failed attempt identity still verified");
+assert.equal(verifyModelIdentity(actual.slice(0,2),models).verified,false,"missing child terminal is not verified");
+assert.equal(verifyModelIdentity(actual.map(e=>e.event==="response"?{...e,model:"wrong/model"}:e),models).verified,false);
+assert.equal(verifyModelIdentity(actual.map(e=>e.event==="response"?{...e,thinking:"high"}:e),models).verified,false);

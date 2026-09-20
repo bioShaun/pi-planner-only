@@ -1,0 +1,380 @@
+{
+  "trials": 27,
+  "groups": [
+    {
+      "arm": "direct",
+      "trials": 9,
+      "completed": 9,
+      "completionRate": 1,
+      "failedTrials": 0,
+      "childFailedAttempts": 0,
+      "childClaims": 0,
+      "usageComplete": true,
+      "root": {
+        "input": 53372,
+        "output": 1152,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "child": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "tokenLowerBound": 54524,
+      "totalTokens": 54524,
+      "tokensPerCompleted": 6058.222222222223,
+      "durationMs": 78182,
+      "medianDurationMs": 7560,
+      "maxDurationMs": 16773,
+      "monetaryCost": null
+    },
+    {
+      "arm": "baseline",
+      "trials": 9,
+      "completed": 9,
+      "completionRate": 1,
+      "failedTrials": 0,
+      "childFailedAttempts": 0,
+      "childClaims": 10,
+      "usageComplete": true,
+      "root": {
+        "input": 515231,
+        "output": 2810,
+        "cacheRead": 44608,
+        "cacheWrite": 0
+      },
+      "child": {
+        "input": 90287,
+        "output": 4866,
+        "cacheRead": 157696,
+        "cacheWrite": 0
+      },
+      "tokenLowerBound": 815498,
+      "totalTokens": 815498,
+      "tokensPerCompleted": 90610.88888888889,
+      "durationMs": 404733,
+      "medianDurationMs": 35585,
+      "maxDurationMs": 94617,
+      "monetaryCost": null
+    },
+    {
+      "arm": "optimized",
+      "trials": 9,
+      "completed": 9,
+      "completionRate": 1,
+      "failedTrials": 0,
+      "childFailedAttempts": 0,
+      "childClaims": 10,
+      "usageComplete": true,
+      "root": {
+        "input": 593981,
+        "output": 3342,
+        "cacheRead": 8123,
+        "cacheWrite": 0
+      },
+      "child": {
+        "input": 86409,
+        "output": 4635,
+        "cacheRead": 150016,
+        "cacheWrite": 0
+      },
+      "tokenLowerBound": 846506,
+      "totalTokens": 846506,
+      "tokensPerCompleted": 94056.22222222222,
+      "durationMs": 400493,
+      "medianDurationMs": 34879,
+      "maxDurationMs": 64503,
+      "monetaryCost": null
+    }
+  ],
+  "monetaryCost": null,
+  "interpretation": "Descriptive paired small-task measurements only. All trials and failed child attempts retained. Fresh local sessions; remote provider cache uncontrolled and reported separately. No monetary or broad policy conclusion.",
+  "designComplete": true,
+  "identityVerified": true,
+  "models": {
+    "root": "tcuni-agy/gemini-3.8-flash-high",
+    "child": "tcuni-luna/gpt-5.6-luna",
+    "thinking": "low"
+  },
+  "latencyBasis": "From slot submission through host process exit; includes any queue, startup, model/tool work and plugin quiescence/review. Not pure provider latency.",
+  "cachePolicy": "Uncontrolled; cache usage retained",
+  "baselineModelControl": "Private agentOverrides for builtins; public runtime-agent-register:v1 model/thinking fields for planner-scout, applied before launcher. Baseline source and tools unchanged.",
+  "byCase": {
+    "count": [
+      {
+        "arm": "direct",
+        "trials": 3,
+        "completed": 3,
+        "completionRate": 1,
+        "failedTrials": 0,
+        "childFailedAttempts": 0,
+        "childClaims": 0,
+        "usageComplete": true,
+        "root": {
+          "input": 15148,
+          "output": 301,
+          "cacheRead": 0,
+          "cacheWrite": 0
+        },
+        "child": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0
+        },
+        "tokenLowerBound": 15449,
+        "totalTokens": 15449,
+        "tokensPerCompleted": 5149.666666666667,
+        "durationMs": 17680,
+        "medianDurationMs": 5363,
+        "maxDurationMs": 7560,
+        "monetaryCost": null
+      },
+      {
+        "arm": "baseline",
+        "trials": 3,
+        "completed": 3,
+        "completionRate": 1,
+        "failedTrials": 0,
+        "childFailedAttempts": 0,
+        "childClaims": 3,
+        "usageComplete": true,
+        "root": {
+          "input": 153344,
+          "output": 828,
+          "cacheRead": 24334,
+          "cacheWrite": 0
+        },
+        "child": {
+          "input": 15909,
+          "output": 1142,
+          "cacheRead": 38400,
+          "cacheWrite": 0
+        },
+        "tokenLowerBound": 233957,
+        "totalTokens": 233957,
+        "tokensPerCompleted": 77985.66666666667,
+        "durationMs": 111837,
+        "medianDurationMs": 35585,
+        "maxDurationMs": 43876,
+        "monetaryCost": null
+      },
+      {
+        "arm": "optimized",
+        "trials": 3,
+        "completed": 3,
+        "completionRate": 1,
+        "failedTrials": 0,
+        "childFailedAttempts": 0,
+        "childClaims": 4,
+        "usageComplete": true,
+        "root": {
+          "input": 192313,
+          "output": 983,
+          "cacheRead": 0,
+          "cacheWrite": 0
+        },
+        "child": {
+          "input": 28365,
+          "output": 1578,
+          "cacheRead": 44032,
+          "cacheWrite": 0
+        },
+        "tokenLowerBound": 267271,
+        "totalTokens": 267271,
+        "tokensPerCompleted": 89090.33333333333,
+        "durationMs": 122168,
+        "medianDurationMs": 34580,
+        "maxDurationMs": 62709,
+        "monetaryCost": null
+      }
+    ],
+    "json": [
+      {
+        "arm": "direct",
+        "trials": 3,
+        "completed": 3,
+        "completionRate": 1,
+        "failedTrials": 0,
+        "childFailedAttempts": 0,
+        "childClaims": 0,
+        "usageComplete": true,
+        "root": {
+          "input": 9965,
+          "output": 210,
+          "cacheRead": 0,
+          "cacheWrite": 0
+        },
+        "child": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0
+        },
+        "tokenLowerBound": 10175,
+        "totalTokens": 10175,
+        "tokensPerCompleted": 3391.6666666666665,
+        "durationMs": 19999,
+        "medianDurationMs": 5393,
+        "maxDurationMs": 10465,
+        "monetaryCost": null
+      },
+      {
+        "arm": "baseline",
+        "trials": 3,
+        "completed": 3,
+        "completionRate": 1,
+        "failedTrials": 0,
+        "childFailedAttempts": 0,
+        "childClaims": 3,
+        "usageComplete": true,
+        "root": {
+          "input": 105897,
+          "output": 766,
+          "cacheRead": 12183,
+          "cacheWrite": 0
+        },
+        "child": {
+          "input": 26620,
+          "output": 1000,
+          "cacheRead": 28160,
+          "cacheWrite": 0
+        },
+        "tokenLowerBound": 174626,
+        "totalTokens": 174626,
+        "tokensPerCompleted": 58208.666666666664,
+        "durationMs": 72882,
+        "medianDurationMs": 24165,
+        "maxDurationMs": 29257,
+        "monetaryCost": null
+      },
+      {
+        "arm": "optimized",
+        "trials": 3,
+        "completed": 3,
+        "completionRate": 1,
+        "failedTrials": 0,
+        "childFailedAttempts": 0,
+        "childClaims": 3,
+        "usageComplete": true,
+        "root": {
+          "input": 136308,
+          "output": 849,
+          "cacheRead": 8123,
+          "cacheWrite": 0
+        },
+        "child": {
+          "input": 21848,
+          "output": 980,
+          "cacheRead": 32768,
+          "cacheWrite": 0
+        },
+        "tokenLowerBound": 200876,
+        "totalTokens": 200876,
+        "tokensPerCompleted": 66958.66666666667,
+        "durationMs": 95629,
+        "medianDurationMs": 34477,
+        "maxDurationMs": 34879,
+        "monetaryCost": null
+      }
+    ],
+    "edit": [
+      {
+        "arm": "direct",
+        "trials": 3,
+        "completed": 3,
+        "completionRate": 1,
+        "failedTrials": 0,
+        "childFailedAttempts": 0,
+        "childClaims": 0,
+        "usageComplete": true,
+        "root": {
+          "input": 28259,
+          "output": 641,
+          "cacheRead": 0,
+          "cacheWrite": 0
+        },
+        "child": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0
+        },
+        "tokenLowerBound": 28900,
+        "totalTokens": 28900,
+        "tokensPerCompleted": 9633.333333333334,
+        "durationMs": 40503,
+        "medianDurationMs": 11867,
+        "maxDurationMs": 16773,
+        "monetaryCost": null
+      },
+      {
+        "arm": "baseline",
+        "trials": 3,
+        "completed": 3,
+        "completionRate": 1,
+        "failedTrials": 0,
+        "childFailedAttempts": 0,
+        "childClaims": 4,
+        "usageComplete": true,
+        "root": {
+          "input": 255990,
+          "output": 1216,
+          "cacheRead": 8091,
+          "cacheWrite": 0
+        },
+        "child": {
+          "input": 47758,
+          "output": 2724,
+          "cacheRead": 91136,
+          "cacheWrite": 0
+        },
+        "tokenLowerBound": 406915,
+        "totalTokens": 406915,
+        "tokensPerCompleted": 135638.33333333334,
+        "durationMs": 220014,
+        "medianDurationMs": 65902,
+        "maxDurationMs": 94617,
+        "monetaryCost": null
+      },
+      {
+        "arm": "optimized",
+        "trials": 3,
+        "completed": 3,
+        "completionRate": 1,
+        "failedTrials": 0,
+        "childFailedAttempts": 0,
+        "childClaims": 3,
+        "usageComplete": true,
+        "root": {
+          "input": 265360,
+          "output": 1510,
+          "cacheRead": 0,
+          "cacheWrite": 0
+        },
+        "child": {
+          "input": 36196,
+          "output": 2077,
+          "cacheRead": 73216,
+          "cacheWrite": 0
+        },
+        "tokenLowerBound": 378359,
+        "totalTokens": 378359,
+        "tokensPerCompleted": 126119.66666666667,
+        "durationMs": 182696,
+        "medianDurationMs": 60995,
+        "maxDurationMs": 64503,
+        "monetaryCost": null
+      }
+    ]
+  },
+  "childDurationMs": {
+    "basis": "Launcher terminal usage.durationMs, not TaskExecutionRecord launch timestamps",
+    "observations": 20,
+    "max": 29839,
+    "overFiveMinutes": 0,
+    "overTenMinutes": 0
+  }
+}

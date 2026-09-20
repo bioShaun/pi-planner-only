@@ -1,0 +1,15 @@
+ M .scratch/stability-next-20260920/acceptance.md
+ M .scratch/stability-next-20260920/continuation-20260920-0502/closeout.md
+ M .scratch/stability-next-20260920/transport-capabilities.md
+ M CONTEXT.md
+ M README.md
+ M README.zh-CN.md
+ M delegate.test.mjs
+ M delegate.ts
+ M ledger-store.ts
+ M p1-delegation.test.mjs
+ M request-events.ts
+ M types.ts
+?? .scratch/stability-next-20260920/execution-20260920/
+?? .scratch/stability-next-20260920/tmp/
+?? docs/adr/0009-report-only-zero-tool-budget.md

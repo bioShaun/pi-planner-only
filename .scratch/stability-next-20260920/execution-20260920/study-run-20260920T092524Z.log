@@ -1,0 +1,30 @@
+{"label":"r1-direct-count","status":0,"quality":true,"childClaims":0,"durationMs":7560,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r1-baseline-count","status":0,"quality":true,"childClaims":1,"durationMs":43876,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r1-optimized-count","status":0,"quality":true,"childClaims":2,"durationMs":62709,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r1-baseline-json","status":0,"quality":true,"childClaims":1,"durationMs":24165,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r1-optimized-json","status":0,"quality":true,"childClaims":1,"durationMs":34477,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r1-direct-json","status":0,"quality":true,"childClaims":0,"durationMs":5393,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r1-optimized-edit","status":0,"quality":true,"childClaims":1,"durationMs":60995,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r1-direct-edit","status":0,"quality":true,"childClaims":0,"durationMs":16773,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r1-baseline-edit","status":0,"quality":true,"childClaims":1,"durationMs":59495,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r2-baseline-count","status":0,"quality":true,"childClaims":1,"durationMs":32376,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r2-optimized-count","status":0,"quality":true,"childClaims":1,"durationMs":24879,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r2-direct-count","status":0,"quality":true,"childClaims":0,"durationMs":5363,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r2-optimized-json","status":0,"quality":true,"childClaims":1,"durationMs":26273,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r2-direct-json","status":0,"quality":true,"childClaims":0,"durationMs":4141,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r2-baseline-json","status":0,"quality":true,"childClaims":1,"durationMs":19460,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r2-direct-edit","status":0,"quality":true,"childClaims":0,"durationMs":11867,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r2-baseline-edit","status":0,"quality":true,"childClaims":1,"durationMs":65902,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r2-optimized-edit","status":0,"quality":true,"childClaims":1,"durationMs":64503,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r3-optimized-count","status":0,"quality":true,"childClaims":1,"durationMs":34580,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r3-direct-count","status":0,"quality":true,"childClaims":0,"durationMs":4757,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r3-baseline-count","status":0,"quality":true,"childClaims":1,"durationMs":35585,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r3-direct-json","status":0,"quality":true,"childClaims":0,"durationMs":10465,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r3-baseline-json","status":0,"quality":true,"childClaims":1,"durationMs":29257,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r3-optimized-json","status":0,"quality":true,"childClaims":1,"durationMs":34879,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r3-baseline-edit","status":0,"quality":true,"childClaims":2,"durationMs":94617,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r3-optimized-edit","status":0,"quality":true,"childClaims":1,"durationMs":57198,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+{"label":"r3-direct-edit","status":0,"quality":true,"childClaims":0,"durationMs":11863,"evidence":"/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS"}
+Evidence: /home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/study-run-yL4RzS
+Private runtime: /project/tmp/planner-study-maTNRt
+No price/savings conclusion; examine each quality, usage completeness, route identity and TUI trace.

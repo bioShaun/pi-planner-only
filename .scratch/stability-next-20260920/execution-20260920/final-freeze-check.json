@@ -1,0 +1,25 @@
+{
+  "source-manifest.json": {
+    "files": 66,
+    "mismatches": []
+  },
+  "harness-manifest.json": {
+    "files": 25,
+    "mismatches": []
+  },
+  "finalRelease": {
+    "run": "release-run-GJqscr",
+    "exit": 0,
+    "filesMatchingCurrent": 60
+  },
+  "scopedWhitespaceCheck": {
+    "exit": 0,
+    "scope": "66 source +25 harness; raw logs/patch snapshots intentionally preserved verbatim"
+  },
+  "strictClosure": {
+    "run": "strict-run-dihsWK",
+    "exit": 0,
+    "verdict": "PASS",
+    "childSeconds": 417.6
+  }
+}

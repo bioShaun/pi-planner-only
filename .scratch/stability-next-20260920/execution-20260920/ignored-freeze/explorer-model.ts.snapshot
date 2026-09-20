@@ -1,0 +1,426 @@
+/** Explorer model/thinking compatibility for pi-subagents 0.68. */
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { homedir } from "node:os";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import type { SubagentDelegationThinking } from "./subagent-delegation-contract.ts";
+
+export const EXPLORER_INHERIT_MODEL = "inherit";
+export const EXPLORER_CONFIG_INVALID = "EXPLORER_CONFIG_INVALID";
+export type ExplorerSelectionFailureCode = typeof EXPLORER_CONFIG_INVALID;
+export interface ExplorerModelSelection { model?: string; thinking?: SubagentDelegationThinking; source: string }
+export type ExplorerModelSelectionResult = { ok: true; selection: ExplorerModelSelection } | { ok: false; code: ExplorerSelectionFailureCode; message: string };
+
+const THINKING_LEVELS: readonly SubagentDelegationThinking[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+let cachedGlobalNpmRoot: string | null | undefined;
+// Verified against pi-subagents 0.68 agents/scout.md. That version has no
+// public discovery projection, so the compatibility snapshot is explicit.
+const BUILTIN_SCOUT: Fields = { thinking: "low", modelPresent: false, thinkingPresent: true, source: "pi-subagents 0.68 builtin scout" };
+type Override = { model?: string | false; thinking?: string | false };
+interface Settings { defaultModel?: string; defaultThinking?: string; disableThinking?: boolean; overrides: Record<string, Override>; providerOverrides: Record<string, Record<string, Override>> }
+interface Scoped { user: Settings; userPath: string; project: Settings; projectPath: string | null; projectRoot: string | null }
+interface Fields { model?: string; thinking?: string; modelPresent: boolean; thinkingPresent: boolean; source: string }
+
+const emptySettings = (): Settings => ({ overrides: {}, providerOverrides: {} });
+
+/** Scalar subset of pi-subagents 0.68 src/agents/frontmatter.ts. */
+function parseAgentFrontmatter(content: string): Record<string, string> {
+	const normalized = content.replace(/\r\n/g, "\n");
+	if (!normalized.startsWith("---")) return {};
+	const end = normalized.indexOf("\n---", 3);
+	if (end === -1) return {};
+	const parsed: Record<string, string> = {};
+	for (const line of normalized.slice(4, end).split("\n")) {
+		const match = line.match(/^([\w-]+):\s*(.*)$/);
+		if (!match) continue;
+		const key = match[1]!;
+		const raw = match[2]!.trim();
+		const quoted = (raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"));
+		parsed[key] = quoted ? raw.slice(1, -1) : raw;
+	}
+	return parsed;
+}
+function isDirectory(path: string): boolean { try { return statSync(path).isDirectory(); } catch { return false; } }
+function agentDir(): string {
+	const configured = process.env.PI_CODING_AGENT_DIR;
+	const home = process.env.HOME || process.env.USERPROFILE || homedir();
+	if (configured === "~") return home;
+	if (configured?.startsWith("~/") || configured?.startsWith("~\\")) return join(home, configured.slice(2));
+	return configured || join(home, ".pi", "agent");
+}
+function readObject(path: string): Record<string, unknown> {
+	let raw: string;
+	try { raw = readFileSync(path, "utf8"); } catch (error) { throw new Error(`Failed to read settings file '${path}': ${String(error)}`); }
+	let value: unknown;
+	try { value = JSON.parse(raw); } catch (error) { throw new Error(`Failed to parse settings file '${path}': ${String(error)}`); }
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Settings file '${path}' must contain a JSON object.`);
+	return value as Record<string, unknown>;
+}
+function projectCandidates(cwd: string): string[] {
+	const roots: string[] = [];
+	const homes = new Set([homedir(), process.env.HOME, process.env.USERPROFILE].filter((v): v is string => Boolean(v && isDirectory(v))).map((v) => realpathSync.native(v)));
+	let current = resolve(cwd);
+	while (true) {
+		if (isDirectory(current) && homes.has(realpathSync.native(current))) return roots;
+		if (isDirectory(join(current, ".pi")) || isDirectory(join(current, ".agents"))) roots.push(current);
+		const parent = dirname(current); if (parent === current) return roots; current = parent;
+	}
+}
+function projectMode(root: string): string | undefined {
+	const path = join(root, ".pi", "settings.json"); if (!existsSync(path)) return undefined;
+	const section = readObject(path).subagents;
+	if (!section || typeof section !== "object" || Array.isArray(section)) return undefined;
+	const value = (section as Record<string, unknown>).projectRootResolution;
+	if (value === undefined || value === "nearest" || value === "git-root") return value;
+	throw new Error(`Invalid projectRootResolution in '${path}'.`);
+}
+function nearestGitRoot(cwd: string): string | null {
+	let current = resolve(cwd);
+	while (true) {
+		if (existsSync(join(current, ".git"))) return current;
+		const parent = dirname(current);
+		if (parent === current) return null;
+		current = parent;
+	}
+}
+function projectRoot(cwd: string): string | null {
+	const candidates = projectCandidates(cwd);
+	const nearest = candidates[0];
+	if (!nearest) return null;
+	let policyRoot: string | undefined;
+	let policyRootIndex = -1;
+	for (const [index, candidate] of candidates.entries()) {
+		const mode = projectMode(candidate);
+		if (mode === "nearest") return nearest;
+		if (mode === "git-root") {
+			policyRoot = candidate;
+			policyRootIndex = index;
+			break;
+		}
+	}
+	if (!policyRoot) return nearest;
+	const gitRoot = nearestGitRoot(cwd);
+	const gitProjectRoot = gitRoot
+		? candidates.slice(policyRootIndex).find((candidate) => resolve(candidate) === resolve(gitRoot))
+		: undefined;
+	const configuredGitRoot = existsSync(join(policyRoot, ".git")) ? policyRoot : undefined;
+	return gitProjectRoot ?? configuredGitRoot ?? nearest;
+}
+function parseOverride(name: string, raw: unknown, path: string): Override {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`Override '${name}' in '${path}' must be an object.`);
+	const input = raw as Record<string, unknown>; const result: Override = {};
+	if (Object.hasOwn(input, "fallbackModels")) throw new Error(`Override '${name}' uses removed fallbackModels.`);
+	if (Object.hasOwn(input, "defaultProvider")) throw new Error(`Override '${name}' in '${path}' uses defaultProvider, which the Explorer compatibility projection cannot preserve.`);
+	const label = `Override '${name}' in '${path}'`;
+	const stringOrFalse = ["output"];
+	for (const field of stringOrFalse) if (field in input && input[field] !== false && (typeof input[field] !== "string" || !(input[field] as string).trim())) throw new Error(`${label} has invalid '${field}'.`);
+	if ("description" in input && (typeof input.description !== "string" || !input.description.trim())) throw new Error(`${label} has invalid 'description'.`);
+	if ("systemPrompt" in input && typeof input.systemPrompt !== "string") throw new Error(`${label} has invalid 'systemPrompt'.`);
+	if ("outputMode" in input && input.outputMode !== "inline" && input.outputMode !== "file-only") throw new Error(`${label} has invalid 'outputMode'.`);
+	if ("systemPromptMode" in input && input.systemPromptMode !== "append" && input.systemPromptMode !== "replace") throw new Error(`${label} has invalid 'systemPromptMode'.`);
+	if ("defaultContext" in input && input.defaultContext !== "fresh" && input.defaultContext !== "fork" && input.defaultContext !== false) throw new Error(`${label} has invalid 'defaultContext'.`);
+	if ("acceptanceRole" in input && input.acceptanceRole !== "read-only" && input.acceptanceRole !== "writer" && input.acceptanceRole !== false) throw new Error(`${label} has invalid 'acceptanceRole'.`);
+	for (const field of ["fast", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "disabled", "completionGuard", "allowNestedSubagents"]) if (field in input && typeof input[field] !== "boolean") throw new Error(`${label} has invalid '${field}'; expected boolean.`);
+	for (const field of ["defaultReads", "skills", "excludeTools", "extensions", "subagentOnlyExtensions", "mutationTools"]) if (field in input) validateStringArrayOrFalse(input[field], `${label} field '${field}'`);
+	if ("tools" in input && input.tools !== "inherit") validateStringArrayOrFalse(input.tools, `${label} field 'tools'`);
+	if ("toolBudget" in input && input.toolBudget !== false && (!input.toolBudget || typeof input.toolBudget !== "object" || Array.isArray(input.toolBudget))) throw new Error(`${label} has invalid 'toolBudget'.`);
+	if ("machine" in input && input.machine !== false) validateMachine(input.machine, `${label} field 'machine'`);
+	for (const field of ["model", "thinking"] as const) if (field in input) {
+		const value = input[field];
+		if (value === false) result[field] = false;
+		else if (typeof value === "string" && value.trim()) result[field] = value.trim();
+		else throw new Error(`Override '${name}' in '${path}' has invalid '${field}'.`);
+	}
+	return result;
+}
+
+function validateStringArrayOrFalse(value: unknown, label: string): void {
+	if (value === false) return;
+	if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) throw new Error(`${label} must be an array of strings or false.`);
+}
+
+function validateMachine(value: unknown, label: string): void {
+	if (typeof value !== "string" || !value.trim() || value.trim().length > 128 || /[\u0000-\u001f\u007f]/u.test(value.trim())) throw new Error(`${label} must be a non-empty safe string of at most 128 characters.`);
+}
+function readSettings(path: string | null): Settings {
+	if (!path || !existsSync(path)) return emptySettings();
+	const section = readObject(path).subagents;
+	if (!section || typeof section !== "object" || Array.isArray(section)) return emptySettings();
+	const input = section as Record<string, unknown>; const result = emptySettings();
+	for (const unsupported of ["defaultProvider", "agentScanDirs", "agentExcludeDirs"]) if (Object.hasOwn(input, unsupported)) throw new Error(`Subagent setting '${unsupported}' in '${path}' is unsupported by the pi-subagents 0.68 Explorer compatibility projection.`);
+	if ("disableBuiltins" in input) {
+		if (typeof input.disableBuiltins !== "boolean") throw new Error(`Invalid disableBuiltins in '${path}'.`);
+		if (input.disableBuiltins) throw new Error(`Subagent setting 'disableBuiltins' in '${path}' is unsupported by the Explorer compatibility projection.`);
+	}
+	if ("maxThinking" in input) {
+		if (typeof input.maxThinking !== "string" || !(THINKING_LEVELS as readonly string[]).includes(input.maxThinking)) throw new Error(`Invalid maxThinking in '${path}'.`);
+		throw new Error(`Subagent setting 'maxThinking' in '${path}' is unsupported by the Explorer compatibility projection.`);
+	}
+	if ("defaultExtensions" in input && (!Array.isArray(input.defaultExtensions) || input.defaultExtensions.some((item) => typeof item !== "string" || !item.trim()))) throw new Error(`Invalid defaultExtensions in '${path}'.`);
+	if (Object.hasOwn(input, "modelScope")) throw new Error(`Subagent setting 'modelScope' in '${path}' is unsupported by the pi-subagents 0.68 Explorer compatibility projection.`);
+	for (const field of ["defaultModel", "defaultThinking"] as const) if (field in input) {
+		const value = input[field]; if (typeof value !== "string" || !value.trim()) throw new Error(`Invalid '${field}' in '${path}'.`); result[field] = value.trim();
+	}
+	if ("disableThinking" in input) { if (typeof input.disableThinking !== "boolean") throw new Error(`Invalid disableThinking in '${path}'.`); result.disableThinking = input.disableThinking; }
+	if (input.agentOverrides && typeof input.agentOverrides === "object" && !Array.isArray(input.agentOverrides)) for (const [name, value] of Object.entries(input.agentOverrides)) result.overrides[name] = parseOverride(name, value, path);
+	if (input.agentOverridesByProvider !== undefined) {
+		if (!input.agentOverridesByProvider || typeof input.agentOverridesByProvider !== "object" || Array.isArray(input.agentOverridesByProvider)) throw new Error(`Invalid agentOverridesByProvider in '${path}'.`);
+		for (const [provider, entries] of Object.entries(input.agentOverridesByProvider)) {
+			if (!entries || typeof entries !== "object" || Array.isArray(entries)) throw new Error(`Invalid provider override '${provider}'.`);
+			result.providerOverrides[provider] = Object.fromEntries(Object.entries(entries).map(([name, value]) => [name, parseOverride(name, value, path)]));
+		}
+	}
+	return result;
+}
+function providerSettings(settings: Settings, provider?: string): Settings {
+	const selected = provider ? settings.providerOverrides[provider] : undefined; if (!selected) return settings;
+	const overrides = { ...settings.overrides }; for (const [name, value] of Object.entries(selected)) overrides[name] = { ...overrides[name], ...value };
+	return { ...settings, overrides };
+}
+
+const PRUNED = new Set([".git", "node_modules", ".pi", "sync-backups"]);
+function definitionFiles(root: string): string[] {
+	if (!existsSync(root)) return []; if (!isDirectory(root)) throw new Error(`Agent definition root '${root}' is not a directory.`);
+	const files: string[] = []; const visited = new Set<string>();
+	const visit = (dir: string): void => {
+		let real: string; try { real = realpathSync.native(dir); } catch { throw new Error(`Agent definition directory '${dir}' is unreadable.`); }
+		if (visited.has(real)) return; visited.add(real);
+		let entries; try { entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name)); } catch { throw new Error(`Agent definition directory '${dir}' is unreadable.`); }
+		for (const entry of entries) {
+			const path = join(dir, entry.name); let directory = entry.isDirectory();
+			if (entry.isSymbolicLink()) try { directory = statSync(path).isDirectory(); } catch { directory = false; }
+			if (directory) {
+				const nestedProject = resolve(path) !== resolve(root) && (existsSync(join(path, ".git")) || isDirectory(join(path, ".pi")) || isDirectory(join(path, ".agents")));
+				if (!PRUNED.has(entry.name) && !nestedProject) visit(path);
+			} else if ((entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith(".md") && !entry.name.endsWith(".chain.md")) {
+				const parts = relative(root, path).split(/[\\/]/).map((part) => part.toLowerCase());
+				if (basename(root).toLowerCase() !== ".agents" || parts[0] !== "skills") files.push(path);
+			}
+		}
+	};
+	visit(root); return files;
+}
+function scoutDefinition(dirs: string[], source: string): Fields | undefined {
+	let selected: Fields | undefined;
+	for (const dir of dirs) for (const path of definitionFiles(dir)) {
+		let content: string;
+		try { content = readFileSync(path, "utf8"); }
+		catch (error) { throw new Error(`Agent definition '${path}' is unreadable: ${String(error)}`); }
+		const frontmatter = parseAgentFrontmatter(content);
+		if (frontmatter.name !== "scout" || typeof frontmatter.description !== "string" || !frontmatter.description.trim()) continue;
+		// A package-qualified definition resolves to package:scout, not scout.
+		if (frontmatter.package?.trim()) {
+			const normalizedPackage = frontmatter.package.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9.-]/g, "").replace(/-+/g, "-").replace(/\.+/g, ".").replace(/(?:^[-.]+|[-.]+$)/g, "");
+			if (!/^[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)*$/.test(normalizedPackage)) throw new Error(`Scout definition '${path}' has invalid package.`);
+			continue;
+		}
+		validateScoutFrontmatter(frontmatter, path);
+		const next: Fields = { modelPresent: false, thinkingPresent: false, source: `${source} scout definition at ${path}` };
+		if (Object.hasOwn(frontmatter, "model")) {
+			if (!frontmatter.model?.trim() || ["|", "|-", ">", ">-"].includes(frontmatter.model.trim())) throw new Error(`Scout definition '${path}' has an unsupported model block form.`);
+			next.model = frontmatter.model.trim(); next.modelPresent = true;
+		}
+		if (Object.hasOwn(frontmatter, "thinking")) {
+			next.thinkingPresent = true;
+			if (["|", "|-", ">", ">-"].includes(frontmatter.thinking.trim())) throw new Error(`Scout definition '${path}' has an unsupported thinking block form.`);
+			if (frontmatter.thinking !== "false") { if (!frontmatter.thinking?.trim()) throw new Error(`Scout definition '${path}' has invalid thinking.`); next.thinking = frontmatter.thinking.trim(); }
+		}
+		selected = next;
+	}
+	return selected;
+}
+
+function validateScoutFrontmatter(frontmatter: Record<string, string>, path: string): void {
+	if (frontmatter.fallbackModels !== undefined) throw new Error(`Scout definition '${path}' uses removed fallbackModels.`);
+	for (const field of ["advertise", "async", "fast", "allowNestedSubagents"]) {
+		if (frontmatter[field] !== undefined && frontmatter[field] !== "true" && frontmatter[field] !== "false") throw new Error(`Scout definition '${path}' has invalid '${field}'; expected true or false.`);
+	}
+	if (frontmatter.outputMode !== undefined && frontmatter.outputMode !== "inline" && frontmatter.outputMode !== "file-only") throw new Error(`Scout definition '${path}' has invalid outputMode.`);
+	if (frontmatter.acceptanceRole !== undefined && frontmatter.acceptanceRole !== "read-only" && frontmatter.acceptanceRole !== "writer") throw new Error(`Scout definition '${path}' has invalid acceptanceRole.`);
+	for (const field of ["timeoutMs", "toolTimeoutMs"]) if (frontmatter[field] !== undefined) {
+		const value = Number(frontmatter[field]);
+		if (!Number.isInteger(value) || value <= 0 || (field === "toolTimeoutMs" && value > 2_147_483_647)) throw new Error(`Scout definition '${path}' has invalid ${field}.`);
+	}
+	if (frontmatter.permission !== undefined && frontmatter.permissions !== undefined) throw new Error(`Scout definition '${path}' cannot declare both permission and permissions.`);
+	if (frontmatter.machine !== undefined) validateMachine(frontmatter.machine, `Scout definition '${path}' machine`);
+	// These valid host forms require YAML/domain parsers not exposed through a
+	// supported discovery API. Refuse them rather than silently mis-project.
+	for (const field of ["runner", "acceptance", "permission", "permissions", "memory", "toolBudget", "outputSchema"]) if (Object.hasOwn(frontmatter, field)) throw new Error(`Scout definition '${path}' uses unsupported complex field '${field}'.`);
+}
+
+function packageRoots(nodeModulesDir: string): string[] {
+	if (!isDirectory(nodeModulesDir)) return [];
+	const roots: string[] = [];
+	for (const entry of readdirSync(nodeModulesDir, { withFileTypes: true })) {
+		if ((!entry.isDirectory() && !entry.isSymbolicLink()) || entry.name.startsWith(".")) continue;
+		const root = join(nodeModulesDir, entry.name);
+		if (!entry.name.startsWith("@")) { roots.push(root); continue; }
+		if (!isDirectory(root)) continue;
+		for (const child of readdirSync(root, { withFileTypes: true })) if (child.isDirectory() || child.isSymbolicLink()) roots.push(join(root, child.name));
+	}
+	return roots;
+}
+
+function safePackagePath(value: string): boolean {
+	return value.length > 0 && !value.startsWith("/") && value.split(/[\\/]/).every((part) => part && part !== "." && part !== "..");
+}
+
+function npmPackageName(source: string): string | undefined {
+	const spec = source.slice(4).trim();
+	if (!spec) return undefined;
+	const packageName = spec.match(/^(@?[^@]+(?:\/[^@]+)?)(?:@(.+))?$/)?.[1] ?? spec;
+	return safePackagePath(packageName) ? packageName : undefined;
+}
+
+function gitPackagePath(source: string): { host: string; repoPath: string } | undefined {
+	const spec = source.slice(4).trim();
+	if (!spec) return undefined;
+	let host = "";
+	let repoPath = "";
+	const scp = spec.match(/^git@([^:]+):(.+)$/);
+	if (scp) {
+		host = scp[1] ?? "";
+		repoPath = scp[2] ?? "";
+	} else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(spec)) {
+		try {
+			const url = new URL(spec);
+			host = url.hostname;
+			repoPath = url.pathname.replace(/^\/+/, "");
+		} catch { return undefined; }
+	} else {
+		const slash = spec.indexOf("/");
+		if (slash < 0) return undefined;
+		host = spec.slice(0, slash);
+		repoPath = spec.slice(slash + 1);
+	}
+	const ref = [repoPath.indexOf("@"), repoPath.indexOf("#")].filter((index) => index >= 0).sort((a, b) => a - b)[0];
+	repoPath = (ref === undefined ? repoPath : repoPath.slice(0, ref)).replace(/\.git$/, "").replace(/^\/+/, "");
+	return host && safePackagePath(host) && safePackagePath(repoPath) && repoPath.split(/[\\/]/).length >= 2 ? { host, repoPath } : undefined;
+}
+
+/** Mirrors pi-subagents 0.68 settings package cache layout. */
+function settingsPackageRoot(source: string, baseDir: string): string | undefined {
+	const value = source.trim();
+	if (!value) return undefined;
+	if (value.startsWith("git:")) {
+		const parsed = gitPackagePath(value);
+		return parsed ? join(baseDir, "git", parsed.host, parsed.repoPath) : undefined;
+	}
+	if (value.startsWith("npm:")) {
+		const name = npmPackageName(value);
+		return name ? join(baseDir, "npm", "node_modules", name) : undefined;
+	}
+	const local = value.startsWith("file:") ? value.slice(5) : value;
+	if (local === "~") return homedir();
+	if (local.startsWith("~/")) return join(homedir(), local.slice(2));
+	if (isAbsolute(local)) return local;
+	if (local === "." || local === ".." || local.startsWith("./") || local.startsWith("../")) return resolve(baseDir, local);
+	if (/^https?:\/\//i.test(value)) {
+		const parsed = gitPackagePath(`git:${value}`);
+		return parsed ? join(baseDir, "git", parsed.host, parsed.repoPath) : undefined;
+	}
+	return undefined;
+}
+
+function settingsPackageRoots(settingsPath: string, baseDir: string): string[] {
+	if (!existsSync(settingsPath)) return [];
+	const packages = readObject(settingsPath).packages;
+	if (!Array.isArray(packages)) return [];
+	return packages.flatMap((entry) => {
+		const source = typeof entry === "string" ? entry : entry && typeof entry === "object" && typeof (entry as Record<string, unknown>).source === "string" ? (entry as Record<string, string>).source : undefined;
+		const root = source ? settingsPackageRoot(source, baseDir) : undefined;
+		return root ? [root] : [];
+	});
+}
+
+function globalNpmRoot(): string | null {
+	const offline = process.env.PI_OFFLINE?.toLowerCase();
+	if (offline === "1" || offline === "true" || offline === "yes") return null;
+	if (cachedGlobalNpmRoot !== undefined) return cachedGlobalNpmRoot;
+	const windowsRoot = process.platform === "win32" && process.env.APPDATA ? join(process.env.APPDATA, "npm", "node_modules") : undefined;
+	if (windowsRoot && isDirectory(windowsRoot)) {
+		cachedGlobalNpmRoot = realpathSync.native(windowsRoot);
+		return cachedGlobalNpmRoot;
+	}
+	try {
+		cachedGlobalNpmRoot = realpathSync.native(execFileSync("npm", ["root", "-g"], { encoding: "utf8", timeout: 5000, windowsHide: true }).trim());
+	} catch { cachedGlobalNpmRoot = null; }
+	return cachedGlobalNpmRoot;
+}
+
+function declaredPackageAgentDirs(packageRoot: string): string[] {
+	const manifestPath = join(packageRoot, "package.json");
+	if (!existsSync(manifestPath)) return [];
+	let manifest: Record<string, unknown>;
+	try { manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, unknown>; } catch { return []; }
+	const roots: Array<Record<string, unknown>> = [];
+	if (manifest["pi-subagents"] && typeof manifest["pi-subagents"] === "object" && !Array.isArray(manifest["pi-subagents"])) roots.push(manifest["pi-subagents"] as Record<string, unknown>);
+	const pi = manifest.pi;
+	if (pi && typeof pi === "object" && !Array.isArray(pi)) {
+		const subagents = (pi as Record<string, unknown>).subagents;
+		if (subagents && typeof subagents === "object" && !Array.isArray(subagents)) roots.push(subagents as Record<string, unknown>);
+	}
+	return roots.flatMap((root) => Array.isArray(root.agents) ? root.agents.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).map((value) => resolve(packageRoot, value)) : []);
+}
+
+
+function assertNoPackageScout(root: string | null, cwd: string, userSettingsPath: string): void {
+	const effectiveRoot = root ?? resolve(cwd);
+	const projectConfigDir = join(effectiveRoot, ".pi");
+	const globalRoot = globalNpmRoot();
+	const candidates = [
+		effectiveRoot,
+		...packageRoots(join(projectConfigDir, "npm", "node_modules")),
+		...settingsPackageRoots(join(projectConfigDir, "settings.json"), projectConfigDir),
+		...packageRoots(join(agentDir(), "npm", "node_modules")),
+		...settingsPackageRoots(userSettingsPath, agentDir()),
+		...(globalRoot ? packageRoots(globalRoot) : []),
+	];
+	for (const packageRoot of new Set(candidates.map((candidate) => resolve(candidate)))) {
+		const dirs = declaredPackageAgentDirs(packageRoot);
+		if (dirs.length > 0 && scoutDefinition(dirs, "package")) throw new Error(`Package-contributed scout definitions under '${packageRoot}' are unsupported by the pi-subagents 0.68 Explorer compatibility projection.`);
+	}
+}
+function defaults(base: Fields, scoped: Scoped): Fields {
+	const result = { ...base };
+	const model = scoped.projectPath && scoped.project.defaultModel !== undefined ? scoped.project.defaultModel : scoped.user.defaultModel;
+	const thinking = scoped.projectPath && scoped.project.defaultThinking !== undefined ? scoped.project.defaultThinking : scoped.user.defaultThinking;
+	if (!result.modelPresent && model !== undefined) { result.model = model; result.modelPresent = true; }
+	if (!result.thinkingPresent && thinking !== undefined) { result.thinking = thinking; result.thinkingPresent = true; }
+	return result;
+}
+function override(base: Fields, fields: Override | undefined, source: string): Fields {
+	if (!fields) return base; const result = { ...base, source };
+	for (const field of ["model", "thinking"] as const) if (Object.hasOwn(fields, field)) { result[`${field}Present`] = true; if (fields[field] === false) delete result[field]; else result[field] = fields[field]; }
+	return result;
+}
+function effectiveScout(scoped: Scoped): Fields {
+	const user = scoutDefinition([join(agentDir(), "agents"), join(homedir(), ".agents")], "user");
+	const project = scoped.projectRoot ? scoutDefinition([join(scoped.projectRoot, ".agents"), join(scoped.projectRoot, ".pi", "agents")], "project") : undefined;
+	const custom = project ?? user; let result = defaults(custom ?? BUILTIN_SCOUT, scoped);
+	if (custom) { result = override(result, scoped.user.overrides.scout, `user scout override at ${scoped.userPath}`); if (scoped.projectPath) result = override(result, scoped.project.overrides.scout, `project scout override at ${scoped.projectPath}`); return result; }
+	const projectOverride = scoped.projectPath ? scoped.project.overrides.scout : undefined; const chosen = projectOverride ?? scoped.user.overrides.scout;
+	result = override(result, chosen, projectOverride ? `project builtin scout override at ${scoped.projectPath}` : `user builtin scout override at ${scoped.userPath}`);
+	const projectDisable = Boolean(scoped.projectPath && scoped.project.disableThinking !== undefined); const disabled = projectDisable ? scoped.project.disableThinking : scoped.user.disableThinking;
+	if (disabled && !Object.hasOwn(chosen ?? {}, "thinking")) { delete result.thinking; result.thinkingPresent = true; }
+	return result;
+}
+function plannerScoutField(scoped: Scoped, field: "model" | "thinking"): { present: boolean; value?: string; source?: string } {
+	let present = false; let value: string | undefined; let source: string | undefined;
+	const entries: Array<[Override | undefined, string]> = [[scoped.user.overrides["planner-scout"], `user planner-scout override at ${scoped.userPath}`], [scoped.projectPath ? scoped.project.overrides["planner-scout"] : undefined, `project planner-scout override at ${scoped.projectPath}`]];
+	for (const [entry, label] of entries) if (entry && Object.hasOwn(entry, field)) { present = true; source = label; value = entry[field] === false ? undefined : entry[field]; }
+	return { present, ...(value !== undefined ? { value } : {}), ...(source ? { source } : {}) };
+}
+
+export function resolveExplorerModelSelection(input: { cwd: string; currentProvider?: string }): ExplorerModelSelectionResult {
+	try {
+		if (process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS?.trim()) throw new Error("PI_SUBAGENT_EXTRA_AGENT_DIRS is unsupported by the pi-subagents 0.68 Explorer compatibility projection.");
+		const userPath = join(agentDir(), "settings.json"); const root = projectRoot(input.cwd); const projectPath = root ? join(root, ".pi", "settings.json") : null;
+		assertNoPackageScout(root, input.cwd, userPath);
+		const scoped: Scoped = { user: providerSettings(readSettings(userPath), input.currentProvider), userPath, project: providerSettings(readSettings(projectPath), input.currentProvider), projectPath, projectRoot: root };
+		const scout = effectiveScout(scoped); const explicitModel = plannerScoutField(scoped, "model"); const explicitThinking = plannerScoutField(scoped, "thinking");
+		const model = explicitModel.present ? explicitModel.value : scout.model; const thinking = explicitThinking.present ? explicitThinking.value : scout.thinking;
+		if (thinking !== undefined && !(THINKING_LEVELS as readonly string[]).includes(thinking)) throw new Error(`Explorer thinking configuration '${thinking}' is invalid; expected one of ${THINKING_LEVELS.join(", ")}.`);
+		return { ok: true, selection: { ...(model !== undefined ? { model } : {}), ...(thinking !== undefined ? { thinking: thinking as SubagentDelegationThinking } : {}), source: `${explicitModel.source ?? scout.source}; ${explicitThinking.source ?? scout.source}` } };
+	} catch (error) { return { ok: false, code: EXPLORER_CONFIG_INVALID, message: `explorer model configuration is not loadable: ${error instanceof Error ? error.message : String(error)}` }; }
+}

@@ -126,11 +126,13 @@ hold，直到恢复条件解决。
 
 验证运行由 Root 显式委派（`planner_delegate` + role=validator 新建验证 Task，`planner_redelegate` 复验既有 Task）；没有任何自动派发。
 
-`planner_delegate` / `planner_redelegate` 在角色路由关闭时沿用 launcher 的 `model` / `thinking` 默认值；启用操作者策略后，发送精确确认可用的 `provider/model` 与 thinking，并在采纳完成报告前核对终态实际身份。两个工具不设置 `toolBudget` / `timeoutMs`；执行 envelope 由插件控制。usage 按 child 返回的实际身份归因。
+`planner_delegate` / `planner_redelegate` 在角色路由关闭时沿用 launcher 的 `model` / `thinking` 默认值；启用操作者策略后，发送精确确认可用的 `provider/model` 与 thinking，并在采纳完成报告前核对终态实际身份。普通 worker、explorer、validator、reviewer 请求不设置 `toolBudget`；Task 唯一一次 report-only 修复绑定已注册的 `planner-report-only` agent（`tools: []`，仅由 launcher 追加结构化结果工具），并发送 `toolBudget: { hard: 1, block: "*" }`。该模式由不可变执行记录决定，不能被重入参数翻转；账本保存实际发送的预算、注册证明、agent 绑定与原始终态。`timeoutMs` 仍不设置，执行 envelope 由插件控制。usage 按 child 返回的实际身份归因。
 
 `reviewer` 子进程一律 `context: "fresh"`，携带 `ReviewRequest`——Task 的 spec、最新 WorkerReport、Root 采集的 Git 证据、有界补丁——不会 fork 父会话。ReviewRequest 是对 Task 的一次调用，绝不是新的 TaskSpec；reviewer 调用只能经 `planner_redelegate`（新铸的 Task 上没有东西可审）。Task 的原始 role、objective、spec 在 worker / reviewer / validation 各轮中保持不变。经 `planner_redelegate` 的 validator 调用是对被审 Task 的调用，其报告记录在该 Task 的 validatorReports。
 
 Worker 返回带 version 的 `WorkerReport`；launcher 按 schema 校验后落在 `details.report`，不会从子代理文本里再解析。非 completed 的 launcher 状态是工具错误（抛出），不是解析失败。Reviewer 只读它的调用载荷，只能用 read、grep、find、ls：不得 `git log`、跑 `npm test` 或重探整棵树。
+
+报告缺失或格式错误只授予一次 report-only 修复。封闭 agent 只暴露一次结构化报告提交，其他工具根本不存在，hard-one 预算在提交后阻断额外调用；`tool_budget_exhausted` 以 report-only 预算失败单独记录，携带的报告绝不接纳。修复报告再次畸形会直接 block，且该执行不能增加 Truth paths。pi-subagents 0.69.0 没有公开预算前 partial grace，也不返回格式错误的原始结构化输出；插件明确标为 unsupported，不从文本猜测。
 
 Validator（`oracle`）在 Worker 校验已 exit 0 时默认做有界复核：`git rev-parse HEAD`、`git status --porcelain`，以及确认报告里点名的测试存在。设 `PI_PLANNER_ONLY_ORACLE=full` 才重跑全量。Worker 校验失败时仍会重跑列出的命令。
 

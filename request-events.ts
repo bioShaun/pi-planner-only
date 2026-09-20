@@ -50,8 +50,10 @@ export function reviewFailureFamily(decision?: ReviewDecision): string | undefin
 export function delegationFailureFamily(outcome: DelegationOutcome): string | undefined {
 	const t = outcome.termination;
 	if (t) {
+		const execution = outcome.task.executions.find((item) => item.executionId === outcome.executionId);
 		if (!t.terminationConfirmed) return "stop-unconfirmed";
 		if (t.evidenceIncomplete || t.probeFailures?.length) return "environment";
+		if (t.status === "tool_budget_exhausted" && execution?.reportOnly) return "report-only-tool-budget";
 		if (t.anomaly || t.reason === "worker_runaway" || t.status === "tool_budget_exhausted" || t.status === "timed_out") return "budget";
 		if (t.reason === "operator_cancel" || t.status === "cancelled" || t.status === "interrupted") return "cancel";
 		if (t.errorCode) return requestErrorFamily("transport", { code: t.errorCode });

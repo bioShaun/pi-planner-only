@@ -1,0 +1,19 @@
+# Child TaskSpec: final real-host and measurement evidence review
+
+You are the terminal astra_reviewer, already below the independent read-only parent. Review directly; do not spawn, delegate, call another launcher, or request another agent. No edits, tests, providers, credentials, process termination, /tmp, or heavy commands. The ordinary wrapper already logged slot audit/status and owns the slot. Soft budget 300 seconds; if unfinished, return BLOCKED with exact missing coverage. Outer watchdog remains 420 seconds. Use inline Python/Node for permission probes: no here-documents or temporary files. Do not diff or list the entire scratch tree.
+
+First prove runtime isolation on index.ts: attempt O_WRONLY only, without create/truncate/write; report errno, the covering mount options, and unchanged SHA256. Metadata alone is insufficient.
+
+Project: /home/tcuni-claw/pi/pi-planner-only. Evidence root: .scratch/stability-next-20260920. source-manifest.json paths are relative to PROJECT ROOT; harness-manifest.json paths are relative to EVIDENCE ROOT. Verify both manifests against disk. Return PASS / REQUEST_CHANGES / BLOCKED on line one, checked facts, limitations, and artifact-backed findings with location, impact, and minimum correction. Do not self-estimate elapsed time: the outer collector records timestamps.
+
+Scope is actual-host/P3 evidence and its claims only. Final implementation correctness and release have a separate strict code review; do not re-review the complete product diff here.
+
+User choices: Root tcuni-agy/gemini-3.8-flash-high, child tcuni-luna/gpt-5.6-luna, low; compare token/completion/latency only, all monetaryCost null. Report repair exposes only structured_output. Host 0.85.1 / launcher 0.69.0.
+
+Use execution-20260920/host-validation.md, measurement-validation.md and closeout.md for navigation, then independently inspect named raw evidence:
+1. report-only-run-3zZ7ry: public runtime registration, actual active tools exactly structured_output, one successful call, matching terminal identity, unchanged workspace, natural exit 0. Preserve report-only-run-xMGYAr as the rejected hard-zero attempt. No private upstream TypeScript import or system-package edits.
+2. study-run-vsHbSx / study-run-TupxIs / study-run-2VtAyF: real TUI queued/scheduled/combined. Verify real hasUI/mode, input timing, matched REQUEST/CANCEL/cancelled terminal, chronological post-close model/tool/REQUEST 0/0/0, settled and natural exit without forced cleanup. Spot-check raw event chronology against proof JSON, not only PASS banners.
+3. study-run-yL4RzS: predefined 27-row rotating schedule, all results and quality-audit.json; actual model identity, raw usage completeness/deduplication and independently aggregate total tokens/completion/durations. Retain unsuccessful earlier Kimi/DeepSeek attempts as failures, not study rows. Baseline model pin changes only public runtime-registration model/thinking and private builtin settings; tools/source baseline remain original. Verify monetaryCost null and correct duration basis.
+4. Provenance: each run's before/after hashes are stable. These host/P3 measurements precede later declaration hardening and the report-only reviewer-binding correction. Verify the measured P3 runs contain no report-only executions and no declaration findings, and assess this explicit boundary. Do not claim the old run hashes are current. Final release-run-GJqscr covers the final source. ADR-0008 keeps 10 minutes as an operational default, not empirical optimum; short children do not calibrate 5 vs 10 minutes; no Root read-policy expansion.
+
+Do not read all historical attempts or diff the entire artifact tree. Required raw paths are listed above; failures and provenance are summarized in closeout.md with exact references. Missing required executable evidence is BLOCKED.

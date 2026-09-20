@@ -1,0 +1,51 @@
+{
+  "arm": "baseline",
+  "case": "count",
+  "repeat": 1,
+  "label": "r1-baseline-count",
+  "status": 0,
+  "signal": null,
+  "durationMs": 43876,
+  "quality": true,
+  "identity": {
+    "verified": true,
+    "rootVerified": true,
+    "childVerified": true,
+    "expected": {
+      "rootModel": "tcuni-agy/gemini-3.8-flash-high",
+      "childModel": "tcuni-luna/gpt-5.6-luna",
+      "thinking": "low"
+    },
+    "rootObservations": 5,
+    "childTerminals": 1
+  },
+  "changed": "",
+  "root": {
+    "input": 59920,
+    "output": 271,
+    "cacheRead": 0,
+    "cacheWrite": 0
+  },
+  "child": {
+    "input": 6901,
+    "output": 412,
+    "cacheRead": 11264,
+    "cacheWrite": 0
+  },
+  "rootMessages": 5,
+  "childClaims": 1,
+  "failedAttempts": 0,
+  "rootUsageIncomplete": false,
+  "childUsageIncomplete": false,
+  "actualRootModels": [
+    "tcuni-agy/gemini-3.8-flash-high"
+  ],
+  "actualChildModels": [
+    "tcuni-luna/gpt-5.6-luna:low:low"
+  ],
+  "monetaryCost": null,
+  "priceStatus": "unverified; no cost-savings claim",
+  "closureObserved": false,
+  "afterClosure": null,
+  "finalAnswer": "The file `fixture.txt` contains the following text:\n> The quick brown fox jumps over the lazy dog today.\n\nThe file has 10 words.\n\nANSWER=10"
+}

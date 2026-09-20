@@ -1,0 +1,16 @@
+file:///home/tcuni-claw/pi/pi-planner-only/delegate.ts:2085
+			throw new DelegationRefused(
+			      ^
+
+DelegationRefused: planner_redelegate refused: report revision 1 of T-20260920-014 has no per-execution A_run/C_report binding; a pass cannot be judged fresh
+    at runReviewInvocation (file:///home/tcuni-claw/pi/pi-planner-only/delegate.ts:2085:10)
+    at async runDelegation (file:///home/tcuni-claw/pi/pi-planner-only/delegate.ts:880:21)
+    at async file:///home/tcuni-claw/pi/pi-planner-only/index.ts:1120:17
+    at async withRefusalBreaker (file:///home/tcuni-claw/pi/pi-planner-only/index.ts:638:19)
+    at async Object.execute (file:///home/tcuni-claw/pi/pi-planner-only/index.ts:601:21)
+    at async file:///home/tcuni-claw/pi/pi-planner-only/p1-delegation.test.mjs:485:20 {
+  code: 'REVIEW_NO_EXECUTION_EVIDENCE',
+  taskId: undefined
+}
+
+Node.js v24.14.0

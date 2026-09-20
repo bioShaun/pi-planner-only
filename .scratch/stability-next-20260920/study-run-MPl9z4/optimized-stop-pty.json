@@ -1,0 +1,33 @@
+{
+  "verdict": "NOT_PROVEN",
+  "scenario": "queued",
+  "injections": [
+    {
+      "kind": "queued",
+      "atMs": 1789893383466.0137,
+      "requestId": "7b8ec1bf-32bb-4c77-ade4-c221cf7a629f"
+    }
+  ],
+  "quietBeforeQuitMs": 3000,
+  "forcedCleanup": true,
+  "exitStatus": 0,
+  "observations": {
+    "ready": true,
+    "hasUI": true,
+    "closureObserved": true,
+    "cancelObserved": true,
+    "cancelledTerminal": true,
+    "settled": true,
+    "originalRequestId": "7b8ec1bf-32bb-4c77-ade4-c221cf7a629f",
+    "requestUnchanged": true,
+    "queuedInputObserved": true,
+    "scheduledInputObserved": false,
+    "afterClosure": {
+      "modelHooks": 0,
+      "toolCalls": 0,
+      "requests": 0
+    },
+    "afterClosureCalls": 0,
+    "lastEventMs": 1789893430213
+  }
+}

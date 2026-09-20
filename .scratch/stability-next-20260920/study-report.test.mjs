@@ -1,0 +1,17 @@
+import assert from "node:assert/strict";
+import { aggregateStudy } from "./study-report.mjs";
+const usage={input:10,output:2,cacheRead:4,cacheWrite:0};
+const success={arm:"optimized",status:0,quality:true,root:usage,child:usage,failedAttempts:0,childClaims:1,durationMs:100};
+const failure={...success,status:1,quality:false,failedAttempts:2,childClaims:2,durationMs:200};
+const result=aggregateStudy([success,failure]).groups[0];
+assert.equal(result.completed,1);
+assert.equal(result.trials,2);
+assert.equal(result.totalTokens,64,"failed trials are included in all token totals");
+assert.equal(result.tokensPerCompleted,64);
+assert.equal(result.childFailedAttempts,2);
+assert.equal(result.monetaryCost,null);
+const unknown=aggregateStudy([{...failure,childUsageIncomplete:true}]).groups[0];
+assert.equal(unknown.totalTokens,null,"partial usage is never presented as complete");
+assert.equal(unknown.tokenLowerBound,32);
+assert.equal(unknown.tokensPerCompleted,null);
+console.log("study-report: PASS");

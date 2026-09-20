@@ -1,0 +1,1 @@
+BLOCKED: outer launcher exit 124 at the unchanged 420-second watchdog. No completed child or parent verdict. Parent/child runtime read-only probes and partial reads are retained, but do not constitute PASS. The next review is split into code and evidence contracts, with fresh reviewers, the same runtime isolation and watchdog, and unchanged product source.

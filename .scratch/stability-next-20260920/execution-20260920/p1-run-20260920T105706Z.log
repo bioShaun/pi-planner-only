@@ -1,0 +1,19 @@
+
+> pi-planner-only@0.8.0 test:p1
+> node --experimental-strip-types p1-delegation.test.mjs
+
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: report-only-explorer-root-absent: fabricated readonly declaration cannot complete
+    at file:///home/tcuni-claw/pi/pi-planner-only/p1-delegation.test.mjs:527:11 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 'completed',
+  expected: 'completed',
+  operator: 'notStrictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.14.0

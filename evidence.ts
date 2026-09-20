@@ -1509,9 +1509,10 @@ export function compareEvidence(
 		),
 	);
 	const extraDeclaredPaths: string[] = [];
-	if (!options.readOnly) {
+	if (!options.readOnly || options.reportOnly) {
 		for (const path of inRepoDeclared) {
-			if (!truthSet.has(path) && !gapAffectedPaths.has(path) && !priorTruth.has(path)) extraDeclaredPaths.push(path);
+			const originBasis = !options.readOnly && (truthSet.has(path) || gapAffectedPaths.has(path));
+			if (!originBasis && !priorTruth.has(path)) extraDeclaredPaths.push(path);
 		}
 	}
 
@@ -1522,7 +1523,7 @@ export function compareEvidence(
 	}
 
 	const missingPaths: string[] = [];
-	if (verifiable && !headChanged && !options.readOnly) {
+	if (verifiable && !headChanged && (!options.readOnly || options.reportOnly)) {
 		for (const path of inRepoDeclared) {
 			if (currentPaths.has(path)) continue;
 			// RF-1 — paths committed (T2) or content-changed on a baseline-dirty
@@ -1545,9 +1546,7 @@ export function compareEvidence(
 	}
 	if (extraDeclaredPaths.length > 0) {
 		reasons.push(`over-reported / unreliable declaration: ${sorted(extraDeclaredPaths).join(", ")}`);
-		// Report-only corrections restate prior-run files without a new T1/T2/T3
-		// delta; marking that unexplained deadlocks schema-only fix rounds.
-		if (!options.reportOnly) unexplained = true;
+		unexplained = true;
 	}
 	if (outOfRepoDeclared.length > 0) {
 		reasons.push(
@@ -1759,7 +1758,7 @@ export function compareExecutionTruth(
 		const inAllowList = hasAllowList && inScopeEarly(path);
 		// A read-only execution may overlap a writer in the same worktree. Its
 		// window is still useful evidence, but observed paths are never charged
-		// to the read-only report or turned into declaration findings.
+		// as its mutations. Explicit repair declarations are checked below.
 		if (options.readOnly) {
 			observedExternalPaths.push(path);
 			externalPaths.push(path);
@@ -1825,7 +1824,7 @@ export function compareExecutionTruth(
 
 	// Branch 3 (unchanged): evidence complete and no task change, or out-of-scope/undeclared-without-basis
 	const extraDeclaredPaths = options.readOnly
-		? []
+		? options.reportOnly ? inRepoDeclared.filter((path) => !priorTruth.has(path)) : []
 		: inRepoDeclared.filter(
 			(path) => !attributed.has(path) && !truthSet.has(path) && !attributionGapPaths.includes(path) && !priorTruth.has(path),
 		);
@@ -1834,7 +1833,7 @@ export function compareExecutionTruth(
 		aRun.finalGitRef && cReport.finalGitRef && aRun.finalGitRef !== cReport.finalGitRef,
 	);
 	const missingPaths: string[] = [];
-	if (verifiable && !headChanged && !options.readOnly) {
+	if (verifiable && !headChanged && (!options.readOnly || options.reportOnly)) {
 		for (const path of inRepoDeclared) {
 			if (currentPaths.has(path)) continue;
 			if (committedPaths.has(path) || t3.includes(path)) continue;
@@ -1870,19 +1869,19 @@ export function compareExecutionTruth(
 	}
 
 	const findings: TruthFindingDraft[] = [];
-	if (verifiable && !options.readOnly) {
+	if (verifiable && (!options.readOnly || options.reportOnly)) {
 		if (undeclaredPaths.length > 0) findings.push({ kind: "undeclared", paths: sorted(undeclaredPaths) });
 		if (outOfScopePaths.length > 0) findings.push({ kind: "scope", paths: sorted(outOfScopePaths) });
-		// A report-only restatement is not required to re-prove presence: the
-		// drift check governs the workspace, and its over/missing declarations
-		// stay visible in the fields above without becoming findings.
+		// Attribution gaps remain an execution-window concern. A report-only
+		// repair compares against its immutable origin window, so invented or
+		// vanished declarations are ordinary blocking declaration findings.
 		if (!options.reportOnly && attributionGapPaths.length > 0) {
 			findings.push({ kind: "attribution-gap", paths: sorted(attributionGapPaths), reason: "baseline content not recoverable from hashes alone" });
 		}
-		if (!options.reportOnly && extraDeclaredPaths.length > 0) {
+		if (extraDeclaredPaths.length > 0) {
 			findings.push({ kind: "over-declared", paths: sorted(extraDeclaredPaths) });
 		}
-		if (!options.reportOnly && missingPaths.length > 0) {
+		if (missingPaths.length > 0) {
 			findings.push({ kind: "missing", paths: sorted(missingPaths) });
 		}
 	}
