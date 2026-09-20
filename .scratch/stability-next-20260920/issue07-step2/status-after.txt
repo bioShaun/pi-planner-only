@@ -1,0 +1,104 @@
+ M .scratch/stability-next-20260920/issue06/applied/after.sha256
+ M .scratch/stability-next-20260920/issue06/applied/applied-at.txt
+ M .scratch/stability-next-20260920/issue06/astra-planner-proposed.md
+ M .scratch/stability-next-20260920/issue06/diagnosis.md
+ M .scratch/stability-next-20260920/issue06/global-budget.patch
+ M .scratch/stability-next-20260920/issue06/review-readonly-proposed-budget.sh
+ M .scratch/stability-next-20260920/issue06/summarize-run.mjs
+ M .scratch/stability-next-20260920/issues/05-measurement.md
+ M .scratch/stability-next-20260920/issues/07-execution-duration-and-request-remaining.md
+ M CONTEXT.md
+ M README.md
+ M README.zh-CN.md
+ M delegate.test.mjs
+ M delegate.ts
+ M execution-defaults.ts
+ M index.ts
+ M ledger-store.test.mjs
+ M ledger-store.ts
+ M orchestrate.ts
+ M p1-delegation.test.mjs
+ M request-events.ts
+ M request-stop.test.mjs
+ M task.ts
+ M types.ts
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T142600Z.command.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T142600Z.exit-code.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T142600Z.finished-at.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T142600Z.harness-after.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T142600Z.harness-before.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T142600Z.log
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T142600Z.source-after.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T142600Z.source-before.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T142600Z.started-at.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T142600Z.tmp-root.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T151619Z.command.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T151619Z.exit-code.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T151619Z.finished-at.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T151619Z.harness-after.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T151619Z.harness-before.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T151619Z.log
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T151619Z.source-after.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T151619Z.source-before.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T151619Z.started-at.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T151619Z.tmp-root.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T152852Z.command.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T152852Z.exit-code.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T152852Z.finished-at.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T152852Z.harness-after.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T152852Z.harness-before.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T152852Z.log
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T152852Z.source-after.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T152852Z.source-before.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T152852Z.started-at.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T152852Z.tmp-root.txt
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-D4Tfpi-20260920T151110Z.command.txt
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-D4Tfpi-20260920T151110Z.exit-code.txt
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-D4Tfpi-20260920T151110Z.finished-at.txt
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-D4Tfpi-20260920T151110Z.harness-after.sha256
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-D4Tfpi-20260920T151110Z.harness-before.sha256
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-D4Tfpi-20260920T151110Z.log
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-D4Tfpi-20260920T151110Z.source-after.sha256
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-D4Tfpi-20260920T151110Z.source-before.sha256
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-D4Tfpi-20260920T151110Z.started-at.txt
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-D4Tfpi-20260920T151110Z.tmp-root.txt
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-Kzag8r-20260920T152444Z.command.txt
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-Kzag8r-20260920T152444Z.exit-code.txt
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-Kzag8r-20260920T152444Z.finished-at.txt
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-Kzag8r-20260920T152444Z.harness-after.sha256
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-Kzag8r-20260920T152444Z.harness-before.sha256
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-Kzag8r-20260920T152444Z.log
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-Kzag8r-20260920T152444Z.source-after.sha256
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-Kzag8r-20260920T152444Z.source-before.sha256
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-Kzag8r-20260920T152444Z.started-at.txt
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-Kzag8r-20260920T152444Z.tmp-root.txt
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-ah68GJ-20260920T225320Z.command.txt
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-ah68GJ-20260920T225320Z.exit-code.txt
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-ah68GJ-20260920T225320Z.finished-at.txt
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-ah68GJ-20260920T225320Z.harness-after.sha256
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-ah68GJ-20260920T225320Z.harness-before.sha256
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-ah68GJ-20260920T225320Z.log
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-ah68GJ-20260920T225320Z.source-after.sha256
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-ah68GJ-20260920T225320Z.source-before.sha256
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-ah68GJ-20260920T225320Z.started-at.txt
+?? .scratch/stability-next-20260920/execution-20260920/strict-summary-strict-run-ah68GJ-20260920T225320Z.tmp-root.txt
+?? .scratch/stability-next-20260920/issue07-step1/staging-paths.txt
+?? .scratch/stability-next-20260920/issue07-step2/
+?? .scratch/stability-next-20260920/release-run-B278Uu/
+?? .scratch/stability-next-20260920/release-run-PotBZh/
+?? .scratch/stability-next-20260920/release-run-aRYYOy/
+?? .scratch/stability-next-20260920/review-claude-20260920/exit-code.txt
+?? .scratch/stability-next-20260920/review-claude-20260920/finished-at.txt
+?? .scratch/stability-next-20260920/review-claude-20260920/head.txt
+?? .scratch/stability-next-20260920/review-claude-20260920/review.md
+?? .scratch/stability-next-20260920/review-claude-20260920/slot-audit.txt
+?? .scratch/stability-next-20260920/review-claude-20260920/slot-status.txt
+?? .scratch/stability-next-20260920/review-claude-20260920/started-at.txt
+?? .scratch/stability-next-20260920/review-claude-20260920/test-release.log
+?? .scratch/stability-next-20260920/review-claude-20260920/tmp-root.txt
+?? .scratch/stability-next-20260920/strict-run-D4Tfpi/
+?? .scratch/stability-next-20260920/strict-run-Kzag8r/
+?? .scratch/stability-next-20260920/strict-run-TDoRaQ/
+?? .scratch/stability-next-20260920/strict-run-ah68GJ/
+?? .scratch/stability-next-20260920/strict-run-lQ7JYw/
+?? docs/adr/0010-request-remaining-execution-envelope.md

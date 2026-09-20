@@ -93,7 +93,7 @@ async function fixture(name, options = {}) {
 	const tools = new Map();
 	const handlers = new Map();
 	const entries = [];
-	const f = { name, cwd, tools, handlers, entries, launches: [], cancels: [], registrations: [], gitPaths: [], pending: options.pending === true, sequence: 0 };
+	const f = { name, cwd, tools, handlers, entries, launches: [], cancels: [], registrations: [], gitPaths: [], pending: options.pending === true, sequence: 0, onRequest: undefined };
 	const events = {
 		on(event, fn) {
 			const set = listeners.get(event) ?? new Set();
@@ -136,6 +136,7 @@ async function fixture(name, options = {}) {
 	});
 	events.on(REQUEST, request => {
 		f.launches.push(request);
+		f.onRequest?.(request);
 		if (!options.omitStarted) events.emit(STARTED, { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId });
 		if (!f.pending) queueMicrotask(() => f.respond(request));
 	});
@@ -218,6 +219,11 @@ try {
 	assert.equal(bound.launches[0].toolBudget, undefined, "ordinary worker omits launcher toolBudget");
 	assert.deepEqual(bound.task(taskId).executions[0].envelope,
 		{ maxTokens: 100_000, maxWallMs: 600_000, source: "default" });
+	assert.deepEqual(bound.task(taskId).executions[0].originalEnvelope,
+		{ maxTokens: 100_000, maxWallMs: 600_000, source: "default" });
+	assert.equal(bound.task(taskId).executions[0].envelopeClamped, false);
+	assert.deepEqual(created.details.executionEnvelope.effective, bound.task(taskId).executions[0].envelope);
+	assert.deepEqual(created.details.executionEnvelope.original, bound.task(taskId).executions[0].originalEnvelope);
 	assert.equal(bound.task(taskId).executions[0].rawTerminal.status, "completed", "normal public terminal is persisted verbatim");
 	const storedBefore = structuredClone(bound.task(taskId).spec);
 	const rebound = await bound.call("planner_redelegate", {
@@ -247,7 +253,11 @@ try {
 		error => error?.code === "TASK_FOREIGN_WORKSPACE");
 	assert.equal(foreign.launches.length, 0, "caller cwd cannot bypass host-context workspace admission");
 
-	const review = await bound.call("planner_redelegate", { taskId, role: "reviewer", envelope: { maxWallMs: 1 } });
+	const reviewRealNow = Date.now;
+	Date.now = () => reviewRealNow() + 850_000;
+	let review;
+	try { review = await bound.call("planner_redelegate", { taskId, role: "reviewer", envelope: { maxWallMs: 1 } }); }
+	finally { Date.now = reviewRealNow; }
 	assert.equal(review.details.review.taskId, taskId);
 	assert.match(review.details.warnings.join("\n"), /ignored envelope for role=reviewer/);
 	assert.equal(bound.launches.at(-1).agent, "reviewer");
@@ -255,6 +265,7 @@ try {
 	assert.match(bound.launches.at(-1).task, /Preserve this stored objective/);
 	assert.doesNotMatch(bound.launches.at(-1).task, /forged objective/);
 	assert.equal(bound.task(taskId).executions.length, 2, "reviewer does not add an execution envelope record");
+	assert.ok(review.details.request.remainingMs < 60_000, "reviewer can use the Request window inside the ordinary-execution reserve");
 
 	const observation = await fixture("observation");
 	const observed = await observation.call("planner_delegate", {
@@ -272,7 +283,7 @@ try {
 	const defaults = await fixture("operator-default", {
 		pending: true,
 		executionDefaults: { MAX_TOKENS: 100_000, MAX_WALL_MS: 15 },
-		requestLimits: { activeMs: 2_000 },
+		requestLimits: { activeMs: 90_000 },
 	});
 	const runaway = await defaults.call("planner_delegate", definition);
 	assert.equal(runaway.details.termination.reason, "worker_runaway");
@@ -281,12 +292,48 @@ try {
 	assert.deepEqual(defaults.task(runaway.details.taskId).executions[0].envelope,
 		{ maxTokens: 100_000, maxWallMs: 15, source: "operator-config" });
 
+	const defaultClamp = await fixture("default-request-clamp", { requestLimits: { activeMs: 120_000 } });
+	const defaultClamped = await defaultClamp.call("planner_delegate", definition);
+	const defaultClampedExecution = defaultClamp.task(defaultClamped.details.taskId).executions[0];
+	assert.deepEqual(defaultClampedExecution.originalEnvelope,
+		{ maxTokens: 100_000, maxWallMs: 600_000, source: "default" });
+	assert.equal(defaultClampedExecution.envelope.source, "default");
+	assert.ok(defaultClampedExecution.envelope.maxWallMs > 0 && defaultClampedExecution.envelope.maxWallMs <= 60_000);
+	assert.equal(defaultClampedExecution.envelopeClamped, true);
+
 	defaults.pending = false;
 	process.env[EXECUTION_DEFAULT_ENV_VARS.MAX_TOKENS] = "2";
 	process.env[EXECUTION_DEFAULT_ENV_VARS.MAX_WALL_MS] = "3";
 	const explicit = await defaults.call("planner_delegate", { ...definition, envelope: { maxTokens: 7 } });
-	assert.deepEqual(defaults.task(explicit.details.taskId).executions[0].envelope,
-		{ maxTokens: 7, source: "delegation-param" }, "explicit envelope replaces configured defaults without raising it");
+	const explicitExecution = defaults.task(explicit.details.taskId).executions[0];
+	assert.deepEqual(explicitExecution.originalEnvelope,
+		{ maxTokens: 7, source: "delegation-param" }, "explicit envelope still replaces configured defaults without token inheritance");
+	assert.equal(explicitExecution.envelope.maxTokens, 7);
+	assert.equal(explicitExecution.envelope.source, "delegation-param");
+	assert.equal(Number.isSafeInteger(explicitExecution.envelope.maxWallMs), true, "token-only explicit envelope receives a Request-derived wall cap");
+	assert.equal(explicitExecution.envelopeClamped, true);
+	assert.deepEqual(explicit.details.executionEnvelope.effective, explicitExecution.envelope);
+	assert.deepEqual(explicit.details.executionEnvelope.original, explicitExecution.originalEnvelope);
+	assert.equal(explicit.details.executionEnvelope.envelopeClamped, true);
+	assert.match(explicit.details.warnings.join("\n"), /wall envelope clamped/);
+
+	const noRemainder = await fixture("request-reserve-refusal", { requestLimits: { activeMs: 60_000 } });
+	let refused;
+	try { await noRemainder.call("planner_delegate", definition); }
+	catch (error) { refused = error; }
+	assert.equal(refused?.code, "REQUEST_REMAINING_INSUFFICIENT");
+	assert.ok(refused?.details?.launchRefusal);
+	assert.equal(noRemainder.launches.length, 0, "reserve refusal emits no public REQUEST");
+	const refusedTask = noRemainder.task(refused.taskId);
+	assert.equal(refusedTask.executions.length, 0);
+	assert.equal(refusedTask.launchRefusals.length, 1);
+	assert.equal(refusedTask.state, "planning");
+	const refusedRequest = requestRecords().find((record) => record.workspace === noRemainder.cwd).current;
+	assert.equal(refusedRequest.childLaunches, 0, "reserve refusal consumes no Request child allowance");
+	assert.equal(refusedRequest.claims.length, 0, "reserve refusal creates no Request claim");
+	assert.ok(refusedRequest.failures.some((failure) => failure.family === "budget"), "reserve refusal uses the budget failure family");
+	const refusalDiagnostics = await noRemainder.call("planner_tasks", { taskId: refused.taskId });
+	assert.equal(refusalDiagnostics.details.diagnostics.launchRefusals[0].code, "REQUEST_REMAINING_INSUFFICIENT");
 
 	const invalid = await fixture("invalid-config");
 	const beforeInvalid = ledgerFiles().length;
@@ -598,7 +645,10 @@ try {
 		["fixture.txt", "invented.txt"],
 	);
 
-	const longWall = await fixture("large-wall-config", { executionDefaults: { MAX_WALL_MS: 2_147_483_648 } });
+	const longWall = await fixture("large-wall-config", {
+		executionDefaults: { MAX_WALL_MS: 2_147_483_648 },
+		requestLimits: { activeMs: 2_147_483_648 + 120_000 },
+	});
 	const originalTimer = globalThis.setTimeout;
 	const delays = [];
 	globalThis.setTimeout = (fn, ms, ...args) => { delays.push(ms); return originalTimer(fn, ms, ...args); };
@@ -616,8 +666,14 @@ try {
 		// Leave time for the real ledger fsync before dispatch; still prove
 		// the Request deadline cancels well before the execution envelope.
 		executionDefaults: { MAX_TOKENS: 100_000, MAX_WALL_MS: 10_000 },
-		requestLimits: { activeMs: 1_000 },
+		requestLimits: { activeMs: 90_000 },
 	});
+	requestFirst.onRequest = () => {
+		const realNow = Date.now;
+		Date.now = () => realNow() + 90_001;
+		try { void requestFirst.handlers.get("before_provider_request")({}, requestFirst.ctx); }
+		finally { Date.now = realNow; }
+	};
 	const cutoff = await requestFirst.call("planner_delegate", definition);
 	assert.equal(cutoff.details.termination.reason, "operator_cancel", "earlier Request deadline wins over execution default");
 	assert.equal(cutoff.details.executionTiming.requestClosed, "active-time-limit");

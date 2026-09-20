@@ -23,3 +23,13 @@ ADR-0008 将十分钟保留为操作默认值定稿，明确不宣称统计最�
 Root 读取政策未放宽。Idle/live 共同的有界读取机制不在本轮实现；未来若要改变权限，需另有 CONTEXT/ADR、额度设计与相关对照证据。写入、通用 shell、Writer hold 和高风险复核边界保持原契约。
 
 2026-09-20最终验收：完整release GJqscr、代码修正ed0kfI及收尾dihsWK通过；各自范围与原始证据见 ../execution-20260920/closeout.md。
+
+## 后续：大任务测量（2026-09-20，Claude 规划，不影响稳定运行）
+
+本轮结论只覆盖小任务：委派比直接 Root 多约 15 倍 token，完成率相同。这不威胁运行稳定，只关系"省 token"目标是否成立，属于下一阶段方向决定，不阻塞发布。若要做：
+
+1. 任务集：3–5 个真实项目任务，单次预计 5–30 分钟、需读 20+ 文件或跑测试，写明可机器判定的完成标准。
+2. 组别：direct Root vs optimized 委派（baseline 可省略）；固定模型与 thinking；每任务至少 3 次重复，保留全部失败样本。
+3. 指标：Root 自身 token（核心指标）、总 token、完成率、墙钟、Request 内 CANCEL 次数；有单价时再算费用，否则保持 null。
+4. 先做工单 07 第一步，否则长任务的耗时口径不可比。
+5. 结论落到 pi-planner-only-goal-and-assessment 与 README 的"适用范围"一节，不做未经测量的省 token 宣称。

@@ -162,6 +162,7 @@ function enforceDiagnosticsDetailsBudget(diagnostics: PlannerTaskDiagnostics): P
 		sessionLog: { status: diagnostics.sessionLog.status },
 		...(diagnostics.request ? { request: diagnostics.request } : {}),
 		executions: [],
+		launchRefusals: [],
 		totalExecutions: diagnostics.totalExecutions,
 		truncated: true,
 		guidance: ["diagnostics exceeded the structured output budget; pass executionId to narrow the query"],
@@ -1161,6 +1162,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 							{ signal: signal ? AbortSignal.any([signal, requestControl.signal]) : requestControl.signal,
 								executionId: toolCallId, onUpdate, toolName: surface.name, previousExecutionId: predecessor,
 								requestId: requestScope,
+								requestObservation: () => requestControl.observe(requestScope),
 								requestClosure: () => requestControl.closure(requestScope),
 								onLateStopConfirmed: () => requestControl.finishChild(toolCallId, true, requestScope) },
 						);
@@ -1210,6 +1212,12 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 						...(execution.requestClosed ? { requestClosed: execution.requestClosed } : {}),
 						...(execution.requestClosedAt ? { requestClosedAt: execution.requestClosedAt } : {}),
 					} : undefined;
+					const executionEnvelope = execution ? {
+						original: execution.originalEnvelope ?? execution.envelope,
+						effective: execution.envelope,
+						envelopeClamped: execution.envelopeClamped ?? false,
+						...(execution.requestBudget ? { requestBudget: execution.requestBudget } : {}),
+					} : undefined;
 					return {
 						content: [{ type: "text", text: renderDelegationOutcome({ ...outcome, warnings }, surface.name) }],
 						details: {
@@ -1224,6 +1232,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 							usage: outcome.usage,
 							request: requestControl.observe(requestScope),
 							...(executionTiming ? { executionTiming } : {}),
+							...(executionEnvelope ? { executionEnvelope } : {}),
 							...(outcome.termination ? { termination: outcome.termination } : {}),
 							warnings,
 						},
@@ -1248,7 +1257,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			"The child's WorkerReport arrives schema-validated in details.report; a non-completed status returns structured details.termination, not a parse failure.",
 			"planner_delegate always mints a new Task and returns its canonical taskId in details.taskId; a correction round, a review, or a recovery re-execution of that Task goes through planner_redelegate with that exact taskId.",
 			"role=explorer pairs with acceptanceMode='observation' for read-only informational tasks — the intended path in non-Git directories; it never claims code-change verification. A worktree-mode Task in a non-Git directory refuses writer launches with structured diagnostics instead.",
-			"Omitting envelope uses the finite execution defaults (10 minutes wall clock, 100000 tokens). An explicit envelope replaces them entirely, so for a heavy coding worker pass BOTH maxTokens and maxWallMs; size maxWallMs to the Request's remaining time (deadline = first activity + 15 min) leaving room for validation and review. A breach cancels the child and requires a recovery decision.",
+			"Omitting envelope uses the finite execution defaults (10 minutes wall clock, 100000 tokens). An explicit envelope replaces default/token inheritance. Ordinary execution walls are capped at the original Request remainder minus a provisional 60000ms reserve; insufficient remainder refuses launch without consuming a child allowance. A breach cancels the child and requires a recovery decision.",
 		],
 		parameters: PLANNER_DELEGATE_PARAMETERS,
 	});
@@ -1266,7 +1275,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			"planner_redelegate binds an existing Task: pass the canonical taskId from a prior planner_delegate result's details.taskId verbatim. Never construct a taskId.",
 			"role=reviewer reviews the bound Task's latest WorkerReport; the launcher-validated ReviewResult arrives in details.review.",
 			"Do not repeat objective, cwd, scope, constraints, acceptanceCriteria, validation, or acceptanceMode: the stored TaskSpec is authoritative. instructions apply to this child packet only and do not mutate it.",
-			"Omitting envelope uses the finite execution defaults (10 minutes wall clock, 100000 tokens). An explicit envelope replaces them entirely, so pass BOTH maxTokens and maxWallMs, with maxWallMs sized to the Request's remaining time. A Task flagged recovery.required re-executes only with a matching recovery decision (retry_same_plan / fix_environment) or is aborted via planner_abort.",
+			"Omitting envelope uses the finite execution defaults (10 minutes wall clock, 100000 tokens). An explicit envelope replaces default/token inheritance. Ordinary execution walls are capped at the original Request remainder minus a provisional 60000ms reserve; insufficient remainder refuses launch without consuming recovery or correction state. A Task flagged recovery.required re-executes only with a matching recovery decision (retry_same_plan / fix_environment) or is aborted via planner_abort.",
 			"recovery.executionId names the abnormal execution's details.executionId — never a child runId; a stray recovery on a Task without a pending requirement is refused (RECOVERY_NOT_APPLICABLE), not ignored.",
 		],
 		parameters: PLANNER_REDELEGATE_PARAMETERS,
@@ -1335,11 +1344,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					...d.executions.flatMap((execution) => [
 						`execution ${execution.executionId} [${execution.kind}] status=${execution.status ?? "unknown"} capability=${execution.capability} confirmed=${execution.terminationConfirmed}${execution.confirmationBasis ? ` via ${execution.confirmationBasis}` : ""}${execution.endedReason ? ` ended=${execution.endedReason}` : ""}${execution.runId ? ` runId=${execution.runId}` : ""}`,
 						`  timing: request=${execution.requestId ?? "unknown"} launched=${execution.launchedAt ?? "unknown"} started=${execution.startedAt ?? "unknown"} ended=${execution.endedAt ?? "unknown"} durationMs=${execution.durationMs ?? "unknown"}${execution.durationBasis ? ` (${execution.durationBasis})` : ""}${execution.requestClosed ? ` | requestClosed=${execution.requestClosed} at ${execution.requestClosedAt ?? "unknown"}` : ""}`,
+						...(execution.effectiveEnvelope ? [`  envelope: effective=${JSON.stringify(execution.effectiveEnvelope)} original=${JSON.stringify(execution.originalEnvelope ?? execution.effectiveEnvelope)} clamped=${execution.envelopeClamped}${execution.requestBudget ? ` request=${JSON.stringify(execution.requestBudget)}` : ""}`] : []),
 						`  report: received=${execution.reportReceived} accepted=${execution.reportAccepted}${execution.evidenceIncomplete ? " | stop evidence incomplete" : ""}`,
 						...(execution.unacceptedReport ? [`  unaccepted report: status=${execution.unacceptedReport.status} reason="${execution.unacceptedReport.reason}"`] : []),
 						...(execution.probeFailures?.length ? [`  probe failures: ${describeProbeFailures(execution.probeFailures)}${execution.probeFailuresTruncated ? ` …and ${execution.probeFailuresTruncated} more` : ""}`] : []),
 						...execution.guidance.map((item) => `  → ${item}`),
 					]),
+					...d.launchRefusals.map((refusal) => `launch refusal ${refusal.executionId} [${refusal.kind}] code=${refusal.code}: ${refusal.reason}; original=${JSON.stringify(refusal.originalEnvelope)} request=${JSON.stringify(refusal.requestBudget)}`),
 					...d.guidance.map((item) => `→ ${item}`),
 					...(d.truncated ? [`… diagnostics truncated; pass executionId to narrow the query`] : []),
 				];

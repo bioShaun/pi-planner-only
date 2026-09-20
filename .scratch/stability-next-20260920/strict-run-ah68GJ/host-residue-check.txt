@@ -1,0 +1,15 @@
+Command: ps -C codex -o pid=,lstart=,args=
+Execution: require_escalated normal terminal
+Exit: 0
+Tool output chunk: 642f0a
+Host process start times (Asia/Shanghai):
+333041 Sat Sep 19 06:55:26 2026
+385946 Sat Sep 19 15:48:23 2026
+386248 Mon Sep 7 13:51:24 2026
+994353 Sun Sep 20 17:33:50 2026
+1094391 Sun Sep 20 09:35:12 2026
+1260132 Sun Sep 20 18:02:48 2026
+1282961 Sun Sep 20 18:05:09 2026
+3332418 Fri Sep 18 15:20:02 2026
+3356701 Fri Sep 18 15:31:04 2026
+All predate final strict launch 2026-09-21 06:48:01 Asia/Shanghai.

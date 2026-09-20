@@ -17,7 +17,7 @@ done
 # the child's turn_context, never from the parent's self-report.
 parent_effort="${REVIEW_READONLY_PARENT_EFFORT:-low}"
 # External deadline in seconds; see astra-planner.md for the default and its evidence.
-review_timeout="${REVIEW_READONLY_TIMEOUT:-420}"
+review_timeout="${REVIEW_READONLY_TIMEOUT:-600}"
 set +e
 {
   cat <<'PROMPT'

@@ -34,6 +34,7 @@ import type {
 	ReviewResult,
 	RootVerdictRefusalRecord,
 	TaskExecutionRecord,
+	TaskLaunchRefusal,
 	TaskFinding,
 	TaskRole,
 	TaskScope,
@@ -1250,6 +1251,8 @@ export interface TaskRecord {
 	 * attribution that links it to the previous execution.
 	 */
 	executions: TaskExecutionRecord[];
+	/** ADR-0010 refusals occur after A_run but before an execution is created. */
+	launchRefusals?: TaskLaunchRefusal[];
 	/**
 	 * E01 — findings that outlive their execution. A later execution may prove
 	 * a change was restored, but only a recorded review closes the finding.
@@ -1642,6 +1645,7 @@ export class TaskStore {
 	restore(record: TaskRecord): void {
 		if (this.tasks.has(record.taskId)) return;
 		if (!Array.isArray(record.executions)) record.executions = [];
+		if (!Array.isArray(record.launchRefusals)) record.launchRefusals = [];
 		if (!Array.isArray(record.findings)) record.findings = [];
 		if (!Array.isArray(record.successors)) record.successors = [];
 		if (!Array.isArray(record.recoveryStates)) record.recoveryStates = [];
@@ -1746,6 +1750,15 @@ export class TaskStore {
 	beginExecution(taskId: string, execution: Omit<TaskExecutionRecord, "taskId">): TaskRecord {
 		const record = this.require(taskId);
 		record.executions.push({ status: "running", ...execution, taskId });
+		return this.touch(record);
+	}
+
+	recordLaunchRefusal(taskId: string, refusal: TaskLaunchRefusal): TaskRecord {
+		const record = this.require(taskId);
+		const refusals = record.launchRefusals ?? (record.launchRefusals = []);
+		if (!refusals.some((item) => item.executionId === refusal.executionId)) {
+			refusals.push(structuredClone(refusal));
+		}
 		return this.touch(record);
 	}
 

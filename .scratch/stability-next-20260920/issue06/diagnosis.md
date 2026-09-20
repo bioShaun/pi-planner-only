@@ -56,3 +56,7 @@ attempt 1–3 的原始目录在 `../strict-run-qE6emR`、`../strict-run-snUQhK`
 第 4 轮暴露的 here-document 问题在 attempt 2 与实验 1 的父会话中同样出现过（首次探针均报同一错误），只是那两次父有重试或没被追究。入口提示词已第二次修订：探针必须用 `python3 -c` 内联、不得用 here-document 或临时文件、失败可重试一次；子 TaskSpec 原样传递，不得附带父的探针结果、假设或 verdict 建议；转述后再附父自己的探针证据。
 
 第 5 轮总时长 253 秒（父 25 + 子 207 + 转述 21），超过原 240 秒预算，直接验证了方案 B 的必要性。420 秒默认值下余量 167 秒。两轮均无自有残留进程，HEAD 85bdd2a，77 个冻结项零漂移。
+
+## 默认时限二次校准（2026-09-20 晚，审核后）
+
+用户实施 P1-B 期间的 8 次 strict child 耗时 166–524 秒（qgpWLM 279、HRTA2r >362、XlcaPu >362、2FEEMJ 469、ed0kfI 166、ONdoZZ >371、Bg1P0s 524、dihsWK 418）。420 默认下两次无 verdict 被截断；闭环的四次中三次靠 `REVIEW_READONLY_TIMEOUT=600`。按用户授权把全局入口与协议默认改为 600（`global-budget.patch`、`applied/after.sha256` 已更新）。仍要求每次 strict 运行记录 child 耗时。

@@ -61,6 +61,12 @@ async function fixture(name, options = {}) {
 		const snapshot = f.state();
 		assert.ok(snapshot.claims.some(c => c.key === request.requestId), "durable request claim exists before any child starts");
 		if (f.onRequest) f.onRequest(request);
+		if (f.expireAfterLaunchMs !== undefined) {
+			const realNow = Date.now;
+			Date.now = () => realNow() + f.expireAfterLaunchMs;
+			try { void handlers.get("before_provider_request")({}, ctx); }
+			finally { Date.now = realNow; }
+		}
 		if (!f.pending) queueMicrotask(() => f.respond(request));
 	});
 	events.on(CANCEL, cancel => {
@@ -256,8 +262,9 @@ try {
 	assert.equal(recoveries.launches.length, 3);
 
 	for (const confirmed of [true, false]) {
-		const stop = await fixture(`deadline-${confirmed}`, { limits: { activeMs: 80 } });
+		const stop = await fixture(`deadline-${confirmed}`, { limits: { activeMs: 90_000 } });
 		stop.pending = true; stop.cancelConfirmed = confirmed;
+		stop.expireAfterLaunchMs = 90_001;
 		const outcome = await stop.call("planner_delegate", worker);
 		assert.equal(stop.state().closedReason, "active-time-limit");
 		assert.equal(stop.cancels.length, 1);
@@ -276,8 +283,9 @@ try {
 		} else assert.equal(stop.task(outcome.details.taskId).writerHold, undefined);
 	}
 
-	const held = await fixture("held-reload", { limits: { activeMs: 80 } });
+	const held = await fixture("held-reload", { limits: { activeMs: 90_000 } });
 	held.pending = true; held.cancelConfirmed = false;
+	held.expireAfterLaunchMs = 90_001;
 	const heldOutcome = await held.call("planner_delegate", worker);
 	await held.reload();
 	assert.ok(held.task(heldOutcome.details.taskId).writerHold);

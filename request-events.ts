@@ -29,6 +29,7 @@ export function requestErrorFamily(tool: string, error: unknown): string {
 	if (["EACCES", "EPERM", "ENOENT", "ENOSPC", "EIO", "ENVIRONMENT_UNVERIFIABLE", "STORE_ERROR"].includes(code)) return "environment";
 	if (["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "EAI_AGAIN", "RATE_LIMITED", "PROVIDER_UNAVAILABLE"].includes(code)) return "transient";
 	if (code === "WRITER_HOLD") return "stop-unconfirmed";
+	if (code === "REQUEST_REMAINING_INSUFFICIENT") return "budget";
 	if (e?.name === "DelegationAborted" || e?.name === "AbortError") return "cancel";
 	const operation = tool === "planner_delegate" || tool === "planner_redelegate" ? "delegation" : tool;
 	if (code.startsWith("TASKSPEC_") || code === "ARGUMENTS_INVALID") return `contract:${operation}:arguments`;

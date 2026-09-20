@@ -532,6 +532,34 @@ function snapshotPath(dir, taskId) {
 		assert.equal(timing.status, "ok", "timing fields and explicit unknown STARTED survive ledger validation");
 		assert.equal(timing.record.executions[0].durationMs, 1000);
 
+		const requestBudget = {
+			requestId: "request-1",
+			requestDeadline: "2026-09-20T10:01:00.000Z",
+			remainingMs: 90_000,
+			observedAt: "2026-09-20T09:59:30.000Z",
+			reserveMs: 60_000,
+			availableMs: 30_000,
+		};
+		writeEnvelope("T-20260918-clamp", shapedRecord("T-20260918-clamp", {
+			executions: [{ executionId: "call-clamp", aRun: {},
+				envelope: { maxTokens: 7, maxWallMs: 30_000, source: "delegation-param" },
+				originalEnvelope: { maxTokens: 7, source: "delegation-param" },
+				envelopeClamped: true, requestBudget }],
+			launchRefusals: [{ executionId: "call-refused", kind: "worker", code: "REQUEST_REMAINING_INSUFFICIENT",
+				reason: "reserve exhausted", originalEnvelope: { maxWallMs: 600_000, source: "default" },
+				requestBudget: { ...requestBudget, remainingMs: 60_000, availableMs: 0 } }],
+		}));
+		const clamp = ledger.read("T-20260918-clamp");
+		assert.equal(clamp.status, "ok", "effective/original envelope and launch refusal survive ledger validation");
+		assert.equal(clamp.record.executions[0].envelope.maxWallMs, 30_000);
+		assert.equal(clamp.record.launchRefusals[0].requestBudget.reserveMs, 60_000);
+
+		writeEnvelope("T-20260918-bad-refusal", shapedRecord("T-20260918-bad-refusal", { launchRefusals: [{
+			executionId: "bad", kind: "worker", code: "REQUEST_REMAINING_INSUFFICIENT", reason: "bad",
+			originalEnvelope: { source: "default" },
+		}] }));
+		assert.match(ledger.read("T-20260918-bad-refusal").reason, /originalEnvelope requires|maxWallMs|requestBudget/);
+
 		writeEnvelope("T-20260918-bad-timing", shapedRecord("T-20260918-bad-timing", { executions: [{
 			executionId: "call-bad-timing", aRun: {}, durationMs: -1,
 		}] }));

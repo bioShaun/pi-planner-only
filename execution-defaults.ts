@@ -2,6 +2,8 @@ import type { ExecutionEnvelope } from "./types.ts";
 
 export const DEFAULT_EXECUTION_MAX_TOKENS = 100_000;
 export const DEFAULT_EXECUTION_MAX_WALL_MS = 600_000; // ADR-0008: ten minutes, inside the fifteen-minute Request window
+/** ADR-0010: provisional scheduling margin retained for Root validation/review. */
+export const REQUEST_EXECUTION_RESERVE_MS = 60_000;
 
 export const EXECUTION_DEFAULT_ENV_VARS = Object.freeze({
 	MAX_TOKENS: "PI_PLANNER_ONLY_EXECUTION_MAX_TOKENS",

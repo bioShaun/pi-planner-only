@@ -1,0 +1,7 @@
+Script started on 2026-09-20 22:25:08+08:00 [COMMAND="npm run typecheck" <not executed on terminal>]
+
+> pi-planner-only@0.8.0 typecheck
+> tsc --noEmit
+
+
+Script done on 2026-09-20 22:25:10+08:00 [COMMAND_EXIT_CODE="0"]

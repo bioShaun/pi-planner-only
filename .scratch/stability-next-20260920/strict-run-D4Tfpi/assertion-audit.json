@@ -1,0 +1,6 @@
+{
+  "removedAssertionLines": [
+    "-\tassert.deepEqual(defaults.task(explicit.details.taskId).executions[0].envelope,"
+  ],
+  "reason": "Existing explicit token-only envelope assertion now checks originalEnvelope; new effective-wall/source/token/clamp/details assertions cover the ADR-0010 behavior. Other existing assertions retained."
+}

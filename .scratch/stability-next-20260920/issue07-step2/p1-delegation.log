@@ -1,0 +1,4 @@
+Script started on 2026-09-20 22:21:55+08:00 [COMMAND="env NODE_DISABLE_COMPILE_CACHE=1 node --experimental-strip-types p1-delegation.test.mjs" <not executed on terminal>]
+p1-delegation: PASS (real plugin/tools/transport/ledger; fake Git and child source; no subprocess)
+
+Script done on 2026-09-20 22:22:11+08:00 [COMMAND_EXIT_CODE="0"]

@@ -1,0 +1,4 @@
+Script started on 2026-09-20 22:25:11+08:00 [COMMAND="env NODE_DISABLE_COMPILE_CACHE=1 TMPDIR=/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/issue07-step2/test-scratch node --experimental-strip-types ledger-store.test.mjs" <not executed on terminal>]
+planner-only ledger-store: PASS
+
+Script done on 2026-09-20 22:25:11+08:00 [COMMAND_EXIT_CODE="0"]

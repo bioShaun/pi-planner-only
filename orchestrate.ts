@@ -74,14 +74,17 @@ import type {
 	DelegationKind,
 	EvidenceRef,
 	ExecutionCapability,
+	ExecutionEnvelope,
 	ExecutionLifecycleStatus,
 	GitProbeFailure,
 	LoadedPluginFingerprint,
 	ReviewFinding,
 	ReviewResult,
 	ReviewVerdict,
+	RequestExecutionBudget,
 	RootVerdictRefusal,
 	TaskExecutionRecord,
+	TaskLaunchRefusal,
 	TaskState,
 	TaskCompletionKind,
 	TaskRole,
@@ -408,6 +411,10 @@ export interface PlannerTaskDiagnostics {
 		durationBasis?: "request-outbound-to-finalization";
 		requestClosed?: string;
 		requestClosedAt?: string;
+		originalEnvelope?: ExecutionEnvelope;
+		effectiveEnvelope?: ExecutionEnvelope;
+		envelopeClamped: boolean;
+		requestBudget?: RequestExecutionBudget;
 		terminationConfirmed: boolean;
 		confirmationBasis?: string;
 		evidenceIncomplete?: boolean;
@@ -418,6 +425,7 @@ export interface PlannerTaskDiagnostics {
 		probeFailuresTruncated?: number;
 		guidance: string[];
 	}[];
+	launchRefusals: TaskLaunchRefusal[];
 	/** Executions on the record before the display cap was applied. */
 	totalExecutions: number;
 	/** True when any list was capped; a narrower query (executionId) shows the rest. */
@@ -753,6 +761,20 @@ export class PlannerOrchestrator {
 			truncated = true;
 			return text.slice(0, max);
 		};
+		const projectEnvelope = (envelope: ExecutionEnvelope) => ({
+			...(envelope.maxTokens !== undefined ? { maxTokens: envelope.maxTokens } : {}),
+			...(envelope.maxWallMs !== undefined ? { maxWallMs: envelope.maxWallMs } : {}),
+			source: envelope.source,
+		});
+		const projectRequestBudget = (budget: RequestExecutionBudget) => ({
+			requestId: capped(budget.requestId, 200),
+			requestDeadline: budget.requestDeadline ? capped(budget.requestDeadline, 100) : null,
+			remainingMs: budget.remainingMs,
+			observedAt: capped(budget.observedAt, 100),
+			reserveMs: budget.reserveMs,
+			availableMs: budget.availableMs,
+			...(budget.unavailableReason ? { unavailableReason: budget.unavailableReason } : {}),
+		});
 		const filteredExecutions = (taskRef.executions ?? [])
 			.filter((execution) => executionId === undefined || execution.executionId === executionId);
 		const totalExecutions = filteredExecutions.length;
@@ -828,6 +850,10 @@ export class PlannerOrchestrator {
 					...(execution.durationBasis ? { durationBasis: execution.durationBasis } : {}),
 					...(execution.requestClosed ? { requestClosed: capped(execution.requestClosed, 200) } : {}),
 					...(execution.requestClosedAt ? { requestClosedAt: capped(execution.requestClosedAt, 100) } : {}),
+					...(execution.originalEnvelope ? { originalEnvelope: projectEnvelope(execution.originalEnvelope) } : {}),
+					...(execution.envelope ? { effectiveEnvelope: projectEnvelope(execution.envelope) } : {}),
+					envelopeClamped: execution.envelopeClamped === true,
+					...(execution.requestBudget ? { requestBudget: projectRequestBudget(execution.requestBudget) } : {}),
 					terminationConfirmed: execution.terminationConfirmed === true,
 					...(execution.confirmationBasis ? { confirmationBasis: capped(execution.confirmationBasis, 200) } : {}),
 					...(execution.evidenceIncomplete === true ? { evidenceIncomplete: true } : {}),
@@ -875,8 +901,22 @@ export class PlannerOrchestrator {
 			truncated = true;
 			cappedGuidance.push(`${guidance.length - cappedGuidance.length} more guidance line(s) omitted — narrow the query with executionId`);
 		}
+		const filteredRefusals = (taskRef.launchRefusals ?? [])
+			.filter((refusal) => executionId === undefined || refusal.executionId === executionId);
+		const shownRefusals = filteredRefusals
+				.slice(-(MAX_TASK_DIAGNOSTIC_EXECUTIONS))
+				.map((refusal) => ({
+					executionId: capped(refusal.executionId, 200),
+					kind: capped(refusal.kind, 100) as DelegationKind,
+					code: refusal.code,
+					reason: capped(refusal.reason, 400),
+					originalEnvelope: projectEnvelope(refusal.originalEnvelope),
+					requestBudget: projectRequestBudget(refusal.requestBudget),
+					...(refusal.reportOnly ? { reportOnly: true } : {}),
+				}));
+		if (filteredRefusals.length > shownRefusals.length) truncated = true;
 		return {
-			diagnostics: {
+				diagnostics: {
 				taskId: capped(record.taskId, 200),
 				state: capped(record.state, 100) as TaskState,
 				...(record.stateReason ? { stateReason: capped(record.stateReason, 400) } : {}),
@@ -897,7 +937,8 @@ export class PlannerOrchestrator {
 				reports: record.reports?.length ?? 0,
 				reviews: record.reviews?.length ?? 0,
 				sessionLog: this.describeSessionLog(record, shownExecutions, options, capped),
-				executions,
+					executions,
+					launchRefusals: shownRefusals,
 				totalExecutions,
 				truncated,
 				guidance: cappedGuidance,

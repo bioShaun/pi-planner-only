@@ -1,0 +1,13 @@
+# Clamp ordinary execution wall time to the Request remainder with a provisional reserve
+
+Status: accepted 2026-09-20
+
+An execution launched late in a Request can advertise more time than the Request permits. We choose automatic clamping with durable attribution and a Root warning, rather than rejecting an otherwise usable execution or merely warning about a bound that cannot be honoured. Ordinary worker, explorer and validator executions, including report-only correction, use a provisional reserve of **60,000 ms**; Reviewer invocations remain bounded by the enclosing Request and can use the remaining review window.
+
+After pre-launch Git sampling and before consuming execution/correction/recovery/dispatch allowances, read the original Request's authoritative deadline and remainder. Let `availableMs = remainingMs - 60000`. If the observation is unavailable or `availableMs <= 0`, record a launch refusal on the Task and return a structured refusal without emitting REQUEST, creating a child execution, consuming its allowances, or creating a Writer hold. Normal Root tool-attempt and failure accounting still applies; the refusal does not grant retries or reopen the Request.
+
+Otherwise, the effective wall bound is `min(original.maxWallMs, availableMs)`. An omitted wall dimension in a token-only explicit envelope is treated as unbounded for this calculation, so it receives the Request-derived wall cap; omitted token dimensions still do not inherit defaults. Preserve token limits, original envelope/source, the Request identity/deadline/observation, and the reserve value. When a cap is applied, persist `envelopeClamped` and the original value, expose the effective envelope and metadata in details/diagnostics, and warn Root. Already-smaller wall bounds remain unchanged. This qualifies ADR-0008's explicit replacement rule only for the enclosing Request wall cap, not for token/default inheritance.
+
+The reserve is a best-effort scheduling margin, not a new allowance or a guaranteed review duration: synchronous admission/persistence, cancellation grace and stop confirmation can use part of it. Existing monotonic execution timing and cancellation/quiescence rules still apply. Clamping may cancel incomplete work earlier; it does not guarantee a saved result or token savings. Request deadlines are never refreshed, no child/repair/recovery allowance is increased, and Writer hold requires the same stop evidence as before.
+
+Sixty seconds is provisional, chosen before representative P3 data exist. Revisit it using Request completion rate, Root recovery tokens, execution breaches and cancellations from real long tasks. This behavior change requires ordinary-terminal release validation and an independent strict review gate before acceptance.

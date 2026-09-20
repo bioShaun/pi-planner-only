@@ -1,7 +1,7 @@
 # 07 执行时长与 Request 剩余时间
 
-Status: needs-triage
-Completion: step 1 complete (release exit 0, ordinary review PASS); step 2 awaits separate policy decision/ADR; no timing policy changed
+Status: ready-for-human
+Completion: step 1 committed a96559b; step 2 implemented, release exit 0 and strict PASS (final), uncommitted
 
 现有十分钟 execution 默认值不能代表一次晚启动委派实际还有十分钟：Request 截止自首个活动起算，验证与评审也需要时间。当前 TaskExecutionRecord 没有可校准的启动时间与统一耗时口径，Root 只能估算余量。P3 小任务组不区分五分钟和十分钟的策略效果。
 
@@ -43,3 +43,11 @@ Completion: step 1 complete (release exit 0, ordinary review PASS); step 2 await
 完整 release 首轮 exit 1（旧的完整诊断相等测试遇到实时观测字段），固定该测试时钟且保留全部旧断言后，复跑 exit 0。独立 `astra_reviewer` ordinary review PASS，无需修正项；本轮没有替代或修改既有 Claude 审核记录。13 个产品/测试文件，393 insertions(+), 29 deletions(-)，既有断言删除 0 行。
 
 文件列表、完整命令、失败及通过日志、审查与哈希见 [第一步交付记录](../issue07-step1/closeout.md)。第二步钳制/拒绝/警告及 reserveMs 尚未裁决，ADR-0010 未创建；P3 大任务测量未启动，本轮只完成其时间观测前置条件。
+
+## 第二步裁决与完成（2026-09-21，Codex）
+
+第一步经 Claude 独立 ordinary review PASS 后已提交：`a96559b`。以上第一步“未提交”和第二步“待裁决”描述为当时记录，现由本段更新。
+
+裁定采用钳制并记录，预留 60 秒标 provisional，已写入 ADR-0010 并实现；不足预留或剩余观测不可用时持久化拒绝，不启动 child。Reviewer 可用预留窗口，Request 截止与额度不刷新。
+
+两轮 strict finding 分别修复了手动恢复拒绝时提前解除 hold、异步采样后使用过期 hold 快照的并发问题；顺序及并发回归随完整 release 通过。最终 fresh strict `PASS (final)`，父子实际只读探针和最终哈希均核实。第二步尚未提交，P3 大任务测量未启动。完整文件列表、命令、退出码、失败记录与证据见 [第二步交付](../issue07-step2/closeout.md)。

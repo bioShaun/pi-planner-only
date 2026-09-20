@@ -1,0 +1,23 @@
+command: node --experimental-strip-types orchestrate.test.mjs
+exit: 1
+environment: sandboxed agent executor
+
+node:internal/child_process:1119
+    result.error = new ErrnoException(result.error, 'spawnSync ' + options.file);
+                   ^
+
+Error: spawnSync git EPERM
+    at Object.spawnSync (node:internal/child_process:1119:20)
+    at spawnSync (node:child_process:911:24)
+    at execFileSync (node:child_process:954:15)
+    at run (orchestrate.test.mjs:1341:25)
+    at setupRealGitRepo (orchestrate.test.mjs:1342:3)
+    at orchestrate.test.mjs:1388:33
+
+error.code: EPERM
+status: 0
+signal: null
+stdout: empty
+stderr: empty
+
+Classification: documented sandbox subprocess fault; ordinary-terminal release validation remains with Root.

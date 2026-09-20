@@ -57,7 +57,8 @@ import {
 import type { FreshReviewerTaskInput, ReviewDecision } from "./review.ts";
 import { childUsageFromValue } from "./usage.ts";
 import type { UsageLedger } from "./usage.ts";
-import { loadExecutionDefaults } from "./execution-defaults.ts";
+import { loadExecutionDefaults, REQUEST_EXECUTION_RESERVE_MS } from "./execution-defaults.ts";
+import type { RequestTimingObservation } from "./request-control.ts";
 import { acceptanceModeOf, isFinalTaskState, isTerminalTaskState } from "./types.ts";
 import type {
 	AcceptanceMode,
@@ -66,6 +67,7 @@ import type {
 	ExecutionCapability,
 	ExecutionEndedReason,
 	ExecutionEnvelope,
+	RequestExecutionBudget,
 	ExecutionToolBudget,
 	ExecutionLifecycleStatus,
 	FindingCategory,
@@ -78,6 +80,7 @@ import type {
 	RunawaySignal,
 	TaskFinding,
 	TaskExecutionRecord,
+	TaskLaunchRefusal,
 	TaskSpec,
 	WorkerReport,
 } from "./types.ts";
@@ -388,7 +391,7 @@ const DELEGATION_SPEC_PARAMETERS = {
 			maxTokens: Type.Optional(Type.Number({ description: "Cancel the child when cumulative UPDATE tokens exceed this. Snapshot input+output, no cache." })),
 			maxWallMs: Type.Optional(Type.Number({ description: "Cancel the child when wall-clock since launch exceeds this many ms." })),
 		}, {
-			description: "Runaway envelope. When omitted on an ordinary execution, finite program/operator defaults apply (maxTokens 100000, maxWallMs 600000 unless operator-configured). An explicit envelope replaces the defaults entirely: for a heavy coding worker pass BOTH maxTokens and maxWallMs, sizing maxWallMs to the Request's remaining time (deadline = first activity + 15 min) with room for validation and review; a lone maxWallMs drops the token bound.",
+			description: "Runaway envelope. When omitted on an ordinary execution, finite program/operator defaults apply (maxTokens 100000, maxWallMs 600000 unless operator-configured). An explicit envelope replaces default/token inheritance. The effective wall bound is capped at the original Request remainder minus a provisional 60000ms reserve; token-only envelopes receive that Request-derived wall cap.",
 		}),
 	),
 };
@@ -691,17 +694,21 @@ export interface DelegationOptions {
 	requestId?: string;
 	/** Reads closure only from that original Request, including durable history. */
 	requestClosure?: () => { requestId: string; requestClosed: string; requestClosedAt: string } | undefined;
+	/** Fresh admission observation of that original Request, supplied only by the public host. */
+	requestObservation?: () => RequestTimingObservation;
 }
 
 export class DelegationRefused extends Error {
 	readonly code: string;
 	readonly taskId?: string;
+	readonly details?: Record<string, unknown>;
 
-	constructor(code: string, message: string, taskId?: string) {
+	constructor(code: string, message: string, taskId?: string, details?: Record<string, unknown>) {
 		super(message);
 		this.name = "DelegationRefused";
 		this.code = code;
 		this.taskId = taskId;
+		this.details = details;
 	}
 }
 
@@ -952,9 +959,12 @@ export async function runDelegation(
 
 	// Reviewers returned above and remain Request-bounded. Every ordinary
 	// execution gets a finite envelope; explicit dimensions stay exact.
-	const envelope = validateEnvelope(params.envelope, toolName)
+	const originalEnvelope = validateEnvelope(params.envelope, toolName)
 		?? deps.executionDefaults
 		?? loadExecutionDefaults();
+	let envelope: ExecutionEnvelope = { ...originalEnvelope };
+	let envelopeClamped = false;
+	let requestBudget: RequestExecutionBudget | undefined;
 
 	// 2. Write lock: capability decides, not the role name — a proven
 	//    restricted reader holds no workspace claim; writers, shell-capable
@@ -962,37 +972,38 @@ export async function runDelegation(
 	//    writerHold outlives both the session and the reservation map: a
 	//    stop-unconfirmed workspace admits no second writer (A4).
 	let reservation: ConcurrencyReservation | undefined;
+	let deferredManualHold: NonNullable<TaskRecord["writerHold"]> | undefined;
 	if (!isRestrictedReader) {
 		if (params.taskId) {
 			if (task.writerHold && recoveryDecision?.worktreeDecision === "manual") {
-				deps.concurrency.release(task.writerHold.executionId);
-				deps.concurrency.release(`writerhold:${task.writerHold.executionId}`);
-				task = deps.store.clearWriterHold(task.taskId);
+				deferredManualHold = { ...task.writerHold };
 			}
-			if (task.writerHold) {
+			if (task.writerHold && !deferredManualHold) {
 				throw new DelegationRefused(
 					"WRITER_HOLD",
 					`${toolName} refused: Task ${task.taskId} writer execution ${task.writerHold.executionId} was never confirmed stopped (${task.writerHold.reason}); submit a matching recovery with worktreeDecision=manual only after operator resolution`,
 					task.taskId,
 				);
 			}
-			const admission = deps.concurrency.reserve({
-				id: executionId,
-				taskId: task.taskId,
-				state: task.state,
-				structured: true,
-				role,
-				capability: "writer",
-				workspaces: [task.cwd || effectiveCwd, ...(thisSpec.additionalWorktreeRoots ?? [])],
-			});
-			if (admission.refusal) {
-				throw new DelegationRefused(
-					admission.refusal.code,
-					`${toolName} refused: ${admission.refusal.reason}; Task ${task.taskId} unchanged, no execution was launched`,
-					task.taskId,
-				);
+			if (!deferredManualHold) {
+				const admission = deps.concurrency.reserve({
+					id: executionId,
+					taskId: task.taskId,
+					state: task.state,
+					structured: true,
+					role,
+					capability: "writer",
+					workspaces: [task.cwd || effectiveCwd, ...(thisSpec.additionalWorktreeRoots ?? [])],
+				});
+				if (admission.refusal) {
+					throw new DelegationRefused(
+						admission.refusal.code,
+						`${toolName} refused: ${admission.refusal.reason}; Task ${task.taskId} unchanged, no execution was launched`,
+						task.taskId,
+					);
+				}
+				reservation = admission.reservation;
 			}
-			reservation = admission.reservation;
 		} else {
 			// Minting a new Task: reserve concurrency atomically before creating the Task in store.
 			const admission = deps.concurrency.reserve({
@@ -1093,13 +1104,6 @@ export async function runDelegation(
 	if (runController.signal.aborted) onSignalAbort();
 
 	try {
-		// A running (or re-runnable) Task is executing for the duration of the
-		// call; a reviewing Task keeps its state (a validator run during review
-		// must not yank the lifecycle back).
-		if (["planning", "changes_requested", "report-invalid", "blocked", "failed"].includes(task.state)) {
-			task = deps.store.transition(task.taskId, "executing");
-		}
-
 		const worktreeRoots = [...new Set([task.cwd || effectiveCwd, ...(thisSpec.additionalWorktreeRoots ?? [])])];
 		const scopePaths = [...new Set([
 			...(thisSpec.scope?.allowedPaths ?? []),
@@ -1117,6 +1121,58 @@ export async function runDelegation(
 
 		// 3. A_run + execution record.
 		const aRun = await captureEvidence(deps.gitRunner, sampleOptions(executionId));
+		if (options.requestObservation) {
+			let observation: RequestTimingObservation | undefined;
+			try {
+				observation = options.requestObservation();
+			} catch { /* an unavailable authoritative observation is a durable refusal below */ }
+			const requestMismatch = observation !== undefined && options.requestId !== undefined && observation.requestId !== options.requestId;
+			const remainingMs = !observation || requestMismatch ? null : observation.remainingMs;
+			const availableMs = remainingMs === null
+				? null
+				: Math.floor(remainingMs - REQUEST_EXECUTION_RESERVE_MS);
+			requestBudget = {
+				requestId: observation?.requestId ?? options.requestId ?? "unknown",
+				requestDeadline: observation?.requestDeadline ?? null,
+				remainingMs,
+				observedAt: observation?.observedAt ?? nowIso(),
+				reserveMs: REQUEST_EXECUTION_RESERVE_MS,
+				availableMs,
+				...(!observation
+					? { unavailableReason: "observation-failed" as const }
+					: requestMismatch
+					? { unavailableReason: "request-mismatch" as const }
+					: observation.unavailableReason ? { unavailableReason: observation.unavailableReason } : {}),
+			};
+			if (availableMs === null || availableMs <= 0) {
+				const reason = availableMs === null
+					? `the original Request remainder is unavailable (${requestBudget.unavailableReason ?? "unknown"})`
+					: `the original Request has ${remainingMs}ms remaining, which does not exceed the provisional ${REQUEST_EXECUTION_RESERVE_MS}ms reserve`;
+				const refusal: TaskLaunchRefusal = {
+					executionId,
+					kind: role as DelegationKind,
+					code: "REQUEST_REMAINING_INSUFFICIENT",
+					reason,
+					originalEnvelope: { ...originalEnvelope },
+					requestBudget,
+					...(reportOnlyGrant ? { reportOnly: true } : {}),
+				};
+				releaseReservation = true;
+				deps.store.recordLaunchRefusal(task.taskId, refusal);
+				throw new DelegationRefused(
+					"REQUEST_REMAINING_INSUFFICIENT",
+					`${toolName} refused: Task ${task.taskId} cannot launch because ${reason}. No child allowance, execution grant, correction, recovery, revalidation, or writer hold was consumed.`,
+					task.taskId,
+					{ launchRefusal: refusal },
+				);
+			}
+			if (originalEnvelope.maxWallMs === undefined || originalEnvelope.maxWallMs > availableMs) {
+				envelope = { ...originalEnvelope, maxWallMs: availableMs };
+				envelopeClamped = true;
+				const originalWall = originalEnvelope.maxWallMs === undefined ? "unbounded" : `${originalEnvelope.maxWallMs}ms`;
+				warnings.push(`execution wall envelope clamped to ${availableMs}ms from ${originalWall} using Request ${requestBudget.requestId} remainder ${remainingMs}ms minus provisional reserve ${REQUEST_EXECUTION_RESERVE_MS}ms`);
+			}
+		}
 		if (reportOnlyGrant) {
 			// Evidence capture yields. Re-read the durable record immediately
 			// before the synchronous beginExecution so concurrent observation
@@ -1144,6 +1200,66 @@ export async function runDelegation(
 			task = freshTask;
 			reportOnlyOrigin = freshOrigin;
 		}
+		if (deferredManualHold) {
+			// Evidence capture yields, so the manual decision and hold must still
+			// be current before this call replaces their reservation. From this
+			// read through recovery consumption below, all operations are
+			// synchronous; a competing recovery cannot validate the same grant.
+			const freshTask = deps.store.require(task.taskId);
+			const freshHold = freshTask.writerHold;
+			const holdUnchanged = freshHold !== undefined
+				&& freshHold.executionId === deferredManualHold.executionId
+				&& freshHold.reason === deferredManualHold.reason
+				&& freshHold.since === deferredManualHold.since;
+			const recoveryRefusal = validateRecoveryDecision(freshTask, recoveryDecision, DELEGATE_RECOVERY_ACTIONS);
+			if (!holdUnchanged || recoveryRefusal) {
+				throw new DelegationRefused(
+					"RECOVERY_REQUIRED",
+					`${toolName} refused: Task ${task.taskId}'s manual recovery authorization changed while pre-launch evidence was captured${recoveryRefusal ? ` (${recoveryRefusal})` : ""}; no child was launched`,
+					task.taskId,
+				);
+			}
+			task = freshTask;
+			const currentManualReservations = deps.concurrency.status().reservations
+				.filter((item) => item.id === freshHold.executionId || item.id === `writerhold:${freshHold.executionId}`)
+				.map((item) => ({ ...item, workspaces: [...item.workspaces] }));
+			const restoreManualReservations = () => {
+				for (const held of currentManualReservations) deps.concurrency.hold(held);
+			};
+			for (const held of currentManualReservations) deps.concurrency.release(held.id);
+			// Older in-memory sessions may carry only one of these ids and no
+			// status snapshot. Releasing absent ids is harmless.
+			deps.concurrency.release(freshHold.executionId);
+			deps.concurrency.release(`writerhold:${freshHold.executionId}`);
+			try {
+				const admission = deps.concurrency.reserve({
+					id: executionId,
+					taskId: task.taskId,
+					state: task.state,
+					structured: true,
+					role,
+					capability: "writer",
+					workspaces: [task.cwd || effectiveCwd, ...(thisSpec.additionalWorktreeRoots ?? [])],
+				});
+				if (admission.refusal) {
+					throw new DelegationRefused(
+						admission.refusal.code,
+						`${toolName} refused: ${admission.refusal.reason}; the existing writer hold remains intact and no execution was launched`,
+						task.taskId,
+					);
+				}
+				reservation = admission.reservation;
+				task = deps.store.clearWriterHold(task.taskId);
+			} catch (error) {
+				if (!reservation) restoreManualReservations();
+				throw error;
+			}
+		}
+		// A refused admission leaves the Task in its prior state. Only an admitted
+		// ordinary execution transitions into executing.
+		if (["planning", "changes_requested", "report-invalid", "blocked", "failed"].includes(task.state)) {
+			task = deps.store.transition(task.taskId, "executing");
+		}
 		deps.store.beginExecution(task.taskId, {
 			executionId,
 			...((reportOnlyOrigin?.executionId ?? options.previousExecutionId)
@@ -1157,7 +1273,9 @@ export async function runDelegation(
 			capabilityBasis: classification.basis,
 			...(options.requestId ? { requestId: options.requestId } : {}),
 			startedAt: null,
-			...(envelope ? { envelope } : {}),
+			envelope,
+			originalEnvelope: { ...originalEnvelope },
+			...(requestBudget ? { requestBudget, envelopeClamped } : {}),
 			...(reportOnlyGrant ? {
 				reportOnly: true,
 				toolBudget: { ...REPORT_ONLY_TOOL_BUDGET },

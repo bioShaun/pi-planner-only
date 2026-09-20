@@ -92,6 +92,7 @@ function makeDeps(overrides = {}) {
 		...("restrictedReaderAgent" in overrides
 			? { restrictedReaderAgent: overrides.restrictedReaderAgent }
 			: { restrictedReaderAgent: "planner-scout" }),
+		...(overrides.reportOnlyAgent ? { reportOnlyAgent: overrides.reportOnlyAgent } : {}),
 		quiescenceWaitMs: overrides.quiescenceWaitMs ?? 0,
 		quiescenceSampleGapMs: overrides.quiescenceSampleGapMs ?? 0,
 		launch: overrides.launch ?? (async (request) => {
@@ -2272,6 +2273,134 @@ for (const [index, [status, expectedState]] of [
 }
 
 // ---------------------------------------------------------------------------
+// ADR-0010 — ordinary executions use the fresh original-Request remainder.
+// ---------------------------------------------------------------------------
+{
+	const dir = initRealRepo();
+	const request = (remainingMs) => ({
+		requestId: "request-clamp",
+		requestDeadline: "2026-09-20T00:15:00.000Z",
+		remainingMs,
+		observedAt: "2026-09-20T00:10:00.000Z",
+	});
+
+	const unchanged = makeDeps({ gitRunner: async (args, cwd) => realGit(dir, ...args) });
+	const unchangedOutcome = await runDelegation(
+		unchanged.deps,
+		makeParams({ envelope: { maxTokens: 11, maxWallMs: 100_000 } }),
+		dir,
+		{ executionId: "clamp-unchanged", requestId: "request-clamp", requestObservation: () => request(300_000) },
+	);
+	assert.deepEqual(unchangedOutcome.task.executions[0].envelope, { maxTokens: 11, maxWallMs: 100_000, source: "delegation-param" });
+	assert.deepEqual(unchangedOutcome.task.executions[0].originalEnvelope, unchangedOutcome.task.executions[0].envelope);
+	assert.equal(unchangedOutcome.task.executions[0].envelopeClamped, false);
+
+	const clamped = makeDeps({ gitRunner: async (args, cwd) => realGit(dir, ...args) });
+	const clampedTimerDelays = [];
+	clamped.deps.wallClock = {
+		now: () => 0,
+		setTimeout(_fn, ms) { clampedTimerDelays.push(ms); return { ms }; },
+		clearTimeout() {},
+	};
+	const clampedOutcome = await runDelegation(
+		clamped.deps,
+		makeParams({ envelope: { maxTokens: 7 } }),
+		dir,
+		{ executionId: "clamp-token-only", requestId: "request-clamp", requestObservation: () => request(90_000) },
+	);
+	const clampedExecution = clampedOutcome.task.executions[0];
+	assert.deepEqual(clampedExecution.originalEnvelope, { maxTokens: 7, source: "delegation-param" });
+	assert.deepEqual(clampedExecution.envelope, { maxTokens: 7, maxWallMs: 30_000, source: "delegation-param" });
+	assert.equal(clampedExecution.envelopeClamped, true);
+	assert.equal(clampedExecution.requestBudget.reserveMs, 60_000);
+	assert.match(clampedOutcome.warnings.join("\n"), /clamped to 30000ms/);
+	assert.deepEqual(clampedTimerDelays, [30_000], "wall timer uses the effective Request-clamped bound");
+
+	let delayedRemaining = 90_000;
+	const delayedGit = async (args, cwd) => {
+		const result = await fakeCleanGit()(args, cwd);
+		if (args.join(" ") === "status --porcelain=v2 --branch") delayedRemaining = 60_000;
+		return result;
+	};
+	const refused = makeDeps({ gitRunner: delayedGit });
+	const refusal = await expectRefusal(runDelegation(
+		refused.deps,
+		makeParams(),
+		dir,
+		{ executionId: "clamp-refused", requestId: "request-clamp", requestObservation: () => request(delayedRemaining) },
+	), "REQUEST_REMAINING_INSUFFICIENT");
+	const refusedTask = refused.deps.store.require(refusal.taskId);
+	assert.equal(refused.launches.length, 0, "post-sample budget refusal emits no REQUEST");
+	assert.equal(refusedTask.state, "planning", "refusal preserves the pre-admission Task state");
+	assert.equal(refusedTask.executions.length, 0, "refusal is not a child execution");
+	assert.equal(refusedTask.launchRefusals.length, 1);
+	assert.equal(refusedTask.launchRefusals[0].requestBudget.availableMs, 0);
+	assert.equal(refused.deps.concurrency.status().reservations.length, 0, "temporary writer reservation is released");
+	assert.deepEqual(refusal.details.launchRefusal, refusedTask.launchRefusals[0]);
+	const unknown = makeDeps({ gitRunner: async (args, cwd) => realGit(dir, ...args) });
+	const unknownRefusal = await expectRefusal(runDelegation(
+		unknown.deps,
+		makeParams(),
+		dir,
+		{ executionId: "clamp-unknown", requestId: "request-clamp", requestObservation: () => ({
+			requestId: "request-clamp", requestDeadline: null, remainingMs: null,
+			observedAt: "2026-09-20T00:10:00.000Z", unavailableReason: "request-not-started",
+		}) },
+	), "REQUEST_REMAINING_INSUFFICIENT");
+	assert.equal(unknownRefusal.details.launchRefusal.requestBudget.availableMs, null);
+	assert.equal(unknown.launches.length, 0);
+
+	const reportOnly = makeDeps({
+		gitRunner: async (args, cwd) => realGit(dir, ...args),
+		reportOnlyAgent: "planner-report-only",
+		launch: async (outbound) => ({
+			requestId: outbound.requestId,
+			ownerRunId: outbound.ownerRunId,
+			nodeId: outbound.nodeId,
+			status: "completed",
+			runId: "run-malformed",
+			agent: "worker",
+		}),
+	});
+	const malformed = await runDelegation(reportOnly.deps, makeParams(), dir, { executionId: "clamp-malformed" });
+	const reportTask = reportOnly.deps.store.require(malformed.task.taskId);
+	assert.equal(reportTask.reportCorrections, 1);
+	const reportsBefore = reportTask.executions.length;
+	const reportRefusal = await expectRefusal(runDelegation(
+		reportOnly.deps,
+		makeParams({ taskId: reportTask.taskId }),
+		dir,
+		{ executionId: "clamp-report-only", requestId: "request-clamp", requestObservation: () => request(60_000) },
+	), "REQUEST_REMAINING_INSUFFICIENT");
+	assert.equal(reportOnly.deps.store.require(reportTask.taskId).executions.length, reportsBefore, "refused report correction consumes no execution grant");
+	assert.equal(reportOnly.deps.store.require(reportTask.taskId).reportCorrections, 1, "the durable correction remains pending");
+	assert.equal(reportRefusal.details.launchRefusal.reportOnly, true);
+
+	const recovery = makeDeps({
+		gitRunner: async (args, cwd) => realGit(dir, ...args),
+		launch: async (outbound, _signal, hooks) => {
+			hooks.onUpdate({ requestId: outbound.requestId, ownerRunId: outbound.ownerRunId, nodeId: outbound.nodeId, tokens: 2 });
+			return { requestId: outbound.requestId, ownerRunId: outbound.ownerRunId, nodeId: outbound.nodeId,
+				status: "cancelled", runId: "run-budget", agent: "worker" };
+		},
+	});
+	const runaway = await runDelegation(recovery.deps, makeParams({ envelope: { maxTokens: 1 } }), dir, { executionId: "clamp-runaway" });
+	const recoveryTask = recovery.deps.store.require(runaway.task.taskId);
+	const recoveryHistoryBefore = recoveryTask.recoveryHistory?.length ?? 0;
+	await expectRefusal(runDelegation(
+		recovery.deps,
+		makeParams({ taskId: recoveryTask.taskId, envelope: { maxTokens: 1 }, recovery: {
+			executionId: "clamp-runaway", action: "retry_same_plan", reason: "retry", worktreeDecision: "keep",
+		} }),
+		dir,
+		{ executionId: "clamp-recovery-refused", requestId: "request-clamp", requestObservation: () => request(60_000) },
+	), "REQUEST_REMAINING_INSUFFICIENT");
+	const recoveryAfter = recovery.deps.store.require(recoveryTask.taskId);
+	assert.equal(recoveryAfter.recovery.required, true, "refusal leaves recovery authorization pending");
+	assert.equal(recoveryAfter.recoveryHistory?.length ?? 0, recoveryHistoryBefore, "refusal consumes no recovery decision");
+}
+
+// ---------------------------------------------------------------------------
 // P0-B.4 — wall-clock breach fires without any UPDATE heartbeat.
 // ---------------------------------------------------------------------------
 {
@@ -2621,15 +2750,124 @@ function makeFakeWallClock() {
 	store.setWriterHold(taskId, { executionId: "call-held", reason: "stop unconfirmed", since: "2026-09-16T00:00:00.000Z" });
 	const concurrency = new ConcurrencyController();
 	concurrency.hold({ id: "writerhold:call-held", taskId, role: "worker", capability: "writer", workspaces: [dir], reservedAt: "2026-09-16T00:00:00.000Z" });
-	const { deps } = makeDeps({ store, concurrency, gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args) });
+	const { deps, launches } = makeDeps({ store, concurrency, gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args) });
+	const holdBefore = structuredClone(store.require(taskId).writerHold);
+	const reservationsBefore = structuredClone(concurrency.status().reservations);
+	const recoveryHistoryBefore = store.require(taskId).recoveryHistory?.length ?? 0;
+	await expectRefusal(runDelegation(deps, makeParams({
+		taskId,
+		recovery: { executionId: "call-held", action: "fix_environment", reason: "operator verified all child processes exited", worktreeDecision: "manual" },
+	}), dir, {
+		executionId: "call-manual-refused",
+		requestId: "request-manual",
+		requestObservation: () => ({ requestId: "request-manual", requestDeadline: "2026-09-20T00:01:00.000Z",
+			remainingMs: 60_000, observedAt: "2026-09-20T00:00:00.000Z" }),
+	}), "REQUEST_REMAINING_INSUFFICIENT");
+	assert.deepEqual(store.require(taskId).writerHold, holdBefore, "insufficient manual recovery preserves the exact writer hold");
+	assert.deepEqual(concurrency.status().reservations, reservationsBefore, "insufficient manual recovery preserves hold reservations");
+	assert.equal(store.require(taskId).executions.length, 0, "insufficient manual recovery creates no execution");
+	assert.equal(store.require(taskId).recovery.required, true);
+	assert.equal(store.require(taskId).recoveryHistory?.length ?? 0, recoveryHistoryBefore, "insufficient manual recovery consumes no recovery grant");
+	assert.equal(launches.length, 0, "insufficient manual recovery emits no REQUEST");
 	const outcome = await runDelegation(deps, makeParams({
 		taskId,
 		recovery: { executionId: "call-held", action: "fix_environment", reason: "operator verified all child processes exited", worktreeDecision: "manual" },
-	}), dir, { executionId: "call-manual" });
+	}), dir, {
+		executionId: "call-manual",
+		requestId: "request-manual",
+		requestObservation: () => ({ requestId: "request-manual", requestDeadline: "2026-09-20T00:02:00.000Z",
+			remainingMs: 120_000, observedAt: "2026-09-20T00:00:00.000Z" }),
+	});
 	assert.ok(outcome.report);
 	assert.equal(store.require(taskId).writerHold, undefined);
 	assert.equal(concurrency.status().reservations.length, 0);
+	assert.equal(launches.length, 1, "sufficient manual recovery swaps the hold and launches once");
 }
+
+async function assertConcurrentManualRecovery(releaseLoserAfterWinnerCompletes) {
+	const dir = initRealRepo();
+	const store = new TaskStore();
+	const suffix = releaseLoserAfterWinnerCompletes ? "after" : "running";
+	const taskId = `T-20260916-801-${suffix}`;
+	const heldExecutionId = `call-held-${suffix}`;
+	store.create(createTaskSpec({ taskId, objective: "serialize manual recovery", cwd: dir, role: "worker", validation: { required: false } }));
+	store.transition(taskId, "executing");
+	store.transition(taskId, "blocked");
+	store.setRecoveryRequired(taskId, { executionId: heldExecutionId, reason: "stop unconfirmed" });
+	store.setWriterHold(taskId, { executionId: heldExecutionId, reason: "stop unconfirmed", since: "2026-09-16T00:00:00.000Z" });
+	const concurrency = new ConcurrencyController();
+	concurrency.hold({ id: `writerhold:${heldExecutionId}`, taskId, role: "worker", capability: "writer", workspaces: [dir], reservedAt: "2026-09-16T00:00:00.000Z" });
+	const gate = () => {
+		let resolve;
+		const promise = new Promise((done) => { resolve = done; });
+		return { promise, resolve };
+	};
+	const winnerAtProbe = gate();
+	const loserAtProbe = gate();
+	const releaseWinnerProbe = gate();
+	const releaseLoserProbe = gate();
+	const winnerAtLaunch = gate();
+	const releaseWinnerLaunch = gate();
+	const cleanGit = fakeCleanGit();
+	let probeStarts = 0;
+	let launches = 0;
+	const { deps } = makeDeps({
+		store,
+		concurrency,
+		gitRunner: async (args, cwd) => {
+			if (args.join(" ") === "rev-parse --git-dir") {
+				probeStarts += 1;
+				if (probeStarts === 1) {
+					winnerAtProbe.resolve();
+					await releaseWinnerProbe.promise;
+				} else if (probeStarts === 2) {
+					loserAtProbe.resolve();
+					await releaseLoserProbe.promise;
+				}
+			}
+			return cleanGit(args, cwd);
+		},
+		launch: async (request) => {
+			launches += 1;
+			winnerAtLaunch.resolve();
+			if (!releaseLoserAfterWinnerCompletes) await releaseWinnerLaunch.promise;
+			return {
+				requestId: request.requestId,
+				ownerRunId: request.ownerRunId,
+				nodeId: request.nodeId,
+				status: "completed",
+				runId: `run-${suffix}`,
+				agent: "worker",
+				result: { kind: "structured", value: makeReport(request.nodeId, undefined, request.cwd) },
+			};
+		},
+	});
+	const recovery = { executionId: heldExecutionId, action: "fix_environment", reason: "operator verified all child processes exited", worktreeDecision: "manual" };
+	const winner = runDelegation(deps, makeParams({ taskId, recovery }), dir, { executionId: `call-winner-${suffix}` });
+	await winnerAtProbe.promise;
+	const loser = runDelegation(deps, makeParams({ taskId, recovery }), dir, { executionId: `call-loser-${suffix}` });
+	await loserAtProbe.promise;
+	releaseWinnerProbe.resolve();
+	await winnerAtLaunch.promise;
+	if (releaseLoserAfterWinnerCompletes) await winner;
+	releaseLoserProbe.resolve();
+	await expectRefusal(loser, "RECOVERY_REQUIRED");
+	if (!releaseLoserAfterWinnerCompletes) {
+		assert.deepEqual(concurrency.status().reservations.map((item) => item.id), [`call-winner-${suffix}`], "the stale recovery cannot restore a ghost hold while the winner runs");
+		releaseWinnerLaunch.resolve();
+		await winner;
+	}
+	const settled = store.require(taskId);
+	assert.equal(launches, 1, "only the winning manual recovery launches");
+	assert.equal(settled.executions.length, 1, "only the winning manual recovery consumes an execution grant");
+	assert.equal(settled.recoveryHistory?.length, 1, "the recovery decision is consumed once");
+	assert.equal(settled.recoveryHistory?.[0].consumedBy, `call-winner-${suffix}`);
+	assert.equal(settled.writerHold, undefined);
+	assert.deepEqual(concurrency.status().reservations, [], "no stale caller restores a ghost reservation");
+}
+
+await assertConcurrentManualRecovery(false);
+await assertConcurrentManualRecovery(true);
 
 {
 	const dir = initRealRepo();

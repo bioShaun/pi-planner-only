@@ -1,0 +1,20 @@
+{
+  "scope_id": "issue07-step2-request-envelope",
+  "snapshot_id": "issue07-step2-fbb15efd6a2cfcaf15dd316a8c48997cc2536548de8d83adf1cff13cfa3b4ac4",
+  "code_review": "NOT_REQUESTED",
+  "validation": "PASS",
+  "final_acceptance": "PASS",
+  "review_kind": "final",
+  "review_verdict": "PASS",
+  "isolation_requirement": "strict",
+  "evidence_refs": [
+    ".scratch/stability-next-20260920/strict-run-ah68GJ/review.md",
+    ".scratch/stability-next-20260920/strict-run-ah68GJ/result.json",
+    ".scratch/stability-next-20260920/strict-run-ah68GJ/parent-probe-records.json",
+    ".scratch/stability-next-20260920/strict-run-ah68GJ/child-probe-records.json",
+    ".scratch/stability-next-20260920/strict-run-ah68GJ/host-residue-check.txt",
+    ".scratch/stability-next-20260920/release-run-B278Uu",
+    ".scratch/stability-next-20260920/issue07-step2/source-manifest.json"
+  ],
+  "contract_error": null
+}

@@ -1,0 +1,18 @@
+{
+  "CONTEXT.md": "10f2074d5c741eb3b5957f0fd4c721bd1ca70937375b1c329d67eafb00e0ae0a",
+  "README.md": "e683ab201f474a7e20e0312b64ff41d78312f123059e47d2ff2ec3986f44d703",
+  "README.zh-CN.md": "ea5eb11686d511e9c61693631bc62e29a917183296133adaa191f4f73f8e44d4",
+  "delegate.test.mjs": "54122b76a74b0d75656ced731c99324e140cf019299205a4c1cffac1d095c71c",
+  "delegate.ts": "5120af1f7564e0a047aa7ff427795eab378ba28f80583a873dc7ac850d61b091",
+  "execution-defaults.ts": "bd8fc3d0ca536d589ffd2d80e0a1e127eb4df30d0c16efc9d60708aa02df7833",
+  "index.ts": "11eb99181ed0c3a91d13a88b53a9b42eb9f21d037974dd4c2d247d2d53783dd5",
+  "ledger-store.test.mjs": "6c2f248c1e5443d84645d49650b641611fe303f5eac64db3b1dbb1f70ed67b3a",
+  "ledger-store.ts": "08b9acca7de13896bb5490ae0356750a3ed4062222f032d861fc41e6438db1fb",
+  "orchestrate.ts": "89455470c5c4f5013c69772953acf53f06f0416ccb1a25e0b3a44bb76acffa5d",
+  "p1-delegation.test.mjs": "f64cc157c702d61800ff565c7b55dc3bc10194e5fb9162ce5f2c7eb873610d19",
+  "request-events.ts": "27d1544db7e6a74848505e6636e440d343d409f30500d98c43a6d9c25bce8ac9",
+  "request-stop.test.mjs": "ccad53ea48ddc84a5376ebfc5e5ffbea62824356169afeeb957a0ebeab840857",
+  "task.ts": "10abd2cba866e855f92375a280b5bcf3310a61b57383473236c90538e48603a1",
+  "types.ts": "2b5706ad96737e04027ecdf6e012f60302ed2a62f044771b97677a7a899b2edc",
+  "docs/adr/0010-request-remaining-execution-envelope.md": "6ef5d15c63ae413c38c5ba00de92b9b52c6854181895e7e7b5164a50e7eca175"
+}

@@ -1,0 +1,16 @@
+{
+  "scope_id": "issue07-step2-request-envelope",
+  "snapshot_id": "issue07-step2-4ac4792cd14b623233b9b7611a500172ffe733839fce22883a7dfe319d193a4d",
+  "code_review": "NOT_REQUESTED",
+  "validation": "PASS",
+  "final_acceptance": "BLOCKED",
+  "review_kind": "final",
+  "review_verdict": "REQUEST_CHANGES",
+  "isolation_requirement": "strict",
+  "evidence_refs": [
+    ".scratch/stability-next-20260920/strict-run-Kzag8r/review.md",
+    ".scratch/stability-next-20260920/strict-run-Kzag8r/result.json",
+    ".scratch/stability-next-20260920/release-run-aRYYOy"
+  ],
+  "contract_error": null
+}

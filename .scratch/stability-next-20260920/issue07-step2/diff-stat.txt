@@ -1,0 +1,16 @@
+ CONTEXT.md             |   2 +-
+ README.md              |   2 +-
+ README.zh-CN.md        |   2 +-
+ delegate.test.mjs      | 242 ++++++++++++++++++++++++++++++++++++++++++++++++-
+ delegate.ts            | 182 ++++++++++++++++++++++++++++++-------
+ execution-defaults.ts  |   2 +
+ index.ts               |  15 ++-
+ ledger-store.test.mjs  |  28 ++++++
+ ledger-store.ts        |  51 +++++++++++
+ orchestrate.ts         |  45 ++++++++-
+ p1-delegation.test.mjs |  70 ++++++++++++--
+ request-events.ts      |   1 +
+ request-stop.test.mjs  |  12 ++-
+ task.ts                |  13 +++
+ types.ts               |  28 ++++++
+ 15 files changed, 645 insertions(+), 50 deletions(-)

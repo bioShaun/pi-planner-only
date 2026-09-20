@@ -313,6 +313,28 @@ export interface ExecutionEnvelope {
 	source: "delegation-param" | "default" | "operator-config";
 }
 
+/** ADR-0010 admission observation from the original enclosing Request. */
+export interface RequestExecutionBudget {
+	requestId: string;
+	requestDeadline: string | null;
+	remainingMs: number | null;
+	observedAt: string;
+	reserveMs: number;
+	availableMs: number | null;
+	unavailableReason?: "request-not-started" | "request-mismatch" | "observation-failed";
+}
+
+/** A durable ordinary-execution refusal recorded before any child launch. */
+export interface TaskLaunchRefusal {
+	executionId: string;
+	kind: DelegationKind;
+	code: "REQUEST_REMAINING_INSUFFICIENT";
+	reason: string;
+	originalEnvelope: ExecutionEnvelope;
+	requestBudget: RequestExecutionBudget;
+	reportOnly?: boolean;
+}
+
 /** The exact public launcher tool budget sent with one execution. */
 export interface ExecutionToolBudget {
 	soft?: number;
@@ -405,6 +427,12 @@ export interface TaskExecutionRecord {
 	usageComplete?: boolean;
 	/** The finite runaway envelope this ordinary execution ran under. */
 	envelope?: ExecutionEnvelope;
+	/** Caller/default envelope before the enclosing Request wall cap was applied. */
+	originalEnvelope?: ExecutionEnvelope;
+	/** True when ADR-0010 lowered or supplied the effective wall dimension. */
+	envelopeClamped?: boolean;
+	/** Original Request observation used for the admission decision. */
+	requestBudget?: RequestExecutionBudget;
 	/** Public launcher capability sent on REQUEST; absent for ordinary executions. */
 	toolBudget?: ExecutionToolBudget;
 	/** Registered closed-tool agent used for a report-only correction. */

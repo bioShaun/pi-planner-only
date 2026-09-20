@@ -89,7 +89,7 @@ Root 自行采集每轮 `A_run`、`C_report`，用两者差异判断范围和报
 
 - advisory：到评估时间检查已有证据和剩余工作，决定继续、缩小范围或接手；继续时记录原因和下一次评估时间，不因到点自动中断有进展的任务。
 - hard：启动前明确 UTC `startedAt`、`deadline` 和取消能力；调度边界检查时钟，等待最多 `min(60 秒, deadline 剩余时间)`。到期立即发出中断并确认终态；如需延长，必须在原 deadline 前记录新 deadline 和原因，不能事后追认。阻塞工具可能延迟调度，不能把提示词中的截止时间宣称为精确硬限制。
-- 两种模式下，取消或接手都必须先确认原写入者及相关进程停止，再转交写入权。严格只读 launcher 仍有独立的外部时限（`REVIEW_READONLY_TIMEOUT`，默认 420 秒，依据 2026-09-20 工单 06 的实测：astra_reviewer 在 gpt-5.6-sol/high 下完成一次 strict 审查需 115–>203 秒，父入口自身约 30 秒），不因 advisory 模式自动延长。
+- 两种模式下，取消或接手都必须先确认原写入者及相关进程停止，再转交写入权。严格只读 launcher 仍有独立的外部时限（`REVIEW_READONLY_TIMEOUT`，默认 600 秒，依据 2026-09-20 的实测：astra_reviewer 在 gpt-5.6-sol/high 下完成一次 strict 审查需 115–524 秒，广泛审查多在 400 秒以上，父入口自身约 30–50 秒；420 默认曾两次截断无 verdict），不因 advisory 模式自动延长。
 
 这是 native Root 的主动调度协议，不是 TOML 自动硬限制，也不保证消除模型错误。文本 `STOP` 和用于记录中断消息的配置项 `agents.interrupt_message` 都不是预算执行器，也不是取消工具。没有硬取消能力时记录能力缺口；外部 CLI 进程组时限不能证明每个 Worker 的取消机制。取消后检查残留进程；停止未确认时保留写入占用。
 
@@ -109,7 +109,7 @@ Explorer、Locator、Reviewer 的配置默认 read-only；Worker、Validator 默
 bash /home/tcuni-claw/.codex/review-readonly.sh /path/to/review-request.md > /path/to/review-events.jsonl
 ```
 
-入口以 `codex exec --sandbox read-only` 启动独立 Root，再以无历史方式调用 astra_reviewer。必须以实际权限探测证明 Root/Reviewer 的运行时隔离；角色 TOML 或模型拒绝写入不是证据。入口要求 Bash、Python 3 和 Codex；stdlib watchdog 建立独立进程组，`REVIEW_READONLY_TIMEOUT`（默认 420）秒后 TERM，宽限 10 秒后对进程组 KILL。父 Root 以 low effort 运行，只做权限探针、spawn、wait 和转述；Reviewer 的 model/effort 仍由角色文件固定，须以子会话 turn_context 核对。退出 0 仅表示 session 完成，仍需检查 Reviewer verdict 与权限证据；124 表示超时后终止，137 表示已强杀且仍需确认无残留进程。依赖缺失是 BLOCKED；strict 失败不能降级为 behavior-only PASS。
+入口以 `codex exec --sandbox read-only` 启动独立 Root，再以无历史方式调用 astra_reviewer。必须以实际权限探测证明 Root/Reviewer 的运行时隔离；角色 TOML 或模型拒绝写入不是证据。入口要求 Bash、Python 3 和 Codex；stdlib watchdog 建立独立进程组，`REVIEW_READONLY_TIMEOUT`（默认 600）秒后 TERM，宽限 10 秒后对进程组 KILL。父 Root 以 low effort 运行，只做权限探针、spawn、wait 和转述；Reviewer 的 model/effort 仍由角色文件固定，须以子会话 turn_context 核对。每次 strict 运行记录 child 实际耗时，用于日后收紧默认值；子契约应写明软预算（例如 300 秒），超时时带覆盖范围返回 BLOCKED 而不是被截断。退出 0 仅表示 session 完成，仍需检查 Reviewer verdict 与权限证据；124 表示超时后终止，137 表示已强杀且仍需确认无残留进程。依赖缺失是 BLOCKED；strict 失败不能降级为 behavior-only PASS。
 
 ## 全局使用与项目约束
 

@@ -55,6 +55,7 @@ const OPTIONAL_ARRAY_FIELDS = [
 	"recoveryStates",
 	"recoveryDispatches",
 	"recoveryHistory",
+	"launchRefusals",
 ] as const;
 
 const OPTIONAL_BOOLEAN_FIELDS = ["standaloneExplorer", "isPlaceholder", "titleAliasUsed"] as const;
@@ -85,6 +86,13 @@ function executionShapeError(value: unknown, index: number): string | undefined 
 			return `${label}.envelope requires maxTokens or maxWallMs`;
 		}
 	}
+	if (value.originalEnvelope !== undefined) {
+		const originalError = envelopeShapeError(value.originalEnvelope, `${label}.originalEnvelope`);
+		if (originalError) return originalError;
+	}
+	if (value.envelopeClamped !== undefined && typeof value.envelopeClamped !== "boolean") return `${label}.envelopeClamped must be a boolean`;
+	const requestBudgetError = requestBudgetShapeError(value.requestBudget, `${label}.requestBudget`);
+	if (requestBudgetError) return requestBudgetError;
 	if (value.toolBudget !== undefined) {
 		if (!isPlainObject(value.toolBudget)) return `${label}.toolBudget must be an object`;
 		if (!Number.isSafeInteger(value.toolBudget.hard) || (value.toolBudget.hard as number) < 0) {
@@ -154,6 +162,43 @@ function executionShapeError(value: unknown, index: number): string | undefined 
 	return undefined;
 }
 
+function requestBudgetShapeError(value: unknown, label: string): string | undefined {
+	if (value === undefined) return undefined;
+	if (!isPlainObject(value)) return `${label} must be an object`;
+	for (const field of ["requestId", "observedAt"] as const) if (typeof value[field] !== "string") return `${label}.${field} must be a string`;
+	if (value.requestDeadline !== null && typeof value.requestDeadline !== "string") return `${label}.requestDeadline must be a string or null`;
+	if (value.remainingMs !== null && (!Number.isSafeInteger(value.remainingMs) || (value.remainingMs as number) < 0)) return `${label}.remainingMs must be a non-negative safe integer or null`;
+	if (value.availableMs !== null && !Number.isSafeInteger(value.availableMs)) return `${label}.availableMs must be a safe integer or null`;
+	if (!Number.isSafeInteger(value.reserveMs) || (value.reserveMs as number) <= 0) return `${label}.reserveMs must be a positive safe integer`;
+	if (value.unavailableReason !== undefined && !["request-not-started", "request-mismatch", "observation-failed"].includes(value.unavailableReason as string)) return `${label}.unavailableReason is invalid`;
+	return undefined;
+}
+
+function envelopeShapeError(value: unknown, label: string): string | undefined {
+	if (!isPlainObject(value)) return `${label} must be an object`;
+	if (!["delegation-param", "default", "operator-config"].includes(value.source as string)) return `${label}.source is invalid`;
+	for (const field of ["maxTokens", "maxWallMs"] as const) {
+		const bound = value[field];
+		if (bound !== undefined && (!Number.isSafeInteger(bound) || (bound as number) <= 0)) return `${label}.${field} must be a positive finite safe integer`;
+	}
+	if (value.maxTokens === undefined && value.maxWallMs === undefined) return `${label} requires maxTokens or maxWallMs`;
+	return undefined;
+}
+
+function launchRefusalShapeError(value: unknown, index: number): string | undefined {
+	const label = `task.launchRefusals[${index}]`;
+	if (!isPlainObject(value)) return `${label} must be an object`;
+	for (const field of ["executionId", "kind", "code", "reason"] as const) if (typeof value[field] !== "string") return `${label}.${field} must be a string`;
+	if (value.code !== "REQUEST_REMAINING_INSUFFICIENT") return `${label}.code is invalid`;
+	const envelopeError = envelopeShapeError(value.originalEnvelope, `${label}.originalEnvelope`);
+	if (envelopeError) return envelopeError;
+	if (value.requestBudget === undefined) return `${label}.requestBudget is required`;
+	const requestError = requestBudgetShapeError(value.requestBudget, `${label}.requestBudget`);
+	if (requestError) return requestError;
+	if (value.reportOnly !== undefined && typeof value.reportOnly !== "boolean") return `${label}.reportOnly must be a boolean`;
+	return undefined;
+}
+
 /**
  * R2 — a syntactically valid envelope can still carry a record whose fields
  * have the wrong shape; diagnostics dereferences executions, usage.children,
@@ -179,6 +224,12 @@ function recordShapeError(task: unknown): string | undefined {
 		if (task[field] !== undefined && typeof task[field] !== "number") return `task.${field} must be a number`;
 	}
 	if (task.spec !== undefined && !isPlainObject(task.spec)) return "task.spec must be an object";
+	if (Array.isArray(task.launchRefusals)) {
+		for (let i = 0; i < task.launchRefusals.length; i += 1) {
+			const error = launchRefusalShapeError(task.launchRefusals[i], i);
+			if (error) return error;
+		}
+	}
 	if (task.usage !== undefined) {
 		if (!isPlainObject(task.usage)) return "task.usage must be an object";
 		if (task.usage.children !== undefined) {

@@ -1,0 +1,16 @@
+{
+  "scope_id": "issue07-step2-request-envelope",
+  "snapshot_id": "issue07-step2-e8c5354112692ec21a45ffa991c4cd1e2d6d8276e0cfe30626d2ff48e1afff14",
+  "code_review": "NOT_REQUESTED",
+  "validation": "PASS",
+  "final_acceptance": "BLOCKED",
+  "review_kind": null,
+  "review_verdict": null,
+  "isolation_requirement": "strict",
+  "evidence_refs": [
+    "../release-run-PotBZh",
+    "../strict-run-TDoRaQ/events.jsonl",
+    "../strict-run-TDoRaQ/result.json"
+  ],
+  "contract_error": "First ReviewRequest omitted required review_kind, scope_id, snapshot_id, isolation_requirement; bare BLOCKED is not an accepted verdict. Corrected request prepared for a fresh final review."
+}

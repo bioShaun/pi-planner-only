@@ -1,0 +1,957 @@
+diff --git a/CONTEXT.md b/CONTEXT.md
+index 1b588e5..e9479f0 100644
+--- a/CONTEXT.md
++++ b/CONTEXT.md
+@@ -89,7 +89,7 @@ The parent tool guard: which tools Root may call. While a Task is live for the w
+ _Avoid_: permissions, ACL
+ 
+ **Delegation**:
+-Launching a child with a role and a TaskSpec. Two entry points: `planner_delegate` always mints a new Task (it takes no `taskId`) and returns the canonical `taskId`; `planner_redelegate` binds an existing Task by that verbatim id for a correction round, a review, or a recovery re-execution. Rebinding reads the complete stored TaskSpec and never accepts caller fields that redefine it; optional instructions augment one child packet only, while the invocation role selects routing without changing the stored role. Workspace admission compares the stored workspace to the host context cwd. `planner_tasks` is the read-only lookup that lists this workspace's live Tasks (memory plus ledger records the restore cap left out) when the canonical id is not in context. The child's WorkerReport returns launcher-validated, never parsed from text; at most one worker per cwd. Ordinary worker, explorer, and validator executions use finite default anomaly bounds (`maxTokens=100000`, `maxWallMs=600000`) unless an operator configuration or explicit `envelope` replaces them; the source is persisted. A breach fires CANCEL and records `worker_runaway` on the TaskExecutionRecord. Reviewer invocations remain Request-bounded.
++Launching a child with a role and a TaskSpec. Two entry points: `planner_delegate` always mints a new Task (it takes no `taskId`) and returns the canonical `taskId`; `planner_redelegate` binds an existing Task by that verbatim id for a correction round, a review, or a recovery re-execution. Rebinding reads the complete stored TaskSpec and never accepts caller fields that redefine it; optional instructions augment one child packet only, while the invocation role selects routing without changing the stored role. Workspace admission compares the stored workspace to the host context cwd. `planner_tasks` is the read-only lookup that lists this workspace's live Tasks (memory plus ledger records the restore cap left out) when the canonical id is not in context. The child's WorkerReport returns launcher-validated, never parsed from text; at most one worker per cwd. Ordinary worker, explorer, and validator executions use finite default anomaly bounds (`maxTokens=100000`, `maxWallMs=600000`) unless an operator configuration or explicit `envelope` replaces them; their wall bound is capped at the original Request remainder minus a provisional 60-second reserve, and an execution is refused when that remainder is unavailable or exhausted. Original and effective bounds retain their source. A breach fires CANCEL and records `worker_runaway` on the TaskExecutionRecord. Reviewer invocations remain Request-bounded and do not use the reserve.
+ _Avoid_: spawn, dispatch (the host mechanism), packet
+ 
+ **Writer hold**:
+diff --git a/README.md b/README.md
+index cfa6ee1..f76fc31 100644
+--- a/README.md
++++ b/README.md
+@@ -399,7 +399,7 @@ The pricing table format:
+ - Keys starting with `_` are ignored (useful for comments).
+ - Reload rates in-session with `/planner-only usage reload`.
+ 
+-Session-level root spend gating is **off by default**. `/planner-only budget on` turns it on for this machine (marker: `~/.pi/agent/planner-only/session-root-budget.on`); `/planner-only budget off` turns it off. Soft cap warns at 3× the worker-initial floor; the 5× hard threshold is reported only — it does not refuse delegations yet. `PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` or `=0` overrides the marker. Ordinary worker, explorer, and validator executions always have finite anomaly bounds. Omitting `envelope` uses `maxTokens=100000` and `maxWallMs=600000` (ten minutes, inside the fifteen-minute Request deadline; ADR-0008); for a heavy coding worker Root should pass an explicit envelope with **both** `maxTokens` and `maxWallMs`, because an explicit envelope replaces the defaults entirely and a lone `maxWallMs` would drop the token bound; size `maxWallMs` to the Request's remaining time (the deadline runs from the Request's first activity) with room left for validation and review; operators may replace either default with the positive safe-integer environment variables `PI_PLANNER_ONLY_EXECUTION_MAX_TOKENS` and `PI_PLANNER_ONLY_EXECUTION_MAX_WALL_MS`. The persisted source is `default`, `operator-config`, or `delegation-param`. An explicit `envelope: { maxTokens?, maxWallMs? }` keeps only its caller-supplied dimensions and values. Reviewer invocations remain bounded by the enclosing Request and do not claim an execution envelope. The session evidence export carries `statuses` (task / workerReport / reviewResult / rootVerdict / refusalKind), `findings`, `usage`, `breakdown`, and `unattributed`; the linkage / requirements / evidenceMatrix / analysis blocks are gone.
++Session-level root spend gating is **off by default**. `/planner-only budget on` turns it on for this machine (marker: `~/.pi/agent/planner-only/session-root-budget.on`); `/planner-only budget off` turns it off. Soft cap warns at 3× the worker-initial floor; the 5× hard threshold is reported only — it does not refuse delegations yet. `PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` or `=0` overrides the marker. Ordinary worker, explorer, and validator executions always have finite anomaly bounds. Omitting `envelope` uses `maxTokens=100000` and `maxWallMs=600000` (ADR-0008); operators may replace either default with the positive safe-integer environment variables `PI_PLANNER_ONLY_EXECUTION_MAX_TOKENS` and `PI_PLANNER_ONLY_EXECUTION_MAX_WALL_MS`. An explicit envelope still replaces token/default inheritance, but its effective wall bound is capped at the original Request remainder minus a provisional 60-second reserve (ADR-0010); a token-only explicit envelope therefore receives a Request-derived wall cap. If the fresh post-sampling remainder is unavailable or does not exceed the reserve, the Task records a launch refusal and no child, correction, recovery, revalidation, or writer hold is consumed. The ledger and tool details retain the original and effective envelopes, source, clamp flag, and Request observation. Reviewer invocations remain bounded by the enclosing Request and may use the reserve window. The session evidence export carries `statuses` (task / workerReport / reviewResult / rootVerdict / refusalKind), `findings`, `usage`, `breakdown`, and `unattributed`; the linkage / requirements / evidenceMatrix / analysis blocks are gone.
+ 
+ **Alternative:** The preferred approach is to specify `cost` directly in `~/.pi/agent/models.json`. This enables native cost calculation across both Pi and `pi-subagents` (e.g. `/subagent-cost`). The plugin table serves as a fallback or override when you prefer not to modify `models.json`.
+ 
+diff --git a/README.zh-CN.md b/README.zh-CN.md
+index 279e366..7a2e079 100644
+--- a/README.zh-CN.md
++++ b/README.zh-CN.md
+@@ -235,7 +235,7 @@ Token 数为准，美元/人民币金额是推导值。扩展跟踪 Root 各生
+ - 以 `_` 开头的键会被忽略（可用于注释）。
+ - 可在会话内通过 `/planner-only usage reload` 重新加载费率表。
+ 
+-会话级 root 累计预算**默认关闭**。`/planner-only budget on` 打开（标记文件 `~/.pi/agent/planner-only/session-root-budget.on`），`/planner-only budget off` 关闭。开启后按 worker 初始 floor 的 ×3 软顶警告；×5 硬顶目前只披露、不拦截委派。`PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` 或 `=0` 会覆盖标记。普通 worker、explorer、validator 执行始终有有限异常上限：省略 `envelope` 时使用 `maxTokens=100000`、`maxWallMs=600000`（10 分钟，在 15 分钟 Request 截止之内；见 ADR-0008）；重编码类 worker 应由 Root 显式传 envelope，且 `maxTokens`、`maxWallMs` **两个都传**：显式 envelope 会整体替换默认值，只传 `maxWallMs` 会丢掉 token 上限；`maxWallMs` 要按 Request 剩余时间（截止从 Request 首次活动起算）并给验证、评审留余量；操作者可用正安全整数环境变量 `PI_PLANNER_ONLY_EXECUTION_MAX_TOKENS`、`PI_PLANNER_ONLY_EXECUTION_MAX_WALL_MS` 替换对应默认值。账本来源记为 `default`、`operator-config` 或 `delegation-param`。显式 `envelope: { maxTokens?, maxWallMs? }` 只保留调用者给出的维度和值。reviewer 仍只受所属 Request 限制，不声称拥有执行 envelope。会话证据导出只携带 `statuses`（task / workerReport / reviewResult / rootVerdict / refusalKind）、`findings`、`usage`、`breakdown`、`unattributed`；linkage / requirements / evidenceMatrix / analysis 块已移除。
++会话级 root 累计预算**默认关闭**。`/planner-only budget on` 打开（标记文件 `~/.pi/agent/planner-only/session-root-budget.on`），`/planner-only budget off` 关闭。开启后按 worker 初始 floor 的 ×3 软顶警告；×5 硬顶目前只披露、不拦截委派。`PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` 或 `=0` 会覆盖标记。普通 worker、explorer、validator 执行始终有有限异常上限：省略 `envelope` 时使用 `maxTokens=100000`、`maxWallMs=600000`（ADR-0008）；操作者可用正安全整数环境变量 `PI_PLANNER_ONLY_EXECUTION_MAX_TOKENS`、`PI_PLANNER_ONLY_EXECUTION_MAX_WALL_MS` 替换对应默认值。显式 envelope 仍整体替换 token/default 继承，但其有效墙钟上限会钳制到原 Request 剩余时间减去暂定的 60 秒预留（ADR-0010），所以只传 token 的显式 envelope 也会得到 Request 派生墙钟上限。若完成启动前采样后的新鲜余量不可用或不超过预留，Task 会记录拒绝启动，且不消耗 child、修复、恢复、重验证额度，也不创建 Writer hold。账本和工具详情同时保留原始/有效 envelope、来源、钳制标记和 Request 观测。reviewer 仍只受所属 Request 限制，并可使用这段预留窗口。会话证据导出只携带 `statuses`（task / workerReport / reviewResult / rootVerdict / refusalKind）、`findings`、`usage`、`breakdown`、`unattributed`；linkage / requirements / evidenceMatrix / analysis 块已移除。
+ 
+ **替代方案：** 推荐直接在 `~/.pi/agent/models.json` 里配置 `cost`。这样 Pi 和 `pi-subagents` 的原生命令（如 `/subagent-cost`）都能直接计价。插件自带的定价表仅作为不需要改动 `models.json` 时的备用与覆盖机制。
+ 
+diff --git a/delegate.test.mjs b/delegate.test.mjs
+index 1ba2600..1b37799 100644
+--- a/delegate.test.mjs
++++ b/delegate.test.mjs
+@@ -92,6 +92,7 @@ function makeDeps(overrides = {}) {
+ 		...("restrictedReaderAgent" in overrides
+ 			? { restrictedReaderAgent: overrides.restrictedReaderAgent }
+ 			: { restrictedReaderAgent: "planner-scout" }),
++		...(overrides.reportOnlyAgent ? { reportOnlyAgent: overrides.reportOnlyAgent } : {}),
+ 		quiescenceWaitMs: overrides.quiescenceWaitMs ?? 0,
+ 		quiescenceSampleGapMs: overrides.quiescenceSampleGapMs ?? 0,
+ 		launch: overrides.launch ?? (async (request) => {
+@@ -2271,6 +2272,134 @@ for (const [index, [status, expectedState]] of [
+ 	assert.deepEqual(outcome.task.executions[0].envelope, { maxTokens: 100_000, maxWallMs: 600_000, source: "default" });
+ }
+ 
++// ---------------------------------------------------------------------------
++// ADR-0010 — ordinary executions use the fresh original-Request remainder.
++// ---------------------------------------------------------------------------
++{
++	const dir = initRealRepo();
++	const request = (remainingMs) => ({
++		requestId: "request-clamp",
++		requestDeadline: "2026-09-20T00:15:00.000Z",
++		remainingMs,
++		observedAt: "2026-09-20T00:10:00.000Z",
++	});
++
++	const unchanged = makeDeps({ gitRunner: async (args, cwd) => realGit(dir, ...args) });
++	const unchangedOutcome = await runDelegation(
++		unchanged.deps,
++		makeParams({ envelope: { maxTokens: 11, maxWallMs: 100_000 } }),
++		dir,
++		{ executionId: "clamp-unchanged", requestId: "request-clamp", requestObservation: () => request(300_000) },
++	);
++	assert.deepEqual(unchangedOutcome.task.executions[0].envelope, { maxTokens: 11, maxWallMs: 100_000, source: "delegation-param" });
++	assert.deepEqual(unchangedOutcome.task.executions[0].originalEnvelope, unchangedOutcome.task.executions[0].envelope);
++	assert.equal(unchangedOutcome.task.executions[0].envelopeClamped, false);
++
++	const clamped = makeDeps({ gitRunner: async (args, cwd) => realGit(dir, ...args) });
++	const clampedTimerDelays = [];
++	clamped.deps.wallClock = {
++		now: () => 0,
++		setTimeout(_fn, ms) { clampedTimerDelays.push(ms); return { ms }; },
++		clearTimeout() {},
++	};
++	const clampedOutcome = await runDelegation(
++		clamped.deps,
++		makeParams({ envelope: { maxTokens: 7 } }),
++		dir,
++		{ executionId: "clamp-token-only", requestId: "request-clamp", requestObservation: () => request(90_000) },
++	);
++	const clampedExecution = clampedOutcome.task.executions[0];
++	assert.deepEqual(clampedExecution.originalEnvelope, { maxTokens: 7, source: "delegation-param" });
++	assert.deepEqual(clampedExecution.envelope, { maxTokens: 7, maxWallMs: 30_000, source: "delegation-param" });
++	assert.equal(clampedExecution.envelopeClamped, true);
++	assert.equal(clampedExecution.requestBudget.reserveMs, 60_000);
++	assert.match(clampedOutcome.warnings.join("\n"), /clamped to 30000ms/);
++	assert.deepEqual(clampedTimerDelays, [30_000], "wall timer uses the effective Request-clamped bound");
++
++	let delayedRemaining = 90_000;
++	const delayedGit = async (args, cwd) => {
++		const result = await fakeCleanGit()(args, cwd);
++		if (args.join(" ") === "status --porcelain=v2 --branch") delayedRemaining = 60_000;
++		return result;
++	};
++	const refused = makeDeps({ gitRunner: delayedGit });
++	const refusal = await expectRefusal(runDelegation(
++		refused.deps,
++		makeParams(),
++		dir,
++		{ executionId: "clamp-refused", requestId: "request-clamp", requestObservation: () => request(delayedRemaining) },
++	), "REQUEST_REMAINING_INSUFFICIENT");
++	const refusedTask = refused.deps.store.require(refusal.taskId);
++	assert.equal(refused.launches.length, 0, "post-sample budget refusal emits no REQUEST");
++	assert.equal(refusedTask.state, "planning", "refusal preserves the pre-admission Task state");
++	assert.equal(refusedTask.executions.length, 0, "refusal is not a child execution");
++	assert.equal(refusedTask.launchRefusals.length, 1);
++	assert.equal(refusedTask.launchRefusals[0].requestBudget.availableMs, 0);
++	assert.equal(refused.deps.concurrency.status().reservations.length, 0, "temporary writer reservation is released");
++	assert.deepEqual(refusal.details.launchRefusal, refusedTask.launchRefusals[0]);
++	const unknown = makeDeps({ gitRunner: async (args, cwd) => realGit(dir, ...args) });
++	const unknownRefusal = await expectRefusal(runDelegation(
++		unknown.deps,
++		makeParams(),
++		dir,
++		{ executionId: "clamp-unknown", requestId: "request-clamp", requestObservation: () => ({
++			requestId: "request-clamp", requestDeadline: null, remainingMs: null,
++			observedAt: "2026-09-20T00:10:00.000Z", unavailableReason: "request-not-started",
++		}) },
++	), "REQUEST_REMAINING_INSUFFICIENT");
++	assert.equal(unknownRefusal.details.launchRefusal.requestBudget.availableMs, null);
++	assert.equal(unknown.launches.length, 0);
++
++	const reportOnly = makeDeps({
++		gitRunner: async (args, cwd) => realGit(dir, ...args),
++		reportOnlyAgent: "planner-report-only",
++		launch: async (outbound) => ({
++			requestId: outbound.requestId,
++			ownerRunId: outbound.ownerRunId,
++			nodeId: outbound.nodeId,
++			status: "completed",
++			runId: "run-malformed",
++			agent: "worker",
++		}),
++	});
++	const malformed = await runDelegation(reportOnly.deps, makeParams(), dir, { executionId: "clamp-malformed" });
++	const reportTask = reportOnly.deps.store.require(malformed.task.taskId);
++	assert.equal(reportTask.reportCorrections, 1);
++	const reportsBefore = reportTask.executions.length;
++	const reportRefusal = await expectRefusal(runDelegation(
++		reportOnly.deps,
++		makeParams({ taskId: reportTask.taskId }),
++		dir,
++		{ executionId: "clamp-report-only", requestId: "request-clamp", requestObservation: () => request(60_000) },
++	), "REQUEST_REMAINING_INSUFFICIENT");
++	assert.equal(reportOnly.deps.store.require(reportTask.taskId).executions.length, reportsBefore, "refused report correction consumes no execution grant");
++	assert.equal(reportOnly.deps.store.require(reportTask.taskId).reportCorrections, 1, "the durable correction remains pending");
++	assert.equal(reportRefusal.details.launchRefusal.reportOnly, true);
++
++	const recovery = makeDeps({
++		gitRunner: async (args, cwd) => realGit(dir, ...args),
++		launch: async (outbound, _signal, hooks) => {
++			hooks.onUpdate({ requestId: outbound.requestId, ownerRunId: outbound.ownerRunId, nodeId: outbound.nodeId, tokens: 2 });
++			return { requestId: outbound.requestId, ownerRunId: outbound.ownerRunId, nodeId: outbound.nodeId,
++				status: "cancelled", runId: "run-budget", agent: "worker" };
++		},
++	});
++	const runaway = await runDelegation(recovery.deps, makeParams({ envelope: { maxTokens: 1 } }), dir, { executionId: "clamp-runaway" });
++	const recoveryTask = recovery.deps.store.require(runaway.task.taskId);
++	const recoveryHistoryBefore = recoveryTask.recoveryHistory?.length ?? 0;
++	await expectRefusal(runDelegation(
++		recovery.deps,
++		makeParams({ taskId: recoveryTask.taskId, envelope: { maxTokens: 1 }, recovery: {
++			executionId: "clamp-runaway", action: "retry_same_plan", reason: "retry", worktreeDecision: "keep",
++		} }),
++		dir,
++		{ executionId: "clamp-recovery-refused", requestId: "request-clamp", requestObservation: () => request(60_000) },
++	), "REQUEST_REMAINING_INSUFFICIENT");
++	const recoveryAfter = recovery.deps.store.require(recoveryTask.taskId);
++	assert.equal(recoveryAfter.recovery.required, true, "refusal leaves recovery authorization pending");
++	assert.equal(recoveryAfter.recoveryHistory?.length ?? 0, recoveryHistoryBefore, "refusal consumes no recovery decision");
++}
++
+ // ---------------------------------------------------------------------------
+ // P0-B.4 — wall-clock breach fires without any UPDATE heartbeat.
+ // ---------------------------------------------------------------------------
+diff --git a/delegate.ts b/delegate.ts
+index cf08415..8a8f67d 100644
+--- a/delegate.ts
++++ b/delegate.ts
+@@ -57,7 +57,8 @@ import {
+ import type { FreshReviewerTaskInput, ReviewDecision } from "./review.ts";
+ import { childUsageFromValue } from "./usage.ts";
+ import type { UsageLedger } from "./usage.ts";
+-import { loadExecutionDefaults } from "./execution-defaults.ts";
++import { loadExecutionDefaults, REQUEST_EXECUTION_RESERVE_MS } from "./execution-defaults.ts";
++import type { RequestTimingObservation } from "./request-control.ts";
+ import { acceptanceModeOf, isFinalTaskState, isTerminalTaskState } from "./types.ts";
+ import type {
+ 	AcceptanceMode,
+@@ -66,6 +67,7 @@ import type {
+ 	ExecutionCapability,
+ 	ExecutionEndedReason,
+ 	ExecutionEnvelope,
++	RequestExecutionBudget,
+ 	ExecutionToolBudget,
+ 	ExecutionLifecycleStatus,
+ 	FindingCategory,
+@@ -78,6 +80,7 @@ import type {
+ 	RunawaySignal,
+ 	TaskFinding,
+ 	TaskExecutionRecord,
++	TaskLaunchRefusal,
+ 	TaskSpec,
+ 	WorkerReport,
+ } from "./types.ts";
+@@ -388,7 +391,7 @@ const DELEGATION_SPEC_PARAMETERS = {
+ 			maxTokens: Type.Optional(Type.Number({ description: "Cancel the child when cumulative UPDATE tokens exceed this. Snapshot input+output, no cache." })),
+ 			maxWallMs: Type.Optional(Type.Number({ description: "Cancel the child when wall-clock since launch exceeds this many ms." })),
+ 		}, {
+-			description: "Runaway envelope. When omitted on an ordinary execution, finite program/operator defaults apply (maxTokens 100000, maxWallMs 600000 unless operator-configured). An explicit envelope replaces the defaults entirely: for a heavy coding worker pass BOTH maxTokens and maxWallMs, sizing maxWallMs to the Request's remaining time (deadline = first activity + 15 min) with room for validation and review; a lone maxWallMs drops the token bound.",
++			description: "Runaway envelope. When omitted on an ordinary execution, finite program/operator defaults apply (maxTokens 100000, maxWallMs 600000 unless operator-configured). An explicit envelope replaces default/token inheritance. The effective wall bound is capped at the original Request remainder minus a provisional 60000ms reserve; token-only envelopes receive that Request-derived wall cap.",
+ 		}),
+ 	),
+ };
+@@ -691,17 +694,21 @@ export interface DelegationOptions {
+ 	requestId?: string;
+ 	/** Reads closure only from that original Request, including durable history. */
+ 	requestClosure?: () => { requestId: string; requestClosed: string; requestClosedAt: string } | undefined;
++	/** Fresh admission observation of that original Request, supplied only by the public host. */
++	requestObservation?: () => RequestTimingObservation;
+ }
+ 
+ export class DelegationRefused extends Error {
+ 	readonly code: string;
+ 	readonly taskId?: string;
++	readonly details?: Record<string, unknown>;
+ 
+-	constructor(code: string, message: string, taskId?: string) {
++	constructor(code: string, message: string, taskId?: string, details?: Record<string, unknown>) {
+ 		super(message);
+ 		this.name = "DelegationRefused";
+ 		this.code = code;
+ 		this.taskId = taskId;
++		this.details = details;
+ 	}
+ }
+ 
+@@ -952,9 +959,12 @@ export async function runDelegation(
+ 
+ 	// Reviewers returned above and remain Request-bounded. Every ordinary
+ 	// execution gets a finite envelope; explicit dimensions stay exact.
+-	const envelope = validateEnvelope(params.envelope, toolName)
++	const originalEnvelope = validateEnvelope(params.envelope, toolName)
+ 		?? deps.executionDefaults
+ 		?? loadExecutionDefaults();
++	let envelope: ExecutionEnvelope = { ...originalEnvelope };
++	let envelopeClamped = false;
++	let requestBudget: RequestExecutionBudget | undefined;
+ 
+ 	// 2. Write lock: capability decides, not the role name — a proven
+ 	//    restricted reader holds no workspace claim; writers, shell-capable
+@@ -1093,13 +1103,6 @@ export async function runDelegation(
+ 	if (runController.signal.aborted) onSignalAbort();
+ 
+ 	try {
+-		// A running (or re-runnable) Task is executing for the duration of the
+-		// call; a reviewing Task keeps its state (a validator run during review
+-		// must not yank the lifecycle back).
+-		if (["planning", "changes_requested", "report-invalid", "blocked", "failed"].includes(task.state)) {
+-			task = deps.store.transition(task.taskId, "executing");
+-		}
+-
+ 		const worktreeRoots = [...new Set([task.cwd || effectiveCwd, ...(thisSpec.additionalWorktreeRoots ?? [])])];
+ 		const scopePaths = [...new Set([
+ 			...(thisSpec.scope?.allowedPaths ?? []),
+@@ -1117,6 +1120,58 @@ export async function runDelegation(
+ 
+ 		// 3. A_run + execution record.
+ 		const aRun = await captureEvidence(deps.gitRunner, sampleOptions(executionId));
++		if (options.requestObservation) {
++			let observation: RequestTimingObservation | undefined;
++			try {
++				observation = options.requestObservation();
++			} catch { /* an unavailable authoritative observation is a durable refusal below */ }
++			const requestMismatch = observation !== undefined && options.requestId !== undefined && observation.requestId !== options.requestId;
++			const remainingMs = !observation || requestMismatch ? null : observation.remainingMs;
++			const availableMs = remainingMs === null
++				? null
++				: Math.floor(remainingMs - REQUEST_EXECUTION_RESERVE_MS);
++			requestBudget = {
++				requestId: observation?.requestId ?? options.requestId ?? "unknown",
++				requestDeadline: observation?.requestDeadline ?? null,
++				remainingMs,
++				observedAt: observation?.observedAt ?? nowIso(),
++				reserveMs: REQUEST_EXECUTION_RESERVE_MS,
++				availableMs,
++				...(!observation
++					? { unavailableReason: "observation-failed" as const }
++					: requestMismatch
++					? { unavailableReason: "request-mismatch" as const }
++					: observation.unavailableReason ? { unavailableReason: observation.unavailableReason } : {}),
++			};
++			if (availableMs === null || availableMs <= 0) {
++				const reason = availableMs === null
++					? `the original Request remainder is unavailable (${requestBudget.unavailableReason ?? "unknown"})`
++					: `the original Request has ${remainingMs}ms remaining, which does not exceed the provisional ${REQUEST_EXECUTION_RESERVE_MS}ms reserve`;
++				const refusal: TaskLaunchRefusal = {
++					executionId,
++					kind: role as DelegationKind,
++					code: "REQUEST_REMAINING_INSUFFICIENT",
++					reason,
++					originalEnvelope: { ...originalEnvelope },
++					requestBudget,
++					...(reportOnlyGrant ? { reportOnly: true } : {}),
++				};
++				releaseReservation = true;
++				deps.store.recordLaunchRefusal(task.taskId, refusal);
++				throw new DelegationRefused(
++					"REQUEST_REMAINING_INSUFFICIENT",
++					`${toolName} refused: Task ${task.taskId} cannot launch because ${reason}. No child allowance, execution grant, correction, recovery, revalidation, or writer hold was consumed.`,
++					task.taskId,
++					{ launchRefusal: refusal },
++				);
++			}
++			if (originalEnvelope.maxWallMs === undefined || originalEnvelope.maxWallMs > availableMs) {
++				envelope = { ...originalEnvelope, maxWallMs: availableMs };
++				envelopeClamped = true;
++				const originalWall = originalEnvelope.maxWallMs === undefined ? "unbounded" : `${originalEnvelope.maxWallMs}ms`;
++				warnings.push(`execution wall envelope clamped to ${availableMs}ms from ${originalWall} using Request ${requestBudget.requestId} remainder ${remainingMs}ms minus provisional reserve ${REQUEST_EXECUTION_RESERVE_MS}ms`);
++			}
++		}
+ 		if (reportOnlyGrant) {
+ 			// Evidence capture yields. Re-read the durable record immediately
+ 			// before the synchronous beginExecution so concurrent observation
+@@ -1144,6 +1199,11 @@ export async function runDelegation(
+ 			task = freshTask;
+ 			reportOnlyOrigin = freshOrigin;
+ 		}
++		// A refused admission leaves the Task in its prior state. Only an admitted
++		// ordinary execution transitions into executing.
++		if (["planning", "changes_requested", "report-invalid", "blocked", "failed"].includes(task.state)) {
++			task = deps.store.transition(task.taskId, "executing");
++		}
+ 		deps.store.beginExecution(task.taskId, {
+ 			executionId,
+ 			...((reportOnlyOrigin?.executionId ?? options.previousExecutionId)
+@@ -1157,7 +1217,9 @@ export async function runDelegation(
+ 			capabilityBasis: classification.basis,
+ 			...(options.requestId ? { requestId: options.requestId } : {}),
+ 			startedAt: null,
+-			...(envelope ? { envelope } : {}),
++			envelope,
++			originalEnvelope: { ...originalEnvelope },
++			...(requestBudget ? { requestBudget, envelopeClamped } : {}),
+ 			...(reportOnlyGrant ? {
+ 				reportOnly: true,
+ 				toolBudget: { ...REPORT_ONLY_TOOL_BUDGET },
+diff --git a/execution-defaults.ts b/execution-defaults.ts
+index eafc27f..820c2d1 100644
+--- a/execution-defaults.ts
++++ b/execution-defaults.ts
+@@ -2,6 +2,8 @@ import type { ExecutionEnvelope } from "./types.ts";
+ 
+ export const DEFAULT_EXECUTION_MAX_TOKENS = 100_000;
+ export const DEFAULT_EXECUTION_MAX_WALL_MS = 600_000; // ADR-0008: ten minutes, inside the fifteen-minute Request window
++/** ADR-0010: provisional scheduling margin retained for Root validation/review. */
++export const REQUEST_EXECUTION_RESERVE_MS = 60_000;
+ 
+ export const EXECUTION_DEFAULT_ENV_VARS = Object.freeze({
+ 	MAX_TOKENS: "PI_PLANNER_ONLY_EXECUTION_MAX_TOKENS",
+diff --git a/index.ts b/index.ts
+index b54319b..514cc8a 100644
+--- a/index.ts
++++ b/index.ts
+@@ -162,6 +162,7 @@ function enforceDiagnosticsDetailsBudget(diagnostics: PlannerTaskDiagnostics): P
+ 		sessionLog: { status: diagnostics.sessionLog.status },
+ 		...(diagnostics.request ? { request: diagnostics.request } : {}),
+ 		executions: [],
++		launchRefusals: [],
+ 		totalExecutions: diagnostics.totalExecutions,
+ 		truncated: true,
+ 		guidance: ["diagnostics exceeded the structured output budget; pass executionId to narrow the query"],
+@@ -1161,6 +1162,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 							{ signal: signal ? AbortSignal.any([signal, requestControl.signal]) : requestControl.signal,
+ 								executionId: toolCallId, onUpdate, toolName: surface.name, previousExecutionId: predecessor,
+ 								requestId: requestScope,
++								requestObservation: () => requestControl.observe(requestScope),
+ 								requestClosure: () => requestControl.closure(requestScope),
+ 								onLateStopConfirmed: () => requestControl.finishChild(toolCallId, true, requestScope) },
+ 						);
+@@ -1210,6 +1212,12 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 						...(execution.requestClosed ? { requestClosed: execution.requestClosed } : {}),
+ 						...(execution.requestClosedAt ? { requestClosedAt: execution.requestClosedAt } : {}),
+ 					} : undefined;
++					const executionEnvelope = execution ? {
++						original: execution.originalEnvelope ?? execution.envelope,
++						effective: execution.envelope,
++						envelopeClamped: execution.envelopeClamped ?? false,
++						...(execution.requestBudget ? { requestBudget: execution.requestBudget } : {}),
++					} : undefined;
+ 					return {
+ 						content: [{ type: "text", text: renderDelegationOutcome({ ...outcome, warnings }, surface.name) }],
+ 						details: {
+@@ -1224,6 +1232,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 							usage: outcome.usage,
+ 							request: requestControl.observe(requestScope),
+ 							...(executionTiming ? { executionTiming } : {}),
++							...(executionEnvelope ? { executionEnvelope } : {}),
+ 							...(outcome.termination ? { termination: outcome.termination } : {}),
+ 							warnings,
+ 						},
+@@ -1248,7 +1257,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 			"The child's WorkerReport arrives schema-validated in details.report; a non-completed status returns structured details.termination, not a parse failure.",
+ 			"planner_delegate always mints a new Task and returns its canonical taskId in details.taskId; a correction round, a review, or a recovery re-execution of that Task goes through planner_redelegate with that exact taskId.",
+ 			"role=explorer pairs with acceptanceMode='observation' for read-only informational tasks — the intended path in non-Git directories; it never claims code-change verification. A worktree-mode Task in a non-Git directory refuses writer launches with structured diagnostics instead.",
+-			"Omitting envelope uses the finite execution defaults (10 minutes wall clock, 100000 tokens). An explicit envelope replaces them entirely, so for a heavy coding worker pass BOTH maxTokens and maxWallMs; size maxWallMs to the Request's remaining time (deadline = first activity + 15 min) leaving room for validation and review. A breach cancels the child and requires a recovery decision.",
++			"Omitting envelope uses the finite execution defaults (10 minutes wall clock, 100000 tokens). An explicit envelope replaces default/token inheritance. Ordinary execution walls are capped at the original Request remainder minus a provisional 60000ms reserve; insufficient remainder refuses launch without consuming a child allowance. A breach cancels the child and requires a recovery decision.",
+ 		],
+ 		parameters: PLANNER_DELEGATE_PARAMETERS,
+ 	});
+@@ -1266,7 +1275,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 			"planner_redelegate binds an existing Task: pass the canonical taskId from a prior planner_delegate result's details.taskId verbatim. Never construct a taskId.",
+ 			"role=reviewer reviews the bound Task's latest WorkerReport; the launcher-validated ReviewResult arrives in details.review.",
+ 			"Do not repeat objective, cwd, scope, constraints, acceptanceCriteria, validation, or acceptanceMode: the stored TaskSpec is authoritative. instructions apply to this child packet only and do not mutate it.",
+-			"Omitting envelope uses the finite execution defaults (10 minutes wall clock, 100000 tokens). An explicit envelope replaces them entirely, so pass BOTH maxTokens and maxWallMs, with maxWallMs sized to the Request's remaining time. A Task flagged recovery.required re-executes only with a matching recovery decision (retry_same_plan / fix_environment) or is aborted via planner_abort.",
++			"Omitting envelope uses the finite execution defaults (10 minutes wall clock, 100000 tokens). An explicit envelope replaces default/token inheritance. Ordinary execution walls are capped at the original Request remainder minus a provisional 60000ms reserve; insufficient remainder refuses launch without consuming recovery or correction state. A Task flagged recovery.required re-executes only with a matching recovery decision (retry_same_plan / fix_environment) or is aborted via planner_abort.",
+ 			"recovery.executionId names the abnormal execution's details.executionId — never a child runId; a stray recovery on a Task without a pending requirement is refused (RECOVERY_NOT_APPLICABLE), not ignored.",
+ 		],
+ 		parameters: PLANNER_REDELEGATE_PARAMETERS,
+@@ -1335,11 +1344,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 					...d.executions.flatMap((execution) => [
+ 						`execution ${execution.executionId} [${execution.kind}] status=${execution.status ?? "unknown"} capability=${execution.capability} confirmed=${execution.terminationConfirmed}${execution.confirmationBasis ? ` via ${execution.confirmationBasis}` : ""}${execution.endedReason ? ` ended=${execution.endedReason}` : ""}${execution.runId ? ` runId=${execution.runId}` : ""}`,
+ 						`  timing: request=${execution.requestId ?? "unknown"} launched=${execution.launchedAt ?? "unknown"} started=${execution.startedAt ?? "unknown"} ended=${execution.endedAt ?? "unknown"} durationMs=${execution.durationMs ?? "unknown"}${execution.durationBasis ? ` (${execution.durationBasis})` : ""}${execution.requestClosed ? ` | requestClosed=${execution.requestClosed} at ${execution.requestClosedAt ?? "unknown"}` : ""}`,
++						...(execution.effectiveEnvelope ? [`  envelope: effective=${JSON.stringify(execution.effectiveEnvelope)} original=${JSON.stringify(execution.originalEnvelope ?? execution.effectiveEnvelope)} clamped=${execution.envelopeClamped}${execution.requestBudget ? ` request=${JSON.stringify(execution.requestBudget)}` : ""}`] : []),
+ 						`  report: received=${execution.reportReceived} accepted=${execution.reportAccepted}${execution.evidenceIncomplete ? " | stop evidence incomplete" : ""}`,
+ 						...(execution.unacceptedReport ? [`  unaccepted report: status=${execution.unacceptedReport.status} reason="${execution.unacceptedReport.reason}"`] : []),
+ 						...(execution.probeFailures?.length ? [`  probe failures: ${describeProbeFailures(execution.probeFailures)}${execution.probeFailuresTruncated ? ` …and ${execution.probeFailuresTruncated} more` : ""}`] : []),
+ 						...execution.guidance.map((item) => `  → ${item}`),
+ 					]),
++					...d.launchRefusals.map((refusal) => `launch refusal ${refusal.executionId} [${refusal.kind}] code=${refusal.code}: ${refusal.reason}; original=${JSON.stringify(refusal.originalEnvelope)} request=${JSON.stringify(refusal.requestBudget)}`),
+ 					...d.guidance.map((item) => `→ ${item}`),
+ 					...(d.truncated ? [`… diagnostics truncated; pass executionId to narrow the query`] : []),
+ 				];
+diff --git a/ledger-store.test.mjs b/ledger-store.test.mjs
+index e1b918b..abb0e04 100644
+--- a/ledger-store.test.mjs
++++ b/ledger-store.test.mjs
+@@ -532,6 +532,34 @@ function snapshotPath(dir, taskId) {
+ 		assert.equal(timing.status, "ok", "timing fields and explicit unknown STARTED survive ledger validation");
+ 		assert.equal(timing.record.executions[0].durationMs, 1000);
+ 
++		const requestBudget = {
++			requestId: "request-1",
++			requestDeadline: "2026-09-20T10:01:00.000Z",
++			remainingMs: 90_000,
++			observedAt: "2026-09-20T09:59:30.000Z",
++			reserveMs: 60_000,
++			availableMs: 30_000,
++		};
++		writeEnvelope("T-20260918-clamp", shapedRecord("T-20260918-clamp", {
++			executions: [{ executionId: "call-clamp", aRun: {},
++				envelope: { maxTokens: 7, maxWallMs: 30_000, source: "delegation-param" },
++				originalEnvelope: { maxTokens: 7, source: "delegation-param" },
++				envelopeClamped: true, requestBudget }],
++			launchRefusals: [{ executionId: "call-refused", kind: "worker", code: "REQUEST_REMAINING_INSUFFICIENT",
++				reason: "reserve exhausted", originalEnvelope: { maxWallMs: 600_000, source: "default" },
++				requestBudget: { ...requestBudget, remainingMs: 60_000, availableMs: 0 } }],
++		}));
++		const clamp = ledger.read("T-20260918-clamp");
++		assert.equal(clamp.status, "ok", "effective/original envelope and launch refusal survive ledger validation");
++		assert.equal(clamp.record.executions[0].envelope.maxWallMs, 30_000);
++		assert.equal(clamp.record.launchRefusals[0].requestBudget.reserveMs, 60_000);
++
++		writeEnvelope("T-20260918-bad-refusal", shapedRecord("T-20260918-bad-refusal", { launchRefusals: [{
++			executionId: "bad", kind: "worker", code: "REQUEST_REMAINING_INSUFFICIENT", reason: "bad",
++			originalEnvelope: { source: "default" },
++		}] }));
++		assert.match(ledger.read("T-20260918-bad-refusal").reason, /originalEnvelope requires|maxWallMs|requestBudget/);
++
+ 		writeEnvelope("T-20260918-bad-timing", shapedRecord("T-20260918-bad-timing", { executions: [{
+ 			executionId: "call-bad-timing", aRun: {}, durationMs: -1,
+ 		}] }));
+diff --git a/ledger-store.ts b/ledger-store.ts
+index 0afff00..a3f5f60 100644
+--- a/ledger-store.ts
++++ b/ledger-store.ts
+@@ -55,6 +55,7 @@ const OPTIONAL_ARRAY_FIELDS = [
+ 	"recoveryStates",
+ 	"recoveryDispatches",
+ 	"recoveryHistory",
++	"launchRefusals",
+ ] as const;
+ 
+ const OPTIONAL_BOOLEAN_FIELDS = ["standaloneExplorer", "isPlaceholder", "titleAliasUsed"] as const;
+@@ -85,6 +86,13 @@ function executionShapeError(value: unknown, index: number): string | undefined
+ 			return `${label}.envelope requires maxTokens or maxWallMs`;
+ 		}
+ 	}
++	if (value.originalEnvelope !== undefined) {
++		const originalError = envelopeShapeError(value.originalEnvelope, `${label}.originalEnvelope`);
++		if (originalError) return originalError;
++	}
++	if (value.envelopeClamped !== undefined && typeof value.envelopeClamped !== "boolean") return `${label}.envelopeClamped must be a boolean`;
++	const requestBudgetError = requestBudgetShapeError(value.requestBudget, `${label}.requestBudget`);
++	if (requestBudgetError) return requestBudgetError;
+ 	if (value.toolBudget !== undefined) {
+ 		if (!isPlainObject(value.toolBudget)) return `${label}.toolBudget must be an object`;
+ 		if (!Number.isSafeInteger(value.toolBudget.hard) || (value.toolBudget.hard as number) < 0) {
+@@ -154,6 +162,43 @@ function executionShapeError(value: unknown, index: number): string | undefined
+ 	return undefined;
+ }
+ 
++function requestBudgetShapeError(value: unknown, label: string): string | undefined {
++	if (value === undefined) return undefined;
++	if (!isPlainObject(value)) return `${label} must be an object`;
++	for (const field of ["requestId", "observedAt"] as const) if (typeof value[field] !== "string") return `${label}.${field} must be a string`;
++	if (value.requestDeadline !== null && typeof value.requestDeadline !== "string") return `${label}.requestDeadline must be a string or null`;
++	if (value.remainingMs !== null && (!Number.isSafeInteger(value.remainingMs) || (value.remainingMs as number) < 0)) return `${label}.remainingMs must be a non-negative safe integer or null`;
++	if (value.availableMs !== null && !Number.isSafeInteger(value.availableMs)) return `${label}.availableMs must be a safe integer or null`;
++	if (!Number.isSafeInteger(value.reserveMs) || (value.reserveMs as number) <= 0) return `${label}.reserveMs must be a positive safe integer`;
++	if (value.unavailableReason !== undefined && !["request-not-started", "request-mismatch", "observation-failed"].includes(value.unavailableReason as string)) return `${label}.unavailableReason is invalid`;
++	return undefined;
++}
++
++function envelopeShapeError(value: unknown, label: string): string | undefined {
++	if (!isPlainObject(value)) return `${label} must be an object`;
++	if (!["delegation-param", "default", "operator-config"].includes(value.source as string)) return `${label}.source is invalid`;
++	for (const field of ["maxTokens", "maxWallMs"] as const) {
++		const bound = value[field];
++		if (bound !== undefined && (!Number.isSafeInteger(bound) || (bound as number) <= 0)) return `${label}.${field} must be a positive finite safe integer`;
++	}
++	if (value.maxTokens === undefined && value.maxWallMs === undefined) return `${label} requires maxTokens or maxWallMs`;
++	return undefined;
++}
++
++function launchRefusalShapeError(value: unknown, index: number): string | undefined {
++	const label = `task.launchRefusals[${index}]`;
++	if (!isPlainObject(value)) return `${label} must be an object`;
++	for (const field of ["executionId", "kind", "code", "reason"] as const) if (typeof value[field] !== "string") return `${label}.${field} must be a string`;
++	if (value.code !== "REQUEST_REMAINING_INSUFFICIENT") return `${label}.code is invalid`;
++	const envelopeError = envelopeShapeError(value.originalEnvelope, `${label}.originalEnvelope`);
++	if (envelopeError) return envelopeError;
++	if (value.requestBudget === undefined) return `${label}.requestBudget is required`;
++	const requestError = requestBudgetShapeError(value.requestBudget, `${label}.requestBudget`);
++	if (requestError) return requestError;
++	if (value.reportOnly !== undefined && typeof value.reportOnly !== "boolean") return `${label}.reportOnly must be a boolean`;
++	return undefined;
++}
++
+ /**
+  * R2 — a syntactically valid envelope can still carry a record whose fields
+  * have the wrong shape; diagnostics dereferences executions, usage.children,
+@@ -179,6 +224,12 @@ function recordShapeError(task: unknown): string | undefined {
+ 		if (task[field] !== undefined && typeof task[field] !== "number") return `task.${field} must be a number`;
+ 	}
+ 	if (task.spec !== undefined && !isPlainObject(task.spec)) return "task.spec must be an object";
++	if (Array.isArray(task.launchRefusals)) {
++		for (let i = 0; i < task.launchRefusals.length; i += 1) {
++			const error = launchRefusalShapeError(task.launchRefusals[i], i);
++			if (error) return error;
++		}
++	}
+ 	if (task.usage !== undefined) {
+ 		if (!isPlainObject(task.usage)) return "task.usage must be an object";
+ 		if (task.usage.children !== undefined) {
+diff --git a/orchestrate.ts b/orchestrate.ts
+index d59b416..71b35a9 100644
+--- a/orchestrate.ts
++++ b/orchestrate.ts
+@@ -74,14 +74,17 @@ import type {
+ 	DelegationKind,
+ 	EvidenceRef,
+ 	ExecutionCapability,
++	ExecutionEnvelope,
+ 	ExecutionLifecycleStatus,
+ 	GitProbeFailure,
+ 	LoadedPluginFingerprint,
+ 	ReviewFinding,
+ 	ReviewResult,
+ 	ReviewVerdict,
++	RequestExecutionBudget,
+ 	RootVerdictRefusal,
+ 	TaskExecutionRecord,
++	TaskLaunchRefusal,
+ 	TaskState,
+ 	TaskCompletionKind,
+ 	TaskRole,
+@@ -408,6 +411,10 @@ export interface PlannerTaskDiagnostics {
+ 		durationBasis?: "request-outbound-to-finalization";
+ 		requestClosed?: string;
+ 		requestClosedAt?: string;
++		originalEnvelope?: ExecutionEnvelope;
++		effectiveEnvelope?: ExecutionEnvelope;
++		envelopeClamped: boolean;
++		requestBudget?: RequestExecutionBudget;
+ 		terminationConfirmed: boolean;
+ 		confirmationBasis?: string;
+ 		evidenceIncomplete?: boolean;
+@@ -418,6 +425,7 @@ export interface PlannerTaskDiagnostics {
+ 		probeFailuresTruncated?: number;
+ 		guidance: string[];
+ 	}[];
++	launchRefusals: TaskLaunchRefusal[];
+ 	/** Executions on the record before the display cap was applied. */
+ 	totalExecutions: number;
+ 	/** True when any list was capped; a narrower query (executionId) shows the rest. */
+@@ -753,6 +761,20 @@ export class PlannerOrchestrator {
+ 			truncated = true;
+ 			return text.slice(0, max);
+ 		};
++		const projectEnvelope = (envelope: ExecutionEnvelope) => ({
++			...(envelope.maxTokens !== undefined ? { maxTokens: envelope.maxTokens } : {}),
++			...(envelope.maxWallMs !== undefined ? { maxWallMs: envelope.maxWallMs } : {}),
++			source: envelope.source,
++		});
++		const projectRequestBudget = (budget: RequestExecutionBudget) => ({
++			requestId: capped(budget.requestId, 200),
++			requestDeadline: budget.requestDeadline ? capped(budget.requestDeadline, 100) : null,
++			remainingMs: budget.remainingMs,
++			observedAt: capped(budget.observedAt, 100),
++			reserveMs: budget.reserveMs,
++			availableMs: budget.availableMs,
++			...(budget.unavailableReason ? { unavailableReason: budget.unavailableReason } : {}),
++		});
+ 		const filteredExecutions = (taskRef.executions ?? [])
+ 			.filter((execution) => executionId === undefined || execution.executionId === executionId);
+ 		const totalExecutions = filteredExecutions.length;
+@@ -828,6 +850,10 @@ export class PlannerOrchestrator {
+ 					...(execution.durationBasis ? { durationBasis: execution.durationBasis } : {}),
+ 					...(execution.requestClosed ? { requestClosed: capped(execution.requestClosed, 200) } : {}),
+ 					...(execution.requestClosedAt ? { requestClosedAt: capped(execution.requestClosedAt, 100) } : {}),
++					...(execution.originalEnvelope ? { originalEnvelope: projectEnvelope(execution.originalEnvelope) } : {}),
++					...(execution.envelope ? { effectiveEnvelope: projectEnvelope(execution.envelope) } : {}),
++					envelopeClamped: execution.envelopeClamped === true,
++					...(execution.requestBudget ? { requestBudget: projectRequestBudget(execution.requestBudget) } : {}),
+ 					terminationConfirmed: execution.terminationConfirmed === true,
+ 					...(execution.confirmationBasis ? { confirmationBasis: capped(execution.confirmationBasis, 200) } : {}),
+ 					...(execution.evidenceIncomplete === true ? { evidenceIncomplete: true } : {}),
+@@ -875,8 +901,22 @@ export class PlannerOrchestrator {
+ 			truncated = true;
+ 			cappedGuidance.push(`${guidance.length - cappedGuidance.length} more guidance line(s) omitted — narrow the query with executionId`);
+ 		}
++		const filteredRefusals = (taskRef.launchRefusals ?? [])
++			.filter((refusal) => executionId === undefined || refusal.executionId === executionId);
++		const shownRefusals = filteredRefusals
++				.slice(-(MAX_TASK_DIAGNOSTIC_EXECUTIONS))
++				.map((refusal) => ({
++					executionId: capped(refusal.executionId, 200),
++					kind: capped(refusal.kind, 100) as DelegationKind,
++					code: refusal.code,
++					reason: capped(refusal.reason, 400),
++					originalEnvelope: projectEnvelope(refusal.originalEnvelope),
++					requestBudget: projectRequestBudget(refusal.requestBudget),
++					...(refusal.reportOnly ? { reportOnly: true } : {}),
++				}));
++		if (filteredRefusals.length > shownRefusals.length) truncated = true;
+ 		return {
+-			diagnostics: {
++				diagnostics: {
+ 				taskId: capped(record.taskId, 200),
+ 				state: capped(record.state, 100) as TaskState,
+ 				...(record.stateReason ? { stateReason: capped(record.stateReason, 400) } : {}),
+@@ -897,7 +937,8 @@ export class PlannerOrchestrator {
+ 				reports: record.reports?.length ?? 0,
+ 				reviews: record.reviews?.length ?? 0,
+ 				sessionLog: this.describeSessionLog(record, shownExecutions, options, capped),
+-				executions,
++					executions,
++					launchRefusals: shownRefusals,
+ 				totalExecutions,
+ 				truncated,
+ 				guidance: cappedGuidance,
+diff --git a/p1-delegation.test.mjs b/p1-delegation.test.mjs
+index a97c2a6..3089e77 100644
+--- a/p1-delegation.test.mjs
++++ b/p1-delegation.test.mjs
+@@ -93,7 +93,7 @@ async function fixture(name, options = {}) {
+ 	const tools = new Map();
+ 	const handlers = new Map();
+ 	const entries = [];
+-	const f = { name, cwd, tools, handlers, entries, launches: [], cancels: [], registrations: [], gitPaths: [], pending: options.pending === true, sequence: 0 };
++	const f = { name, cwd, tools, handlers, entries, launches: [], cancels: [], registrations: [], gitPaths: [], pending: options.pending === true, sequence: 0, onRequest: undefined };
+ 	const events = {
+ 		on(event, fn) {
+ 			const set = listeners.get(event) ?? new Set();
+@@ -136,6 +136,7 @@ async function fixture(name, options = {}) {
+ 	});
+ 	events.on(REQUEST, request => {
+ 		f.launches.push(request);
++		f.onRequest?.(request);
+ 		if (!options.omitStarted) events.emit(STARTED, { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId });
+ 		if (!f.pending) queueMicrotask(() => f.respond(request));
+ 	});
+@@ -218,6 +219,11 @@ try {
+ 	assert.equal(bound.launches[0].toolBudget, undefined, "ordinary worker omits launcher toolBudget");
+ 	assert.deepEqual(bound.task(taskId).executions[0].envelope,
+ 		{ maxTokens: 100_000, maxWallMs: 600_000, source: "default" });
++	assert.deepEqual(bound.task(taskId).executions[0].originalEnvelope,
++		{ maxTokens: 100_000, maxWallMs: 600_000, source: "default" });
++	assert.equal(bound.task(taskId).executions[0].envelopeClamped, false);
++	assert.deepEqual(created.details.executionEnvelope.effective, bound.task(taskId).executions[0].envelope);
++	assert.deepEqual(created.details.executionEnvelope.original, bound.task(taskId).executions[0].originalEnvelope);
+ 	assert.equal(bound.task(taskId).executions[0].rawTerminal.status, "completed", "normal public terminal is persisted verbatim");
+ 	const storedBefore = structuredClone(bound.task(taskId).spec);
+ 	const rebound = await bound.call("planner_redelegate", {
+@@ -247,7 +253,11 @@ try {
+ 		error => error?.code === "TASK_FOREIGN_WORKSPACE");
+ 	assert.equal(foreign.launches.length, 0, "caller cwd cannot bypass host-context workspace admission");
+ 
+-	const review = await bound.call("planner_redelegate", { taskId, role: "reviewer", envelope: { maxWallMs: 1 } });
++	const reviewRealNow = Date.now;
++	Date.now = () => reviewRealNow() + 850_000;
++	let review;
++	try { review = await bound.call("planner_redelegate", { taskId, role: "reviewer", envelope: { maxWallMs: 1 } }); }
++	finally { Date.now = reviewRealNow; }
+ 	assert.equal(review.details.review.taskId, taskId);
+ 	assert.match(review.details.warnings.join("\n"), /ignored envelope for role=reviewer/);
+ 	assert.equal(bound.launches.at(-1).agent, "reviewer");
+@@ -255,6 +265,7 @@ try {
+ 	assert.match(bound.launches.at(-1).task, /Preserve this stored objective/);
+ 	assert.doesNotMatch(bound.launches.at(-1).task, /forged objective/);
+ 	assert.equal(bound.task(taskId).executions.length, 2, "reviewer does not add an execution envelope record");
++	assert.ok(review.details.request.remainingMs < 60_000, "reviewer can use the Request window inside the ordinary-execution reserve");
+ 
+ 	const observation = await fixture("observation");
+ 	const observed = await observation.call("planner_delegate", {
+@@ -272,7 +283,7 @@ try {
+ 	const defaults = await fixture("operator-default", {
+ 		pending: true,
+ 		executionDefaults: { MAX_TOKENS: 100_000, MAX_WALL_MS: 15 },
+-		requestLimits: { activeMs: 2_000 },
++		requestLimits: { activeMs: 90_000 },
+ 	});
+ 	const runaway = await defaults.call("planner_delegate", definition);
+ 	assert.equal(runaway.details.termination.reason, "worker_runaway");
+@@ -281,12 +292,48 @@ try {
+ 	assert.deepEqual(defaults.task(runaway.details.taskId).executions[0].envelope,
+ 		{ maxTokens: 100_000, maxWallMs: 15, source: "operator-config" });
+ 
++	const defaultClamp = await fixture("default-request-clamp", { requestLimits: { activeMs: 120_000 } });
++	const defaultClamped = await defaultClamp.call("planner_delegate", definition);
++	const defaultClampedExecution = defaultClamp.task(defaultClamped.details.taskId).executions[0];
++	assert.deepEqual(defaultClampedExecution.originalEnvelope,
++		{ maxTokens: 100_000, maxWallMs: 600_000, source: "default" });
++	assert.equal(defaultClampedExecution.envelope.source, "default");
++	assert.ok(defaultClampedExecution.envelope.maxWallMs > 0 && defaultClampedExecution.envelope.maxWallMs <= 60_000);
++	assert.equal(defaultClampedExecution.envelopeClamped, true);
++
+ 	defaults.pending = false;
+ 	process.env[EXECUTION_DEFAULT_ENV_VARS.MAX_TOKENS] = "2";
+ 	process.env[EXECUTION_DEFAULT_ENV_VARS.MAX_WALL_MS] = "3";
+ 	const explicit = await defaults.call("planner_delegate", { ...definition, envelope: { maxTokens: 7 } });
+-	assert.deepEqual(defaults.task(explicit.details.taskId).executions[0].envelope,
+-		{ maxTokens: 7, source: "delegation-param" }, "explicit envelope replaces configured defaults without raising it");
++	const explicitExecution = defaults.task(explicit.details.taskId).executions[0];
++	assert.deepEqual(explicitExecution.originalEnvelope,
++		{ maxTokens: 7, source: "delegation-param" }, "explicit envelope still replaces configured defaults without token inheritance");
++	assert.equal(explicitExecution.envelope.maxTokens, 7);
++	assert.equal(explicitExecution.envelope.source, "delegation-param");
++	assert.equal(Number.isSafeInteger(explicitExecution.envelope.maxWallMs), true, "token-only explicit envelope receives a Request-derived wall cap");
++	assert.equal(explicitExecution.envelopeClamped, true);
++	assert.deepEqual(explicit.details.executionEnvelope.effective, explicitExecution.envelope);
++	assert.deepEqual(explicit.details.executionEnvelope.original, explicitExecution.originalEnvelope);
++	assert.equal(explicit.details.executionEnvelope.envelopeClamped, true);
++	assert.match(explicit.details.warnings.join("\n"), /wall envelope clamped/);
++
++	const noRemainder = await fixture("request-reserve-refusal", { requestLimits: { activeMs: 60_000 } });
++	let refused;
++	try { await noRemainder.call("planner_delegate", definition); }
++	catch (error) { refused = error; }
++	assert.equal(refused?.code, "REQUEST_REMAINING_INSUFFICIENT");
++	assert.ok(refused?.details?.launchRefusal);
++	assert.equal(noRemainder.launches.length, 0, "reserve refusal emits no public REQUEST");
++	const refusedTask = noRemainder.task(refused.taskId);
++	assert.equal(refusedTask.executions.length, 0);
++	assert.equal(refusedTask.launchRefusals.length, 1);
++	assert.equal(refusedTask.state, "planning");
++	const refusedRequest = requestRecords().find((record) => record.workspace === noRemainder.cwd).current;
++	assert.equal(refusedRequest.childLaunches, 0, "reserve refusal consumes no Request child allowance");
++	assert.equal(refusedRequest.claims.length, 0, "reserve refusal creates no Request claim");
++	assert.ok(refusedRequest.failures.some((failure) => failure.family === "budget"), "reserve refusal uses the budget failure family");
++	const refusalDiagnostics = await noRemainder.call("planner_tasks", { taskId: refused.taskId });
++	assert.equal(refusalDiagnostics.details.diagnostics.launchRefusals[0].code, "REQUEST_REMAINING_INSUFFICIENT");
+ 
+ 	const invalid = await fixture("invalid-config");
+ 	const beforeInvalid = ledgerFiles().length;
+@@ -598,7 +645,10 @@ try {
+ 		["fixture.txt", "invented.txt"],
+ 	);
+ 
+-	const longWall = await fixture("large-wall-config", { executionDefaults: { MAX_WALL_MS: 2_147_483_648 } });
++	const longWall = await fixture("large-wall-config", {
++		executionDefaults: { MAX_WALL_MS: 2_147_483_648 },
++		requestLimits: { activeMs: 2_147_483_648 + 120_000 },
++	});
+ 	const originalTimer = globalThis.setTimeout;
+ 	const delays = [];
+ 	globalThis.setTimeout = (fn, ms, ...args) => { delays.push(ms); return originalTimer(fn, ms, ...args); };
+@@ -616,8 +666,14 @@ try {
+ 		// Leave time for the real ledger fsync before dispatch; still prove
+ 		// the Request deadline cancels well before the execution envelope.
+ 		executionDefaults: { MAX_TOKENS: 100_000, MAX_WALL_MS: 10_000 },
+-		requestLimits: { activeMs: 1_000 },
++		requestLimits: { activeMs: 90_000 },
+ 	});
++	requestFirst.onRequest = () => {
++		const realNow = Date.now;
++		Date.now = () => realNow() + 90_001;
++		try { void requestFirst.handlers.get("before_provider_request")({}, requestFirst.ctx); }
++		finally { Date.now = realNow; }
++	};
+ 	const cutoff = await requestFirst.call("planner_delegate", definition);
+ 	assert.equal(cutoff.details.termination.reason, "operator_cancel", "earlier Request deadline wins over execution default");
+ 	assert.equal(cutoff.details.executionTiming.requestClosed, "active-time-limit");
+diff --git a/request-events.ts b/request-events.ts
+index dec19ed..613dbf4 100644
+--- a/request-events.ts
++++ b/request-events.ts
+@@ -29,6 +29,7 @@ export function requestErrorFamily(tool: string, error: unknown): string {
+ 	if (["EACCES", "EPERM", "ENOENT", "ENOSPC", "EIO", "ENVIRONMENT_UNVERIFIABLE", "STORE_ERROR"].includes(code)) return "environment";
+ 	if (["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "EAI_AGAIN", "RATE_LIMITED", "PROVIDER_UNAVAILABLE"].includes(code)) return "transient";
+ 	if (code === "WRITER_HOLD") return "stop-unconfirmed";
++	if (code === "REQUEST_REMAINING_INSUFFICIENT") return "budget";
+ 	if (e?.name === "DelegationAborted" || e?.name === "AbortError") return "cancel";
+ 	const operation = tool === "planner_delegate" || tool === "planner_redelegate" ? "delegation" : tool;
+ 	if (code.startsWith("TASKSPEC_") || code === "ARGUMENTS_INVALID") return `contract:${operation}:arguments`;
+diff --git a/request-stop.test.mjs b/request-stop.test.mjs
+index a87464c..ce53ce1 100644
+--- a/request-stop.test.mjs
++++ b/request-stop.test.mjs
+@@ -61,6 +61,12 @@ async function fixture(name, options = {}) {
+ 		const snapshot = f.state();
+ 		assert.ok(snapshot.claims.some(c => c.key === request.requestId), "durable request claim exists before any child starts");
+ 		if (f.onRequest) f.onRequest(request);
++		if (f.expireAfterLaunchMs !== undefined) {
++			const realNow = Date.now;
++			Date.now = () => realNow() + f.expireAfterLaunchMs;
++			try { void handlers.get("before_provider_request")({}, ctx); }
++			finally { Date.now = realNow; }
++		}
+ 		if (!f.pending) queueMicrotask(() => f.respond(request));
+ 	});
+ 	events.on(CANCEL, cancel => {
+@@ -256,8 +262,9 @@ try {
+ 	assert.equal(recoveries.launches.length, 3);
+ 
+ 	for (const confirmed of [true, false]) {
+-		const stop = await fixture(`deadline-${confirmed}`, { limits: { activeMs: 80 } });
++		const stop = await fixture(`deadline-${confirmed}`, { limits: { activeMs: 90_000 } });
+ 		stop.pending = true; stop.cancelConfirmed = confirmed;
++		stop.expireAfterLaunchMs = 90_001;
+ 		const outcome = await stop.call("planner_delegate", worker);
+ 		assert.equal(stop.state().closedReason, "active-time-limit");
+ 		assert.equal(stop.cancels.length, 1);
+@@ -276,8 +283,9 @@ try {
+ 		} else assert.equal(stop.task(outcome.details.taskId).writerHold, undefined);
+ 	}
+ 
+-	const held = await fixture("held-reload", { limits: { activeMs: 80 } });
++	const held = await fixture("held-reload", { limits: { activeMs: 90_000 } });
+ 	held.pending = true; held.cancelConfirmed = false;
++	held.expireAfterLaunchMs = 90_001;
+ 	const heldOutcome = await held.call("planner_delegate", worker);
+ 	await held.reload();
+ 	assert.ok(held.task(heldOutcome.details.taskId).writerHold);
+diff --git a/task.ts b/task.ts
+index d62c6b8..a9a1446 100644
+--- a/task.ts
++++ b/task.ts
+@@ -34,6 +34,7 @@ import type {
+ 	ReviewResult,
+ 	RootVerdictRefusalRecord,
+ 	TaskExecutionRecord,
++	TaskLaunchRefusal,
+ 	TaskFinding,
+ 	TaskRole,
+ 	TaskScope,
+@@ -1250,6 +1251,8 @@ export interface TaskRecord {
+ 	 * attribution that links it to the previous execution.
+ 	 */
+ 	executions: TaskExecutionRecord[];
++	/** ADR-0010 refusals occur after A_run but before an execution is created. */
++	launchRefusals?: TaskLaunchRefusal[];
+ 	/**
+ 	 * E01 — findings that outlive their execution. A later execution may prove
+ 	 * a change was restored, but only a recorded review closes the finding.
+@@ -1642,6 +1645,7 @@ export class TaskStore {
+ 	restore(record: TaskRecord): void {
+ 		if (this.tasks.has(record.taskId)) return;
+ 		if (!Array.isArray(record.executions)) record.executions = [];
++		if (!Array.isArray(record.launchRefusals)) record.launchRefusals = [];
+ 		if (!Array.isArray(record.findings)) record.findings = [];
+ 		if (!Array.isArray(record.successors)) record.successors = [];
+ 		if (!Array.isArray(record.recoveryStates)) record.recoveryStates = [];
+@@ -1749,6 +1753,15 @@ export class TaskStore {
+ 		return this.touch(record);
+ 	}
+ 
++	recordLaunchRefusal(taskId: string, refusal: TaskLaunchRefusal): TaskRecord {
++		const record = this.require(taskId);
++		const refusals = record.launchRefusals ?? (record.launchRefusals = []);
++		if (!refusals.some((item) => item.executionId === refusal.executionId)) {
++			refusals.push(structuredClone(refusal));
++		}
++		return this.touch(record);
++	}
++
+ 	/** E01 — fill in the result-receive sample (C_report) and attribution. */
+ 	completeExecution(
+ 		taskId: string,
+diff --git a/types.ts b/types.ts
+index ab13c87..73c1e99 100644
+--- a/types.ts
++++ b/types.ts
+@@ -313,6 +313,28 @@ export interface ExecutionEnvelope {
+ 	source: "delegation-param" | "default" | "operator-config";
+ }
+ 
++/** ADR-0010 admission observation from the original enclosing Request. */
++export interface RequestExecutionBudget {
++	requestId: string;
++	requestDeadline: string | null;
++	remainingMs: number | null;
++	observedAt: string;
++	reserveMs: number;
++	availableMs: number | null;
++	unavailableReason?: "request-not-started" | "request-mismatch" | "observation-failed";
++}
++
++/** A durable ordinary-execution refusal recorded before any child launch. */
++export interface TaskLaunchRefusal {
++	executionId: string;
++	kind: DelegationKind;
++	code: "REQUEST_REMAINING_INSUFFICIENT";
++	reason: string;
++	originalEnvelope: ExecutionEnvelope;
++	requestBudget: RequestExecutionBudget;
++	reportOnly?: boolean;
++}
++
+ /** The exact public launcher tool budget sent with one execution. */
+ export interface ExecutionToolBudget {
+ 	soft?: number;
+@@ -405,6 +427,12 @@ export interface TaskExecutionRecord {
+ 	usageComplete?: boolean;
+ 	/** The finite runaway envelope this ordinary execution ran under. */
+ 	envelope?: ExecutionEnvelope;
++	/** Caller/default envelope before the enclosing Request wall cap was applied. */
++	originalEnvelope?: ExecutionEnvelope;
++	/** True when ADR-0010 lowered or supplied the effective wall dimension. */
++	envelopeClamped?: boolean;
++	/** Original Request observation used for the admission decision. */
++	requestBudget?: RequestExecutionBudget;
+ 	/** Public launcher capability sent on REQUEST; absent for ordinary executions. */
+ 	toolBudget?: ExecutionToolBudget;
+ 	/** Registered closed-tool agent used for a report-only correction. */

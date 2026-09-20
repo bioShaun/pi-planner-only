@@ -1,0 +1,38 @@
+{
+  "runDir": "/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/strict-run-ah68GJ",
+  "launcherExit": 0,
+  "parent": {
+    "thread": "01a0c101-4502-7013-b685-b6773172a348",
+    "rollout": "/home/tcuni-claw/.codex/sessions/2026/09/21/rollout-2026-09-21T06-48-01-01a0c101-4502-7013-b685-b6773172a348.jsonl",
+    "model": "gpt-6-astra",
+    "effort": "low",
+    "sandbox": "read-only",
+    "startedAt": "2026-09-20T22:48:01.139Z",
+    "taskComplete": "2026-09-20T22:53:00.767Z",
+    "elapsedSeconds": 299.6
+  },
+  "child": {
+    "thread": "01a0c102-2581-75c2-848f-6516e19c018e",
+    "rollout": "/home/tcuni-claw/.codex/sessions/2026/09/21/rollout-2026-09-21T06-48-58-01a0c102-2581-75c2-848f-6516e19c018e.jsonl",
+    "model": "gpt-5.6-sol",
+    "effort": "high",
+    "sandbox": "read-only",
+    "startedAt": "2026-09-20T22:48:58.527Z",
+    "taskComplete": "2026-09-20T22:52:40.945Z",
+    "elapsedSeconds": 222.4,
+    "verdictFirstLine": "PASS (final)"
+  },
+  "externalTimeoutSeconds": 600,
+  "residueCwdUnknown": [],
+  "summaryMethod": "Root Python extraction across date boundary; prior hardcoded-date summarizer failure retained",
+  "recordedAtUtc": "2026-09-20T22:54:26.536025+00:00",
+  "sandboxProcObservation": [
+    {
+      "pid": "1",
+      "cwd": "/home/tcuni-claw/pi/pi-planner-only",
+      "startedEpoch": 1789944866.27
+    }
+  ],
+  "residueCodexProcessesStartedAfterLaunch": [],
+  "residueMethod": "Normal-terminal ps -C codex -o pid=,lstart=,args=, tool chunk 642f0a, exit 0. All nine host Codex processes predate this run. Sandbox PID 1 is the current executor, not a host residue."
+}
