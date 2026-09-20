@@ -1,0 +1,30 @@
+ M .scratch/stability-next-20260920/issue06/applied/after.sha256
+ M .scratch/stability-next-20260920/issue06/applied/applied-at.txt
+ M .scratch/stability-next-20260920/issue06/astra-planner-proposed.md
+ M .scratch/stability-next-20260920/issue06/diagnosis.md
+ M .scratch/stability-next-20260920/issue06/global-budget.patch
+ M .scratch/stability-next-20260920/issue06/review-readonly-proposed-budget.sh
+ M .scratch/stability-next-20260920/issue06/summarize-run.mjs
+ M .scratch/stability-next-20260920/issues/05-measurement.md
+ M .scratch/stability-next-20260920/issues/07-execution-duration-and-request-remaining.md
+ M README.md
+ M delegate.test.mjs
+ M delegate.ts
+ M diagnostics-regression.test.mjs
+ M index.ts
+ M ledger-store.test.mjs
+ M ledger-store.ts
+ M orchestrate.ts
+ M p1-delegation.test.mjs
+ M request-control.test.mjs
+ M request-control.ts
+ M types.ts
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T125607Z.command.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T125607Z.harness-before.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T125607Z.log
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T125607Z.source-before.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T125607Z.started-at.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260920T125607Z.tmp-root.txt
+?? .scratch/stability-next-20260920/issue07-step1/
+?? .scratch/stability-next-20260920/release-run-LQKWmo/
+?? .scratch/stability-next-20260920/review-claude-20260920/

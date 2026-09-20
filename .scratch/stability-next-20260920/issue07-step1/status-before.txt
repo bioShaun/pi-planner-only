@@ -1,0 +1,11 @@
+ M .scratch/stability-next-20260920/issue06/applied/after.sha256
+ M .scratch/stability-next-20260920/issue06/applied/applied-at.txt
+ M .scratch/stability-next-20260920/issue06/astra-planner-proposed.md
+ M .scratch/stability-next-20260920/issue06/diagnosis.md
+ M .scratch/stability-next-20260920/issue06/global-budget.patch
+ M .scratch/stability-next-20260920/issue06/review-readonly-proposed-budget.sh
+ M .scratch/stability-next-20260920/issue06/summarize-run.mjs
+ M .scratch/stability-next-20260920/issues/05-measurement.md
+ M .scratch/stability-next-20260920/issues/07-execution-duration-and-request-remaining.md
+?? .scratch/stability-next-20260920/issue07-step1/
+?? .scratch/stability-next-20260920/review-claude-20260920/

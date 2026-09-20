@@ -518,6 +518,25 @@ function snapshotPath(dir, taskId) {
 		const historical = ledger.read("T-20260918-s11");
 		assert.equal(historical.status, "ok", "S11: a record missing fields predating them is not corrupt");
 
+		writeEnvelope("T-20260918-timing", shapedRecord("T-20260918-timing", { executions: [{
+			executionId: "call-timing",
+			aRun: {},
+			requestId: "request-1",
+			launchedAt: "2026-09-20T10:00:00.000Z",
+			startedAt: null,
+			endedAt: "2026-09-20T10:00:01.000Z",
+			durationMs: 1000,
+			durationBasis: "request-outbound-to-finalization",
+		}] }));
+		const timing = ledger.read("T-20260918-timing");
+		assert.equal(timing.status, "ok", "timing fields and explicit unknown STARTED survive ledger validation");
+		assert.equal(timing.record.executions[0].durationMs, 1000);
+
+		writeEnvelope("T-20260918-bad-timing", shapedRecord("T-20260918-bad-timing", { executions: [{
+			executionId: "call-bad-timing", aRun: {}, durationMs: -1,
+		}] }));
+		assert.match(ledger.read("T-20260918-bad-timing").reason, /durationMs must be a non-negative/);
+
 		writeEnvelope("T-20260918-s12", shapedRecord("T-20260918-s12", { executions: {} }));
 		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
 		const diagnostics = orch.describeTaskDiagnostics(cwd, "T-20260918-s12");

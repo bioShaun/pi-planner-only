@@ -82,8 +82,16 @@ try {
 	let now = 1000, callback, rootAborts = 0;
 	const timedStore = new MemoryStorage();
 	const timed = make(timedStore, { now: () => now, setTimer: fn => { callback = fn; return { unref() {} }; }, clearTimer() {}, stopRoot: () => { rootAborts++; return "requested"; } });
+	assert.deepEqual(timed.observe(), {
+		requestId: timed.requestId,
+		requestDeadline: null,
+		remainingMs: null,
+		observedAt: "1970-01-01T00:00:01.000Z",
+		unavailableReason: "request-not-started",
+	});
 	tool(timed, "start");
 	assert.equal(timed.snapshot().deadline, 901000);
+	assert.equal(timed.observe().remainingMs, 900000);
 	now = 901000; callback();
 	assert.equal(timed.snapshot().closedReason, "active-time-limit");
 	assert.equal(timed.snapshot().rootStop, "requested");
@@ -96,6 +104,25 @@ try {
 	timed.settle();
 	const restoredTime = make(timedStore, { now: () => now });
 	assert.equal(restoredTime.snapshot().deadline, 901000);
+	assert.equal(restoredTime.observe().remainingMs, 0, "restored Request keeps its original deadline");
+	const closedTimingId = restoredTime.requestId;
+	const closedTiming = restoredTime.closure(closedTimingId);
+	assert.equal(closedTiming.requestId, closedTimingId);
+	assert.equal(closedTiming.requestClosed, "active-time-limit");
+	assert.equal(closedTiming.requestClosedAt, "1970-01-01T00:15:01.000Z");
+	restoredTime.settle();
+	assert.equal(restoredTime.input("interactive"), true);
+	assert.notEqual(restoredTime.requestId, closedTimingId);
+	assert.equal(restoredTime.observe(closedTimingId).requestId, closedTimingId, "history lookup stays bound to the original Request");
+	assert.equal(restoredTime.observe(closedTimingId).remainingMs, 0, "re-entry cannot refresh an earlier Request deadline");
+	assert.equal(restoredTime.closure(closedTimingId).requestClosed, "active-time-limit", "cross-Request closure lookup does not use the new Request");
+
+	let passiveNow = 5_000;
+	const passive = make(new MemoryStorage(), { now: () => passiveNow, setTimer: () => ({ unref() {} }), clearTimer() {} });
+	tool(passive, "passive-start");
+	passiveNow += limits.activeMs + 1;
+	assert.equal(passive.observe().remainingMs, 0);
+	assert.equal(passive.snapshot().closedReason, undefined, "remaining-time observation is side-effect-free after the deadline");
 
 	const brokenStorage = new MemoryStorage();
 	const broken = make(brokenStorage);

@@ -38,6 +38,7 @@ const {
 	SUBAGENT_DELEGATION_CANCEL_EVENT: CANCEL,
 	SUBAGENT_DELEGATION_REQUEST_EVENT: REQUEST,
 	SUBAGENT_DELEGATION_RESPONSE_EVENT: RESPONSE,
+	SUBAGENT_DELEGATION_STARTED_EVENT: STARTED,
 } = await import("./subagent-delegation-contract.ts");
 const {
 	EXECUTION_DEFAULT_ENV_VARS,
@@ -135,6 +136,7 @@ async function fixture(name, options = {}) {
 	});
 	events.on(REQUEST, request => {
 		f.launches.push(request);
+		if (!options.omitStarted) events.emit(STARTED, { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId });
 		if (!f.pending) queueMicrotask(() => f.respond(request));
 	});
 	events.on(CANCEL, cancel => {
@@ -199,6 +201,20 @@ try {
 	assert.deepEqual(schemaKeys, ["envelope", "instructions", "recovery", "role", "taskId"]);
 	const created = await bound.call("planner_delegate", { ...definition, cwd: bound.cwd });
 	const taskId = created.details.taskId;
+	assert.equal(typeof created.details.request.requestId, "string");
+	assert.equal(typeof created.details.request.requestDeadline, "string");
+	assert.equal(typeof created.details.request.remainingMs, "number");
+	assert.equal(typeof created.details.request.observedAt, "string");
+	assert.equal(created.details.executionTiming.requestId, created.details.request.requestId);
+	assert.equal(typeof created.details.executionTiming.launchedAt, "string");
+	assert.equal(typeof created.details.executionTiming.startedAt, "string");
+	assert.equal(typeof created.details.executionTiming.endedAt, "string");
+	assert.equal(created.details.executionTiming.durationBasis, "request-outbound-to-finalization");
+	assert.equal(Number.isSafeInteger(created.details.executionTiming.durationMs), true);
+	const timingDiagnostics = await bound.call("planner_tasks", { taskId });
+	assert.equal(timingDiagnostics.details.diagnostics.request.requestId, created.details.request.requestId);
+	assert.equal(timingDiagnostics.details.diagnostics.executions[0].requestId, created.details.request.requestId);
+	assert.equal(timingDiagnostics.details.diagnostics.executions[0].durationBasis, "request-outbound-to-finalization");
 	assert.equal(bound.launches[0].toolBudget, undefined, "ordinary worker omits launcher toolBudget");
 	assert.deepEqual(bound.task(taskId).executions[0].envelope,
 		{ maxTokens: 100_000, maxWallMs: 600_000, source: "default" });
@@ -215,6 +231,8 @@ try {
 		acceptanceCriteria: ["forged acceptance"],
 		validation: { required: false },
 	});
+	assert.equal(rebound.details.request.requestId, created.details.request.requestId);
+	assert.equal(rebound.details.request.requestDeadline, created.details.request.requestDeadline, "same-Request re-entry keeps the original deadline");
 	const reboundPacket = JSON.parse(bound.launches.at(-1).task);
 	assert.deepEqual(reboundPacket.spec, storedBefore, "minimal rebind uses the complete stored TaskSpec");
 	assert.equal(reboundPacket.instructions, "temporary child-only note");
@@ -594,6 +612,7 @@ try {
 
 	const requestFirst = await fixture("request-first", {
 		pending: true,
+		omitStarted: true,
 		// Leave time for the real ledger fsync before dispatch; still prove
 		// the Request deadline cancels well before the execution envelope.
 		executionDefaults: { MAX_TOKENS: 100_000, MAX_WALL_MS: 10_000 },
@@ -601,6 +620,9 @@ try {
 	});
 	const cutoff = await requestFirst.call("planner_delegate", definition);
 	assert.equal(cutoff.details.termination.reason, "operator_cancel", "earlier Request deadline wins over execution default");
+	assert.equal(cutoff.details.executionTiming.requestClosed, "active-time-limit");
+	assert.equal(typeof cutoff.details.executionTiming.requestClosedAt, "string");
+	assert.equal(cutoff.details.executionTiming.startedAt, null, "waiting launch without STARTED remains explicitly unknown");
 	assert.equal(requestFirst.cancels.length, 1);
 	assert.equal(requestFirst.task(cutoff.details.taskId).executions[0].envelope.source, "operator-config");
 

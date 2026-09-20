@@ -22,11 +22,13 @@ import {
 	SUBAGENT_DELEGATION_CANCEL_EVENT,
 	SUBAGENT_DELEGATION_REQUEST_EVENT,
 	SUBAGENT_DELEGATION_RESPONSE_EVENT,
+	SUBAGENT_DELEGATION_STARTED_EVENT,
 	SUBAGENT_DELEGATION_UPDATE_EVENT,
 	type SubagentDelegationCancel,
 	type SubagentDelegationJsonSchemaObject,
 	type SubagentDelegationRequest,
 	type SubagentDelegationResponse,
+	type SubagentDelegationStarted,
 	type SubagentDelegationTerminalResponse,
 	type SubagentDelegationUpdate,
 	type SubagentDelegationUsage,
@@ -553,8 +555,12 @@ export const REVIEW_RESULT_SCHEMA = structuredClone(Type.Object(
 export interface DelegationLaunchHooks {
 	/** Synchronous final-admission hook, called immediately before REQUEST emit. */
 	beforeDispatch?: (request: SubagentDelegationRequest) => void;
+	/** Durable observation at the outbound REQUEST boundary, before listeners run. */
+	onRequest?: (request: SubagentDelegationRequest) => void;
 	/** Best-effort notification that REQUEST emit returned. Must not throw. */
 	onDispatch?: (request: SubagentDelegationRequest) => void;
+	/** Local receipt of an identity-matched launcher STARTED event. */
+	onStarted?: (started: SubagentDelegationStarted) => void;
 	/** 每条按身份三元组过滤后的 UPDATE。调用方不得阻塞。 */
 	onUpdate?: (update: SubagentDelegationUpdate) => void;
 	/**
@@ -681,6 +687,10 @@ export interface DelegationOptions {
 	 * the surface name and the mint-vs-bind clause adapt.
 	 */
 	toolName?: string;
+	/** Request identity that admitted this execution. */
+	requestId?: string;
+	/** Reads closure only from that original Request, including durable history. */
+	requestClosure?: () => { requestId: string; requestClosed: string; requestClosedAt: string } | undefined;
 }
 
 export class DelegationRefused extends Error {
@@ -1023,6 +1033,7 @@ export async function runDelegation(
 	// task.writerHold instead of releasing it in the finally (A4).
 	let releaseReservation = false;
 	let cancelRequestedAt: string | undefined;
+	let requestClosureAtCancel: ReturnType<NonNullable<DelegationOptions["requestClosure"]>>;
 	// P0-B — the launcher listens on an internal controller so the runaway
 	//    monitor fires the same CANCEL path as the operator's signal; exactly
 	//    one control action per execution (spec §3).
@@ -1036,6 +1047,22 @@ export async function runDelegation(
 	const armWallTimer = deps.wallClock?.setTimeout ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
 	const disarmWallTimer = deps.wallClock?.clearTimeout ?? ((handle: ReturnType<typeof setTimeout>) => clearTimeout(handle));
 	let launchStartedAt = 0;
+	let executionLaunchedAt: number | undefined;
+	const finalTiming = () => executionLaunchedAt === undefined
+		? { endedAt: nowIso() }
+		: {
+			endedAt: nowIso(),
+			durationMs: Math.max(0, Math.floor(wallNow() - executionLaunchedAt)),
+			durationBasis: "request-outbound-to-finalization" as const,
+		};
+	const requestClosurePatch = (endedReason: ExecutionEndedReason) => endedReason === "operator_cancel"
+		&& requestClosureAtCancel
+		&& requestClosureAtCancel.requestId === options.requestId
+		? {
+			requestClosed: requestClosureAtCancel.requestClosed,
+			requestClosedAt: requestClosureAtCancel.requestClosedAt,
+		}
+		: {};
 	let wallTimer: ReturnType<typeof setTimeout> | undefined;
 	const stopWallTimer = () => {
 		if (wallTimer) disarmWallTimer(wallTimer);
@@ -1054,6 +1081,7 @@ export async function runDelegation(
 	const onSignalAbort = () => {
 		if (cancelRequestedAt) return;
 		cancelRequestedAt = nowIso();
+		requestClosureAtCancel = options.requestClosure?.();
 		try {
 			deps.store.finalizeExecution(task.taskId, executionId, { status: "cancel_requested", cancelRequestedAt });
 		} catch { /* the abort path must not fail on a ledger write */ }
@@ -1127,6 +1155,8 @@ export async function runDelegation(
 			aRun,
 			capability: classification.capability,
 			capabilityBasis: classification.basis,
+			...(options.requestId ? { requestId: options.requestId } : {}),
+			startedAt: null,
 			...(envelope ? { envelope } : {}),
 			...(reportOnlyGrant ? {
 				reportOnly: true,
@@ -1286,7 +1316,8 @@ export async function runDelegation(
 				deps.store.finalizeExecution(task.taskId, executionId, {
 					status: q.confirmed ? "stopped" : "stop_unconfirmed",
 					endedReason,
-					endedAt: nowIso(),
+					...finalTiming(),
+					...requestClosurePatch(endedReason),
 					terminationConfirmed: q.confirmed,
 					...(q.confirmed
 						? { confirmationBasis: q.basis, ...(q.cTerminal ? { cTerminal: q.cTerminal } : {}) }
@@ -1355,6 +1386,21 @@ export async function runDelegation(
 				onDispatch: (outbound) => {
 					deps.store.markRevalidationRequestObserved(task.taskId, executionId, outbound.requestId);
 				},
+				onRequest: () => {
+					executionLaunchedAt = wallNow();
+					try {
+						deps.store.finalizeExecution(task.taskId, executionId, {
+							launchedAt: nowIso(),
+							startedAt: null,
+						});
+					} catch { /* timing observation cannot change launch admission */ }
+				},
+				onStarted: () => {
+					const execution = deps.store.executionById(task.taskId, executionId);
+					if (execution && execution.startedAt === null) {
+						deps.store.finalizeExecution(task.taskId, executionId, { startedAt: nowIso() });
+					}
+				},
 				onUpdate: (update) => {
 					// P0-B monitor — cumulative token snapshot, max not sum;
 					// unknown/regressing counts never reset the observed level.
@@ -1383,6 +1429,7 @@ export async function runDelegation(
 					deps.store.finalizeExecution(task.taskId, executionId, {
 						status: "stop_unconfirmed",
 						endedReason: abortedReason,
+						...requestClosurePatch(abortedReason),
 						...(cancelRequestedAt ? { cancelRequestedAt } : {}),
 						usageComplete: false,
 					});
@@ -1407,7 +1454,8 @@ export async function runDelegation(
 					deps.store.finalizeExecution(task.taskId, executionId, {
 						status: "stopped",
 						endedReason: abortedReason,
-						endedAt: nowIso(),
+						...finalTiming(),
+						...requestClosurePatch(abortedReason),
 						terminationConfirmed: true,
 						confirmationBasis: "no-launch",
 						usageComplete: false,
@@ -1451,7 +1499,7 @@ export async function runDelegation(
 			deps.store.finalizeExecution(task.taskId, executionId, {
 				status: "failed",
 				endedReason: "launch_failure",
-				endedAt: nowIso(),
+				...finalTiming(),
 				terminationConfirmed: true,
 				confirmationBasis: "no-launch",
 				usageComplete: false,
@@ -1539,7 +1587,8 @@ export async function runDelegation(
 			deps.store.finalizeExecution(task.taskId, executionId, {
 				status: q.confirmed ? "stopped" : "stop_unconfirmed",
 				endedReason,
-				endedAt: nowIso(),
+				...finalTiming(),
+				...requestClosurePatch(endedReason),
 				terminationConfirmed: q.confirmed,
 				...(q.confirmed
 					? { confirmationBasis: q.basis, ...(q.cTerminal ? { cTerminal: q.cTerminal } : {}) }
@@ -1635,7 +1684,7 @@ export async function runDelegation(
 			deps.store.finalizeExecution(task.taskId, executionId, {
 				status: "stop_unconfirmed",
 				endedReason: "normal",
-				endedAt: nowIso(),
+				...finalTiming(),
 				terminationConfirmed: false,
 				cReport,
 				interimSample: completionQuiescence.interim,
@@ -1781,7 +1830,7 @@ export async function runDelegation(
 		deps.store.completeExecution(task.taskId, executionId, {
 			status: "completed",
 			endedReason: "normal",
-			endedAt: nowIso(),
+			...finalTiming(),
 			terminationConfirmed: true,
 			confirmationBasis: completionQuiescence.basis,
 			usageComplete: response.usage !== undefined,
@@ -2288,6 +2337,7 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
 			&& (payload.nodeId === undefined || payload.nodeId === request.nodeId);
 		const cleanup = () => {
 			unsubscribeResponse();
+			unsubscribeStarted();
 			unsubscribeUpdate();
 			signal?.removeEventListener("abort", onAbort);
 			if (graceTimer !== undefined) clearTimeout(graceTimer);
@@ -2307,6 +2357,14 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
 			settled = true;
 			cleanup();
 			resolve(response);
+		});
+		const unsubscribeStarted = pi.events.on(SUBAGENT_DELEGATION_STARTED_EVENT, (payload) => {
+			if (settled) return;
+			const started = payload as SubagentDelegationStarted;
+			if (started.requestId !== request.requestId
+				|| started.ownerRunId !== request.ownerRunId
+				|| started.nodeId !== request.nodeId) return;
+			try { hooks?.onStarted?.(started); } catch { /* observation failure cannot disrupt the child */ }
 		});
 		const unsubscribeUpdate = pi.events.on(SUBAGENT_DELEGATION_UPDATE_EVENT, (payload) => {
 			if (settled) return;
@@ -2341,6 +2399,7 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
 			return;
 		}
 		inFlight.set(request.requestId, cancelPayload);
+		try { hooks?.onRequest?.(request); } catch { /* observation cannot change launch admission */ }
 		try {
 			pi.events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, request);
 		} catch {

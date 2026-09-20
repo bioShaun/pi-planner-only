@@ -21,6 +21,7 @@ import {
 	SUBAGENT_DELEGATION_CANCEL_EVENT,
 	SUBAGENT_DELEGATION_REQUEST_EVENT,
 	SUBAGENT_DELEGATION_RESPONSE_EVENT,
+	SUBAGENT_DELEGATION_STARTED_EVENT,
 	SUBAGENT_DELEGATION_UPDATE_EVENT,
 } from "./subagent-delegation-contract.ts";
 import { FINDING_CATEGORIES, FINDING_SEVERITIES, REVIEW_VERDICTS } from "./review.ts";
@@ -1492,9 +1493,19 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 	const bus = tinyEmitter();
 	const launcher = createHostLauncher({ events: bus });
 	const updates = [];
-	const promise = launcher(launcherRequest(), undefined, { onUpdate: (update) => updates.push(update) });
+	const observations = [];
+	const starts = [];
+	const promise = launcher(launcherRequest(), undefined, {
+		onRequest: (request) => observations.push(request.requestId),
+		onStarted: (started) => starts.push(started.requestId),
+		onUpdate: (update) => updates.push(update),
+	});
 	const request = bus.emitted.find((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT).payload;
 	const triple = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
+	assert.deepEqual(observations, [request.requestId], "REQUEST boundary is observed once");
+	bus.emit(SUBAGENT_DELEGATION_STARTED_EVENT, { ...triple, requestId: "req-other" });
+	bus.emit(SUBAGENT_DELEGATION_STARTED_EVENT, triple);
+	assert.deepEqual(starts, [request.requestId], "only identity-matched STARTED reaches hooks");
 	bus.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, { ...triple, currentTool: "read" });
 	bus.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, { ...triple, requestId: "req-other", currentTool: "x" });
 	bus.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, { ...triple, nodeId: "T-other", currentTool: "y" });
@@ -1504,6 +1515,60 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 	bus.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, { ...triple, status: "completed" });
 	const response = await promise;
 	assert.equal(response.status, "completed", "matching RESPONSE resolves the wait");
+}
+
+// Issue 07 step one — persisted execution timing begins at REQUEST outbound,
+// observes STARTED locally, and derives duration from the monotonic clock even
+// if the wall clock rolls backward. Pre-launch evidence capture is excluded.
+{
+	let wall = 10_000;
+	let wallDate = new Date("2026-09-20T10:00:00.000Z");
+	const { deps } = makeDeps({
+		launch: async (request, _signal, hooks) => {
+			hooks.onRequest(request);
+			wall += 25;
+			wallDate = new Date("2026-09-20T09:59:00.000Z");
+			hooks.onStarted({ requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId });
+			wall += 75;
+			return {
+				requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId,
+				status: "completed", runId: "run-timing", agent: "worker",
+				result: { kind: "structured", value: makeReport(request.nodeId, "run-timing", request.cwd) },
+			};
+		},
+	});
+	deps.now = () => wallDate;
+	deps.wallClock = { now: () => wall, setTimeout, clearTimeout };
+	const outcome = await runDelegation(deps, makeParams(), process.cwd(), {
+		executionId: "call-timing",
+		requestId: "request-original",
+	});
+	const execution = outcome.task.executions[0];
+	assert.equal(execution.requestId, "request-original");
+	assert.equal(execution.launchedAt, "2026-09-20T10:00:00.000Z");
+	assert.equal(execution.startedAt, "2026-09-20T09:59:00.000Z", "STARTED stores local receipt time without wall-clock inference");
+	assert.equal(execution.durationMs, 100, "duration uses monotonic REQUEST-to-finalization elapsed time");
+	assert.equal(execution.durationBasis, "request-outbound-to-finalization");
+	assert.equal(execution.endedAt, "2026-09-20T09:59:00.000Z", "endedAt retains wall timestamp semantics independently of duration");
+}
+
+{
+	let wall = 0;
+	const { deps } = makeDeps({
+		launch: async (request, _signal, hooks) => {
+			hooks.onRequest(request);
+			wall = 7;
+			return {
+				requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId,
+				status: "completed", runId: "run-no-started", agent: "worker",
+				result: { kind: "structured", value: makeReport(request.nodeId, "run-no-started", request.cwd) },
+			};
+		},
+	});
+	deps.wallClock = { now: () => wall, setTimeout, clearTimeout };
+	const outcome = await runDelegation(deps, makeParams(), process.cwd(), { executionId: "call-no-started" });
+	assert.equal(outcome.task.executions[0].startedAt, null, "missing STARTED remains explicitly unknown");
+	assert.equal(outcome.task.executions[0].durationMs, 7);
 }
 
 // ---------------------------------------------------------------------------
@@ -1618,24 +1683,38 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 	}));
 	const concurrency = new ConcurrencyController();
 	const usage = new UsageLedger({ pricing: { version: 1, currency: "USD", rates: {} } });
+	const requestAbort = new AbortController();
 	const { deps } = makeDeps({
 		store,
 		concurrency,
 		usage,
 		gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args),
-		launch: async (request) => ({
-			requestId: request.requestId,
-			ownerRunId: request.ownerRunId,
-			nodeId: request.nodeId,
-			status: "cancelled",
-			error: "operator cancel",
-			runId: "run-c",
-			agent: "worker",
-			model: "test/model",
-			usage: { input: 5, output: 6, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1, toolCalls: 1, durationMs: 40 },
+		launch: async (request, _signal, hooks) => {
+			hooks.onRequest(request);
+			requestAbort.abort();
+			return {
+				requestId: request.requestId,
+				ownerRunId: request.ownerRunId,
+				nodeId: request.nodeId,
+				status: "cancelled",
+				error: "operator cancel",
+				runId: "run-c",
+				agent: "worker",
+				model: "test/model",
+				usage: { input: 5, output: 6, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1, toolCalls: 1, durationMs: 40 },
+			};
+		},
+	});
+	const outcome = await runDelegation(deps, makeParams({ taskId }), dir, {
+		executionId: "call-ca",
+		signal: requestAbort.signal,
+		requestId: "request-cancelled",
+		requestClosure: () => ({
+			requestId: "request-cancelled",
+			requestClosed: "active-time-limit",
+			requestClosedAt: "2026-09-20T10:15:00.000Z",
 		}),
 	});
-	const outcome = await runDelegation(deps, makeParams({ taskId }), dir, { executionId: "call-ca" });
 	assert.equal(outcome.termination?.status, "cancelled", "structured termination, not a thrown refusal");
 	assert.equal(outcome.termination?.reason, "operator_cancel");
 	assert.equal(outcome.termination?.executionStatus, "stopped");
@@ -1653,6 +1732,9 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 	const execution = record.executions[0];
 	assert.equal(execution.status, "stopped");
 	assert.equal(execution.endedReason, "operator_cancel");
+	assert.equal(execution.requestId, "request-cancelled");
+	assert.equal(execution.requestClosed, "active-time-limit");
+	assert.equal(execution.requestClosedAt, "2026-09-20T10:15:00.000Z");
 	assert.equal(execution.usageComplete, true);
 	assert.ok(execution.cTerminal?.gitStatusHash, "residual C_terminal recorded");
 	assert.equal(record.writerHold, undefined);
@@ -1675,17 +1757,29 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 	const concurrency = new ConcurrencyController();
 	const usage = new UsageLedger({ pricing: { version: 1, currency: "USD", rates: {} } });
 	let capturedHooks;
+	let wall = 0;
+	let closure = { requestId: "request-old", requestClosed: "active-time-limit", requestClosedAt: "2026-09-20T10:15:00.000Z" };
+	const requestAbort = new AbortController();
 	const { deps } = makeDeps({
 		store,
 		concurrency,
 		usage,
 		gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args),
-		launch: async (_request, _signal, hooks) => {
+		launch: async (request, _signal, hooks) => {
 			capturedHooks = hooks;
+			hooks.onRequest(request);
+			wall = 10;
+			requestAbort.abort();
 			throw new DelegationAborted(taskId);
 		},
 	});
-	const outcome = await runDelegation(deps, makeParams({ taskId }), dir, { executionId: "call-cb" });
+	deps.wallClock = { now: () => wall, setTimeout, clearTimeout };
+	const outcome = await runDelegation(deps, makeParams({ taskId }), dir, {
+		executionId: "call-cb",
+		signal: requestAbort.signal,
+		requestId: "request-old",
+		requestClosure: () => closure,
+	});
 	assert.equal(outcome.termination?.executionStatus, "stop_unconfirmed", "grace expiry without a terminal is an unconfirmed stop");
 	assert.equal(outcome.termination?.reason, "operator_cancel");
 	assert.equal(outcome.termination?.terminationConfirmed, false);
@@ -1696,6 +1790,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 	assert.equal(concurrency.status().reservations.length, 1, "unconfirmed stop keeps the write lock");
 	assert.equal(record.writerHold?.executionId, "call-cb", "persisted writer hold names the execution");
 	assert.equal(record.executions[0].status, "stop_unconfirmed");
+	assert.equal(record.executions[0].endedAt, undefined, "grace expiry without a terminal has no execution endpoint");
+	assert.equal(record.executions[0].durationMs, undefined, "grace expiry does not turn waiter return into execution duration");
 	// Admission: the held workspace refuses a second writer even for the same
 	// Task — lift the terminal state so the WRITER_HOLD guard is what fires.
 	record.state = "changes_requested";
@@ -1704,6 +1800,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 	assert.ok(second instanceof DelegationRefused && second.code === "WRITER_HOLD", `writer hold refuses a second writer, got ${second}`);
 	record.state = "blocked"; // restore the parked state before the late-terminal part
 	// A3 — the late terminal finalizes the execution exactly once.
+	closure = { requestId: "request-new", requestClosed: "operator-resume", requestClosedAt: "2026-09-20T10:16:00.000Z" };
+	wall = 100;
 	capturedHooks.onLateTerminal({
 		requestId: "req-late",
 		ownerRunId: "owner-run-1",
@@ -1720,6 +1818,9 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 	assert.equal(execAfter.terminationConfirmed, true);
 	assert.equal(execAfter.confirmationBasis, "terminal+quiet-worktree");
 	assert.equal(execAfter.endedReason, "operator_cancel");
+	assert.equal(execAfter.durationMs, 100, "late terminal retains the original REQUEST monotonic anchor");
+	assert.equal(execAfter.requestId, "request-old");
+	assert.equal(execAfter.requestClosed, "active-time-limit", "late terminal retains the original Request closure after re-entry");
 	assert.ok(execAfter.cTerminal?.gitStatusHash, "C_terminal recorded from the late terminal");
 	assert.equal(execAfter.runId, "run-late");
 	assert.equal(execAfter.usageComplete, true);

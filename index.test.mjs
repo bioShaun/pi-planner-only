@@ -2549,8 +2549,19 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 	const ledgerPath = join(isolatedAgentDir, "planner-only", "ledger", `${taskId}.json`);
 	const beforeLedger = readFileSync(ledgerPath, "utf8");
 	const beforeRequests = piEvents.emitted.filter((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT).length;
-	const first = await tasksTool.execute("call-t06-byte-budget-1", { taskId }, undefined, () => {}, ctx);
-	const second = await tasksTool.execute("call-t06-byte-budget-2", { taskId }, undefined, () => {}, ctx);
+	// Request timing is a live observation. Compare the complete diagnostics
+	// at one observation instant while retaining the source-immutability check.
+	const originalNow = Date.now;
+	const observedAt = Date.now();
+	let first, second;
+	try {
+		Date.now = () => observedAt;
+		first = await tasksTool.execute("call-t06-byte-budget-1", { taskId }, undefined, () => {}, ctx);
+		second = await tasksTool.execute("call-t06-byte-budget-2", { taskId }, undefined, () => {}, ctx);
+	} finally {
+		Date.now = originalNow;
+	}
+	assert.equal(first.details.diagnostics.request.observedAt, new Date(observedAt).toISOString());
 	assert.ok(Buffer.byteLength(JSON.stringify(first.details), "utf8") < 64 * 1024, "all structured details fit below 64 KiB in UTF-8 bytes");
 	assert.equal(first.details.diagnostics.truncated, true, "byte-budget truncation is disclosed");
 	assert.deepEqual(second.details, first.details, "repeated diagnostics are stable and do not mutate their source record");

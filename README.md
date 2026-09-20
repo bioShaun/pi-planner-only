@@ -109,7 +109,13 @@ resolved.
 in-memory or ledger-only Tasks without delegation, Git sampling, or shell
 access. It reports execution status, capability and confirmation basis,
 termination and report admission, probe failures, recovery requirements,
-writer hold state, and session-log location. A location is classified as a
+writer hold state, execution timing, the originating Request identity, the
+current Request deadline/remaining-time observation, and session-log location.
+`launchedAt` is the local REQUEST outbound boundary, `startedAt` is the local
+receipt of launcher STARTED (explicitly unknown when absent), and `durationMs`
+uses a monotonic REQUEST-outbound-to-finalization interval that includes stop
+confirmation but excludes pre-launch Git capture. Wall timestamps retain their
+own meaning and are not subtracted to derive duration. A location is classified as a
 verified readable file, a known but unavailable file, a directory hint, or
 unknown; a directory is never presented as a verified log file. Diagnostic
 details are bounded to a fixed 64 KiB structured budget and disclose
@@ -304,6 +310,10 @@ Each Root request shares a durable allowance across all Tasks and child roles:
 32 tool attempts, 8 child launch claims, 3 unresolved failures in the same family,
 2 genuine parameter repairs, and a 15-minute deadline from its first activity.
 Changing wording, Task IDs, policies, or recovery execution IDs does not reset it.
+Delegation results expose `details.request.{requestId, requestDeadline,
+remainingMs, observedAt}`; before first activity the remaining value is `null` with
+`unavailableReason: request-not-started`. These are observations only and do not
+refresh or clamp the deadline.
 The next tool/launch over its allowance is refused before execution; the third
 same-family failure closes admission immediately. Only an accepted correction
 resolves its own same-Task, same-family failure ancestors. An unrelated success

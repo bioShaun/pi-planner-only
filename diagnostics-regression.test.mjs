@@ -46,6 +46,9 @@ try {
 	const historical = historicalOrchestrator.describeTaskDiagnostics("/fixture/diagnostics", optional.taskId).diagnostics;
 	assert.equal(historical.state, "unknown", "historical missing state renders safely");
 	assert.equal(historical.executions[0].kind, "unknown", "historical missing execution kind renders safely");
+	assert.equal(historical.executions[0].startedAt, null, "historical missing STARTED remains explicitly unknown");
+	assert.equal(historical.executions[0].launchedAt, undefined, "historical launch time is never guessed");
+	assert.equal(historical.executions[0].durationMs, undefined, "historical duration is never guessed");
 
 	for (const [sampleName, install] of [
 		["aRun", (execution, failures) => { execution.aRun.probeFailures = failures; }],

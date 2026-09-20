@@ -360,12 +360,25 @@ export interface TaskExecutionRecord {
 	taskId: string;
 	/** P0-A lifecycle status; `beginExecution` writes `running`. */
 	status?: ExecutionLifecycleStatus;
+	/** Request that admitted this execution. Absent on old ledgers and non-host unit seams. */
+	requestId?: string;
+	/** Local wall timestamp at the REQUEST outbound boundary; excludes pre-launch Git capture. */
+	launchedAt?: string;
+	/** Local receipt time of identity-matched launcher STARTED; null means STARTED was not observed. */
+	startedAt?: string | null;
 	/** Why this execution ended; absent while running or on old ledgers. */
 	endedReason?: ExecutionEndedReason;
 	/** When a CANCEL was requested (signal abort or WRC). Never used as endedAt. */
 	cancelRequestedAt?: string;
 	/** When the execution's terminal state was finalized. */
 	endedAt?: string;
+	/** Monotonic elapsed time from REQUEST outbound through finalization/quiescence. */
+	durationMs?: number;
+	/** Documents the two endpoints used by durationMs. */
+	durationBasis?: "request-outbound-to-finalization";
+	/** Original Request closure that caused cancellation; endedReason retains host semantics. */
+	requestClosed?: string;
+	requestClosedAt?: string;
 	/** Set only when the spec §3 quiescence predicate passed. */
 	terminationConfirmed?: boolean;
 	/**

@@ -62,9 +62,12 @@ const OPTIONAL_BOOLEAN_FIELDS = ["standaloneExplorer", "isPlaceholder", "titleAl
 function executionShapeError(value: unknown, index: number): string | undefined {
 	const label = `task.executions[${index}]`;
 	if (!isPlainObject(value)) return `${label} must be an object`;
-	for (const field of ["executionId", "kind", "status", "capability", "capabilityBasis", "reportOnlyAgent", "reportOnlyCapabilityBasis", "runId", "cwd", "endedReason", "endedAt", "confirmationBasis", "unacceptedReportReason"] as const) {
+	for (const field of ["executionId", "kind", "status", "capability", "capabilityBasis", "reportOnlyAgent", "reportOnlyCapabilityBasis", "runId", "cwd", "endedReason", "requestId", "launchedAt", "endedAt", "durationBasis", "requestClosed", "requestClosedAt", "confirmationBasis", "unacceptedReportReason"] as const) {
 		if (value[field] !== undefined && typeof value[field] !== "string") return `${label}.${field} must be a string`;
 	}
+	if (value.startedAt !== undefined && value.startedAt !== null && typeof value.startedAt !== "string") return `${label}.startedAt must be a string or null`;
+	if (value.durationMs !== undefined && (!Number.isSafeInteger(value.durationMs) || (value.durationMs as number) < 0)) return `${label}.durationMs must be a non-negative finite safe integer`;
+	if (value.durationBasis !== undefined && value.durationBasis !== "request-outbound-to-finalization") return `${label}.durationBasis is invalid`;
 	if (typeof value.executionId !== "string") return `${label}.executionId must be a string`;
 	if (!isPlainObject(value.aRun)) return `${label}.aRun must be an object`;
 	if (value.envelope !== undefined) {

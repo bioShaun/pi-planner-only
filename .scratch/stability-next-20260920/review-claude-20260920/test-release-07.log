@@ -1,0 +1,85 @@
+
+> pi-planner-only@0.8.0 test:release
+> npm run typecheck && npm run test:p1 && npm test
+
+
+> pi-planner-only@0.8.0 typecheck
+> tsc --noEmit
+
+
+> pi-planner-only@0.8.0 test:p1
+> node --experimental-strip-types p1-delegation.test.mjs
+
+p1-delegation: PASS (real plugin/tools/transport/ledger; fake Git and child source; no subprocess)
+
+> pi-planner-only@0.8.0 test
+> node --experimental-strip-types policy.test.mjs && node --experimental-strip-types policy-cutover.test.mjs && node --experimental-strip-types roles.test.mjs && node --experimental-strip-types floors.test.mjs && node --experimental-strip-types role-models.test.mjs && node --experimental-strip-types task.test.mjs && node --experimental-strip-types ledger-store.test.mjs && node --experimental-strip-types report.test.mjs && node --experimental-strip-types review.test.mjs && node --experimental-strip-types usage.test.mjs && node --experimental-strip-types orchestrate.test.mjs && node --experimental-strip-types evidence.test.mjs && node --experimental-strip-types git-audit.test.mjs && node --experimental-strip-types index.test.mjs && node --experimental-strip-types diagnostics-regression.test.mjs && node --experimental-strip-types workspace-snapshot.test.mjs && node --experimental-strip-types architecture.test.mjs && node --experimental-strip-types naming.test.mjs && node --experimental-strip-types concurrency.test.mjs && node --experimental-strip-types rs01.test.mjs && node --experimental-strip-types rs02.test.mjs && node --experimental-strip-types rs02-concurrency.test.mjs && node --experimental-strip-types rs03.test.mjs && node --experimental-strip-types rt06.test.mjs && node --experimental-strip-types nx04-06.test.mjs && node --experimental-strip-types nx09-scope.test.mjs && node --experimental-strip-types nx10-attribution.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types refusal-breaker.test.mjs && node --experimental-strip-types diffstat-acceptance.test.mjs && node --experimental-strip-types revalidation-accounting.test.mjs && node --experimental-strip-types request-control.test.mjs && node --experimental-strip-types request-stop.test.mjs
+
+planner-only policy: PASS
+planner-only policy cutover: PASS
+planner-only roles: PASS
+planner-only floors: PASS
+role-models: PASS
+planner-only task lifecycle: PASS
+planner-only ledger-store: PASS
+planner-only report: PASS
+planner-only review: PASS
+planner-only usage: PASS
+error: open("src/parser.ts"): Permission denied
+fatal: cannot hash src/parser.ts
+fatal: could not open 'src/parser.ts' for reading: Permission denied
+planner-only orchestration: PASS
+planner-only evidence: PASS
+hint: Using 'master' as the name for the initial branch. This default branch name
+hint: is subject to change. To configure the initial branch name to use in all
+hint: of your new repositories, which will suppress this warning, call:
+hint:
+hint: 	git config --global init.defaultBranch <name>
+hint:
+hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+hint: 'development'. The just-created branch can be renamed via this command:
+hint:
+hint: 	git branch -m <name>
+hint:
+hint: Disable this message with "git config set advice.defaultBranchName false"
+evidence.test.mjs: ticket-01 probe failure cases passed
+planner-only git_audit: PASS
+diagnostics regression tests passed
+planner-only workspace snapshot: PASS
+planner-only architecture: PASS
+planner-only naming: PASS
+✔ A01: Loaded plugin fingerprint is recorded from loaded build, distinct from disk HEAD (6.671282ms)
+✔ A05: Multi-process shared ledger allocation, quarantine, and cross-workspace checks pass (1.909188ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 11.684061
+rs02 tests passed
+rs02 concurrency tests passed
+rs03: PASS
+rt06: PASS
+planner-only NX-04/NX-05/NX-06: PASS
+✔ normalizeRepoRelativePath (0.514315ms)
+✔ matchesScopePath (0.134064ms)
+✔ isPathInDeclaredScope routes every entry form through the one matcher (0.252248ms)
+✔ validateTaskSpec rejects scope escaping workspace (0.275813ms)
+✔ real git e2e scope cases (67.199244ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 72.289179
+nx10-attribution.test.mjs passed!
+Planner-only: failed to persist ledger snapshot: EISDIR: illegal operation on a directory, rename '/project/tmp/planner-review-DgufYC/planner-only-admission-ledger-KjlgcQ/planner-only/ledger/.tmp-3289610-2' -> '/project/tmp/planner-review-DgufYC/planner-only-admission-ledger-KjlgcQ/planner-only/ledger/T-20260918-001.json'
+delegate.test.mjs: all cases passed
+refusal-breaker.test.mjs: all cases passed
+revalidation-accounting: PASS
+request-control: PASS (limits, durable faults, races, lifecycle, causal failures, repairs)
+request-stop: PASS (real plugin/tools/transport/ledger; fake Git and child source; no subprocess)

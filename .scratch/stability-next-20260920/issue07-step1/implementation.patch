@@ -1,0 +1,907 @@
+diff --git a/README.md b/README.md
+index c78e852..cfa6ee1 100644
+--- a/README.md
++++ b/README.md
+@@ -109,7 +109,13 @@ resolved.
+ in-memory or ledger-only Tasks without delegation, Git sampling, or shell
+ access. It reports execution status, capability and confirmation basis,
+ termination and report admission, probe failures, recovery requirements,
+-writer hold state, and session-log location. A location is classified as a
++writer hold state, execution timing, the originating Request identity, the
++current Request deadline/remaining-time observation, and session-log location.
++`launchedAt` is the local REQUEST outbound boundary, `startedAt` is the local
++receipt of launcher STARTED (explicitly unknown when absent), and `durationMs`
++uses a monotonic REQUEST-outbound-to-finalization interval that includes stop
++confirmation but excludes pre-launch Git capture. Wall timestamps retain their
++own meaning and are not subtracted to derive duration. A location is classified as a
+ verified readable file, a known but unavailable file, a directory hint, or
+ unknown; a directory is never presented as a verified log file. Diagnostic
+ details are bounded to a fixed 64 KiB structured budget and disclose
+@@ -304,6 +310,10 @@ Each Root request shares a durable allowance across all Tasks and child roles:
+ 32 tool attempts, 8 child launch claims, 3 unresolved failures in the same family,
+ 2 genuine parameter repairs, and a 15-minute deadline from its first activity.
+ Changing wording, Task IDs, policies, or recovery execution IDs does not reset it.
++Delegation results expose `details.request.{requestId, requestDeadline,
++remainingMs, observedAt}`; before first activity the remaining value is `null` with
++`unavailableReason: request-not-started`. These are observations only and do not
++refresh or clamp the deadline.
+ The next tool/launch over its allowance is refused before execution; the third
+ same-family failure closes admission immediately. Only an accepted correction
+ resolves its own same-Task, same-family failure ancestors. An unrelated success
+diff --git a/delegate.test.mjs b/delegate.test.mjs
+index 957f9d9..1ba2600 100644
+--- a/delegate.test.mjs
++++ b/delegate.test.mjs
+@@ -21,6 +21,7 @@ import {
+ 	SUBAGENT_DELEGATION_CANCEL_EVENT,
+ 	SUBAGENT_DELEGATION_REQUEST_EVENT,
+ 	SUBAGENT_DELEGATION_RESPONSE_EVENT,
++	SUBAGENT_DELEGATION_STARTED_EVENT,
+ 	SUBAGENT_DELEGATION_UPDATE_EVENT,
+ } from "./subagent-delegation-contract.ts";
+ import { FINDING_CATEGORIES, FINDING_SEVERITIES, REVIEW_VERDICTS } from "./review.ts";
+@@ -1492,9 +1493,19 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+ 	const bus = tinyEmitter();
+ 	const launcher = createHostLauncher({ events: bus });
+ 	const updates = [];
+-	const promise = launcher(launcherRequest(), undefined, { onUpdate: (update) => updates.push(update) });
++	const observations = [];
++	const starts = [];
++	const promise = launcher(launcherRequest(), undefined, {
++		onRequest: (request) => observations.push(request.requestId),
++		onStarted: (started) => starts.push(started.requestId),
++		onUpdate: (update) => updates.push(update),
++	});
+ 	const request = bus.emitted.find((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT).payload;
+ 	const triple = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
++	assert.deepEqual(observations, [request.requestId], "REQUEST boundary is observed once");
++	bus.emit(SUBAGENT_DELEGATION_STARTED_EVENT, { ...triple, requestId: "req-other" });
++	bus.emit(SUBAGENT_DELEGATION_STARTED_EVENT, triple);
++	assert.deepEqual(starts, [request.requestId], "only identity-matched STARTED reaches hooks");
+ 	bus.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, { ...triple, currentTool: "read" });
+ 	bus.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, { ...triple, requestId: "req-other", currentTool: "x" });
+ 	bus.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, { ...triple, nodeId: "T-other", currentTool: "y" });
+@@ -1506,6 +1517,60 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+ 	assert.equal(response.status, "completed", "matching RESPONSE resolves the wait");
+ }
+ 
++// Issue 07 step one — persisted execution timing begins at REQUEST outbound,
++// observes STARTED locally, and derives duration from the monotonic clock even
++// if the wall clock rolls backward. Pre-launch evidence capture is excluded.
++{
++	let wall = 10_000;
++	let wallDate = new Date("2026-09-20T10:00:00.000Z");
++	const { deps } = makeDeps({
++		launch: async (request, _signal, hooks) => {
++			hooks.onRequest(request);
++			wall += 25;
++			wallDate = new Date("2026-09-20T09:59:00.000Z");
++			hooks.onStarted({ requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId });
++			wall += 75;
++			return {
++				requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId,
++				status: "completed", runId: "run-timing", agent: "worker",
++				result: { kind: "structured", value: makeReport(request.nodeId, "run-timing", request.cwd) },
++			};
++		},
++	});
++	deps.now = () => wallDate;
++	deps.wallClock = { now: () => wall, setTimeout, clearTimeout };
++	const outcome = await runDelegation(deps, makeParams(), process.cwd(), {
++		executionId: "call-timing",
++		requestId: "request-original",
++	});
++	const execution = outcome.task.executions[0];
++	assert.equal(execution.requestId, "request-original");
++	assert.equal(execution.launchedAt, "2026-09-20T10:00:00.000Z");
++	assert.equal(execution.startedAt, "2026-09-20T09:59:00.000Z", "STARTED stores local receipt time without wall-clock inference");
++	assert.equal(execution.durationMs, 100, "duration uses monotonic REQUEST-to-finalization elapsed time");
++	assert.equal(execution.durationBasis, "request-outbound-to-finalization");
++	assert.equal(execution.endedAt, "2026-09-20T09:59:00.000Z", "endedAt retains wall timestamp semantics independently of duration");
++}
++
++{
++	let wall = 0;
++	const { deps } = makeDeps({
++		launch: async (request, _signal, hooks) => {
++			hooks.onRequest(request);
++			wall = 7;
++			return {
++				requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId,
++				status: "completed", runId: "run-no-started", agent: "worker",
++				result: { kind: "structured", value: makeReport(request.nodeId, "run-no-started", request.cwd) },
++			};
++		},
++	});
++	deps.wallClock = { now: () => wall, setTimeout, clearTimeout };
++	const outcome = await runDelegation(deps, makeParams(), process.cwd(), { executionId: "call-no-started" });
++	assert.equal(outcome.task.executions[0].startedAt, null, "missing STARTED remains explicitly unknown");
++	assert.equal(outcome.task.executions[0].durationMs, 7);
++}
++
+ // ---------------------------------------------------------------------------
+ // 4. abort → exactly one strict three-key CANCEL → cancelled terminal inside
+ //    the grace window resolves the wait.
+@@ -1618,24 +1683,38 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+ 	}));
+ 	const concurrency = new ConcurrencyController();
+ 	const usage = new UsageLedger({ pricing: { version: 1, currency: "USD", rates: {} } });
++	const requestAbort = new AbortController();
+ 	const { deps } = makeDeps({
+ 		store,
+ 		concurrency,
+ 		usage,
+ 		gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args),
+-		launch: async (request) => ({
+-			requestId: request.requestId,
+-			ownerRunId: request.ownerRunId,
+-			nodeId: request.nodeId,
+-			status: "cancelled",
+-			error: "operator cancel",
+-			runId: "run-c",
+-			agent: "worker",
+-			model: "test/model",
+-			usage: { input: 5, output: 6, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1, toolCalls: 1, durationMs: 40 },
++		launch: async (request, _signal, hooks) => {
++			hooks.onRequest(request);
++			requestAbort.abort();
++			return {
++				requestId: request.requestId,
++				ownerRunId: request.ownerRunId,
++				nodeId: request.nodeId,
++				status: "cancelled",
++				error: "operator cancel",
++				runId: "run-c",
++				agent: "worker",
++				model: "test/model",
++				usage: { input: 5, output: 6, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1, toolCalls: 1, durationMs: 40 },
++			};
++		},
++	});
++	const outcome = await runDelegation(deps, makeParams({ taskId }), dir, {
++		executionId: "call-ca",
++		signal: requestAbort.signal,
++		requestId: "request-cancelled",
++		requestClosure: () => ({
++			requestId: "request-cancelled",
++			requestClosed: "active-time-limit",
++			requestClosedAt: "2026-09-20T10:15:00.000Z",
+ 		}),
+ 	});
+-	const outcome = await runDelegation(deps, makeParams({ taskId }), dir, { executionId: "call-ca" });
+ 	assert.equal(outcome.termination?.status, "cancelled", "structured termination, not a thrown refusal");
+ 	assert.equal(outcome.termination?.reason, "operator_cancel");
+ 	assert.equal(outcome.termination?.executionStatus, "stopped");
+@@ -1653,6 +1732,9 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+ 	const execution = record.executions[0];
+ 	assert.equal(execution.status, "stopped");
+ 	assert.equal(execution.endedReason, "operator_cancel");
++	assert.equal(execution.requestId, "request-cancelled");
++	assert.equal(execution.requestClosed, "active-time-limit");
++	assert.equal(execution.requestClosedAt, "2026-09-20T10:15:00.000Z");
+ 	assert.equal(execution.usageComplete, true);
+ 	assert.ok(execution.cTerminal?.gitStatusHash, "residual C_terminal recorded");
+ 	assert.equal(record.writerHold, undefined);
+@@ -1675,17 +1757,29 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+ 	const concurrency = new ConcurrencyController();
+ 	const usage = new UsageLedger({ pricing: { version: 1, currency: "USD", rates: {} } });
+ 	let capturedHooks;
++	let wall = 0;
++	let closure = { requestId: "request-old", requestClosed: "active-time-limit", requestClosedAt: "2026-09-20T10:15:00.000Z" };
++	const requestAbort = new AbortController();
+ 	const { deps } = makeDeps({
+ 		store,
+ 		concurrency,
+ 		usage,
+ 		gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args),
+-		launch: async (_request, _signal, hooks) => {
++		launch: async (request, _signal, hooks) => {
+ 			capturedHooks = hooks;
++			hooks.onRequest(request);
++			wall = 10;
++			requestAbort.abort();
+ 			throw new DelegationAborted(taskId);
+ 		},
+ 	});
+-	const outcome = await runDelegation(deps, makeParams({ taskId }), dir, { executionId: "call-cb" });
++	deps.wallClock = { now: () => wall, setTimeout, clearTimeout };
++	const outcome = await runDelegation(deps, makeParams({ taskId }), dir, {
++		executionId: "call-cb",
++		signal: requestAbort.signal,
++		requestId: "request-old",
++		requestClosure: () => closure,
++	});
+ 	assert.equal(outcome.termination?.executionStatus, "stop_unconfirmed", "grace expiry without a terminal is an unconfirmed stop");
+ 	assert.equal(outcome.termination?.reason, "operator_cancel");
+ 	assert.equal(outcome.termination?.terminationConfirmed, false);
+@@ -1696,6 +1790,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+ 	assert.equal(concurrency.status().reservations.length, 1, "unconfirmed stop keeps the write lock");
+ 	assert.equal(record.writerHold?.executionId, "call-cb", "persisted writer hold names the execution");
+ 	assert.equal(record.executions[0].status, "stop_unconfirmed");
++	assert.equal(record.executions[0].endedAt, undefined, "grace expiry without a terminal has no execution endpoint");
++	assert.equal(record.executions[0].durationMs, undefined, "grace expiry does not turn waiter return into execution duration");
+ 	// Admission: the held workspace refuses a second writer even for the same
+ 	// Task — lift the terminal state so the WRITER_HOLD guard is what fires.
+ 	record.state = "changes_requested";
+@@ -1704,6 +1800,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+ 	assert.ok(second instanceof DelegationRefused && second.code === "WRITER_HOLD", `writer hold refuses a second writer, got ${second}`);
+ 	record.state = "blocked"; // restore the parked state before the late-terminal part
+ 	// A3 — the late terminal finalizes the execution exactly once.
++	closure = { requestId: "request-new", requestClosed: "operator-resume", requestClosedAt: "2026-09-20T10:16:00.000Z" };
++	wall = 100;
+ 	capturedHooks.onLateTerminal({
+ 		requestId: "req-late",
+ 		ownerRunId: "owner-run-1",
+@@ -1720,6 +1818,9 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+ 	assert.equal(execAfter.terminationConfirmed, true);
+ 	assert.equal(execAfter.confirmationBasis, "terminal+quiet-worktree");
+ 	assert.equal(execAfter.endedReason, "operator_cancel");
++	assert.equal(execAfter.durationMs, 100, "late terminal retains the original REQUEST monotonic anchor");
++	assert.equal(execAfter.requestId, "request-old");
++	assert.equal(execAfter.requestClosed, "active-time-limit", "late terminal retains the original Request closure after re-entry");
+ 	assert.ok(execAfter.cTerminal?.gitStatusHash, "C_terminal recorded from the late terminal");
+ 	assert.equal(execAfter.runId, "run-late");
+ 	assert.equal(execAfter.usageComplete, true);
+diff --git a/delegate.ts b/delegate.ts
+index 838470b..cf08415 100644
+--- a/delegate.ts
++++ b/delegate.ts
+@@ -22,11 +22,13 @@ import {
+ 	SUBAGENT_DELEGATION_CANCEL_EVENT,
+ 	SUBAGENT_DELEGATION_REQUEST_EVENT,
+ 	SUBAGENT_DELEGATION_RESPONSE_EVENT,
++	SUBAGENT_DELEGATION_STARTED_EVENT,
+ 	SUBAGENT_DELEGATION_UPDATE_EVENT,
+ 	type SubagentDelegationCancel,
+ 	type SubagentDelegationJsonSchemaObject,
+ 	type SubagentDelegationRequest,
+ 	type SubagentDelegationResponse,
++	type SubagentDelegationStarted,
+ 	type SubagentDelegationTerminalResponse,
+ 	type SubagentDelegationUpdate,
+ 	type SubagentDelegationUsage,
+@@ -553,8 +555,12 @@ export const REVIEW_RESULT_SCHEMA = structuredClone(Type.Object(
+ export interface DelegationLaunchHooks {
+ 	/** Synchronous final-admission hook, called immediately before REQUEST emit. */
+ 	beforeDispatch?: (request: SubagentDelegationRequest) => void;
++	/** Durable observation at the outbound REQUEST boundary, before listeners run. */
++	onRequest?: (request: SubagentDelegationRequest) => void;
+ 	/** Best-effort notification that REQUEST emit returned. Must not throw. */
+ 	onDispatch?: (request: SubagentDelegationRequest) => void;
++	/** Local receipt of an identity-matched launcher STARTED event. */
++	onStarted?: (started: SubagentDelegationStarted) => void;
+ 	/** 每条按身份三元组过滤后的 UPDATE。调用方不得阻塞。 */
+ 	onUpdate?: (update: SubagentDelegationUpdate) => void;
+ 	/**
+@@ -681,6 +687,10 @@ export interface DelegationOptions {
+ 	 * the surface name and the mint-vs-bind clause adapt.
+ 	 */
+ 	toolName?: string;
++	/** Request identity that admitted this execution. */
++	requestId?: string;
++	/** Reads closure only from that original Request, including durable history. */
++	requestClosure?: () => { requestId: string; requestClosed: string; requestClosedAt: string } | undefined;
+ }
+ 
+ export class DelegationRefused extends Error {
+@@ -1023,6 +1033,7 @@ export async function runDelegation(
+ 	// task.writerHold instead of releasing it in the finally (A4).
+ 	let releaseReservation = false;
+ 	let cancelRequestedAt: string | undefined;
++	let requestClosureAtCancel: ReturnType<NonNullable<DelegationOptions["requestClosure"]>>;
+ 	// P0-B — the launcher listens on an internal controller so the runaway
+ 	//    monitor fires the same CANCEL path as the operator's signal; exactly
+ 	//    one control action per execution (spec §3).
+@@ -1036,6 +1047,22 @@ export async function runDelegation(
+ 	const armWallTimer = deps.wallClock?.setTimeout ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
+ 	const disarmWallTimer = deps.wallClock?.clearTimeout ?? ((handle: ReturnType<typeof setTimeout>) => clearTimeout(handle));
+ 	let launchStartedAt = 0;
++	let executionLaunchedAt: number | undefined;
++	const finalTiming = () => executionLaunchedAt === undefined
++		? { endedAt: nowIso() }
++		: {
++			endedAt: nowIso(),
++			durationMs: Math.max(0, Math.floor(wallNow() - executionLaunchedAt)),
++			durationBasis: "request-outbound-to-finalization" as const,
++		};
++	const requestClosurePatch = (endedReason: ExecutionEndedReason) => endedReason === "operator_cancel"
++		&& requestClosureAtCancel
++		&& requestClosureAtCancel.requestId === options.requestId
++		? {
++			requestClosed: requestClosureAtCancel.requestClosed,
++			requestClosedAt: requestClosureAtCancel.requestClosedAt,
++		}
++		: {};
+ 	let wallTimer: ReturnType<typeof setTimeout> | undefined;
+ 	const stopWallTimer = () => {
+ 		if (wallTimer) disarmWallTimer(wallTimer);
+@@ -1054,6 +1081,7 @@ export async function runDelegation(
+ 	const onSignalAbort = () => {
+ 		if (cancelRequestedAt) return;
+ 		cancelRequestedAt = nowIso();
++		requestClosureAtCancel = options.requestClosure?.();
+ 		try {
+ 			deps.store.finalizeExecution(task.taskId, executionId, { status: "cancel_requested", cancelRequestedAt });
+ 		} catch { /* the abort path must not fail on a ledger write */ }
+@@ -1127,6 +1155,8 @@ export async function runDelegation(
+ 			aRun,
+ 			capability: classification.capability,
+ 			capabilityBasis: classification.basis,
++			...(options.requestId ? { requestId: options.requestId } : {}),
++			startedAt: null,
+ 			...(envelope ? { envelope } : {}),
+ 			...(reportOnlyGrant ? {
+ 				reportOnly: true,
+@@ -1286,7 +1316,8 @@ export async function runDelegation(
+ 				deps.store.finalizeExecution(task.taskId, executionId, {
+ 					status: q.confirmed ? "stopped" : "stop_unconfirmed",
+ 					endedReason,
+-					endedAt: nowIso(),
++					...finalTiming(),
++					...requestClosurePatch(endedReason),
+ 					terminationConfirmed: q.confirmed,
+ 					...(q.confirmed
+ 						? { confirmationBasis: q.basis, ...(q.cTerminal ? { cTerminal: q.cTerminal } : {}) }
+@@ -1355,6 +1386,21 @@ export async function runDelegation(
+ 				onDispatch: (outbound) => {
+ 					deps.store.markRevalidationRequestObserved(task.taskId, executionId, outbound.requestId);
+ 				},
++				onRequest: () => {
++					executionLaunchedAt = wallNow();
++					try {
++						deps.store.finalizeExecution(task.taskId, executionId, {
++							launchedAt: nowIso(),
++							startedAt: null,
++						});
++					} catch { /* timing observation cannot change launch admission */ }
++				},
++				onStarted: () => {
++					const execution = deps.store.executionById(task.taskId, executionId);
++					if (execution && execution.startedAt === null) {
++						deps.store.finalizeExecution(task.taskId, executionId, { startedAt: nowIso() });
++					}
++				},
+ 				onUpdate: (update) => {
+ 					// P0-B monitor — cumulative token snapshot, max not sum;
+ 					// unknown/regressing counts never reset the observed level.
+@@ -1383,6 +1429,7 @@ export async function runDelegation(
+ 					deps.store.finalizeExecution(task.taskId, executionId, {
+ 						status: "stop_unconfirmed",
+ 						endedReason: abortedReason,
++						...requestClosurePatch(abortedReason),
+ 						...(cancelRequestedAt ? { cancelRequestedAt } : {}),
+ 						usageComplete: false,
+ 					});
+@@ -1407,7 +1454,8 @@ export async function runDelegation(
+ 					deps.store.finalizeExecution(task.taskId, executionId, {
+ 						status: "stopped",
+ 						endedReason: abortedReason,
+-						endedAt: nowIso(),
++						...finalTiming(),
++						...requestClosurePatch(abortedReason),
+ 						terminationConfirmed: true,
+ 						confirmationBasis: "no-launch",
+ 						usageComplete: false,
+@@ -1451,7 +1499,7 @@ export async function runDelegation(
+ 			deps.store.finalizeExecution(task.taskId, executionId, {
+ 				status: "failed",
+ 				endedReason: "launch_failure",
+-				endedAt: nowIso(),
++				...finalTiming(),
+ 				terminationConfirmed: true,
+ 				confirmationBasis: "no-launch",
+ 				usageComplete: false,
+@@ -1539,7 +1587,8 @@ export async function runDelegation(
+ 			deps.store.finalizeExecution(task.taskId, executionId, {
+ 				status: q.confirmed ? "stopped" : "stop_unconfirmed",
+ 				endedReason,
+-				endedAt: nowIso(),
++				...finalTiming(),
++				...requestClosurePatch(endedReason),
+ 				terminationConfirmed: q.confirmed,
+ 				...(q.confirmed
+ 					? { confirmationBasis: q.basis, ...(q.cTerminal ? { cTerminal: q.cTerminal } : {}) }
+@@ -1635,7 +1684,7 @@ export async function runDelegation(
+ 			deps.store.finalizeExecution(task.taskId, executionId, {
+ 				status: "stop_unconfirmed",
+ 				endedReason: "normal",
+-				endedAt: nowIso(),
++				...finalTiming(),
+ 				terminationConfirmed: false,
+ 				cReport,
+ 				interimSample: completionQuiescence.interim,
+@@ -1781,7 +1830,7 @@ export async function runDelegation(
+ 		deps.store.completeExecution(task.taskId, executionId, {
+ 			status: "completed",
+ 			endedReason: "normal",
+-			endedAt: nowIso(),
++			...finalTiming(),
+ 			terminationConfirmed: true,
+ 			confirmationBasis: completionQuiescence.basis,
+ 			usageComplete: response.usage !== undefined,
+@@ -2288,6 +2337,7 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
+ 			&& (payload.nodeId === undefined || payload.nodeId === request.nodeId);
+ 		const cleanup = () => {
+ 			unsubscribeResponse();
++			unsubscribeStarted();
+ 			unsubscribeUpdate();
+ 			signal?.removeEventListener("abort", onAbort);
+ 			if (graceTimer !== undefined) clearTimeout(graceTimer);
+@@ -2308,6 +2358,14 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
+ 			cleanup();
+ 			resolve(response);
+ 		});
++		const unsubscribeStarted = pi.events.on(SUBAGENT_DELEGATION_STARTED_EVENT, (payload) => {
++			if (settled) return;
++			const started = payload as SubagentDelegationStarted;
++			if (started.requestId !== request.requestId
++				|| started.ownerRunId !== request.ownerRunId
++				|| started.nodeId !== request.nodeId) return;
++			try { hooks?.onStarted?.(started); } catch { /* observation failure cannot disrupt the child */ }
++		});
+ 		const unsubscribeUpdate = pi.events.on(SUBAGENT_DELEGATION_UPDATE_EVENT, (payload) => {
+ 			if (settled) return;
+ 			const update = payload as SubagentDelegationUpdate;
+@@ -2341,6 +2399,7 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
+ 			return;
+ 		}
+ 		inFlight.set(request.requestId, cancelPayload);
++		try { hooks?.onRequest?.(request); } catch { /* observation cannot change launch admission */ }
+ 		try {
+ 			pi.events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, request);
+ 		} catch {
+diff --git a/diagnostics-regression.test.mjs b/diagnostics-regression.test.mjs
+index 78733e1..47e4ca1 100644
+--- a/diagnostics-regression.test.mjs
++++ b/diagnostics-regression.test.mjs
+@@ -46,6 +46,9 @@ try {
+ 	const historical = historicalOrchestrator.describeTaskDiagnostics("/fixture/diagnostics", optional.taskId).diagnostics;
+ 	assert.equal(historical.state, "unknown", "historical missing state renders safely");
+ 	assert.equal(historical.executions[0].kind, "unknown", "historical missing execution kind renders safely");
++	assert.equal(historical.executions[0].startedAt, null, "historical missing STARTED remains explicitly unknown");
++	assert.equal(historical.executions[0].launchedAt, undefined, "historical launch time is never guessed");
++	assert.equal(historical.executions[0].durationMs, undefined, "historical duration is never guessed");
+ 
+ 	for (const [sampleName, install] of [
+ 		["aRun", (execution, failures) => { execution.aRun.probeFailures = failures; }],
+diff --git a/index.test.mjs b/index.test.mjs
+index 0a6370a..593aefe 100644
+--- a/index.test.mjs
++++ b/index.test.mjs
+@@ -2549,8 +2549,19 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
+ 	const ledgerPath = join(isolatedAgentDir, "planner-only", "ledger", `${taskId}.json`);
+ 	const beforeLedger = readFileSync(ledgerPath, "utf8");
+ 	const beforeRequests = piEvents.emitted.filter((entry) => entry.event === SUBAGENT_DELEGATION_REQUEST_EVENT).length;
+-	const first = await tasksTool.execute("call-t06-byte-budget-1", { taskId }, undefined, () => {}, ctx);
+-	const second = await tasksTool.execute("call-t06-byte-budget-2", { taskId }, undefined, () => {}, ctx);
++	// Request timing is a live observation. Compare the complete diagnostics
++	// at one observation instant while retaining the source-immutability check.
++	const originalNow = Date.now;
++	const observedAt = Date.now();
++	let first, second;
++	try {
++		Date.now = () => observedAt;
++		first = await tasksTool.execute("call-t06-byte-budget-1", { taskId }, undefined, () => {}, ctx);
++		second = await tasksTool.execute("call-t06-byte-budget-2", { taskId }, undefined, () => {}, ctx);
++	} finally {
++		Date.now = originalNow;
++	}
++	assert.equal(first.details.diagnostics.request.observedAt, new Date(observedAt).toISOString());
+ 	assert.ok(Buffer.byteLength(JSON.stringify(first.details), "utf8") < 64 * 1024, "all structured details fit below 64 KiB in UTF-8 bytes");
+ 	assert.equal(first.details.diagnostics.truncated, true, "byte-budget truncation is disclosed");
+ 	assert.deepEqual(second.details, first.details, "repeated diagnostics are stable and do not mutate their source record");
+diff --git a/index.ts b/index.ts
+index 33b3a4c..b54319b 100644
+--- a/index.ts
++++ b/index.ts
+@@ -160,6 +160,7 @@ function enforceDiagnosticsDetailsBudget(diagnostics: PlannerTaskDiagnostics): P
+ 		reports: diagnostics.reports,
+ 		reviews: diagnostics.reviews,
+ 		sessionLog: { status: diagnostics.sessionLog.status },
++		...(diagnostics.request ? { request: diagnostics.request } : {}),
+ 		executions: [],
+ 		totalExecutions: diagnostics.totalExecutions,
+ 		truncated: true,
+@@ -1159,6 +1160,8 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 							ctx.cwd || process.cwd(),
+ 							{ signal: signal ? AbortSignal.any([signal, requestControl.signal]) : requestControl.signal,
+ 								executionId: toolCallId, onUpdate, toolName: surface.name, previousExecutionId: predecessor,
++								requestId: requestScope,
++								requestClosure: () => requestControl.closure(requestScope),
+ 								onLateStopConfirmed: () => requestControl.finishChild(toolCallId, true, requestScope) },
+ 						);
+ 					} catch (error) {
+@@ -1196,11 +1199,22 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 						persistSessionEntries();
+ 					}
+ 					const warnings = [...ignoredWarnings, ...outcome.warnings];
++					const execution = outcome.task.executions.find((item) => item.executionId === outcome.executionId);
++					const executionTiming = execution ? {
++						...(execution.requestId ? { requestId: execution.requestId } : {}),
++						...(execution.launchedAt ? { launchedAt: execution.launchedAt } : {}),
++						startedAt: execution.startedAt ?? null,
++						...(execution.endedAt ? { endedAt: execution.endedAt } : {}),
++						...(execution.durationMs !== undefined ? { durationMs: execution.durationMs } : {}),
++						...(execution.durationBasis ? { durationBasis: execution.durationBasis } : {}),
++						...(execution.requestClosed ? { requestClosed: execution.requestClosed } : {}),
++						...(execution.requestClosedAt ? { requestClosedAt: execution.requestClosedAt } : {}),
++					} : undefined;
+ 					return {
+ 						content: [{ type: "text", text: renderDelegationOutcome({ ...outcome, warnings }, surface.name) }],
+-							details: {
+-								taskId: outcome.task.taskId,
+-								...(modelRoute ? { modelRoute } : {}),
++						details: {
++							taskId: outcome.task.taskId,
++							...(modelRoute ? { modelRoute } : {}),
+ 							executionId: outcome.executionId,
+ 							runId: outcome.runId,
+ 							state: outcome.task.state,
+@@ -1208,6 +1222,8 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 							report: outcome.report,
+ 							review: outcome.review,
+ 							usage: outcome.usage,
++							request: requestControl.observe(requestScope),
++							...(executionTiming ? { executionTiming } : {}),
+ 							...(outcome.termination ? { termination: outcome.termination } : {}),
+ 							warnings,
+ 						},
+@@ -1298,21 +1314,27 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 						details: { error: result.error, taskId: params.taskId },
+ 					};
+ 				}
+-				const d = enforceDiagnosticsDetailsBudget(result.diagnostics);
++				const requestControl = requestFor(ctx);
++				const d = enforceDiagnosticsDetailsBudget({
++					...result.diagnostics,
++					request: requestControl.observe(requestControl.requestId),
++				});
+ 				// The structured payload is bounded before rendering so the text
+ 				// and details disclosures stay in sync.
+ 				const lines = [
+ 					`planner_tasks diagnostics for ${d.taskId} (${d.source}):`,
+ 					`state: ${d.state}${d.stateReason ? ` — ${d.stateReason}` : ""} | acceptanceMode: ${d.acceptanceMode} | reports: ${d.reports} | reviews: ${d.reviews}`,
++					...(d.request ? [`request ${d.request.requestId}: deadline=${d.request.requestDeadline ?? "not started"} remainingMs=${d.request.remainingMs ?? "unknown"} observedAt=${d.request.observedAt}${d.request.unavailableReason ? ` (${d.request.unavailableReason})` : ""}`] : []),
+ 					`session log: ${d.sessionLog.status}${d.sessionLog.path ? ` — ${d.sessionLog.path}` : ""}${d.sessionLog.note ? ` (${d.sessionLog.note})` : ""}`,
+ 					...(d.writerHold ? [`writer hold: ${d.writerHold.active ? "active" : "recorded (no live reservation)"} for execution ${d.writerHold.executionId} — ${d.writerHold.reason}`] : []),
+ 					...(d.recovery ? [`recovery.required: ${d.recovery.reason} (execution ${d.recovery.executionId})`] : []),
+-						...(d.executions.length === 0 && d.totalExecutions === 0 ? ["executions: none recorded"] : []),
++					...(d.executions.length === 0 && d.totalExecutions === 0 ? ["executions: none recorded"] : []),
+ 					...(d.totalExecutions > d.executions.length
+ 						? [`executions: showing latest ${d.executions.length} of ${d.totalExecutions} — pass executionId to inspect a specific one`]
+ 						: []),
+ 					...d.executions.flatMap((execution) => [
+ 						`execution ${execution.executionId} [${execution.kind}] status=${execution.status ?? "unknown"} capability=${execution.capability} confirmed=${execution.terminationConfirmed}${execution.confirmationBasis ? ` via ${execution.confirmationBasis}` : ""}${execution.endedReason ? ` ended=${execution.endedReason}` : ""}${execution.runId ? ` runId=${execution.runId}` : ""}`,
++						`  timing: request=${execution.requestId ?? "unknown"} launched=${execution.launchedAt ?? "unknown"} started=${execution.startedAt ?? "unknown"} ended=${execution.endedAt ?? "unknown"} durationMs=${execution.durationMs ?? "unknown"}${execution.durationBasis ? ` (${execution.durationBasis})` : ""}${execution.requestClosed ? ` | requestClosed=${execution.requestClosed} at ${execution.requestClosedAt ?? "unknown"}` : ""}`,
+ 						`  report: received=${execution.reportReceived} accepted=${execution.reportAccepted}${execution.evidenceIncomplete ? " | stop evidence incomplete" : ""}`,
+ 						...(execution.unacceptedReport ? [`  unaccepted report: status=${execution.unacceptedReport.status} reason="${execution.unacceptedReport.reason}"`] : []),
+ 						...(execution.probeFailures?.length ? [`  probe failures: ${describeProbeFailures(execution.probeFailures)}${execution.probeFailuresTruncated ? ` …and ${execution.probeFailuresTruncated} more` : ""}`] : []),
+diff --git a/ledger-store.test.mjs b/ledger-store.test.mjs
+index 44724ab..e1b918b 100644
+--- a/ledger-store.test.mjs
++++ b/ledger-store.test.mjs
+@@ -518,6 +518,25 @@ function snapshotPath(dir, taskId) {
+ 		const historical = ledger.read("T-20260918-s11");
+ 		assert.equal(historical.status, "ok", "S11: a record missing fields predating them is not corrupt");
+ 
++		writeEnvelope("T-20260918-timing", shapedRecord("T-20260918-timing", { executions: [{
++			executionId: "call-timing",
++			aRun: {},
++			requestId: "request-1",
++			launchedAt: "2026-09-20T10:00:00.000Z",
++			startedAt: null,
++			endedAt: "2026-09-20T10:00:01.000Z",
++			durationMs: 1000,
++			durationBasis: "request-outbound-to-finalization",
++		}] }));
++		const timing = ledger.read("T-20260918-timing");
++		assert.equal(timing.status, "ok", "timing fields and explicit unknown STARTED survive ledger validation");
++		assert.equal(timing.record.executions[0].durationMs, 1000);
++
++		writeEnvelope("T-20260918-bad-timing", shapedRecord("T-20260918-bad-timing", { executions: [{
++			executionId: "call-bad-timing", aRun: {}, durationMs: -1,
++		}] }));
++		assert.match(ledger.read("T-20260918-bad-timing").reason, /durationMs must be a non-negative/);
++
+ 		writeEnvelope("T-20260918-s12", shapedRecord("T-20260918-s12", { executions: {} }));
+ 		const orch = new PlannerOrchestrator({ gitRunner, ledgerDir: dir });
+ 		const diagnostics = orch.describeTaskDiagnostics(cwd, "T-20260918-s12");
+diff --git a/ledger-store.ts b/ledger-store.ts
+index 963d959..0afff00 100644
+--- a/ledger-store.ts
++++ b/ledger-store.ts
+@@ -62,9 +62,12 @@ const OPTIONAL_BOOLEAN_FIELDS = ["standaloneExplorer", "isPlaceholder", "titleAl
+ function executionShapeError(value: unknown, index: number): string | undefined {
+ 	const label = `task.executions[${index}]`;
+ 	if (!isPlainObject(value)) return `${label} must be an object`;
+-	for (const field of ["executionId", "kind", "status", "capability", "capabilityBasis", "reportOnlyAgent", "reportOnlyCapabilityBasis", "runId", "cwd", "endedReason", "endedAt", "confirmationBasis", "unacceptedReportReason"] as const) {
++	for (const field of ["executionId", "kind", "status", "capability", "capabilityBasis", "reportOnlyAgent", "reportOnlyCapabilityBasis", "runId", "cwd", "endedReason", "requestId", "launchedAt", "endedAt", "durationBasis", "requestClosed", "requestClosedAt", "confirmationBasis", "unacceptedReportReason"] as const) {
+ 		if (value[field] !== undefined && typeof value[field] !== "string") return `${label}.${field} must be a string`;
+ 	}
++	if (value.startedAt !== undefined && value.startedAt !== null && typeof value.startedAt !== "string") return `${label}.startedAt must be a string or null`;
++	if (value.durationMs !== undefined && (!Number.isSafeInteger(value.durationMs) || (value.durationMs as number) < 0)) return `${label}.durationMs must be a non-negative finite safe integer`;
++	if (value.durationBasis !== undefined && value.durationBasis !== "request-outbound-to-finalization") return `${label}.durationBasis is invalid`;
+ 	if (typeof value.executionId !== "string") return `${label}.executionId must be a string`;
+ 	if (!isPlainObject(value.aRun)) return `${label}.aRun must be an object`;
+ 	if (value.envelope !== undefined) {
+diff --git a/orchestrate.ts b/orchestrate.ts
+index 4b2852a..d59b416 100644
+--- a/orchestrate.ts
++++ b/orchestrate.ts
+@@ -382,6 +382,14 @@ export interface PlannerTaskDiagnostics {
+ 	reports: number;
+ 	reviews: number;
+ 	sessionLog: TaskSessionLogStatus;
++	/** Request clock observed by the public diagnostics adapter. */
++	request?: {
++		requestId: string;
++		requestDeadline: string | null;
++		remainingMs: number | null;
++		observedAt: string;
++		unavailableReason?: "request-not-started";
++	};
+ 	executions: {
+ 		executionId: string;
+ 		kind: DelegationKind;
+@@ -392,7 +400,14 @@ export interface PlannerTaskDiagnostics {
+ 		cwd?: string;
+ 		worktreeRoots?: string[];
+ 		endedReason?: string;
++		requestId?: string;
++		launchedAt?: string;
++		startedAt: string | null;
+ 		endedAt?: string;
++		durationMs?: number;
++		durationBasis?: "request-outbound-to-finalization";
++		requestClosed?: string;
++		requestClosedAt?: string;
+ 		terminationConfirmed: boolean;
+ 		confirmationBasis?: string;
+ 		evidenceIncomplete?: boolean;
+@@ -805,7 +820,14 @@ export class PlannerOrchestrator {
+ 						? { worktreeRoots: execution.worktreeRoots.map((root) => capped(root, 400)) }
+ 						: {}),
+ 					...(execution.endedReason ? { endedReason: capped(execution.endedReason, 400) } : {}),
++					...(execution.requestId ? { requestId: capped(execution.requestId, 200) } : {}),
++					...(execution.launchedAt ? { launchedAt: capped(execution.launchedAt, 100) } : {}),
++					startedAt: execution.startedAt ? capped(execution.startedAt, 100) : null,
+ 					...(execution.endedAt ? { endedAt: capped(execution.endedAt, 100) } : {}),
++					...(execution.durationMs !== undefined ? { durationMs: execution.durationMs } : {}),
++					...(execution.durationBasis ? { durationBasis: execution.durationBasis } : {}),
++					...(execution.requestClosed ? { requestClosed: capped(execution.requestClosed, 200) } : {}),
++					...(execution.requestClosedAt ? { requestClosedAt: capped(execution.requestClosedAt, 100) } : {}),
+ 					terminationConfirmed: execution.terminationConfirmed === true,
+ 					...(execution.confirmationBasis ? { confirmationBasis: capped(execution.confirmationBasis, 200) } : {}),
+ 					...(execution.evidenceIncomplete === true ? { evidenceIncomplete: true } : {}),
+diff --git a/p1-delegation.test.mjs b/p1-delegation.test.mjs
+index fbb8368..a97c2a6 100644
+--- a/p1-delegation.test.mjs
++++ b/p1-delegation.test.mjs
+@@ -38,6 +38,7 @@ const {
+ 	SUBAGENT_DELEGATION_CANCEL_EVENT: CANCEL,
+ 	SUBAGENT_DELEGATION_REQUEST_EVENT: REQUEST,
+ 	SUBAGENT_DELEGATION_RESPONSE_EVENT: RESPONSE,
++	SUBAGENT_DELEGATION_STARTED_EVENT: STARTED,
+ } = await import("./subagent-delegation-contract.ts");
+ const {
+ 	EXECUTION_DEFAULT_ENV_VARS,
+@@ -135,6 +136,7 @@ async function fixture(name, options = {}) {
+ 	});
+ 	events.on(REQUEST, request => {
+ 		f.launches.push(request);
++		if (!options.omitStarted) events.emit(STARTED, { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId });
+ 		if (!f.pending) queueMicrotask(() => f.respond(request));
+ 	});
+ 	events.on(CANCEL, cancel => {
+@@ -199,6 +201,20 @@ try {
+ 	assert.deepEqual(schemaKeys, ["envelope", "instructions", "recovery", "role", "taskId"]);
+ 	const created = await bound.call("planner_delegate", { ...definition, cwd: bound.cwd });
+ 	const taskId = created.details.taskId;
++	assert.equal(typeof created.details.request.requestId, "string");
++	assert.equal(typeof created.details.request.requestDeadline, "string");
++	assert.equal(typeof created.details.request.remainingMs, "number");
++	assert.equal(typeof created.details.request.observedAt, "string");
++	assert.equal(created.details.executionTiming.requestId, created.details.request.requestId);
++	assert.equal(typeof created.details.executionTiming.launchedAt, "string");
++	assert.equal(typeof created.details.executionTiming.startedAt, "string");
++	assert.equal(typeof created.details.executionTiming.endedAt, "string");
++	assert.equal(created.details.executionTiming.durationBasis, "request-outbound-to-finalization");
++	assert.equal(Number.isSafeInteger(created.details.executionTiming.durationMs), true);
++	const timingDiagnostics = await bound.call("planner_tasks", { taskId });
++	assert.equal(timingDiagnostics.details.diagnostics.request.requestId, created.details.request.requestId);
++	assert.equal(timingDiagnostics.details.diagnostics.executions[0].requestId, created.details.request.requestId);
++	assert.equal(timingDiagnostics.details.diagnostics.executions[0].durationBasis, "request-outbound-to-finalization");
+ 	assert.equal(bound.launches[0].toolBudget, undefined, "ordinary worker omits launcher toolBudget");
+ 	assert.deepEqual(bound.task(taskId).executions[0].envelope,
+ 		{ maxTokens: 100_000, maxWallMs: 600_000, source: "default" });
+@@ -215,6 +231,8 @@ try {
+ 		acceptanceCriteria: ["forged acceptance"],
+ 		validation: { required: false },
+ 	});
++	assert.equal(rebound.details.request.requestId, created.details.request.requestId);
++	assert.equal(rebound.details.request.requestDeadline, created.details.request.requestDeadline, "same-Request re-entry keeps the original deadline");
+ 	const reboundPacket = JSON.parse(bound.launches.at(-1).task);
+ 	assert.deepEqual(reboundPacket.spec, storedBefore, "minimal rebind uses the complete stored TaskSpec");
+ 	assert.equal(reboundPacket.instructions, "temporary child-only note");
+@@ -594,6 +612,7 @@ try {
+ 
+ 	const requestFirst = await fixture("request-first", {
+ 		pending: true,
++		omitStarted: true,
+ 		// Leave time for the real ledger fsync before dispatch; still prove
+ 		// the Request deadline cancels well before the execution envelope.
+ 		executionDefaults: { MAX_TOKENS: 100_000, MAX_WALL_MS: 10_000 },
+@@ -601,6 +620,9 @@ try {
+ 	});
+ 	const cutoff = await requestFirst.call("planner_delegate", definition);
+ 	assert.equal(cutoff.details.termination.reason, "operator_cancel", "earlier Request deadline wins over execution default");
++	assert.equal(cutoff.details.executionTiming.requestClosed, "active-time-limit");
++	assert.equal(typeof cutoff.details.executionTiming.requestClosedAt, "string");
++	assert.equal(cutoff.details.executionTiming.startedAt, null, "waiting launch without STARTED remains explicitly unknown");
+ 	assert.equal(requestFirst.cancels.length, 1);
+ 	assert.equal(requestFirst.task(cutoff.details.taskId).executions[0].envelope.source, "operator-config");
+ 
+diff --git a/request-control.test.mjs b/request-control.test.mjs
+index cdec5ac..4a0163d 100644
+--- a/request-control.test.mjs
++++ b/request-control.test.mjs
+@@ -82,8 +82,16 @@ try {
+ 	let now = 1000, callback, rootAborts = 0;
+ 	const timedStore = new MemoryStorage();
+ 	const timed = make(timedStore, { now: () => now, setTimer: fn => { callback = fn; return { unref() {} }; }, clearTimer() {}, stopRoot: () => { rootAborts++; return "requested"; } });
++	assert.deepEqual(timed.observe(), {
++		requestId: timed.requestId,
++		requestDeadline: null,
++		remainingMs: null,
++		observedAt: "1970-01-01T00:00:01.000Z",
++		unavailableReason: "request-not-started",
++	});
+ 	tool(timed, "start");
+ 	assert.equal(timed.snapshot().deadline, 901000);
++	assert.equal(timed.observe().remainingMs, 900000);
+ 	now = 901000; callback();
+ 	assert.equal(timed.snapshot().closedReason, "active-time-limit");
+ 	assert.equal(timed.snapshot().rootStop, "requested");
+@@ -96,6 +104,25 @@ try {
+ 	timed.settle();
+ 	const restoredTime = make(timedStore, { now: () => now });
+ 	assert.equal(restoredTime.snapshot().deadline, 901000);
++	assert.equal(restoredTime.observe().remainingMs, 0, "restored Request keeps its original deadline");
++	const closedTimingId = restoredTime.requestId;
++	const closedTiming = restoredTime.closure(closedTimingId);
++	assert.equal(closedTiming.requestId, closedTimingId);
++	assert.equal(closedTiming.requestClosed, "active-time-limit");
++	assert.equal(closedTiming.requestClosedAt, "1970-01-01T00:15:01.000Z");
++	restoredTime.settle();
++	assert.equal(restoredTime.input("interactive"), true);
++	assert.notEqual(restoredTime.requestId, closedTimingId);
++	assert.equal(restoredTime.observe(closedTimingId).requestId, closedTimingId, "history lookup stays bound to the original Request");
++	assert.equal(restoredTime.observe(closedTimingId).remainingMs, 0, "re-entry cannot refresh an earlier Request deadline");
++	assert.equal(restoredTime.closure(closedTimingId).requestClosed, "active-time-limit", "cross-Request closure lookup does not use the new Request");
++
++	let passiveNow = 5_000;
++	const passive = make(new MemoryStorage(), { now: () => passiveNow, setTimer: () => ({ unref() {} }), clearTimer() {} });
++	tool(passive, "passive-start");
++	passiveNow += limits.activeMs + 1;
++	assert.equal(passive.observe().remainingMs, 0);
++	assert.equal(passive.snapshot().closedReason, undefined, "remaining-time observation is side-effect-free after the deadline");
+ 
+ 	const brokenStorage = new MemoryStorage();
+ 	const broken = make(brokenStorage);
+diff --git a/request-control.ts b/request-control.ts
+index 0c42dad..403b4b0 100644
+--- a/request-control.ts
++++ b/request-control.ts
+@@ -79,9 +79,25 @@ export interface RequestRecord {
+ 	failures: FailureMember[];
+ 	structures: Array<{ operation: string; issues: string[] }>;
+ 	closedReason?: string;
++	closedAt?: number;
+ 	settled: boolean;
+ 	rootStop: RootStop;
+ }
++
++export interface RequestTimingObservation {
++	requestId: string;
++	requestDeadline: string | null;
++	remainingMs: number | null;
++	observedAt: string;
++	/** Present only while the Request clock has not started. */
++	unavailableReason?: "request-not-started";
++}
++
++export interface RequestClosureObservation {
++	requestId: string;
++	requestClosed: string;
++	requestClosedAt: string;
++}
+ interface RequestDocument {
+ 	version: 1;
+ 	sessionId: string;
+@@ -152,6 +168,10 @@ function validRecord(r: RequestRecord): boolean {
+ 	if (!(r.startedAt === null && r.deadline === null) && !(integer(r.startedAt) && integer(r.deadline) && r.deadline === r.startedAt! + r.limits.activeMs)) return false;
+ 	if (typeof r.settled !== "boolean" || !["not-requested", "requested", "confirmed", "unsupported", "unconfirmed"].includes(r.rootStop)) return false;
+ 	if (r.closedReason !== undefined && !text(r.closedReason)) return false;
++	if (r.closedAt !== undefined && !integer(r.closedAt)) return false;
++	// Old durable records can have closedReason without closedAt; keep the
++	// closure time unknown rather than inventing one on restore.
++	if (r.closedAt !== undefined && r.closedReason === undefined) return false;
+ 	if (!Array.isArray(r.tools) || !r.tools.every(t => t && text(t.id) && text(t.name) && ["admitted", "executing", "settled"].includes(t.phase))) return false;
+ 	if (new Set(r.tools.map(t => t.id)).size !== r.tools.length || r.toolAttempts < r.tools.length) return false;
+ 	if (!Array.isArray(r.claims) || r.childLaunches !== r.claims.length || !r.claims.every(c => c && text(c.key) && text(c.taskId) && text(c.executionId)
+@@ -225,6 +245,37 @@ export class RequestController {
+ 	get requestId(): string { return this.current.id; }
+ 	get signal(): AbortSignal { return this.controller.signal; }
+ 	snapshot(): RequestRecord { return structuredClone(this.current); }
++	observe(requestId = this.requestId): RequestTimingObservation {
++		const observedAt = this.now();
++		const record = this.record(requestId);
++		if (!record) {
++			throw new RequestClosed("request-changed");
++		}
++		if (record.deadline === null) {
++			return {
++				requestId: record.id,
++				requestDeadline: null,
++				remainingMs: null,
++				observedAt: new Date(observedAt).toISOString(),
++				unavailableReason: "request-not-started",
++			};
++		}
++		return {
++			requestId: record.id,
++			requestDeadline: new Date(record.deadline).toISOString(),
++			remainingMs: Math.max(0, record.deadline - observedAt),
++			observedAt: new Date(observedAt).toISOString(),
++		};
++	}
++	closure(requestId = this.requestId): RequestClosureObservation | undefined {
++		const record = this.record(requestId);
++		if (!record?.closedReason || record.closedAt === undefined) return undefined;
++		return {
++			requestId: record.id,
++			requestClosed: record.closedReason,
++			requestClosedAt: new Date(record.closedAt).toISOString(),
++		};
++	}
+ 	private fresh(limits: Readonly<RequestLimits>): RequestRecord {
+ 		return { id: randomUUID(), limits: { ...limits }, startedAt: null, deadline: null, toolAttempts: 0, childLaunches: 0, repairs: 0,
+ 			modelCallsObserved: 0, tools: [], claims: [], failures: [], structures: [], settled: false, rootStop: "not-requested" };
+@@ -264,6 +315,7 @@ export class RequestController {
+ 	close(reason: string): void {
+ 		if (!this.current.closedReason) {
+ 			this.current.closedReason = reason;
++			this.current.closedAt = this.now();
+ 			this.current.rootStop = "requested";
+ 			this.save(); // close in memory and on disk BEFORE any cancellation
+ 		}
+diff --git a/types.ts b/types.ts
+index 1c0d1e5..ab13c87 100644
+--- a/types.ts
++++ b/types.ts
+@@ -360,12 +360,25 @@ export interface TaskExecutionRecord {
+ 	taskId: string;
+ 	/** P0-A lifecycle status; `beginExecution` writes `running`. */
+ 	status?: ExecutionLifecycleStatus;
++	/** Request that admitted this execution. Absent on old ledgers and non-host unit seams. */
++	requestId?: string;
++	/** Local wall timestamp at the REQUEST outbound boundary; excludes pre-launch Git capture. */
++	launchedAt?: string;
++	/** Local receipt time of identity-matched launcher STARTED; null means STARTED was not observed. */
++	startedAt?: string | null;
+ 	/** Why this execution ended; absent while running or on old ledgers. */
+ 	endedReason?: ExecutionEndedReason;
+ 	/** When a CANCEL was requested (signal abort or WRC). Never used as endedAt. */
+ 	cancelRequestedAt?: string;
+ 	/** When the execution's terminal state was finalized. */
+ 	endedAt?: string;
++	/** Monotonic elapsed time from REQUEST outbound through finalization/quiescence. */
++	durationMs?: number;
++	/** Documents the two endpoints used by durationMs. */
++	durationBasis?: "request-outbound-to-finalization";
++	/** Original Request closure that caused cancellation; endedReason retains host semantics. */
++	requestClosed?: string;
++	requestClosedAt?: string;
+ 	/** Set only when the spec §3 quiescence predicate passed. */
+ 	terminationConfirmed?: boolean;
+ 	/**

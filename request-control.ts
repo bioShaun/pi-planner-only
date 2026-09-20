@@ -79,8 +79,24 @@ export interface RequestRecord {
 	failures: FailureMember[];
 	structures: Array<{ operation: string; issues: string[] }>;
 	closedReason?: string;
+	closedAt?: number;
 	settled: boolean;
 	rootStop: RootStop;
+}
+
+export interface RequestTimingObservation {
+	requestId: string;
+	requestDeadline: string | null;
+	remainingMs: number | null;
+	observedAt: string;
+	/** Present only while the Request clock has not started. */
+	unavailableReason?: "request-not-started";
+}
+
+export interface RequestClosureObservation {
+	requestId: string;
+	requestClosed: string;
+	requestClosedAt: string;
 }
 interface RequestDocument {
 	version: 1;
@@ -152,6 +168,10 @@ function validRecord(r: RequestRecord): boolean {
 	if (!(r.startedAt === null && r.deadline === null) && !(integer(r.startedAt) && integer(r.deadline) && r.deadline === r.startedAt! + r.limits.activeMs)) return false;
 	if (typeof r.settled !== "boolean" || !["not-requested", "requested", "confirmed", "unsupported", "unconfirmed"].includes(r.rootStop)) return false;
 	if (r.closedReason !== undefined && !text(r.closedReason)) return false;
+	if (r.closedAt !== undefined && !integer(r.closedAt)) return false;
+	// Old durable records can have closedReason without closedAt; keep the
+	// closure time unknown rather than inventing one on restore.
+	if (r.closedAt !== undefined && r.closedReason === undefined) return false;
 	if (!Array.isArray(r.tools) || !r.tools.every(t => t && text(t.id) && text(t.name) && ["admitted", "executing", "settled"].includes(t.phase))) return false;
 	if (new Set(r.tools.map(t => t.id)).size !== r.tools.length || r.toolAttempts < r.tools.length) return false;
 	if (!Array.isArray(r.claims) || r.childLaunches !== r.claims.length || !r.claims.every(c => c && text(c.key) && text(c.taskId) && text(c.executionId)
@@ -225,6 +245,37 @@ export class RequestController {
 	get requestId(): string { return this.current.id; }
 	get signal(): AbortSignal { return this.controller.signal; }
 	snapshot(): RequestRecord { return structuredClone(this.current); }
+	observe(requestId = this.requestId): RequestTimingObservation {
+		const observedAt = this.now();
+		const record = this.record(requestId);
+		if (!record) {
+			throw new RequestClosed("request-changed");
+		}
+		if (record.deadline === null) {
+			return {
+				requestId: record.id,
+				requestDeadline: null,
+				remainingMs: null,
+				observedAt: new Date(observedAt).toISOString(),
+				unavailableReason: "request-not-started",
+			};
+		}
+		return {
+			requestId: record.id,
+			requestDeadline: new Date(record.deadline).toISOString(),
+			remainingMs: Math.max(0, record.deadline - observedAt),
+			observedAt: new Date(observedAt).toISOString(),
+		};
+	}
+	closure(requestId = this.requestId): RequestClosureObservation | undefined {
+		const record = this.record(requestId);
+		if (!record?.closedReason || record.closedAt === undefined) return undefined;
+		return {
+			requestId: record.id,
+			requestClosed: record.closedReason,
+			requestClosedAt: new Date(record.closedAt).toISOString(),
+		};
+	}
 	private fresh(limits: Readonly<RequestLimits>): RequestRecord {
 		return { id: randomUUID(), limits: { ...limits }, startedAt: null, deadline: null, toolAttempts: 0, childLaunches: 0, repairs: 0,
 			modelCallsObserved: 0, tools: [], claims: [], failures: [], structures: [], settled: false, rootStop: "not-requested" };
@@ -264,6 +315,7 @@ export class RequestController {
 	close(reason: string): void {
 		if (!this.current.closedReason) {
 			this.current.closedReason = reason;
+			this.current.closedAt = this.now();
 			this.current.rootStop = "requested";
 			this.save(); // close in memory and on disk BEFORE any cancellation
 		}

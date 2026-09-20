@@ -382,6 +382,14 @@ export interface PlannerTaskDiagnostics {
 	reports: number;
 	reviews: number;
 	sessionLog: TaskSessionLogStatus;
+	/** Request clock observed by the public diagnostics adapter. */
+	request?: {
+		requestId: string;
+		requestDeadline: string | null;
+		remainingMs: number | null;
+		observedAt: string;
+		unavailableReason?: "request-not-started";
+	};
 	executions: {
 		executionId: string;
 		kind: DelegationKind;
@@ -392,7 +400,14 @@ export interface PlannerTaskDiagnostics {
 		cwd?: string;
 		worktreeRoots?: string[];
 		endedReason?: string;
+		requestId?: string;
+		launchedAt?: string;
+		startedAt: string | null;
 		endedAt?: string;
+		durationMs?: number;
+		durationBasis?: "request-outbound-to-finalization";
+		requestClosed?: string;
+		requestClosedAt?: string;
 		terminationConfirmed: boolean;
 		confirmationBasis?: string;
 		evidenceIncomplete?: boolean;
@@ -805,7 +820,14 @@ export class PlannerOrchestrator {
 						? { worktreeRoots: execution.worktreeRoots.map((root) => capped(root, 400)) }
 						: {}),
 					...(execution.endedReason ? { endedReason: capped(execution.endedReason, 400) } : {}),
+					...(execution.requestId ? { requestId: capped(execution.requestId, 200) } : {}),
+					...(execution.launchedAt ? { launchedAt: capped(execution.launchedAt, 100) } : {}),
+					startedAt: execution.startedAt ? capped(execution.startedAt, 100) : null,
 					...(execution.endedAt ? { endedAt: capped(execution.endedAt, 100) } : {}),
+					...(execution.durationMs !== undefined ? { durationMs: execution.durationMs } : {}),
+					...(execution.durationBasis ? { durationBasis: execution.durationBasis } : {}),
+					...(execution.requestClosed ? { requestClosed: capped(execution.requestClosed, 200) } : {}),
+					...(execution.requestClosedAt ? { requestClosedAt: capped(execution.requestClosedAt, 100) } : {}),
 					terminationConfirmed: execution.terminationConfirmed === true,
 					...(execution.confirmationBasis ? { confirmationBasis: capped(execution.confirmationBasis, 200) } : {}),
 					...(execution.evidenceIncomplete === true ? { evidenceIncomplete: true } : {}),

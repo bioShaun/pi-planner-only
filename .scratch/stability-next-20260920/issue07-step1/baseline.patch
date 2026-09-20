@@ -1,0 +1,175 @@
+diff --git a/.scratch/stability-next-20260920/issue06/applied/after.sha256 b/.scratch/stability-next-20260920/issue06/applied/after.sha256
+index 05be75a..a053c9c 100644
+--- a/.scratch/stability-next-20260920/issue06/applied/after.sha256
++++ b/.scratch/stability-next-20260920/issue06/applied/after.sha256
+@@ -1,3 +1,3 @@
+-1f559c994757e20bacdbf8944107bf80cf5e2d0c4b844e3225d353f41c603d76  /home/tcuni-claw/.codex/review-readonly.sh
+-bb701d3a7b2c8dcf579516e828c30ecba841baeb3cdf1cf205dd29188e18ae49  /home/tcuni-claw/.codex/astra-planner.md
++7f7e6e79350ff4e51f7111692f2e35b8006e604850f9c0a371b5f7276195758b  /home/tcuni-claw/.codex/review-readonly.sh
++5e7e900c1cfa5b86f25532645ff3d01fe94afb8334694cdb75b6306852a4cba4  /home/tcuni-claw/.codex/astra-planner.md
+ 0b116a568f4d9cb588535f16f83ea95054c9792c08ae8c00fe9fe0ecf97bb3f6  /home/tcuni-claw/.codex/run-bounded.py
+diff --git a/.scratch/stability-next-20260920/issue06/applied/applied-at.txt b/.scratch/stability-next-20260920/issue06/applied/applied-at.txt
+index fdfbcee..f6986c2 100644
+--- a/.scratch/stability-next-20260920/issue06/applied/applied-at.txt
++++ b/.scratch/stability-next-20260920/issue06/applied/applied-at.txt
+@@ -1,2 +1,3 @@
+ 2026-09-20T07:31:51Z
+ 2026-09-20T07:39:32Z
++2026-09-20T12:38:55Z
+diff --git a/.scratch/stability-next-20260920/issue06/astra-planner-proposed.md b/.scratch/stability-next-20260920/issue06/astra-planner-proposed.md
+index e4b7b17..187d663 100644
+--- a/.scratch/stability-next-20260920/issue06/astra-planner-proposed.md
++++ b/.scratch/stability-next-20260920/issue06/astra-planner-proposed.md
+@@ -89,7 +89,7 @@ Root 自行采集每轮 `A_run`、`C_report`，用两者差异判断范围和报
+ 
+ - advisory：到评估时间检查已有证据和剩余工作，决定继续、缩小范围或接手；继续时记录原因和下一次评估时间，不因到点自动中断有进展的任务。
+ - hard：启动前明确 UTC `startedAt`、`deadline` 和取消能力；调度边界检查时钟，等待最多 `min(60 秒, deadline 剩余时间)`。到期立即发出中断并确认终态；如需延长，必须在原 deadline 前记录新 deadline 和原因，不能事后追认。阻塞工具可能延迟调度，不能把提示词中的截止时间宣称为精确硬限制。
+-- 两种模式下，取消或接手都必须先确认原写入者及相关进程停止，再转交写入权。严格只读 launcher 仍有独立的外部时限（`REVIEW_READONLY_TIMEOUT`，默认 420 秒，依据 2026-09-20 工单 06 的实测：astra_reviewer 在 gpt-5.6-sol/high 下完成一次 strict 审查需 115–>203 秒，父入口自身约 30 秒），不因 advisory 模式自动延长。
++- 两种模式下，取消或接手都必须先确认原写入者及相关进程停止，再转交写入权。严格只读 launcher 仍有独立的外部时限（`REVIEW_READONLY_TIMEOUT`，默认 600 秒，依据 2026-09-20 的实测：astra_reviewer 在 gpt-5.6-sol/high 下完成一次 strict 审查需 115–524 秒，广泛审查多在 400 秒以上，父入口自身约 30–50 秒；420 默认曾两次截断无 verdict），不因 advisory 模式自动延长。
+ 
+ 这是 native Root 的主动调度协议，不是 TOML 自动硬限制，也不保证消除模型错误。文本 `STOP` 和用于记录中断消息的配置项 `agents.interrupt_message` 都不是预算执行器，也不是取消工具。没有硬取消能力时记录能力缺口；外部 CLI 进程组时限不能证明每个 Worker 的取消机制。取消后检查残留进程；停止未确认时保留写入占用。
+ 
+@@ -109,7 +109,7 @@ Explorer、Locator、Reviewer 的配置默认 read-only；Worker、Validator 默
+ bash /home/tcuni-claw/.codex/review-readonly.sh /path/to/review-request.md > /path/to/review-events.jsonl
+ ```
+ 
+-入口以 `codex exec --sandbox read-only` 启动独立 Root，再以无历史方式调用 astra_reviewer。必须以实际权限探测证明 Root/Reviewer 的运行时隔离；角色 TOML 或模型拒绝写入不是证据。入口要求 Bash、Python 3 和 Codex；stdlib watchdog 建立独立进程组，`REVIEW_READONLY_TIMEOUT`（默认 420）秒后 TERM，宽限 10 秒后对进程组 KILL。父 Root 以 low effort 运行，只做权限探针、spawn、wait 和转述；Reviewer 的 model/effort 仍由角色文件固定，须以子会话 turn_context 核对。退出 0 仅表示 session 完成，仍需检查 Reviewer verdict 与权限证据；124 表示超时后终止，137 表示已强杀且仍需确认无残留进程。依赖缺失是 BLOCKED；strict 失败不能降级为 behavior-only PASS。
++入口以 `codex exec --sandbox read-only` 启动独立 Root，再以无历史方式调用 astra_reviewer。必须以实际权限探测证明 Root/Reviewer 的运行时隔离；角色 TOML 或模型拒绝写入不是证据。入口要求 Bash、Python 3 和 Codex；stdlib watchdog 建立独立进程组，`REVIEW_READONLY_TIMEOUT`（默认 600）秒后 TERM，宽限 10 秒后对进程组 KILL。父 Root 以 low effort 运行，只做权限探针、spawn、wait 和转述；Reviewer 的 model/effort 仍由角色文件固定，须以子会话 turn_context 核对。每次 strict 运行记录 child 实际耗时，用于日后收紧默认值；子契约应写明软预算（例如 300 秒），超时时带覆盖范围返回 BLOCKED 而不是被截断。退出 0 仅表示 session 完成，仍需检查 Reviewer verdict 与权限证据；124 表示超时后终止，137 表示已强杀且仍需确认无残留进程。依赖缺失是 BLOCKED；strict 失败不能降级为 behavior-only PASS。
+ 
+ ## 全局使用与项目约束
+ 
+diff --git a/.scratch/stability-next-20260920/issue06/diagnosis.md b/.scratch/stability-next-20260920/issue06/diagnosis.md
+index e9e0059..61e4eed 100644
+--- a/.scratch/stability-next-20260920/issue06/diagnosis.md
++++ b/.scratch/stability-next-20260920/issue06/diagnosis.md
+@@ -56,3 +56,7 @@ attempt 1–3 的原始目录在 `../strict-run-qE6emR`、`../strict-run-snUQhK`
+ 第 4 轮暴露的 here-document 问题在 attempt 2 与实验 1 的父会话中同样出现过（首次探针均报同一错误），只是那两次父有重试或没被追究。入口提示词已第二次修订：探针必须用 `python3 -c` 内联、不得用 here-document 或临时文件、失败可重试一次；子 TaskSpec 原样传递，不得附带父的探针结果、假设或 verdict 建议；转述后再附父自己的探针证据。
+ 
+ 第 5 轮总时长 253 秒（父 25 + 子 207 + 转述 21），超过原 240 秒预算，直接验证了方案 B 的必要性。420 秒默认值下余量 167 秒。两轮均无自有残留进程，HEAD 85bdd2a，77 个冻结项零漂移。
++
++## 默认时限二次校准（2026-09-20 晚，审核后）
++
++用户实施 P1-B 期间的 8 次 strict child 耗时 166–524 秒（qgpWLM 279、HRTA2r >362、XlcaPu >362、2FEEMJ 469、ed0kfI 166、ONdoZZ >371、Bg1P0s 524、dihsWK 418）。420 默认下两次无 verdict 被截断；闭环的四次中三次靠 `REVIEW_READONLY_TIMEOUT=600`。按用户授权把全局入口与协议默认改为 600（`global-budget.patch`、`applied/after.sha256` 已更新）。仍要求每次 strict 运行记录 child 耗时。
+diff --git a/.scratch/stability-next-20260920/issue06/global-budget.patch b/.scratch/stability-next-20260920/issue06/global-budget.patch
+index eddf7fe..cfbf8b8 100644
+--- a/.scratch/stability-next-20260920/issue06/global-budget.patch
++++ b/.scratch/stability-next-20260920/issue06/global-budget.patch
+@@ -1,5 +1,5 @@
+ --- .scratch/stability-next-20260920/issue06/review-readonly-current.sh	2026-09-20 13:48:13.827498639 +0800
+-+++ .scratch/stability-next-20260920/issue06/review-readonly-proposed-budget.sh	2026-09-20 15:39:32.494689610 +0800
+++++ .scratch/stability-next-20260920/issue06/review-readonly-proposed-budget.sh	2026-09-20 20:38:55.211937409 +0800
+ @@ -11,6 +11,13 @@
+      exit 127
+    fi
+@@ -10,7 +10,7 @@
+ +# the child's turn_context, never from the parent's self-report.
+ +parent_effort="${REVIEW_READONLY_PARENT_EFFORT:-low}"
+ +# External deadline in seconds; see astra-planner.md for the default and its evidence.
+-+review_timeout="${REVIEW_READONLY_TIMEOUT:-420}"
+++review_timeout="${REVIEW_READONLY_TIMEOUT:-600}"
+  set +e
+  {
+    cat <<'PROMPT'
+@@ -49,13 +49,13 @@
+    *) printf 'review-readonly: launch/session failed (exit %s)\n' "$launcher_status" >&2 ;;
+  esac
+ --- .scratch/stability-next-20260920/issue06/astra-planner-current.md	2026-09-20 13:59:54.575175631 +0800
+-+++ /home/tcuni-claw/.codex/astra-planner.md	2026-09-20 15:31:12.793628968 +0800
+++++ .scratch/stability-next-20260920/issue06/astra-planner-proposed.md	2026-09-20 20:38:55.212819880 +0800
+ @@ -89,7 +89,7 @@
+  
+  - advisory：到评估时间检查已有证据和剩余工作，决定继续、缩小范围或接手；继续时记录原因和下一次评估时间，不因到点自动中断有进展的任务。
+  - hard：启动前明确 UTC `startedAt`、`deadline` 和取消能力；调度边界检查时钟，等待最多 `min(60 秒, deadline 剩余时间)`。到期立即发出中断并确认终态；如需延长，必须在原 deadline 前记录新 deadline 和原因，不能事后追认。阻塞工具可能延迟调度，不能把提示词中的截止时间宣称为精确硬限制。
+ -- 两种模式下，取消或接手都必须先确认原写入者及相关进程停止，再转交写入权。严格只读 launcher 仍有独立的 240 秒外部时限，不因 advisory 模式自动延长。
+-+- 两种模式下，取消或接手都必须先确认原写入者及相关进程停止，再转交写入权。严格只读 launcher 仍有独立的外部时限（`REVIEW_READONLY_TIMEOUT`，默认 420 秒，依据 2026-09-20 工单 06 的实测：astra_reviewer 在 gpt-5.6-sol/high 下完成一次 strict 审查需 115–>203 秒，父入口自身约 30 秒），不因 advisory 模式自动延长。
+++- 两种模式下，取消或接手都必须先确认原写入者及相关进程停止，再转交写入权。严格只读 launcher 仍有独立的外部时限（`REVIEW_READONLY_TIMEOUT`，默认 600 秒，依据 2026-09-20 的实测：astra_reviewer 在 gpt-5.6-sol/high 下完成一次 strict 审查需 115–524 秒，广泛审查多在 400 秒以上，父入口自身约 30–50 秒；420 默认曾两次截断无 verdict），不因 advisory 模式自动延长。
+  
+  这是 native Root 的主动调度协议，不是 TOML 自动硬限制，也不保证消除模型错误。文本 `STOP` 和用于记录中断消息的配置项 `agents.interrupt_message` 都不是预算执行器，也不是取消工具。没有硬取消能力时记录能力缺口；外部 CLI 进程组时限不能证明每个 Worker 的取消机制。取消后检查残留进程；停止未确认时保留写入占用。
+  
+@@ -64,7 +64,7 @@
+  ```
+  
+ -入口以 `codex exec --sandbox read-only` 启动独立 Root，再以无历史方式调用 astra_reviewer。必须以实际权限探测证明 Root/Reviewer 的运行时隔离；角色 TOML 或模型拒绝写入不是证据。入口要求 Bash、Python 3 和 Codex；stdlib watchdog 建立独立进程组，240 秒后 TERM，宽限 10 秒后对进程组 KILL。退出 0 仅表示 session 完成，仍需检查 Reviewer verdict 与权限证据；124 表示超时后终止，137 表示已强杀且仍需确认无残留进程。依赖缺失是 BLOCKED；strict 失败不能降级为 behavior-only PASS。
+-+入口以 `codex exec --sandbox read-only` 启动独立 Root，再以无历史方式调用 astra_reviewer。必须以实际权限探测证明 Root/Reviewer 的运行时隔离；角色 TOML 或模型拒绝写入不是证据。入口要求 Bash、Python 3 和 Codex；stdlib watchdog 建立独立进程组，`REVIEW_READONLY_TIMEOUT`（默认 420）秒后 TERM，宽限 10 秒后对进程组 KILL。父 Root 以 low effort 运行，只做权限探针、spawn、wait 和转述；Reviewer 的 model/effort 仍由角色文件固定，须以子会话 turn_context 核对。每次 strict 运行记录 child 实际耗时，用于日后收紧默认值；子契约应写明软预算（例如 300 秒），超时时带覆盖范围返回 BLOCKED 而不是被截断。退出 0 仅表示 session 完成，仍需检查 Reviewer verdict 与权限证据；124 表示超时后终止，137 表示已强杀且仍需确认无残留进程。依赖缺失是 BLOCKED；strict 失败不能降级为 behavior-only PASS。
+++入口以 `codex exec --sandbox read-only` 启动独立 Root，再以无历史方式调用 astra_reviewer。必须以实际权限探测证明 Root/Reviewer 的运行时隔离；角色 TOML 或模型拒绝写入不是证据。入口要求 Bash、Python 3 和 Codex；stdlib watchdog 建立独立进程组，`REVIEW_READONLY_TIMEOUT`（默认 600）秒后 TERM，宽限 10 秒后对进程组 KILL。父 Root 以 low effort 运行，只做权限探针、spawn、wait 和转述；Reviewer 的 model/effort 仍由角色文件固定，须以子会话 turn_context 核对。每次 strict 运行记录 child 实际耗时，用于日后收紧默认值；子契约应写明软预算（例如 300 秒），超时时带覆盖范围返回 BLOCKED 而不是被截断。退出 0 仅表示 session 完成，仍需检查 Reviewer verdict 与权限证据；124 表示超时后终止，137 表示已强杀且仍需确认无残留进程。依赖缺失是 BLOCKED；strict 失败不能降级为 behavior-only PASS。
+  
+  ## 全局使用与项目约束
+  
+diff --git a/.scratch/stability-next-20260920/issue06/review-readonly-proposed-budget.sh b/.scratch/stability-next-20260920/issue06/review-readonly-proposed-budget.sh
+index 692239b..3cbc413 100644
+--- a/.scratch/stability-next-20260920/issue06/review-readonly-proposed-budget.sh
++++ b/.scratch/stability-next-20260920/issue06/review-readonly-proposed-budget.sh
+@@ -17,7 +17,7 @@ done
+ # the child's turn_context, never from the parent's self-report.
+ parent_effort="${REVIEW_READONLY_PARENT_EFFORT:-low}"
+ # External deadline in seconds; see astra-planner.md for the default and its evidence.
+-review_timeout="${REVIEW_READONLY_TIMEOUT:-420}"
++review_timeout="${REVIEW_READONLY_TIMEOUT:-600}"
+ set +e
+ {
+   cat <<'PROMPT'
+diff --git a/.scratch/stability-next-20260920/issue06/summarize-run.mjs b/.scratch/stability-next-20260920/issue06/summarize-run.mjs
+index 547e565..16b0dbb 100644
+--- a/.scratch/stability-next-20260920/issue06/summarize-run.mjs
++++ b/.scratch/stability-next-20260920/issue06/summarize-run.mjs
+@@ -30,7 +30,8 @@ const sec = (a, b) => a && b ? Number(((new Date(b) - new Date(a)) / 1000).toFix
+ const mtime = (f) => fs.statSync(path.join(runDir, f)).mtime.toISOString();
+ const launchedAt = fs.existsSync(path.join(runDir, "launched-at.txt")) ? read("launched-at.txt").trim() : mtime("slot-status.txt");
+ const finishedAt = fs.existsSync(path.join(runDir, "finished-at.txt")) ? read("finished-at.txt").trim() : mtime("exit-code.txt");
+-const residue = execSync("for p in $(pgrep -x codex); do s=$(ps -o lstart= -p $p); [ \"$(date -d \"$s\" +%s)\" -ge \"$(date -d '" + launchedAt + "' +%s)\" ] && echo \"$p $s\"; done; true", { shell: "/bin/bash" }).toString().trim().split("\n").filter(Boolean);
++// Residue = codex processes started after this launch whose cwd is this project (other projects' sessions are not ours).
++const residue = execSync("for p in $(pgrep -x codex); do s=$(ps -o lstart= -p $p); c=$(readlink /proc/$p/cwd 2>/dev/null); [ \"$c\" = \"" + process.cwd() + "\" ] && [ \"$(date -d \"$s\" +%s)\" -ge \"$(date -d '" + launchedAt + "' +%s)\" ] && echo \"$p $s $c\"; done; true", { shell: "/bin/bash" }).toString().trim().split("\n").filter(Boolean);
+ const tmpPaths = execSync("find /project/tmp -maxdepth 1 -name 'planner-strict-*' -newermt '" + launchedAt + "' ! -newermt '" + finishedAt + "' 2>/dev/null; true", { shell: "/bin/bash" }).toString().trim().split("\n").filter(Boolean);
+ const verdict = childComplete && childFinalMsg ? (childFinalMsg.payload.content.map((x) => x.text || "").join("").split("\n")[0]) : null;
+ const out = {
+diff --git a/.scratch/stability-next-20260920/issues/05-measurement.md b/.scratch/stability-next-20260920/issues/05-measurement.md
+index f1d8dd0..ddbffc2 100644
+--- a/.scratch/stability-next-20260920/issues/05-measurement.md
++++ b/.scratch/stability-next-20260920/issues/05-measurement.md
+@@ -23,3 +23,13 @@ ADR-0008 将十分钟保留为操作默认值定稿，明确不宣称统计最
+ Root 读取政策未放宽。Idle/live 共同的有界读取机制不在本轮实现；未来若要改变权限，需另有 CONTEXT/ADR、额度设计与相关对照证据。写入、通用 shell、Writer hold 和高风险复核边界保持原契约。
+ 
+ 2026-09-20最终验收：完整release GJqscr、代码修正ed0kfI及收尾dihsWK通过；各自范围与原始证据见 ../execution-20260920/closeout.md。
++
++## 后续：大任务测量（2026-09-20，Claude 规划，不影响稳定运行）
++
++本轮结论只覆盖小任务：委派比直接 Root 多约 15 倍 token，完成率相同。这不威胁运行稳定，只关系"省 token"目标是否成立，属于下一阶段方向决定，不阻塞发布。若要做：
++
++1. 任务集：3–5 个真实项目任务，单次预计 5–30 分钟、需读 20+ 文件或跑测试，写明可机器判定的完成标准。
++2. 组别：direct Root vs optimized 委派（baseline 可省略）；固定模型与 thinking；每任务至少 3 次重复，保留全部失败样本。
++3. 指标：Root 自身 token（核心指标）、总 token、完成率、墙钟、Request 内 CANCEL 次数；有单价时再算费用，否则保持 null。
++4. 先做工单 07 第一步，否则长任务的耗时口径不可比。
++5. 结论落到 pi-planner-only-goal-and-assessment 与 README 的"适用范围"一节，不做未经测量的省 token 宣称。
+diff --git a/.scratch/stability-next-20260920/issues/07-execution-duration-and-request-remaining.md b/.scratch/stability-next-20260920/issues/07-execution-duration-and-request-remaining.md
+index 23cb4c8..8fdeac9 100644
+--- a/.scratch/stability-next-20260920/issues/07-execution-duration-and-request-remaining.md
++++ b/.scratch/stability-next-20260920/issues/07-execution-duration-and-request-remaining.md
+@@ -10,3 +10,28 @@ Completion: not started; separate follow-up, no timing semantics changed in this
+ 验收：普通执行、等待启动、取消、晚到终态、恢复账本和跨 Request 场景都保留一致时间来源；时长不受墙钟回拨误导；同一 Request 内重入不能重新获得完整时限。若进一步自动截断 execution envelope 或强制预留评审时间，先另作 ADR 决定该行为，不能混入纯观测改动。
+ 
+ 后续代表性校准需要同时比较 default-breach rate、Root 恢复 token 和完整 Request 完成率，并覆盖可能超过五分钟的工作；本轮三种小任务不能外推。沿用显式模型配置、全部失败样本、普通终端验收与 slot audit/status 规则。
++
++## 稳定性影响评估与实施规划（2026-09-20，Claude）
++
++现状核实：Request 截止 = 首次活动 `startedAt + activeMs`（request-control.ts:284/386），到点 `close("active-time-limit")` 取消一切，真实 TUI 三场景已证明关闭后零调用。execution envelope 默认 10 分钟墙钟独立计时（delegate.ts:1321–1338），不参照 Request 剩余时间；Root 只在诊断文本里看到 `Deadline: <ISO>`（request-control.ts:455），没有结构化的剩余时间。
++
++结论：**不影响"有界运行"意义上的稳定**，安全网在 Request 层已闭合。影响的是结果可预期性：晚启动的 child 会被 Request 截止砍掉，已付费工作丢失，且终态呈现为取消而非"时间不足"，Root 无法预判也无法在同一 Request 内重试。这是可控范围内的浪费与误归因，值得做，但按观测和裁决分两步，不混在一起。
++
++### 第一步：纯观测（不改任何时序行为）
++
++1. TaskExecutionRecord 持久化 `launchedAt`（REQUEST 出站时刻）、`startedAt`（launcher STARTED，可为 unknown）、`endedAt`、`durationMs`（单调时钟差，不用墙钟相减），并标明口径；前置 Git 采样不计入。
++2. Request 记录返回结构化字段：`requestDeadline`、`remainingMs`、`observedAt`；未启动时 `remainingMs = null` 并说明"未开始计时"。挂到 planner_status 的 Task 诊断和 planner_delegate/redelegate 的 details。
++3. 终态归因：child 因 Request 关闭被取消时，endedReason 保留 `operator_cancel`/host 语义不变，但附 `requestClosed: "active-time-limit"` 与关闭时刻，让 Root 能区分"被操作者停"与"Request 到期"。
++4. 测试（p1-delegation.test.mjs 真实入口 + request-control.test.mjs）：普通执行、等待启动、取消、晚到终态、恢复账本、跨 Request 重入不能重获完整时限、墙钟回拨不改变 durationMs。不删既有断言。
++5. 验收：release exit 0；ordinary review 即可（无权限或写入边界变化）。
++
++### 第二步：裁决后的钳制（另写 ADR-0010）
++
++- 决定：launch 时若 `envelope.maxWallMs > remainingMs − reserveMs`，是拒绝、钳制到剩余值、还是仅警告；`reserveMs` 给验证与评审留的余量如何定（建议从 P3/真实记录取中位数，先设常量并标 provisional）。
++- 不刷新 Request 截止，不增加额度，不改一次修复与 Writer hold。
++- 测试：钳制/拒绝的三种分支、显式 envelope 与默认值各一组、剩余不足时不启动 child 且账本有记录。
++- 验收：行为变化，走 strict gate（默认 600 秒）。
++
++### 规模与分工
++
++第一步约一天内可完成的改动量（记录字段、两处返回、归因附注、测试）；第二步取决于裁决，改动小但要 ADR。用户实施，Claude 审核；每步交付：改动文件列表、命令与退出码、日志路径、diff 统计。

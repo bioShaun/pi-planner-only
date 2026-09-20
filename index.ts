@@ -160,6 +160,7 @@ function enforceDiagnosticsDetailsBudget(diagnostics: PlannerTaskDiagnostics): P
 		reports: diagnostics.reports,
 		reviews: diagnostics.reviews,
 		sessionLog: { status: diagnostics.sessionLog.status },
+		...(diagnostics.request ? { request: diagnostics.request } : {}),
 		executions: [],
 		totalExecutions: diagnostics.totalExecutions,
 		truncated: true,
@@ -1159,6 +1160,8 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 							ctx.cwd || process.cwd(),
 							{ signal: signal ? AbortSignal.any([signal, requestControl.signal]) : requestControl.signal,
 								executionId: toolCallId, onUpdate, toolName: surface.name, previousExecutionId: predecessor,
+								requestId: requestScope,
+								requestClosure: () => requestControl.closure(requestScope),
 								onLateStopConfirmed: () => requestControl.finishChild(toolCallId, true, requestScope) },
 						);
 					} catch (error) {
@@ -1196,11 +1199,22 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 						persistSessionEntries();
 					}
 					const warnings = [...ignoredWarnings, ...outcome.warnings];
+					const execution = outcome.task.executions.find((item) => item.executionId === outcome.executionId);
+					const executionTiming = execution ? {
+						...(execution.requestId ? { requestId: execution.requestId } : {}),
+						...(execution.launchedAt ? { launchedAt: execution.launchedAt } : {}),
+						startedAt: execution.startedAt ?? null,
+						...(execution.endedAt ? { endedAt: execution.endedAt } : {}),
+						...(execution.durationMs !== undefined ? { durationMs: execution.durationMs } : {}),
+						...(execution.durationBasis ? { durationBasis: execution.durationBasis } : {}),
+						...(execution.requestClosed ? { requestClosed: execution.requestClosed } : {}),
+						...(execution.requestClosedAt ? { requestClosedAt: execution.requestClosedAt } : {}),
+					} : undefined;
 					return {
 						content: [{ type: "text", text: renderDelegationOutcome({ ...outcome, warnings }, surface.name) }],
-							details: {
-								taskId: outcome.task.taskId,
-								...(modelRoute ? { modelRoute } : {}),
+						details: {
+							taskId: outcome.task.taskId,
+							...(modelRoute ? { modelRoute } : {}),
 							executionId: outcome.executionId,
 							runId: outcome.runId,
 							state: outcome.task.state,
@@ -1208,6 +1222,8 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 							report: outcome.report,
 							review: outcome.review,
 							usage: outcome.usage,
+							request: requestControl.observe(requestScope),
+							...(executionTiming ? { executionTiming } : {}),
 							...(outcome.termination ? { termination: outcome.termination } : {}),
 							warnings,
 						},
@@ -1298,21 +1314,27 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 						details: { error: result.error, taskId: params.taskId },
 					};
 				}
-				const d = enforceDiagnosticsDetailsBudget(result.diagnostics);
+				const requestControl = requestFor(ctx);
+				const d = enforceDiagnosticsDetailsBudget({
+					...result.diagnostics,
+					request: requestControl.observe(requestControl.requestId),
+				});
 				// The structured payload is bounded before rendering so the text
 				// and details disclosures stay in sync.
 				const lines = [
 					`planner_tasks diagnostics for ${d.taskId} (${d.source}):`,
 					`state: ${d.state}${d.stateReason ? ` — ${d.stateReason}` : ""} | acceptanceMode: ${d.acceptanceMode} | reports: ${d.reports} | reviews: ${d.reviews}`,
+					...(d.request ? [`request ${d.request.requestId}: deadline=${d.request.requestDeadline ?? "not started"} remainingMs=${d.request.remainingMs ?? "unknown"} observedAt=${d.request.observedAt}${d.request.unavailableReason ? ` (${d.request.unavailableReason})` : ""}`] : []),
 					`session log: ${d.sessionLog.status}${d.sessionLog.path ? ` — ${d.sessionLog.path}` : ""}${d.sessionLog.note ? ` (${d.sessionLog.note})` : ""}`,
 					...(d.writerHold ? [`writer hold: ${d.writerHold.active ? "active" : "recorded (no live reservation)"} for execution ${d.writerHold.executionId} — ${d.writerHold.reason}`] : []),
 					...(d.recovery ? [`recovery.required: ${d.recovery.reason} (execution ${d.recovery.executionId})`] : []),
-						...(d.executions.length === 0 && d.totalExecutions === 0 ? ["executions: none recorded"] : []),
+					...(d.executions.length === 0 && d.totalExecutions === 0 ? ["executions: none recorded"] : []),
 					...(d.totalExecutions > d.executions.length
 						? [`executions: showing latest ${d.executions.length} of ${d.totalExecutions} — pass executionId to inspect a specific one`]
 						: []),
 					...d.executions.flatMap((execution) => [
 						`execution ${execution.executionId} [${execution.kind}] status=${execution.status ?? "unknown"} capability=${execution.capability} confirmed=${execution.terminationConfirmed}${execution.confirmationBasis ? ` via ${execution.confirmationBasis}` : ""}${execution.endedReason ? ` ended=${execution.endedReason}` : ""}${execution.runId ? ` runId=${execution.runId}` : ""}`,
+						`  timing: request=${execution.requestId ?? "unknown"} launched=${execution.launchedAt ?? "unknown"} started=${execution.startedAt ?? "unknown"} ended=${execution.endedAt ?? "unknown"} durationMs=${execution.durationMs ?? "unknown"}${execution.durationBasis ? ` (${execution.durationBasis})` : ""}${execution.requestClosed ? ` | requestClosed=${execution.requestClosed} at ${execution.requestClosedAt ?? "unknown"}` : ""}`,
 						`  report: received=${execution.reportReceived} accepted=${execution.reportAccepted}${execution.evidenceIncomplete ? " | stop evidence incomplete" : ""}`,
 						...(execution.unacceptedReport ? [`  unaccepted report: status=${execution.unacceptedReport.status} reason="${execution.unacceptedReport.reason}"`] : []),
 						...(execution.probeFailures?.length ? [`  probe failures: ${describeProbeFailures(execution.probeFailures)}${execution.probeFailuresTruncated ? ` …and ${execution.probeFailuresTruncated} more` : ""}`] : []),

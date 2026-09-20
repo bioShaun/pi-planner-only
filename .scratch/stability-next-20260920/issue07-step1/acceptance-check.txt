@@ -1,0 +1,16 @@
+Pre-existing unrelated tracked diffs unchanged: 8
+README.md: OK
+delegate.ts: OK
+index.ts: OK
+orchestrate.ts: OK
+types.ts: OK
+request-control.ts: OK
+ledger-store.ts: OK
+delegate.test.mjs: OK
+request-control.test.mjs: OK
+p1-delegation.test.mjs: OK
+ledger-store.test.mjs: OK
+diagnostics-regression.test.mjs: OK
+index.test.mjs: OK
+git diff --check: exit 0
+Release: exit 0; ordinary review: PASS

@@ -1,0 +1,30 @@
+Issue 07 step one focused checks
+2026-09-20 Asia/Shanghai
+
+Command: npm run typecheck
+Exit: 0
+Output:
+> pi-planner-only@0.8.0 typecheck
+> tsc --noEmit
+
+Command: node --check delegate.test.mjs
+Exit: 0
+Output: (none)
+
+Command: node --check p1-delegation.test.mjs
+Exit: 0
+Output: (none)
+
+Command: env TMPDIR=/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/issue07-step1/test-tmp node --experimental-strip-types request-control.test.mjs
+Exit: 0
+Output: request-control: PASS (limits, durable faults, races, lifecycle, causal failures, repairs)
+
+Command: env TMPDIR=/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/issue07-step1/test-tmp node --experimental-strip-types ledger-store.test.mjs
+Exit: 0
+Output: planner-only ledger-store: PASS
+
+Command: env TMPDIR=/home/tcuni-claw/pi/pi-planner-only/.scratch/stability-next-20260920/issue07-step1/test-tmp node --experimental-strip-types diagnostics-regression.test.mjs
+Exit: 0
+Output: diagnostics regression tests passed
+
+Not run here by project constraint: p1-delegation.test.mjs, delegate.test.mjs full execution, npm test, npm run test:release. Root will run the release suite from the approved ordinary terminal after writer handoff.
