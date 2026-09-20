@@ -1,0 +1,2 @@
+PID      RSS         CPU%  COMM             状态
+3786788      0.3G   99.9  blastn           << 绕过了 slot
