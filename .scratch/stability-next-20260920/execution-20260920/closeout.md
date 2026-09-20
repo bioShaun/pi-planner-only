@@ -1,6 +1,6 @@
 # 执行清单验收收尾（2026-09-20）
 
-已完成 handoff-20260920.md 授权范围：P1-B 仅报告提交能力、真实 TUI 三场景、Gemini/Luna 三组对照、最终 release 与独立 strict 验收。原 P1-A / stop / P2 先提交为 `83a0ad4351300e4537435ce637a995207e221ed0`；本轮实现提交号在提交后回填。未推送或发布。
+已完成 handoff-20260920.md 授权范围：P1-B 仅报告提交能力、真实 TUI 三场景、Gemini/Luna 三组对照、最终 release 与独立 strict 验收。原 P1-A / stop / P2 先提交为 `83a0ad4351300e4537435ce637a995207e221ed0`；本轮实现提交为 `9dd61755a2748e3f432e6b5f362945963906637d`。未推送或发布。
 
 P1-B 仅向修复 child 暴露 structured_output，并允许一次提交。修复机会与原执行绑定且不可由角色/并发参数绕过；账本保留预算、原始终态和专用失败家族；修复不新增 Truth。Root 和 delegated reviewer 均验证原执行来源、修复前后连续性和最终文件状态。只读 Explorer 的修复声明也必须有既有 Truth 支持，不能把观察到的其他写入据为己有。有效修复可完成，虚报、再次畸形或失去证据绑定均不能完成。partial grace 和原始畸形报告诊断仍 unsupported。
 
@@ -46,4 +46,4 @@ ADR-0008将十分钟保留为操作默认值，未声称统计最优。20个chil
 
 原始77项冻结检查零漂移，其中75项进入83a0ad4；两份此前已忽略的旧explorer-model原型以相同字节归档而未加入产品，详见baseline-freeze.json和ignored-freeze。任务内tmp、npm-cache和p1b-tmp按.gitignore排除。原始ANSI日志/补丁保留字节，因此全目录whitespace扫描会命中原始证据；66源码+25脚本/契约的限定检查exit0。
 
-最终实现提交：待回填。
+最终实现提交：`9dd61755a2748e3f432e6b5f362945963906637d`。
