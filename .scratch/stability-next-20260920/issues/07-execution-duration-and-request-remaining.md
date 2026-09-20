@@ -46,8 +46,6 @@ Completion: step 1 committed a96559b; step 2 implemented, release exit 0 and str
 
 ## 第二步裁决与完成（2026-09-21，Codex）
 
-第一步经 Claude 独立 ordinary review PASS 后已提交：`a96559b`。以上第一步“未提交”和第二步“待裁决”描述为当时记录，现由本段更新。
+第一步经 Claude 独立 ordinary review PASS 后已提交：`a96559b`。第二步采用钳制并记录，预留 60 秒标 provisional，已写入 ADR-0010 并实现；不足预留或剩余观测不可用时持久化拒绝，不启动 child。Reviewer 可用预留窗口，Request 截止与额度不刷新。
 
-裁定采用钳制并记录，预留 60 秒标 provisional，已写入 ADR-0010 并实现；不足预留或剩余观测不可用时持久化拒绝，不启动 child。Reviewer 可用预留窗口，Request 截止与额度不刷新。
-
-两轮 strict finding 分别修复了手动恢复拒绝时提前解除 hold、异步采样后使用过期 hold 快照的并发问题；顺序及并发回归随完整 release 通过。最终 fresh strict `PASS (final)`，父子实际只读探针和最终哈希均核实。第二步尚未提交，P3 大任务测量未启动。完整文件列表、命令、退出码、失败记录与证据见 [第二步交付](../issue07-step2/closeout.md)。
+两轮 strict finding 分别修复了手动恢复拒绝时提前解除 hold、异步采样后使用过期 hold 快照的并发问题；顺序及并发回归随完整 release 通过。最终 fresh strict `PASS (final)`，父子实际只读探针和最终哈希均核实。第二步已于 `eb941ca` 提交，P3 大任务测量未启动。完整文件列表、命令、退出码、失败记录与证据见 [第二步交付](../issue07-step2/closeout.md)。

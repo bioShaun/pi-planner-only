@@ -1,6 +1,6 @@
 # 工单 07 第二步交付
 
-完成时间：2026-09-21（Asia/Shanghai）。第二步已实现并通过最终 strict gate，尚未提交；第一步已提交为 `a96559b`。P3 大任务测量未启动。
+完成时间：2026-09-21（Asia/Shanghai）。第二步已实现并通过最终 strict gate，已提交为 `eb941ca`；第一步已提交为 `a96559b`。P3 大任务测量未启动。
 
 ## 裁决与结果
 
@@ -16,7 +16,7 @@
 
 文档：`CONTEXT.md`、`README.md`、`README.zh-CN.md`、新增 `docs/adr/0010-request-remaining-execution-envelope.md`。
 
-15 个已有文件相对 `a96559b`：645 additions / 50 deletions，另加新 ADR。完整差异见 [implementation.patch](implementation.patch)，16 个审核文件哈希见 [source-manifest.json](source-manifest.json)。既有 token-only envelope 断言改为检查 originalEnvelope，并新增有效上限断言；其余已有断言保留，见 [assertion-audit.json](assertion-audit.json)。
+15 个已有文件相对 `a96559b`：645 additions / 50 deletions，另加新 ADR。完整差异见 [implementation.patch](implementation.patch)，16 个审核文件哈希见 [source-manifest.json](source-manifest.json)。既有 token-only envelope 断言改为检查 originalEnvelope，并新增有效上限断言；其余已有断言保留，见 [assertion-audit.json](assertion-audit.json)。提交批次同时包含工单 06 的 600 秒 strict 默认、按 cwd 过滤残留进程修订，以及工单 05/07 文档更新；临时目录和执行中间态未提交。
 
 ## 验证
 
@@ -38,6 +38,6 @@ P1 与 Request-stop 走真实插件/工具/事件传输/账本入口，Git 和 c
 4. [strict-run-Kzag8r](../strict-run-Kzag8r/review.md)：REQUEST_CHANGES，异步 Git 采样前保存的 hold/预留快照可过期。改为采样后重读 Task、校验原 hold 与恢复授权，再同步获取当前预留并更换；新增并发回归，验证只有一次启动/执行/恢复消费且无幽灵预留。
 5. [strict-run-ah68GJ](../strict-run-ah68GJ/review.md)：fresh Reviewer 确认上述两项已关闭，PASS (final)。
 
-原 sandbox 中 orchestrate 子进程检查的 EPERM 保留在 `orchestrate-sandbox-failure.log`；正常终端完整 release 已覆盖通过。最终审核跨日，既有 issue06 汇总脚本硬编码 2026/09/20 导致汇总命令 exit 1；保留 `execution-20260920/strict-summary-strict-run-ah68GJ-20260920T225320Z.log`，Root 按实际会话 ID 从 2026/09/21 提取原始元数据与探针，没有改动用户的 issue06 脚本。
+原 sandbox 中 orchestrate 子进程检查的 EPERM 保留在 `orchestrate-sandbox-failure.log`；正常终端完整 release 已覆盖通过。最终审核跨日，issue06 汇总脚本现已修复为按实际 sessions 日期树查找，不再硬编码 `2026/09/20`；默认 strict 外部时限为 600 秒。
 
 机器可读最终状态见 [acceptance.json](acceptance.json)：validation PASS、final_acceptance PASS、review_kind final、review_verdict PASS、strict、contract_error null。失败轮次的原快照、ReviewRequest、diff、结论均保留。
