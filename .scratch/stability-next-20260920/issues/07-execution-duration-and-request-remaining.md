@@ -1,7 +1,7 @@
 # 07 执行时长与 Request 剩余时间
 
-Status: ready-for-human
-Completion: step 1 committed a96559b; step 2 implemented, release exit 0 and strict PASS (final), uncommitted
+Status: done
+Completion: step 1 committed a96559b; step 2 committed eb941ca, release exit 0 and strict PASS (final)
 
 现有十分钟 execution 默认值不能代表一次晚启动委派实际还有十分钟：Request 截止自首个活动起算，验证与评审也需要时间。当前 TaskExecutionRecord 没有可校准的启动时间与统一耗时口径，Root 只能估算余量。P3 小任务组不区分五分钟和十分钟的策略效果。
 
