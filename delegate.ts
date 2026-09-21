@@ -190,6 +190,42 @@ export const RESTRICTED_READER_AGENT = "planner-scout";
 export const RESTRICTED_READER_TOOLS = ["read", "grep", "find", "ls"] as const;
 
 /**
+ * Register a plugin-owned runtime agent with pi-subagents. The definitions
+ * opt out of the completion-guard text heuristic (`completionGuard: false`,
+ * pi-subagents ≤ 0.70.0); pi-subagents removed that field in #2356 (main
+ * 2026-09-20) and its registry rejects unknown fields, so a rejection naming
+ * `completionGuard` is retried once without it. Any other failure, or a
+ * missing owner, leaves the agent unregistered. Returns true only when the
+ * owner accepted the definition.
+ */
+export function registerPluginRuntimeAgent(
+	emit: (event: string, request: unknown) => void,
+	name: string,
+	definition: Record<string, unknown>,
+): boolean {
+	const attempt = (candidate: Record<string, unknown>): { ok?: boolean; error?: unknown; registration?: unknown } | undefined => {
+		const request: { version: number; name: string; definition: unknown; result?: { ok?: boolean; error?: unknown; registration?: unknown } } = {
+			version: 1,
+			name,
+			definition: candidate,
+		};
+		emit("pi-subagents:runtime-agent-register:v1", request);
+		return request.result;
+	};
+	const first = attempt(definition);
+	if (first?.ok === true && first.registration !== undefined) return true;
+	if (first?.ok === false && "completionGuard" in definition) {
+		const message = first.error instanceof Error ? first.error.message : String(first.error ?? "");
+		if (/unknown fields?:[^.]*\bcompletionGuard\b/.test(message)) {
+			const { completionGuard: _dropped, ...withoutGuard } = definition;
+			const second = attempt(withoutGuard);
+			return second?.ok === true && second.registration !== undefined;
+		}
+	}
+	return false;
+}
+
+/**
  * The agent definition index.ts hands to the runtime-agent registry. The
  * declared tool allowlist is the capability proof; pi-subagents' completion
  * guard is a text heuristic over Root-authored spec prose (e.g. "do not

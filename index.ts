@@ -55,6 +55,7 @@ import {
 	PLANNER_DELEGATE_PARAMETERS,
 	PLANNER_REDELEGATE_PARAMETERS,
 	RESTRICTED_READER_AGENT,
+	registerPluginRuntimeAgent,
 	RESTRICTED_READER_DEFINITION,
 	REPORT_ONLY_AGENT,
 	REPORT_ONLY_DEFINITION,
@@ -471,21 +472,11 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	// delegations refuse with READER_CAPABILITY_UNPROVEN.
 	let restrictedReaderAgent: string | undefined;
 	let reportOnlyAgent: string | undefined;
+	const emitRegistration = (event: string, request: unknown): void => { pi.events.emit(event, request); };
 	const ensureRestrictedReaderAgent = (): void => {
 		if (restrictedReaderAgent !== undefined) return;
 		try {
-			const request: {
-				version: number;
-				name: string;
-				definition: unknown;
-				result?: { ok?: boolean; registration?: unknown };
-			} = {
-				version: 1,
-				name: RESTRICTED_READER_AGENT,
-				definition: RESTRICTED_READER_DEFINITION,
-			};
-			pi.events.emit("pi-subagents:runtime-agent-register:v1", request);
-			if (request.result?.ok === true && request.result.registration !== undefined) {
+			if (registerPluginRuntimeAgent(emitRegistration, RESTRICTED_READER_AGENT, RESTRICTED_READER_DEFINITION)) {
 				restrictedReaderAgent = RESTRICTED_READER_AGENT;
 			}
 		} catch {
@@ -496,14 +487,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	const ensureReportOnlyAgent = (): void => {
 		if (reportOnlyAgent !== undefined) return;
 		try {
-			const request: {
-				version: number;
-				name: string;
-				definition: unknown;
-				result?: { ok?: boolean; registration?: unknown };
-			} = { version: 1, name: REPORT_ONLY_AGENT, definition: REPORT_ONLY_DEFINITION };
-			pi.events.emit("pi-subagents:runtime-agent-register:v1", request);
-			if (request.result?.ok === true && request.result.registration !== undefined) {
+			if (registerPluginRuntimeAgent(emitRegistration, REPORT_ONLY_AGENT, REPORT_ONLY_DEFINITION)) {
 				reportOnlyAgent = REPORT_ONLY_AGENT;
 			}
 		} catch {

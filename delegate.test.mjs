@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import {
+	registerPluginRuntimeAgent,
 	DelegationAborted,
 	DelegationRefused,
 	PLANNER_DELEGATE_PARAMETERS,
@@ -3429,6 +3430,60 @@ await assertConcurrentManualRecovery(true);
 	);
 	assert.equal(outcome.task.validatorReports.length, 1);
 	assert.equal(outcome.task.validatorReports[0].evidence.workerRunId, "run-validator");
+}
+
+// ---------------------------------------------------------------------------
+// Runtime-agent registration fallback: pi-subagents #2356 (main 2026-09-20)
+// removed `completionGuard` and its registry rejects unknown fields. The first
+// attempt keeps the ≤0.70.0 opt-out; only that exact rejection is retried
+// once without the field. Other failures and a missing owner stay unregistered.
+// ---------------------------------------------------------------------------
+{
+	const definition = { description: "d", systemPrompt: "p", tools: ["read"], completionGuard: false };
+	const record = (results) => {
+		const seen = [];
+		const emit = (event, request) => {
+			assert.equal(event, "pi-subagents:runtime-agent-register:v1");
+			seen.push(request.definition);
+			const next = results.shift();
+			if (next !== undefined) request.result = next;
+		};
+		return { emit, seen };
+	};
+	// (a) ≤0.70.0 owner accepts the opt-out on the first attempt: one emit, field kept.
+	const accept = record([{ ok: true, registration: { dispose() {} } }]);
+	assert.equal(registerPluginRuntimeAgent(accept.emit, "planner-scout", definition), true);
+	assert.equal(accept.seen.length, 1);
+	assert.equal(accept.seen[0].completionGuard, false);
+	// (b) #2356 owner rejects the unknown field: retried once without it, and accepted.
+	const strict = record([
+		{ ok: false, error: new Error("Runtime agent definition has unknown fields: completionGuard.") },
+		{ ok: true, registration: { dispose() {} } },
+	]);
+	assert.equal(registerPluginRuntimeAgent(strict.emit, "planner-scout", definition), true);
+	assert.equal(strict.seen.length, 2);
+	assert.equal(strict.seen[0].completionGuard, false);
+	assert.equal("completionGuard" in strict.seen[1], false, "the retry drops only completionGuard");
+	assert.deepEqual(strict.seen[1].tools, ["read"], "the retry keeps the capability proof");
+	// (c) a different rejection is not retried and stays unregistered.
+	const other = record([{ ok: false, error: new Error("Runtime agent definition has unknown fields: tools.") }]);
+	assert.equal(registerPluginRuntimeAgent(other.emit, "planner-scout", definition), false);
+	assert.equal(other.seen.length, 1);
+	// (d) rejection on the retry too: still unregistered, no third attempt.
+	const twice = record([
+		{ ok: false, error: new Error("Runtime agent definition has unknown fields: completionGuard.") },
+		{ ok: false, error: new Error("name collision") },
+	]);
+	assert.equal(registerPluginRuntimeAgent(twice.emit, "planner-scout", definition), false);
+	assert.equal(twice.seen.length, 2);
+	// (e) no owner writes a result: unregistered, single attempt.
+	const absent = record([]);
+	assert.equal(registerPluginRuntimeAgent(absent.emit, "planner-scout", definition), false);
+	assert.equal(absent.seen.length, 1);
+	// (f) a definition without the field never retries.
+	const plain = record([{ ok: false, error: new Error("Runtime agent definition has unknown fields: completionGuard.") }]);
+	assert.equal(registerPluginRuntimeAgent(plain.emit, "planner-report-only", { description: "d", systemPrompt: "p" }), false);
+	assert.equal(plain.seen.length, 1);
 }
 
 console.log("delegate.test.mjs: all cases passed");
