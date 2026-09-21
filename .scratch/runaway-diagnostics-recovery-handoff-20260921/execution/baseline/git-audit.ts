@@ -1,0 +1,485 @@
+/**
+ * Git-read: Root's only Git access. Fixed, read-only argv — never a shell.
+ *
+ * git_audit (the parent tool), Evidence probe, and the leftover bash allowlist
+ * all take argv from this module. One table, two adapters (pi.exec in prod,
+ * in-memory in tests).
+ */
+
+import { statSync } from "node:fs";
+import { isAbsolute, relative, resolve, sep } from "node:path";
+import { matchesScopePath, unquoteGitPath } from "./evidence.ts";
+import {
+	DEFAULT_GIT_AUDIT_ENTRIES,
+	MAX_GIT_AUDIT_ENTRIES,
+	MAX_GIT_AUDIT_OUTPUT_CHARS,
+} from "./types.ts";
+
+/** Shared runner seam for git_audit and Evidence capture. */
+export type GitRunner = (
+	args: readonly string[],
+	cwd: string,
+) => Promise<{ stdout: string; stderr?: string; code: number; killed?: boolean }>;
+
+/**
+ * Argv owned by Git-read. Evidence probe and git_audit `status`/`head` share
+ * these rows. Evidence's working-tree diff is `diff HEAD --stat` (includes
+ * staged); the git_audit `diff-stat` tool stays `diff --stat` (unstaged).
+ */
+export const GIT_READ_ARGV = {
+	gitDir: ["rev-parse", "--git-dir"],
+	/**
+	 * E01 — porcelain paths are relative to the repository root; a sample
+	 * taken from a subdirectory must normalize them against this root.
+	 */
+	topLevel: ["rev-parse", "--show-toplevel"],
+	head: ["rev-parse", "HEAD"],
+	status: ["status", "--porcelain=v2", "--branch"],
+	// D1 — the plain status collapses a wholly-untracked directory into one
+	// `?? dir/` entry that cannot be hashed; this variant drills down to the
+	// file level so evidence samples can match declared files inside it.
+	statusAll: ["status", "--porcelain=v2", "--branch", "--untracked-files=all"],
+	evidenceDiffStat: ["diff", "HEAD", "--stat"],
+	// Reviewer evidence packet only. git_audit's diff-* operations build their
+	// own argv because they also support the staged variant. The check rows
+	// disable external diff/textconv so no repo config can execute programs.
+	diffCheck: ["diff", "--check", "--no-ext-diff", "--no-textconv"],
+	diffCheckStaged: ["diff", "--cached", "--check", "--no-ext-diff", "--no-textconv"],
+	// FR-05 reviewer packet rows — the baseline ref is appended as a trailing
+	// argv element after validation against GIT_REF_PATTERN.
+	patchBetween: ["diff", "--patch", "--no-ext-diff", "--no-textconv"],
+	numstatBetween: ["diff", "--numstat", "--no-ext-diff", "--no-textconv"],
+	// RF-1 Evidence probe rows only — never reachable through the git_audit tool.
+	// diffNamesBetween takes the two refs as trailing argv elements, each
+	// validated against GIT_REF_PATTERN; hashObject takes dirty paths after `--`.
+	diffNamesBetween: ["diff", "--name-only", "--no-ext-diff", "--no-textconv"],
+	hashObject: ["hash-object", "--"],
+} as const;
+
+/** RF-1 — commit SHAs accepted as diff endpoints by the Evidence probe (full or abbreviated). */
+export const GIT_REF_PATTERN = /^[0-9a-f]{7,40}$/;
+export const GIT_AUDIT_OPERATIONS = [
+	"status",
+	"diff-stat",
+	"diff-names",
+	"diff-check",
+	"head",
+	"log",
+] as const;
+
+/** RT-06 — the commit primitive has a separate, fixed write surface. */
+export const GIT_COMMIT_OPERATIONS = ["root", "add", "commit"] as const;
+
+export interface GitCommitRequest {
+	taskId: string;
+	cwd: string;
+	truthPaths: readonly string[];
+	message?: string;
+}
+
+export type GitCommitPlan = {
+	ok: true;
+	taskId: string;
+	paths: string[];
+	message: string;
+	addArgv: string[];
+	commitArgv: string[];
+} | { ok: false; error: string };
+
+const TASK_ID_PATTERN = /^T-[0-9]{8}-[0-9]{3,}$/;
+
+function safeCommitPath(path: string): boolean {
+	return typeof path === "string" && path.trim().length > 0
+		&& !SHELL_METACHARACTERS.test(path)
+		&& !path.includes("\0")
+		&& !isAbsolute(path)
+		&& path !== "."
+		&& path !== ".."
+		&& !path.startsWith(`..${sep}`);
+}
+
+/** Build the only argv shapes exposed by the policy-governed commit primitive. */
+export function resolveGitCommit(request: GitCommitRequest): GitCommitPlan {
+	if (!TASK_ID_PATTERN.test(request.taskId.trim())) return { ok: false, error: "git_commit requires a canonical taskId" };
+	if (!request.cwd || SHELL_METACHARACTERS.test(request.cwd)) return { ok: false, error: "git_commit cwd is invalid" };
+	const paths = [...new Set(request.truthPaths.map((path) => path.trim()))].sort();
+	if (paths.length === 0) return { ok: false, error: "git_commit requires at least one attributed truth path" };
+	if (paths.some((path) => !safeCommitPath(path))) return { ok: false, error: "git_commit truth paths must be safe repository-relative paths" };
+	const suffix = request.message?.trim() || `Task ${request.taskId}: accepted changes`;
+	const message = suffix.includes(request.taskId) ? suffix : `${suffix} (${request.taskId})`;
+	return {
+		ok: true,
+		taskId: request.taskId,
+		paths,
+		message,
+		addArgv: ["add", "--", ...paths],
+		commitArgv: ["commit", "-m", message, "--", ...paths],
+	};
+}
+
+export interface CommitPathClassification { blocking: string[]; external: string[]; }
+
+/** Ticket 08 — narrow untracked exemption for the git_commit gate. */
+export function classifyCommitDirtyPaths(opts: {
+	trackedDirty: readonly string[];   // porcelain 1/2/u entries
+	untrackedDirty: readonly string[]; // porcelain ? entries (dirs keep trailing slash)
+	ignoredDirty: readonly string[];   // porcelain ! entries
+	truthPaths: readonly string[];
+	scopeAllowedPaths: readonly string[]; // may be empty
+}): CommitPathClassification {
+	const truth = new Set(opts.truthPaths.map((p) => p.replaceAll("\\", "/").replace(/^\.\//, "")));
+	const blocking: string[] = [];
+	const external: string[] = [];
+
+	for (const raw of opts.trackedDirty) {
+		const path = raw.replaceAll("\\", "/").replace(/^\.\//, "");
+		if (!truth.has(path)) {
+			blocking.push(path);
+		}
+	}
+
+	for (const raw of opts.untrackedDirty) {
+		const path = raw.replaceAll("\\", "/").replace(/^\.\//, "");
+		if (truth.has(path)) continue;
+		if (matchesScopePath(opts.scopeAllowedPaths, path)) {
+			blocking.push(path);
+		} else {
+			external.push(path);
+		}
+	}
+
+	for (const raw of opts.ignoredDirty) {
+		const path = raw.replaceAll("\\", "/").replace(/^\.\//, "");
+		if (!truth.has(path)) {
+			external.push(path);
+		}
+	}
+
+	return {
+		blocking: [...new Set(blocking)],
+		external: [...new Set(external)],
+	};
+}
+
+export function parseGitStatusKinds(stdout: string): { tracked: string[]; untracked: string[]; ignored: string[] } {
+	const tracked: string[] = [];
+	const untracked: string[] = [];
+	const ignored: string[] = [];
+
+	for (const rawLine of stdout.split(/\r?\n/)) {
+		const line = rawLine.replace(/\r$/, "");
+		if (!line || line.startsWith("#")) continue;
+		if (line.startsWith("? ")) {
+			const path = unquoteGitPath(line.slice(2));
+			if (path) untracked.push(path);
+			continue;
+		}
+		if (line.startsWith("! ")) {
+			const path = unquoteGitPath(line.slice(2));
+			if (path) ignored.push(path);
+			continue;
+		}
+		const fields = line.split(" ");
+		const kind = fields[0];
+		// porcelain v2 layout (the path is the final field and may contain spaces):
+		// `1 XY sub mH mI mW hH hI path`                 -> path at 8
+		// `2 XY sub mH mI mW hH hI Xscore path<TAB>orig` -> path at 9
+		// `u XY sub m1 m2 m3 mW h1 h2 h3 path`           -> path at 10
+		const pathIndex = kind === "1" ? 8 : kind === "2" ? 9 : kind === "u" ? 10 : -1;
+		if (pathIndex === -1 || fields.length <= pathIndex) continue;
+		const rawPath = fields.slice(pathIndex).join(" ").split(/[\0\t]/)[0];
+		const path = unquoteGitPath(rawPath);
+		if (path) tracked.push(path);
+	}
+
+	return {
+		tracked: [...new Set(tracked)],
+		untracked: [...new Set(untracked)],
+		ignored: [...new Set(ignored)],
+	};
+}
+
+/** Parse porcelain v2 paths into repository-relative names for dirty-tree checks. */
+export function parseGitStatusPaths(stdout: string): string[] {
+	const kinds = parseGitStatusKinds(stdout);
+	return [...new Set([...kinds.tracked, ...kinds.untracked, ...kinds.ignored])];
+}
+
+export function dirtyPathsOutsideTruth(dirtyPaths: readonly string[], truthPaths: readonly string[]): string[] {
+	const truth = new Set(truthPaths.map((path) => path.replaceAll("\\", "/").replace(/^\.\//, "")));
+	return [...new Set(dirtyPaths.map((path) => path.replaceAll("\\", "/")).filter((path) => !truth.has(path)))];
+}
+
+export type GitAuditOperation = (typeof GIT_AUDIT_OPERATIONS)[number];
+
+/** §9.4 — subcommands that must never be reachable through this tool. */
+export const FORBIDDEN_GIT_OPERATIONS = [
+	"commit",
+	"add",
+	"reset",
+	"checkout",
+	"switch",
+	"restore",
+	"clean",
+	"rebase",
+	"merge",
+	"cherry-pick",
+	"push",
+	"pull",
+	"fetch",
+	"config",
+	"stash",
+	"tag",
+	"branch",
+	"apply",
+	"am",
+	"bisect",
+	"notes",
+	"worktree",
+] as const;
+
+/** Shell metacharacters, command substitution, and redirection. */
+export const SHELL_METACHARACTERS = /[;&|`$><\n\r\\]/;
+
+export interface GitAuditRequest {
+	operation: string;
+	cwd?: string;
+	staged?: boolean;
+	maxEntries?: number;
+}
+
+export type ResolvedGitAudit =
+	| { ok: true; operation: GitAuditOperation; argv: string[] }
+	| { ok: false; error: string };
+
+function isForbiddenOperation(operation: string): boolean {
+	const normalized = operation.trim().toLowerCase();
+	const tokens = normalized.split(/[\s-]+/).filter(Boolean);
+	return tokens.some((token) => (FORBIDDEN_GIT_OPERATIONS as readonly string[]).includes(token));
+}
+
+function clampEntries(value: number | undefined): number {
+	if (value === undefined || !Number.isFinite(value)) return DEFAULT_GIT_AUDIT_ENTRIES;
+	return Math.min(MAX_GIT_AUDIT_ENTRIES, Math.max(1, Math.trunc(value)));
+}
+
+/**
+ * Reject anything that is not a known operation, carries shell syntax, or names
+ * a mutating Git subcommand. Returns a human-readable reason, or undefined when
+ * the request is safe.
+ */
+function rejectGitAuditRequest(request: GitAuditRequest): string | undefined {
+	const operation = request.operation;
+	if (typeof operation !== "string" || !operation.trim()) {
+		return "git_audit requires an operation";
+	}
+	if (SHELL_METACHARACTERS.test(operation)) {
+		return `git_audit operation contains forbidden shell syntax: ${JSON.stringify(operation)}`;
+	}
+	if (isForbiddenOperation(operation)) {
+		return `git_audit forbids the mutating git operation: ${operation.trim()}`;
+	}
+	if (!(GIT_AUDIT_OPERATIONS as readonly string[]).includes(operation.trim().toLowerCase())) {
+		return `git_audit operation must be one of ${GIT_AUDIT_OPERATIONS.join(", ")}`;
+	}
+	if (request.cwd !== undefined) {
+		if (typeof request.cwd !== "string") return "git_audit cwd must be a string";
+		if (SHELL_METACHARACTERS.test(request.cwd)) {
+			return `git_audit cwd contains forbidden shell syntax: ${JSON.stringify(request.cwd)}`;
+		}
+	}
+	if (request.maxEntries !== undefined && !Number.isFinite(request.maxEntries)) {
+		return "git_audit maxEntries must be a finite number";
+	}
+	return undefined;
+}
+
+/** Map a validated operation to a fixed argv. No shell is involved. */
+export function resolveGitAudit(request: GitAuditRequest): ResolvedGitAudit {
+	const rejection = rejectGitAuditRequest(request);
+	if (rejection) return { ok: false, error: rejection };
+
+	const operation = request.operation.trim().toLowerCase() as GitAuditOperation;
+	const staged = request.staged === true;
+	switch (operation) {
+		case "status":
+			return { ok: true, operation, argv: [...GIT_READ_ARGV.status] };
+		case "diff-stat":
+			return {
+				ok: true,
+				operation,
+				argv: ["diff", ...(staged ? ["--cached"] : []), "--stat", "--no-ext-diff", "--no-textconv"],
+			};
+		case "diff-names":
+			return {
+				ok: true,
+				operation,
+				argv: ["diff", ...(staged ? ["--cached"] : []), "--name-status", "--no-ext-diff", "--no-textconv"],
+			};
+		case "diff-check":
+			return {
+				ok: true,
+				operation,
+				argv: ["diff", ...(staged ? ["--cached"] : []), "--check", "--no-ext-diff", "--no-textconv"],
+			};
+		case "head":
+			return { ok: true, operation, argv: [...GIT_READ_ARGV.head] };
+		case "log":
+			return {
+				ok: true,
+				operation,
+				argv: ["log", "--oneline", "-n", String(clampEntries(request.maxEntries))],
+			};
+	}
+}
+
+export function validateGitAuditCwd(cwd: string): { ok: true; path: string } | { ok: false; error: string } {
+	try {
+		const stats = statSync(cwd);
+		if (!stats.isDirectory()) return { ok: false, error: `git_audit cwd is not a directory: ${cwd}` };
+		return { ok: true, path: cwd };
+	} catch {
+		return { ok: false, error: `git_audit cwd does not exist: ${cwd}` };
+	}
+}
+
+export interface GitAuditCommandResult {
+	stdout: string;
+	stderr: string;
+	code: number;
+}
+
+const EMPTY_MESSAGES: Record<GitAuditOperation, string> = {
+	status: "(clean working tree)",
+	"diff-stat": "(no diff)",
+	"diff-names": "(no changed paths)",
+	"diff-check": "(no whitespace errors)",
+	head: "(no commits yet)",
+	log: "(no commits yet)",
+};
+
+/** Bound the output before it can reach the parent's context. */
+function formatGitAudit(
+	operation: GitAuditOperation,
+	result: GitAuditCommandResult,
+): string {
+	const header = `git ${[operation, ...(result.code === 0 ? [] : [`exit ${result.code}`])].join(" ")}`;
+	if (result.code !== 0) {
+		const detail = result.stderr.trim() || result.stdout.trim() || "no output";
+		return `${header}\n${detail.slice(0, MAX_GIT_AUDIT_OUTPUT_CHARS)}`;
+	}
+	const stdout = result.stdout.trimEnd();
+	if (!stdout) return `${header}\n${EMPTY_MESSAGES[operation]}`;
+	if (stdout.length <= MAX_GIT_AUDIT_OUTPUT_CHARS) return `${header}\n${stdout}`;
+	return `${header}\n${stdout.slice(0, MAX_GIT_AUDIT_OUTPUT_CHARS)}\n… (truncated, ${stdout.length} chars total)`;
+}
+
+export type GitAuditRunner = GitRunner;
+
+export interface GitAuditOutcome {
+	ok: boolean;
+	operation: string;
+	text: string;
+	code: number;
+}
+
+export async function runGitAudit(
+	run: GitAuditRunner,
+	request: GitAuditRequest,
+	baseCwd: string,
+): Promise<GitAuditOutcome> {
+	const resolved = resolveGitAudit(request);
+	if (!resolved.ok) return { ok: false, operation: request.operation, text: resolved.error, code: 1 };
+
+	const target = resolve(baseCwd, request.cwd ?? ".");
+	const rel = relative(baseCwd, target);
+	if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+		return {
+			ok: false,
+			operation: resolved.operation,
+			text: "git_audit cwd must stay inside the working directory",
+			code: 1,
+		};
+	}
+	const cwdCheck = validateGitAuditCwd(target);
+	if (!cwdCheck.ok) return { ok: false, operation: resolved.operation, text: cwdCheck.error, code: 1 };
+
+	let result: GitAuditCommandResult;
+	try {
+		const raw = await run(resolved.argv, target);
+		result = { stdout: raw.stdout, stderr: raw.stderr ?? "", code: raw.code };
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return { ok: false, operation: resolved.operation, text: `git_audit failed: ${message}`, code: 1 };
+	}
+
+	return {
+		ok: result.code === 0,
+		operation: resolved.operation,
+		text: formatGitAudit(resolved.operation, result),
+		code: result.code,
+	};
+}
+
+const SAFE_GIT_STATUS_FLAGS = new Set([
+	"--short",
+	"-s",
+	"--branch",
+	"-b",
+	"--porcelain",
+	"--porcelain=v1",
+	"--porcelain=v2",
+]);
+
+const SAFE_GIT_DIFF_FLAGS = new Set([
+	"--cached",
+	"--staged",
+	"--stat",
+	"--numstat",
+	"--shortstat",
+	"--name-only",
+	"--name-status",
+	"--check",
+	"--no-color",
+	"--no-ext-diff",
+	"--no-textconv",
+]);
+
+const SAFE_GIT_LOG_FLAGS = new Set([
+	"--oneline",
+	"--decorate",
+	"--no-decorate",
+	"--stat",
+	"--no-color",
+]);
+
+function allFlagsAllowed(tokens: string[], allowed: Set<string>): boolean {
+	return tokens.every((token) => allowed.has(token));
+}
+
+/**
+ * Leftover bash allowlist for a stale `bash` tool call. Same Git-read module
+ * owns the flags so the allowlist cannot drift from git_audit / Evidence.
+ */
+export function isSafeAuditCommand(command: string): boolean {
+	const trimmed = command.trim();
+	if (!trimmed || SHELL_METACHARACTERS.test(trimmed)) return false;
+	if (trimmed === "pwd") return true;
+
+	const tokens = trimmed.split(/\s+/);
+	if (tokens[0] !== "git" || tokens.length < 2) return false;
+
+	const subcommand = tokens[1];
+	const args = tokens.slice(2);
+	if (subcommand === "status") return allFlagsAllowed(args, SAFE_GIT_STATUS_FLAGS);
+	if (subcommand === "diff") return allFlagsAllowed(args, SAFE_GIT_DIFF_FLAGS);
+	if (subcommand === "log") {
+		return args.every((token) =>
+			SAFE_GIT_LOG_FLAGS.has(token) ||
+			/^-n\d+$/.test(token) ||
+			/^--max-count=\d+$/.test(token),
+		);
+	}
+
+	return false;
+}

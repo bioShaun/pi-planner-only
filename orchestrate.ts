@@ -415,6 +415,8 @@ export interface PlannerTaskDiagnostics {
 		effectiveEnvelope?: ExecutionEnvelope;
 		envelopeClamped: boolean;
 		requestBudget?: RequestExecutionBudget;
+		traceSummary?: TaskExecutionRecord["traceSummary"];
+		updateTrace?: TaskExecutionRecord["updateTrace"];
 		terminationConfirmed: boolean;
 		confirmationBasis?: string;
 		evidenceIncomplete?: boolean;
@@ -765,6 +767,8 @@ export class PlannerOrchestrator {
 		const projectEnvelope = (envelope: ExecutionEnvelope) => ({
 			...(envelope.maxTokens !== undefined ? { maxTokens: envelope.maxTokens } : {}),
 			...(envelope.maxWallMs !== undefined ? { maxWallMs: envelope.maxWallMs } : {}),
+			...(envelope.maxReadOnlyTools !== undefined ? { maxReadOnlyTools: envelope.maxReadOnlyTools } : {}),
+			...(envelope.preparationTokensShare !== undefined ? { preparationTokensShare: envelope.preparationTokensShare } : {}),
 			source: envelope.source,
 		});
 		const projectRequestBudget = (budget: RequestExecutionBudget) => ({
@@ -854,7 +858,15 @@ export class PlannerOrchestrator {
 					...(execution.originalEnvelope ? { originalEnvelope: projectEnvelope(execution.originalEnvelope) } : {}),
 					...(execution.envelope ? { effectiveEnvelope: projectEnvelope(execution.envelope) } : {}),
 					envelopeClamped: execution.envelopeClamped === true,
-					...(execution.requestBudget ? { requestBudget: projectRequestBudget(execution.requestBudget) } : {}),
+						...(execution.requestBudget ? { requestBudget: projectRequestBudget(execution.requestBudget) } : {}),
+						...(execution.traceSummary ? { traceSummary: execution.traceSummary } : {}),
+					...(execution.updateTrace?.length ? { updateTrace: execution.updateTrace.slice(-8).map((update) => ({
+						receivedAt: capped(update.receivedAt, 100), ordinal: update.ordinal,
+						...(update.toolCount !== undefined ? { toolCount: update.toolCount } : {}),
+						...(update.currentTool ? { currentTool: capped(update.currentTool, 120) } : {}),
+						...(update.currentToolArgs ? { currentToolArgs: capped(update.currentToolArgs, 512) } : {}),
+						...(update.recentTools?.length ? { recentTools: update.recentTools.slice(-8).map((tool) => ({ tool: capped(tool.tool, 120), args: capped(tool.args, 512) })) } : {}),
+					})) } : {}),
 					terminationConfirmed: execution.terminationConfirmed === true,
 					...(execution.confirmationBasis ? { confirmationBasis: capped(execution.confirmationBasis, 200) } : {}),
 					...(execution.evidenceIncomplete === true ? { evidenceIncomplete: true } : {}),

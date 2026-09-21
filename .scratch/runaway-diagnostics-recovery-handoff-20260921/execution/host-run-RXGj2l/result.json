@@ -1,0 +1,6 @@
+{
+  "verdict": "FAIL",
+  "error": "AssertionError [ERR_ASSERTION]: actual child artifact must contain priorExecution",
+  "stack": "AssertionError [ERR_ASSERTION]: actual child artifact must contain priorExecution\n    at file:///home/tcuni-claw/pi/pi-planner-only/.scratch/runaway-diagnostics-recovery-handoff-20260921/execution/host-acceptance.mjs:139:9\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
+  "evidence": "/home/tcuni-claw/pi/pi-planner-only/.scratch/runaway-diagnostics-recovery-handoff-20260921/execution/host-run-RXGj2l"
+}

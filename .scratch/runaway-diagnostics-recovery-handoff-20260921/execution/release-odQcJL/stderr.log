@@ -1,0 +1,21 @@
+error: open("src/parser.ts"): Permission denied
+fatal: cannot hash src/parser.ts
+fatal: could not open 'src/parser.ts' for reading: Permission denied
+hint: Using 'master' as the name for the initial branch. This default branch name
+hint: is subject to change. To configure the initial branch name to use in all
+hint: of your new repositories, which will suppress this warning, call:
+hint:
+hint: 	git config --global init.defaultBranch <name>
+hint:
+hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+hint: 'development'. The just-created branch can be renamed via this command:
+hint:
+hint: 	git branch -m <name>
+hint:
+hint: Disable this message with "git config set advice.defaultBranchName false"
+Planner-only: failed to persist ledger snapshot: EISDIR: illegal operation on a directory, rename '/project/tmp/runaway-validation-HkUrZk/planner-only-admission-ledger-cQHpGh/planner-only/ledger/.tmp-3529777-16' -> '/project/tmp/runaway-validation-HkUrZk/planner-only-admission-ledger-cQHpGh/planner-only/ledger/T-20260918-001.json'
+npm notice
+npm notice New minor version of npm available! 11.9.0 -> 11.19.1
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.19.1
+npm notice To update run: npm install -g npm@11.19.1
+npm notice

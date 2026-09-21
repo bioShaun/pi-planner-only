@@ -284,6 +284,7 @@ export type ExecutionCapability = "writer" | "restricted-reader" | "unknown";
 export type ExecutionEndedReason =
 	| "normal"
 	| "worker_runaway"
+	| "preparation_runaway"
 	| "operator_cancel"
 	| "timeout"
 	| "tool_budget"
@@ -293,7 +294,7 @@ export type ExecutionEndedReason =
 	| "launch_failure";
 
 /** P0-B — the signal that tripped the runaway monitor. */
-export type RunawaySignal = "tokens" | "wall";
+export type RunawaySignal = "tokens" | "wall" | "preparation";
 
 /** P0-B — observed value and the envelope limit it crossed. */
 export interface RunawayObservation {
@@ -310,7 +311,40 @@ export interface RunawayObservation {
 export interface ExecutionEnvelope {
 	maxTokens?: number;
 	maxWallMs?: number;
+	maxReadOnlyTools?: number;
+	preparationTokensShare?: number;
 	source: "delegation-param" | "default" | "operator-config";
+}
+
+export interface ExecutionUpdateSnapshot {
+	receivedAt: string;
+	ordinal: number;
+	tokens?: number;
+	toolCount?: number;
+	durationMs?: number;
+	currentTool?: string;
+	currentToolArgs?: string;
+	recentTools?: Array<{ tool: string; args: string }>;
+	recentOutputLines?: string[];
+}
+
+export interface ExecutionTraceSummary {
+	firstNonReadOnlyToolOrdinal?: number;
+	maxTokenDelta?: number;
+	readOnlyToolFraction?: number;
+	classifiedToolCalls: number;
+	observedToolCalls: number;
+	totalToolCalls: number;
+	coalescedToolCalls: number;
+}
+
+export interface ExecutionUsageSnapshot {
+	input: null;
+	output: null;
+	cacheRead: null;
+	cacheWrite: null;
+	totalTokens: number;
+	snapshot: true;
 }
 
 /** ADR-0010 admission observation from the original enclosing Request. */
@@ -443,6 +477,13 @@ export interface TaskExecutionRecord {
 	rawTerminal?: Record<string, unknown>;
 	/** P0-B — which envelope bound tripped, with the observed value. */
 	runawayObservation?: RunawayObservation;
+	/** Bounded tail of launcher UPDATE observations. */
+	updateTrace?: ExecutionUpdateSnapshot[];
+	traceSummary?: ExecutionTraceSummary;
+	/** Largest valid UPDATE token total, retained independently of the bounded trace and terminal usage. */
+	observedTokenHighWater?: number;
+	/** Lower-bound cancellation snapshot; replaced by a real terminal usage record when one arrives. */
+	usageSnapshot?: ExecutionUsageSnapshot;
 	/**
 	 * Ticket 02 — the launch-time trusted capability of this execution
 	 * (see `ExecutionCapability`). Absent on pre-T02 ledgers: readers treat a
@@ -658,6 +699,15 @@ export interface TaskPacket {
 	instructions: string;
 	knownFacts: string[];
 	artifactRefs: string[];
+	priorExecution?: {
+		executionId: string;
+		endedReason?: string;
+		runawayObservation?: RunawayObservation;
+		diffStat: { aRun: string | null; terminal: string | null; terminalKind: "cTerminal" | "interimSample" | "unavailable" };
+		recentTools: Array<{ tool: string; args: string }>;
+		recentOutputLines: string[];
+		recoveryReason: string;
+	};
 }
 
 /** Upward contract: the only structured thing a worker returns. */
@@ -981,6 +1031,8 @@ export interface ChildUsage extends TokenCounts, ChildProvenance {
 export interface TaskUsage {
 	root: RootUsage;
 	children: ChildUsage[];
+	/** Uncategorised UPDATE lower bounds retained until matching terminal usage arrives. */
+	snapshots?: Array<ExecutionUsageSnapshot & { kind: DelegationKind; toolCallId: string }>;
 	rootModel?: string;        // last Root model seen while this Task was active
 	costUnknown: boolean;      // any component lacked a rate
 }

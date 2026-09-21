@@ -1,0 +1,231 @@
+diff --git a/concurrency.ts b/concurrency.ts
+index 224a36a..c068617 100644
+--- a/concurrency.ts
++++ b/concurrency.ts
+@@ -32,6 +32,8 @@ export interface ConcurrencyReservation {
+ 	workspaces: string[];
+ 	reservedAt: string;
+ 	holdReason?: string;
++	/** Whether this reservation consumes one execution slot in this session. */
++	countsTowardLimit: boolean;
+ }
+ 
+ export interface ConcurrencyStatus {
+@@ -39,6 +41,8 @@ export interface ConcurrencyStatus {
+ 	source: ConcurrencySource;
+ 	occupied: number;
+ 	available: number;
++	/** Workspace isolation claims retained without consuming execution capacity. */
++	isolationHolds: number;
+ 	reservations: ConcurrencyReservation[];
+ }
+ 
+@@ -143,11 +147,31 @@ export class ConcurrencyController {
+ 	getSource(): ConcurrencySource { return this.sessionLimit !== undefined ? "session" : this.hasSavedLimit ? "saved" : "default"; }
+ 
+ 	reserve(request: ConcurrencyReservationRequest): ConcurrencyReserveOutcome {
+-		if (this.reservations.has(request.id)) return { reservation: this.reservations.get(request.id) };
++		const existing = this.reservations.get(request.id);
++		if (existing) {
++			if (existing.countsTowardLimit) return { reservation: existing };
++			const limit = this.getLimit();
++			const occupied = [...this.reservations.values()].filter((item) => item.countsTowardLimit).length;
++			return {
++				refusal: {
++					code: "WORKSPACE_CONFLICT",
++					reason: `WORKSPACE_CONFLICT: execution id ${request.id.slice(0, 100)} is retained as a restored isolation hold; use planner_tasks to diagnose it before retrying`,
++					limit,
++					occupied,
++					available: Math.max(0, limit - occupied),
++					conflictingIds: [existing.id],
++				},
++			};
++		}
+ 		const limit = this.getLimit();
+-		const occupied = this.reservations.size;
++		const occupied = [...this.reservations.values()].filter((item) => item.countsTowardLimit).length;
+ 		if (occupied >= limit) {
+-			return { refusal: { code: "CONCURRENCY_LIMIT_REACHED", reason: `CONCURRENCY_LIMIT_REACHED: occupied ${occupied}/${limit}; no execution slot is available`, limit, occupied, available: 0 } };
++			const active = [...this.reservations.values()]
++				.filter((item) => item.countsTowardLimit)
++				.slice(0, 5)
++				.map((item) => `${(item.taskId ?? "unbound").slice(0, 100)}/${item.id.slice(0, 100)}`)
++				.join(", ");
++			return { refusal: { code: "CONCURRENCY_LIMIT_REACHED", reason: `CONCURRENCY_LIMIT_REACHED: occupied ${occupied}/${limit}; no execution slot is available${active ? ` (active: ${active})` : ""}; call planner_tasks for bounded reservation diagnostics`, limit, occupied, available: 0 } };
+ 		}
+ 		const workspaces = [...new Set((request.workspaces ?? []).filter(Boolean).map(normalizedWorkspace))];
+ 		const conflicts = this.enforceWorkspace ? [...this.reservations.values()].filter((active) => {
+@@ -160,7 +184,7 @@ export class ConcurrencyController {
+ 			return {
+ 				refusal: {
+ 					code: "WORKSPACE_CONFLICT",
+-					reason: `WORKSPACE_CONFLICT: ${request.capability} cannot run beside active ${conflicts.map((item) => `${item.role} ${item.taskId ?? item.id}`).join(", ")}`,
++					reason: `WORKSPACE_CONFLICT: ${request.capability} cannot run beside active ${conflicts.slice(0, 5).map((item) => `${item.role.slice(0, 50)} ${(item.taskId ?? item.id).slice(0, 100)}`).join(", ")}; call planner_tasks for bounded reservation diagnostics`,
+ 					limit,
+ 					occupied,
+ 					available: limit - occupied,
+@@ -175,6 +199,7 @@ export class ConcurrencyController {
+ 			capability: request.capability,
+ 			workspaces,
+ 			reservedAt: new Date().toISOString(),
++			countsTowardLimit: true,
+ 		};
+ 		this.reservations.set(request.id, reservation);
+ 		return { reservation };
+@@ -186,8 +211,14 @@ export class ConcurrencyController {
+ 	 * Never refuses: the hold exists precisely because a stop was never
+ 	 * confirmed, so it must occupy the workspace unconditionally.
+ 	 */
+-	hold(entry: { id: string; taskId?: string; role: string; capability: ConcurrencyCapability; workspaces: readonly string[]; reservedAt: string; holdReason?: string }): void {
+-		if (this.reservations.has(entry.id)) return;
++	hold(entry: { id: string; taskId?: string; role: string; capability: ConcurrencyCapability; workspaces: readonly string[]; reservedAt: string; holdReason?: string; countsTowardLimit?: boolean }): void {
++		const existing = this.reservations.get(entry.id);
++		if (existing) {
++			// Re-registration can upgrade a restored isolation claim to a live
++			// capacity claim, but must never downgrade a live execution.
++			if (entry.countsTowardLimit !== false) existing.countsTowardLimit = true;
++			return;
++		}
+ 		this.reservations.set(entry.id, {
+ 			id: entry.id,
+ 			...(entry.taskId ? { taskId: entry.taskId } : {}),
+@@ -196,6 +227,7 @@ export class ConcurrencyController {
+ 			workspaces: [...new Set(entry.workspaces.filter(Boolean).map(normalizedWorkspace))],
+ 			reservedAt: entry.reservedAt,
+ 			...(entry.holdReason ? { holdReason: entry.holdReason } : {}),
++			countsTowardLimit: entry.countsTowardLimit !== false,
+ 		});
+ 	}
+ 	setTaskId(id: string, taskId: string): void {
+@@ -205,6 +237,8 @@ export class ConcurrencyController {
+ 	get(id: string): ConcurrencyReservation | undefined { return this.reservations.get(id); }
+ 	status(): ConcurrencyStatus {
+ 		const limit = this.getLimit();
+-		return { limit, source: this.getSource(), occupied: this.reservations.size, available: Math.max(0, limit - this.reservations.size), reservations: [...this.reservations.values()] };
++		const reservations = [...this.reservations.values()];
++		const occupied = reservations.filter((item) => item.countsTowardLimit).length;
++		return { limit, source: this.getSource(), occupied, available: Math.max(0, limit - occupied), isolationHolds: reservations.length - occupied, reservations };
+ 	}
+ }
+diff --git a/index.ts b/index.ts
+index 514cc8a..5c09c1b 100644
+--- a/index.ts
++++ b/index.ts
+@@ -1367,16 +1367,68 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 				};
+ 			}
+ 			const tasks = orchestrator.listLiveTasks(cwd);
++			const status = orchestrator.getConcurrencyStatus();
++			const workspace = normalizeWorkspaceIdentity(cwd);
++			const reservationLimit = 12;
++			const prioritizedReservations = status.reservations
++				.map((item, index) => ({ item, index }))
++				.sort((left, right) => {
++					const priority = (item: typeof left.item) => item.workspaces.includes(workspace) ? 0 : item.countsTowardLimit ? 1 : 2;
++					return priority(left.item) - priority(right.item) || left.index - right.index;
++				})
++				.map(({ item }) => item);
++			let reservationFieldsTruncated = false;
++			const reservations = prioritizedReservations.slice(0, reservationLimit).map((item) => {
++				reservationFieldsTruncated ||= item.id.length > 200
++					|| (item.taskId?.length ?? 0) > 200
++					|| (item.holdReason?.length ?? 0) > 400
++					|| item.workspaces.length > 8
++					|| item.workspaces.some((path) => path.length > 400);
++				return ({
++				id: item.id.slice(0, 200),
++				...(item.taskId ? { taskId: item.taskId.slice(0, 200) } : {}),
++				capability: item.capability,
++				countsTowardLimit: item.countsTowardLimit,
++				workspaces: item.workspaces.slice(0, 8).map((path) => path.slice(0, 400)),
++				...(item.holdReason ? { reason: item.holdReason.slice(0, 400) } : {}),
++				});
++			});
++			const workspaceBlocked = status.reservations.some((item) => item.workspaces.includes(workspace));
++			const concurrency = {
++				limit: status.limit,
++				occupied: status.occupied,
++				available: status.available,
++				isolationHolds: status.isolationHolds,
++				workspaceBlocked,
++				reservations,
++				truncated: status.reservations.length > reservations.length || reservationFieldsTruncated,
++			};
++			const capacityLine = `capacity: ${status.occupied}/${status.limit} execution slots occupied, ${status.available} available; ${status.isolationHolds} isolation hold(s)`;
++			const reservationLines = reservations.map((item) =>
++				`reservation ${item.taskId ?? "unbound"}/${item.id} capability=${item.capability} capacity=${item.countsTowardLimit ? "occupied" : "isolation-only"} workspace=${item.workspaces.join(", ") || "none"}${item.reason ? ` reason=${item.reason}` : ""}`,
++			);
++			const admissionBlocked = status.available === 0 || workspaceBlocked;
+ 			const text = tasks.length === 0
+-				? `planner_tasks: No live Tasks in ${cwd}. planner_delegate mints a new one.`
++				? [
++					`planner_tasks: No live Tasks in ${cwd}.`,
++					capacityLine,
++					...reservationLines,
++					...(concurrency.truncated ? [`reservations: showing ${reservations.length} of ${status.reservations.length}`] : []),
++					admissionBlocked
++						? "Delegation is currently blocked; use the reservation task/execution IDs above to diagnose capacity or workspace isolation before retrying."
++						: "No capacity or workspace blocker is visible; planner_delegate can mint a new Task.",
++				].join("\n")
+ 				: [
+ 					`planner_tasks: ${tasks.length} live Task(s) in ${cwd}:`,
+ 					...tasks.map((task) =>
+ 						`${task.taskId} | ${task.state} | ${task.role}${task.recoveryRequired ? " | recovery required" : ""} | ${task.objective ?? "(no spec)"}`),
++					capacityLine,
++					...reservationLines,
++					...(concurrency.truncated ? [`reservations: showing ${reservations.length} of ${status.reservations.length}`] : []),
+ 				].join("\n");
+ 			return {
+ 				content: [{ type: "text", text }],
+-				details: { tasks },
++				details: { tasks, concurrency },
+ 			};
+ 		},
+ 	});
+diff --git a/orchestrate.ts b/orchestrate.ts
+index 71b35a9..4c3ecbe 100644
+--- a/orchestrate.ts
++++ b/orchestrate.ts
+@@ -572,6 +572,7 @@ export class PlannerOrchestrator {
+ 				workspaces: [restored.cwd, ...(restored.spec?.additionalWorktreeRoots ?? [])],
+ 				reservedAt: hold.since,
+ 				holdReason: hold.reason,
++				countsTowardLimit: false,
+ 			});
+ 		}
+ 		return restored;
+@@ -1131,13 +1132,13 @@ export class PlannerOrchestrator {
+ 	/** Current child capacity and workspace reservations for /planner-only status. */
+ 	renderConcurrencyStatus(): string {
+ 		const status = this.concurrency.status();
+-		const lines = [`Concurrency: ${status.occupied}/${status.limit} occupied, ${status.available} available (source: ${status.source})`];
++		const lines = [`Concurrency: ${status.occupied}/${status.limit} execution slots occupied, ${status.available} available; ${status.isolationHolds} isolation hold(s) (source: ${status.source})`];
+ 		for (const item of status.reservations) {
+ 			const task = item.taskId ? this.store.get(item.taskId) : undefined;
+ 			const isWriterHold = item.id.startsWith("writerhold:") || item.holdReason !== undefined || Boolean(task?.writerHold && item.id.includes(task.writerHold.executionId));
+ 			const holdReason = item.holdReason ?? task?.writerHold?.reason;
+ 			const holdSuffix = isWriterHold ? ` (restored writer hold: ${holdReason ?? "unconfirmed stop"})` : "";
+-			lines.push(`  - ${item.taskId ?? "unbound"} execution=${item.id} role=${item.role} capability=${item.capability} workspace=${item.workspaces.join(", ") || "none"}${holdSuffix}`);
++			lines.push(`  - ${item.taskId ?? "unbound"} execution=${item.id} role=${item.role} capability=${item.capability} capacity=${item.countsTowardLimit ? "occupied" : "isolation-only"} workspace=${item.workspaces.join(", ") || "none"}${holdSuffix}`);
+ 		}
+ 		return lines.join("\n");
+ 	}
+diff --git a/package-lock.json b/package-lock.json
+index fb2918a..541dffa 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "pi-planner-only",
+-  "version": "0.5.0",
++  "version": "0.8.0",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "pi-planner-only",
+-      "version": "0.5.0",
++      "version": "0.8.0",
+       "license": "MIT",
+       "devDependencies": {
+         "@earendil-works/pi-coding-agent": "*",

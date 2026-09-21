@@ -1,0 +1,11 @@
+{
+  "activeResources": [
+    "FSEventWrap",
+    "ProcessWrap"
+  ],
+  "handles": [
+    "FSWatcher",
+    "ChildProcess"
+  ],
+  "verdict": "PASS"
+}

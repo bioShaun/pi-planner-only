@@ -2419,7 +2419,7 @@ for (const [index, [status, expectedState]] of [
 	const recoveryHistoryBefore = recoveryTask.recoveryHistory?.length ?? 0;
 	await expectRefusal(runDelegation(
 		recovery.deps,
-		makeParams({ taskId: recoveryTask.taskId, envelope: { maxTokens: 1 }, recovery: {
+		makeParams({ taskId: recoveryTask.taskId, envelope: { maxTokens: 2 }, recovery: {
 			executionId: "clamp-runaway", action: "retry_same_plan", reason: "retry", worktreeDecision: "keep",
 		} }),
 		dir,
@@ -2581,11 +2581,12 @@ function makeFakeWallClock() {
 // ---------------------------------------------------------------------------
 {
 	const dir = initRealRepo();
+	let recoveryLaunches = 0;
 	const { deps } = makeDeps({
 		gitRunner: async (args, cwd) => realGit(dir, ...args),
 		launch: async (request, signal, hooks) => {
 			const base = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
-			hooks.onUpdate({ ...base, tokens: 9999 });
+			hooks.onUpdate({ ...base, tokens: 9999 + recoveryLaunches++ });
 			return { ...base, status: "cancelled", runId: "run-g", agent: "worker" };
 		},
 	});
@@ -2631,7 +2632,7 @@ function makeFakeWallClock() {
 	// requirement under the new executionId for the dedupe check below.
 	const retry = await runDelegation(deps, makeParams({
 		taskId,
-		envelope: { maxTokens: 100 },
+		envelope: { maxTokens: 9999 },
 		recovery: {
 			executionId: "call-g1",
 			action: "retry_same_plan",
@@ -2942,7 +2943,7 @@ await assertConcurrentManualRecovery(true);
 	assert.equal(outcome.termination, undefined);
 }
 
-{
+for (const preparation of [false, true]) {
 	const dir = initRealRepo();
 	const store = new TaskStore();
 	const taskId = "T-20260916-802";
@@ -2953,15 +2954,29 @@ await assertConcurrentManualRecovery(true);
 		gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args),
 		launch: async (request, _signal, captured) => {
 			hooks = captured;
-			captured.onUpdate({ requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId, tokens: 200 });
+			captured.onUpdate({ requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId, tokens: 200, toolCount: 1, currentTool: "read" });
+			if (preparation) {
+				for (let i = 2; i <= 70; i += 1) captured.onUpdate({ requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId, tokens: 100, toolCount: i, currentTool: "read" });
+			}
 			throw new DelegationAborted(taskId);
 		},
 	});
-	const outcome = await runDelegation(deps, makeParams({ taskId, envelope: { maxTokens: 100 } }), dir, { executionId: "call-late-runaway" });
-	assert.equal(outcome.termination?.reason, "worker_runaway");
-	hooks.onLateTerminal({ requestId: "late-runaway", ownerRunId: "owner-run-1", nodeId: taskId, status: "cancelled", runId: "run-late-runaway", agent: "worker" });
+	const outcome = await runDelegation(deps, makeParams({ taskId, envelope: preparation ? { maxReadOnlyTools: 1 } : { maxTokens: 100 } }), dir, { executionId: "call-late-runaway" });
+	assert.equal(outcome.termination?.reason, preparation ? "preparation_runaway" : "worker_runaway");
+	assert.equal(store.require(taskId).executions[0].usageSnapshot.snapshot, true);
+	hooks.onLateTerminal({ requestId: "late-runaway", ownerRunId: "owner-run-1", nodeId: taskId, status: "cancelled", runId: "run-late-runaway", agent: "worker", usage: { input: 101, output: 7, cacheRead: 3, cacheWrite: 0, cost: 0.02, turns: 2, toolCalls: 4, durationMs: 20 } });
 	await sleep(200);
-	assert.equal(store.require(taskId).executions[0].endedReason, "worker_runaway");
+	assert.equal(store.require(taskId).executions[0].endedReason, preparation ? "preparation_runaway" : "worker_runaway");
+	assert.equal(store.require(taskId).executions[0].observedTokenHighWater, 200);
+	if (preparation) assert.ok(store.require(taskId).executions[0].updateTrace.every((item) => item.tokens === 100), "the peak frame was evicted");
+	assert.equal(store.require(taskId).executions[0].usageSnapshot, undefined, "late real usage replaces the partial execution snapshot");
+	assert.equal(deps.usage.taskUsage(taskId).children.length, 1, "late usage is accounted once");
+	assert.equal(deps.usage.taskUsage(taskId).children[0].input, 101);
+	assert.equal(deps.usage.drain().at(-1).usageSnapshotResolved, true);
+	await expectRefusal(runDelegation(deps, makeParams({ taskId, envelope: { maxTokens: 150 },
+		recovery: { executionId: "call-late-runaway", action: "retry_same_plan", reason: "retry after terminal", worktreeDecision: "keep" },
+	}), dir, { executionId: "late-smaller-retry" }), "RECOVERY_ENVELOPE_BELOW_OBSERVED");
+	assert.equal(store.require(taskId).executions.length, 1, "a smaller terminal total cannot erase the observed breach");
 }
 
 // ============================================================================
@@ -3473,6 +3488,94 @@ await assertConcurrentManualRecovery(true);
 	);
 	assert.equal(outcome.task.validatorReports.length, 1);
 	assert.equal(outcome.task.validatorReports[0].evidence.workerRunId, "run-validator");
+}
+
+// ---------------------------------------------------------------------------
+// Runaway diagnostics/recovery: trace, snapshot, floor/handoff and prep guard.
+// ---------------------------------------------------------------------------
+{
+	const dir = initRealRepo();
+	const store = new TaskStore();
+	let recoveryPacket;
+	let launchNo = 0;
+	const { deps } = makeDeps({ store, launch: async (request, signal, hooks) => {
+		launchNo += 1;
+		if (launchNo === 1) {
+			const base = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
+			for (let i = 1; i <= 70; i += 1) hooks.onUpdate({ ...base, tokens: i * 100, toolCount: i, currentTool: "read", currentToolArgs: `file-${i}`, ...(i === 68 ? { recentTools: Array.from({ length: 7 }, (_, n) => ({ tool: "read", args: `file-${61 + n}` })) } : {}), recentOutputLines: [`line-${i}`] });
+			assert.equal(signal.aborted, true);
+			return { ...base, status: "cancelled", runId: "run-trace" };
+		}
+		recoveryPacket = JSON.parse(request.task);
+		return { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId, status: "completed", runId: "run-recovery", agent: "worker", usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1, toolCalls: 1, durationMs: 2 }, result: { kind: "structured", value: makeReport(request.nodeId, "run-recovery", request.cwd) } };
+	} });
+	const first = await runDelegation(deps, makeParams({ envelope: { maxTokens: 6_000 } }), dir, { executionId: "trace-run" });
+	assert.equal(first.termination.reason, "worker_runaway");
+	const execution = store.require(first.task.taskId).executions[0];
+	assert.equal(execution.updateTrace.length, 64);
+	assert.equal(execution.updateTrace[0].ordinal, 7);
+	assert.equal(execution.traceSummary.totalToolCalls, 70);
+	assert.equal(execution.traceSummary.classifiedToolCalls, 70);
+	assert.equal(execution.traceSummary.readOnlyToolFraction, 1);
+	assert.deepEqual(execution.usageSnapshot, { input: null, output: null, cacheRead: null, cacheWrite: null, totalTokens: 7000, snapshot: true });
+	const below = await expectRefusal(runDelegation(deps, makeParams({ taskId: first.task.taskId, envelope: { maxTokens: 6_999 }, recovery: { executionId: "trace-run", action: "retry_same_plan", reason: "retry unchanged", worktreeDecision: "keep" } }), dir, { executionId: "trace-too-small" }), "RECOVERY_ENVELOPE_BELOW_OBSERVED");
+	assert.match(below.message, /observed token usage 7000/);
+	assert.equal(store.require(first.task.taskId).executions.length, 1);
+	const recovered = await runDelegation(deps, makeParams({ taskId: first.task.taskId, envelope: { maxTokens: 7_000 }, recovery: { executionId: "trace-run", action: "retry_same_plan", reason: "provider stabilized", worktreeDecision: "keep" } }), dir, { executionId: "trace-retry" });
+	assert.ok(recovered.report, "equality is allowed");
+	assert.equal(recoveryPacket.spec.objective, "implement the thing");
+	assert.equal(recoveryPacket.instructions, "");
+	assert.equal(recoveryPacket.priorExecution.executionId, "trace-run");
+	assert.equal(recoveryPacket.priorExecution.recoveryReason, "provider stabilized");
+	assert.equal(recoveryPacket.priorExecution.recentTools.length, 8);
+	assert.deepEqual(recoveryPacket.priorExecution.recentTools.map((item) => item.args), Array.from({ length: 8 }, (_, n) => `file-${63 + n}`), "optional history does not erase subsequent currentTool observations");
+	assert.equal(recoveryPacket.priorExecution.recentOutputLines.at(-1), "line-70");
+}
+
+{
+	const dir = initRealRepo();
+	const prepDeps = (role) => makeDeps({ launch: async (request, signal, hooks) => {
+		const base = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
+		for (let i = 1; i <= 3; i += 1) hooks.onUpdate({ ...base, tokens: i * 100, toolCount: i, currentTool: "read", currentToolArgs: `r-${i}` });
+		return signal.aborted
+			? { ...base, status: "cancelled", runId: `run-${role}` }
+			: { ...base, status: "completed", runId: `run-${role}`, agent: role, result: { kind: "structured", value: makeReport(request.nodeId, `run-${role}`, request.cwd) } };
+	} });
+	const worker = prepDeps("worker");
+	const stopped = await runDelegation(worker.deps, makeParams({ envelope: { maxReadOnlyTools: 2 } }), dir, { executionId: "prep-worker" });
+	assert.equal(stopped.termination.reason, "preparation_runaway");
+	assert.equal(stopped.task.executions[0].runawayObservation.signal, "preparation");
+	assert.equal(stopped.task.executions[0].usageSnapshot.totalTokens, 300, "prep-only envelopes still retain observed tokens");
+	const explorer = prepDeps("explorer");
+	const allowed = await runDelegation(explorer.deps, makeParams({ role: "explorer", envelope: { maxReadOnlyTools: 2 } }), dir, { executionId: "prep-explorer" });
+	assert.equal(allowed.termination, undefined);
+	assert.equal(Compile(PLANNER_DELEGATE_PARAMETERS).Check(makeParams({ envelope: { maxTokens: 100, preparationTokensShare: 0.5 } })), true);
+	const invalid = prepDeps("worker");
+	await expectRefusal(runDelegation(invalid.deps, makeParams({ envelope: { preparationTokensShare: 0.5 } }), dir, { executionId: "prep-invalid" }), "ENVELOPE_INVALID");
+	assert.equal(invalid.launches.length, 0);
+	const repeated = makeDeps({ launch: async (request, signal, hooks) => {
+		const base = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
+		for (let i = 0; i < 4; i += 1) hooks.onUpdate({ ...base, tokens: 100 + i, toolCount: 1, currentTool: "read", currentToolArgs: "please write output.ts" });
+		assert.equal(signal.aborted, false, "repeated progress frames and prose in args do not count as writes or extra calls");
+		return { ...base, status: "completed", runId: "run-repeat", agent: "worker", result: { kind: "structured", value: makeReport(request.nodeId, "run-repeat", request.cwd) } };
+	} });
+	const repeatedOutcome = await runDelegation(repeated.deps, makeParams({ envelope: { maxReadOnlyTools: 1 } }), dir, { executionId: "prep-repeat" });
+	assert.equal(repeatedOutcome.termination, undefined);
+	assert.equal(repeatedOutcome.task.executions[0].traceSummary.totalToolCalls, 1);
+	const share = prepDeps("worker");
+	const shareStopped = await runDelegation(share.deps, makeParams({ envelope: { maxTokens: 1_000, preparationTokensShare: 0.2 } }), dir, { executionId: "prep-share" });
+	assert.equal(shareStopped.termination.reason, "preparation_runaway");
+	assert.deepEqual(shareStopped.task.executions[0].runawayObservation, { signal: "preparation", observed: 300, limit: 200 });
+	const wrote = makeDeps({ launch: async (request, signal, hooks) => {
+		const base = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
+		hooks.onUpdate({ ...base, tokens: 50, toolCount: 1, currentTool: "bash", currentToolArgs: "apply change" });
+		hooks.onUpdate({ ...base, tokens: 500, toolCount: 2, currentTool: "read" });
+		assert.equal(signal.aborted, false);
+		return { ...base, status: "completed", runId: "run-wrote", agent: "worker", result: { kind: "structured", value: makeReport(request.nodeId, "run-wrote", request.cwd) } };
+	} });
+	const wroteOutcome = await runDelegation(wrote.deps, makeParams({ envelope: { maxTokens: 1_000, preparationTokensShare: 0.2 } }), dir, { executionId: "prep-wrote" });
+	assert.equal(wroteOutcome.termination, undefined);
+	assert.equal(wroteOutcome.task.executions[0].traceSummary.firstNonReadOnlyToolOrdinal, 1);
 }
 
 // ---------------------------------------------------------------------------

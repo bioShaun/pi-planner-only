@@ -247,6 +247,8 @@ TUI 下按 Esc 中止 `planner_delegate`/`planner_redelegate` 会向子代理发
 
 **跑飞 envelope 与恢复（P0-B）。** 两个委派工具都接受显式 `envelope: { maxTokens?, maxWallMs? }`——UPDATE 累计 tokens（input+output 快照，不含 cache）与只覆盖实际 launcher 等待、不包含启动前 Evidence 采样的独立墙钟。越线即走与 Esc 相同的 CANCEL 路径，只触发一次；即使终态在取消宽限后迟到，执行原因仍保留为 `worker_runaway`。确认停止与未确认停止都会置 `task.recovery.required`。此后重新执行该 Task 必须在 `planner_redelegate` 携带结构化 `recovery` 决策（`retry_same_plan` / `fix_environment`，指明异常 `executionId`、理由与 `worktreeDecision`），或用独立的 `planner_abort`（ADR-0003：一次调用落 blocked 裁决并消费恢复要求）交人工。决策只消费一次；action、规范化 evidenceRefs 与 worktreeDecision 等价时，即使改写理由或调换证据顺序也会拒绝。`worktreeDecision: "manual"` 是操作者确认残留 writer 已处理后的显式断言，可解除持久 hold。未接线的 P1 动作明确拒绝。对 `planner_redelegate` 而言，非终态 Task 上的 `recovery` 会在派发前对 worker、explorer、validator 和 reviewer 一律拒绝为 `RECOVERY_NOT_APPLICABLE`；普通修正或评审轮必须省略该键。终态调用仍走各角色原有守卫：非 reviewer 执行除 `blocked + recovery.required` 外返回 `TASK_CLOSED`，reviewer 仍由既有 `REVIEW_TERMINAL` 语义处理。`planner_verdict` 的兼容行为不同：它会剥离多余的 `recovery`，记录普通 verdict，在 `warnings` 披露剥离，并且不消费恢复要求。
 
+每次执行持久化最近 64 条 launcher UPDATE，包括有界的工具参数与输出行；这些字段可能包含宿主载荷里已有的敏感内容。`planner_tasks` 展示首次观测到的非只读工具序号、最大 token 跳变和带覆盖计数的只读占比；非只读工具只表示工具分类证据，不证明写入成功。取消执行先保存不虚构分类或成本的 token 快照，真实终态 usage 到达后替换。worker 可选配 `maxReadOnlyTools` 和 `preparationTokensShare`（后者要求 `maxTokens`），按精确工具名判断并以 `preparation_runaway` 收尾。恢复子包另带结构化 `priorExecution`；`retry_same_plan` 的 token 预算低于上次实测 token 越限值时拒绝。
+
 ## 设计规范
 
 - [v0.2 规范](docs/pi-planner-only-v0.2-spec.md)：核心协议与架构。

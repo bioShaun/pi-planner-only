@@ -1,0 +1,298 @@
+{
+  "taskId": "T-20260921-001",
+  "spec": {
+    "taskId": "T-20260921-001",
+    "objective": "Acceptance probe: call read on fixture.txt twelve times sequentially, one call at a time. Do not replace these reads with bash, do not batch calls, and do not call any write or edit tool. The controller will intentionally cancel you early. This is an authorized cancellation test.",
+    "cwd": "/project/tmp/runaway-host-KVp0sb/workspace",
+    "role": "worker",
+    "acceptanceMode": "worktree",
+    "scope": {
+      "allowedPaths": [
+        "fixture.txt"
+      ]
+    },
+    "constraints": [
+      "Read fixture.txt only; no edits, shell, delegation or network."
+    ],
+    "acceptanceCriteria": [
+      "Execute the specified read-only loop for the controller acceptance probe."
+    ],
+    "validation": {
+      "required": false
+    },
+    "expectedEvidence": {},
+    "stopConditions": []
+  },
+  "role": "worker",
+  "successors": [],
+  "cwd": "/project/tmp/runaway-host-KVp0sb/workspace",
+  "state": "blocked",
+  "reviewRound": 0,
+  "reviewMode": "root",
+  "reports": [],
+  "validatorReports": [],
+  "reviews": [],
+  "verdictRefusals": [],
+  "overrides": [],
+  "aliases": [],
+  "reportCorrections": 0,
+  "executions": [
+    {
+      "status": "stopped",
+      "executionId": "probe-first",
+      "kind": "worker",
+      "cwd": "/project/tmp/runaway-host-KVp0sb/workspace",
+      "worktreeRoots": [
+        "/project/tmp/runaway-host-KVp0sb/workspace"
+      ],
+      "aRun": {
+        "cwd": "/project/tmp/runaway-host-KVp0sb/workspace",
+        "taskId": "T-20260921-001",
+        "workerRunId": "probe-first",
+        "finalGitRef": "6bc8ac16a7f93a26e33c80ebd478d96b0144cb1e",
+        "gitStatusHash": "e3b0c44298fc1c14",
+        "repoRoot": "/project/tmp/runaway-host-KVp0sb/workspace",
+        "changedPaths": [],
+        "gitAvailable": true,
+        "generatedAt": "2026-09-21T07:37:29.979Z"
+      },
+      "capability": "writer",
+      "capabilityBasis": "child retains shell/edit/write tools; writer isolation applies",
+      "requestId": "46680f1b-fbbd-419a-a6a8-f8af50506d8b",
+      "startedAt": "2026-09-21T07:37:30.120Z",
+      "envelope": {
+        "maxTokens": 100000,
+        "maxWallMs": 120000,
+        "maxReadOnlyTools": 1,
+        "source": "delegation-param"
+      },
+      "originalEnvelope": {
+        "maxTokens": 100000,
+        "maxWallMs": 120000,
+        "maxReadOnlyTools": 1,
+        "source": "delegation-param"
+      },
+      "requestBudget": {
+        "requestId": "46680f1b-fbbd-419a-a6a8-f8af50506d8b",
+        "requestDeadline": "2026-09-21T07:52:29.875Z",
+        "remainingMs": 899765,
+        "observedAt": "2026-09-21T07:37:30.110Z",
+        "reserveMs": 60000,
+        "availableMs": 839765
+      },
+      "envelopeClamped": false,
+      "taskId": "T-20260921-001",
+      "launchedAt": "2026-09-21T07:37:30.119Z",
+      "updateTrace": [
+        {
+          "receivedAt": "2026-09-21T07:37:30.170Z",
+          "ordinal": 1,
+          "tokens": 0,
+          "toolCount": 0,
+          "durationMs": 6
+        },
+        {
+          "receivedAt": "2026-09-21T07:37:34.619Z",
+          "ordinal": 2,
+          "tokens": 7036,
+          "toolCount": 0,
+          "durationMs": 4456
+        },
+        {
+          "receivedAt": "2026-09-21T07:37:34.620Z",
+          "ordinal": 3,
+          "tokens": 7036,
+          "toolCount": 1,
+          "durationMs": 4457,
+          "currentTool": "read",
+          "currentToolArgs": "/project/tmp/runaway-host-KVp0sb/workspace/fixture.txt"
+        },
+        {
+          "receivedAt": "2026-09-21T07:37:34.622Z",
+          "ordinal": 4,
+          "tokens": 7036,
+          "toolCount": 1,
+          "durationMs": 4459,
+          "recentTools": [
+            {
+              "tool": "read",
+              "args": "/project/tmp/runaway-host-KVp0sb/workspace/fixture.txt"
+            }
+          ]
+        },
+        {
+          "receivedAt": "2026-09-21T07:37:38.476Z",
+          "ordinal": 5,
+          "tokens": 14127,
+          "toolCount": 1,
+          "durationMs": 8313,
+          "recentTools": [
+            {
+              "tool": "read",
+              "args": "/project/tmp/runaway-host-KVp0sb/workspace/fixture.txt"
+            }
+          ]
+        },
+        {
+          "receivedAt": "2026-09-21T07:37:38.477Z",
+          "ordinal": 6,
+          "tokens": 14127,
+          "toolCount": 2,
+          "durationMs": 8313,
+          "currentTool": "read",
+          "currentToolArgs": "/project/tmp/runaway-host-KVp0sb/workspace/fixture.txt",
+          "recentTools": [
+            {
+              "tool": "read",
+              "args": "/project/tmp/runaway-host-KVp0sb/workspace/fixture.txt"
+            }
+          ]
+        },
+        {
+          "receivedAt": "2026-09-21T07:37:38.478Z",
+          "ordinal": 7,
+          "tokens": 14127,
+          "toolCount": 2,
+          "durationMs": 8315,
+          "recentTools": [
+            {
+              "tool": "read",
+              "args": "/project/tmp/runaway-host-KVp0sb/workspace/fixture.txt"
+            },
+            {
+              "tool": "read",
+              "args": "/project/tmp/runaway-host-KVp0sb/workspace/fixture.txt"
+            }
+          ]
+        }
+      ],
+      "traceSummary": {
+        "maxTokenDelta": 7091,
+        "readOnlyToolFraction": 1,
+        "classifiedToolCalls": 2,
+        "observedToolCalls": 2,
+        "totalToolCalls": 2,
+        "coalescedToolCalls": 0
+      },
+      "observedTokenHighWater": 14127,
+      "runawayObservation": {
+        "signal": "preparation",
+        "observed": 2,
+        "limit": 1
+      },
+      "cancelRequestedAt": "2026-09-21T07:37:38.477Z",
+      "endedReason": "preparation_runaway",
+      "endedAt": "2026-09-21T07:37:48.800Z",
+      "durationMs": 18680,
+      "durationBasis": "request-outbound-to-finalization",
+      "terminationConfirmed": true,
+      "confirmationBasis": "terminal+quiet-worktree",
+      "cTerminal": {
+        "cwd": "/project/tmp/runaway-host-KVp0sb/workspace",
+        "taskId": "T-20260921-001",
+        "workerRunId": "399bb868-a6ac-4748-9636-d15972cb23a0",
+        "finalGitRef": "6bc8ac16a7f93a26e33c80ebd478d96b0144cb1e",
+        "gitStatusHash": "e3b0c44298fc1c14",
+        "repoRoot": "/project/tmp/runaway-host-KVp0sb/workspace",
+        "changedPaths": [],
+        "gitAvailable": true,
+        "generatedAt": "2026-09-21T07:37:48.775Z"
+      },
+      "usageComplete": true,
+      "rawTerminal": {
+        "requestId": "d57b80a8-d87c-4837-b4d5-d2a994a58841",
+        "ownerRunId": "01a0c2e6-059d-7392-99d6-d90e3719ca83",
+        "nodeId": "T-20260921-001",
+        "status": "cancelled",
+        "error": "This operation was aborted",
+        "runId": "399bb868-a6ac-4748-9636-d15972cb23a0",
+        "agent": "worker",
+        "model": "tcuni-luna/gpt-5.6-luna:low",
+        "thinking": "low",
+        "exitCode": 1,
+        "launchContractDigest": "021ad8ec09635ff7c71e1d8742cced15f8f3843c034f5a443506b745068c76ff",
+        "usage": {
+          "input": 14021,
+          "output": 106,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "cost": 0,
+          "turns": 3,
+          "toolCalls": 2,
+          "durationMs": 8317
+        }
+      },
+      "runId": "399bb868-a6ac-4748-9636-d15972cb23a0"
+    }
+  ],
+  "findings": [],
+  "recoveryAttempts": 0,
+  "recoveryStates": [],
+  "usage": {
+    "root": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "turns": 0,
+      "tokensUnknownTurns": 0,
+      "byPhase": {
+        "planning": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "turns": 0
+        },
+        "executing": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "turns": 0
+        },
+        "reviewing": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "turns": 0
+        }
+      },
+      "reviewLeakBytes": 0,
+      "injectedBytes": 0
+    },
+    "children": [
+      {
+        "input": 14021,
+        "output": 106,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "kind": "worker",
+        "pending": false,
+        "source": "sync-details",
+        "runId": "399bb868-a6ac-4748-9636-d15972cb23a0",
+        "toolCallId": "probe-first",
+        "agent": "worker",
+        "model": "tcuni-luna/gpt-5.6-luna:low",
+        "thinking": "low",
+        "ownerRootSessionId": "01a0c2e6-059d-7392-99d6-d90e3719ca83",
+        "taskId": "T-20260921-001",
+        "executionId": "probe-first",
+        "turns": 3,
+        "outcome": "failed"
+      }
+    ],
+    "costUnknown": true
+  },
+  "createdAt": "2026-09-21T07:37:29.978Z",
+  "updatedAt": "2026-09-21T07:37:48.800Z",
+  "revalidationDispatches": [],
+  "sealedAt": "2026-09-21T07:37:38.500Z",
+  "stateReason": "worker runaway: preparation 2 exceeded envelope 1; delegation cancelled",
+  "recovery": {
+    "required": true,
+    "reason": "worker runaway: preparation 2 exceeded envelope 1",
+    "executionId": "probe-first"
+  }
+}

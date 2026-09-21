@@ -59,6 +59,17 @@ export interface UsageEntry {
 	provider?: string;
 	usage?: PiUsageLike;
 	child?: ChildUsage;
+	usageSnapshot?: {
+		kind: DelegationKind;
+		toolCallId: string;
+		input: null;
+		output: null;
+		cacheRead: null;
+		cacheWrite: null;
+		totalTokens: number;
+		snapshot: true;
+	};
+	usageSnapshotResolved?: boolean;
 	bytes?: number;
 	messageId?: string;
 	toolCallId?: string;
@@ -577,6 +588,7 @@ export class UsageLedger {
 	private readonly untasked: RootUsage = emptyRootUsage();
 	private readonly shared: RootUsage = emptyRootUsage();
 	private readonly seenIds = new Set<string>();
+	private readonly snapshotToolCallIds = new Set<string>();
 	private pending: UsageEntry[] = [];
 	private seq = 0;
 
@@ -618,7 +630,7 @@ export class UsageLedger {
 	private refreshCostUnknown(task: TaskUsage): void {
 		const rootUnknown = task.root.turns > 0 && task.root.costUsd === undefined;
 		const childUnknown = task.children.some((child) => child.costUsd === undefined);
-		task.costUnknown = rootUnknown || childUnknown;
+		task.costUnknown = rootUnknown || childUnknown || (task.snapshots?.length ?? 0) > 0;
 	}
 
 	private applyRootTurn(input: {
@@ -741,6 +753,9 @@ export class UsageLedger {
 	}
 
 	private upsertChild(task: TaskUsage, child: ChildUsage): void {
+		if (child.toolCallId && task.snapshots?.length) {
+			task.snapshots = task.snapshots.filter((snapshot) => snapshot.toolCallId !== child.toolCallId);
+		}
 		const priced = child.costUsd !== undefined
 			? child.costUsd
 			: resolveCost(
@@ -798,6 +813,38 @@ export class UsageLedger {
 			child: cloneChild(this.ensureTask(canonicalTaskId).children.find((c) => childKey(c) === childKey(child)) ?? child),
 			...(child.toolCallId ? { toolCallId: child.toolCallId } : {}),
 			...(child.runId ? { runId: child.runId } : {}),
+			...(child.toolCallId && this.snapshotToolCallIds.delete(child.toolCallId) ? { usageSnapshotResolved: true } : {}),
+		});
+	}
+
+	/** Persist an honest lower-bound UPDATE snapshot without inventing a token breakdown or cost. */
+	recordChildSnapshot(taskId: string, snapshot: { kind: DelegationKind; toolCallId: string; totalTokens: number }): void {
+		if (this.snapshotToolCallIds.has(snapshot.toolCallId)) return;
+		this.snapshotToolCallIds.add(snapshot.toolCallId);
+		const canonicalTaskId = this.canonicalTaskId(taskId);
+		const task = this.ensureTask(canonicalTaskId);
+		task.snapshots = [
+			...(task.snapshots ?? []).filter((item) => item.toolCallId !== snapshot.toolCallId),
+			{ kind: snapshot.kind, toolCallId: snapshot.toolCallId, input: null, output: null, cacheRead: null, cacheWrite: null, totalTokens: snapshot.totalTokens, snapshot: true },
+		];
+		this.refreshCostUnknown(task);
+		const seq = this.nextSeq();
+		this.push({
+			id: `child-snapshot:${snapshot.toolCallId}:${seq}`,
+			kind: "child",
+			taskId: canonicalTaskId,
+			at: this.at(),
+			toolCallId: snapshot.toolCallId,
+			usageSnapshot: {
+				kind: snapshot.kind,
+				toolCallId: snapshot.toolCallId,
+				input: null,
+				output: null,
+				cacheRead: null,
+				cacheWrite: null,
+				totalTokens: snapshot.totalTokens,
+				snapshot: true,
+			},
 		});
 	}
 
@@ -904,6 +951,20 @@ export class UsageLedger {
 			if (!entry || typeof entry !== "object" || !entry.id || !entry.kind) continue;
 			if (this.seenIds.has(entry.id)) continue;
 			this.seenIds.add(entry.id);
+			if (entry.usageSnapshot?.toolCallId && entry.taskId) {
+				this.snapshotToolCallIds.add(entry.usageSnapshot.toolCallId);
+				const task = this.ensureTask(entry.taskId);
+				task.snapshots = [...(task.snapshots ?? []).filter((item) => item.toolCallId !== entry.usageSnapshot?.toolCallId), { ...entry.usageSnapshot }];
+				this.refreshCostUnknown(task);
+			}
+			if (entry.usageSnapshotResolved && entry.toolCallId) {
+				this.snapshotToolCallIds.delete(entry.toolCallId);
+				if (entry.taskId) {
+					const task = this.ensureTask(entry.taskId);
+					task.snapshots = (task.snapshots ?? []).filter((item) => item.toolCallId !== entry.toolCallId);
+					this.refreshCostUnknown(task);
+				}
+			}
 			if (entry.kind === "root-turn") {
 				this.applyRootTurn({
 					...(entry.taskId ? { taskId: entry.taskId } : {}),
@@ -987,11 +1048,13 @@ function usageTokens(counts: TokenCounts): number {
 export function summarizeTaskBudget(usage: TaskUsage, limits?: CumulativeBudgetLimits): TaskBudgetSummary {
 	const rootTokens = usageTokens(usage.root);
 	const childTokens = usage.children.reduce((sum, child) => sum + usageTokens(child), 0);
+	const snapshotTokens = (usage.snapshots ?? []).reduce((sum, snapshot) => sum + snapshot.totalTokens, 0);
 	const unresolved = (child: ChildUsage): boolean => child.pending || child.source === "unavailable";
 	const tokenDebt = usage.children.reduce((sum, child) => sum + (unresolved(child) ? (child.tokensDebt ?? 0) : 0), 0);
-	const tokenKnown = rootTokens + childTokens + tokenDebt;
+	const tokenKnown = rootTokens + childTokens + snapshotTokens + tokenDebt;
 	const tokenUnknown = usage.root.tokensUnknownTurns
-		+ usage.children.filter(unresolved).length;
+		+ usage.children.filter(unresolved).length
+		+ (usage.snapshots?.length ?? 0);
 	const costDebt = usage.children.reduce(
 		(sum, child) => sum + (child.costUsd === undefined ? (child.costDebtUsd ?? 0) : 0),
 		0,
@@ -1005,7 +1068,8 @@ export function summarizeTaskBudget(usage: TaskUsage, limits?: CumulativeBudgetL
 	// so it must not fabricate an unknown component (renderUsage guards the same way).
 	const rootCostUnknown = usage.root.turns > 0 && usage.root.costUsd === undefined;
 	const costUnknown = (rootCostUnknown ? 1 : 0)
-		+ usage.children.filter((child) => child.costUsd === undefined).length;
+		+ usage.children.filter((child) => child.costUsd === undefined).length
+		+ (usage.snapshots?.length ?? 0);
 	const dimension = (known: number, unknownParts: number, debt: number, limit?: number): BudgetDimension => ({
 		...(limit === undefined ? {} : { limit, remaining: limit - known }),
 		known,
@@ -1034,6 +1098,12 @@ export function summarizeTaskBudget(usage: TaskUsage, limits?: CumulativeBudgetL
 		role.tokens += usageTokens(child) + (unresolved(child) ? (child.tokensDebt ?? 0) : 0);
 		role.costUsd += child.costUsd ?? (child.costDebtUsd ?? 0);
 		if (child.costUsd === undefined) role.costUnknownParts += 1;
+	}
+	for (const snapshot of usage.snapshots ?? []) {
+		const role = byRole[snapshot.kind] ?? (byRole[snapshot.kind] = { calls: 0, tokens: 0, costUsd: 0, costUnknownParts: 0 });
+		role.calls += 1;
+		role.tokens += snapshot.totalTokens;
+		role.costUnknownParts += 1;
 	}
 	return {
 		configured: limits?.tokens !== undefined || limits?.costUsd !== undefined,
@@ -1070,10 +1140,12 @@ export function summarizeSessionUsage(ledger: UsageLedger): SessionUsageSummary 
 	for (const taskId of session.tasks) {
 		const usage = ledger.taskUsage(taskId);
 		if (!usage) continue;
-		totalTokens += usageTokens(usage.root) + usage.children.reduce((sum, child) => sum + usageTokens(child), 0);
+		totalTokens += usageTokens(usage.root) + usage.children.reduce((sum, child) => sum + usageTokens(child), 0)
+			+ (usage.snapshots ?? []).reduce((sum, snapshot) => sum + snapshot.totalTokens, 0);
 		totalCostUsd += (usage.root.costUsd ?? 0) + usage.children.reduce((sum, child) => sum + (child.costUsd ?? 0), 0);
 		costUnknownParts += (usage.root.turns > 0 && usage.root.costUsd === undefined ? 1 : 0)
-			+ usage.children.filter((child) => child.costUsd === undefined).length;
+			+ usage.children.filter((child) => child.costUsd === undefined).length
+			+ (usage.snapshots?.length ?? 0);
 	}
 	return {
 		unattributed: {
@@ -1163,11 +1235,15 @@ export function renderUsage(
 			`Child  ${child.kind.padEnd(9)} ${child.model ?? child.agent ?? ""}     in ${formatTokens(child.input)}  out ${formatTokens(child.output)}${childCost}${ident}${pending}`,
 		);
 	}
+	for (const snapshot of taskUsage.snapshots ?? []) {
+		lines.push(`Child  ${snapshot.kind.padEnd(9)} usage snapshot ${formatTokens(snapshot.totalTokens)} uncached tokens (call ${snapshot.toolCallId}); input/output split and cost unknown`);
+	}
 	const childCostSum = taskUsage.children.reduce((sum, child) => sum + (child.costUsd ?? 0), 0);
 	const rootCostVal = root.costUsd;
 	if (taskUsage.costUnknown) {
 		const unknownCount = (root.costUsd === undefined && root.turns > 0 ? 1 : 0)
-			+ taskUsage.children.filter((child) => child.costUsd === undefined).length;
+			+ taskUsage.children.filter((child) => child.costUsd === undefined).length
+			+ (taskUsage.snapshots?.length ?? 0);
 		lines.push(`cost unknown${unknownCount ? ` for ${unknownCount} components` : ""}`);
 		if (root.turns > 0 && root.costUsd === undefined) {
 			const knownChildren = taskUsage.children.filter((child) => child.costUsd !== undefined);
@@ -1213,7 +1289,8 @@ export function renderUsageLine(taskUsage: TaskUsage, currency: "USD" | "CNY" = 
 	const childTok = formatTokens(childTokNum).replace(/\.0k$/, "k").replace(/\.0M$/, "M");
 	const compactRoot = formatTokens(taskUsage.root.input + taskUsage.root.output).replace(/\.0k$/, "k");
 	const compactChild = formatTokens(
-		taskUsage.children.reduce((sum, child) => sum + child.input + child.output, 0),
+		taskUsage.children.reduce((sum, child) => sum + child.input + child.output, 0)
+			+ (taskUsage.snapshots ?? []).reduce((sum, snapshot) => sum + snapshot.totalTokens, 0),
 	).replace(/\.0k$/, "k");
 	let line: string;
 	if (taskUsage.costUnknown) {

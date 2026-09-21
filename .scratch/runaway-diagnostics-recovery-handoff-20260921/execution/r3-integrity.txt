@@ -1,0 +1,3 @@
+Final source-manifest-r3.json verification: all 62 files match.
+git diff --check: exit0
+bash -n execution/run-validation.sh: exit0

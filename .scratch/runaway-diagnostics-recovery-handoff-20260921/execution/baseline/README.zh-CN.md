@@ -1,0 +1,299 @@
+# pi-planner-only
+
+[English](README.md) · 中文
+
+[Pi](https://pi.dev) 扩展：把 **root 会话** 限制为规划与审核。改文件、跑 shell、跑测试一律交给 subagent。
+
+守卫开启时，Root 不得改文件、不得跑通用 shell。`tool_call` 策略是闸门。父会话仍保留 `bash`/`edit`/`write` 作为 active tools，因为 pi-subagents 用父会话工具集当子代理 ceiling；宿主的 `setActiveTools` 要到下一轮才生效，剥 schema 会让同一轮启动的 oracle/worker/delegate 没有壳工具。前台子进程不加载 ambient 扩展；后台子进程可能会加载。本扩展在 `PI_SUBAGENT_CHILD=1` 时直接 no-op。
+
+v0.2 在守卫之上加了一层薄编排：结构化 `TaskSpec` / `WorkerReport`、有界 review 循环、只读 `git_audit`、evidence 新鲜度，以及隔离的 Fresh Reviewer。v0.2.x 加固序列收紧了生命周期接缝：两份子契约都做任务身份校验、每次 PASS 在接受边界由 Root 重新采样证据、reviewer 调用不再改写 Task、可选的严格委派模式。
+
+## 安装
+
+```bash
+pi install https://github.com/bioShaun/pi-planner-only    # 用户级
+# 或
+pi install https://github.com/bioShaun/pi-planner-only -l # 项目级
+```
+
+然后重启 Pi，或执行 `/reload`。
+
+SSH 也可以：`pi install git:git@github.com:bioShaun/pi-planner-only`。
+
+```bash
+pi update https://github.com/bioShaun/pi-planner-only
+pi remove https://github.com/bioShaun/pi-planner-only
+```
+
+**不要**再把本仓库拷进 `~/.pi/agent/extensions/`，否则 Pi 会加载两次。
+
+本地开发：
+
+```bash
+pi install /path/to/pi-planner-only
+# 或本次运行试用整个包、不安装
+pi -e .
+```
+
+`typebox` 和 `@earendil-works/pi-coding-agent` 是 peerDependencies：由 Pi 运行时提供，不要放进 `dependencies`。
+
+支持的主机范围：`@earendil-works/pi-coding-agent` `>=0.84 <1`、`pi-subagents` `>=0.65 <0.70`（声明见 `package.json`）。发布必须运行 `npm run test:release`（typecheck + 单元测试）。
+
+## 命令
+
+- `/planner-only status`
+- `/planner-only on`
+- `/planner-only off`
+- `/planner-only task [taskId]` — 任务生命周期
+- `/planner-only task abandon|reset <taskId>` — 放弃活跃或指定任务
+- `/planner-only review [taskId] [root|fresh|pass|request_changes|blocked] [summary]`
+- `/planner-only budget [on|off]` — 会话级 root 累计预算（默认关闭）
+- `/planner-only usage [taskId | session | reload]`
+
+单次会话覆盖：`PI_PLANNER_ONLY=1`（亦支持 `true`、`on`）无论是否存在标记均强制开启；`PI_PLANNER_ONLY=0`（`false`、`off`）禁用。持久关闭标记：`~/.pi/agent/planner-only.off`。
+
+`/planner-only off` 关闭策略。`session_shutdown` 仍会还原旧版本剥掉的工具，方便 reload 重新采集完整列表。
+
+## 父进程可用工具
+
+存在则保留：`read`、`grep`、`find`、`ls`、`git_audit`、`planner_verdict`、`planner_abort`、`planner_delegate`、`planner_redelegate`、`planner_tasks`、`git_commit`、`question`、`questionnaire`。
+
+拦截：`edit`、`write`、通用 `bash`、未知 mutator，以及 `subagent` 的宿主机命令路径（如 `workflow: "run-ci"`、`gate`）。
+
+`tool_call` 策略里仍有一小段 git/`pwd` 白名单，只防过期调用。Root 的 `bash`/`edit`/`write` 仍被策略拦截；这些名字留在父会话 active tools 里，供子代理继承。
+
+## v0.2 编排
+
+Root 把 `TaskSpec` 作为 `planner_delegate` 的参数传入——该工具没有 `taskId` 键，永远铸出新 Task 并在 `details.taskId` 返回 canonical id：
+
+```json
+{
+  "objective": "Add a CSV parser",
+  "cwd": "/repo",
+  "role": "worker",
+  "scope": { "allowedPaths": ["src/parser.ts"] },
+  "constraints": ["no new dependencies"],
+  "acceptanceCriteria": ["empty input returns []"],
+  "validation": { "required": true, "commands": ["npm test"] },
+  "expectedEvidence": { "changedFiles": true, "tests": true },
+  "stopConditions": ["ask if the schema is ambiguous"]
+}
+```
+
+重进一个已有 Task——`request_changes` 后的修正轮、对其最新 WorkerReport 的 reviewer 调用、或一次 recovery 重执行——走 `planner_redelegate`：`taskId` 必填，逐字取自上一次结果的 `details.taskId`（绝不自行构造）。公开输入只保留 `taskId`、本次调用的 `role`，以及可选的 `instructions`、`envelope`、`recovery`：
+
+```json
+{
+  "taskId": "T-20260831-001",
+  "role": "reviewer"
+}
+```
+
+当 canonical id 不在上下文里（压缩或 session 恢复后），`planner_tasks` 会列出本 workspace 的 live Task——非终态，以及挂着 recovery 决策的 blocked——含 `taskId`、`state`、`role`、`recoveryRequired` 与来源（`memory` 或 `ledger`；restore cap 可能让 live Task 只留在磁盘上）。它只读：不铸新、不绑定、不恢复、不启动。
+
+`planner_delegate` 登记任务、采样工作区；同一 cwd 上第二个 `worker` 委派会被拒绝（每个 cwd 至多一个 worker）；`subagent` 与 `bg_wait` 调用一律拒绝。铸出的 id 会在共享 ledger 命名空间中以跨进程原子 claim 保留；恢复过、终态、超恢复上限或快照损坏的 id 都不会再次分配。`planner_redelegate` 逐字绑定既有记录——完整已存 spec（包括 workspace 与 validation）是下行契约，绝不重写——并按宿主上下文校验 workspace。旧客户端重复提供的定义字段会被忽略并告警；`instructions` 只补充本次 child packet。id 冲突不会被当作继续。受限角色会 remap 到工具面匹配的 builtin agent：
+
+### 只读恢复与诊断
+
+`acceptanceMode` 只能在 `planner_delegate` 创建 Task 时选择，重绑定时
+不可修改；省略时默认为 `worktree`。只有 `role: "explorer"` 才能使用
+`acceptanceMode: "observation"` 交付只读信息。观察类验收接受可信
+restricted-reader 的信息报告，不表示已验证代码变更。受限 reader 收到
+匹配终态后以 `terminal+restricted-reader` 确认，不需要 Git，也不会获得
+writer reservation 或 `writerHold`；没有匹配终态时仍是未确认状态，但不会
+因此获得 writer hold。
+
+Worktree Task 以及可写或能力未知的执行继续要求原有 Evidence。若 writer
+在启动前无法提供必要采样，会以 `ENVIRONMENT_UNVERIFIABLE` 拒绝启动，不
+产生子执行或新的 hold；启动后出现采样或哈希缺口时继续保持 writer 隔离和
+hold，直到恢复条件解决。
+
+不带 `taskId` 的 `planner_tasks` 仍列出 live Task；带 canonical `taskId`、可
+选 `executionId` 时，只读返回内存或账本中的诊断，不发起委派、不采样 Git、
+不运行 shell。返回执行状态、能力与确认依据、终态和报告接纳、探测失败、
+恢复要求、writer hold 及会话日志位置。位置明确区分已验证可读文件、已知但
+不可访问的文件、目录提示和未知；目录不会冒称已验证日志文件。结构化诊断
+固定上限为 64 KiB，并披露截断。`executionId` 指 Task 的一次执行，用于
+诊断，和子执行的 `runId` 不同。
+
+非法 TaskSpec 拒绝会展示修复摘要，保留可信角色和验证意图。命令列表简写会转换成明确的必需验证；无法无损转换的 validation 会继续拒绝并要求补充，不会静默变成 `required: false`。`validation.commands` 的每一项必须是可执行命令形状——以程序名或路径开头的 shell 命令；指令性散文会被拒绝（`TASKSPEC_VALIDATION_COMMAND_NOT_EXECUTABLE`），因为 worker 会逐字执行这些项、校验器也逐字比对。`planner_redelegate` 上未知或其他 workspace 的 `taskId` 会在启动 child 前拒绝，也不会创建 placeholder。
+
+| 角色 | Builtin agent | 子进程工具 |
+|---|---|---|
+| `worker` | 不改 | agent 自己的 allowlist |
+| `explorer` / `reviewer` | `reviewer` | read, grep, find, ls |
+| `validator` | `oracle` | read, grep, find, ls, bash |
+
+验证运行由 Root 显式委派（`planner_delegate` + role=validator 新建验证 Task，`planner_redelegate` 复验既有 Task）；没有任何自动派发。
+
+`planner_delegate` / `planner_redelegate` 在角色路由关闭时沿用 launcher 的 `model` / `thinking` 默认值；启用操作者策略后，发送精确确认可用的 `provider/model` 与 thinking，并在采纳完成报告前核对终态实际身份。普通 worker、explorer、validator、reviewer 请求不设置 `toolBudget`；Task 唯一一次 report-only 修复绑定已注册的 `planner-report-only` agent（`tools: []`，仅由 launcher 追加结构化结果工具），并发送 `toolBudget: { hard: 1, block: "*" }`。该模式由不可变执行记录决定，不能被重入参数翻转；账本保存实际发送的预算、注册证明、agent 绑定与原始终态。`timeoutMs` 仍不设置，执行 envelope 由插件控制。usage 按 child 返回的实际身份归因。`planner-scout` 与 `planner-report-only` 是运行时注册的 agent，定义里不带 `model`/`thinking`；在上游 commit `bbb30096`（#2369，2026-09-20，「apply model settings to runtime-registered agents」，0.70.0 之后的首个版本）及以后的 pi-subagents 上，它们遵循 `subagents.defaultModel` / `defaultThinking` 以及 `subagents.agentOverrides.planner-scout`（或 `planner-report-only`）的 `model`/`thinking`。`agentOverrides.scout` 只作用于 builtin scout，不会影响 Explorer。pi-subagents 0.70.0 及更早版本对运行时 agent 不套用任何操作者模型设置，Explorer 会继承 Root 会话模型。
+
+`reviewer` 子进程一律 `context: "fresh"`，携带 `ReviewRequest`——Task 的 spec、最新 WorkerReport、Root 采集的 Git 证据、有界补丁——不会 fork 父会话。ReviewRequest 是对 Task 的一次调用，绝不是新的 TaskSpec；reviewer 调用只能经 `planner_redelegate`（新铸的 Task 上没有东西可审）。Task 的原始 role、objective、spec 在 worker / reviewer / validation 各轮中保持不变。经 `planner_redelegate` 的 validator 调用是对被审 Task 的调用，其报告记录在该 Task 的 validatorReports。
+
+Worker 返回带 version 的 `WorkerReport`；launcher 按 schema 校验后落在 `details.report`，不会从子代理文本里再解析。非 completed 的 launcher 状态是工具错误（抛出），不是解析失败。Reviewer 只读它的调用载荷，只能用 read、grep、find、ls：不得 `git log`、跑 `npm test` 或重探整棵树。
+
+报告缺失或格式错误只授予一次 report-only 修复。封闭 agent 只暴露一次结构化报告提交，其他工具根本不存在，hard-one 预算在提交后阻断额外调用；`tool_budget_exhausted` 以 report-only 预算失败单独记录，携带的报告绝不接纳。修复报告再次畸形会直接 block，且该执行不能增加 Truth paths。pi-subagents 0.69.0 没有公开预算前 partial grace，也不返回格式错误的原始结构化输出；插件明确标为 unsupported，不从文本猜测。
+
+Validator（`oracle`）在 Worker 校验已 exit 0 时默认做有界复核：`git rev-parse HEAD`、`git status --porcelain`，以及确认报告里点名的测试存在。设 `PI_PLANNER_ONLY_ORACLE=full` 才重跑全量。Worker 校验失败时仍会重跑列出的命令。
+
+### 任务身份与 PASS 边界
+
+两份子契约都要与所属委派对账：
+
+- `WorkerReport` 只有在 `taskId` 与 `evidence.taskId` 与被委派任务一致时才被接受。执行身份（`evidence.workerRunId`）由 Root 从 launcher terminal 盖章（ADR-0004）；child 传入的值会被剥离并在 warnings 中披露，不会导致拒收。结构合法但属于别的任务的报告会带着身份错误落到复核判定上，不会被静默接受。
+- `ReviewResult` 只有在 `taskId` 与被评审任务一致时才被记录；不匹配的裁决不落库、任何状态都不变。
+
+证据按执行记录归属，全部由 Root 采集。每次实际子进程执行都有独立证据记录：Root 在执行真正开始前采样（`A_run`），在该执行的最终结果到达时再采一次（`C_report`）——即使报告无法解析也会保存。Truth/scope 是纯函数 `diff(A_run, C_report)` 与报告声明的交叉核对——`A_run` 之前的一切（包括分支上早已存在的无关提交）天然不在窗口内。Freshness 是独立的 `diff(C_report, C_now)`：Root 在复核和验收边界重新采样，报告之后的工作区漂移强制 `revalidate` 而非完成；fresh reviewer 的 `evidenceFresh: true` 永远绕不过这道 Root 侧检查。findings（漏报、越界、漂移）跨纠正轮次保留并阻止 PASS，直到复核确认修复；早于每次执行证据的旧账本记录被标记为不可验证，无法自动完成。修正轮的 changedFiles 可以复述本 Task 早前执行已归因的路径；只有从未归因给本 Task 的路径才算 over-reported。写锁按 worktree 的真实路径生效：同一 worktree 的别名（相对路径、符号链接）共享同一把锁，独立 worktree 互不影响。
+
+### Idle gather 策略
+
+Root 的 gather 阶段由适配器工作区的 Task store 推导。当该 cwd 存在未终结的 Task 时，适用常规允许清单（inspect 工具、`git_audit`、Verdict、一次委派）。当没有任何存活 Task（Idle for gather）时，Root 只能用 `planner_delegate` 发起一次 Delegation、用 `planner_redelegate` 重进既有 Task、用 `planner_tasks` 查 live Task、提问、记录 Verdict（`planner_verdict` 对 blocked/failed 同样可用）、用 `planner_abort` 放弃挂着 `recovery.required` 的异常执行、用 `git_commit` 提交已 completed 的 Task，或用 `git_audit` 检查 Git；`subagent` 与 `bg_wait` 一律拒绝。每条 Idle 拒绝都附带可校验的 TaskSpec JSON（按被拒调用填充），修复只需一次粘贴。带独立 TaskSpec 的 standalone Explorer Task 与 Worker Task 一样闭环：校验过的 WorkerReport → reviewing → Root `planner_verdict`；零变更的只读结果是合法交付，畸形的终局报告会以修复指引 block 该 Task。blocked/failed 不会让 gather 保持存活；要再查看代码树，请重新委派。
+
+Reviewer 没有 `git_audit`（前台子进程不加载 ambient 扩展，该工具属于父扩展）。Root 自己采样 Git，把有界证据包——HEAD、status、当前变更文件、A-to-C 归因/漏报/多报路径、diff stat、diff check——放进 `ReviewRequest`；reviewer 只用 `read`/`grep`/`find`/`ls`。针对 Task 起始基线的有界补丁会随 `ReviewRequest` 传给 reviewer（已提交的 Task 变更仍可评审）；若补丁被截断（`patchTruncated` 或省略路径），reviewer 的 PASS 会被拒收，只能记录 `request_changes` 或 `blocked`。
+
+reviewer 的 PASS 与快照摘要绑定：必须写明它看到的报告版本和 WorkspaceSnapshot 摘要，且 Root 在接受时会重新采样工作区快照——不匹配、过期或未知（超预算/不可读）的采样一律 `revalidate` 而非完成。HEAD/status 哈希只作为 Git 归因证据，永远不能替代 PASS 身份。写锁由存活的可写委派（worker 或 validator）在整个调用期间持有，因此同一工作树上的第二个可写子进程会在启动前被拒绝——即使 Task 正处于 reviewing 或 blocked。
+
+Review 状态：`planning → executing → reviewing → completed | changes_requested | blocked`。Root 使用 `planner_verdict` 记录裁决：blocked / failed 的 Task 只要有已记录的报告就可以直接 pass；completed 是唯一终态。最多 3 轮修正（`MAX_REVIEW_ROUNDS`）。范围内 stale evidence 不能直接 PASS。Root 可以覆盖 reviewer，覆盖记录只留在内存。
+
+### 请求额度、停止与恢复
+
+每个 Root 请求跨所有 Task、角色、纠正与恢复共享：32 次工具尝试、8 次 child
+启动 claim、同类未解决失败 3 次、真实参数修复 2 次，以及首次活动起 15 分钟的
+绝对截止。第 33 次工具尝试、第 9 次 child 派发在执行前被拒；第三次同类失败
+立即封锁。改文案、换 Task、切政策或换 recovery executionId 都不能重置额度。
+只有经过最终验收的关联纠正，才能解决同 Task、同 family 的因果前序失败；
+无关成功和结构合法的报告不清零。
+
+`/planner-only request status` 分别显示新准入、child 停止和 Root 停止状态。
+封锁先持久化再取消活动 child；每次 child claim 在 REQUEST 发出前持久提交，
+失败、取消或发送状态未知均不返还。停止未确认时保留 Writer hold，重载和新请求
+都不清除。每 Task 的 evidence revalidation 另有既存三次上限，现已在真实派发时
+消费 grant 并准确递增，第四次不再启动 child。
+
+只有旧请求 settled 后的下一条 idle interactive 输入自动开启新请求。
+extension、排队续跑、steering、RPC、compaction 和 reload 都不能解锁。
+`/planner-only request resume` 只注册为用户命令，需要宿主空闲并在 UI 中人工确认；
+无确认 UI 的模式保持封锁。记录缺失、损坏或写盘中断须由 operator 核对后处理，
+不会静默归零。Request 恢复不替代 Writer hold 的既有人工处理契约。
+
+operator 可通过环境变量配置正有限整数，请求创建时冻结；空值、零、负值、
+小数或 unlimited 均无效：
+
+| 环境变量 | 默认值 |
+|---|---:|
+| `PI_PLANNER_ONLY_REQUEST_TOOL_ATTEMPTS` | 32 |
+| `PI_PLANNER_ONLY_REQUEST_CHILD_LAUNCHES` | 8 |
+| `PI_PLANNER_ONLY_REQUEST_FAILURES` | 3 |
+| `PI_PLANNER_ONLY_REQUEST_REPAIRS` | 2 |
+| `PI_PLANNER_ONLY_REQUEST_ACTIVE_MS` | 900000 |
+
+状态保存在 agent 目录下的 `planner-only/requests/`，区分 claim 已提交、REQUEST
+已观察发出、terminal 已收到和停止已确认。不要用删除状态的方式解除未确认 writer。
+Request 封锁后，每次新的 agent_start 都会重新发出 abort。真实 SDK 0.85.1 / 假模型队列探针已观察到额外模型调用为 0；交互 TUI 尚未验证，其他宿主路径仍可能需要额外停止支持。provider-request
+hook 的观测取决于 provider，不承诺全局模型次数、token 或费用硬上限。
+
+### 复合工作流
+
+执行型 `subagent` 调用若带有非空的 `workflowScript`、`workflowScriptPath`、
+`workflow`，或非空的 `tasks` / `chain` 数组，会在启动前被拒绝。planner-only
+无法审计或改写这些内部步骤，也不会解析 JavaScript `workflowScript`。每个生命
+周期阶段必须是独立的直接 `{agent, task}` 调用：先等待 worker 的
+`WorkerReport`，再直调 reviewer，确保它拿到最新的 TaskSpec、WorkerReport 和
+Root Git 证据。带 `action` 的管理或 `validate` 调用保持不变。
+
+### git_audit
+
+仅父进程可用的只读 Git：`status`、`diff-stat`、`diff-names`、`diff-check`、`head`、`log`。固定 argv，不走 shell，mutating 子命令一律拒绝。
+
+### 用量核算
+
+Token 数为准，美元/人民币金额是推导值。扩展跟踪 Root 各生命周期阶段（`planning`、`executing`、`reviewing`）的轮次与 Token、子进程各委派运行的消耗、审核期间只读工具产生的审查泄漏字节（review leak bytes），以及注入 prompt 的字节数。
+
+成本按以下优先级解析：
+1. 模型供应商/平台原生上报（Pi core 的 `usage.cost` 或 `pi-subagents` 的 `cost`）；
+2. 插件定价表 `~/.pi/agent/planner-only/pricing.json`（可通过 `PI_PLANNER_ONLY_PRICING` 覆盖）；
+3. 若均无对应费率，则标记为成本未知（`cost unknown`，绝不展示为 `$0.00`）。
+
+定价表格式：
+
+```json
+{
+  "version": 1,
+  "currency": "USD",
+  "rates": {
+    "example-provider/expensive-root-model": { "input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 3.75 },
+    "cheap-worker-model": { "input": 0.2, "output": 1.2, "cacheRead": 0.02, "cacheWrite": 0.2 }
+  }
+}
+```
+
+- 键默认是裸模型名（如 `gpt-5.6-luna`）。只有该 provider 价格不同时才写 `provider/model`。
+- 首次加载时，若 `~/.pi/agent/planner-only/pricing.json` 不存在，插件会把内置默认表拷过去；之后升级只补缺失的键，不覆盖你改过的。
+- 查找优先用显式 `provider/model`，否则用裸模型名。
+- 费率为 `currency`（`USD` 或 `CNY`）下每百万 Token 的价格。
+- 费率为 `null` 表示费率未知（展示为 `cost unknown`）；`0` 表示免费。
+- 以 `_` 开头的键会被忽略（可用于注释）。
+- 可在会话内通过 `/planner-only usage reload` 重新加载费率表。
+
+会话级 root 累计预算**默认关闭**。`/planner-only budget on` 打开（标记文件 `~/.pi/agent/planner-only/session-root-budget.on`），`/planner-only budget off` 关闭。开启后按 worker 初始 floor 的 ×3 软顶警告；×5 硬顶目前只披露、不拦截委派。`PI_PLANNER_ONLY_SESSION_ROOT_BUDGET=1` 或 `=0` 会覆盖标记。普通 worker、explorer、validator 执行始终有有限异常上限：省略 `envelope` 时使用 `maxTokens=100000`、`maxWallMs=600000`（ADR-0008）；操作者可用正安全整数环境变量 `PI_PLANNER_ONLY_EXECUTION_MAX_TOKENS`、`PI_PLANNER_ONLY_EXECUTION_MAX_WALL_MS` 替换对应默认值。显式 envelope 仍整体替换 token/default 继承，但其有效墙钟上限会钳制到原 Request 剩余时间减去暂定的 60 秒预留（ADR-0010），所以只传 token 的显式 envelope 也会得到 Request 派生墙钟上限。若完成启动前采样后的新鲜余量不可用或不超过预留，Task 会记录拒绝启动，且不消耗 child、修复、恢复、重验证额度，也不创建 Writer hold。账本和工具详情同时保留原始/有效 envelope、来源、钳制标记和 Request 观测。reviewer 仍只受所属 Request 限制，并可使用这段预留窗口。会话证据导出只携带 `statuses`（task / workerReport / reviewResult / rootVerdict / refusalKind）、`findings`、`usage`、`breakdown`、`unattributed`；linkage / requirements / evidenceMatrix / analysis 块已移除。
+
+**替代方案：** 推荐直接在 `~/.pi/agent/models.json` 里配置 `cost`。这样 Pi 和 `pi-subagents` 的原生命令（如 `/subagent-cost`）都能直接计价。插件自带的定价表仅作为不需要改动 `models.json` 时的备用与覆盖机制。
+
+### 取消与孤儿子进程
+
+TUI 下按 Esc 中止 `planner_delegate`/`planner_redelegate` 会向子代理发 CANCEL，Task 进入 `blocked`，已消耗的 usage 落账。`-p`（print）模式没有工具级中止入口：SIGINT 直接结束 Root，进程内运行的子代理随之结束，不会落 `cancelled` 终态或 usage 行；但子代理已启动的 shell 命令可能残留为孤儿进程（宿主试跑时观察到一次），需自行检查并清理。委派在飞时键入 `/exit` 会被当作 steering 输入而不是退出；请用 Ctrl-D。
+
+**停止确认（P0-A）。** 仅收到终态并不证明 writer 已静止。在身份匹配的终态到达后，委派会等待 `quiescenceWaitMs`（默认 10 s；`PI_PLANNER_ONLY_QUIESCENCE_MS` 覆盖），再要求两次连续一致的工作树采样——满足后停止才记为 `confirmed`（`confirmationBasis: terminal+quiet-worktree`）、释放 writer 预留，并把残留样本记为 `cTerminal`。普通 `completed` writer 也受同一谓词约束；若静止未确认，其报告不入账，Task 保持 `blocked` 与 writer hold。若 5 s 宽限期到期仍无终态，执行置为 `stop_unconfirmed`：Task 进 `blocked`，writer 预留转为持久化 `writerHold`，跨重启且不受普通账本恢复条数上限影响地继续拒绝第二写入者；launcher 保留 RESPONSE 订阅，迟到终态仍会把执行恰一次收尾（usage、`cTerminal`、释放）。采样失败记 `evidenceIncomplete`，同样保持 hold。非 completed 委派（cancelled、timed_out、failed 等）不再抛错：委派调用返回结构化 `details.termination`（宿主终态、ended reason、确认依据、执行生命周期状态、`usageComplete`）并附文本摘要。取消请求之后到达的 `completed` 报告只收入 `executions[].lateReport` 作证据，不再推进 review。
+
+**跑飞 envelope 与恢复（P0-B）。** 两个委派工具都接受显式 `envelope: { maxTokens?, maxWallMs? }`——UPDATE 累计 tokens（input+output 快照，不含 cache）与只覆盖实际 launcher 等待、不包含启动前 Evidence 采样的独立墙钟。越线即走与 Esc 相同的 CANCEL 路径，只触发一次；即使终态在取消宽限后迟到，执行原因仍保留为 `worker_runaway`。确认停止与未确认停止都会置 `task.recovery.required`。此后重新执行该 Task 必须在 `planner_redelegate` 携带结构化 `recovery` 决策（`retry_same_plan` / `fix_environment`，指明异常 `executionId`、理由与 `worktreeDecision`），或用独立的 `planner_abort`（ADR-0003：一次调用落 blocked 裁决并消费恢复要求）交人工。决策只消费一次；action、规范化 evidenceRefs 与 worktreeDecision 等价时，即使改写理由或调换证据顺序也会拒绝。`worktreeDecision: "manual"` 是操作者确认残留 writer 已处理后的显式断言，可解除持久 hold。未接线的 P1 动作明确拒绝。对 `planner_redelegate` 而言，非终态 Task 上的 `recovery` 会在派发前对 worker、explorer、validator 和 reviewer 一律拒绝为 `RECOVERY_NOT_APPLICABLE`；普通修正或评审轮必须省略该键。终态调用仍走各角色原有守卫：非 reviewer 执行除 `blocked + recovery.required` 外返回 `TASK_CLOSED`，reviewer 仍由既有 `REVIEW_TERMINAL` 语义处理。`planner_verdict` 的兼容行为不同：它会剥离多余的 `recovery`，记录普通 verdict，在 `warnings` 披露剥离，并且不消费恢复要求。
+
+## 设计规范
+
+- [v0.2 规范](docs/pi-planner-only-v0.2-spec.md)：核心协议与架构。
+- [Evidence Authority 规范](docs/pi-planner-only-evidence-authority-spec.md)：Root 负责委派归因的证据语义。
+- [P0/P1 加固规范](docs/pi-planner-only-p0-p1-hardening-spec.md)：证据、生命周期与信任边界加固。
+- [v0.3.1 规范](docs/pi-planner-only-v0.3.1-spec.md)：减少 Root turns 与宽松 WorkerReport 规范化。
+- [v0.3.2 规范](docs/pi-planner-only-v0.3.2-spec.md)：压缩重复 Root 输入与按需 JSON 提醒。
+
+## 测试
+
+```bash
+npm test          # 单元 + 进程内集成
+npm run typecheck # tsc --noEmit（Pi 直接加载 .ts；这是本地类型检查）
+npm run test:release  # 发布门禁：typecheck + 单元测试
+```
+
+`test:release` = typecheck + 单元测试；宿主层覆盖以 typed-delegation 验收运行的采证产物记录，不作为发布门禁套件。
+
+## 模块
+
+| 文件 | 职责 |
+|---|---|
+| `types.ts` | `TaskSpec`、`WorkerReport`、`EvidenceRef`、`ReviewResult`、`ReviewRequest` |
+| `policy.ts` | 父进程工具白名单与 `tool_call` 决策 |
+| `request-control.ts` | 请求额度、持久封锁、生命周期与失败链 |
+| `request-events.ts` | Task/宿主结构化事实转换 |
+| `task.ts` | 校验、状态机 |
+| `report.ts` | `WorkerReport` schema 校验与身份校验 |
+| `review.ts` | 裁决、review 循环、fresh-review 任务包 |
+| `roles.ts` | TaskRole 画像与 agent remap |
+| `evidence.ts` | Git 探测、A-to-C 归因、review 证据包 |
+| `git-audit.ts` | `git_audit` 解析与输出上限 |
+| `orchestrate.ts` | 委派启动、写锁、review 循环、Task 存储写入 |
+| `notify.ts` | 异步 subagent 通知与子进程元数据解析 |
+| `usage.ts` | 纯用量账本、Token 与成本核算、报告渲染 |
+| `index.ts` | hook、工具、命令 |
+
+不引入后台 Advisor、调度队列或外部 telemetry。Task、Request 与用量按上述规则保存在本地。
+
+### 操作者配置委派模型
+
+`PI_PLANNER_ONLY_ROLE_MODELS=1` 启用 typed 委派工具的角色路由。通过
+`PI_PLANNER_ONLY_MODEL_WORKER=provider/model` 和 `PI_PLANNER_ONLY_THINKING_WORKER=low`
+配置 worker；`EXPLORER`、`VALIDATOR`、`REVIEWER` 同理。未启用时沿用 launcher 的选择。
+工具参数不能覆盖操作者策略；创建 Task/child 前必须由宿主可用模型列表确认。
+仅显式配置的 `PI_PLANNER_ONLY_MODEL_WORKER_FALLBACK` 可以替换不可用模型。
+
+终态必须报告匹配的实际模型和 thinking（独立字段或已知的 `:thinking` 后缀）。缺失或冲突时不采纳 completed 报告，但保留 usage 和诊断报告。
+工具 `details.modelRoute` 和 `planner-only-model-route` 会话条目记录期望与实际身份。
+当前接线已通过 fixture；真实模型路由和成本收益仍需普通终端测量。

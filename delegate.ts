@@ -60,6 +60,7 @@ import type { UsageLedger } from "./usage.ts";
 import { loadExecutionDefaults, REQUEST_EXECUTION_RESERVE_MS } from "./execution-defaults.ts";
 import type { RequestTimingObservation } from "./request-control.ts";
 import { acceptanceModeOf, isFinalTaskState, isTerminalTaskState } from "./types.ts";
+import { READ_ONLY_TOOLS } from "./policy.ts";
 import type {
 	AcceptanceMode,
 	DelegationKind,
@@ -327,10 +328,27 @@ function validateEnvelope(raw: PlannerDelegationParams["envelope"], toolName = "
 	};
 	const maxTokens = check("maxTokens", raw.maxTokens);
 	const maxWallMs = check("maxWallMs", raw.maxWallMs);
-	if (maxTokens === undefined && maxWallMs === undefined) {
-		throw new DelegationRefused("ENVELOPE_INVALID", `${toolName} refused: envelope requires at least one of maxTokens / maxWallMs`);
+	const maxReadOnlyTools = check("maxReadOnlyTools", raw.maxReadOnlyTools);
+	let preparationTokensShare: number | undefined;
+	if (raw.preparationTokensShare !== undefined) {
+		if (!Number.isFinite(raw.preparationTokensShare) || raw.preparationTokensShare <= 0 || raw.preparationTokensShare > 1) {
+			throw new DelegationRefused("ENVELOPE_INVALID", `${toolName} refused: envelope.preparationTokensShare must be greater than 0 and at most 1, got ${raw.preparationTokensShare}`);
+		}
+		if (maxTokens === undefined) {
+			throw new DelegationRefused("ENVELOPE_INVALID", `${toolName} refused: envelope.preparationTokensShare requires envelope.maxTokens`);
+		}
+		preparationTokensShare = raw.preparationTokensShare;
 	}
-	return { ...(maxTokens !== undefined ? { maxTokens } : {}), ...(maxWallMs !== undefined ? { maxWallMs } : {}), source: "delegation-param" };
+	if (maxTokens === undefined && maxWallMs === undefined && maxReadOnlyTools === undefined && preparationTokensShare === undefined) {
+		throw new DelegationRefused("ENVELOPE_INVALID", `${toolName} refused: envelope requires at least one configured bound`);
+	}
+	return {
+		...(maxTokens !== undefined ? { maxTokens } : {}),
+		...(maxWallMs !== undefined ? { maxWallMs } : {}),
+		...(maxReadOnlyTools !== undefined ? { maxReadOnlyTools } : {}),
+		...(preparationTokensShare !== undefined ? { preparationTokensShare } : {}),
+		source: "delegation-param",
+	};
 }
 
 /** P0-B — actions wired for planner_redelegate re-execution. */
@@ -426,6 +444,8 @@ const DELEGATION_SPEC_PARAMETERS = {
 		Type.Object({
 			maxTokens: Type.Optional(Type.Number({ description: "Cancel the child when cumulative UPDATE tokens exceed this. Snapshot input+output, no cache." })),
 			maxWallMs: Type.Optional(Type.Number({ description: "Cancel the child when wall-clock since launch exceeds this many ms." })),
+			maxReadOnlyTools: Type.Optional(Type.Number({ description: "Worker-only: cancel after this many consecutive observed read-only tool calls before the first write-capable tool." })),
+			preparationTokensShare: Type.Optional(Type.Number({ description: "Worker-only: cancel when pre-write tokens exceed this share of maxTokens. Requires maxTokens." })),
 		}, {
 			description: "Runaway envelope. When omitted on an ordinary execution, finite program/operator defaults apply (maxTokens 100000, maxWallMs 600000 unless operator-configured). An explicit envelope replaces default/token inheritance. The effective wall bound is capped at the original Request remainder minus a provisional 60000ms reserve; token-only envelopes receive that Request-derived wall cap.",
 		}),
@@ -1001,6 +1021,27 @@ export async function runDelegation(
 	let envelope: ExecutionEnvelope = { ...originalEnvelope };
 	let envelopeClamped = false;
 	let requestBudget: RequestExecutionBudget | undefined;
+	if (recoveryDecision?.action === "retry_same_plan" && envelope.maxTokens !== undefined) {
+		const prior = task.executions.find((item) => item.executionId === recoveryDecision.executionId);
+		const terminalUsage = prior?.rawTerminal?.usage;
+		const terminalObservedTokens = terminalUsage && typeof terminalUsage === "object" && !Array.isArray(terminalUsage)
+			&& typeof (terminalUsage as { input?: unknown }).input === "number"
+			&& typeof (terminalUsage as { output?: unknown }).output === "number"
+			? (terminalUsage as { input: number; output: number }).input + (terminalUsage as { input: number; output: number }).output
+			: undefined;
+		const tokenObservations = [prior?.observedTokenHighWater, prior?.usageSnapshot?.totalTokens, terminalObservedTokens,
+			prior?.runawayObservation?.signal === "tokens" ? prior.runawayObservation.observed : undefined,
+			...(prior?.updateTrace ?? []).map((update) => update.tokens),
+		].filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
+		const observedTokens = tokenObservations.length ? Math.max(...tokenObservations) : undefined;
+		if (prior && observedTokens !== undefined && envelope.maxTokens < observedTokens) {
+			throw new DelegationRefused(
+				"RECOVERY_ENVELOPE_BELOW_OBSERVED",
+				`${toolName} refused: retry_same_plan maxTokens ${envelope.maxTokens} is below execution ${prior.executionId}'s observed token usage ${observedTokens}; change the plan or create a new Task instead of only lowering the budget`,
+				task.taskId,
+			);
+		}
+	}
 
 	// 2. Write lock: capability decides, not the role name — a proven
 	//    restricted reader holds no workspace claim; writers, shell-capable
@@ -1087,6 +1128,40 @@ export async function runDelegation(
 	const runController = new AbortController();
 	let runaway: RunawayObservation | undefined;
 	let maxTokensSeen = -1;
+	const updateTrace: NonNullable<TaskExecutionRecord["updateTrace"]> = [];
+	let updateOrdinal = 0;
+	let priorToolCount = 0;
+	let consecutiveReadOnlyTools = 0;
+	let preparationComplete = false;
+	let classifiedToolCalls = 0;
+	let observedToolCalls = 0;
+	let readOnlyToolCalls = 0;
+	let coalescedToolCalls = 0;
+	let firstNonReadOnlyToolOrdinal: number | undefined;
+	let priorTokens = 0;
+	let maxTokenDelta = 0;
+	const traceSummary = (): NonNullable<TaskExecutionRecord["traceSummary"]> => ({
+		...(firstNonReadOnlyToolOrdinal !== undefined ? { firstNonReadOnlyToolOrdinal } : {}),
+		maxTokenDelta,
+		readOnlyToolFraction: classifiedToolCalls > 0 ? readOnlyToolCalls / classifiedToolCalls : 0,
+		classifiedToolCalls,
+		observedToolCalls,
+		totalToolCalls: priorToolCount,
+		coalescedToolCalls,
+	});
+	const persistUsageSnapshot = () => {
+		if (maxTokensSeen < 0) return;
+		deps.store.finalizeExecution(task.taskId, executionId, {
+			usageSnapshot: { input: null, output: null, cacheRead: null, cacheWrite: null, totalTokens: maxTokensSeen, snapshot: true },
+			usageComplete: false,
+		});
+		deps.usage.recordChildSnapshot(task.taskId, {
+			kind: role as DelegationKind,
+			toolCallId: executionId,
+			totalTokens: maxTokensSeen,
+		});
+	};
+	const runawayEndedReason = (): ExecutionEndedReason => runaway?.signal === "preparation" ? "preparation_runaway" : "worker_runaway";
 	// Ticket 01 (wrc-incident-followups) — elapsed is read from a monotonic
 	//    clock, not Date.now: a wall-clock rollback can no longer shrink or
 	//    negate it.
@@ -1368,12 +1443,41 @@ export async function runDelegation(
 		const requestInstructions = reportOnly && reportOnlyOrigin
 			? buildReportOnlyRepairInstructions(task, reportOnlyOrigin, params.instructions ?? "")
 			: params.instructions ?? "";
+		const priorExecution = recoveryDecision
+			? (() => {
+				const prior = task.executions.find((item) => item.executionId === recoveryDecision.executionId);
+				if (!prior) return undefined;
+				const tail = prior.updateTrace ?? [];
+				let recentIndex = tail.length - 1;
+				while (recentIndex >= 0 && !tail[recentIndex].recentTools?.length) recentIndex -= 1;
+				const recentTools = recentIndex >= 0 ? [...tail[recentIndex].recentTools!] : [];
+				let recentCount = -1;
+				for (const item of tail.slice(Math.max(0, recentIndex))) {
+					if (item.toolCount === undefined || item.toolCount <= recentCount) continue;
+					recentCount = item.toolCount;
+					if (item.currentTool) recentTools.push({ tool: item.currentTool, args: item.currentToolArgs ?? "" });
+				}
+				return {
+					executionId: prior.executionId,
+					...(prior.endedReason ? { endedReason: prior.endedReason } : {}),
+					...(prior.runawayObservation ? { runawayObservation: prior.runawayObservation } : {}),
+					diffStat: {
+						aRun: prior.aRun.diffStat ?? null,
+						terminal: prior.cTerminal?.diffStat ?? prior.interimSample?.diffStat ?? null,
+						terminalKind: prior.cTerminal ? "cTerminal" as const : prior.interimSample ? "interimSample" as const : "unavailable" as const,
+					},
+					recentTools: recentTools.slice(-8),
+					recentOutputLines: [...tail].reverse().find((item) => item.recentOutputLines?.length)?.recentOutputLines?.slice(-20) ?? [],
+					recoveryReason: recoveryDecision.reason,
+				};
+			})()
+			: undefined;
 		const request: SubagentDelegationRequest = {
 			requestId,
 			ownerRunId: deps.ownerRunId,
 			nodeId: task.taskId,
 			agent: reportOnly ? REPORT_ONLY_AGENT : classification.agent ?? ROLE_AGENTS[role] ?? "worker",
-			task: buildTaskPacket(thisSpec, requestInstructions),
+			task: buildTaskPacket(thisSpec, requestInstructions, { ...(priorExecution ? { priorExecution } : {}) }),
 			context: "fresh",
 			cwd: task.cwd || effectiveCwd,
 			...(reportOnly ? { toolBudget: { ...REPORT_ONLY_TOOL_BUDGET } } : {}),
@@ -1461,7 +1565,7 @@ export async function runDelegation(
 					}
 				}
 				const endedReason: ExecutionEndedReason = runaway
-					? "worker_runaway"
+					? runawayEndedReason()
 					: cancelRequestedAt
 						? "operator_cancel"
 						: reportOnly && late.status === "tool_budget_exhausted"
@@ -1478,6 +1582,7 @@ export async function runDelegation(
 						: { interimSample: q.interim, stopSamples: q.samples }),
 					...(q.confirmed === false && q.evidenceIncomplete ? { evidenceIncomplete: true } : {}),
 					usageComplete,
+					...(usageComplete ? { usageSnapshot: undefined } : {}),
 					rawTerminal: structuredClone(late) as unknown as Record<string, unknown>,
 					...(late.runId ? { runId: late.runId } : {}),
 					...(lateSuccess && late.result?.kind === "structured"
@@ -1556,13 +1661,63 @@ export async function runDelegation(
 					}
 				},
 				onUpdate: (update) => {
+					updateOrdinal += 1;
+					const clip = (value: string | undefined, max: number) => value === undefined ? undefined : value.slice(0, max);
+					const snapshot = {
+						receivedAt: nowIso(),
+						ordinal: updateOrdinal,
+						...(typeof update.tokens === "number" && Number.isFinite(update.tokens) && update.tokens >= 0 ? { tokens: update.tokens } : {}),
+						...(typeof update.toolCount === "number" && Number.isSafeInteger(update.toolCount) && update.toolCount >= 0 ? { toolCount: update.toolCount } : {}),
+						...(typeof update.durationMs === "number" && Number.isFinite(update.durationMs) && update.durationMs >= 0 ? { durationMs: Math.floor(update.durationMs) } : {}),
+						...(clip(update.currentTool, 120) ? { currentTool: clip(update.currentTool, 120) } : {}),
+						...(clip(update.currentToolArgs, 1000) ? { currentToolArgs: clip(update.currentToolArgs, 1000) } : {}),
+						...(update.recentTools?.length ? { recentTools: update.recentTools.slice(-8).map((item) => ({ tool: item.tool.slice(0, 120), args: item.args.slice(0, 1000) })) } : {}),
+						...((update.recentOutputLines?.length || update.recentOutput) ? { recentOutputLines: (update.recentOutputLines ?? update.recentOutput?.split("\n") ?? []).slice(-20).map((line) => line.slice(0, 1000)) } : {}),
+					};
+					updateTrace.push(snapshot);
+					if (updateTrace.length > 64) updateTrace.splice(0, updateTrace.length - 64);
+					if (snapshot.tokens !== undefined) {
+						maxTokenDelta = Math.max(maxTokenDelta, Math.max(0, snapshot.tokens - priorTokens));
+						priorTokens = Math.max(priorTokens, snapshot.tokens);
+						maxTokensSeen = Math.max(maxTokensSeen, snapshot.tokens);
+					}
+					if (snapshot.toolCount !== undefined && snapshot.toolCount > priorToolCount) {
+						const delta = snapshot.toolCount - priorToolCount;
+						observedToolCalls += 1;
+						if (delta > 1) {
+							coalescedToolCalls += delta - 1;
+							consecutiveReadOnlyTools = 0;
+						}
+						if (snapshot.currentTool) {
+							classifiedToolCalls += 1;
+							if (READ_ONLY_TOOLS.has(snapshot.currentTool)) {
+								readOnlyToolCalls += 1;
+								consecutiveReadOnlyTools += 1;
+							} else {
+								preparationComplete = true;
+								consecutiveReadOnlyTools = 0;
+								firstNonReadOnlyToolOrdinal ??= snapshot.toolCount;
+							}
+						} else {
+							consecutiveReadOnlyTools = 0;
+						}
+						priorToolCount = snapshot.toolCount;
+					}
+					try { deps.store.finalizeExecution(task.taskId, executionId, { updateTrace: structuredClone(updateTrace), traceSummary: traceSummary(), ...(maxTokensSeen >= 0 ? { observedTokenHighWater: maxTokensSeen } : {}) }); } catch { /* diagnostics must not break execution */ }
 					// P0-B monitor — cumulative token snapshot, max not sum;
 					// unknown/regressing counts never reset the observed level.
-					if (envelope?.maxTokens !== undefined) {
-						const tokens = update.tokens;
-						if (typeof tokens === "number" && Number.isFinite(tokens) && tokens >= 0) {
-							maxTokensSeen = Math.max(maxTokensSeen, tokens);
+					const tokens = update.tokens;
+					if (typeof tokens === "number" && Number.isFinite(tokens) && tokens >= 0) {
+						maxTokensSeen = Math.max(maxTokensSeen, tokens);
+						if (envelope?.maxTokens !== undefined) {
 							if (maxTokensSeen > envelope.maxTokens) breach("tokens", maxTokensSeen, envelope.maxTokens);
+						}
+					}
+					if (role === "worker" && !preparationComplete && !runaway) {
+						if (envelope.maxReadOnlyTools !== undefined && consecutiveReadOnlyTools > envelope.maxReadOnlyTools) {
+							breach("preparation", consecutiveReadOnlyTools, envelope.maxReadOnlyTools);
+						} else if (envelope.preparationTokensShare !== undefined && envelope.maxTokens !== undefined && maxTokensSeen > envelope.maxTokens * envelope.preparationTokensShare) {
+							breach("preparation", maxTokensSeen, Math.floor(envelope.maxTokens * envelope.preparationTokensShare));
 						}
 					}
 					options.onUpdate?.(renderDelegationProgress(role as DelegationKind, task.taskId, update, options.toolName));
@@ -1575,7 +1730,8 @@ export async function runDelegation(
 			const aborted = error instanceof DelegationAborted || runController.signal.aborted === true;
 			if (aborted) {
 				const emitted = !(error instanceof DelegationAborted) || error.requestEmitted;
-				const abortedReason: ExecutionEndedReason = runaway ? "worker_runaway" : "operator_cancel";
+				const abortedReason: ExecutionEndedReason = runaway ? runawayEndedReason() : "operator_cancel";
+				if (runaway || cancelRequestedAt) persistUsageSnapshot();
 				if (emitted) {
 					// Grace expired with no terminal: the stop is unconfirmed. The
 					// reservation becomes a persisted hold — released only when a
@@ -1729,12 +1885,13 @@ export async function runDelegation(
 					usageComplete = true;
 				}
 			}
+			if ((runaway || cancelRequestedAt) && !usageComplete) persistUsageSnapshot();
 			deps.store.finalizeExecution(task.taskId, executionId, { status: "stopping" });
 			const q = await confirmStop(responseRunId);
-			const endedReason: ExecutionEndedReason = lateSuccess
-				? "operator_cancel"
-				: runaway
-					? "worker_runaway"
+			const endedReason: ExecutionEndedReason = runaway
+				? runawayEndedReason()
+				: lateSuccess
+					? "operator_cancel"
 					: reportOnly && terminal.status === "tool_budget_exhausted"
 						? "report_only_tool_budget"
 						: terminalEndedReason(terminal);
@@ -1796,6 +1953,7 @@ export async function runDelegation(
 					...(terminalReport ? { reportReceived: true, reportAccepted: false } : {}),
 					...(reservation && !q.confirmed ? { writerHold: true } : {}),
 					usageComplete,
+					...(usageComplete ? { usageSnapshot: undefined } : {}),
 					...(terminal.error ? { error: terminal.error } : {}),
 				},
 				warnings,

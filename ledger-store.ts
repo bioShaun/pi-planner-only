@@ -76,14 +76,20 @@ function executionShapeError(value: unknown, index: number): string | undefined 
 		if (!["delegation-param", "default", "operator-config"].includes(value.envelope.source as string)) {
 			return `${label}.envelope.source must be delegation-param, default, or operator-config`;
 		}
-		for (const field of ["maxTokens", "maxWallMs"] as const) {
+		for (const field of ["maxTokens", "maxWallMs", "maxReadOnlyTools"] as const) {
 			const bound = value.envelope[field];
 			if (bound !== undefined && (!Number.isSafeInteger(bound) || (bound as number) <= 0)) {
 				return `${label}.envelope.${field} must be a positive finite safe integer`;
 			}
 		}
-		if (value.envelope.maxTokens === undefined && value.envelope.maxWallMs === undefined) {
-			return `${label}.envelope requires maxTokens or maxWallMs`;
+		if (value.envelope.preparationTokensShare !== undefined && (typeof value.envelope.preparationTokensShare !== "number" || value.envelope.preparationTokensShare <= 0 || value.envelope.preparationTokensShare > 1)) {
+			return `${label}.envelope.preparationTokensShare must be greater than 0 and at most 1`;
+		}
+		if (value.envelope.preparationTokensShare !== undefined && value.envelope.maxTokens === undefined) {
+			return `${label}.envelope.preparationTokensShare requires maxTokens`;
+		}
+		if (value.envelope.maxTokens === undefined && value.envelope.maxWallMs === undefined && value.envelope.maxReadOnlyTools === undefined) {
+			return `${label}.envelope requires a configured bound`;
 		}
 	}
 	if (value.originalEnvelope !== undefined) {
@@ -108,6 +114,31 @@ function executionShapeError(value: unknown, index: number): string | undefined 
 	}
 	if (value.rawTerminal !== undefined && !isPlainObject(value.rawTerminal)) {
 		return `${label}.rawTerminal must be an object`;
+	}
+	if (value.updateTrace !== undefined) {
+		if (!Array.isArray(value.updateTrace) || value.updateTrace.length > 64) return `${label}.updateTrace must be an array of at most 64 entries`;
+		for (let i = 0; i < value.updateTrace.length; i += 1) {
+			const item = value.updateTrace[i];
+			if (!isPlainObject(item)) return `${label}.updateTrace[${i}] must be an object`;
+			if (typeof item.receivedAt !== "string" || !Number.isSafeInteger(item.ordinal) || (item.ordinal as number) <= 0) return `${label}.updateTrace[${i}] identity is invalid`;
+			for (const field of ["tokens", "toolCount", "durationMs"] as const) if (item[field] !== undefined && (!Number.isSafeInteger(item[field]) || (item[field] as number) < 0)) return `${label}.updateTrace[${i}].${field} must be a non-negative safe integer`;
+			for (const field of ["currentTool", "currentToolArgs"] as const) if (item[field] !== undefined && typeof item[field] !== "string") return `${label}.updateTrace[${i}].${field} must be a string`;
+			if (item.recentTools !== undefined && (!Array.isArray(item.recentTools) || item.recentTools.length > 8)) return `${label}.updateTrace[${i}].recentTools must contain at most 8 entries`;
+			if (Array.isArray(item.recentTools) && item.recentTools.some((tool) => !isPlainObject(tool) || typeof tool.tool !== "string" || typeof tool.args !== "string")) return `${label}.updateTrace[${i}].recentTools entries must contain string tool and args`;
+			if (item.recentOutputLines !== undefined && (!Array.isArray(item.recentOutputLines) || item.recentOutputLines.length > 20 || item.recentOutputLines.some((line) => typeof line !== "string"))) return `${label}.updateTrace[${i}].recentOutputLines must contain at most 20 strings`;
+		}
+	}
+	if (value.traceSummary !== undefined) {
+		if (!isPlainObject(value.traceSummary)) return `${label}.traceSummary must be an object`;
+		for (const field of ["firstNonReadOnlyToolOrdinal", "maxTokenDelta", "classifiedToolCalls", "observedToolCalls", "totalToolCalls", "coalescedToolCalls"] as const) {
+			if (value.traceSummary[field] !== undefined && (!Number.isSafeInteger(value.traceSummary[field]) || (value.traceSummary[field] as number) < 0)) return `${label}.traceSummary.${field} must be a non-negative safe integer`;
+		}
+		if (typeof value.traceSummary.readOnlyToolFraction !== "number" || value.traceSummary.readOnlyToolFraction < 0 || value.traceSummary.readOnlyToolFraction > 1) return `${label}.traceSummary.readOnlyToolFraction is invalid`;
+	}
+	if (value.usageSnapshot !== undefined) {
+		if (!isPlainObject(value.usageSnapshot) || value.usageSnapshot.snapshot !== true) return `${label}.usageSnapshot must be a snapshot object`;
+		for (const field of ["input", "output", "cacheRead", "cacheWrite"] as const) if (value.usageSnapshot[field] !== null) return `${label}.usageSnapshot.${field} must be null`;
+		if (!Number.isSafeInteger(value.usageSnapshot.totalTokens) || (value.usageSnapshot.totalTokens as number) < 0) return `${label}.usageSnapshot.totalTokens must be a non-negative safe integer`;
 	}
 	const probeFailuresError = (sample: Record<string, unknown>, sampleLabel: string): string | undefined => {
 		if (sample.probeFailures === undefined) return undefined;
@@ -177,11 +208,13 @@ function requestBudgetShapeError(value: unknown, label: string): string | undefi
 function envelopeShapeError(value: unknown, label: string): string | undefined {
 	if (!isPlainObject(value)) return `${label} must be an object`;
 	if (!["delegation-param", "default", "operator-config"].includes(value.source as string)) return `${label}.source is invalid`;
-	for (const field of ["maxTokens", "maxWallMs"] as const) {
+	for (const field of ["maxTokens", "maxWallMs", "maxReadOnlyTools"] as const) {
 		const bound = value[field];
 		if (bound !== undefined && (!Number.isSafeInteger(bound) || (bound as number) <= 0)) return `${label}.${field} must be a positive finite safe integer`;
 	}
-	if (value.maxTokens === undefined && value.maxWallMs === undefined) return `${label} requires maxTokens or maxWallMs`;
+	if (value.preparationTokensShare !== undefined && (typeof value.preparationTokensShare !== "number" || value.preparationTokensShare <= 0 || value.preparationTokensShare > 1)) return `${label}.preparationTokensShare is invalid`;
+	if (value.preparationTokensShare !== undefined && value.maxTokens === undefined) return `${label}.preparationTokensShare requires maxTokens`;
+	if (value.maxTokens === undefined && value.maxWallMs === undefined && value.maxReadOnlyTools === undefined) return `${label} requires a configured bound`;
 	return undefined;
 }
 

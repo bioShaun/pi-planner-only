@@ -1,0 +1,1 @@
+timeout --kill-after=5 60 codex exec --sandbox read-only --json "Return exactly READY. Do not call tools." </dev/null

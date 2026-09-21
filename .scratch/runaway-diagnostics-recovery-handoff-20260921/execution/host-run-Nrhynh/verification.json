@@ -1,0 +1,23 @@
+{
+  "verdict": "PASS",
+  "host": "0.86.1",
+  "launcher": "0.70.0",
+  "launcherCommit": "bbb300969a08d4da5b60ca2f4b08276d0b47efe6",
+  "childModel": "tcuni-luna/gpt-5.6-luna",
+  "executions": [
+    {
+      "executionId": "probe-first",
+      "endedReason": "preparation_runaway",
+      "terminationConfirmed": true
+    },
+    {
+      "executionId": "probe-retry",
+      "endedReason": "preparation_runaway",
+      "terminationConfirmed": true
+    }
+  ],
+  "recoveryTranscript": "artifact-1-bbed0df1-2797-4c6c-827b-5a70c191003a_worker_0_transcript.jsonl",
+  "originalHarnessExit": 1,
+  "harnessCorrection": "Parse JSON transcript messages before searching; raw archives escape quotes. Original failure retained in result.json.",
+  "limits": "Actual Pi SDK, launcher, child model/tools and Git; scripted Root. First task-bearing user message follows a host redacted-prompt placeholder. Installed 0.70 integration does not expand declared compatibility."
+}

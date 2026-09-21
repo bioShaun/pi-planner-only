@@ -1,0 +1,1 @@
+timeout --kill-after=5 45 env RUST_LOG=codex_core=info\,codex_exec=info codex exec --sandbox read-only --json Return\ exactly\ READY.\ Do\ not\ call\ tools. 

@@ -1,0 +1,14 @@
+Planner-only: failed to persist ledger snapshot: EISDIR: illegal operation on a directory, rename '/project/tmp/runaway-validation-UtTXnZ/planner-only-admission-ledger-a3sC3l/planner-only/ledger/.tmp-3025589-16' -> '/project/tmp/runaway-validation-UtTXnZ/planner-only-admission-ledger-a3sC3l/planner-only/ledger/T-20260918-001.json'
+file:///home/tcuni-claw/pi/pi-planner-only/delegate.ts:1036
+			throw new DelegationRefused(
+			      ^
+
+DelegationRefused: planner_delegate refused: retry_same_plan maxTokens 100 is below execution call-g1's observed token usage 9999; change the plan or create a new Task instead of only lowering the budget
+    at runDelegation (file:///home/tcuni-claw/pi/pi-planner-only/delegate.ts:1036:10)
+    at file:///home/tcuni-claw/pi/pi-planner-only/delegate.test.mjs:2632:22 {
+  code: 'RECOVERY_ENVELOPE_BELOW_OBSERVED',
+  taskId: 'T-20260921-001',
+  details: undefined
+}
+
+Node.js v24.14.0

@@ -1,0 +1,6 @@
+{
+  "at": "2026-09-21T07:11:42.299079+00:00",
+  "memory.current": "73849712640\n",
+  "memory.events": "low 0\nhigh 286399618\nmax 0\noom 0\noom_kill 1\noom_group_kill 0\n",
+  "memory.pressure": "some avg10=72.25 avg60=73.48 avg300=68.95 total=129586366541\nfull avg10=71.17 avg60=72.76 avg300=68.10 total=129439343918\n"
+}

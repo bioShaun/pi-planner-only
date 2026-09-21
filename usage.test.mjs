@@ -1046,4 +1046,30 @@ function ticket15ResolvedNoRate(overrides = {}) {
 	assert.equal(Object.keys(evidence.statuses.rootVerdict).length, 0);
 }
 
+{
+	const u = ledger();
+	u.recordChildSnapshot("T-snapshot", { kind: "worker", toolCallId: "call-snapshot", totalTokens: 321 });
+	u.recordChildSnapshot("T-snapshot", { kind: "worker", toolCallId: "call-snapshot", totalTokens: 999 });
+	assert.equal(u.taskUsage("T-snapshot").snapshots?.[0].totalTokens, 321, "partial usage remains visible without double recording");
+	assert.equal(u.taskUsage("T-snapshot").costUnknown, true);
+	assert.equal(summarizeTaskBudget(u.taskUsage("T-snapshot")).tokens.known, 321, "measured snapshot total participates in budget accounting");
+	assert.equal(summarizeTaskBudget(u.taskUsage("T-snapshot")).costUsd.unknownParts, 1);
+	assert.equal(summarizeTaskBudget(u.taskUsage("T-snapshot")).tokens.unknownParts, 1, "snapshot remains a lower bound, with cache use unknown");
+	assert.match(renderUsage(u.taskUsage("T-snapshot"), { taskId: "T-snapshot" }), /usage snapshot 321 uncached tokens/);
+	const first = u.drain();
+	assert.equal(first.length, 1, "one logical cancellation snapshot is written");
+	assert.deepEqual(first[0].usageSnapshot, { kind: "worker", toolCallId: "call-snapshot", input: null, output: null, cacheRead: null, cacheWrite: null, totalTokens: 321, snapshot: true });
+	assert.equal(first[0].child, undefined, "snapshot does not fabricate a priced child breakdown");
+	const replay = ledger();
+	replay.load(first);
+	assert.equal(replay.taskUsage("T-snapshot").snapshots?.[0].totalTokens, 321, "replay restores the visible lower bound");
+	replay.recordChild("T-snapshot", { kind: "worker", toolCallId: "call-snapshot", input: 10, output: 2, cacheRead: 0, cacheWrite: 0, pending: false, source: "sync-details" });
+	assert.equal(replay.drain()[0].usageSnapshotResolved, true, "usage.jsonl replay preserves the snapshot replacement identity");
+	u.recordChild("T-snapshot", { kind: "worker", toolCallId: "call-snapshot", input: 10, output: 2, cacheRead: 0, cacheWrite: 0, pending: false, source: "sync-details" });
+	const resolved = u.drain();
+	assert.equal(resolved.length, 1);
+	assert.equal(resolved[0].usageSnapshotResolved, true, "real terminal usage explicitly replaces the snapshot identity");
+	assert.equal(u.taskUsage("T-snapshot").children.length, 1, "only real usage appears in task totals");
+}
+
 console.log("planner-only usage: PASS");

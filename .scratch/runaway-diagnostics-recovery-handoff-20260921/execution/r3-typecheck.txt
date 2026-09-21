@@ -1,0 +1,4 @@
+Command: ./node_modules/.bin/tsc --noEmit
+Exit: 0
+stdout/stderr: empty
+Snapshot: 89e4a4cbae991e01b163e11e8e0add6d6291f6222662b3e85c9679f58ba1a018

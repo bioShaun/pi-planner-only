@@ -1,0 +1,951 @@
+--- baseline/README.md
++++ current/README.md
+@@ -411,6 +411,8 @@
+ 
+ **Runaway envelope and recovery (P0-B).** Both delegation tools accept an explicit `envelope: { maxTokens?, maxWallMs? }` — cumulative UPDATE tokens (snapshot input+output, no cache) and an independent wall clock covering the actual launcher wait, not pre-launch evidence sampling. A breach fires the same CANCEL path as Esc, once; the execution ends `worker_runaway`, including when its terminal arrives after the cancel grace, and a confirmed stop plus an unconfirmed one both flag `task.recovery.required`. Re-executing the Task then requires a structured `recovery` decision on `planner_redelegate` (`retry_same_plan` / `fix_environment`, naming the abnormal `executionId`, a reason, and a `worktreeDecision`), or `planner_abort` — the dedicated give-up surface (ADR-0003) that records a blocked verdict and consumes the requirement in one call — to hand it to the operator. A decision is consumed once; equivalent action/evidence/worktree decisions are refused even if the reason is reworded or evidence references are reordered. `worktreeDecision: "manual"` clears a persisted hold only as the operator's explicit assertion that residual writers were resolved. Unwired P1 actions refuse explicitly. On `planner_redelegate`, a `recovery` key on a non-final Task is refused `RECOVERY_NOT_APPLICABLE` before dispatch for workers, explorers, validators, and reviewers; omit it for ordinary correction or review rounds. Final calls retain their role-specific guards: non-reviewer execution uses `TASK_CLOSED` except for `blocked + recovery.required`, while reviewer invocation keeps its existing `REVIEW_TERMINAL` handling. `planner_verdict` has different compatibility behavior: it strips a stray `recovery` key, records the plain verdict, and discloses the strip in `warnings` without consuming recovery.
+ 
++Each execution persists a bounded tail of 64 launcher UPDATE observations, including bounded tool arguments and output lines. These fields can contain sensitive content already present in the host payload. `planner_tasks` reports the first observed non-read-only tool ordinal, the largest observed token jump, and a read-only fraction with coverage counts; a non-read-only tool is classification evidence, not proof that a write succeeded. Cancelled runs retain an uncategorized token snapshot until real terminal usage replaces it. Worker executions may opt into `maxReadOnlyTools` and `preparationTokensShare` (the latter requires `maxTokens`); exact tool names determine `preparation_runaway`. Recovery packets carry a separate structured `priorExecution` field, and `retry_same_plan` refuses token budgets below the prior observed token breach.
++
+ ## Design specs
+ 
+ - [v0.2 specification](docs/pi-planner-only-v0.2-spec.md) covers the core protocol and architecture.
+--- baseline/README.zh-CN.md
++++ current/README.zh-CN.md
+@@ -246,6 +246,8 @@
+ **停止确认（P0-A）。** 仅收到终态并不证明 writer 已静止。在身份匹配的终态到达后，委派会等待 `quiescenceWaitMs`（默认 10 s；`PI_PLANNER_ONLY_QUIESCENCE_MS` 覆盖），再要求两次连续一致的工作树采样——满足后停止才记为 `confirmed`（`confirmationBasis: terminal+quiet-worktree`）、释放 writer 预留，并把残留样本记为 `cTerminal`。普通 `completed` writer 也受同一谓词约束；若静止未确认，其报告不入账，Task 保持 `blocked` 与 writer hold。若 5 s 宽限期到期仍无终态，执行置为 `stop_unconfirmed`：Task 进 `blocked`，writer 预留转为持久化 `writerHold`，跨重启且不受普通账本恢复条数上限影响地继续拒绝第二写入者；launcher 保留 RESPONSE 订阅，迟到终态仍会把执行恰一次收尾（usage、`cTerminal`、释放）。采样失败记 `evidenceIncomplete`，同样保持 hold。非 completed 委派（cancelled、timed_out、failed 等）不再抛错：委派调用返回结构化 `details.termination`（宿主终态、ended reason、确认依据、执行生命周期状态、`usageComplete`）并附文本摘要。取消请求之后到达的 `completed` 报告只收入 `executions[].lateReport` 作证据，不再推进 review。
+ 
+ **跑飞 envelope 与恢复（P0-B）。** 两个委派工具都接受显式 `envelope: { maxTokens?, maxWallMs? }`——UPDATE 累计 tokens（input+output 快照，不含 cache）与只覆盖实际 launcher 等待、不包含启动前 Evidence 采样的独立墙钟。越线即走与 Esc 相同的 CANCEL 路径，只触发一次；即使终态在取消宽限后迟到，执行原因仍保留为 `worker_runaway`。确认停止与未确认停止都会置 `task.recovery.required`。此后重新执行该 Task 必须在 `planner_redelegate` 携带结构化 `recovery` 决策（`retry_same_plan` / `fix_environment`，指明异常 `executionId`、理由与 `worktreeDecision`），或用独立的 `planner_abort`（ADR-0003：一次调用落 blocked 裁决并消费恢复要求）交人工。决策只消费一次；action、规范化 evidenceRefs 与 worktreeDecision 等价时，即使改写理由或调换证据顺序也会拒绝。`worktreeDecision: "manual"` 是操作者确认残留 writer 已处理后的显式断言，可解除持久 hold。未接线的 P1 动作明确拒绝。对 `planner_redelegate` 而言，非终态 Task 上的 `recovery` 会在派发前对 worker、explorer、validator 和 reviewer 一律拒绝为 `RECOVERY_NOT_APPLICABLE`；普通修正或评审轮必须省略该键。终态调用仍走各角色原有守卫：非 reviewer 执行除 `blocked + recovery.required` 外返回 `TASK_CLOSED`，reviewer 仍由既有 `REVIEW_TERMINAL` 语义处理。`planner_verdict` 的兼容行为不同：它会剥离多余的 `recovery`，记录普通 verdict，在 `warnings` 披露剥离，并且不消费恢复要求。
++
++每次执行持久化最近 64 条 launcher UPDATE，包括有界的工具参数与输出行；这些字段可能包含宿主载荷里已有的敏感内容。`planner_tasks` 展示首次观测到的非只读工具序号、最大 token 跳变和带覆盖计数的只读占比；非只读工具只表示工具分类证据，不证明写入成功。取消执行先保存不虚构分类或成本的 token 快照，真实终态 usage 到达后替换。worker 可选配 `maxReadOnlyTools` 和 `preparationTokensShare`（后者要求 `maxTokens`），按精确工具名判断并以 `preparation_runaway` 收尾。恢复子包另带结构化 `priorExecution`；`retry_same_plan` 的 token 预算低于上次实测 token 越限值时拒绝。
+ 
+ ## 设计规范
+ 
+--- baseline/delegate.test.mjs
++++ current/delegate.test.mjs
+@@ -2419,7 +2419,7 @@
+ 	const recoveryHistoryBefore = recoveryTask.recoveryHistory?.length ?? 0;
+ 	await expectRefusal(runDelegation(
+ 		recovery.deps,
+-		makeParams({ taskId: recoveryTask.taskId, envelope: { maxTokens: 1 }, recovery: {
++		makeParams({ taskId: recoveryTask.taskId, envelope: { maxTokens: 2 }, recovery: {
+ 			executionId: "clamp-runaway", action: "retry_same_plan", reason: "retry", worktreeDecision: "keep",
+ 		} }),
+ 		dir,
+@@ -2581,11 +2581,12 @@
+ // ---------------------------------------------------------------------------
+ {
+ 	const dir = initRealRepo();
++	let recoveryLaunches = 0;
+ 	const { deps } = makeDeps({
+ 		gitRunner: async (args, cwd) => realGit(dir, ...args),
+ 		launch: async (request, signal, hooks) => {
+ 			const base = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
+-			hooks.onUpdate({ ...base, tokens: 9999 });
++			hooks.onUpdate({ ...base, tokens: 9999 + recoveryLaunches++ });
+ 			return { ...base, status: "cancelled", runId: "run-g", agent: "worker" };
+ 		},
+ 	});
+@@ -2631,7 +2632,7 @@
+ 	// requirement under the new executionId for the dedupe check below.
+ 	const retry = await runDelegation(deps, makeParams({
+ 		taskId,
+-		envelope: { maxTokens: 100 },
++		envelope: { maxTokens: 9999 },
+ 		recovery: {
+ 			executionId: "call-g1",
+ 			action: "retry_same_plan",
+@@ -2959,9 +2960,14 @@
+ 	});
+ 	const outcome = await runDelegation(deps, makeParams({ taskId, envelope: { maxTokens: 100 } }), dir, { executionId: "call-late-runaway" });
+ 	assert.equal(outcome.termination?.reason, "worker_runaway");
+-	hooks.onLateTerminal({ requestId: "late-runaway", ownerRunId: "owner-run-1", nodeId: taskId, status: "cancelled", runId: "run-late-runaway", agent: "worker" });
++	assert.equal(store.require(taskId).executions[0].usageSnapshot.snapshot, true);
++	hooks.onLateTerminal({ requestId: "late-runaway", ownerRunId: "owner-run-1", nodeId: taskId, status: "cancelled", runId: "run-late-runaway", agent: "worker", usage: { input: 101, output: 7, cacheRead: 3, cacheWrite: 0, cost: 0.02, turns: 2, toolCalls: 4, durationMs: 20 } });
+ 	await sleep(200);
+ 	assert.equal(store.require(taskId).executions[0].endedReason, "worker_runaway");
++	assert.equal(store.require(taskId).executions[0].usageSnapshot, undefined, "late real usage replaces the partial execution snapshot");
++	assert.equal(deps.usage.taskUsage(taskId).children.length, 1, "late usage is accounted once");
++	assert.equal(deps.usage.taskUsage(taskId).children[0].input, 101);
++	assert.equal(deps.usage.drain().at(-1).usageSnapshotResolved, true);
+ }
+ 
+ // ============================================================================
+@@ -3473,6 +3479,94 @@
+ 	);
+ 	assert.equal(outcome.task.validatorReports.length, 1);
+ 	assert.equal(outcome.task.validatorReports[0].evidence.workerRunId, "run-validator");
++}
++
++// ---------------------------------------------------------------------------
++// Runaway diagnostics/recovery: trace, snapshot, floor/handoff and prep guard.
++// ---------------------------------------------------------------------------
++{
++	const dir = initRealRepo();
++	const store = new TaskStore();
++	let recoveryPacket;
++	let launchNo = 0;
++	const { deps } = makeDeps({ store, launch: async (request, signal, hooks) => {
++		launchNo += 1;
++		if (launchNo === 1) {
++			const base = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
++			for (let i = 1; i <= 70; i += 1) hooks.onUpdate({ ...base, tokens: i * 100, toolCount: i, currentTool: "read", currentToolArgs: `file-${i}`, recentOutputLines: [`line-${i}`] });
++			assert.equal(signal.aborted, true);
++			return { ...base, status: "cancelled", runId: "run-trace" };
++		}
++		recoveryPacket = JSON.parse(request.task);
++		return { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId, status: "completed", runId: "run-recovery", agent: "worker", usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1, toolCalls: 1, durationMs: 2 }, result: { kind: "structured", value: makeReport(request.nodeId, "run-recovery", request.cwd) } };
++	} });
++	const first = await runDelegation(deps, makeParams({ envelope: { maxTokens: 6_000 } }), dir, { executionId: "trace-run" });
++	assert.equal(first.termination.reason, "worker_runaway");
++	const execution = store.require(first.task.taskId).executions[0];
++	assert.equal(execution.updateTrace.length, 64);
++	assert.equal(execution.updateTrace[0].ordinal, 7);
++	assert.equal(execution.traceSummary.totalToolCalls, 70);
++	assert.equal(execution.traceSummary.classifiedToolCalls, 70);
++	assert.equal(execution.traceSummary.readOnlyToolFraction, 1);
++	assert.deepEqual(execution.usageSnapshot, { input: null, output: null, cacheRead: null, cacheWrite: null, totalTokens: 7000, snapshot: true });
++	const below = await expectRefusal(runDelegation(deps, makeParams({ taskId: first.task.taskId, envelope: { maxTokens: 6_999 }, recovery: { executionId: "trace-run", action: "retry_same_plan", reason: "retry unchanged", worktreeDecision: "keep" } }), dir, { executionId: "trace-too-small" }), "RECOVERY_ENVELOPE_BELOW_OBSERVED");
++	assert.match(below.message, /observed token usage 7000/);
++	assert.equal(store.require(first.task.taskId).executions.length, 1);
++	const recovered = await runDelegation(deps, makeParams({ taskId: first.task.taskId, envelope: { maxTokens: 7_000 }, recovery: { executionId: "trace-run", action: "retry_same_plan", reason: "provider stabilized", worktreeDecision: "keep" } }), dir, { executionId: "trace-retry" });
++	assert.ok(recovered.report, "equality is allowed");
++	assert.equal(recoveryPacket.spec.objective, "implement the thing");
++	assert.equal(recoveryPacket.instructions, "");
++	assert.equal(recoveryPacket.priorExecution.executionId, "trace-run");
++	assert.equal(recoveryPacket.priorExecution.recoveryReason, "provider stabilized");
++	assert.equal(recoveryPacket.priorExecution.recentTools.length, 8);
++	assert.equal(recoveryPacket.priorExecution.recentTools.at(-1).args, "file-70");
++	assert.equal(recoveryPacket.priorExecution.recentOutputLines.at(-1), "line-70");
++}
++
++{
++	const dir = initRealRepo();
++	const prepDeps = (role) => makeDeps({ launch: async (request, signal, hooks) => {
++		const base = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
++		for (let i = 1; i <= 3; i += 1) hooks.onUpdate({ ...base, tokens: i * 100, toolCount: i, currentTool: "read", currentToolArgs: `r-${i}` });
++		return signal.aborted
++			? { ...base, status: "cancelled", runId: `run-${role}` }
++			: { ...base, status: "completed", runId: `run-${role}`, agent: role, result: { kind: "structured", value: makeReport(request.nodeId, `run-${role}`, request.cwd) } };
++	} });
++	const worker = prepDeps("worker");
++	const stopped = await runDelegation(worker.deps, makeParams({ envelope: { maxReadOnlyTools: 2 } }), dir, { executionId: "prep-worker" });
++	assert.equal(stopped.termination.reason, "preparation_runaway");
++	assert.equal(stopped.task.executions[0].runawayObservation.signal, "preparation");
++	assert.equal(stopped.task.executions[0].usageSnapshot.totalTokens, 300, "prep-only envelopes still retain observed tokens");
++	const explorer = prepDeps("explorer");
++	const allowed = await runDelegation(explorer.deps, makeParams({ role: "explorer", envelope: { maxReadOnlyTools: 2 } }), dir, { executionId: "prep-explorer" });
++	assert.equal(allowed.termination, undefined);
++	assert.equal(Compile(PLANNER_DELEGATE_PARAMETERS).Check(makeParams({ envelope: { maxTokens: 100, preparationTokensShare: 0.5 } })), true);
++	const invalid = prepDeps("worker");
++	await expectRefusal(runDelegation(invalid.deps, makeParams({ envelope: { preparationTokensShare: 0.5 } }), dir, { executionId: "prep-invalid" }), "ENVELOPE_INVALID");
++	assert.equal(invalid.launches.length, 0);
++	const repeated = makeDeps({ launch: async (request, signal, hooks) => {
++		const base = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
++		for (let i = 0; i < 4; i += 1) hooks.onUpdate({ ...base, tokens: 100 + i, toolCount: 1, currentTool: "read", currentToolArgs: "please write output.ts" });
++		assert.equal(signal.aborted, false, "repeated progress frames and prose in args do not count as writes or extra calls");
++		return { ...base, status: "completed", runId: "run-repeat", agent: "worker", result: { kind: "structured", value: makeReport(request.nodeId, "run-repeat", request.cwd) } };
++	} });
++	const repeatedOutcome = await runDelegation(repeated.deps, makeParams({ envelope: { maxReadOnlyTools: 1 } }), dir, { executionId: "prep-repeat" });
++	assert.equal(repeatedOutcome.termination, undefined);
++	assert.equal(repeatedOutcome.task.executions[0].traceSummary.totalToolCalls, 1);
++	const share = prepDeps("worker");
++	const shareStopped = await runDelegation(share.deps, makeParams({ envelope: { maxTokens: 1_000, preparationTokensShare: 0.2 } }), dir, { executionId: "prep-share" });
++	assert.equal(shareStopped.termination.reason, "preparation_runaway");
++	assert.deepEqual(shareStopped.task.executions[0].runawayObservation, { signal: "preparation", observed: 300, limit: 200 });
++	const wrote = makeDeps({ launch: async (request, signal, hooks) => {
++		const base = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
++		hooks.onUpdate({ ...base, tokens: 50, toolCount: 1, currentTool: "bash", currentToolArgs: "apply change" });
++		hooks.onUpdate({ ...base, tokens: 500, toolCount: 2, currentTool: "read" });
++		assert.equal(signal.aborted, false);
++		return { ...base, status: "completed", runId: "run-wrote", agent: "worker", result: { kind: "structured", value: makeReport(request.nodeId, "run-wrote", request.cwd) } };
++	} });
++	const wroteOutcome = await runDelegation(wrote.deps, makeParams({ envelope: { maxTokens: 1_000, preparationTokensShare: 0.2 } }), dir, { executionId: "prep-wrote" });
++	assert.equal(wroteOutcome.termination, undefined);
++	assert.equal(wroteOutcome.task.executions[0].traceSummary.firstNonReadOnlyToolOrdinal, 1);
+ }
+ 
+ // ---------------------------------------------------------------------------
+--- baseline/delegate.ts
++++ current/delegate.ts
+@@ -60,6 +60,7 @@
+ import { loadExecutionDefaults, REQUEST_EXECUTION_RESERVE_MS } from "./execution-defaults.ts";
+ import type { RequestTimingObservation } from "./request-control.ts";
+ import { acceptanceModeOf, isFinalTaskState, isTerminalTaskState } from "./types.ts";
++import { READ_ONLY_TOOLS } from "./policy.ts";
+ import type {
+ 	AcceptanceMode,
+ 	DelegationKind,
+@@ -327,10 +328,27 @@
+ 	};
+ 	const maxTokens = check("maxTokens", raw.maxTokens);
+ 	const maxWallMs = check("maxWallMs", raw.maxWallMs);
+-	if (maxTokens === undefined && maxWallMs === undefined) {
+-		throw new DelegationRefused("ENVELOPE_INVALID", `${toolName} refused: envelope requires at least one of maxTokens / maxWallMs`);
+-	}
+-	return { ...(maxTokens !== undefined ? { maxTokens } : {}), ...(maxWallMs !== undefined ? { maxWallMs } : {}), source: "delegation-param" };
++	const maxReadOnlyTools = check("maxReadOnlyTools", raw.maxReadOnlyTools);
++	let preparationTokensShare: number | undefined;
++	if (raw.preparationTokensShare !== undefined) {
++		if (!Number.isFinite(raw.preparationTokensShare) || raw.preparationTokensShare <= 0 || raw.preparationTokensShare > 1) {
++			throw new DelegationRefused("ENVELOPE_INVALID", `${toolName} refused: envelope.preparationTokensShare must be greater than 0 and at most 1, got ${raw.preparationTokensShare}`);
++		}
++		if (maxTokens === undefined) {
++			throw new DelegationRefused("ENVELOPE_INVALID", `${toolName} refused: envelope.preparationTokensShare requires envelope.maxTokens`);
++		}
++		preparationTokensShare = raw.preparationTokensShare;
++	}
++	if (maxTokens === undefined && maxWallMs === undefined && maxReadOnlyTools === undefined && preparationTokensShare === undefined) {
++		throw new DelegationRefused("ENVELOPE_INVALID", `${toolName} refused: envelope requires at least one configured bound`);
++	}
++	return {
++		...(maxTokens !== undefined ? { maxTokens } : {}),
++		...(maxWallMs !== undefined ? { maxWallMs } : {}),
++		...(maxReadOnlyTools !== undefined ? { maxReadOnlyTools } : {}),
++		...(preparationTokensShare !== undefined ? { preparationTokensShare } : {}),
++		source: "delegation-param",
++	};
+ }
+ 
+ /** P0-B — actions wired for planner_redelegate re-execution. */
+@@ -426,6 +444,8 @@
+ 		Type.Object({
+ 			maxTokens: Type.Optional(Type.Number({ description: "Cancel the child when cumulative UPDATE tokens exceed this. Snapshot input+output, no cache." })),
+ 			maxWallMs: Type.Optional(Type.Number({ description: "Cancel the child when wall-clock since launch exceeds this many ms." })),
++			maxReadOnlyTools: Type.Optional(Type.Number({ description: "Worker-only: cancel after this many consecutive observed read-only tool calls before the first write-capable tool." })),
++			preparationTokensShare: Type.Optional(Type.Number({ description: "Worker-only: cancel when pre-write tokens exceed this share of maxTokens. Requires maxTokens." })),
+ 		}, {
+ 			description: "Runaway envelope. When omitted on an ordinary execution, finite program/operator defaults apply (maxTokens 100000, maxWallMs 600000 unless operator-configured). An explicit envelope replaces default/token inheritance. The effective wall bound is capped at the original Request remainder minus a provisional 60000ms reserve; token-only envelopes receive that Request-derived wall cap.",
+ 		}),
+@@ -1001,6 +1021,25 @@
+ 	let envelope: ExecutionEnvelope = { ...originalEnvelope };
+ 	let envelopeClamped = false;
+ 	let requestBudget: RequestExecutionBudget | undefined;
++	if (recoveryDecision?.action === "retry_same_plan" && envelope.maxTokens !== undefined) {
++		const prior = task.executions.find((item) => item.executionId === recoveryDecision.executionId);
++		const terminalUsage = prior?.rawTerminal?.usage;
++		const terminalObservedTokens = terminalUsage && typeof terminalUsage === "object" && !Array.isArray(terminalUsage)
++			&& typeof (terminalUsage as { input?: unknown }).input === "number"
++			&& typeof (terminalUsage as { output?: unknown }).output === "number"
++			? (terminalUsage as { input: number; output: number }).input + (terminalUsage as { input: number; output: number }).output
++			: undefined;
++		const observedTokens = prior?.usageSnapshot?.totalTokens
++			?? terminalObservedTokens
++			?? (prior?.runawayObservation?.signal === "tokens" ? prior.runawayObservation.observed : undefined);
++		if (prior && observedTokens !== undefined && envelope.maxTokens < observedTokens) {
++			throw new DelegationRefused(
++				"RECOVERY_ENVELOPE_BELOW_OBSERVED",
++				`${toolName} refused: retry_same_plan maxTokens ${envelope.maxTokens} is below execution ${prior.executionId}'s observed token usage ${observedTokens}; change the plan or create a new Task instead of only lowering the budget`,
++				task.taskId,
++			);
++		}
++	}
+ 
+ 	// 2. Write lock: capability decides, not the role name — a proven
+ 	//    restricted reader holds no workspace claim; writers, shell-capable
+@@ -1087,6 +1126,40 @@
+ 	const runController = new AbortController();
+ 	let runaway: RunawayObservation | undefined;
+ 	let maxTokensSeen = -1;
++	const updateTrace: NonNullable<TaskExecutionRecord["updateTrace"]> = [];
++	let updateOrdinal = 0;
++	let priorToolCount = 0;
++	let consecutiveReadOnlyTools = 0;
++	let preparationComplete = false;
++	let classifiedToolCalls = 0;
++	let observedToolCalls = 0;
++	let readOnlyToolCalls = 0;
++	let coalescedToolCalls = 0;
++	let firstNonReadOnlyToolOrdinal: number | undefined;
++	let priorTokens = 0;
++	let maxTokenDelta = 0;
++	const traceSummary = (): NonNullable<TaskExecutionRecord["traceSummary"]> => ({
++		...(firstNonReadOnlyToolOrdinal !== undefined ? { firstNonReadOnlyToolOrdinal } : {}),
++		maxTokenDelta,
++		readOnlyToolFraction: classifiedToolCalls > 0 ? readOnlyToolCalls / classifiedToolCalls : 0,
++		classifiedToolCalls,
++		observedToolCalls,
++		totalToolCalls: priorToolCount,
++		coalescedToolCalls,
++	});
++	const persistUsageSnapshot = () => {
++		if (maxTokensSeen < 0) return;
++		deps.store.finalizeExecution(task.taskId, executionId, {
++			usageSnapshot: { input: null, output: null, cacheRead: null, cacheWrite: null, totalTokens: maxTokensSeen, snapshot: true },
++			usageComplete: false,
++		});
++		deps.usage.recordChildSnapshot(task.taskId, {
++			kind: role as DelegationKind,
++			toolCallId: executionId,
++			totalTokens: maxTokensSeen,
++		});
++	};
++	const runawayEndedReason = (): ExecutionEndedReason => runaway?.signal === "preparation" ? "preparation_runaway" : "worker_runaway";
+ 	// Ticket 01 (wrc-incident-followups) — elapsed is read from a monotonic
+ 	//    clock, not Date.now: a wall-clock rollback can no longer shrink or
+ 	//    negate it.
+@@ -1368,12 +1441,38 @@
+ 		const requestInstructions = reportOnly && reportOnlyOrigin
+ 			? buildReportOnlyRepairInstructions(task, reportOnlyOrigin, params.instructions ?? "")
+ 			: params.instructions ?? "";
++		const priorExecution = recoveryDecision
++			? (() => {
++				const prior = task.executions.find((item) => item.executionId === recoveryDecision.executionId);
++				if (!prior) return undefined;
++				const tail = prior.updateTrace ?? [];
++				const recent = [...tail].reverse().find((item) => item.recentTools?.length);
++				const last = tail.at(-1);
++				return {
++					executionId: prior.executionId,
++					...(prior.endedReason ? { endedReason: prior.endedReason } : {}),
++					...(prior.runawayObservation ? { runawayObservation: prior.runawayObservation } : {}),
++					diffStat: {
++						aRun: prior.aRun.diffStat ?? null,
++						terminal: prior.cTerminal?.diffStat ?? prior.interimSample?.diffStat ?? null,
++						terminalKind: prior.cTerminal ? "cTerminal" as const : prior.interimSample ? "interimSample" as const : "unavailable" as const,
++					},
++					recentTools: recent ? [...(recent.recentTools ?? []), ...(last?.currentTool ? [{ tool: last.currentTool, args: last.currentToolArgs ?? "" }] : [])].slice(-8) : tail.reduce<Array<{ tool: string; args: string; count: number }>>((items, item) => {
++						if (!item.currentTool || item.toolCount === undefined || item.toolCount <= (items.at(-1)?.count ?? -1)) return items;
++						items.push({ tool: item.currentTool, args: item.currentToolArgs ?? "", count: item.toolCount });
++						return items;
++					}, []).slice(-8).map(({ tool, args }) => ({ tool, args })),
++					recentOutputLines: [...tail].reverse().find((item) => item.recentOutputLines?.length)?.recentOutputLines?.slice(-20) ?? [],
++					recoveryReason: recoveryDecision.reason,
++				};
++			})()
++			: undefined;
+ 		const request: SubagentDelegationRequest = {
+ 			requestId,
+ 			ownerRunId: deps.ownerRunId,
+ 			nodeId: task.taskId,
+ 			agent: reportOnly ? REPORT_ONLY_AGENT : classification.agent ?? ROLE_AGENTS[role] ?? "worker",
+-			task: buildTaskPacket(thisSpec, requestInstructions),
++			task: buildTaskPacket(thisSpec, requestInstructions, { ...(priorExecution ? { priorExecution } : {}) }),
+ 			context: "fresh",
+ 			cwd: task.cwd || effectiveCwd,
+ 			...(reportOnly ? { toolBudget: { ...REPORT_ONLY_TOOL_BUDGET } } : {}),
+@@ -1461,7 +1560,7 @@
+ 					}
+ 				}
+ 				const endedReason: ExecutionEndedReason = runaway
+-					? "worker_runaway"
++					? runawayEndedReason()
+ 					: cancelRequestedAt
+ 						? "operator_cancel"
+ 						: reportOnly && late.status === "tool_budget_exhausted"
+@@ -1478,6 +1577,7 @@
+ 						: { interimSample: q.interim, stopSamples: q.samples }),
+ 					...(q.confirmed === false && q.evidenceIncomplete ? { evidenceIncomplete: true } : {}),
+ 					usageComplete,
++					...(usageComplete ? { usageSnapshot: undefined } : {}),
+ 					rawTerminal: structuredClone(late) as unknown as Record<string, unknown>,
+ 					...(late.runId ? { runId: late.runId } : {}),
+ 					...(lateSuccess && late.result?.kind === "structured"
+@@ -1556,13 +1656,62 @@
+ 					}
+ 				},
+ 				onUpdate: (update) => {
++					updateOrdinal += 1;
++					const clip = (value: string | undefined, max: number) => value === undefined ? undefined : value.slice(0, max);
++					const snapshot = {
++						receivedAt: nowIso(),
++						ordinal: updateOrdinal,
++						...(typeof update.tokens === "number" && Number.isFinite(update.tokens) && update.tokens >= 0 ? { tokens: update.tokens } : {}),
++						...(typeof update.toolCount === "number" && Number.isSafeInteger(update.toolCount) && update.toolCount >= 0 ? { toolCount: update.toolCount } : {}),
++						...(typeof update.durationMs === "number" && Number.isFinite(update.durationMs) && update.durationMs >= 0 ? { durationMs: Math.floor(update.durationMs) } : {}),
++						...(clip(update.currentTool, 120) ? { currentTool: clip(update.currentTool, 120) } : {}),
++						...(clip(update.currentToolArgs, 1000) ? { currentToolArgs: clip(update.currentToolArgs, 1000) } : {}),
++						...(update.recentTools?.length ? { recentTools: update.recentTools.slice(-8).map((item) => ({ tool: item.tool.slice(0, 120), args: item.args.slice(0, 1000) })) } : {}),
++						...((update.recentOutputLines?.length || update.recentOutput) ? { recentOutputLines: (update.recentOutputLines ?? update.recentOutput?.split("\n") ?? []).slice(-20).map((line) => line.slice(0, 1000)) } : {}),
++					};
++					updateTrace.push(snapshot);
++					if (updateTrace.length > 64) updateTrace.splice(0, updateTrace.length - 64);
++					if (snapshot.tokens !== undefined) {
++						maxTokenDelta = Math.max(maxTokenDelta, Math.max(0, snapshot.tokens - priorTokens));
++						priorTokens = Math.max(priorTokens, snapshot.tokens);
++					}
++					if (snapshot.toolCount !== undefined && snapshot.toolCount > priorToolCount) {
++						const delta = snapshot.toolCount - priorToolCount;
++						observedToolCalls += 1;
++						if (delta > 1) {
++							coalescedToolCalls += delta - 1;
++							consecutiveReadOnlyTools = 0;
++						}
++						if (snapshot.currentTool) {
++							classifiedToolCalls += 1;
++							if (READ_ONLY_TOOLS.has(snapshot.currentTool)) {
++								readOnlyToolCalls += 1;
++								consecutiveReadOnlyTools += 1;
++							} else {
++								preparationComplete = true;
++								consecutiveReadOnlyTools = 0;
++								firstNonReadOnlyToolOrdinal ??= snapshot.toolCount;
++							}
++						} else {
++							consecutiveReadOnlyTools = 0;
++						}
++						priorToolCount = snapshot.toolCount;
++					}
++					try { deps.store.finalizeExecution(task.taskId, executionId, { updateTrace: structuredClone(updateTrace), traceSummary: traceSummary() }); } catch { /* diagnostics must not break execution */ }
+ 					// P0-B monitor — cumulative token snapshot, max not sum;
+ 					// unknown/regressing counts never reset the observed level.
+-					if (envelope?.maxTokens !== undefined) {
+-						const tokens = update.tokens;
+-						if (typeof tokens === "number" && Number.isFinite(tokens) && tokens >= 0) {
+-							maxTokensSeen = Math.max(maxTokensSeen, tokens);
++					const tokens = update.tokens;
++					if (typeof tokens === "number" && Number.isFinite(tokens) && tokens >= 0) {
++						maxTokensSeen = Math.max(maxTokensSeen, tokens);
++						if (envelope?.maxTokens !== undefined) {
+ 							if (maxTokensSeen > envelope.maxTokens) breach("tokens", maxTokensSeen, envelope.maxTokens);
++						}
++					}
++					if (role === "worker" && !preparationComplete && !runaway) {
++						if (envelope.maxReadOnlyTools !== undefined && consecutiveReadOnlyTools > envelope.maxReadOnlyTools) {
++							breach("preparation", consecutiveReadOnlyTools, envelope.maxReadOnlyTools);
++						} else if (envelope.preparationTokensShare !== undefined && envelope.maxTokens !== undefined && maxTokensSeen > envelope.maxTokens * envelope.preparationTokensShare) {
++							breach("preparation", maxTokensSeen, Math.floor(envelope.maxTokens * envelope.preparationTokensShare));
+ 						}
+ 					}
+ 					options.onUpdate?.(renderDelegationProgress(role as DelegationKind, task.taskId, update, options.toolName));
+@@ -1575,7 +1724,8 @@
+ 			const aborted = error instanceof DelegationAborted || runController.signal.aborted === true;
+ 			if (aborted) {
+ 				const emitted = !(error instanceof DelegationAborted) || error.requestEmitted;
+-				const abortedReason: ExecutionEndedReason = runaway ? "worker_runaway" : "operator_cancel";
++				const abortedReason: ExecutionEndedReason = runaway ? runawayEndedReason() : "operator_cancel";
++				if (runaway || cancelRequestedAt) persistUsageSnapshot();
+ 				if (emitted) {
+ 					// Grace expired with no terminal: the stop is unconfirmed. The
+ 					// reservation becomes a persisted hold — released only when a
+@@ -1729,12 +1879,13 @@
+ 					usageComplete = true;
+ 				}
+ 			}
++			if ((runaway || cancelRequestedAt) && !usageComplete) persistUsageSnapshot();
+ 			deps.store.finalizeExecution(task.taskId, executionId, { status: "stopping" });
+ 			const q = await confirmStop(responseRunId);
+-			const endedReason: ExecutionEndedReason = lateSuccess
+-				? "operator_cancel"
+-				: runaway
+-					? "worker_runaway"
++			const endedReason: ExecutionEndedReason = runaway
++				? runawayEndedReason()
++				: lateSuccess
++					? "operator_cancel"
+ 					: reportOnly && terminal.status === "tool_budget_exhausted"
+ 						? "report_only_tool_budget"
+ 						: terminalEndedReason(terminal);
+@@ -1796,6 +1947,7 @@
+ 					...(terminalReport ? { reportReceived: true, reportAccepted: false } : {}),
+ 					...(reservation && !q.confirmed ? { writerHold: true } : {}),
+ 					usageComplete,
++					...(usageComplete ? { usageSnapshot: undefined } : {}),
+ 					...(terminal.error ? { error: terminal.error } : {}),
+ 				},
+ 				warnings,
+--- baseline/index.test.mjs
++++ current/index.test.mjs
+@@ -1401,6 +1401,19 @@
+ 		tools.get("planner_redelegate").execute("call-wrc-3", { taskId: retryRequest.nodeId, role: "worker", objective: "x", scope: {}, constraints: [], acceptanceCriteria: [], validation: { required: false } }, undefined, () => {}, ctx),
+ 		/requires a RecoveryDecision/,
+ 	);
++	// A same-plan retry cannot lower the token envelope below observed usage;
++	// repeated refusals are still counted by the public refusal breaker.
++	for (let attempt = 1; attempt <= 2; attempt += 1) {
++		await assert.rejects(
++			tools.get("planner_redelegate").execute(`call-wrc-floor-${attempt}`, {
++				taskId: retryRequest.nodeId,
++				role: "worker",
++				envelope: { maxTokens: 499 },
++				recovery: { executionId: "call-wrc-2", action: "retry_same_plan", reason: "retry below observed", worktreeDecision: "keep" },
++			}, undefined, () => {}, ctx),
++			(error) => error?.code === "RECOVERY_ENVELOPE_BELOW_OBSERVED" && (attempt === 1 || /Repeat notice/.test(error.message)),
++		);
++	}
+ 
+ 	// Valid retry_same_plan → new execution on the same Task.
+ 	const retryExec = tools.get("planner_redelegate").execute(
+@@ -2354,6 +2367,14 @@
+ 	assert.deepEqual(registrations[0].definition.tools, ["read", "grep", "find", "ls"], "the registered tool list is read-only");
+ 	// 2026-09-18 T-20260918-001..003 launch rejections from the pi-subagents task-intent heuristic.
+ 	assert.equal(registrations[0].definition.completionGuard, false, "the restricted reader opts out of the completion-guard text heuristic");
++	piEvents.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, {
++		requestId: readerRequest.requestId,
++		ownerRunId: readerRequest.ownerRunId,
++		nodeId: readerRequest.nodeId,
++		tokens: 120,
++		toolCount: 1,
++		currentTool: "read",
++	});
+ 	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+ 		requestId: readerRequest.requestId,
+ 		ownerRunId: readerRequest.ownerRunId,
+@@ -2392,6 +2413,9 @@
+ 	assert.equal(d.executions[0].confirmationBasis, "terminal+restricted-reader");
+ 	assert.equal(d.executions[0].reportReceived, true);
+ 	assert.equal(d.executions[0].reportAccepted, true);
++	assert.equal(d.executions[0].traceSummary.readOnlyToolFraction, 1);
++	assert.equal(d.executions[0].traceSummary.classifiedToolCalls, 1);
++	assert.match(diag.content[0].text, /trace: firstNonReadOnlyToolOrdinal=none maxTokenDelta=120 readOnlyToolFraction=1 coverage=1\/1/);
+ 	assert.match(diag.content[0].text, /restricted-reader/);
+ 	// The session-log line reports a location status, never a guessed file.
+ 	assert.ok(d.sessionLog, "diagnostics carry the session log status");
+--- baseline/index.ts
++++ current/index.ts
+@@ -1328,7 +1328,8 @@
+ 					...d.executions.flatMap((execution) => [
+ 						`execution ${execution.executionId} [${execution.kind}] status=${execution.status ?? "unknown"} capability=${execution.capability} confirmed=${execution.terminationConfirmed}${execution.confirmationBasis ? ` via ${execution.confirmationBasis}` : ""}${execution.endedReason ? ` ended=${execution.endedReason}` : ""}${execution.runId ? ` runId=${execution.runId}` : ""}`,
+ 						`  timing: request=${execution.requestId ?? "unknown"} launched=${execution.launchedAt ?? "unknown"} started=${execution.startedAt ?? "unknown"} ended=${execution.endedAt ?? "unknown"} durationMs=${execution.durationMs ?? "unknown"}${execution.durationBasis ? ` (${execution.durationBasis})` : ""}${execution.requestClosed ? ` | requestClosed=${execution.requestClosed} at ${execution.requestClosedAt ?? "unknown"}` : ""}`,
+-						...(execution.effectiveEnvelope ? [`  envelope: effective=${JSON.stringify(execution.effectiveEnvelope)} original=${JSON.stringify(execution.originalEnvelope ?? execution.effectiveEnvelope)} clamped=${execution.envelopeClamped}${execution.requestBudget ? ` request=${JSON.stringify(execution.requestBudget)}` : ""}`] : []),
++							...(execution.effectiveEnvelope ? [`  envelope: effective=${JSON.stringify(execution.effectiveEnvelope)} original=${JSON.stringify(execution.originalEnvelope ?? execution.effectiveEnvelope)} clamped=${execution.envelopeClamped}${execution.requestBudget ? ` request=${JSON.stringify(execution.requestBudget)}` : ""}`] : []),
++							...(execution.traceSummary ? [`  trace: firstNonReadOnlyToolOrdinal=${execution.traceSummary.firstNonReadOnlyToolOrdinal ?? "none"} maxTokenDelta=${execution.traceSummary.maxTokenDelta ?? 0} readOnlyToolFraction=${execution.traceSummary.readOnlyToolFraction} coverage=${execution.traceSummary.classifiedToolCalls}/${execution.traceSummary.totalToolCalls} observed=${execution.traceSummary.observedToolCalls} coalesced=${execution.traceSummary.coalescedToolCalls}`] : []),
+ 						`  report: received=${execution.reportReceived} accepted=${execution.reportAccepted}${execution.evidenceIncomplete ? " | stop evidence incomplete" : ""}`,
+ 						...(execution.unacceptedReport ? [`  unaccepted report: status=${execution.unacceptedReport.status} reason="${execution.unacceptedReport.reason}"`] : []),
+ 						...(execution.probeFailures?.length ? [`  probe failures: ${describeProbeFailures(execution.probeFailures)}${execution.probeFailuresTruncated ? ` …and ${execution.probeFailuresTruncated} more` : ""}`] : []),
+--- baseline/ledger-store.ts
++++ current/ledger-store.ts
+@@ -76,14 +76,20 @@
+ 		if (!["delegation-param", "default", "operator-config"].includes(value.envelope.source as string)) {
+ 			return `${label}.envelope.source must be delegation-param, default, or operator-config`;
+ 		}
+-		for (const field of ["maxTokens", "maxWallMs"] as const) {
++		for (const field of ["maxTokens", "maxWallMs", "maxReadOnlyTools"] as const) {
+ 			const bound = value.envelope[field];
+ 			if (bound !== undefined && (!Number.isSafeInteger(bound) || (bound as number) <= 0)) {
+ 				return `${label}.envelope.${field} must be a positive finite safe integer`;
+ 			}
+ 		}
+-		if (value.envelope.maxTokens === undefined && value.envelope.maxWallMs === undefined) {
+-			return `${label}.envelope requires maxTokens or maxWallMs`;
++		if (value.envelope.preparationTokensShare !== undefined && (typeof value.envelope.preparationTokensShare !== "number" || value.envelope.preparationTokensShare <= 0 || value.envelope.preparationTokensShare > 1)) {
++			return `${label}.envelope.preparationTokensShare must be greater than 0 and at most 1`;
++		}
++		if (value.envelope.preparationTokensShare !== undefined && value.envelope.maxTokens === undefined) {
++			return `${label}.envelope.preparationTokensShare requires maxTokens`;
++		}
++		if (value.envelope.maxTokens === undefined && value.envelope.maxWallMs === undefined && value.envelope.maxReadOnlyTools === undefined) {
++			return `${label}.envelope requires a configured bound`;
+ 		}
+ 	}
+ 	if (value.originalEnvelope !== undefined) {
+@@ -108,6 +114,31 @@
+ 	}
+ 	if (value.rawTerminal !== undefined && !isPlainObject(value.rawTerminal)) {
+ 		return `${label}.rawTerminal must be an object`;
++	}
++	if (value.updateTrace !== undefined) {
++		if (!Array.isArray(value.updateTrace) || value.updateTrace.length > 64) return `${label}.updateTrace must be an array of at most 64 entries`;
++		for (let i = 0; i < value.updateTrace.length; i += 1) {
++			const item = value.updateTrace[i];
++			if (!isPlainObject(item)) return `${label}.updateTrace[${i}] must be an object`;
++			if (typeof item.receivedAt !== "string" || !Number.isSafeInteger(item.ordinal) || (item.ordinal as number) <= 0) return `${label}.updateTrace[${i}] identity is invalid`;
++			for (const field of ["tokens", "toolCount", "durationMs"] as const) if (item[field] !== undefined && (!Number.isSafeInteger(item[field]) || (item[field] as number) < 0)) return `${label}.updateTrace[${i}].${field} must be a non-negative safe integer`;
++			for (const field of ["currentTool", "currentToolArgs"] as const) if (item[field] !== undefined && typeof item[field] !== "string") return `${label}.updateTrace[${i}].${field} must be a string`;
++			if (item.recentTools !== undefined && (!Array.isArray(item.recentTools) || item.recentTools.length > 8)) return `${label}.updateTrace[${i}].recentTools must contain at most 8 entries`;
++			if (Array.isArray(item.recentTools) && item.recentTools.some((tool) => !isPlainObject(tool) || typeof tool.tool !== "string" || typeof tool.args !== "string")) return `${label}.updateTrace[${i}].recentTools entries must contain string tool and args`;
++			if (item.recentOutputLines !== undefined && (!Array.isArray(item.recentOutputLines) || item.recentOutputLines.length > 20 || item.recentOutputLines.some((line) => typeof line !== "string"))) return `${label}.updateTrace[${i}].recentOutputLines must contain at most 20 strings`;
++		}
++	}
++	if (value.traceSummary !== undefined) {
++		if (!isPlainObject(value.traceSummary)) return `${label}.traceSummary must be an object`;
++		for (const field of ["firstNonReadOnlyToolOrdinal", "maxTokenDelta", "classifiedToolCalls", "observedToolCalls", "totalToolCalls", "coalescedToolCalls"] as const) {
++			if (value.traceSummary[field] !== undefined && (!Number.isSafeInteger(value.traceSummary[field]) || (value.traceSummary[field] as number) < 0)) return `${label}.traceSummary.${field} must be a non-negative safe integer`;
++		}
++		if (typeof value.traceSummary.readOnlyToolFraction !== "number" || value.traceSummary.readOnlyToolFraction < 0 || value.traceSummary.readOnlyToolFraction > 1) return `${label}.traceSummary.readOnlyToolFraction is invalid`;
++	}
++	if (value.usageSnapshot !== undefined) {
++		if (!isPlainObject(value.usageSnapshot) || value.usageSnapshot.snapshot !== true) return `${label}.usageSnapshot must be a snapshot object`;
++		for (const field of ["input", "output", "cacheRead", "cacheWrite"] as const) if (value.usageSnapshot[field] !== null) return `${label}.usageSnapshot.${field} must be null`;
++		if (!Number.isSafeInteger(value.usageSnapshot.totalTokens) || (value.usageSnapshot.totalTokens as number) < 0) return `${label}.usageSnapshot.totalTokens must be a non-negative safe integer`;
+ 	}
+ 	const probeFailuresError = (sample: Record<string, unknown>, sampleLabel: string): string | undefined => {
+ 		if (sample.probeFailures === undefined) return undefined;
+@@ -177,11 +208,13 @@
+ function envelopeShapeError(value: unknown, label: string): string | undefined {
+ 	if (!isPlainObject(value)) return `${label} must be an object`;
+ 	if (!["delegation-param", "default", "operator-config"].includes(value.source as string)) return `${label}.source is invalid`;
+-	for (const field of ["maxTokens", "maxWallMs"] as const) {
++	for (const field of ["maxTokens", "maxWallMs", "maxReadOnlyTools"] as const) {
+ 		const bound = value[field];
+ 		if (bound !== undefined && (!Number.isSafeInteger(bound) || (bound as number) <= 0)) return `${label}.${field} must be a positive finite safe integer`;
+ 	}
+-	if (value.maxTokens === undefined && value.maxWallMs === undefined) return `${label} requires maxTokens or maxWallMs`;
++	if (value.preparationTokensShare !== undefined && (typeof value.preparationTokensShare !== "number" || value.preparationTokensShare <= 0 || value.preparationTokensShare > 1)) return `${label}.preparationTokensShare is invalid`;
++	if (value.preparationTokensShare !== undefined && value.maxTokens === undefined) return `${label}.preparationTokensShare requires maxTokens`;
++	if (value.maxTokens === undefined && value.maxWallMs === undefined && value.maxReadOnlyTools === undefined) return `${label} requires a configured bound`;
+ 	return undefined;
+ }
+ 
+--- baseline/orchestrate.ts
++++ current/orchestrate.ts
+@@ -415,6 +415,7 @@
+ 		effectiveEnvelope?: ExecutionEnvelope;
+ 		envelopeClamped: boolean;
+ 		requestBudget?: RequestExecutionBudget;
++		traceSummary?: TaskExecutionRecord["traceSummary"];
+ 		terminationConfirmed: boolean;
+ 		confirmationBasis?: string;
+ 		evidenceIncomplete?: boolean;
+@@ -765,6 +766,8 @@
+ 		const projectEnvelope = (envelope: ExecutionEnvelope) => ({
+ 			...(envelope.maxTokens !== undefined ? { maxTokens: envelope.maxTokens } : {}),
+ 			...(envelope.maxWallMs !== undefined ? { maxWallMs: envelope.maxWallMs } : {}),
++			...(envelope.maxReadOnlyTools !== undefined ? { maxReadOnlyTools: envelope.maxReadOnlyTools } : {}),
++			...(envelope.preparationTokensShare !== undefined ? { preparationTokensShare: envelope.preparationTokensShare } : {}),
+ 			source: envelope.source,
+ 		});
+ 		const projectRequestBudget = (budget: RequestExecutionBudget) => ({
+@@ -854,7 +857,8 @@
+ 					...(execution.originalEnvelope ? { originalEnvelope: projectEnvelope(execution.originalEnvelope) } : {}),
+ 					...(execution.envelope ? { effectiveEnvelope: projectEnvelope(execution.envelope) } : {}),
+ 					envelopeClamped: execution.envelopeClamped === true,
+-					...(execution.requestBudget ? { requestBudget: projectRequestBudget(execution.requestBudget) } : {}),
++						...(execution.requestBudget ? { requestBudget: projectRequestBudget(execution.requestBudget) } : {}),
++						...(execution.traceSummary ? { traceSummary: execution.traceSummary } : {}),
+ 					terminationConfirmed: execution.terminationConfirmed === true,
+ 					...(execution.confirmationBasis ? { confirmationBasis: capped(execution.confirmationBasis, 200) } : {}),
+ 					...(execution.evidenceIncomplete === true ? { evidenceIncomplete: true } : {}),
+--- baseline/roles.ts
++++ current/roles.ts
+@@ -62,7 +62,7 @@
+  */
+ export function buildTaskPacket(
+ 	spec: TaskSpec,
+-	prompt: string,	details: { candidateText?: string; candidate?: Record<string, unknown> } = {},
++	prompt: string,	details: { candidateText?: string; candidate?: Record<string, unknown>; priorExecution?: TaskPacket["priorExecution"] } = {},
+ ): string {
+ 	let instructions = prompt.trim();
+ 	const existingValue = (() => {
+@@ -91,6 +91,7 @@
+ 			instructions: typeof existing.instructions === "string" ? existing.instructions : "",
+ 			knownFacts,
+ 			artifactRefs,
++			...(details.priorExecution ? { priorExecution: details.priorExecution } : {}),
+ 		} satisfies TaskPacket, null, 2);
+ 	}
+ 	if (details.candidateText) {
+@@ -121,5 +122,6 @@
+ 		instructions,
+ 		knownFacts,
+ 		artifactRefs,
++		...(details.priorExecution ? { priorExecution: details.priorExecution } : {}),
+ 	} satisfies TaskPacket, null, 2);
+ }
+--- baseline/types.ts
++++ current/types.ts
+@@ -284,6 +284,7 @@
+ export type ExecutionEndedReason =
+ 	| "normal"
+ 	| "worker_runaway"
++	| "preparation_runaway"
+ 	| "operator_cancel"
+ 	| "timeout"
+ 	| "tool_budget"
+@@ -293,7 +294,7 @@
+ 	| "launch_failure";
+ 
+ /** P0-B — the signal that tripped the runaway monitor. */
+-export type RunawaySignal = "tokens" | "wall";
++export type RunawaySignal = "tokens" | "wall" | "preparation";
+ 
+ /** P0-B — observed value and the envelope limit it crossed. */
+ export interface RunawayObservation {
+@@ -310,7 +311,40 @@
+ export interface ExecutionEnvelope {
+ 	maxTokens?: number;
+ 	maxWallMs?: number;
++	maxReadOnlyTools?: number;
++	preparationTokensShare?: number;
+ 	source: "delegation-param" | "default" | "operator-config";
++}
++
++export interface ExecutionUpdateSnapshot {
++	receivedAt: string;
++	ordinal: number;
++	tokens?: number;
++	toolCount?: number;
++	durationMs?: number;
++	currentTool?: string;
++	currentToolArgs?: string;
++	recentTools?: Array<{ tool: string; args: string }>;
++	recentOutputLines?: string[];
++}
++
++export interface ExecutionTraceSummary {
++	firstNonReadOnlyToolOrdinal?: number;
++	maxTokenDelta?: number;
++	readOnlyToolFraction?: number;
++	classifiedToolCalls: number;
++	observedToolCalls: number;
++	totalToolCalls: number;
++	coalescedToolCalls: number;
++}
++
++export interface ExecutionUsageSnapshot {
++	input: null;
++	output: null;
++	cacheRead: null;
++	cacheWrite: null;
++	totalTokens: number;
++	snapshot: true;
+ }
+ 
+ /** ADR-0010 admission observation from the original enclosing Request. */
+@@ -443,6 +477,11 @@
+ 	rawTerminal?: Record<string, unknown>;
+ 	/** P0-B — which envelope bound tripped, with the observed value. */
+ 	runawayObservation?: RunawayObservation;
++	/** Bounded tail of launcher UPDATE observations. */
++	updateTrace?: ExecutionUpdateSnapshot[];
++	traceSummary?: ExecutionTraceSummary;
++	/** Lower-bound cancellation snapshot; replaced by a real terminal usage record when one arrives. */
++	usageSnapshot?: ExecutionUsageSnapshot;
+ 	/**
+ 	 * Ticket 02 — the launch-time trusted capability of this execution
+ 	 * (see `ExecutionCapability`). Absent on pre-T02 ledgers: readers treat a
+@@ -658,6 +697,15 @@
+ 	instructions: string;
+ 	knownFacts: string[];
+ 	artifactRefs: string[];
++	priorExecution?: {
++		executionId: string;
++		endedReason?: string;
++		runawayObservation?: RunawayObservation;
++		diffStat: { aRun: string | null; terminal: string | null; terminalKind: "cTerminal" | "interimSample" | "unavailable" };
++		recentTools: Array<{ tool: string; args: string }>;
++		recentOutputLines: string[];
++		recoveryReason: string;
++	};
+ }
+ 
+ /** Upward contract: the only structured thing a worker returns. */
+@@ -981,6 +1029,8 @@
+ export interface TaskUsage {
+ 	root: RootUsage;
+ 	children: ChildUsage[];
++	/** Uncategorised UPDATE lower bounds retained until matching terminal usage arrives. */
++	snapshots?: Array<ExecutionUsageSnapshot & { kind: DelegationKind; toolCallId: string }>;
+ 	rootModel?: string;        // last Root model seen while this Task was active
+ 	costUnknown: boolean;      // any component lacked a rate
+ }
+--- baseline/usage.test.mjs
++++ current/usage.test.mjs
+@@ -1046,4 +1046,30 @@
+ 	assert.equal(Object.keys(evidence.statuses.rootVerdict).length, 0);
+ }
+ 
++{
++	const u = ledger();
++	u.recordChildSnapshot("T-snapshot", { kind: "worker", toolCallId: "call-snapshot", totalTokens: 321 });
++	u.recordChildSnapshot("T-snapshot", { kind: "worker", toolCallId: "call-snapshot", totalTokens: 999 });
++	assert.equal(u.taskUsage("T-snapshot").snapshots?.[0].totalTokens, 321, "partial usage remains visible without double recording");
++	assert.equal(u.taskUsage("T-snapshot").costUnknown, true);
++	assert.equal(summarizeTaskBudget(u.taskUsage("T-snapshot")).tokens.known, 321, "measured snapshot total participates in budget accounting");
++	assert.equal(summarizeTaskBudget(u.taskUsage("T-snapshot")).costUsd.unknownParts, 1);
++	assert.equal(summarizeTaskBudget(u.taskUsage("T-snapshot")).tokens.unknownParts, 1, "snapshot remains a lower bound, with cache use unknown");
++	assert.match(renderUsage(u.taskUsage("T-snapshot"), { taskId: "T-snapshot" }), /usage snapshot 321 uncached tokens/);
++	const first = u.drain();
++	assert.equal(first.length, 1, "one logical cancellation snapshot is written");
++	assert.deepEqual(first[0].usageSnapshot, { kind: "worker", toolCallId: "call-snapshot", input: null, output: null, cacheRead: null, cacheWrite: null, totalTokens: 321, snapshot: true });
++	assert.equal(first[0].child, undefined, "snapshot does not fabricate a priced child breakdown");
++	const replay = ledger();
++	replay.load(first);
++	assert.equal(replay.taskUsage("T-snapshot").snapshots?.[0].totalTokens, 321, "replay restores the visible lower bound");
++	replay.recordChild("T-snapshot", { kind: "worker", toolCallId: "call-snapshot", input: 10, output: 2, cacheRead: 0, cacheWrite: 0, pending: false, source: "sync-details" });
++	assert.equal(replay.drain()[0].usageSnapshotResolved, true, "usage.jsonl replay preserves the snapshot replacement identity");
++	u.recordChild("T-snapshot", { kind: "worker", toolCallId: "call-snapshot", input: 10, output: 2, cacheRead: 0, cacheWrite: 0, pending: false, source: "sync-details" });
++	const resolved = u.drain();
++	assert.equal(resolved.length, 1);
++	assert.equal(resolved[0].usageSnapshotResolved, true, "real terminal usage explicitly replaces the snapshot identity");
++	assert.equal(u.taskUsage("T-snapshot").children.length, 1, "only real usage appears in task totals");
++}
++
+ console.log("planner-only usage: PASS");
+--- baseline/usage.ts
++++ current/usage.ts
+@@ -59,6 +59,17 @@
+ 	provider?: string;
+ 	usage?: PiUsageLike;
+ 	child?: ChildUsage;
++	usageSnapshot?: {
++		kind: DelegationKind;
++		toolCallId: string;
++		input: null;
++		output: null;
++		cacheRead: null;
++		cacheWrite: null;
++		totalTokens: number;
++		snapshot: true;
++	};
++	usageSnapshotResolved?: boolean;
+ 	bytes?: number;
+ 	messageId?: string;
+ 	toolCallId?: string;
+@@ -577,6 +588,7 @@
+ 	private readonly untasked: RootUsage = emptyRootUsage();
+ 	private readonly shared: RootUsage = emptyRootUsage();
+ 	private readonly seenIds = new Set<string>();
++	private readonly snapshotToolCallIds = new Set<string>();
+ 	private pending: UsageEntry[] = [];
+ 	private seq = 0;
+ 
+@@ -618,7 +630,7 @@
+ 	private refreshCostUnknown(task: TaskUsage): void {
+ 		const rootUnknown = task.root.turns > 0 && task.root.costUsd === undefined;
+ 		const childUnknown = task.children.some((child) => child.costUsd === undefined);
+-		task.costUnknown = rootUnknown || childUnknown;
++		task.costUnknown = rootUnknown || childUnknown || (task.snapshots?.length ?? 0) > 0;
+ 	}
+ 
+ 	private applyRootTurn(input: {
+@@ -741,6 +753,9 @@
+ 	}
+ 
+ 	private upsertChild(task: TaskUsage, child: ChildUsage): void {
++		if (child.toolCallId && task.snapshots?.length) {
++			task.snapshots = task.snapshots.filter((snapshot) => snapshot.toolCallId !== child.toolCallId);
++		}
+ 		const priced = child.costUsd !== undefined
+ 			? child.costUsd
+ 			: resolveCost(
+@@ -798,6 +813,38 @@
+ 			child: cloneChild(this.ensureTask(canonicalTaskId).children.find((c) => childKey(c) === childKey(child)) ?? child),
+ 			...(child.toolCallId ? { toolCallId: child.toolCallId } : {}),
+ 			...(child.runId ? { runId: child.runId } : {}),
++			...(child.toolCallId && this.snapshotToolCallIds.delete(child.toolCallId) ? { usageSnapshotResolved: true } : {}),
++		});
++	}
++
++	/** Persist an honest lower-bound UPDATE snapshot without inventing a token breakdown or cost. */
++	recordChildSnapshot(taskId: string, snapshot: { kind: DelegationKind; toolCallId: string; totalTokens: number }): void {
++		if (this.snapshotToolCallIds.has(snapshot.toolCallId)) return;
++		this.snapshotToolCallIds.add(snapshot.toolCallId);
++		const canonicalTaskId = this.canonicalTaskId(taskId);
++		const task = this.ensureTask(canonicalTaskId);
++		task.snapshots = [
++			...(task.snapshots ?? []).filter((item) => item.toolCallId !== snapshot.toolCallId),
++			{ kind: snapshot.kind, toolCallId: snapshot.toolCallId, input: null, output: null, cacheRead: null, cacheWrite: null, totalTokens: snapshot.totalTokens, snapshot: true },
++		];
++		this.refreshCostUnknown(task);
++		const seq = this.nextSeq();
++		this.push({
++			id: `child-snapshot:${snapshot.toolCallId}:${seq}`,
++			kind: "child",
++			taskId: canonicalTaskId,
++			at: this.at(),
++			toolCallId: snapshot.toolCallId,
++			usageSnapshot: {
++				kind: snapshot.kind,
++				toolCallId: snapshot.toolCallId,
++				input: null,
++				output: null,
++				cacheRead: null,
++				cacheWrite: null,
++				totalTokens: snapshot.totalTokens,
++				snapshot: true,
++			},
+ 		});
+ 	}
+ 
+@@ -904,6 +951,20 @@
+ 			if (!entry || typeof entry !== "object" || !entry.id || !entry.kind) continue;
+ 			if (this.seenIds.has(entry.id)) continue;
+ 			this.seenIds.add(entry.id);
++			if (entry.usageSnapshot?.toolCallId && entry.taskId) {
++				this.snapshotToolCallIds.add(entry.usageSnapshot.toolCallId);
++				const task = this.ensureTask(entry.taskId);
++				task.snapshots = [...(task.snapshots ?? []).filter((item) => item.toolCallId !== entry.usageSnapshot?.toolCallId), { ...entry.usageSnapshot }];
++				this.refreshCostUnknown(task);
++			}
++			if (entry.usageSnapshotResolved && entry.toolCallId) {
++				this.snapshotToolCallIds.delete(entry.toolCallId);
++				if (entry.taskId) {
++					const task = this.ensureTask(entry.taskId);
++					task.snapshots = (task.snapshots ?? []).filter((item) => item.toolCallId !== entry.toolCallId);
++					this.refreshCostUnknown(task);
++				}
++			}
+ 			if (entry.kind === "root-turn") {
+ 				this.applyRootTurn({
+ 					...(entry.taskId ? { taskId: entry.taskId } : {}),
+@@ -987,11 +1048,13 @@
+ export function summarizeTaskBudget(usage: TaskUsage, limits?: CumulativeBudgetLimits): TaskBudgetSummary {
+ 	const rootTokens = usageTokens(usage.root);
+ 	const childTokens = usage.children.reduce((sum, child) => sum + usageTokens(child), 0);
++	const snapshotTokens = (usage.snapshots ?? []).reduce((sum, snapshot) => sum + snapshot.totalTokens, 0);
+ 	const unresolved = (child: ChildUsage): boolean => child.pending || child.source === "unavailable";
+ 	const tokenDebt = usage.children.reduce((sum, child) => sum + (unresolved(child) ? (child.tokensDebt ?? 0) : 0), 0);
+-	const tokenKnown = rootTokens + childTokens + tokenDebt;
++	const tokenKnown = rootTokens + childTokens + snapshotTokens + tokenDebt;
+ 	const tokenUnknown = usage.root.tokensUnknownTurns
+-		+ usage.children.filter(unresolved).length;
++		+ usage.children.filter(unresolved).length
++		+ (usage.snapshots?.length ?? 0);
+ 	const costDebt = usage.children.reduce(
+ 		(sum, child) => sum + (child.costUsd === undefined ? (child.costDebtUsd ?? 0) : 0),
+ 		0,
+@@ -1005,7 +1068,8 @@
+ 	// so it must not fabricate an unknown component (renderUsage guards the same way).
+ 	const rootCostUnknown = usage.root.turns > 0 && usage.root.costUsd === undefined;
+ 	const costUnknown = (rootCostUnknown ? 1 : 0)
+-		+ usage.children.filter((child) => child.costUsd === undefined).length;
++		+ usage.children.filter((child) => child.costUsd === undefined).length
++		+ (usage.snapshots?.length ?? 0);
+ 	const dimension = (known: number, unknownParts: number, debt: number, limit?: number): BudgetDimension => ({
+ 		...(limit === undefined ? {} : { limit, remaining: limit - known }),
+ 		known,
+@@ -1035,6 +1099,12 @@
+ 		role.costUsd += child.costUsd ?? (child.costDebtUsd ?? 0);
+ 		if (child.costUsd === undefined) role.costUnknownParts += 1;
+ 	}
++	for (const snapshot of usage.snapshots ?? []) {
++		const role = byRole[snapshot.kind] ?? (byRole[snapshot.kind] = { calls: 0, tokens: 0, costUsd: 0, costUnknownParts: 0 });
++		role.calls += 1;
++		role.tokens += snapshot.totalTokens;
++		role.costUnknownParts += 1;
++	}
+ 	return {
+ 		configured: limits?.tokens !== undefined || limits?.costUsd !== undefined,
+ 		tokens: dimension(tokenKnown, tokenUnknown, tokenDebt, limits?.tokens),
+@@ -1070,10 +1140,12 @@
+ 	for (const taskId of session.tasks) {
+ 		const usage = ledger.taskUsage(taskId);
+ 		if (!usage) continue;
+-		totalTokens += usageTokens(usage.root) + usage.children.reduce((sum, child) => sum + usageTokens(child), 0);
++		totalTokens += usageTokens(usage.root) + usage.children.reduce((sum, child) => sum + usageTokens(child), 0)
++			+ (usage.snapshots ?? []).reduce((sum, snapshot) => sum + snapshot.totalTokens, 0);
+ 		totalCostUsd += (usage.root.costUsd ?? 0) + usage.children.reduce((sum, child) => sum + (child.costUsd ?? 0), 0);
+ 		costUnknownParts += (usage.root.turns > 0 && usage.root.costUsd === undefined ? 1 : 0)
+-			+ usage.children.filter((child) => child.costUsd === undefined).length;
++			+ usage.children.filter((child) => child.costUsd === undefined).length
++			+ (usage.snapshots?.length ?? 0);
+ 	}
+ 	return {
+ 		unattributed: {
+@@ -1163,11 +1235,15 @@
+ 			`Child  ${child.kind.padEnd(9)} ${child.model ?? child.agent ?? ""}     in ${formatTokens(child.input)}  out ${formatTokens(child.output)}${childCost}${ident}${pending}`,
+ 		);
+ 	}
++	for (const snapshot of taskUsage.snapshots ?? []) {
++		lines.push(`Child  ${snapshot.kind.padEnd(9)} usage snapshot ${formatTokens(snapshot.totalTokens)} uncached tokens (call ${snapshot.toolCallId}); input/output split and cost unknown`);
++	}
+ 	const childCostSum = taskUsage.children.reduce((sum, child) => sum + (child.costUsd ?? 0), 0);
+ 	const rootCostVal = root.costUsd;
+ 	if (taskUsage.costUnknown) {
+ 		const unknownCount = (root.costUsd === undefined && root.turns > 0 ? 1 : 0)
+-			+ taskUsage.children.filter((child) => child.costUsd === undefined).length;
++			+ taskUsage.children.filter((child) => child.costUsd === undefined).length
++			+ (taskUsage.snapshots?.length ?? 0);
+ 		lines.push(`cost unknown${unknownCount ? ` for ${unknownCount} components` : ""}`);
+ 		if (root.turns > 0 && root.costUsd === undefined) {
+ 			const knownChildren = taskUsage.children.filter((child) => child.costUsd !== undefined);
+@@ -1213,7 +1289,8 @@
+ 	const childTok = formatTokens(childTokNum).replace(/\.0k$/, "k").replace(/\.0M$/, "M");
+ 	const compactRoot = formatTokens(taskUsage.root.input + taskUsage.root.output).replace(/\.0k$/, "k");
+ 	const compactChild = formatTokens(
+-		taskUsage.children.reduce((sum, child) => sum + child.input + child.output, 0),
++		taskUsage.children.reduce((sum, child) => sum + child.input + child.output, 0)
++			+ (taskUsage.snapshots ?? []).reduce((sum, snapshot) => sum + snapshot.totalTokens, 0),
+ 	).replace(/\.0k$/, "k");
+ 	let line: string;
+ 	if (taskUsage.costUnknown) {

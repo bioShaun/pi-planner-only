@@ -1,0 +1,8 @@
+{
+  "at": "2026-09-21T07:10:17.703637+00:00",
+  "memory.current": "73739575296\n",
+  "memory.high": "68719476736\n",
+  "memory.max": "81604378624\n",
+  "memory.events": "low 0\nhigh 286340227\nmax 0\noom 0\noom_kill 1\noom_group_kill 0\n",
+  "memory.pressure": "some avg10=74.54 avg60=70.71 avg300=67.03 total=129522743464\nfull avg10=74.02 avg60=69.94 avg300=66.11 total=129376262630\n"
+}

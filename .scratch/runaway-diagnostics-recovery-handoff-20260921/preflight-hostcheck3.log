@@ -1,0 +1,7 @@
+== slot audit 2026-09-21T06:15:57Z
+PID      RSS         CPU%  COMM             状态
+
+没发现绕过 slot 的重进程。
+=== heavy.slice 资源用量 ===
+  内存 12.7G 已用 / 64.0G 软限 / 76.0G 硬顶   swap上限 0.0G   进程 0   CPU权重 50
+

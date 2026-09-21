@@ -1401,6 +1401,19 @@ try {
 		tools.get("planner_redelegate").execute("call-wrc-3", { taskId: retryRequest.nodeId, role: "worker", objective: "x", scope: {}, constraints: [], acceptanceCriteria: [], validation: { required: false } }, undefined, () => {}, ctx),
 		/requires a RecoveryDecision/,
 	);
+	// A same-plan retry cannot lower the token envelope below observed usage;
+	// repeated refusals are still counted by the public refusal breaker.
+	for (let attempt = 1; attempt <= 2; attempt += 1) {
+		await assert.rejects(
+			tools.get("planner_redelegate").execute(`call-wrc-floor-${attempt}`, {
+				taskId: retryRequest.nodeId,
+				role: "worker",
+				envelope: { maxTokens: 499 },
+				recovery: { executionId: "call-wrc-2", action: "retry_same_plan", reason: "retry below observed", worktreeDecision: "keep" },
+			}, undefined, () => {}, ctx),
+			(error) => error?.code === "RECOVERY_ENVELOPE_BELOW_OBSERVED" && (attempt === 1 || /Repeat notice/.test(error.message)),
+		);
+	}
 
 	// Valid retry_same_plan → new execution on the same Task.
 	const retryExec = tools.get("planner_redelegate").execute(
@@ -2354,6 +2367,15 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 	assert.deepEqual(registrations[0].definition.tools, ["read", "grep", "find", "ls"], "the registered tool list is read-only");
 	// 2026-09-18 T-20260918-001..003 launch rejections from the pi-subagents task-intent heuristic.
 	assert.equal(registrations[0].definition.completionGuard, false, "the restricted reader opts out of the completion-guard text heuristic");
+	piEvents.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, {
+		requestId: readerRequest.requestId,
+		ownerRunId: readerRequest.ownerRunId,
+		nodeId: readerRequest.nodeId,
+		tokens: 120,
+		toolCount: 1,
+		currentTool: "read",
+		currentToolArgs: "fixture.txt",
+	});
 	piEvents.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
 		requestId: readerRequest.requestId,
 		ownerRunId: readerRequest.ownerRunId,
@@ -2392,6 +2414,11 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 	assert.equal(d.executions[0].confirmationBasis, "terminal+restricted-reader");
 	assert.equal(d.executions[0].reportReceived, true);
 	assert.equal(d.executions[0].reportAccepted, true);
+	assert.equal(d.executions[0].traceSummary.readOnlyToolFraction, 1);
+	assert.equal(d.executions[0].traceSummary.classifiedToolCalls, 1);
+	assert.equal(d.executions[0].updateTrace[0].currentToolArgs, "fixture.txt");
+	assert.match(diag.content[0].text, /trace tool #1 count=1: read args="fixture.txt"/);
+	assert.match(diag.content[0].text, /trace: firstNonReadOnlyToolOrdinal=none maxTokenDelta=120 readOnlyToolFraction=1 coverage=1\/1/);
 	assert.match(diag.content[0].text, /restricted-reader/);
 	// The session-log line reports a location status, never a guessed file.
 	assert.ok(d.sessionLog, "diagnostics carry the session log status");

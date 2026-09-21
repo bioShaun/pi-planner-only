@@ -1,0 +1,599 @@
+diff --git a/.scratch/explorer-model-config/issues/01-explorer-config-routing.md b/.scratch/explorer-model-config/issues/01-explorer-config-routing.md
+index 501bd0d..f928cc3 100644
+--- a/.scratch/explorer-model-config/issues/01-explorer-config-routing.md
++++ b/.scratch/explorer-model-config/issues/01-explorer-config-routing.md
+@@ -4,7 +4,7 @@
+ 
+ **Blocked by:** None (can start immediately).
+ 
+-**Status:** needs-triage
++**Status:** wontfix
+ 
+ **Resolution:** Partial implementation; focused checks passed; full host compatibility remains open.
+ 
+@@ -40,3 +40,5 @@
+   - `index.ts`：在运行时插件绑定中将 `ctx.model`、`ctx.modelRegistry` 以及 `workspaceCwd` 连通至 `resolveExplorerModelSelection`。
+   - 回归测试：`explorer-model-config.test.mjs` 全量用例覆盖成功矩阵、失败矩阵、能力隔离及注册门禁；`npm run test:release` 干净通过。
+ - 2026-09-18 真实宿主数据点（来自 `../../root-stamped-run-identity/evidence/`，0.8.0 / `84cced4`，`pi-subagents@0.68.0`）：隔离 `settings.json` 配置 `subagents.agentOverrides.scout = qwen-local/qwen3.8-27b, thinking low`，Root 为 `tcuni-luna/gpt-5.6-luna`；三次 `planner-scout` 执行实际模型均为 `tcuni-luna/gpt-5.6-luna`（`A/meta.json:14`），override 未生效。与 `4fa55e3` 回退 explorer-model 接线后的预期一致；本票的宿主兼容性缺口仍然 open，该记录可作为修复后对照的"修复前"样本。
++
++- 2026-09-21：根因定位到上游 pi-subagents（运行时注册的 agent 不套用 `subagents.defaultModel` / `agentOverrides`，见 `runtime-agent-registry.ts:424`），改为上游修复，插件不再解析模型配置。本票的插件侧适配器方案作废；后续见 `.scratch/explorer-model-upstream-runtime-agent-settings/`。
+diff --git a/.scratch/explorer-model-config/issues/02-explorer-redelegation-identity.md b/.scratch/explorer-model-config/issues/02-explorer-redelegation-identity.md
+index 333d1c6..2d0cb6c 100644
+--- a/.scratch/explorer-model-config/issues/02-explorer-redelegation-identity.md
++++ b/.scratch/explorer-model-config/issues/02-explorer-redelegation-identity.md
+@@ -4,7 +4,7 @@
+ 
+ **Blocked by:** 01 — Explorer 按子代理配置启动并保持只读。
+ 
+-**Status:** needs-triage
++**Status:** wontfix
+ 
+ **Resolution:** Focused lifecycle checks passed; final closure blocked by 01 and release/host validation.
+ 
+@@ -37,3 +37,5 @@
+   - 身份真实性：宿主实际报告的 terminal model / thinking 写入执行记录与账本；请求值与观察值不同时保持观察值，缺失时保持未知（不回填请求值）。
+   - 用量与非目标角色隔离：`usage.jsonl` 持久化行核对确认子执行用量归属真实模型；Worker、Reviewer、Validator 请求不附带任何模型权威，Root 运行时模型未被改动。
+   - 回归测试见 `explorer-model-config.test.mjs`，`npm run test:release` 全部通过。
++
++- 2026-09-21：根因定位到上游 pi-subagents（运行时注册的 agent 不套用 `subagents.defaultModel` / `agentOverrides`，见 `runtime-agent-registry.ts:424`），改为上游修复，插件不再解析模型配置。本票的插件侧适配器方案作废；后续见 `.scratch/explorer-model-upstream-runtime-agent-settings/`。
+diff --git a/.scratch/explorer-model-config/issues/03-real-pi-acceptance.md b/.scratch/explorer-model-config/issues/03-real-pi-acceptance.md
+index 251ee09..dab3fa1 100644
+--- a/.scratch/explorer-model-config/issues/03-real-pi-acceptance.md
++++ b/.scratch/explorer-model-config/issues/03-real-pi-acceptance.md
+@@ -4,7 +4,7 @@
+ 
+ **Blocked by:** 02 — Explorer 重新委派读取当前配置并保留真实运行身份（已传递依赖票 01）。
+ 
+-**Status:** needs-triage
++**Status:** wontfix
+ 
+ **Resolution:** Acceptance blocked; historical model/tool evidence only; current implementation not accepted.
+ 
+@@ -39,3 +39,5 @@
+   - 账本与用量核验：`T-20260918-001.json` 及 `usage.jsonl` 分离记录 Root 为 `gpt-5.6-luna`，Explorer 为 `qwen-local/qwen3.8-27b:low`；执行分类保持为 `restricted-reader`，确认依据为 `terminal+restricted-reader`。
+   - 完整证据链与运行文件见 `.scratch/explorer-model-config/evidence/` 及 [REPORT.md](../evidence/REPORT.md)。
+ - 2026-09-18：关于"需上游提供真实 runId"的前提已由 ADR-0004 及 `.scratch/root-stamped-run-identity/` 取消（改为 Root 在接纳时盖章）。宿主重跑验收并入 `root-stamped-run-identity/04`。
++
++- 2026-09-21：根因定位到上游 pi-subagents（运行时注册的 agent 不套用 `subagents.defaultModel` / `agentOverrides`，见 `runtime-agent-registry.ts:424`），改为上游修复，插件不再解析模型配置。本票的插件侧适配器方案作废；后续见 `.scratch/explorer-model-upstream-runtime-agent-settings/`。
+diff --git a/.scratch/explorer-model-config/spec.md b/.scratch/explorer-model-config/spec.md
+index d5f2022..f870769 100644
+--- a/.scratch/explorer-model-config/spec.md
++++ b/.scratch/explorer-model-config/spec.md
+@@ -1,6 +1,6 @@
+ # Explorer 委派遵循子代理模型配置
+ 
+-Status: ready-for-agent
++Status: wontfix
+ Type: spec
+ Date: 2026-09-18
+ Source: T-20260918-004 的模型继承排查
+@@ -108,3 +108,7 @@ Evidence references retained for implementation (local to the diagnosed machine)
+ - [Installed Delegation request construction](/home/tcuni-claw/.pi/agent/git/github.com/bioShaun/pi-planner-only/delegate.ts:960)
+ - [Runtime agents appended after configured discovery](/home/tcuni-claw/.pi/agent/npm/node_modules/pi-subagents/src/agents/runtime-agent-registry.ts:424)
+ - [Host fallback to parent model](/home/tcuni-claw/.pi/agent/npm/node_modules/pi-subagents/src/runs/shared/model-resolution.ts:305)
++
++## Comments
++
++- 2026-09-21：根因定位到上游 pi-subagents（运行时注册的 agent 不套用 `subagents.defaultModel` / `agentOverrides`，见 `runtime-agent-registry.ts:424`），改为上游修复，插件不再解析模型配置。本票的插件侧适配器方案作废；后续见 `.scratch/explorer-model-upstream-runtime-agent-settings/`。
+diff --git a/README.md b/README.md
+index f76fc31..bebe29b 100644
+--- a/README.md
++++ b/README.md
+@@ -195,7 +195,7 @@ Validation runs are delegated by Root explicitly (`planner_delegate` with
+ role=validator for a fresh validation Task, `planner_redelegate` to re-validate
+ an existing Task); nothing is auto-dispatched.
+ 
+-`planner_delegate` and `planner_redelegate` use launcher defaults for `model` and `thinking` unless operator role routing is enabled. Enabled routing sends an exactly verified available `provider/model` and thinking, then checks actual terminal identity before accepting completion. Ordinary worker, explorer, validator, and reviewer requests omit `toolBudget`; the Task's one report-only correction binds the registered `planner-report-only` agent (`tools: []`, with only the launcher's structured result tool appended) and sends `toolBudget: { hard: 1, block: "*" }`. The immutable execution record, not re-delegation arguments, selects that mode and persists the sent budget, registration proof, agent binding, and raw terminal. `timeoutMs` remains unset because the plugin owns its execution envelope. Usage rows retain the child response identity for attribution.
++`planner_delegate` and `planner_redelegate` use launcher defaults for `model` and `thinking` unless operator role routing is enabled. Enabled routing sends an exactly verified available `provider/model` and thinking, then checks actual terminal identity before accepting completion. Ordinary worker, explorer, validator, and reviewer requests omit `toolBudget`; the Task's one report-only correction binds the registered `planner-report-only` agent (`tools: []`, with only the launcher's structured result tool appended) and sends `toolBudget: { hard: 1, block: "*" }`. The immutable execution record, not re-delegation arguments, selects that mode and persists the sent budget, registration proof, agent binding, and raw terminal. `timeoutMs` remains unset because the plugin owns its execution envelope. Usage rows retain the child response identity for attribution. `planner-scout` and `planner-report-only` are runtime-registered agents whose definitions carry no `model`/`thinking`; with pi-subagents at or after upstream commit `bbb30096` (#2369, 2026-09-20, "apply model settings to runtime-registered agents"; first release after 0.70.0) they follow `subagents.defaultModel` / `defaultThinking` and the `model`/`thinking` fields of `subagents.agentOverrides.planner-scout` (or `planner-report-only`). `agentOverrides.scout` configures only the builtin scout and never reaches the Explorer. On pi-subagents 0.70.0 and older, runtime agents skip every operator model setting and inherit the Root session model.
+ 
+ A `reviewer` child always launches with `context: "fresh"` carrying a
+ `ReviewRequest` — the Task's spec, the latest WorkerReport, Root's Git
+diff --git a/README.zh-CN.md b/README.zh-CN.md
+index 7a2e079..6a015c0 100644
+--- a/README.zh-CN.md
++++ b/README.zh-CN.md
+@@ -126,7 +126,7 @@ hold，直到恢复条件解决。
+ 
+ 验证运行由 Root 显式委派（`planner_delegate` + role=validator 新建验证 Task，`planner_redelegate` 复验既有 Task）；没有任何自动派发。
+ 
+-`planner_delegate` / `planner_redelegate` 在角色路由关闭时沿用 launcher 的 `model` / `thinking` 默认值；启用操作者策略后，发送精确确认可用的 `provider/model` 与 thinking，并在采纳完成报告前核对终态实际身份。普通 worker、explorer、validator、reviewer 请求不设置 `toolBudget`；Task 唯一一次 report-only 修复绑定已注册的 `planner-report-only` agent（`tools: []`，仅由 launcher 追加结构化结果工具），并发送 `toolBudget: { hard: 1, block: "*" }`。该模式由不可变执行记录决定，不能被重入参数翻转；账本保存实际发送的预算、注册证明、agent 绑定与原始终态。`timeoutMs` 仍不设置，执行 envelope 由插件控制。usage 按 child 返回的实际身份归因。
++`planner_delegate` / `planner_redelegate` 在角色路由关闭时沿用 launcher 的 `model` / `thinking` 默认值；启用操作者策略后，发送精确确认可用的 `provider/model` 与 thinking，并在采纳完成报告前核对终态实际身份。普通 worker、explorer、validator、reviewer 请求不设置 `toolBudget`；Task 唯一一次 report-only 修复绑定已注册的 `planner-report-only` agent（`tools: []`，仅由 launcher 追加结构化结果工具），并发送 `toolBudget: { hard: 1, block: "*" }`。该模式由不可变执行记录决定，不能被重入参数翻转；账本保存实际发送的预算、注册证明、agent 绑定与原始终态。`timeoutMs` 仍不设置，执行 envelope 由插件控制。usage 按 child 返回的实际身份归因。`planner-scout` 与 `planner-report-only` 是运行时注册的 agent，定义里不带 `model`/`thinking`；在上游 commit `bbb30096`（#2369，2026-09-20，「apply model settings to runtime-registered agents」，0.70.0 之后的首个版本）及以后的 pi-subagents 上，它们遵循 `subagents.defaultModel` / `defaultThinking` 以及 `subagents.agentOverrides.planner-scout`（或 `planner-report-only`）的 `model`/`thinking`。`agentOverrides.scout` 只作用于 builtin scout，不会影响 Explorer。pi-subagents 0.70.0 及更早版本对运行时 agent 不套用任何操作者模型设置，Explorer 会继承 Root 会话模型。
+ 
+ `reviewer` 子进程一律 `context: "fresh"`，携带 `ReviewRequest`——Task 的 spec、最新 WorkerReport、Root 采集的 Git 证据、有界补丁——不会 fork 父会话。ReviewRequest 是对 Task 的一次调用，绝不是新的 TaskSpec；reviewer 调用只能经 `planner_redelegate`（新铸的 Task 上没有东西可审）。Task 的原始 role、objective、spec 在 worker / reviewer / validation 各轮中保持不变。经 `planner_redelegate` 的 validator 调用是对被审 Task 的调用，其报告记录在该 Task 的 validatorReports。
+ 
+diff --git a/concurrency.test.mjs b/concurrency.test.mjs
+index f3c3b45..4854620 100644
+--- a/concurrency.test.mjs
++++ b/concurrency.test.mjs
+@@ -77,7 +77,9 @@ try {
+ }
+ 
+ // --------------------------------------------------------------------------
+-// Ticket 02: Restored writer holds with holdReason and occupied > limit
++// Restored writer holds isolate workspaces without consuming this session's
++// execution capacity. Direct hold callers remain capacity-counting unless
++// they explicitly identify a ledger-restored hold.
+ // --------------------------------------------------------------------------
+ {
+ 	const c = new ConcurrencyController({ savedLimit: 2 });
+@@ -89,6 +91,7 @@ try {
+ 		workspaces: ["/repo/a"],
+ 		reservedAt: "2026-09-18T10:00:00.000Z",
+ 		holdReason: "unconfirmed stop on crash",
++		countsTowardLimit: false,
+ 	});
+ 	c.hold({
+ 		id: "writerhold:call-2",
+@@ -98,6 +101,7 @@ try {
+ 		workspaces: ["/repo/b"],
+ 		reservedAt: "2026-09-18T10:05:00.000Z",
+ 		holdReason: "abnormal termination",
++		countsTowardLimit: false,
+ 	});
+ 	c.hold({
+ 		id: "writerhold:call-3",
+@@ -107,15 +111,17 @@ try {
+ 		workspaces: ["/repo/c"],
+ 		reservedAt: "2026-09-18T10:10:00.000Z",
+ 		holdReason: "network drop",
++		countsTowardLimit: false,
+ 	});
+ 
+ 	const status = c.status();
+-	assert.equal(status.occupied, 3, "occupied is 3");
+-	assert.equal(status.limit, 2, "limit is 2; occupied > limit from restore");
+-	assert.equal(status.available, 0, "available is 0");
++	assert.equal(status.occupied, 0, "restored holds do not occupy execution capacity");
++	assert.equal(status.isolationHolds, 3, "all restored holds remain visible as isolation holds");
++	assert.equal(status.limit, 2, "configured execution limit remains 2");
++	assert.equal(status.available, 2, "execution capacity remains available");
+ 	assert.equal(c.get("writerhold:call-1")?.holdReason, "unconfirmed stop on crash");
+ 
+-	// New writer is refused with CONCURRENCY_LIMIT_REACHED
++	// An unrelated writer is admitted, while the held workspace still conflicts.
+ 	const res = c.reserve({
+ 		id: "w-new",
+ 		taskId: "T-20260918-004",
+@@ -123,7 +129,26 @@ try {
+ 		capability: "writer",
+ 		workspaces: ["/repo/d"],
+ 	});
+-	assert.equal(res.refusal?.code, "CONCURRENCY_LIMIT_REACHED");
+-	assert.equal(c.status().occupied, 3, "holds not cleared");
++	assert.ok(res.reservation);
++	assert.equal(c.status().occupied, 1);
++	assert.equal(c.reserve({ id: "w-conflict", role: "worker", capability: "writer", workspaces: ["/repo/a"] }).refusal?.code, "WORKSPACE_CONFLICT");
++	assert.equal(c.status().isolationHolds, 3, "holds not cleared");
+ 	assert.equal(c.status().limit, 2, "limit not bumped");
+ }
++
++{
++	const c = new ConcurrencyController({ savedLimit: 1 });
++	c.hold({ id: "legacy-direct", role: "worker", capability: "writer", workspaces: ["/legacy"], reservedAt: "2026-09-18T00:00:00.000Z" });
++	c.hold({ id: "legacy-direct", role: "worker", capability: "writer", workspaces: ["/legacy"], reservedAt: "2026-09-18T00:00:00.000Z", countsTowardLimit: false });
++	assert.equal(c.get("legacy-direct")?.countsTowardLimit, true, "duplicate registration cannot downgrade a live capacity claim");
++	assert.equal(c.status().occupied, 1, "hold defaults conservatively to capacity-counting");
++	assert.equal(c.reserve({ id: "blocked", role: "worker", capability: "writer", workspaces: ["/other"] }).refusal?.code, "CONCURRENCY_LIMIT_REACHED");
++}
++
++{
++	const c = new ConcurrencyController();
++	c.hold({ id: "same-id", role: "worker", capability: "writer", workspaces: ["/held"], reservedAt: "2026-09-18T00:00:00.000Z", countsTowardLimit: false });
++	const collision = c.reserve({ id: "same-id", role: "worker", capability: "writer", workspaces: ["/unrelated"] });
++	assert.equal(collision.refusal?.code, "WORKSPACE_CONFLICT", "same-id reserve cannot bypass capacity admission through a restored hold");
++	assert.equal(c.get("same-id")?.countsTowardLimit, false);
++}
+diff --git a/concurrency.ts b/concurrency.ts
+index 224a36a..c068617 100644
+--- a/concurrency.ts
++++ b/concurrency.ts
+@@ -32,6 +32,8 @@ export interface ConcurrencyReservation {
+ 	workspaces: string[];
+ 	reservedAt: string;
+ 	holdReason?: string;
++	/** Whether this reservation consumes one execution slot in this session. */
++	countsTowardLimit: boolean;
+ }
+ 
+ export interface ConcurrencyStatus {
+@@ -39,6 +41,8 @@ export interface ConcurrencyStatus {
+ 	source: ConcurrencySource;
+ 	occupied: number;
+ 	available: number;
++	/** Workspace isolation claims retained without consuming execution capacity. */
++	isolationHolds: number;
+ 	reservations: ConcurrencyReservation[];
+ }
+ 
+@@ -143,11 +147,31 @@ export class ConcurrencyController {
+ 	getSource(): ConcurrencySource { return this.sessionLimit !== undefined ? "session" : this.hasSavedLimit ? "saved" : "default"; }
+ 
+ 	reserve(request: ConcurrencyReservationRequest): ConcurrencyReserveOutcome {
+-		if (this.reservations.has(request.id)) return { reservation: this.reservations.get(request.id) };
++		const existing = this.reservations.get(request.id);
++		if (existing) {
++			if (existing.countsTowardLimit) return { reservation: existing };
++			const limit = this.getLimit();
++			const occupied = [...this.reservations.values()].filter((item) => item.countsTowardLimit).length;
++			return {
++				refusal: {
++					code: "WORKSPACE_CONFLICT",
++					reason: `WORKSPACE_CONFLICT: execution id ${request.id.slice(0, 100)} is retained as a restored isolation hold; use planner_tasks to diagnose it before retrying`,
++					limit,
++					occupied,
++					available: Math.max(0, limit - occupied),
++					conflictingIds: [existing.id],
++				},
++			};
++		}
+ 		const limit = this.getLimit();
+-		const occupied = this.reservations.size;
++		const occupied = [...this.reservations.values()].filter((item) => item.countsTowardLimit).length;
+ 		if (occupied >= limit) {
+-			return { refusal: { code: "CONCURRENCY_LIMIT_REACHED", reason: `CONCURRENCY_LIMIT_REACHED: occupied ${occupied}/${limit}; no execution slot is available`, limit, occupied, available: 0 } };
++			const active = [...this.reservations.values()]
++				.filter((item) => item.countsTowardLimit)
++				.slice(0, 5)
++				.map((item) => `${(item.taskId ?? "unbound").slice(0, 100)}/${item.id.slice(0, 100)}`)
++				.join(", ");
++			return { refusal: { code: "CONCURRENCY_LIMIT_REACHED", reason: `CONCURRENCY_LIMIT_REACHED: occupied ${occupied}/${limit}; no execution slot is available${active ? ` (active: ${active})` : ""}; call planner_tasks for bounded reservation diagnostics`, limit, occupied, available: 0 } };
+ 		}
+ 		const workspaces = [...new Set((request.workspaces ?? []).filter(Boolean).map(normalizedWorkspace))];
+ 		const conflicts = this.enforceWorkspace ? [...this.reservations.values()].filter((active) => {
+@@ -160,7 +184,7 @@ export class ConcurrencyController {
+ 			return {
+ 				refusal: {
+ 					code: "WORKSPACE_CONFLICT",
+-					reason: `WORKSPACE_CONFLICT: ${request.capability} cannot run beside active ${conflicts.map((item) => `${item.role} ${item.taskId ?? item.id}`).join(", ")}`,
++					reason: `WORKSPACE_CONFLICT: ${request.capability} cannot run beside active ${conflicts.slice(0, 5).map((item) => `${item.role.slice(0, 50)} ${(item.taskId ?? item.id).slice(0, 100)}`).join(", ")}; call planner_tasks for bounded reservation diagnostics`,
+ 					limit,
+ 					occupied,
+ 					available: limit - occupied,
+@@ -175,6 +199,7 @@ export class ConcurrencyController {
+ 			capability: request.capability,
+ 			workspaces,
+ 			reservedAt: new Date().toISOString(),
++			countsTowardLimit: true,
+ 		};
+ 		this.reservations.set(request.id, reservation);
+ 		return { reservation };
+@@ -186,8 +211,14 @@ export class ConcurrencyController {
+ 	 * Never refuses: the hold exists precisely because a stop was never
+ 	 * confirmed, so it must occupy the workspace unconditionally.
+ 	 */
+-	hold(entry: { id: string; taskId?: string; role: string; capability: ConcurrencyCapability; workspaces: readonly string[]; reservedAt: string; holdReason?: string }): void {
+-		if (this.reservations.has(entry.id)) return;
++	hold(entry: { id: string; taskId?: string; role: string; capability: ConcurrencyCapability; workspaces: readonly string[]; reservedAt: string; holdReason?: string; countsTowardLimit?: boolean }): void {
++		const existing = this.reservations.get(entry.id);
++		if (existing) {
++			// Re-registration can upgrade a restored isolation claim to a live
++			// capacity claim, but must never downgrade a live execution.
++			if (entry.countsTowardLimit !== false) existing.countsTowardLimit = true;
++			return;
++		}
+ 		this.reservations.set(entry.id, {
+ 			id: entry.id,
+ 			...(entry.taskId ? { taskId: entry.taskId } : {}),
+@@ -196,6 +227,7 @@ export class ConcurrencyController {
+ 			workspaces: [...new Set(entry.workspaces.filter(Boolean).map(normalizedWorkspace))],
+ 			reservedAt: entry.reservedAt,
+ 			...(entry.holdReason ? { holdReason: entry.holdReason } : {}),
++			countsTowardLimit: entry.countsTowardLimit !== false,
+ 		});
+ 	}
+ 	setTaskId(id: string, taskId: string): void {
+@@ -205,6 +237,8 @@ export class ConcurrencyController {
+ 	get(id: string): ConcurrencyReservation | undefined { return this.reservations.get(id); }
+ 	status(): ConcurrencyStatus {
+ 		const limit = this.getLimit();
+-		return { limit, source: this.getSource(), occupied: this.reservations.size, available: Math.max(0, limit - this.reservations.size), reservations: [...this.reservations.values()] };
++		const reservations = [...this.reservations.values()];
++		const occupied = reservations.filter((item) => item.countsTowardLimit).length;
++		return { limit, source: this.getSource(), occupied, available: Math.max(0, limit - occupied), isolationHolds: reservations.length - occupied, reservations };
+ 	}
+ }
+diff --git a/delegate.test.mjs b/delegate.test.mjs
+index 8dece11..7e935ce 100644
+--- a/delegate.test.mjs
++++ b/delegate.test.mjs
+@@ -29,6 +29,7 @@ import { FINDING_CATEGORIES, FINDING_SEVERITIES, REVIEW_VERDICTS } from "./revie
+ import { ConcurrencyController } from "./concurrency.ts";
+ import { LedgerSnapshotStore } from "./ledger-store.ts";
+ import { TaskStore, createTaskSpec } from "./task.ts";
++import { PlannerOrchestrator } from "./orchestrate.ts";
+ import { UsageLedger } from "./usage.ts";
+ import { Compile } from "typebox/compile";
+ 
+@@ -392,6 +393,34 @@ async function expectRefusal(promise, code) {
+ 		assert.equal(concurrency.status().occupied, 1, "no reservation leaked");
+ 	}
+ 
++	// Historical ledger holds retain isolation but do not exhaust a new
++	// session's execution capacity in an unrelated workspace.
++	{
++		const ledgerRoot = makeTempDir("planner-only-restored-holds-");
++		const snapshots = new LedgerSnapshotStore(ledgerRoot);
++		for (let i = 1; i <= 4; i++) {
++			const seed = new TaskStore();
++			const held = seed.create(createTaskSpec({ objective: "historical hold", cwd: `/historical/${i}`, role: "worker", validation: { required: false } }, `T-20260918-h${i}`));
++			held.state = "blocked";
++			held.writerHold = { executionId: `call-old-${i}`, reason: "stop unconfirmed", since: "2026-09-18T00:00:00.000Z" };
++			snapshots.writeOrThrow(held);
++		}
++		const concurrency = new ConcurrencyController();
++		const orch = new PlannerOrchestrator({ ledgerDir: ledgerRoot, concurrency, gitRunner: fakeCleanGit() });
++		assert.equal(orch.restoreFromLedger().restored, 4);
++		const { deps, launches } = makeDeps({ store: orch.store, concurrency });
++		const taskCount = orch.store.list().length;
++		await expectRefusal(runDelegation(deps, makeParams(), "/historical/1", { executionId: "call-held-workspace" }), "WORKSPACE_CONFLICT");
++		assert.equal(launches.length, 0, "restored workspace isolation refuses before launch");
++		assert.equal(orch.store.list().length, taskCount, "workspace refusal mints no Task");
++		const outcome = await runDelegation(deps, makeParams(), dir, { executionId: "call-new-session" });
++		assert.equal(launches.length, 1);
++		assert.equal(outcome.report?.taskId, outcome.task.taskId, "unrelated execution returns an accepted report");
++		assert.equal(outcome.task.executions.at(-1).terminationConfirmed, true);
++		assert.equal(concurrency.status().occupied, 0, "completed execution releases only the new live reservation");
++		assert.equal(concurrency.status().isolationHolds, 4, "all historical holds remain registered");
++	}
++
+ 	// Ticket 02: Pre-admission refusal on existing Task keeps canonical taskId and leaves Task unchanged
+ 	{
+ 		const store = new TaskStore();
+@@ -2749,8 +2778,8 @@ function makeFakeWallClock() {
+ 	store.transition(taskId, "blocked");
+ 	store.setRecoveryRequired(taskId, { executionId: "call-held", reason: "stop unconfirmed" });
+ 	store.setWriterHold(taskId, { executionId: "call-held", reason: "stop unconfirmed", since: "2026-09-16T00:00:00.000Z" });
+-	const concurrency = new ConcurrencyController();
+-	concurrency.hold({ id: "writerhold:call-held", taskId, role: "worker", capability: "writer", workspaces: [dir], reservedAt: "2026-09-16T00:00:00.000Z" });
++	const concurrency = new ConcurrencyController({ savedLimit: 1 });
++	concurrency.hold({ id: "writerhold:call-held", taskId, role: "worker", capability: "writer", workspaces: [dir], reservedAt: "2026-09-16T00:00:00.000Z", countsTowardLimit: false });
+ 	const { deps, launches } = makeDeps({ store, concurrency, gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args) });
+ 	const holdBefore = structuredClone(store.require(taskId).writerHold);
+ 	const reservationsBefore = structuredClone(concurrency.status().reservations);
+@@ -2770,6 +2799,20 @@ function makeFakeWallClock() {
+ 	assert.equal(store.require(taskId).recovery.required, true);
+ 	assert.equal(store.require(taskId).recoveryHistory?.length ?? 0, recoveryHistoryBefore, "insufficient manual recovery consumes no recovery grant");
+ 	assert.equal(launches.length, 0, "insufficient manual recovery emits no REQUEST");
++	assert.ok(concurrency.reserve({ id: "live-capacity", role: "worker", capability: "writer", workspaces: ["/unrelated/live"] }).reservation);
++	await expectRefusal(runDelegation(deps, makeParams({
++		taskId,
++		recovery: { executionId: "call-held", action: "fix_environment", reason: "operator verified all child processes exited", worktreeDecision: "manual" },
++	}), dir, {
++		executionId: "call-manual-capacity-refused",
++		requestId: "request-manual-capacity-refused",
++		requestObservation: () => ({ requestId: "request-manual-capacity-refused", requestDeadline: "2026-09-20T00:02:00.000Z",
++			remainingMs: 120_000, observedAt: "2026-09-20T00:00:00.000Z" }),
++	}), "CONCURRENCY_LIMIT_REACHED");
++	assert.equal(concurrency.get("writerhold:call-held")?.countsTowardLimit, false, "manual recovery rollback preserves restored isolation classification");
++	assert.equal(concurrency.status().occupied, 1, "rollback does not turn the restored hold into execution capacity");
++	assert.equal(concurrency.status().isolationHolds, 1);
++	concurrency.release("live-capacity");
+ 	const outcome = await runDelegation(deps, makeParams({
+ 		taskId,
+ 		recovery: { executionId: "call-held", action: "fix_environment", reason: "operator verified all child processes exited", worktreeDecision: "manual" },
+diff --git a/index.test.mjs b/index.test.mjs
+index 593aefe..cf95835 100644
+--- a/index.test.mjs
++++ b/index.test.mjs
+@@ -26,6 +26,7 @@ process.env.PI_PLANNER_ONLY_CANCEL_GRACE_MS = "50";
+ for (const limit of ["TOOL_ATTEMPTS", "CHILD_LAUNCHES", "FAILURES", "REPAIRS"]) {
+ 	process.env[`PI_PLANNER_ONLY_REQUEST_${limit}`] = "1000";
+ }
++
+ // ticket 05 → 08: this file drives the pre-cutover subagent chain through the hook; deleted with it.
+ 
+ delete process.env.PI_SUBAGENT_CHILD;
+@@ -1762,7 +1763,10 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
+ 	await handlers.get("input")({ source: "interactive" }, noLiveCtx);
+ 	const emptyListed = await tasksTool.execute("call-tasks-2", {}, undefined, () => {}, noLiveCtx);
+ 	assert.deepEqual(emptyListed.details.tasks, []);
+-	assert.match(emptyListed.content[0].text, /No live Tasks in .+\. planner_delegate mints a new one\./);
++	assert.match(emptyListed.content[0].text, /No live Tasks in .+\./);
++	assert.match(emptyListed.content[0].text, /capacity: \d+\/\d+ execution slots occupied/);
++	assert.ok(emptyListed.details.concurrency);
++	assert.ok(emptyListed.details.concurrency.reservations.length <= 12, "global concurrency diagnostics are bounded");
+ 	await handlers.get("agent_settled")({}, ctx);
+ 	await handlers.get("input")({ source: "interactive" }, ctx);
+ }
+@@ -3208,3 +3212,44 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
+ 		);
+ 	}
+ }
++
++// Concurrency listing priority is tested last because session_start adopts
++// ledger fixtures into the shared orchestrator store. Running it earlier
++// would change the source provenance asserted by the diagnostics tests above.
++{
++	const tasksTool = tools.get("planner_tasks");
++	const blockedCwd = join(tmpdir(), "planner-only-capacity-blocked-cwd");
++	const blockedCtx = { ...ctx, cwd: blockedCwd };
++	// More than the public diagnostics cap of restored holds: the blocker for
++	// this cwd is deliberately oldest, so insertion-order slicing would hide it.
++	for (let i = 0; i < 13; i++) {
++		new LedgerSnapshotStore(isolatedAgentDir).write({
++			taskId: `T-20260918-cap-${String(i).padStart(2, "0")}`,
++			state: "blocked",
++			role: "worker",
++			cwd: `/unrelated/history-${i}`,
++			spec: { objective: "historical isolation" },
++			writerHold: { executionId: `call-history-${i}`, reason: `historical stop ${i}`, since: "2026-09-18T00:00:00.000Z" },
++			updatedAt: `2026-09-18T00:${String(i).padStart(2, "0")}:00.000Z`,
++		});
++	}
++	new LedgerSnapshotStore(isolatedAgentDir).write({
++		taskId: "T-20260918-cap-blocker",
++		state: "blocked",
++		role: "worker",
++		cwd: blockedCwd,
++		spec: { objective: "current workspace isolation" },
++		writerHold: { executionId: "call-current-workspace-blocker", reason: "current workspace stop unconfirmed", since: "2026-09-17T00:00:00.000Z" },
++		updatedAt: "2026-09-17T00:00:00.000Z",
++	});
++	await handlers.get("session_start")({}, blockedCtx);
++	await handlers.get("agent_settled")({}, blockedCtx);
++	await handlers.get("input")({ source: "interactive" }, blockedCtx);
++	const listed = await tasksTool.execute("call-tasks-capacity-priority", {}, undefined, () => {}, blockedCtx);
++	assert.deepEqual(listed.details.tasks, []);
++	assert.equal(listed.details.concurrency.workspaceBlocked, true);
++	assert.ok(listed.details.concurrency.reservations.length <= 12, "global concurrency diagnostics are bounded");
++	assert.equal(listed.details.concurrency.reservations[0].taskId, "T-20260918-cap-blocker", "the current-workspace blocker is prioritized ahead of unrelated history");
++	assert.equal(listed.details.concurrency.truncated, true);
++	assert.match(listed.content[0].text, /Delegation is currently blocked/);
++}
+diff --git a/index.ts b/index.ts
+index c6d5762..26bee41 100644
+--- a/index.ts
++++ b/index.ts
+@@ -1351,16 +1351,68 @@ export default function plannerOnly(pi: ExtensionAPI): void {
+ 				};
+ 			}
+ 			const tasks = orchestrator.listLiveTasks(cwd);
++			const status = orchestrator.getConcurrencyStatus();
++			const workspace = normalizeWorkspaceIdentity(cwd);
++			const reservationLimit = 12;
++			const prioritizedReservations = status.reservations
++				.map((item, index) => ({ item, index }))
++				.sort((left, right) => {
++					const priority = (item: typeof left.item) => item.workspaces.includes(workspace) ? 0 : item.countsTowardLimit ? 1 : 2;
++					return priority(left.item) - priority(right.item) || left.index - right.index;
++				})
++				.map(({ item }) => item);
++			let reservationFieldsTruncated = false;
++			const reservations = prioritizedReservations.slice(0, reservationLimit).map((item) => {
++				reservationFieldsTruncated ||= item.id.length > 200
++					|| (item.taskId?.length ?? 0) > 200
++					|| (item.holdReason?.length ?? 0) > 400
++					|| item.workspaces.length > 8
++					|| item.workspaces.some((path) => path.length > 400);
++				return ({
++				id: item.id.slice(0, 200),
++				...(item.taskId ? { taskId: item.taskId.slice(0, 200) } : {}),
++				capability: item.capability,
++				countsTowardLimit: item.countsTowardLimit,
++				workspaces: item.workspaces.slice(0, 8).map((path) => path.slice(0, 400)),
++				...(item.holdReason ? { reason: item.holdReason.slice(0, 400) } : {}),
++				});
++			});
++			const workspaceBlocked = status.reservations.some((item) => item.workspaces.includes(workspace));
++			const concurrency = {
++				limit: status.limit,
++				occupied: status.occupied,
++				available: status.available,
++				isolationHolds: status.isolationHolds,
++				workspaceBlocked,
++				reservations,
++				truncated: status.reservations.length > reservations.length || reservationFieldsTruncated,
++			};
++			const capacityLine = `capacity: ${status.occupied}/${status.limit} execution slots occupied, ${status.available} available; ${status.isolationHolds} isolation hold(s)`;
++			const reservationLines = reservations.map((item) =>
++				`reservation ${item.taskId ?? "unbound"}/${item.id} capability=${item.capability} capacity=${item.countsTowardLimit ? "occupied" : "isolation-only"} workspace=${item.workspaces.join(", ") || "none"}${item.reason ? ` reason=${item.reason}` : ""}`,
++			);
++			const admissionBlocked = status.available === 0 || workspaceBlocked;
+ 			const text = tasks.length === 0
+-				? `planner_tasks: No live Tasks in ${cwd}. planner_delegate mints a new one.`
++				? [
++					`planner_tasks: No live Tasks in ${cwd}.`,
++					capacityLine,
++					...reservationLines,
++					...(concurrency.truncated ? [`reservations: showing ${reservations.length} of ${status.reservations.length}`] : []),
++					admissionBlocked
++						? "Delegation is currently blocked; use the reservation task/execution IDs above to diagnose capacity or workspace isolation before retrying."
++						: "No capacity or workspace blocker is visible; planner_delegate can mint a new Task.",
++				].join("\n")
+ 				: [
+ 					`planner_tasks: ${tasks.length} live Task(s) in ${cwd}:`,
+ 					...tasks.map((task) =>
+ 						`${task.taskId} | ${task.state} | ${task.role}${task.recoveryRequired ? " | recovery required" : ""} | ${task.objective ?? "(no spec)"}`),
++					capacityLine,
++					...reservationLines,
++					...(concurrency.truncated ? [`reservations: showing ${reservations.length} of ${status.reservations.length}`] : []),
+ 				].join("\n");
+ 			return {
+ 				content: [{ type: "text", text }],
+-				details: { tasks },
++				details: { tasks, concurrency },
+ 			};
+ 		},
+ 	});
+diff --git a/orchestrate.test.mjs b/orchestrate.test.mjs
+index a4d92d9..e42a30d 100644
+--- a/orchestrate.test.mjs
++++ b/orchestrate.test.mjs
+@@ -955,6 +955,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
+ 			reason: "cancel grace expired without a terminal; writer stop unconfirmed",
+ 			since: "2026-09-16T00:00:00.000Z",
+ 		};
++		held.spec.additionalWorktreeRoots = ["/fixture/held-additional-root"];
+ 		held.executions.push({
+ 			executionId: "call-held",
+ 			taskId: held.taskId,
+@@ -974,6 +975,10 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
+ 			concurrency.status().reservations.some((r) => r.id === "writerhold:call-held"),
+ 			"the persisted hold is re-registered on restore",
+ 		);
++		assert.equal(concurrency.status().occupied, 0, "restored isolation does not consume current-session execution capacity");
++		assert.equal(concurrency.status().isolationHolds, 1);
++		const unrelated = concurrency.reserve({ id: "call-unrelated", role: "worker", capability: "writer", workspaces: ["/unrelated"] });
++		assert.ok(unrelated.reservation, "unrelated current-session execution is admitted");
+ 		const admission = concurrency.reserve({
+ 			id: "call-second",
+ 			role: "worker",
+@@ -981,6 +986,8 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
+ 			workspaces: [held.cwd],
+ 		});
+ 		assert.equal(admission.refusal?.code, "WORKSPACE_CONFLICT", "a second writer is refused after restart");
++		assert.equal(concurrency.reserve({ id: "call-additional-root", role: "worker", capability: "writer", workspaces: ["/fixture/held-additional-root"] }).refusal?.code, "WORKSPACE_CONFLICT", "restored additional worktree roots remain isolated");
++		concurrency.release("call-unrelated");
+ 		const status = orch.renderTaskStatus(orch.store.require(held.taskId));
+ 		assert.match(status, /Writer hold: kept/);
+ 		assert.match(status, /call-held: stop_unconfirmed \(operator_cancel\)/);
+@@ -2559,12 +2566,13 @@ function boundReaderExecution(store, task, { executionId, runId, report }) {
+ 		workspaces: ["/workspace/restored"],
+ 		reservedAt: "2026-09-18T12:00:00.000Z",
+ 		holdReason: "unconfirmed stop on previous session abort",
++		countsTowardLimit: false,
+ 	});
+ 
+ 	const rendered = orch.renderConcurrencyStatus();
+-	assert.match(rendered, /Concurrency: 2\/2 occupied, 0 available/);
+-	assert.match(rendered, /T-20260918-100 execution=call-active role=worker capability=writer workspace=\/workspace\/active$/m);
+-	assert.match(rendered, /T-20260918-200 execution=writerhold:call-restored role=worker capability=writer workspace=\/workspace\/restored \(restored writer hold: unconfirmed stop on previous session abort\)/);
++	assert.match(rendered, /Concurrency: 1\/2 execution slots occupied, 1 available; 1 isolation hold/);
++	assert.match(rendered, /T-20260918-100 execution=call-active role=worker capability=writer capacity=occupied workspace=\/workspace\/active$/m);
++	assert.match(rendered, /T-20260918-200 execution=writerhold:call-restored role=worker capability=writer capacity=isolation-only workspace=\/workspace\/restored \(restored writer hold: unconfirmed stop on previous session abort\)/);
+ }
+ 
+ // ============================================================================
+@@ -2629,4 +2637,3 @@ function boundReaderExecution(store, task, { executionId, runId, report }) {
+ }
+ 
+ console.log("planner-only orchestration: PASS");
+-
+diff --git a/orchestrate.ts b/orchestrate.ts
+index 71b35a9..4c3ecbe 100644
+--- a/orchestrate.ts
++++ b/orchestrate.ts
+@@ -572,6 +572,7 @@ export class PlannerOrchestrator {
+ 				workspaces: [restored.cwd, ...(restored.spec?.additionalWorktreeRoots ?? [])],
+ 				reservedAt: hold.since,
+ 				holdReason: hold.reason,
++				countsTowardLimit: false,
+ 			});
+ 		}
+ 		return restored;
+@@ -1131,13 +1132,13 @@ export class PlannerOrchestrator {
+ 	/** Current child capacity and workspace reservations for /planner-only status. */
+ 	renderConcurrencyStatus(): string {
+ 		const status = this.concurrency.status();
+-		const lines = [`Concurrency: ${status.occupied}/${status.limit} occupied, ${status.available} available (source: ${status.source})`];
++		const lines = [`Concurrency: ${status.occupied}/${status.limit} execution slots occupied, ${status.available} available; ${status.isolationHolds} isolation hold(s) (source: ${status.source})`];
+ 		for (const item of status.reservations) {
+ 			const task = item.taskId ? this.store.get(item.taskId) : undefined;
+ 			const isWriterHold = item.id.startsWith("writerhold:") || item.holdReason !== undefined || Boolean(task?.writerHold && item.id.includes(task.writerHold.executionId));
+ 			const holdReason = item.holdReason ?? task?.writerHold?.reason;
+ 			const holdSuffix = isWriterHold ? ` (restored writer hold: ${holdReason ?? "unconfirmed stop"})` : "";
+-			lines.push(`  - ${item.taskId ?? "unbound"} execution=${item.id} role=${item.role} capability=${item.capability} workspace=${item.workspaces.join(", ") || "none"}${holdSuffix}`);
++			lines.push(`  - ${item.taskId ?? "unbound"} execution=${item.id} role=${item.role} capability=${item.capability} capacity=${item.countsTowardLimit ? "occupied" : "isolation-only"} workspace=${item.workspaces.join(", ") || "none"}${holdSuffix}`);
+ 		}
+ 		return lines.join("\n");
+ 	}

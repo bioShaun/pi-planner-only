@@ -1,0 +1,51 @@
+ M .scratch/explorer-model-config/issues/01-explorer-config-routing.md
+ M .scratch/explorer-model-config/issues/02-explorer-redelegation-identity.md
+ M .scratch/explorer-model-config/issues/03-real-pi-acceptance.md
+ M .scratch/explorer-model-config/spec.md
+ M README.md
+ M README.zh-CN.md
+ M concurrency.test.mjs
+ M concurrency.ts
+ M delegate.test.mjs
+ M index.test.mjs
+ M index.ts
+ M orchestrate.test.mjs
+ M orchestrate.ts
+?? .scratch/child-session-package-20260921/
+?? .scratch/concurrency-empty-tasks-20260921/
+?? .scratch/explorer-model-upstream-runtime-agent-settings/
+?? .scratch/runaway-diagnostics-recovery-handoff-20260921/
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T034457Z.command.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T034457Z.exit-code.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T034457Z.finished-at.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T034457Z.harness-after.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T034457Z.harness-before.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T034457Z.log
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T034457Z.source-after.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T034457Z.source-before.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T034457Z.started-at.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T034457Z.tmp-root.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T034750Z.command.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T034750Z.exit-code.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T034750Z.finished-at.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T034750Z.harness-after.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T034750Z.harness-before.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T034750Z.log
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T034750Z.source-after.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T034750Z.source-before.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T034750Z.started-at.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T034750Z.tmp-root.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T035454Z.command.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T035454Z.exit-code.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T035454Z.finished-at.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T035454Z.harness-after.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T035454Z.harness-before.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T035454Z.log
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T035454Z.source-after.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T035454Z.source-before.sha256
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T035454Z.started-at.txt
+?? .scratch/stability-next-20260920/execution-20260920/release-run-20260921T035454Z.tmp-root.txt
+?? .scratch/stability-next-20260920/release-run-gHM8Fg/
+?? .scratch/stability-next-20260920/release-run-m37K4u/
+?? .scratch/stability-next-20260920/release-run-uUA5b9/
+?? .scratch/stability-next-20260920/strict-run-1Lo2UM/

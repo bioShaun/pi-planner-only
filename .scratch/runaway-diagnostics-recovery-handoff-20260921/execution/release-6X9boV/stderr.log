@@ -1,0 +1,43 @@
+error: open("src/parser.ts"): Permission denied
+fatal: cannot hash src/parser.ts
+fatal: could not open 'src/parser.ts' for reading: Permission denied
+hint: Using 'master' as the name for the initial branch. This default branch name
+hint: is subject to change. To configure the initial branch name to use in all
+hint: of your new repositories, which will suppress this warning, call:
+hint:
+hint: 	git config --global init.defaultBranch <name>
+hint:
+hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+hint: 'development'. The just-created branch can be renamed via this command:
+hint:
+hint: 	git branch -m <name>
+hint:
+hint: Disable this message with "git config set advice.defaultBranchName false"
+Planner-only: failed to persist ledger snapshot: EISDIR: illegal operation on a directory, rename '/project/tmp/runaway-validation-zINNvT/planner-only-admission-ledger-fjv5W7/planner-only/ledger/.tmp-2998632-16' -> '/project/tmp/runaway-validation-zINNvT/planner-only-admission-ledger-fjv5W7/planner-only/ledger/T-20260918-001.json'
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ 'RECOVERY_ENVELOPE_BELOW_OBSERVED'
+- 'REQUEST_REMAINING_INSUFFICIENT'
+     ^
+
+    at expectRefusal (file:///home/tcuni-claw/pi/pi-planner-only/delegate.test.mjs:166:10)
+    at async file:///home/tcuni-claw/pi/pi-planner-only/delegate.test.mjs:2420:2 {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: 'RECOVERY_ENVELOPE_BELOW_OBSERVED',
+  expected: 'REQUEST_REMAINING_INSUFFICIENT',
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.14.0
+npm notice
+npm notice New minor version of npm available! 11.9.0 -> 11.19.1
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.19.1
+npm notice To update run: npm install -g npm@11.19.1
+npm notice

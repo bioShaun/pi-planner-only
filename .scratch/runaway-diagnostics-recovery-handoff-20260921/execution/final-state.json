@@ -1,0 +1,27 @@
+{
+  "scope_id": "runaway-diagnostics-recovery-01-04-20260921",
+  "snapshot_id": "89e4a4cbae991e01b163e11e8e0add6d6291f6222662b3e85c9679f58ba1a018",
+  "code_review": "PASS",
+  "validation": "PASS",
+  "final_acceptance": "PASS",
+  "review_kind": "final",
+  "review_verdict": "PASS",
+  "isolation_requirement": "strict",
+  "evidence_refs": [
+    "execution/source-manifest-r3.json",
+    "execution/code-review-r3.md",
+    "execution/r3-typecheck.txt",
+    "execution/release-odQcJL/",
+    "execution/host-7iH0yO/",
+    "execution/host-run-sdRHiU/",
+    "execution/host-xS2LKF/",
+    "execution/host-run-Nrhynh/",
+    "execution/host-acceptance.pre-exit-fix.mjs",
+    "execution/cli-probe-stdin-closed-TLdJqr/",
+    "execution/ReviewRequest-r3-final.md",
+    "execution/strict-A7XBX7/",
+    "execution/strict-A7XBX7/reviewer-verdict.md",
+    "execution/validation-interruption.md"
+  ],
+  "contract_error": null
+}

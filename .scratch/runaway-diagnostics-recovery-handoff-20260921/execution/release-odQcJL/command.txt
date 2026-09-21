@@ -1,0 +1,1 @@
+timeout --kill-after=10 300 npm run test:release 
