@@ -574,8 +574,8 @@ assert.equal(
 	assert.equal("recovery" in create.properties, false, "recovery re-execution is a rebind concern");
 	assert.deepEqual(
 		create.properties.role.anyOf.map((entry) => entry.const),
-		["worker", "explorer", "validator"],
-		"a reviewer invocation only exists over an existing Task",
+		["worker", "explorer"],
+		"validator and reviewer invocations only exist over an existing Task",
 	);
 
 	const rebind = PLANNER_REDELEGATE_PARAMETERS;
@@ -834,16 +834,17 @@ for (const [name, usage, expectedReason] of [
 {
 	const dir = initRealRepo();
 	const { deps, launches } = makeDeps({ gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args) });
+	const worker = await runDelegation(deps, makeParams(), dir, { executionId: "call-before-v" });
 	const outcome = await runDelegation(
 		deps,
-		makeParams({ role: "validator", objective: "validate the work" }),
+		{ taskId: worker.task.taskId, role: "validator" },
 		dir,
-		{ executionId: "call-v" },
+		{ executionId: "call-v", toolName: "planner_redelegate" },
 	);
-	assert.equal(launches[0].agent, "oracle", "validator -> oracle");
+	assert.equal(launches[1].agent, "oracle", "validator -> oracle");
 	assert.equal(outcome.task.executions.at(-1).auxiliary, true, "validator execution is auxiliary");
 	assert.equal(outcome.task.validatorReports.length, 1, "validator report recorded");
-	assert.equal(outcome.task.reports.length, 0, "not a worker report");
+	assert.equal(outcome.task.reports.length, 1, "validator does not replace or append a worker report");
 }
 
 // ============================================================================
@@ -3459,6 +3460,7 @@ for (const preparation of [false, true]) {
 	// 6. Validator role: validatorReports[0].evidence.workerRunId === runId
 	const dir = initRealRepo();
 	const store = new TaskStore();
+	const host = store.create(createTaskSpec({ ...makeParams(), cwd: dir }));
 	const { deps } = makeDeps({
 		store,
 		launch: async (request) => ({
@@ -3482,9 +3484,9 @@ for (const preparation of [false, true]) {
 	});
 	const outcome = await runDelegation(
 		deps,
-		makeParams({ role: "validator", objective: "validate work" }),
+		{ taskId: host.taskId, role: "validator" },
 		dir,
-		{ executionId: "call-validator" },
+		{ executionId: "call-validator", toolName: "planner_redelegate" },
 	);
 	assert.equal(outcome.task.validatorReports.length, 1);
 	assert.equal(outcome.task.validatorReports[0].evidence.workerRunId, "run-validator");

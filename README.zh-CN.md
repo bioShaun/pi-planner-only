@@ -124,7 +124,7 @@ hold，直到恢复条件解决。
 | `explorer` / `reviewer` | `reviewer` | read, grep, find, ls |
 | `validator` | `oracle` | read, grep, find, ls, bash |
 
-验证运行由 Root 显式委派（`planner_delegate` + role=validator 新建验证 Task，`planner_redelegate` 复验既有 Task）；没有任何自动派发。
+验证运行由 Root 通过 `planner_redelegate` 显式委派，传入 `role=validator` 和既有 Task 的 canonical `taskId`。先用 `planner_delegate` 创建 worker Task；独立 validator Task 会在分配 ID 或启动子代理之前被拒绝。Oracle 报告作为 worker 报告的辅助证据；没有任何自动派发。
 
 `planner_delegate` / `planner_redelegate` 在角色路由关闭时沿用 launcher 的 `model` / `thinking` 默认值；启用操作者策略后，发送精确确认可用的 `provider/model` 与 thinking，并在采纳完成报告前核对终态实际身份。普通 worker、explorer、validator、reviewer 请求不设置 `toolBudget`；Task 唯一一次 report-only 修复绑定已注册的 `planner-report-only` agent（`tools: []`，仅由 launcher 追加结构化结果工具），并发送 `toolBudget: { hard: 1, block: "*" }`。该模式由不可变执行记录决定，不能被重入参数翻转；账本保存实际发送的预算、注册证明、agent 绑定与原始终态。`timeoutMs` 仍不设置，执行 envelope 由插件控制。usage 按 child 返回的实际身份归因。`planner-scout` 与 `planner-report-only` 是运行时注册的 agent，定义里不带 `model`/`thinking`；在上游 commit `bbb30096`（#2369，2026-09-20，「apply model settings to runtime-registered agents」，0.70.0 之后的首个版本）及以后的 pi-subagents 上，它们遵循 `subagents.defaultModel` / `defaultThinking` 以及 `subagents.agentOverrides.planner-scout`（或 `planner-report-only`）的 `model`/`thinking`。`agentOverrides.scout` 只作用于 builtin scout，不会影响 Explorer。pi-subagents 0.70.0 及更早版本对运行时 agent 不套用任何操作者模型设置，Explorer 会继承 Root 会话模型。
 

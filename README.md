@@ -191,9 +191,11 @@ placeholder.
 | `explorer` / `reviewer` | `reviewer` | read, grep, find, ls |
 | `validator` | `oracle` | read, grep, find, ls, bash |
 
-Validation runs are delegated by Root explicitly (`planner_delegate` with
-role=validator for a fresh validation Task, `planner_redelegate` to re-validate
-an existing Task); nothing is auto-dispatched.
+Validation runs are delegated by Root explicitly through `planner_redelegate`
+with `role=validator` and the existing Task's canonical `taskId`. First create
+a worker Task with `planner_delegate`; standalone validator Tasks are refused
+before allocation or launch. Oracle reports supplement the worker report;
+nothing is auto-dispatched.
 
 `planner_delegate` and `planner_redelegate` use launcher defaults for `model` and `thinking` unless operator role routing is enabled. Enabled routing sends an exactly verified available `provider/model` and thinking, then checks actual terminal identity before accepting completion. Ordinary worker, explorer, validator, and reviewer requests omit `toolBudget`; the Task's one report-only correction binds the registered `planner-report-only` agent (`tools: []`, with only the launcher's structured result tool appended) and sends `toolBudget: { hard: 1, block: "*" }`. The immutable execution record, not re-delegation arguments, selects that mode and persists the sent budget, registration proof, agent binding, and raw terminal. `timeoutMs` remains unset because the plugin owns its execution envelope. Usage rows retain the child response identity for attribution. `planner-scout` and `planner-report-only` are runtime-registered agents whose definitions carry no `model`/`thinking`; with pi-subagents at or after upstream commit `bbb30096` (#2369, 2026-09-20, "apply model settings to runtime-registered agents"; first release after 0.70.0) they follow `subagents.defaultModel` / `defaultThinking` and the `model`/`thinking` fields of `subagents.agentOverrides.planner-scout` (or `planner-report-only`). `agentOverrides.scout` configures only the builtin scout and never reaches the Explorer. On pi-subagents 0.70.0 and older, runtime agents skip every operator model setting and inherit the Root session model.
 

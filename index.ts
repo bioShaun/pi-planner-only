@@ -1233,7 +1233,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			"Delegate one TaskSpec to a leaf agent through the structured delegation API.",
 			"Always mints a new Task and returns its canonical taskId in details.taskId; taskId and recovery are not accepted (use planner_redelegate to re-enter an existing Task).",
 			"Returns the launcher-validated WorkerReport in details.report; prose output is never parsed.",
-			"Root should prefer this tool over subagent for new worker, explorer, and validator tasks.",
+			"Root should prefer this tool over subagent for new worker and explorer tasks. For oracle validation, first create a worker Task, then use planner_redelegate with its taskId and role=validator.",
 		].join(" "),
 		promptSnippet: "planner_delegate: mint a Task — typed TaskSpec delegation with a structured WorkerReport result",
 		promptGuidelines: [
@@ -1258,6 +1258,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		promptGuidelines: [
 			"planner_redelegate binds an existing Task: pass the canonical taskId from a prior planner_delegate result's details.taskId verbatim. Never construct a taskId.",
 			"role=reviewer reviews the bound Task's latest WorkerReport; the launcher-validated ReviewResult arrives in details.review.",
+			"role=validator runs auxiliary oracle validation on the bound Task; its report supplements the worker report. It cannot create a standalone Task through planner_delegate.",
 			"Do not repeat objective, cwd, scope, constraints, acceptanceCriteria, validation, or acceptanceMode: the stored TaskSpec is authoritative. instructions apply to this child packet only and do not mutate it.",
 			"Omitting envelope uses the finite execution defaults (10 minutes wall clock, 100000 tokens). An explicit envelope replaces default/token inheritance. Ordinary execution walls are capped at the original Request remainder minus a provisional 60000ms reserve; insufficient remainder refuses launch without consuming recovery or correction state. A Task flagged recovery.required re-executes only with a matching recovery decision (retry_same_plan / fix_environment) or is aborted via planner_abort.",
 			"recovery.executionId names the abnormal execution's details.executionId — never a child runId; a stray recovery on a Task without a pending requirement is refused (RECOVERY_NOT_APPLICABLE), not ignored.",

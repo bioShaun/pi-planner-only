@@ -131,11 +131,20 @@ try {
 		assert.equal(repeat.launches.length, 0);
 	}
 
+	// A non-validating host cannot mint an auxiliary validator Task, even
+	// when it passes a taskId to the mint-only tool (the adapter strips it).
+	const standaloneValidator = await fixture("standalone-validator");
+	await assert.rejects(standaloneValidator.call("planner_delegate", {
+		...worker, role: "validator", taskId: "T-20260921-020",
+	}), error => error.code === "TASK_REQUIRED" && /planner_redelegate/.test(error.message));
+	assert.equal(standaloneValidator.launches.length, 0);
+	assert.equal(standaloneValidator.state().claims.length, 0);
+
 	const launches = await fixture("launches");
 	const initial = await launches.call("planner_delegate", worker);
 	const taskId = initial.details.taskId;
+	await launches.call("planner_redelegate", { taskId, role: "validator" });
 	await launches.call("planner_redelegate", { ...worker, taskId, role: "reviewer" });
-	await launches.call("planner_delegate", { ...worker, role: "validator" });
 	for (let i = 0; i < 5; i++) await launches.call("planner_delegate", { ...worker, role: "explorer", acceptanceMode: "observation" });
 	assert.equal(launches.launches.length, 8);
 	await launches.call("planner_delegate", { ...worker, role: "explorer", acceptanceMode: "observation" }, { direct: true });

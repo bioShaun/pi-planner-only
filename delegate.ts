@@ -465,13 +465,12 @@ const DELEGATION_RECOVERY_PARAMETER = Type.Optional(
 );
 
 /**
- * planner_delegate — mint-only surface. No taskId, no recovery, no reviewer
- * role: a reviewer invocation only exists over an existing Task, and recovery
- * only makes sense on a bound Task. Anything else is a new Task.
+ * planner_delegate — mint-only surface. Validators and reviewers only invoke
+ * existing Tasks; neither can supply a new Task's primary report.
  */
 export const PLANNER_DELEGATE_PARAMETERS = Type.Object({
-	role: Type.Union([Type.Literal("worker"), Type.Literal("explorer"), Type.Literal("validator")], {
-		description: "Delegation role. worker implements; explorer does read-only recon (restricted-reader agent, no shell/edit/write); validator runs an oracle verdict. Reviews of an existing Task go through planner_redelegate with role=reviewer.",
+	role: Type.Union([Type.Literal("worker"), Type.Literal("explorer")], {
+		description: "Delegation role. worker implements; explorer does read-only recon (restricted-reader agent, no shell/edit/write). For oracle validation, first create a worker Task, then use planner_redelegate with its taskId and role=validator. Reviews use planner_redelegate with role=reviewer.",
 	}),
 	...DELEGATION_SPEC_PARAMETERS,
 });
@@ -487,7 +486,7 @@ export const PLANNER_REDELEGATE_PARAMETERS = Type.Object({
 		description: "Canonical id of an existing Task, verbatim from a prior planner_delegate result's details.taskId. Never construct one.",
 	}),
 	role: Type.Union([Type.Literal("worker"), Type.Literal("explorer"), Type.Literal("validator"), Type.Literal("reviewer")], {
-		description: "Invocation role. worker implements a correction round; explorer does read-only recon (restricted-reader agent, no shell/edit/write); validator runs an oracle verdict; reviewer reviews the bound Task's latest WorkerReport. This never changes the stored TaskSpec role.",
+		description: "Invocation role. worker implements a correction round; explorer does read-only recon (restricted-reader agent, no shell/edit/write); validator runs auxiliary oracle validation on the bound Task; reviewer reviews the bound Task's latest WorkerReport. This never changes the stored TaskSpec role.",
 	}),
 	instructions: Type.Optional(Type.String({ description: "Temporary prose appended to this child packet only; it never changes the stored TaskSpec." })),
 	envelope: DELEGATION_SPEC_PARAMETERS.envelope,
@@ -852,6 +851,14 @@ export async function runDelegation(
 	// consumes an id.
 	if (role === "reviewer" && !params.taskId) {
 		throw new DelegationRefused("TASK_REQUIRED", `${toolName} refused: role=reviewer requires taskId of the Task under review`);
+	}
+	// Validators only add auxiliary reports. Refuse standalone calls even if
+	// a host bypasses the minting schema, before claiming an id or sampling Git.
+	if (role === "validator" && !params.taskId) {
+		throw new DelegationRefused(
+			"TASK_REQUIRED",
+			`${toolName} refused: role=validator requires an existing Task; first create a Task with planner_delegate role=worker, then use planner_redelegate with its canonical taskId and role=validator for auxiliary oracle validation.`,
+		);
 	}
 
 	// Ticket 02 — classify the execution's mutation capability from the
