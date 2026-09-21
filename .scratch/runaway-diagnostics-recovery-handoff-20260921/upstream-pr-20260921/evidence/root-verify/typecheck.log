@@ -1,0 +1,4 @@
+
+> pi-subagents@0.70.1 typecheck
+> tsc --noEmit
+

@@ -1,0 +1,46 @@
+ℹ baseline = opted-in {"counts":{"index":1,"read":0,"stat":0},"outcome":"completed"}
+ℹ baseline = opted-in {"counts":{"index":1,"read":2,"stat":3},"outcome":"completed"}
+ℹ baseline = opted-in {"counts":{"index":1,"read":2,"stat":4},"outcome":"completed"}
+ℹ baseline = opted-in {"counts":{"index":1,"read":2,"stat":4},"outcome":"completed"}
+ℹ baseline = opted-in {"counts":{"index":1,"read":1,"stat":3},"outcome":"completed"}
+ℹ baseline = opted-in {"counts":{"index":1,"read":1,"stat":1},"outcome":"completed"}
+ℹ baseline = opted-in {"counts":{"index":1,"read":1,"stat":1},"outcome":"completed"}
+ℹ baseline = opted-in {"counts":{"index":1,"read":1,"stat":2},"outcome":"completed"}
+ℹ baseline = opted-in {"counts":{"index":1,"read":1,"stat":1},"outcome":"completed"}
+ℹ baseline = opted-in {"counts":{"index":1,"read":1,"stat":2},"outcome":"completed"}
+ℹ baseline = opted-in {"counts":{"index":1,"read":1,"stat":1},"outcome":"completed"}
+ℹ baseline = opted-in {"counts":{"index":1,"read":0,"stat":4},"outcome":"completed"}
+ℹ baseline = opted-in {"counts":{"index":1,"read":0,"stat":1},"outcome":"completed"}
+ℹ baseline = opted-in {"counts":{"index":1,"read":0,"stat":1},"outcome":"ENOTDIR"}
+ℹ baseline = opted-in {"counts":{"index":1,"read":0,"stat":1},"outcome":"completed"}
+ℹ baseline = opted-in {"counts":{"index":1,"read":0,"stat":1},"outcome":"ENOTDIR"}
+ℹ baseline = opted-in {"counts":{"index":1,"read":40,"stat":40},"outcome":"completed"}
+ℹ tests 3292
+ℹ suites 349
+ℹ pass 3279
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 13
+ℹ todo 0
+ℹ duration_ms 51672.463532
+--- tail ---
+  ✔ rejects tracked synthetic paths from hook output (319.547695ms)
+  ✔ rejects absolute synthetic paths from hook output (367.216938ms)
+  ✔ excludes hook-created synthetic files from captured patch output (101.898103ms)
+  ✔ retains created worktrees when a later hook failure has unknown settlement (511.89986ms)
+  ✔ fails when the hook exceeds the configured timeout (508.73279ms)
+✔ worktree (5618.30008ms)
+▶ manifest-backed worktree discard
+  ✔ keeps incomplete cleanup actionable with exact manual Git commands (24.556624ms)
+✔ manifest-backed worktree discard (24.712109ms)
+▶ writer budget guidance
+  ✔ keeps hard tool and usage caps off mutation-capable workers (1.385185ms)
+✔ writer budget guidance (2.107322ms)
+ℹ tests 3292
+ℹ suites 349
+ℹ pass 3279
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 13
+ℹ todo 0
+ℹ duration_ms 51672.463532

@@ -1,0 +1,11 @@
+=== slot preflight ===
+=== versions ===
+=== running pi (slot cpu) ===
+pi exit: 0
+=== collecting evidence ===
+ledger T-20260921-001.json: role=explorer state=completed executions=1 reports=1
+  execution[0] agent=planner-scout status=completed rawTerminal.model=tcuni-ds/deepseek/deepseek-v4.1-flash:low thinking=low error=
+  usage.rootModel=gemini-3.8-flash-high children=[{"agent":"planner-scout","model":"tcuni-ds/deepseek/deepseek-v4.1-flash:low"}]
+VALIDATION PASS
+evidence: /home/tcuni-claw/pi/pi-planner-only/.scratch/explorer-model-upstream-runtime-agent-settings/evidence/deploy-installed-9b96580-20260921T080733Z-3953587
+exit=0

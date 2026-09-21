@@ -1,0 +1,21 @@
+=== heavy.slice 资源用量 ===
+  内存 23.3G 已用 / 64.0G 软限 / 76.0G 硬顶   swap上限 0.0G   进程 181   CPU权重 50
+
+=== 池 io（6 槽）===
+243  finished   /project/tmp/slot/ts-out.vgqVHB 0        0.12/0.05/0.03 [wew-v21-panel-hpc-submit]/home/tcuni-claw/.local/share/slot/jobs/1789096923-228245-32674.sh
+--- tail ---
+257  finished   /project/tmp/slot/ts-out.pMLY4X 21       4752.08/5473.16/154.28 [pea-zw6-known-vcf-build]/home/tcuni-claw/.local/share/slot/jobs/1789627359-4009886-12025.sh
+265  finished   /project/tmp/slot/ts-out.vKJ188 3        665.88/641.53/32.54 [pea-zw6-known-vcf-finish2]/home/tcuni-claw/.local/share/slot/jobs/1789641583-373560-15475.sh
+266  finished   /project/tmp/slot/ts-out.KkaW5q 1        840.02/778.70/55.46 [pea-zw6-known-vcf-finish3]/home/tcuni-claw/.local/share/slot/jobs/1789647916-657765-13828.sh
+403  finished   /project/tmp/slot/ts-out.5GQADA -1       1017.61/0.00/0.00 [io]/home/tcuni-claw/.local/share/slot/jobs/1789718465-3439605-11934.sh
+405  finished   /project/tmp/slot/ts-out.STOYre -1       769.17/0.00/0.00 [io]/home/tcuni-claw/.local/share/slot/jobs/1789719482-3493729-24765.sh
+404  finished   /project/tmp/slot/ts-out.EpcwX9 56       1584.50/0.20/0.09 [io]/home/tcuni-claw/.local/share/slot/jobs/1789719363-3479967-27787.sh
+407  finished   /project/tmp/slot/ts-out.O6X2sE -1       797.60/0.00/0.00 [io]/home/tcuni-claw/.local/share/slot/jobs/1789720251-3529109-10007.sh
+408  finished   /project/tmp/slot/ts-out.Jqrkbc 0        1171.97/1.09/0.59 [io]/home/tcuni-claw/.local/share/slot/jobs/1789720272-3529855-5184.sh
+409  finished   /project/tmp/slot/ts-out.0F4hYi 0        10967.79/7227.00/408.78 [io]/home/tcuni-claw/.local/share/slot/jobs/1789721049-3558134-19378.sh
+415  finished   /project/tmp/slot/ts-out.IUik4U 1        1212.29/1115.62/58.18 [pea-zw6-known-vcf-finish4]/home/tcuni-claw/.local/share/slot/jobs/1789775069-684150-27535.sh
+416  finished   /project/tmp/slot/ts-out.Fs73PY 0        1354.64/1189.49/66.55 [pea-zw6-known-vcf-finish5]/home/tcuni-claw/.local/share/slot/jobs/1789776408-840457-3693.sh
+410  finished   /project/tmp/slot/ts-out.5uiRkO 0        56669.14/25045.26/6239.98 [io]/home/tcuni-claw/.local/share/slot/jobs/1789721514-3580292-6938.sh
+462  finished   /project/tmp/slot/ts-out.AyBozj 1        0.04/0.16/0.00 [sp10k-positions]/home/tcuni-claw/.local/share/slot/jobs/1789961101-1714383-28948.sh
+463  finished   /project/tmp/slot/ts-out.cfjBWX 0        609.21/768.91/24.66 [sp10k-positions-r2]/home/tcuni-claw/.local/share/slot/jobs/1789961193-1727611-24041.sh
+464  finished   /project/tmp/slot/ts-out.0YxWsD 0        421.37/446.67/30.06 [sp10k-step2-tags]/home/tcuni-claw/.local/share/slot/jobs/1789961942-1829909-4.sh

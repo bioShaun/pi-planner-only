@@ -1,0 +1,10 @@
+{
+  "host": "0.86.1",
+  "launcher": "0.70.0",
+  "launcherCommit": "bbb300969a08d4da5b60ca2f4b08276d0b47efe6",
+  "childModel": "tcuni-luna/gpt-5.6-luna",
+  "runtime": "/project/tmp/runaway-host-IW5KIJ",
+  "pluginDir": "/home/tcuni-claw/.pi/agent/git/github.com/bioShaun/pi-planner-only",
+  "pluginHead": "9b965809953fd4221758192a6392e57f1d0716b5",
+  "scope": "Real SDK, plugin, launcher, child model/tools, Git and ledgers; scripted Root provider."
+}

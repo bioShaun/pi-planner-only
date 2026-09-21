@@ -1,0 +1,13 @@
+{
+  "file": "artifact-3-62e201b3-102c-44a1-ac58-c3256016af68_worker_0_transcript.jsonl",
+  "message": {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "Task: {\n  \"version\": 1,\n  \"spec\": {\n    \"taskId\": \"T-20260921-001\",\n    \"objective\": \"Acceptance probe: call read on fixture.txt twelve times sequentially, one call at a time. Do not replace these reads with bash, do not batch calls, and do not call any write or edit tool. The controller will intentionally cancel you early. This is an authorized cancellation test.\",\n    \"cwd\": \"/project/tmp/runaway-host-IW5KIJ/workspace\",\n    \"role\": \"worker\",\n    \"acceptanceMode\": \"worktree\",\n    \"scope\": {\n      \"allowedPaths\": [\n        \"fixture.txt\"\n      ]\n    },\n    \"constraints\": [\n      \"Read fixture.txt only; no edits, shell, delegation or network.\"\n    ],\n    \"acceptanceCriteria\": [\n      \"Execute the specified read-only loop for the controller acceptance probe.\"\n    ],\n    \"validation\": {\n      \"required\": false\n    },\n    \"expectedEvidence\": {},\n    \"stopConditions\": []\n  },\n  \"instructions\": \"Continue the original fixture-only read sequence. Do not write or run shell commands.\",\n  \"knownFacts\": [\n    \"Read fixture.txt only; no edits, shell, delegation or network.\",\n    \"Execute the specified read-only loop for the controller acceptance probe.\"\n  ],\n  \"artifactRefs\": [\n    \"fixture.txt\"\n  ],\n  \"priorExecution\": {\n    \"executionId\": \"probe-first\",\n    \"endedReason\": \"preparation_runaway\",\n    \"runawayObservation\": {\n      \"signal\": \"preparation\",\n      \"observed\": 2,\n      \"limit\": 1\n    },\n    \"diffStat\": {\n      \"aRun\": null,\n      \"terminal\": null,\n      \"terminalKind\": \"cTerminal\"\n    },\n    \"recentTools\": [\n      {\n        \"tool\": \"read\",\n        \"args\": \"fixture.txt\"\n      },\n      {\n        \"tool\": \"read\",\n        \"args\": \"fixture.txt\"\n      }\n    ],\n    \"recentOutputLines\": [],\n    \"recoveryReason\": \"Intentional preparation guard acceptance; repeat the same bounded fixture reads to verify handoff.\"\n  }\n}"
+      }
+    ],
+    "timestamp": 1789977836560
+  }
+}

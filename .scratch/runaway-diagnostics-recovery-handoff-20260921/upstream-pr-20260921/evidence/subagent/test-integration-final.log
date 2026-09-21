@@ -1,0 +1,21 @@
+
+> pi-subagents@0.70.1 test:integration
+> node --experimental-strip-types --import ./test/support/register-loader.mjs --test test/integration/*.test.ts
+
+▶ acceptance file reports
+--- tail ---
+[pi-subagents] workflowScript contains dynamic child launches; static validation proved 0 launch(es), so runtime fan-out enforcement remains authoritative for the configured budget of 2.
+  ✔ rejects a mixed dirty group before child dispatch or budget claims (async=false) (184.143403ms)
+[pi-subagents] workflowScript contains dynamic child launches; static validation proved 0 launch(es), so runtime fan-out enforcement remains authoritative for the configured budget of 2.
+  ✔ rejects a mixed nonrepo group before child dispatch or budget claims (async=true) (145.129708ms)
+  ✔ rejects a mixed dirty group before child dispatch or budget claims (async=true) (208.310008ms)
+  ✔ launches a valid isolated child and preserves explicit false on a non-repository sibling (311.07345ms)
+✔ public workflow worktree admission (1214.723429ms)
+ℹ tests 1065
+ℹ suites 48
+ℹ pass 1058
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 7
+ℹ todo 0
+ℹ duration_ms 166020.17449

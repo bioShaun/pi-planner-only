@@ -1,0 +1,1 @@
+2374 OPEN base=main head=9d9b656c https://github.com/nicobailon/pi-subagents/pull/2374

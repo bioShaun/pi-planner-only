@@ -1,0 +1,21 @@
+
+> pi-subagents@0.70.1 test:unit
+> node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/*.test.ts
+
+▶ planAbortRecovery
+--- tail ---
+✔ worktree (5591.471733ms)
+▶ manifest-backed worktree discard
+  ✔ keeps incomplete cleanup actionable with exact manual Git commands (19.848214ms)
+✔ manifest-backed worktree discard (19.963642ms)
+▶ writer budget guidance
+  ✔ keeps hard tool and usage caps off mutation-capable workers (1.218629ms)
+✔ writer budget guidance (1.936449ms)
+ℹ tests 3292
+ℹ suites 349
+ℹ pass 3279
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 13
+ℹ todo 0
+ℹ duration_ms 60902.995318

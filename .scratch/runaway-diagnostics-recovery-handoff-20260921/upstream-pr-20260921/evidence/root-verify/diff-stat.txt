@@ -1,0 +1,9 @@
+ src/api/delegation.ts                            |  19 +++
+ src/runs/foreground/execution.ts                 |  15 +++
+ src/shared/types.ts                              |   3 +
+ src/slash/delegation-adapters.ts                 |  39 ++++++
+ src/slash/prompt-template-bridge.ts              |  17 ++-
+ test/integration/single-execution.part-2.test.ts | 148 +++++++++++++++++++++++
+ test/unit/delegation-api.test.ts                 | 115 ++++++++++++++++++
+ test/unit/prompt-template-bridge.test.ts         | 117 ++++++++++++++++++
+ 8 files changed, 472 insertions(+), 1 deletion(-)

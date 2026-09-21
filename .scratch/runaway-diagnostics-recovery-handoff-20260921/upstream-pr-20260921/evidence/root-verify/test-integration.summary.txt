@@ -1,0 +1,29 @@
+ℹ tests 1065
+ℹ suites 48
+ℹ pass 1058
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 7
+ℹ todo 0
+ℹ duration_ms 66861.552491
+--- tail ---
+[pi-subagents] workflowScript contains dynamic child launches; static validation proved 0 launch(es), so runtime fan-out enforcement remains authoritative for the configured budget of 2.
+▶ public workflow worktree admission
+  ✔ rejects a direct async worktree launch before returning a receipt (164.301851ms)
+[pi-subagents] workflowScript contains dynamic child launches; static validation proved 0 launch(es), so runtime fan-out enforcement remains authoritative for the configured budget of 2.
+  ✔ rejects a mixed nonrepo group before child dispatch or budget claims (async=false) (135.121217ms)
+[pi-subagents] workflowScript contains dynamic child launches; static validation proved 0 launch(es), so runtime fan-out enforcement remains authoritative for the configured budget of 2.
+  ✔ rejects a mixed dirty group before child dispatch or budget claims (async=false) (273.828237ms)
+[pi-subagents] workflowScript contains dynamic child launches; static validation proved 0 launch(es), so runtime fan-out enforcement remains authoritative for the configured budget of 2.
+  ✔ rejects a mixed nonrepo group before child dispatch or budget claims (async=true) (150.304843ms)
+  ✔ rejects a mixed dirty group before child dispatch or budget claims (async=true) (186.447447ms)
+  ✔ launches a valid isolated child and preserves explicit false on a non-repository sibling (251.253007ms)
+✔ public workflow worktree admission (1163.405503ms)
+ℹ tests 1065
+ℹ suites 48
+ℹ pass 1058
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 7
+ℹ todo 0
+ℹ duration_ms 66861.552491

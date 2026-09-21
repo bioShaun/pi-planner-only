@@ -1,0 +1,707 @@
+From 9d9b656c8100e12b56c77914bc421919b524d088 Mon Sep 17 00:00:00 2001
+From: bioShaun <bioShaun@users.noreply.github.com>
+Date: Mon, 21 Sep 2026 16:38:53 +0800
+Subject: [PATCH] feat(delegation): carry cumulative per-attempt usage on
+ structured UPDATE
+
+Add an optional usage snapshot { input, output, cacheRead, cacheWrite,
+turns } to SubagentDelegationUpdate so a parent that cancels a child
+before the terminal response can still explain cache traffic and keep
+classified usage for that attempt.
+
+- AgentProgress carries cumulative cacheRead/cacheWrite next to
+  inputTokens/outputTokens/turnCount; execution updates them on every
+  assistant message and after reconcileAttemptUsage.
+- The progress-change gate and sameStructuredDelegationUpdateProgress
+  compare all counters so a cache-only or turn-only change is not
+  suppressed as a heartbeat.
+- usage is projected as a fresh object only when all five counters are
+  finite non-negative; missing means unavailable, not zero. tokens keeps
+  its input+output meaning; the terminal response stays authoritative.
+---
+ src/api/delegation.ts                         |  19 +++
+ src/runs/foreground/execution.ts              |  15 ++
+ src/shared/types.ts                           |   3 +
+ src/slash/delegation-adapters.ts              |  39 +++++
+ src/slash/prompt-template-bridge.ts           |  17 +-
+ .../single-execution.part-2.test.ts           | 148 ++++++++++++++++++
+ test/unit/delegation-api.test.ts              | 115 ++++++++++++++
+ test/unit/prompt-template-bridge.test.ts      | 117 ++++++++++++++
+ 8 files changed, 472 insertions(+), 1 deletion(-)
+
+diff --git a/src/api/delegation.ts b/src/api/delegation.ts
+index 9ff991d1..294b17df 100644
+--- a/src/api/delegation.ts
++++ b/src/api/delegation.ts
+@@ -48,6 +48,24 @@ export interface SubagentDelegationStarted {
+ 	nodeId: string;
+ }
+ 
++/**
++ * Cumulative per-attempt usage snapshot carried on a structured delegation
++ * UPDATE. All counters describe the same attempt at the same observation
++ * time and are finite non-negative values; a missing counter means the
++ * value is unavailable, not zero. `tokens` on the update keeps its existing
++ * input+output meaning -- this snapshot adds cache and turn counters
++ * alongside it. An UPDATE does not promise final billed usage or cost; the
++ * terminal response's `usage` remains authoritative, and retry attempts are
++ * never aggregated into a single snapshot here.
++ */
++export interface SubagentDelegationUpdateUsage {
++	input: number;
++	output: number;
++	cacheRead: number;
++	cacheWrite: number;
++	turns: number;
++}
++
+ export interface SubagentDelegationUpdate extends SubagentDelegationStarted {
+ 	runId?: string;
+ 	currentTool?: string;
+@@ -59,6 +77,7 @@ export interface SubagentDelegationUpdate extends SubagentDelegationStarted {
+ 	toolCount?: number;
+ 	durationMs?: number;
+ 	tokens?: number;
++	usage?: SubagentDelegationUpdateUsage;
+ }
+ 
+ export type SubagentDelegationStatus =
+diff --git a/src/runs/foreground/execution.ts b/src/runs/foreground/execution.ts
+index 4431171c..78943b14 100644
+--- a/src/runs/foreground/execution.ts
++++ b/src/runs/foreground/execution.ts
+@@ -284,6 +284,9 @@ interface StructuredDelegationProgressState {
+ 	model?: string;
+ 	toolCount: number;
+ 	tokens: number;
++	cacheRead?: number;
++	cacheWrite?: number;
++	turnCount?: number;
+ }
+ 
+ function captureStructuredDelegationProgressState(progress: AgentProgress, result: SingleResult): StructuredDelegationProgressState {
+@@ -296,6 +299,9 @@ function captureStructuredDelegationProgressState(progress: AgentProgress, resul
+ 		model: progress.model ?? result.model,
+ 		toolCount: progress.toolCount,
+ 		tokens: progress.tokens,
++		cacheRead: progress.cacheRead,
++		cacheWrite: progress.cacheWrite,
++		turnCount: progress.turnCount,
+ 	};
+ }
+ 
+@@ -310,6 +316,9 @@ function structuredDelegationProgressChanged(
+ 		|| previous.model !== (progress.model ?? result.model)
+ 		|| previous.toolCount !== progress.toolCount
+ 		|| previous.tokens !== progress.tokens
++		|| previous.cacheRead !== progress.cacheRead
++		|| previous.cacheWrite !== progress.cacheWrite
++		|| previous.turnCount !== progress.turnCount
+ 		|| previous.recentOutput.length !== progress.recentOutput.length) return true;
+ 	for (let index = 0; index < progress.recentOutput.length; index++) {
+ 		if (previous.recentOutput[index] !== progress.recentOutput[index]) return true;
+@@ -502,6 +511,8 @@ async function runSingleAttempt(
+ 		...(resolvedThinking ? { thinking: resolvedThinking } : {}),
+ 		inputTokens: 0,
+ 		outputTokens: 0,
++		cacheRead: 0,
++		cacheWrite: 0,
+ 		durationMs: 0,
+ 		lastActivityAt: startTime,
+ 	};
+@@ -1070,6 +1081,8 @@ async function runSingleAttempt(
+ 						progress.tokens = result.usage.input + result.usage.output;
+ 						progress.inputTokens = result.usage.input;
+ 						progress.outputTokens = result.usage.output;
++						progress.cacheRead = result.usage.cacheRead;
++						progress.cacheWrite = result.usage.cacheWrite;
+ 						progress.window = window;
+ 						progress.windowPeak = Math.max(progress.windowPeak ?? 0, window);
+ 					}
+@@ -1301,6 +1314,8 @@ async function runSingleAttempt(
+ 				progress.tokens = result.usage.input + result.usage.output;
+ 				progress.inputTokens = result.usage.input;
+ 				progress.outputTokens = result.usage.output;
++				progress.cacheRead = result.usage.cacheRead;
++				progress.cacheWrite = result.usage.cacheWrite;
+ 				progress.turnCount = result.usage.turns;
+ 			}
+ 			finish(finalCode);
+diff --git a/src/shared/types.ts b/src/shared/types.ts
+index 60bb38ab..4a7de67b 100644
+--- a/src/shared/types.ts
++++ b/src/shared/types.ts
+@@ -959,6 +959,9 @@ export interface AgentProgress {
+ 	thinking?: string;
+ 	inputTokens?: number;
+ 	outputTokens?: number;
++	/** Cumulative cache-read/cache-write tokens for the current attempt, alongside inputTokens/outputTokens. */
++	cacheRead?: number;
++	cacheWrite?: number;
+ 	window?: number;
+ 	windowPeak?: number;
+ 	durationMs: number;
+diff --git a/src/slash/delegation-adapters.ts b/src/slash/delegation-adapters.ts
+index 996b14e9..cfb362da 100644
+--- a/src/slash/delegation-adapters.ts
++++ b/src/slash/delegation-adapters.ts
+@@ -4,6 +4,7 @@ import {
+ 	type SubagentDelegationStatus,
+ 	type SubagentDelegationThinking,
+ 	type SubagentDelegationUpdate,
++	type SubagentDelegationUpdateUsage,
+ 	type SubagentDelegationValue,
+ } from "../api/delegation.ts";
+ import type { AcceptanceInput, AgentContract, EffectsProjection, ExecutionProjection, IntercomBridgeConfig, JsonSchemaObject, ReviewProjection, ToolBudgetConfig, Usage } from "../shared/types.ts";
+@@ -38,6 +39,7 @@ interface PromptTemplateDelegationTaskProgress {
+ 	toolCount?: number;
+ 	durationMs?: number;
+ 	tokens?: number;
++	usage?: SubagentDelegationUpdateUsage;
+ }
+ 
+ export interface PromptTemplateDelegationUpdate {
+@@ -52,6 +54,7 @@ export interface PromptTemplateDelegationUpdate {
+ 	toolCount?: number;
+ 	durationMs?: number;
+ 	tokens?: number;
++	usage?: SubagentDelegationUpdateUsage;
+ 	taskProgress?: PromptTemplateDelegationTaskProgress[];
+ }
+ 
+@@ -108,6 +111,11 @@ export interface PromptTemplateBridgeResult {
+ 			toolCount?: number;
+ 			durationMs?: number;
+ 			tokens?: number;
++			inputTokens?: number;
++			outputTokens?: number;
++			cacheRead?: number;
++			cacheWrite?: number;
++			turnCount?: number;
+ 		}>;
+ 	};
+ }
+@@ -238,6 +246,34 @@ function buildDelegationMessages(
+ 	return [{ role: "assistant", content }];
+ }
+ 
++function isFiniteNonNegative(value: unknown): value is number {
++	return typeof value === "number" && Number.isFinite(value) && value >= 0;
++}
++
++/**
++ * Projects a cumulative per-attempt usage snapshot from a progress entry,
++ * only when every counter is present and a finite non-negative number.
++ * Returns a fresh object each call so a later mutation of the source
++ * progress (which keeps accumulating) never changes a snapshot already
++ * handed to a caller.
++ */
++function buildDelegationUpdateUsage(entry: {
++	inputTokens?: number;
++	outputTokens?: number;
++	cacheRead?: number;
++	cacheWrite?: number;
++	turnCount?: number;
++} | undefined): SubagentDelegationUpdateUsage | undefined {
++	if (!entry) return undefined;
++	const { inputTokens, outputTokens, cacheRead, cacheWrite, turnCount } = entry;
++	if (!isFiniteNonNegative(inputTokens)
++		|| !isFiniteNonNegative(outputTokens)
++		|| !isFiniteNonNegative(cacheRead)
++		|| !isFiniteNonNegative(cacheWrite)
++		|| !isFiniteNonNegative(turnCount)) return undefined;
++	return { input: inputTokens, output: outputTokens, cacheRead, cacheWrite, turns: turnCount };
++}
++
+ export function toDelegationUpdate(requestId: string, update: PromptTemplateBridgeResult): PromptTemplateDelegationUpdate | undefined {
+ 	const progress = update.details?.progress?.[0];
+ 	const taskProgress = update.details?.progress?.map((entry) => {
+@@ -259,6 +295,7 @@ export function toDelegationUpdate(requestId: string, update: PromptTemplateBrid
+ 			toolCount: entry.toolCount,
+ 			durationMs: entry.durationMs,
+ 			tokens: entry.tokens,
++			usage: buildDelegationUpdateUsage(entry),
+ 		};
+ 	});
+ 	if (!progress && (!taskProgress || taskProgress.length === 0)) return undefined;
+@@ -277,6 +314,7 @@ export function toDelegationUpdate(requestId: string, update: PromptTemplateBrid
+ 		recentTools: sanitizeRecentTools(progress?.recentTools),
+ 		model: progress ? resolveProgressModel(update, progress) : undefined,
+ 		toolCount: progress?.toolCount,
++		usage: buildDelegationUpdateUsage(progress),
+ 		durationMs: progress?.durationMs,
+ 		tokens: progress?.tokens,
+ 		taskProgress,
+@@ -325,6 +363,7 @@ export function toSubagentDelegationUpdate(
+ 		...(typeof legacy.toolCount === "number" ? { toolCount: legacy.toolCount } : {}),
+ 		...(typeof legacy.durationMs === "number" ? { durationMs: legacy.durationMs } : {}),
+ 		...(typeof legacy.tokens === "number" ? { tokens: legacy.tokens } : {}),
++		...(legacy.usage ? { usage: legacy.usage } : {}),
+ 	};
+ }
+ 
+diff --git a/src/slash/prompt-template-bridge.ts b/src/slash/prompt-template-bridge.ts
+index dd19df42..134526de 100644
+--- a/src/slash/prompt-template-bridge.ts
++++ b/src/slash/prompt-template-bridge.ts
+@@ -82,6 +82,20 @@ function sameRecentTools(
+ 	return left.every((tool, index) => tool.tool === right[index]?.tool && tool.args === right[index]?.args);
+ }
+ 
++/** A cache-only or turn-only change with unchanged tokens/tool progress must still count as a change, not a heartbeat. */
++function sameUpdateUsage(
++	left: SubagentDelegationUpdate["usage"],
++	right: SubagentDelegationUpdate["usage"],
++): boolean {
++	if (left === right) return true;
++	if (!left || !right) return false;
++	return left.input === right.input
++		&& left.output === right.output
++		&& left.cacheRead === right.cacheRead
++		&& left.cacheWrite === right.cacheWrite
++		&& left.turns === right.turns;
++}
++
+ /** Duration is a heartbeat clock, not delegation-visible progress; terminal usage remains authoritative. */
+ function sameStructuredDelegationUpdateProgress(left: SubagentDelegationUpdate, right: SubagentDelegationUpdate): boolean {
+ 	return left.requestId === right.requestId
+@@ -95,7 +109,8 @@ function sameStructuredDelegationUpdateProgress(left: SubagentDelegationUpdate,
+ 		&& sameRecentTools(left.recentTools, right.recentTools)
+ 		&& left.model === right.model
+ 		&& left.toolCount === right.toolCount
+-		&& left.tokens === right.tokens;
++		&& left.tokens === right.tokens
++		&& sameUpdateUsage(left.usage, right.usage);
+ }
+ 
+ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: string }>(
+diff --git a/test/integration/single-execution.part-2.test.ts b/test/integration/single-execution.part-2.test.ts
+index 60263b2e..96b5025b 100644
+--- a/test/integration/single-execution.part-2.test.ts
++++ b/test/integration/single-execution.part-2.test.ts
+@@ -43,6 +43,7 @@ import {
+ 	SUBAGENT_DELEGATION_REQUEST_EVENT,
+ 	SUBAGENT_DELEGATION_RESPONSE_EVENT,
+ 	SUBAGENT_DELEGATION_STARTED_EVENT,
++	SUBAGENT_DELEGATION_UPDATE_EVENT,
+ 	type SubagentDelegationRequest,
+ 	type SubagentDelegationResponse,
+ 	type SubagentDelegationStarted,
+@@ -990,6 +991,153 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
+ 		}
+ 	});
+ 
++	it("emits cumulative UPDATE usage across multiple assistant messages that agrees with the terminal usage", async () => {
++		mockPi.onCall({
++			steps: [
++				{
++					jsonl: [{
++						type: "message_end",
++						message: {
++							role: "assistant",
++							content: [{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "package.json" } }],
++							model: "mock/test-model",
++							stopReason: "toolUse",
++							usage: { input: 5, output: 3, cacheRead: 2, cacheWrite: 1, cost: { total: 0.001 } },
++						},
++					}],
++					delay: 20,
++				},
++				{
++					jsonl: [{
++						type: "tool_result_end",
++						message: { role: "toolResult", toolCallId: "call-1", toolName: "read", isError: false, content: [{ type: "text", text: "{}" }] },
++					}],
++					delay: 20,
++				},
++				{
++					jsonl: [{
++						type: "message_end",
++						message: {
++							role: "assistant",
++							content: [{ type: "text", text: "final answer" }],
++							model: "mock/test-model",
++							stopReason: "stop",
++							usage: { input: 11, output: 7, cacheRead: 6, cacheWrite: 4, cost: { total: 0.0125 } },
++						},
++					}],
++					delay: 20,
++				},
++			],
++		});
++		const extensionEvents = createEventBus();
++		const runtimeHandlers = new Map<string, Array<(event: unknown, ctx: ReturnType<typeof makeMinimalCtx>) => void>>();
++		const fakePi = new Proxy({
++			events: extensionEvents,
++			on(event: string, handler: (event: unknown, ctx: ReturnType<typeof makeMinimalCtx>) => void) {
++				const handlers = runtimeHandlers.get(event) ?? [];
++				handlers.push(handler);
++				runtimeHandlers.set(event, handlers);
++				return () => runtimeHandlers.set(event, (runtimeHandlers.get(event) ?? []).filter((entry) => entry !== handler));
++			},
++			registerTool() {},
++			registerCommand() {},
++			registerShortcut() {},
++			registerMessageRenderer() {},
++			sendMessage() {},
++			getSessionName() { return undefined; },
++		}, {
++			get(target, prop) {
++				if (prop in target) return target[prop as keyof typeof target];
++				return () => undefined;
++			},
++		});
++		const ctx = {
++			...makeMinimalCtx(tempDir),
++			modelRegistry: {
++				getAvailable: () => [{ provider: "mock", id: "test-model", reasoning: true }],
++			},
++			sessionManager: {
++				getSessionId: () => "usage-snapshot-session",
++				getSessionFile: () => path.join(tempDir, "usage-snapshot-session.jsonl"),
++				getEntries: () => [],
++			},
++		};
++		const updates: Array<{ usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; turns: number } }> = [];
++		const responses: SubagentDelegationResponse[] = [];
++		extensionEvents.on(SUBAGENT_DELEGATION_UPDATE_EVENT, (payload) => {
++			if ((payload as { ownerRunId?: unknown }).ownerRunId === "owner-usage-snapshot") {
++				updates.push(payload as { usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; turns: number } });
++			}
++		});
++		extensionEvents.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) => {
++			if ((payload as { ownerRunId?: unknown }).ownerRunId === "owner-usage-snapshot") {
++				responses.push(payload as SubagentDelegationResponse);
++			}
++		});
++
++		const usageRequest = {
++			requestId: "usage-snapshot-a",
++			ownerRunId: "owner-usage-snapshot",
++			nodeId: "node-usage-a",
++			agent: "worker",
++			task: "Report cumulative usage across turns",
++			context: "fresh",
++			cwd: tempDir,
++			model: "mock/test-model",
++			thinking: "high",
++			result: { kind: "text" },
++		} satisfies SubagentDelegationRequest;
++
++		try {
++			const previousChildEnv = process.env[SUBAGENT_CHILD_ENV];
++			delete process.env[SUBAGENT_CHILD_ENV];
++			try {
++				registerSubagentExtension(fakePi as never);
++			} finally {
++				if (previousChildEnv === undefined) delete process.env[SUBAGENT_CHILD_ENV];
++				else process.env[SUBAGENT_CHILD_ENV] = previousChildEnv;
++			}
++			for (const handler of runtimeHandlers.get("session_start") ?? []) {
++				await handler({ reason: "startup" }, ctx);
++			}
++			extensionEvents.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, usageRequest);
++
++			const responseDeadlineAt = Date.now() + 30_000;
++			while (responses.length < 1 && Date.now() < responseDeadlineAt) {
++				await new Promise((resolve) => setTimeout(resolve, 20));
++			}
++			assert.equal(responses.length, 1);
++			const [response] = responses;
++			assert.equal(response.status, "completed");
++
++			const usageUpdates = updates.filter((entry) => entry.usage !== undefined);
++			assert.ok(usageUpdates.length >= 2, `expected at least two UPDATEs carrying usage, got ${JSON.stringify(updates)}`);
++			// Cumulative counters must monotonically reflect the running attempt, not reset or mix turns.
++			for (let index = 1; index < usageUpdates.length; index++) {
++				const previous = usageUpdates[index - 1]?.usage;
++				const current = usageUpdates[index]?.usage;
++				assert.ok(previous && current);
++				assert.ok(current.cacheRead >= previous.cacheRead, "cacheRead must not regress across an attempt");
++				assert.ok(current.cacheWrite >= previous.cacheWrite, "cacheWrite must not regress across an attempt");
++			}
++			const lastUpdateUsage = usageUpdates.at(-1)?.usage;
++			assert.ok(lastUpdateUsage);
++			assert.deepEqual(lastUpdateUsage, {
++				input: response.usage?.input,
++				output: response.usage?.output,
++				cacheRead: response.usage?.cacheRead,
++				cacheWrite: response.usage?.cacheWrite,
++				turns: response.usage?.turns,
++			});
++			// Cumulative across both assistant turns in the attempt: 5+11 input, 3+7 output, 2+6 cacheRead, 1+4 cacheWrite, 2 turns.
++			assert.deepEqual(lastUpdateUsage, { input: 16, output: 10, cacheRead: 8, cacheWrite: 5, turns: 2 });
++		} finally {
++			for (const handler of runtimeHandlers.get("session_shutdown") ?? []) {
++				await handler({}, ctx);
++			}
++		}
++	});
++
+ 	it("allows concurrent async launches in one turn", async () => {
+ 		mockPi.onCall({ output: "async one" });
+ 		mockPi.onCall({ output: "async two" });
+diff --git a/test/unit/delegation-api.test.ts b/test/unit/delegation-api.test.ts
+index ecaf0bc7..7c9544b3 100644
+--- a/test/unit/delegation-api.test.ts
++++ b/test/unit/delegation-api.test.ts
+@@ -331,6 +331,89 @@ describe("public subagent delegation contract", () => {
+ 		bridge.dispose();
+ 	});
+ 
++	it("emits a structured delegation update when only cumulative cache or turn counters change", async () => {
++		const events = new FakeEvents();
++		const updates: SubagentDelegationUpdate[] = [];
++		events.on(SUBAGENT_DELEGATION_UPDATE_EVENT, (payload) => updates.push(payload as SubagentDelegationUpdate));
++		const bridge = registerPromptTemplateDelegationBridge({
++			events,
++			getContext: () => ({ cwd: "/repo" }),
++			execute: async () => { throw new Error("legacy executor must remain separate"); },
++			executeStructured: async (_id, _params, _signal, _ctx, onUpdate) => {
++				const base = {
++					index: 0,
++					agent: "reviewer",
++					currentTool: "read",
++					toolCount: 1,
++					durationMs: 1_000,
++					tokens: 16,
++					inputTokens: 8,
++					outputTokens: 8,
++					cacheRead: 0,
++					cacheWrite: 0,
++					turnCount: 1,
++				};
++				onUpdate({ details: { mode: "single", runId: "run-usage", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [base] } });
++				// Exact duplicate: tokens/tool progress and usage counters are unchanged, so this is a heartbeat.
++				onUpdate({ details: { mode: "single", runId: "run-usage", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ ...base }] } });
++				// Only cacheRead changes.
++				onUpdate({ details: { mode: "single", runId: "run-usage", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ ...base, cacheRead: 4 }] } });
++				// Only cacheWrite changes.
++				onUpdate({ details: { mode: "single", runId: "run-usage", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ ...base, cacheRead: 4, cacheWrite: 2 }] } });
++				// Only turns changes.
++				onUpdate({ details: { mode: "single", runId: "run-usage", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ ...base, cacheRead: 4, cacheWrite: 2, turnCount: 2 }] } });
++				return {
++					details: {
++						mode: "single",
++						runId: "run-usage",
++						results: [{ agent: "reviewer", exitCode: 0, model: "openai/gpt-5", finalOutput: "done", usage: { input: 8, output: 8, cacheRead: 4, cacheWrite: 2, cost: 0, turns: 2 } }],
++					},
++				};
++			},
++		});
++		const responsePromise = once(events, SUBAGENT_DELEGATION_RESPONSE_EVENT);
++		events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, { ...request, result: { kind: "text" as const } });
++		assert.equal((await responsePromise as SubagentDelegationResponse).status, "completed");
++		assert.equal(updates.length, 4);
++		assert.deepEqual(updates[0]?.usage, { input: 8, output: 8, cacheRead: 0, cacheWrite: 0, turns: 1 });
++		assert.deepEqual(updates[1]?.usage, { input: 8, output: 8, cacheRead: 4, cacheWrite: 0, turns: 1 });
++		assert.deepEqual(updates[2]?.usage, { input: 8, output: 8, cacheRead: 4, cacheWrite: 2, turns: 1 });
++		assert.deepEqual(updates[3]?.usage, { input: 8, output: 8, cacheRead: 4, cacheWrite: 2, turns: 2 });
++		bridge.dispose();
++	});
++
++	it("omits usage from a structured delegation update when counters are absent or invalid", async () => {
++		const events = new FakeEvents();
++		const updates: SubagentDelegationUpdate[] = [];
++		events.on(SUBAGENT_DELEGATION_UPDATE_EVENT, (payload) => updates.push(payload as SubagentDelegationUpdate));
++		const bridge = registerPromptTemplateDelegationBridge({
++			events,
++			getContext: () => ({ cwd: "/repo" }),
++			execute: async () => { throw new Error("legacy executor must remain separate"); },
++			executeStructured: async (_id, _params, _signal, _ctx, onUpdate) => {
++				// Legacy-shaped progress: no cache/turn counters at all.
++				onUpdate({ details: { mode: "single", runId: "run-invalid", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ index: 0, agent: "reviewer", currentTool: "read", toolCount: 1, tokens: 8 }] } });
++				// A negative counter must not project usage.
++				onUpdate({ details: { mode: "single", runId: "run-invalid", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ index: 0, agent: "reviewer", currentTool: "write", toolCount: 2, tokens: 16, inputTokens: -1, outputTokens: 8, cacheRead: 0, cacheWrite: 0, turnCount: 1 }] } });
++				// A NaN counter must not project usage.
++				onUpdate({ details: { mode: "single", runId: "run-invalid", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ index: 0, agent: "reviewer", currentTool: "grep", toolCount: 3, tokens: 16, inputTokens: 8, outputTokens: Number.NaN, cacheRead: 0, cacheWrite: 0, turnCount: 1 }] } });
++				return {
++					details: {
++						mode: "single",
++						runId: "run-invalid",
++						results: [{ agent: "reviewer", exitCode: 0, model: "openai/gpt-5", finalOutput: "done", usage: { input: 8, output: 8, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 } }],
++					},
++				};
++			},
++		});
++		const responsePromise = once(events, SUBAGENT_DELEGATION_RESPONSE_EVENT);
++		events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, { ...request, result: { kind: "text" as const } });
++		assert.equal((await responsePromise as SubagentDelegationResponse).status, "completed");
++		assert.equal(updates.length, 3);
++		for (const update of updates) assert.equal(update.usage, undefined);
++		bridge.dispose();
++	});
++
+ 	it("always delivers the complete structured terminal error after quiet heartbeats", async () => {
+ 		const events = new FakeEvents();
+ 		const updates: SubagentDelegationUpdate[] = [];
+@@ -407,6 +490,38 @@ describe("public subagent delegation contract", () => {
+ 		}
+ 	});
+ 
++	it("preserves the last emitted usage snapshot when cancellation lands before the terminal response", async () => {
++		const events = new FakeEvents();
++		const updates: SubagentDelegationUpdate[] = [];
++		const responses: SubagentDelegationResponse[] = [];
++		events.on(SUBAGENT_DELEGATION_UPDATE_EVENT, (payload) => updates.push(payload as SubagentDelegationUpdate));
++		events.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) => responses.push(payload as SubagentDelegationResponse));
++		let deliverSecondUpdate: (() => void) | undefined;
++		const bridge = registerPromptTemplateDelegationBridge({
++			events,
++			getContext: () => ({ cwd: "/repo" }),
++			execute: async () => { throw new Error("legacy executor must remain separate"); },
++			executeStructured: async (_id, _params, signal, _ctx, onUpdate) => await new Promise((_resolve, reject) => {
++				onUpdate({ details: { mode: "single", runId: "run-cancel-usage", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ index: 0, agent: "reviewer", currentTool: "read", toolCount: 1, tokens: 8, inputTokens: 4, outputTokens: 4, cacheRead: 1, cacheWrite: 0, turnCount: 1 }] } });
++				deliverSecondUpdate = () => onUpdate({ details: { mode: "single", runId: "run-cancel-usage", results: [{ agent: "reviewer", model: "openai/gpt-5" }], progress: [{ index: 0, agent: "reviewer", currentTool: "read", toolCount: 1, tokens: 12, inputTokens: 6, outputTokens: 6, cacheRead: 3, cacheWrite: 1, turnCount: 2 }] } });
++				signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
++			}),
++		});
++		events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, { ...request, requestId: "cancel-usage", result: { kind: "text" as const } });
++		while (updates.length < 1) await tick();
++		assert.deepEqual(updates[0]?.usage, { input: 4, output: 4, cacheRead: 1, cacheWrite: 0, turns: 1 });
++		deliverSecondUpdate?.();
++		while (updates.length < 2) await tick();
++		assert.deepEqual(updates[1]?.usage, { input: 6, output: 6, cacheRead: 3, cacheWrite: 1, turns: 2 });
++		events.emit(SUBAGENT_DELEGATION_CANCEL_EVENT, { requestId: "cancel-usage", ownerRunId: "owner-1", nodeId: "node-1" });
++		while (!responses.some((entry) => entry.requestId === "cancel-usage")) await tick();
++		assert.equal(responses.find((entry) => entry.requestId === "cancel-usage")?.status, "cancelled");
++		// The already-emitted UPDATE usage snapshots must be untouched by the cancellation.
++		assert.deepEqual(updates[0]?.usage, { input: 4, output: 4, cacheRead: 1, cacheWrite: 0, turns: 1 });
++		assert.deepEqual(updates[1]?.usage, { input: 6, output: 6, cacheRead: 3, cacheWrite: 1, turns: 2 });
++		bridge.dispose();
++	});
++
+ 	it("isolates logical-node ownership, exact cancellation, pre-cancellation, and reuse", async () => {
+ 		const events = new FakeEvents();
+ 		const releases = new Map<string, () => void>();
+diff --git a/test/unit/prompt-template-bridge.test.ts b/test/unit/prompt-template-bridge.test.ts
+index 4ccf93f6..6f720cea 100644
+--- a/test/unit/prompt-template-bridge.test.ts
++++ b/test/unit/prompt-template-bridge.test.ts
+@@ -126,6 +126,123 @@ describe("prompt-template delegation bridge", () => {
+ 		bridge.dispose();
+ 	});
+ 
++	it("projects no usage from a legacy progress payload without cache or turn counters", async () => {
++		const events = new FakeEvents();
++		const bridge = registerPromptTemplateDelegationBridge({
++			events,
++			getContext: () => ({ cwd: "/repo" }),
++			executeStructured: async (_requestId, _request, _signal, _ctx, onUpdate) => {
++				onUpdate({
++					details: {
++						results: [{ agent: "worker", model: "openai/gpt-5-mini" }],
++						progress: [{ index: 0, agent: "worker", currentTool: "read", toolCount: 1, tokens: 42 }],
++					},
++				});
++				return { details: { results: [{ agent: "worker", finalOutput: "ok", exitCode: 0 }] } };
++			},
++			execute: async () => { throw new Error("structured request should use executeStructured"); },
++		});
++
++		const updatePromise = once(events, PROMPT_TEMPLATE_SUBAGENT_UPDATE_EVENT);
++		const responsePromise = once(events, PROMPT_TEMPLATE_SUBAGENT_RESPONSE_EVENT);
++		events.emit(PROMPT_TEMPLATE_SUBAGENT_REQUEST_EVENT, structuredRequest({ requestId: "r-legacy-usage" }));
++
++		const update = await updatePromise as {
++			tokens?: number;
++			usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; turns: number };
++		};
++		assert.equal(update.tokens, 42);
++		assert.equal(update.usage, undefined);
++
++		await responsePromise;
++		bridge.dispose();
++	});
++
++	it("projects cumulative usage exactly when all counters are present and valid", async () => {
++		const events = new FakeEvents();
++		const bridge = registerPromptTemplateDelegationBridge({
++			events,
++			getContext: () => ({ cwd: "/repo" }),
++			executeStructured: async (_requestId, _request, _signal, _ctx, onUpdate) => {
++				onUpdate({
++					details: {
++						results: [{ agent: "worker", model: "openai/gpt-5-mini" }],
++						progress: [{
++							index: 0,
++							agent: "worker",
++							currentTool: "read",
++							toolCount: 1,
++							tokens: 20,
++							inputTokens: 12,
++							outputTokens: 8,
++							cacheRead: 3,
++							cacheWrite: 1,
++							turnCount: 2,
++						}],
++					},
++				});
++				return { details: { results: [{ agent: "worker", finalOutput: "ok", exitCode: 0 }] } };
++			},
++			execute: async () => { throw new Error("structured request should use executeStructured"); },
++		});
++
++		const updatePromise = once(events, PROMPT_TEMPLATE_SUBAGENT_UPDATE_EVENT);
++		const responsePromise = once(events, PROMPT_TEMPLATE_SUBAGENT_RESPONSE_EVENT);
++		events.emit(PROMPT_TEMPLATE_SUBAGENT_REQUEST_EVENT, structuredRequest({ requestId: "r-full-usage" }));
++
++		const update = await updatePromise as {
++			usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; turns: number };
++		};
++		assert.deepEqual(update.usage, { input: 12, output: 8, cacheRead: 3, cacheWrite: 1, turns: 2 });
++
++		await responsePromise;
++		bridge.dispose();
++	});
++
++	it("keeps a previously emitted usage snapshot immutable after further accumulation", async () => {
++		const events = new FakeEvents();
++		const updates: Array<{ usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; turns: number } }> = [];
++		events.on(PROMPT_TEMPLATE_SUBAGENT_UPDATE_EVENT, (payload) => {
++			updates.push(payload as { usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; turns: number } });
++		});
++		const mutableProgress: Record<string, unknown> = {
++			index: 0,
++			agent: "worker",
++			currentTool: "read",
++			toolCount: 1,
++			tokens: 10,
++			inputTokens: 5,
++			outputTokens: 5,
++			cacheRead: 1,
++			cacheWrite: 1,
++			turnCount: 1,
++		};
++		const bridge = registerPromptTemplateDelegationBridge({
++			events,
++			getContext: () => ({ cwd: "/repo" }),
++			executeStructured: async (_requestId, _request, _signal, _ctx, onUpdate) => {
++				onUpdate({ details: { results: [{ agent: "worker", model: "openai/gpt-5-mini" }], progress: [{ ...mutableProgress }] } });
++				// Simulate further accumulation on the source after the first snapshot was emitted.
++				mutableProgress.cacheRead = 9;
++				mutableProgress.cacheWrite = 9;
++				mutableProgress.turnCount = 3;
++				onUpdate({ details: { results: [{ agent: "worker", model: "openai/gpt-5-mini" }], progress: [{ ...mutableProgress, currentTool: "write" }] } });
++				return { details: { results: [{ agent: "worker", finalOutput: "ok", exitCode: 0 }] } };
++			},
++			execute: async () => { throw new Error("structured request should use executeStructured"); },
++		});
++
++		const responsePromise = once(events, PROMPT_TEMPLATE_SUBAGENT_RESPONSE_EVENT);
++		events.emit(PROMPT_TEMPLATE_SUBAGENT_REQUEST_EVENT, structuredRequest({ requestId: "r-usage-immutable" }));
++		await responsePromise;
++
++		assert.equal(updates.length, 2);
++		assert.deepEqual(updates[0]?.usage, { input: 5, output: 5, cacheRead: 1, cacheWrite: 1, turns: 1 });
++		assert.deepEqual(updates[1]?.usage, { input: 5, output: 5, cacheRead: 9, cacheWrite: 9, turns: 3 });
++
++		bridge.dispose();
++	});
++
+ 	it("returns structured error when no active context", async () => {
+ 		const events = new FakeEvents();
+ 		const bridge = registerPromptTemplateDelegationBridge({
+-- 
+2.51.0
+

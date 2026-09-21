@@ -1,0 +1,1 @@
+slot cpu -- pi update git:github.com/bioShaun/pi-planner-only </dev/null

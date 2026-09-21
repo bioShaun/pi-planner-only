@@ -43,7 +43,7 @@
 - 当前 r3 快照：`89e4a4cbae991e01b163e11e8e0add6d6291f6222662b3e85c9679f58ba1a018`；`execution/source-manifest-r3.json` 固定源码。r3 TypeScript 检查 exit0。
 - r1 strict launcher 600秒超时（stdout 0 字节，codex 未启动），无 verdict、无只读权限证明；r2 发布复验停滞后已停止。当时共享 heavy.slice 内存约69GiB，超过64GiB软阈值，full avg60约73%。压力解除后同一 launcher 于 strict-A7XBX7 在 586 秒内完成并 PASS，支持环境阻塞的归因。
 - 验证脚本曾在执行中被修改，引起中断后的误重提；两个自有 scope 均已确认 inactive/dead。原始失败、超时和中断证据未覆盖，详见 `execution/validation-interruption.md`。
-- **01–04 实现已落地，r3 快照最终验收已关闭（release PASS、host PASS、strict PASS (final)）**。仍未做、且未获授权的事项：更新本机脏安装副本、推送、开上游 PR；步骤见 [RELEASE-STEPS.md](RELEASE-STEPS.md)。[RESUME.md](RESUME.md) 保留为历史记录。
+- **01–04 实现已落地，r3 快照最终验收已关闭（release PASS、host PASS、strict PASS (final)）**。后续（2026-09-21 用户授权后）：用户自行推送 main（远端 `9b96580`）；安装副本已更新并通过部署验收，见 [deploy-20260921/REPORT.md](deploy-20260921/REPORT.md)；上游 PR 已提交为 nicobailon/pi-subagents#2374，见 [upstream-pr-20260921/REPORT.md](upstream-pr-20260921/REPORT.md)。[RESUME.md](RESUME.md) 保留为历史记录。
 
 ## 当前状态
 

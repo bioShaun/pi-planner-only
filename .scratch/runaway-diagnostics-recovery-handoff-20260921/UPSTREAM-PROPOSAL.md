@@ -1,6 +1,6 @@
 # Upstream proposal: cumulative usage on structured delegation UPDATE
 
-Status: proposal prepared; no upstream changes or PR submitted, as requested on 2026-09-21.
+Status: implemented and submitted 2026-09-21 as https://github.com/nicobailon/pi-subagents/pull/2374 (fork branch `delegation-update-cumulative-usage`, commit 9d9b656c on upstream main 1ac7b5e2 / v0.70.1). Record: [upstream-pr-20260921/REPORT.md](upstream-pr-20260921/REPORT.md). The text below is the proposal as prepared before implementation.
 
 ## Problem and API
 

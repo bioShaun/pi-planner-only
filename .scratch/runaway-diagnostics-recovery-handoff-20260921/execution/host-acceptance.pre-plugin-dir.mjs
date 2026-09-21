@@ -7,8 +7,6 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 const here=path.dirname(fileURLToPath(import.meta.url));
 const repo=path.resolve(here,"../../..");
-// Deploy check (2026-09-21): RUNAWAY_PLUGIN_DIR points the harness at the installed plugin copy instead of this repo.
-const pluginDir=process.env.RUNAWAY_PLUGIN_DIR?path.resolve(process.env.RUNAWAY_PLUGIN_DIR):repo;
 assert.ok(fs.statSync("/project/tmp").isDirectory());
 const runtime=fs.mkdtempSync("/project/tmp/runaway-host-");
 fs.chmodSync(runtime,0o700);
@@ -44,7 +42,7 @@ run("git",["-c","user.name=acceptance","-c","user.email=acceptance@invalid","com
 save("versions.json",{host:JSON.parse(fs.readFileSync(path.join(host,"package.json"))).version,
  launcher:JSON.parse(fs.readFileSync(path.join(upstream,"package.json"))).version,
  launcherCommit:run("git",["-C",upstream,"rev-parse","HEAD"]).trim(),childModel,
- runtime,pluginDir,pluginHead:run("git",["-C",pluginDir,"rev-parse","HEAD"]).trim(),scope:"Real SDK, plugin, launcher, child model/tools, Git and ledgers; scripted Root provider."});
+ runtime,scope:"Real SDK, plugin, launcher, child model/tools, Git and ledgers; scripted Root provider."});
 const load=p=>import(pathToFileURL(path.join(host,p)).href);
 const {createAgentSession,DefaultResourceLoader,ModelRuntime,SessionManager,SettingsManager}=await load("dist/index.js");
 const {fauxProvider,fauxAssistantMessage,fauxToolCall}=await load("node_modules/@earendil-works/pi-ai/dist/providers/faux.js");
@@ -66,7 +64,7 @@ const observe=pi=>{
 const settingsManager=SettingsManager.create(work,agent);
 const loader=new DefaultResourceLoader({cwd:work,agentDir:agent,settingsManager,
  noExtensions:true,noSkills:true,noPromptTemplates:true,noThemes:true,noContextFiles:true,
- additionalExtensionPaths:[path.join(upstream,"index.ts"),path.join(pluginDir,"index.ts")],
+ additionalExtensionPaths:[path.join(upstream,"index.ts"),path.join(repo,"index.ts")],
  extensionFactories:[{name:"runaway-observer",factory:observe}],
  systemPrompt:"Deterministic Root for bounded plugin acceptance."});
 await loader.reload();

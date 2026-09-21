@@ -1,0 +1,21 @@
+
+> pi-subagents@0.70.1 test:integration
+> node --experimental-strip-types --import ./test/support/register-loader.mjs --test test/integration/*.test.ts
+
+▶ acceptance file reports
+--- tail ---
+  -   input: 11,
+  -   output: 7,
+  -   turns: 1
+    }
+  
+      at TestContext.<anonymous> (file:///project/tmp/pi-subagents-runtime-agent-settings/test/integration/single-execution.part-2.test.ts:1132:11)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: { input: 16, output: 10, cacheRead: 8, cacheWrite: 5, turns: 2 },
+    expected: { input: 11, output: 7, cacheRead: 6, cacheWrite: 4, turns: 1 },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
