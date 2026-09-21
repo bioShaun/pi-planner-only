@@ -1,6 +1,6 @@
 # Explorer 委派遵循子代理模型配置
 
-Status: ready-for-agent
+Status: wontfix
 Type: spec
 Date: 2026-09-18
 Source: T-20260918-004 的模型继承排查
@@ -108,3 +108,7 @@ Evidence references retained for implementation (local to the diagnosed machine)
 - [Installed Delegation request construction](/home/tcuni-claw/.pi/agent/git/github.com/bioShaun/pi-planner-only/delegate.ts:960)
 - [Runtime agents appended after configured discovery](/home/tcuni-claw/.pi/agent/npm/node_modules/pi-subagents/src/agents/runtime-agent-registry.ts:424)
 - [Host fallback to parent model](/home/tcuni-claw/.pi/agent/npm/node_modules/pi-subagents/src/runs/shared/model-resolution.ts:305)
+
+## Comments
+
+- 2026-09-21：根因定位到上游 pi-subagents（运行时注册的 agent 不套用 `subagents.defaultModel` / `agentOverrides`，见 `runtime-agent-registry.ts:424`），改为上游修复，插件不再解析模型配置。本票的插件侧适配器方案作废；后续见 `.scratch/explorer-model-upstream-runtime-agent-settings/`。

@@ -77,7 +77,9 @@ try {
 }
 
 // --------------------------------------------------------------------------
-// Ticket 02: Restored writer holds with holdReason and occupied > limit
+// Restored writer holds isolate workspaces without consuming this session's
+// execution capacity. Direct hold callers remain capacity-counting unless
+// they explicitly identify a ledger-restored hold.
 // --------------------------------------------------------------------------
 {
 	const c = new ConcurrencyController({ savedLimit: 2 });
@@ -89,6 +91,7 @@ try {
 		workspaces: ["/repo/a"],
 		reservedAt: "2026-09-18T10:00:00.000Z",
 		holdReason: "unconfirmed stop on crash",
+		countsTowardLimit: false,
 	});
 	c.hold({
 		id: "writerhold:call-2",
@@ -98,6 +101,7 @@ try {
 		workspaces: ["/repo/b"],
 		reservedAt: "2026-09-18T10:05:00.000Z",
 		holdReason: "abnormal termination",
+		countsTowardLimit: false,
 	});
 	c.hold({
 		id: "writerhold:call-3",
@@ -107,15 +111,17 @@ try {
 		workspaces: ["/repo/c"],
 		reservedAt: "2026-09-18T10:10:00.000Z",
 		holdReason: "network drop",
+		countsTowardLimit: false,
 	});
 
 	const status = c.status();
-	assert.equal(status.occupied, 3, "occupied is 3");
-	assert.equal(status.limit, 2, "limit is 2; occupied > limit from restore");
-	assert.equal(status.available, 0, "available is 0");
+	assert.equal(status.occupied, 0, "restored holds do not occupy execution capacity");
+	assert.equal(status.isolationHolds, 3, "all restored holds remain visible as isolation holds");
+	assert.equal(status.limit, 2, "configured execution limit remains 2");
+	assert.equal(status.available, 2, "execution capacity remains available");
 	assert.equal(c.get("writerhold:call-1")?.holdReason, "unconfirmed stop on crash");
 
-	// New writer is refused with CONCURRENCY_LIMIT_REACHED
+	// An unrelated writer is admitted, while the held workspace still conflicts.
 	const res = c.reserve({
 		id: "w-new",
 		taskId: "T-20260918-004",
@@ -123,7 +129,26 @@ try {
 		capability: "writer",
 		workspaces: ["/repo/d"],
 	});
-	assert.equal(res.refusal?.code, "CONCURRENCY_LIMIT_REACHED");
-	assert.equal(c.status().occupied, 3, "holds not cleared");
+	assert.ok(res.reservation);
+	assert.equal(c.status().occupied, 1);
+	assert.equal(c.reserve({ id: "w-conflict", role: "worker", capability: "writer", workspaces: ["/repo/a"] }).refusal?.code, "WORKSPACE_CONFLICT");
+	assert.equal(c.status().isolationHolds, 3, "holds not cleared");
 	assert.equal(c.status().limit, 2, "limit not bumped");
+}
+
+{
+	const c = new ConcurrencyController({ savedLimit: 1 });
+	c.hold({ id: "legacy-direct", role: "worker", capability: "writer", workspaces: ["/legacy"], reservedAt: "2026-09-18T00:00:00.000Z" });
+	c.hold({ id: "legacy-direct", role: "worker", capability: "writer", workspaces: ["/legacy"], reservedAt: "2026-09-18T00:00:00.000Z", countsTowardLimit: false });
+	assert.equal(c.get("legacy-direct")?.countsTowardLimit, true, "duplicate registration cannot downgrade a live capacity claim");
+	assert.equal(c.status().occupied, 1, "hold defaults conservatively to capacity-counting");
+	assert.equal(c.reserve({ id: "blocked", role: "worker", capability: "writer", workspaces: ["/other"] }).refusal?.code, "CONCURRENCY_LIMIT_REACHED");
+}
+
+{
+	const c = new ConcurrencyController();
+	c.hold({ id: "same-id", role: "worker", capability: "writer", workspaces: ["/held"], reservedAt: "2026-09-18T00:00:00.000Z", countsTowardLimit: false });
+	const collision = c.reserve({ id: "same-id", role: "worker", capability: "writer", workspaces: ["/unrelated"] });
+	assert.equal(collision.refusal?.code, "WORKSPACE_CONFLICT", "same-id reserve cannot bypass capacity admission through a restored hold");
+	assert.equal(c.get("same-id")?.countsTowardLimit, false);
 }

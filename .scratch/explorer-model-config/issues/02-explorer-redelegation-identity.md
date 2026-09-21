@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — Explorer 按子代理配置启动并保持只读。
 
-**Status:** needs-triage
+**Status:** wontfix
 
 **Resolution:** Focused lifecycle checks passed; final closure blocked by 01 and release/host validation.
 
@@ -37,3 +37,5 @@
   - 身份真实性：宿主实际报告的 terminal model / thinking 写入执行记录与账本；请求值与观察值不同时保持观察值，缺失时保持未知（不回填请求值）。
   - 用量与非目标角色隔离：`usage.jsonl` 持久化行核对确认子执行用量归属真实模型；Worker、Reviewer、Validator 请求不附带任何模型权威，Root 运行时模型未被改动。
   - 回归测试见 `explorer-model-config.test.mjs`，`npm run test:release` 全部通过。
+
+- 2026-09-21：根因定位到上游 pi-subagents（运行时注册的 agent 不套用 `subagents.defaultModel` / `agentOverrides`，见 `runtime-agent-registry.ts:424`），改为上游修复，插件不再解析模型配置。本票的插件侧适配器方案作废；后续见 `.scratch/explorer-model-upstream-runtime-agent-settings/`。

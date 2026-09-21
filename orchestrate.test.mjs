@@ -955,6 +955,7 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 			reason: "cancel grace expired without a terminal; writer stop unconfirmed",
 			since: "2026-09-16T00:00:00.000Z",
 		};
+		held.spec.additionalWorktreeRoots = ["/fixture/held-additional-root"];
 		held.executions.push({
 			executionId: "call-held",
 			taskId: held.taskId,
@@ -974,6 +975,10 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 			concurrency.status().reservations.some((r) => r.id === "writerhold:call-held"),
 			"the persisted hold is re-registered on restore",
 		);
+		assert.equal(concurrency.status().occupied, 0, "restored isolation does not consume current-session execution capacity");
+		assert.equal(concurrency.status().isolationHolds, 1);
+		const unrelated = concurrency.reserve({ id: "call-unrelated", role: "worker", capability: "writer", workspaces: ["/unrelated"] });
+		assert.ok(unrelated.reservation, "unrelated current-session execution is admitted");
 		const admission = concurrency.reserve({
 			id: "call-second",
 			role: "worker",
@@ -981,6 +986,8 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 			workspaces: [held.cwd],
 		});
 		assert.equal(admission.refusal?.code, "WORKSPACE_CONFLICT", "a second writer is refused after restart");
+		assert.equal(concurrency.reserve({ id: "call-additional-root", role: "worker", capability: "writer", workspaces: ["/fixture/held-additional-root"] }).refusal?.code, "WORKSPACE_CONFLICT", "restored additional worktree roots remain isolated");
+		concurrency.release("call-unrelated");
 		const status = orch.renderTaskStatus(orch.store.require(held.taskId));
 		assert.match(status, /Writer hold: kept/);
 		assert.match(status, /call-held: stop_unconfirmed \(operator_cancel\)/);
@@ -2559,12 +2566,13 @@ function boundReaderExecution(store, task, { executionId, runId, report }) {
 		workspaces: ["/workspace/restored"],
 		reservedAt: "2026-09-18T12:00:00.000Z",
 		holdReason: "unconfirmed stop on previous session abort",
+		countsTowardLimit: false,
 	});
 
 	const rendered = orch.renderConcurrencyStatus();
-	assert.match(rendered, /Concurrency: 2\/2 occupied, 0 available/);
-	assert.match(rendered, /T-20260918-100 execution=call-active role=worker capability=writer workspace=\/workspace\/active$/m);
-	assert.match(rendered, /T-20260918-200 execution=writerhold:call-restored role=worker capability=writer workspace=\/workspace\/restored \(restored writer hold: unconfirmed stop on previous session abort\)/);
+	assert.match(rendered, /Concurrency: 1\/2 execution slots occupied, 1 available; 1 isolation hold/);
+	assert.match(rendered, /T-20260918-100 execution=call-active role=worker capability=writer capacity=occupied workspace=\/workspace\/active$/m);
+	assert.match(rendered, /T-20260918-200 execution=writerhold:call-restored role=worker capability=writer capacity=isolation-only workspace=\/workspace\/restored \(restored writer hold: unconfirmed stop on previous session abort\)/);
 }
 
 // ============================================================================
@@ -2629,4 +2637,3 @@ function boundReaderExecution(store, task, { executionId, runId, report }) {
 }
 
 console.log("planner-only orchestration: PASS");
-

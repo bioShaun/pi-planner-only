@@ -32,6 +32,8 @@ export interface ConcurrencyReservation {
 	workspaces: string[];
 	reservedAt: string;
 	holdReason?: string;
+	/** Whether this reservation consumes one execution slot in this session. */
+	countsTowardLimit: boolean;
 }
 
 export interface ConcurrencyStatus {
@@ -39,6 +41,8 @@ export interface ConcurrencyStatus {
 	source: ConcurrencySource;
 	occupied: number;
 	available: number;
+	/** Workspace isolation claims retained without consuming execution capacity. */
+	isolationHolds: number;
 	reservations: ConcurrencyReservation[];
 }
 
@@ -143,11 +147,31 @@ export class ConcurrencyController {
 	getSource(): ConcurrencySource { return this.sessionLimit !== undefined ? "session" : this.hasSavedLimit ? "saved" : "default"; }
 
 	reserve(request: ConcurrencyReservationRequest): ConcurrencyReserveOutcome {
-		if (this.reservations.has(request.id)) return { reservation: this.reservations.get(request.id) };
+		const existing = this.reservations.get(request.id);
+		if (existing) {
+			if (existing.countsTowardLimit) return { reservation: existing };
+			const limit = this.getLimit();
+			const occupied = [...this.reservations.values()].filter((item) => item.countsTowardLimit).length;
+			return {
+				refusal: {
+					code: "WORKSPACE_CONFLICT",
+					reason: `WORKSPACE_CONFLICT: execution id ${request.id.slice(0, 100)} is retained as a restored isolation hold; use planner_tasks to diagnose it before retrying`,
+					limit,
+					occupied,
+					available: Math.max(0, limit - occupied),
+					conflictingIds: [existing.id],
+				},
+			};
+		}
 		const limit = this.getLimit();
-		const occupied = this.reservations.size;
+		const occupied = [...this.reservations.values()].filter((item) => item.countsTowardLimit).length;
 		if (occupied >= limit) {
-			return { refusal: { code: "CONCURRENCY_LIMIT_REACHED", reason: `CONCURRENCY_LIMIT_REACHED: occupied ${occupied}/${limit}; no execution slot is available`, limit, occupied, available: 0 } };
+			const active = [...this.reservations.values()]
+				.filter((item) => item.countsTowardLimit)
+				.slice(0, 5)
+				.map((item) => `${(item.taskId ?? "unbound").slice(0, 100)}/${item.id.slice(0, 100)}`)
+				.join(", ");
+			return { refusal: { code: "CONCURRENCY_LIMIT_REACHED", reason: `CONCURRENCY_LIMIT_REACHED: occupied ${occupied}/${limit}; no execution slot is available${active ? ` (active: ${active})` : ""}; call planner_tasks for bounded reservation diagnostics`, limit, occupied, available: 0 } };
 		}
 		const workspaces = [...new Set((request.workspaces ?? []).filter(Boolean).map(normalizedWorkspace))];
 		const conflicts = this.enforceWorkspace ? [...this.reservations.values()].filter((active) => {
@@ -160,7 +184,7 @@ export class ConcurrencyController {
 			return {
 				refusal: {
 					code: "WORKSPACE_CONFLICT",
-					reason: `WORKSPACE_CONFLICT: ${request.capability} cannot run beside active ${conflicts.map((item) => `${item.role} ${item.taskId ?? item.id}`).join(", ")}`,
+					reason: `WORKSPACE_CONFLICT: ${request.capability} cannot run beside active ${conflicts.slice(0, 5).map((item) => `${item.role.slice(0, 50)} ${(item.taskId ?? item.id).slice(0, 100)}`).join(", ")}; call planner_tasks for bounded reservation diagnostics`,
 					limit,
 					occupied,
 					available: limit - occupied,
@@ -175,6 +199,7 @@ export class ConcurrencyController {
 			capability: request.capability,
 			workspaces,
 			reservedAt: new Date().toISOString(),
+			countsTowardLimit: true,
 		};
 		this.reservations.set(request.id, reservation);
 		return { reservation };
@@ -186,8 +211,14 @@ export class ConcurrencyController {
 	 * Never refuses: the hold exists precisely because a stop was never
 	 * confirmed, so it must occupy the workspace unconditionally.
 	 */
-	hold(entry: { id: string; taskId?: string; role: string; capability: ConcurrencyCapability; workspaces: readonly string[]; reservedAt: string; holdReason?: string }): void {
-		if (this.reservations.has(entry.id)) return;
+	hold(entry: { id: string; taskId?: string; role: string; capability: ConcurrencyCapability; workspaces: readonly string[]; reservedAt: string; holdReason?: string; countsTowardLimit?: boolean }): void {
+		const existing = this.reservations.get(entry.id);
+		if (existing) {
+			// Re-registration can upgrade a restored isolation claim to a live
+			// capacity claim, but must never downgrade a live execution.
+			if (entry.countsTowardLimit !== false) existing.countsTowardLimit = true;
+			return;
+		}
 		this.reservations.set(entry.id, {
 			id: entry.id,
 			...(entry.taskId ? { taskId: entry.taskId } : {}),
@@ -196,6 +227,7 @@ export class ConcurrencyController {
 			workspaces: [...new Set(entry.workspaces.filter(Boolean).map(normalizedWorkspace))],
 			reservedAt: entry.reservedAt,
 			...(entry.holdReason ? { holdReason: entry.holdReason } : {}),
+			countsTowardLimit: entry.countsTowardLimit !== false,
 		});
 	}
 	setTaskId(id: string, taskId: string): void {
@@ -205,6 +237,8 @@ export class ConcurrencyController {
 	get(id: string): ConcurrencyReservation | undefined { return this.reservations.get(id); }
 	status(): ConcurrencyStatus {
 		const limit = this.getLimit();
-		return { limit, source: this.getSource(), occupied: this.reservations.size, available: Math.max(0, limit - this.reservations.size), reservations: [...this.reservations.values()] };
+		const reservations = [...this.reservations.values()];
+		const occupied = reservations.filter((item) => item.countsTowardLimit).length;
+		return { limit, source: this.getSource(), occupied, available: Math.max(0, limit - occupied), isolationHolds: reservations.length - occupied, reservations };
 	}
 }

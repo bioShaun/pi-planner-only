@@ -1351,16 +1351,68 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				};
 			}
 			const tasks = orchestrator.listLiveTasks(cwd);
+			const status = orchestrator.getConcurrencyStatus();
+			const workspace = normalizeWorkspaceIdentity(cwd);
+			const reservationLimit = 12;
+			const prioritizedReservations = status.reservations
+				.map((item, index) => ({ item, index }))
+				.sort((left, right) => {
+					const priority = (item: typeof left.item) => item.workspaces.includes(workspace) ? 0 : item.countsTowardLimit ? 1 : 2;
+					return priority(left.item) - priority(right.item) || left.index - right.index;
+				})
+				.map(({ item }) => item);
+			let reservationFieldsTruncated = false;
+			const reservations = prioritizedReservations.slice(0, reservationLimit).map((item) => {
+				reservationFieldsTruncated ||= item.id.length > 200
+					|| (item.taskId?.length ?? 0) > 200
+					|| (item.holdReason?.length ?? 0) > 400
+					|| item.workspaces.length > 8
+					|| item.workspaces.some((path) => path.length > 400);
+				return ({
+				id: item.id.slice(0, 200),
+				...(item.taskId ? { taskId: item.taskId.slice(0, 200) } : {}),
+				capability: item.capability,
+				countsTowardLimit: item.countsTowardLimit,
+				workspaces: item.workspaces.slice(0, 8).map((path) => path.slice(0, 400)),
+				...(item.holdReason ? { reason: item.holdReason.slice(0, 400) } : {}),
+				});
+			});
+			const workspaceBlocked = status.reservations.some((item) => item.workspaces.includes(workspace));
+			const concurrency = {
+				limit: status.limit,
+				occupied: status.occupied,
+				available: status.available,
+				isolationHolds: status.isolationHolds,
+				workspaceBlocked,
+				reservations,
+				truncated: status.reservations.length > reservations.length || reservationFieldsTruncated,
+			};
+			const capacityLine = `capacity: ${status.occupied}/${status.limit} execution slots occupied, ${status.available} available; ${status.isolationHolds} isolation hold(s)`;
+			const reservationLines = reservations.map((item) =>
+				`reservation ${item.taskId ?? "unbound"}/${item.id} capability=${item.capability} capacity=${item.countsTowardLimit ? "occupied" : "isolation-only"} workspace=${item.workspaces.join(", ") || "none"}${item.reason ? ` reason=${item.reason}` : ""}`,
+			);
+			const admissionBlocked = status.available === 0 || workspaceBlocked;
 			const text = tasks.length === 0
-				? `planner_tasks: No live Tasks in ${cwd}. planner_delegate mints a new one.`
+				? [
+					`planner_tasks: No live Tasks in ${cwd}.`,
+					capacityLine,
+					...reservationLines,
+					...(concurrency.truncated ? [`reservations: showing ${reservations.length} of ${status.reservations.length}`] : []),
+					admissionBlocked
+						? "Delegation is currently blocked; use the reservation task/execution IDs above to diagnose capacity or workspace isolation before retrying."
+						: "No capacity or workspace blocker is visible; planner_delegate can mint a new Task.",
+				].join("\n")
 				: [
 					`planner_tasks: ${tasks.length} live Task(s) in ${cwd}:`,
 					...tasks.map((task) =>
 						`${task.taskId} | ${task.state} | ${task.role}${task.recoveryRequired ? " | recovery required" : ""} | ${task.objective ?? "(no spec)"}`),
+					capacityLine,
+					...reservationLines,
+					...(concurrency.truncated ? [`reservations: showing ${reservations.length} of ${status.reservations.length}`] : []),
 				].join("\n");
 			return {
 				content: [{ type: "text", text }],
-				details: { tasks },
+				details: { tasks, concurrency },
 			};
 		},
 	});

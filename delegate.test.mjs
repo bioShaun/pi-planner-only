@@ -29,6 +29,7 @@ import { FINDING_CATEGORIES, FINDING_SEVERITIES, REVIEW_VERDICTS } from "./revie
 import { ConcurrencyController } from "./concurrency.ts";
 import { LedgerSnapshotStore } from "./ledger-store.ts";
 import { TaskStore, createTaskSpec } from "./task.ts";
+import { PlannerOrchestrator } from "./orchestrate.ts";
 import { UsageLedger } from "./usage.ts";
 import { Compile } from "typebox/compile";
 
@@ -390,6 +391,34 @@ async function expectRefusal(promise, code) {
 		assert.equal(store.list().length, 0, "no task created in store on capacity refusal");
 		assert.ok(refusal.message.includes("no Task was created, no execution was launched"));
 		assert.equal(concurrency.status().occupied, 1, "no reservation leaked");
+	}
+
+	// Historical ledger holds retain isolation but do not exhaust a new
+	// session's execution capacity in an unrelated workspace.
+	{
+		const ledgerRoot = makeTempDir("planner-only-restored-holds-");
+		const snapshots = new LedgerSnapshotStore(ledgerRoot);
+		for (let i = 1; i <= 4; i++) {
+			const seed = new TaskStore();
+			const held = seed.create(createTaskSpec({ objective: "historical hold", cwd: `/historical/${i}`, role: "worker", validation: { required: false } }, `T-20260918-h${i}`));
+			held.state = "blocked";
+			held.writerHold = { executionId: `call-old-${i}`, reason: "stop unconfirmed", since: "2026-09-18T00:00:00.000Z" };
+			snapshots.writeOrThrow(held);
+		}
+		const concurrency = new ConcurrencyController();
+		const orch = new PlannerOrchestrator({ ledgerDir: ledgerRoot, concurrency, gitRunner: fakeCleanGit() });
+		assert.equal(orch.restoreFromLedger().restored, 4);
+		const { deps, launches } = makeDeps({ store: orch.store, concurrency });
+		const taskCount = orch.store.list().length;
+		await expectRefusal(runDelegation(deps, makeParams(), "/historical/1", { executionId: "call-held-workspace" }), "WORKSPACE_CONFLICT");
+		assert.equal(launches.length, 0, "restored workspace isolation refuses before launch");
+		assert.equal(orch.store.list().length, taskCount, "workspace refusal mints no Task");
+		const outcome = await runDelegation(deps, makeParams(), dir, { executionId: "call-new-session" });
+		assert.equal(launches.length, 1);
+		assert.equal(outcome.report?.taskId, outcome.task.taskId, "unrelated execution returns an accepted report");
+		assert.equal(outcome.task.executions.at(-1).terminationConfirmed, true);
+		assert.equal(concurrency.status().occupied, 0, "completed execution releases only the new live reservation");
+		assert.equal(concurrency.status().isolationHolds, 4, "all historical holds remain registered");
 	}
 
 	// Ticket 02: Pre-admission refusal on existing Task keeps canonical taskId and leaves Task unchanged
@@ -2749,8 +2778,8 @@ function makeFakeWallClock() {
 	store.transition(taskId, "blocked");
 	store.setRecoveryRequired(taskId, { executionId: "call-held", reason: "stop unconfirmed" });
 	store.setWriterHold(taskId, { executionId: "call-held", reason: "stop unconfirmed", since: "2026-09-16T00:00:00.000Z" });
-	const concurrency = new ConcurrencyController();
-	concurrency.hold({ id: "writerhold:call-held", taskId, role: "worker", capability: "writer", workspaces: [dir], reservedAt: "2026-09-16T00:00:00.000Z" });
+	const concurrency = new ConcurrencyController({ savedLimit: 1 });
+	concurrency.hold({ id: "writerhold:call-held", taskId, role: "worker", capability: "writer", workspaces: [dir], reservedAt: "2026-09-16T00:00:00.000Z", countsTowardLimit: false });
 	const { deps, launches } = makeDeps({ store, concurrency, gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args) });
 	const holdBefore = structuredClone(store.require(taskId).writerHold);
 	const reservationsBefore = structuredClone(concurrency.status().reservations);
@@ -2770,6 +2799,20 @@ function makeFakeWallClock() {
 	assert.equal(store.require(taskId).recovery.required, true);
 	assert.equal(store.require(taskId).recoveryHistory?.length ?? 0, recoveryHistoryBefore, "insufficient manual recovery consumes no recovery grant");
 	assert.equal(launches.length, 0, "insufficient manual recovery emits no REQUEST");
+	assert.ok(concurrency.reserve({ id: "live-capacity", role: "worker", capability: "writer", workspaces: ["/unrelated/live"] }).reservation);
+	await expectRefusal(runDelegation(deps, makeParams({
+		taskId,
+		recovery: { executionId: "call-held", action: "fix_environment", reason: "operator verified all child processes exited", worktreeDecision: "manual" },
+	}), dir, {
+		executionId: "call-manual-capacity-refused",
+		requestId: "request-manual-capacity-refused",
+		requestObservation: () => ({ requestId: "request-manual-capacity-refused", requestDeadline: "2026-09-20T00:02:00.000Z",
+			remainingMs: 120_000, observedAt: "2026-09-20T00:00:00.000Z" }),
+	}), "CONCURRENCY_LIMIT_REACHED");
+	assert.equal(concurrency.get("writerhold:call-held")?.countsTowardLimit, false, "manual recovery rollback preserves restored isolation classification");
+	assert.equal(concurrency.status().occupied, 1, "rollback does not turn the restored hold into execution capacity");
+	assert.equal(concurrency.status().isolationHolds, 1);
+	concurrency.release("live-capacity");
 	const outcome = await runDelegation(deps, makeParams({
 		taskId,
 		recovery: { executionId: "call-held", action: "fix_environment", reason: "operator verified all child processes exited", worktreeDecision: "manual" },

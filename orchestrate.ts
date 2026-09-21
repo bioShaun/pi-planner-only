@@ -572,6 +572,7 @@ export class PlannerOrchestrator {
 				workspaces: [restored.cwd, ...(restored.spec?.additionalWorktreeRoots ?? [])],
 				reservedAt: hold.since,
 				holdReason: hold.reason,
+				countsTowardLimit: false,
 			});
 		}
 		return restored;
@@ -1131,13 +1132,13 @@ export class PlannerOrchestrator {
 	/** Current child capacity and workspace reservations for /planner-only status. */
 	renderConcurrencyStatus(): string {
 		const status = this.concurrency.status();
-		const lines = [`Concurrency: ${status.occupied}/${status.limit} occupied, ${status.available} available (source: ${status.source})`];
+		const lines = [`Concurrency: ${status.occupied}/${status.limit} execution slots occupied, ${status.available} available; ${status.isolationHolds} isolation hold(s) (source: ${status.source})`];
 		for (const item of status.reservations) {
 			const task = item.taskId ? this.store.get(item.taskId) : undefined;
 			const isWriterHold = item.id.startsWith("writerhold:") || item.holdReason !== undefined || Boolean(task?.writerHold && item.id.includes(task.writerHold.executionId));
 			const holdReason = item.holdReason ?? task?.writerHold?.reason;
 			const holdSuffix = isWriterHold ? ` (restored writer hold: ${holdReason ?? "unconfirmed stop"})` : "";
-			lines.push(`  - ${item.taskId ?? "unbound"} execution=${item.id} role=${item.role} capability=${item.capability} workspace=${item.workspaces.join(", ") || "none"}${holdSuffix}`);
+			lines.push(`  - ${item.taskId ?? "unbound"} execution=${item.id} role=${item.role} capability=${item.capability} capacity=${item.countsTowardLimit ? "occupied" : "isolation-only"} workspace=${item.workspaces.join(", ") || "none"}${holdSuffix}`);
 		}
 		return lines.join("\n");
 	}

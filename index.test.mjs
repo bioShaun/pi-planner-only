@@ -26,6 +26,7 @@ process.env.PI_PLANNER_ONLY_CANCEL_GRACE_MS = "50";
 for (const limit of ["TOOL_ATTEMPTS", "CHILD_LAUNCHES", "FAILURES", "REPAIRS"]) {
 	process.env[`PI_PLANNER_ONLY_REQUEST_${limit}`] = "1000";
 }
+
 // ticket 05 → 08: this file drives the pre-cutover subagent chain through the hook; deleted with it.
 
 delete process.env.PI_SUBAGENT_CHILD;
@@ -1762,7 +1763,10 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 	await handlers.get("input")({ source: "interactive" }, noLiveCtx);
 	const emptyListed = await tasksTool.execute("call-tasks-2", {}, undefined, () => {}, noLiveCtx);
 	assert.deepEqual(emptyListed.details.tasks, []);
-	assert.match(emptyListed.content[0].text, /No live Tasks in .+\. planner_delegate mints a new one\./);
+	assert.match(emptyListed.content[0].text, /No live Tasks in .+\./);
+	assert.match(emptyListed.content[0].text, /capacity: \d+\/\d+ execution slots occupied/);
+	assert.ok(emptyListed.details.concurrency);
+	assert.ok(emptyListed.details.concurrency.reservations.length <= 12, "global concurrency diagnostics are bounded");
 	await handlers.get("agent_settled")({}, ctx);
 	await handlers.get("input")({ source: "interactive" }, ctx);
 }
@@ -3207,4 +3211,45 @@ let mintedTaskIdForListing; // ticket 18's planner_tasks block lists this Task
 			`warnings disclose child value ${incidentVal}`,
 		);
 	}
+}
+
+// Concurrency listing priority is tested last because session_start adopts
+// ledger fixtures into the shared orchestrator store. Running it earlier
+// would change the source provenance asserted by the diagnostics tests above.
+{
+	const tasksTool = tools.get("planner_tasks");
+	const blockedCwd = join(tmpdir(), "planner-only-capacity-blocked-cwd");
+	const blockedCtx = { ...ctx, cwd: blockedCwd };
+	// More than the public diagnostics cap of restored holds: the blocker for
+	// this cwd is deliberately oldest, so insertion-order slicing would hide it.
+	for (let i = 0; i < 13; i++) {
+		new LedgerSnapshotStore(isolatedAgentDir).write({
+			taskId: `T-20260918-cap-${String(i).padStart(2, "0")}`,
+			state: "blocked",
+			role: "worker",
+			cwd: `/unrelated/history-${i}`,
+			spec: { objective: "historical isolation" },
+			writerHold: { executionId: `call-history-${i}`, reason: `historical stop ${i}`, since: "2026-09-18T00:00:00.000Z" },
+			updatedAt: `2026-09-18T00:${String(i).padStart(2, "0")}:00.000Z`,
+		});
+	}
+	new LedgerSnapshotStore(isolatedAgentDir).write({
+		taskId: "T-20260918-cap-blocker",
+		state: "blocked",
+		role: "worker",
+		cwd: blockedCwd,
+		spec: { objective: "current workspace isolation" },
+		writerHold: { executionId: "call-current-workspace-blocker", reason: "current workspace stop unconfirmed", since: "2026-09-17T00:00:00.000Z" },
+		updatedAt: "2026-09-17T00:00:00.000Z",
+	});
+	await handlers.get("session_start")({}, blockedCtx);
+	await handlers.get("agent_settled")({}, blockedCtx);
+	await handlers.get("input")({ source: "interactive" }, blockedCtx);
+	const listed = await tasksTool.execute("call-tasks-capacity-priority", {}, undefined, () => {}, blockedCtx);
+	assert.deepEqual(listed.details.tasks, []);
+	assert.equal(listed.details.concurrency.workspaceBlocked, true);
+	assert.ok(listed.details.concurrency.reservations.length <= 12, "global concurrency diagnostics are bounded");
+	assert.equal(listed.details.concurrency.reservations[0].taskId, "T-20260918-cap-blocker", "the current-workspace blocker is prioritized ahead of unrelated history");
+	assert.equal(listed.details.concurrency.truncated, true);
+	assert.match(listed.content[0].text, /Delegation is currently blocked/);
 }

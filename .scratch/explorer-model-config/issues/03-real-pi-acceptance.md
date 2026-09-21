@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — Explorer 重新委派读取当前配置并保留真实运行身份（已传递依赖票 01）。
 
-**Status:** needs-triage
+**Status:** wontfix
 
 **Resolution:** Acceptance blocked; historical model/tool evidence only; current implementation not accepted.
 
@@ -39,3 +39,5 @@
   - 账本与用量核验：`T-20260918-001.json` 及 `usage.jsonl` 分离记录 Root 为 `gpt-5.6-luna`，Explorer 为 `qwen-local/qwen3.8-27b:low`；执行分类保持为 `restricted-reader`，确认依据为 `terminal+restricted-reader`。
   - 完整证据链与运行文件见 `.scratch/explorer-model-config/evidence/` 及 [REPORT.md](../evidence/REPORT.md)。
 - 2026-09-18：关于"需上游提供真实 runId"的前提已由 ADR-0004 及 `.scratch/root-stamped-run-identity/` 取消（改为 Root 在接纳时盖章）。宿主重跑验收并入 `root-stamped-run-identity/04`。
+
+- 2026-09-21：根因定位到上游 pi-subagents（运行时注册的 agent 不套用 `subagents.defaultModel` / `agentOverrides`，见 `runtime-agent-registry.ts:424`），改为上游修复，插件不再解析模型配置。本票的插件侧适配器方案作废；后续见 `.scratch/explorer-model-upstream-runtime-agent-settings/`。

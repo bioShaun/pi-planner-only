@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** needs-triage
+**Status:** wontfix
 
 **Resolution:** Partial implementation; focused checks passed; full host compatibility remains open.
 
@@ -40,3 +40,5 @@
   - `index.ts`：在运行时插件绑定中将 `ctx.model`、`ctx.modelRegistry` 以及 `workspaceCwd` 连通至 `resolveExplorerModelSelection`。
   - 回归测试：`explorer-model-config.test.mjs` 全量用例覆盖成功矩阵、失败矩阵、能力隔离及注册门禁；`npm run test:release` 干净通过。
 - 2026-09-18 真实宿主数据点（来自 `../../root-stamped-run-identity/evidence/`，0.8.0 / `84cced4`，`pi-subagents@0.68.0`）：隔离 `settings.json` 配置 `subagents.agentOverrides.scout = qwen-local/qwen3.8-27b, thinking low`，Root 为 `tcuni-luna/gpt-5.6-luna`；三次 `planner-scout` 执行实际模型均为 `tcuni-luna/gpt-5.6-luna`（`A/meta.json:14`），override 未生效。与 `4fa55e3` 回退 explorer-model 接线后的预期一致；本票的宿主兼容性缺口仍然 open，该记录可作为修复后对照的"修复前"样本。
+
+- 2026-09-21：根因定位到上游 pi-subagents（运行时注册的 agent 不套用 `subagents.defaultModel` / `agentOverrides`，见 `runtime-agent-registry.ts:424`），改为上游修复，插件不再解析模型配置。本票的插件侧适配器方案作废；后续见 `.scratch/explorer-model-upstream-runtime-agent-settings/`。
