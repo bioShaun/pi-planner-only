@@ -245,7 +245,7 @@ TUI 下按 Esc 中止 `planner_delegate`/`planner_redelegate` 会向子代理发
 
 **停止确认（P0-A）。** 仅收到终态并不证明 writer 已静止。在身份匹配的终态到达后，委派会等待 `quiescenceWaitMs`（默认 10 s；`PI_PLANNER_ONLY_QUIESCENCE_MS` 覆盖），再要求两次连续一致的工作树采样——满足后停止才记为 `confirmed`（`confirmationBasis: terminal+quiet-worktree`）、释放 writer 预留，并把残留样本记为 `cTerminal`。普通 `completed` writer 也受同一谓词约束；若静止未确认，其报告不入账，Task 保持 `blocked` 与 writer hold。若 5 s 宽限期到期仍无终态，执行置为 `stop_unconfirmed`：Task 进 `blocked`，writer 预留转为持久化 `writerHold`，跨重启且不受普通账本恢复条数上限影响地继续拒绝第二写入者；launcher 保留 RESPONSE 订阅，迟到终态仍会把执行恰一次收尾（usage、`cTerminal`、释放）。采样失败记 `evidenceIncomplete`，同样保持 hold。非 completed 委派（cancelled、timed_out、failed 等）不再抛错：委派调用返回结构化 `details.termination`（宿主终态、ended reason、确认依据、执行生命周期状态、`usageComplete`）并附文本摘要。取消请求之后到达的 `completed` 报告只收入 `executions[].lateReport` 作证据，不再推进 review。
 
-**跑飞 envelope 与恢复（P0-B）。** 两个委派工具都接受显式 `envelope: { maxTokens?, maxWallMs? }`——UPDATE 累计 tokens（input+output 快照，不含 cache）与只覆盖实际 launcher 等待、不包含启动前 Evidence 采样的独立墙钟。越线即走与 Esc 相同的 CANCEL 路径，只触发一次；即使终态在取消宽限后迟到，执行原因仍保留为 `worker_runaway`。确认停止与未确认停止都会置 `task.recovery.required`。此后重新执行该 Task 必须在 `planner_redelegate` 携带结构化 `recovery` 决策（`retry_same_plan` / `fix_environment`，指明异常 `executionId`、理由与 `worktreeDecision`），或用独立的 `planner_abort`（ADR-0003：一次调用落 blocked 裁决并消费恢复要求）交人工。决策只消费一次；action、规范化 evidenceRefs 与 worktreeDecision 等价时，即使改写理由或调换证据顺序也会拒绝。`worktreeDecision: "manual"` 是操作者确认残留 writer 已处理后的显式断言，可解除持久 hold。未接线的 P1 动作明确拒绝。对 `planner_redelegate` 而言，非终态 Task 上的 `recovery` 会在派发前对 worker、explorer、validator 和 reviewer 一律拒绝为 `RECOVERY_NOT_APPLICABLE`；普通修正或评审轮必须省略该键。终态调用仍走各角色原有守卫：非 reviewer 执行除 `blocked + recovery.required` 外返回 `TASK_CLOSED`，reviewer 仍由既有 `REVIEW_TERMINAL` 语义处理。`planner_verdict` 的兼容行为不同：它会剥离多余的 `recovery`，记录普通 verdict，在 `warnings` 披露剥离，并且不消费恢复要求。
+**跑飞 envelope 与恢复（P0-B）。** 两个委派工具都接受显式 `envelope: { maxTokens?, maxWallMs?, softTokensShare? }`——UPDATE 累计 tokens（input+output 快照，不含 cache）与只覆盖实际 launcher 等待、不包含启动前 Evidence 采样的独立墙钟。存在 `maxTokens` 时默认在越过 70% 后尝试一次收尾提醒；`softTokensShare` 可配置为大于 0 且小于 1 的比例。提醒的 queued/unavailable/gone/failed/unconfirmed 回执会保留在执行诊断中，且不会延长预算或宽限期。越线即走与 Esc 相同的 CANCEL 路径，只触发一次；即使终态在取消宽限后迟到，执行原因仍保留为 `worker_runaway`。确认停止与未确认停止都会置 `task.recovery.required`。此后重新执行该 Task 必须在 `planner_redelegate` 携带结构化 `recovery` 决策（`retry_same_plan` / `fix_environment` / `resume_report_only`，指明异常 `executionId`、理由与 `worktreeDecision`），或用独立的 `planner_abort`（ADR-0003：一次调用落 blocked 裁决并消费恢复要求）交人工。决策只消费一次；action、规范化 evidenceRefs 与 worktreeDecision 等价时，即使改写理由或调换证据顺序也会拒绝。`worktreeDecision: "manual"` 是操作者确认残留 writer 已处理后的显式断言，可解除持久 hold。未接线的 P1 动作明确拒绝。对 `planner_redelegate` 而言，非终态 Task 上的 `recovery` 会在派发前对 worker、explorer、validator 和 reviewer 一律拒绝为 `RECOVERY_NOT_APPLICABLE`；普通修正或评审轮必须省略该键。终态调用仍走各角色原有守卫：非 reviewer 执行除 `blocked + recovery.required` 外返回 `TASK_CLOSED`，reviewer 仍由既有 `REVIEW_TERMINAL` 语义处理。`planner_verdict` 的兼容行为不同：它会剥离多余的 `recovery`，记录普通 verdict，在 `warnings` 披露剥离，并且不消费恢复要求。
 
 每次执行持久化最近 64 条 launcher UPDATE，包括有界的工具参数与输出行；这些字段可能包含宿主载荷里已有的敏感内容。`planner_tasks` 展示首次观测到的非只读工具序号、最大 token 跳变和带覆盖计数的只读占比；非只读工具只表示工具分类证据，不证明写入成功。取消执行先保存不虚构分类或成本的 token 快照，真实终态 usage 到达后替换。worker 可选配 `maxReadOnlyTools` 和 `preparationTokensShare`（后者要求 `maxTokens`），按精确工具名判断并以 `preparation_runaway` 收尾。恢复子包另带结构化 `priorExecution`；`retry_same_plan` 的 token 预算低于上次实测 token 越限值时拒绝。
 
@@ -268,6 +268,11 @@ npm run test:release  # 发布门禁：typecheck + 单元测试
 `test:release` = typecheck + 单元测试；宿主层覆盖以 typed-delegation 验收运行的采证产物记录，不作为发布门禁套件。
 
 ## 模块
+
+受限收尾的宿主基础模块另有生产执行器测试：`npm run test:closeout:host`，
+须在提供 slot、bubblewrap、libseccomp 和 systemd cgroup delegation 的 Linux
+正常终端运行。首版运行环境支持系统 Python/unittest；这些基础模块本身不启用恢复
+action。详见[执行与证据契约](docs/closeout-validation.md)。
 
 | 文件 | 职责 |
 |---|---|
@@ -299,3 +304,7 @@ npm run test:release  # 发布门禁：typecheck + 单元测试
 终态必须报告匹配的实际模型和 thinking（独立字段或已知的 `:thinking` 后缀）。缺失或冲突时不采纳 completed 报告，但保留 usage 和诊断报告。
 工具 `details.modelRoute` 和 `planner-only-model-route` 会话条目记录期望与实际身份。
 当前接线已通过 fixture；真实模型路由和成本收益仍需普通终端测量。
+
+### 受限收尾恢复
+
+`resume_report_only` 是一次性收尾恢复，只适用于因 token 或 wall 上限而持久化为 `cancelled` 的 worker runaway。准入要求停止已确认、`C_terminal` 完整，并且 origin 存在非空、可归属且范围内的改动。宿主只暴露 `closeout_read`、`closeout_validate`、`structured_output`，最多允许五次核对和一次报告；每条必要命令都必须引用本次宿主 journal 的回执。旧 origin 保持取消且没有报告，新收尾执行只继承其路径，不贡献新 Truth。完成报告仍需正常 review/verdict；收尾失败后只允许完整 `retry_same_plan` 或 `planner_abort`。

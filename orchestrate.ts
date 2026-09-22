@@ -45,6 +45,8 @@ import {
 import type { ReviewDecision } from "./review.ts";
 import { LedgerSnapshotStore, SAFE_TASK_ID } from "./ledger-store.ts";
 import type { LedgerCorrupt } from "./ledger-store.ts";
+import { canonicalSha256 } from "./closeout-evidence.ts";
+import { reconcileRestoredCloseout, validatePersistedCloseout } from "./closeout-recovery.ts";
 import {
 	TaskIdAllocator,
 	TaskStore,
@@ -417,6 +419,7 @@ export interface PlannerTaskDiagnostics {
 		requestBudget?: RequestExecutionBudget;
 		traceSummary?: TaskExecutionRecord["traceSummary"];
 		updateTrace?: TaskExecutionRecord["updateTrace"];
+		softTokenWarning?: TaskExecutionRecord["softTokenWarning"];
 		terminationConfirmed: boolean;
 		confirmationBasis?: string;
 		evidenceIncomplete?: boolean;
@@ -540,6 +543,7 @@ export class PlannerOrchestrator {
 		this.store.restore(record);
 		this.restoredTaskIds.add(record.taskId);
 		const restored = this.store.require(record.taskId);
+		reconcileRestoredCloseout(this.store, restored);
 		// WRC P0-A — an execution whose stop was in flight when the host
 		//    ended never got its confirmation; hold the workspace
 		//    conservatively, same as a persisted hold.
@@ -769,6 +773,7 @@ export class PlannerOrchestrator {
 			...(envelope.maxWallMs !== undefined ? { maxWallMs: envelope.maxWallMs } : {}),
 			...(envelope.maxReadOnlyTools !== undefined ? { maxReadOnlyTools: envelope.maxReadOnlyTools } : {}),
 			...(envelope.preparationTokensShare !== undefined ? { preparationTokensShare: envelope.preparationTokensShare } : {}),
+			...(envelope.softTokensShare !== undefined ? { softTokensShare: envelope.softTokensShare } : {}),
 			source: envelope.source,
 		});
 		const projectRequestBudget = (budget: RequestExecutionBudget) => ({
@@ -835,6 +840,9 @@ export class PlannerOrchestrator {
 				if (execution.status === "failed" && execution.confirmationBasis === "no-launch") {
 					guidance.push("the execution never launched — a pre-launch check refused it");
 				}
+				if (execution.softTokenWarning) {
+					guidance.push(`soft token warning ${execution.softTokenWarning.status}: observed ${execution.softTokenWarning.observed}, threshold ${execution.softTokenWarning.threshold}, limit ${execution.softTokenWarning.limit}${execution.softTokenWarning.reason ? ` (${capped(execution.softTokenWarning.reason, 400)})` : ""}`);
+				}
 				return {
 					executionId: capped(execution.executionId, 200),
 					kind: capped(execution.kind, 100) as DelegationKind,
@@ -860,6 +868,12 @@ export class PlannerOrchestrator {
 					envelopeClamped: execution.envelopeClamped === true,
 						...(execution.requestBudget ? { requestBudget: projectRequestBudget(execution.requestBudget) } : {}),
 						...(execution.traceSummary ? { traceSummary: execution.traceSummary } : {}),
+						...(execution.softTokenWarning ? { softTokenWarning: {
+							...execution.softTokenWarning,
+							attemptedAt: capped(execution.softTokenWarning.attemptedAt, 100),
+							...(execution.softTokenWarning.completedAt ? { completedAt: capped(execution.softTokenWarning.completedAt, 100) } : {}),
+							...(execution.softTokenWarning.reason ? { reason: capped(execution.softTokenWarning.reason, 400) } : {}),
+						} } : {}),
 					...(execution.updateTrace?.length ? { updateTrace: execution.updateTrace.slice(-8).map((update) => ({
 						receivedAt: capped(update.receivedAt, 100), ordinal: update.ordinal,
 						...(update.toolCount !== undefined ? { toolCount: update.toolCount } : {}),
@@ -1944,9 +1958,11 @@ export class PlannerOrchestrator {
 				reasons: [...comparison.reasons, `missing execution evidence — ${reason}`],
 			};
 		}
-		const origin = latest.reportOnly
-			? this.store.executionById(task.taskId, latest.previousExecutionId ?? "")
-			: latest;
+		const origin = latest.closeout
+			? this.store.executionById(task.taskId, latest.closeout.originExecutionId)
+			: latest.reportOnly
+				? this.store.executionById(task.taskId, latest.previousExecutionId ?? "")
+				: latest;
 		if (latest.reportOnly && (!origin || !origin.cReport)) {
 			const reason = `report-only execution ${latest.executionId} has no linked prior execution ${latest.previousExecutionId ?? "(missing)"} with C_report; attribution cannot be verified`;
 			this.store.completeExecution(task.taskId, latest.executionId, {
@@ -1961,7 +1977,7 @@ export class PlannerOrchestrator {
 			};
 		}
 		const truthRun = origin?.aRun ?? latest.aRun;
-		const truthBase = origin?.cReport ?? latest.cReport;
+		const truthBase = latest.closeout ? origin?.cTerminal : origin?.cReport ?? latest.cReport;
 		const roots = additionalWorktreeRootsOf(task);
 		const priorTruthPaths = task.executions
 			.filter((item) => item !== latest && !item.auxiliary && !item.reportOnly && item.truthPaths?.length)
@@ -1983,7 +1999,7 @@ export class PlannerOrchestrator {
 			? compareFreshness(origin.cReport, latest.aRun, freshnessOptions).fresh
 				&& compareFreshness(latest.aRun, latest.cReport, freshnessOptions).fresh
 			: false;
-		const freshnessBase = latest.reportOnly && correctionWindowFresh ? latest.cReport : truthBase;
+		const freshnessBase = latest.closeout || (latest.reportOnly && correctionWindowFresh) ? latest.cReport : truthBase;
 		let freshness: FreshnessComparison = freshnessBase
 			? compareFreshness(freshnessBase, currentSample, freshnessOptions)
 			: {
@@ -2892,6 +2908,38 @@ export class PlannerOrchestrator {
 			const identity = this.reportIdentityRefusal(current);
 			if (identity) return this.refusedVerdictOutcome(current, verdict, identity);
 		}
+		const reportProducer = report
+			? [...current.executions].reverse().find((execution) => execution.reportIndex === current.reports.length - 1)
+			: undefined;
+		const closeoutRevisionBinding = reportProducer?.closeout
+			? canonicalSha256({ report, revision: current.reports.length, executionId: reportProducer.executionId, closeout: reportProducer.closeout })
+			: undefined;
+		if (reportProducer?.closeout && verdict !== "pass") {
+			try { this.store.transition(current.taskId, "blocked"); } catch { /* already blocked */ }
+			this.store.setRecoveryRequired(current.taskId, {
+				reason: "restricted closeout was consumed; choose a full retry_same_plan or planner_abort",
+				executionId: reportProducer.executionId,
+			});
+			return {
+				task: this.store.require(current.taskId),
+				decision: { action: "blocked", nextState: "blocked", round: current.reviewRound, consumesRound: false,
+					failureClass: "evidence", reasonCode: "closeout-final", reason: "closeout cannot receive request_changes or correction",
+					guidance: ["Choose an explicit full retry_same_plan or planner_abort."] },
+			};
+		}
+		if (verdict === "pass" && reportProducer?.closeout && report) {
+			const closeoutErrors = validatePersistedCloseout(current, reportProducer, report);
+			if (closeoutErrors.length) {
+				try { this.store.transition(current.taskId, "blocked"); } catch { /* already blocked */ }
+				this.store.setRecoveryRequired(current.taskId, {
+					reason: `closeout evidence failed final recheck: ${closeoutErrors.join("; ")}`,
+					executionId: reportProducer.executionId,
+				});
+				return this.refusedVerdictOutcome(this.store.require(current.taskId), verdict, {
+					kind: "closeout-evidence", reason: `closeout evidence failed final recheck: ${closeoutErrors.join("; ")}`,
+				});
+			}
+		}
 
 		if (verdict === "pass" && report && !rawJudged && acceptanceModeOf(current) === "observation") {
 			// Ticket 03 — observation acceptance never fabricates Git freshness:
@@ -2934,6 +2982,19 @@ export class PlannerOrchestrator {
 		if (gapUnlockApproved && comparison) {
 			comparison.truthFindings = comparison.truthFindings?.filter(f => f.kind !== "attribution-gap");
 			comparison.unexplained = false;
+		}
+
+		if (verdict === "pass" && reportProducer?.closeout && report) {
+			const freshTask = this.store.require(current.taskId);
+			const freshProducer = freshTask.executions.find((item) => item.reportIndex === freshTask.reports.length - 1);
+			if (canonicalSha256({ report: freshTask.reports.at(-1), revision: freshTask.reports.length,
+				executionId: freshProducer?.executionId, closeout: freshProducer?.closeout }) !== closeoutRevisionBinding) {
+				return this.refusedVerdictOutcome(freshTask, verdict, { kind: "closeout-evidence", reason: "closeout report revision changed during verdict sampling" });
+			}
+			const errors = validatePersistedCloseout(freshTask, freshProducer!, freshTask.reports.at(-1)!);
+			if (errors.length) return this.refusedVerdictOutcome(current, verdict, {
+				kind: "closeout-evidence", reason: `closeout evidence failed post-sampling recheck: ${errors.join("; ")}`,
+			});
 		}
 
 		const review: ReviewResult = {

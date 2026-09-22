@@ -6,6 +6,11 @@
  * of these shapes: `TaskSpec` going down, `WorkerReport` coming back up.
  */
 
+/** Host-owned closeout capability and evidence records; these never grant a
+ * model authority merely by appearing in a TaskPacket or WorkerReport. */
+export type * from "./closeout-types.ts";
+import type { CloseoutOutputArtifact } from "./closeout-types.ts";
+
 /** WorkerReport wire version. Bump only with a migration. */
 export const WORKER_REPORT_VERSION = 1;
 
@@ -313,7 +318,18 @@ export interface ExecutionEnvelope {
 	maxWallMs?: number;
 	maxReadOnlyTools?: number;
 	preparationTokensShare?: number;
+	softTokensShare?: number;
 	source: "delegation-param" | "default" | "operator-config";
+}
+
+export interface SoftTokenWarning {
+	observed: number;
+	limit: number;
+	threshold: number;
+	attemptedAt: string;
+	status: "pending" | "queued" | "unavailable" | "gone" | "failed" | "unconfirmed";
+	completedAt?: string;
+	reason?: string;
 }
 
 export interface ExecutionUpdateSnapshot {
@@ -377,9 +393,8 @@ export interface ExecutionToolBudget {
 }
 
 /**
- * P0-B — a Root recovery decision (spec §5). P0 wires retry_same_plan /
- * fix_environment through planner_redelegate and abort through
- * planner_verdict; the remaining actions are refused until P1.
+ * A Root recovery decision: retry_same_plan, fix_environment and eligible
+ * resume_report_only use planner_redelegate; abort uses planner_abort.
  */
 export interface RecoveryDecision {
 	/** The abnormal execution this decision addresses. */
@@ -477,6 +492,8 @@ export interface TaskExecutionRecord {
 	rawTerminal?: Record<string, unknown>;
 	/** P0-B — which envelope bound tripped, with the observed value. */
 	runawayObservation?: RunawayObservation;
+	/** One best-effort request asking the running child to close out before its hard token bound. */
+	softTokenWarning?: SoftTokenWarning;
 	/** Bounded tail of launcher UPDATE observations. */
 	updateTrace?: ExecutionUpdateSnapshot[];
 	traceSummary?: ExecutionTraceSummary;
@@ -518,6 +535,23 @@ export interface TaskExecutionRecord {
 	runId?: string;
 	/** True for report-only report revision corrections. */
 	reportOnly?: boolean;
+	/** One-shot restricted closeout execution. Source attribution stays with its origin. */
+	closeout?: {
+		version: 1;
+		/** Transport identity, distinct from the enclosing Request id on execution. */
+		requestId: string;
+		originExecutionId: string;
+		journalRoot: string;
+		journalId: string;
+		grantSha256: string;
+		associationSha256: string;
+		originEvidenceSha256: string;
+		inheritedTruthPaths: string[];
+		receiptIds?: string[];
+		reportBindingSha256?: string;
+		/** Absent only on a consumed preparation that failed before artifact sealing. */
+		snapshotManifestArtifact?: CloseoutOutputArtifact;
+	};
 	/** True when the trusted launch binding granted this execution read-only capability. */
 	readOnly?: boolean;
 	/** Host run id resumed by this execution, when applicable. */
@@ -683,6 +717,8 @@ export interface ValidationResult {
 	type: ValidationType;
 	status: ValidationStatus;
 	exitCode?: number;
+	/** Host-issued closeout journal receipt. Required on resume_report_only. */
+	receiptId?: string;
 	summary: string;
 	/** Root normalization marker; worker-declared reports omit this field. */
 	inferred?: boolean;
@@ -699,6 +735,13 @@ export interface TaskPacket {
 	instructions: string;
 	knownFacts: string[];
 	artifactRefs: string[];
+	/** Static disclosure of the effective execution envelope at launch time. */
+	readonly budgetDisclosure?: {
+		readonly maxTokens?: number;
+		readonly maxWallMs?: number;
+		readonly accounting: string;
+		readonly closingReserveGuidance: string;
+	};
 	priorExecution?: {
 		executionId: string;
 		endedReason?: string;
@@ -747,6 +790,9 @@ export interface ReviewRoundAttribution {
 	/** A_run / C_report head refs for this window. */
 	aRef?: string;
 	cRef?: string;
+	/** A cancelled origin retains a terminal boundary, never a C_report. */
+	terminalRef?: string;
+	closeout?: { originExecutionId: string; inheritedFiles: string[]; receiptIds: string[] };
 	attributedFiles: string[];
 	executionChangedFiles?: string[];
 	committedFiles?: string[];
@@ -849,6 +895,7 @@ export type RootVerdictRefusalKind =
 	| "attribution-gap-unlock-refused"   // strict fresh mode has 0 evidence attribution paths
 	| "observation-inadmissible"       // an observation-acceptance gate failed (report/execution/declared-evidence)
 	| "report-identity"                // the bound report revision fails the Task/execution identity check at verdict time
+	| "closeout-evidence"              // durable closeout journal/artifacts failed final recheck
 	| "recovery-invalid";              // the RecoveryDecision failed validateRecoveryDecision (planner_abort / redelegate gate)
 
 /** Structured refusal of a Root verdict request: typed kind plus prose for display. */

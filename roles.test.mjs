@@ -66,6 +66,29 @@ assert.match(reviewerPrompt("T-20260831-009"), /Git evidence is supplied by Root
 	assert.equal(oracleSuiteMode({ PI_PLANNER_ONLY_ORACLE: "bounded" }), "bounded");
 }
 
+{
+	const spec = createTaskSpec({ objective: "disclose effective envelope", cwd: process.cwd(), validation: { required: false } });
+	const budgetDisclosure = {
+		maxTokens: 12_000,
+		maxWallMs: 45_000,
+		accounting: "Cumulative input+output snapshots; cache read tokens are excluded.",
+		closingReserveGuidance: "Reserve the final 10% for verification and reporting.",
+	};
+	const plain = JSON.parse(buildTaskPacket(spec, "implement", { budgetDisclosure }));
+	assert.deepEqual(plain.budgetDisclosure, budgetDisclosure, "plain prompts receive the trusted effective envelope disclosure");
+
+	const stale = JSON.stringify({
+		version: 1,
+		spec,
+		instructions: "continue",
+		knownFacts: [],
+		artifactRefs: [],
+		budgetDisclosure: { maxTokens: 1, maxWallMs: 2, accounting: "stale", closingReserveGuidance: "stale" },
+	});
+	const rebuilt = JSON.parse(buildTaskPacket(spec, stale, { budgetDisclosure }));
+	assert.deepEqual(rebuilt.budgetDisclosure, budgetDisclosure, "embedded packet budgets are replaced by the trusted launch disclosure");
+}
+
 
 {
 	const fixtureSpec = {

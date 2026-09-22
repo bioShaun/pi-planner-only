@@ -72,6 +72,9 @@ import { normalizeWorkspaceIdentity } from "./task.ts";
 import { FileRequestStorage, RequestClosed, RequestController } from "./request-control.ts";
 import { acceptedExecution, correctionPredecessor, delegationFailureFamily, requestErrorFamily, reviewFailureFamily, structuralIssues } from "./request-events.ts";
 import { loadExecutionDefaults } from "./execution-defaults.ts";
+import { SUBAGENT_DELEGATION_CLOSEOUT_REGISTRAR_EVENT } from "./subagent-delegation-contract.ts";
+import type { CloseoutBrokerRegistrar } from "./closeout-broker.ts";
+import { discoverCloseoutRuntimeProfile } from "./closeout-sandbox.ts";
 
 /** P0-B — the only recovery action wired through planner_abort (spec §5, ADR-0003). */
 const ABORT_RECOVERY_ACTIONS = new Set(["abort"]);
@@ -472,6 +475,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	// delegations refuse with READER_CAPABILITY_UNPROVEN.
 	let restrictedReaderAgent: string | undefined;
 	let reportOnlyAgent: string | undefined;
+	let closeoutRegistrar: CloseoutBrokerRegistrar | undefined;
 	const emitRegistration = (event: string, request: unknown): void => { pi.events.emit(event, request); };
 	const ensureRestrictedReaderAgent = (): void => {
 		if (restrictedReaderAgent !== undefined) return;
@@ -493,6 +497,16 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		} catch {
 			// A pending report correction refuses before REQUEST without this proof.
 		}
+	};
+	const ensureCloseoutRegistrar = (): void => {
+		if (closeoutRegistrar) return;
+		const request = {
+			version: 1 as const,
+			accept(registrar: CloseoutBrokerRegistrar) {
+				if (registrar?.version === 1 && typeof registrar.register === "function") closeoutRegistrar = registrar;
+			},
+		};
+		try { pi.events.emit(SUBAGENT_DELEGATION_CLOSEOUT_REGISTRAR_EVENT, request); } catch { /* capability stays unavailable */ }
 	};
 	// WRC P0-A — spec §3 quiescenceWaitMs; env override exists for tests and
 	// calibrated hosts, the default stays 10 s (forced-settlement 3–4 s +
@@ -1103,6 +1117,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 						const route = resolveDelegationModel(effectiveParams.role, ctx.modelRegistry);
 						ensureRestrictedReaderAgent();
 						ensureReportOnlyAgent();
+						ensureCloseoutRegistrar();
 						outcome = await runDelegation(
 							{
 								store: orchestrator.store,
@@ -1137,6 +1152,13 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 								},
 								...(restrictedReaderAgent !== undefined ? { restrictedReaderAgent } : {}),
 								...(reportOnlyAgent !== undefined ? { reportOnlyAgent } : {}),
+								...(closeoutRegistrar !== undefined ? { closeout: {
+									registrar: closeoutRegistrar,
+									stateRoot: process.env.PI_PLANNER_CLOSEOUT_STATE_ROOT?.trim() || join(AGENT_DIR, "planner-only", "closeout"),
+									discoverRuntimeProfile: () => discoverCloseoutRuntimeProfile({
+										...(process.env.PI_PLANNER_CLOSEOUT_PYTHON_TOOLS?.trim() ? { pythonToolsRoot: process.env.PI_PLANNER_CLOSEOUT_PYTHON_TOOLS.trim() } : {}),
+									}),
+								} } : {}),
 								...(quiescenceWaitMs !== undefined ? { quiescenceWaitMs } : {}),
 								ownerRunId: ctx.sessionManager?.getSessionId?.() || PROCESS_OWNER_RUN_ID,
 								...(executionDefaults ? { executionDefaults } : {}),
@@ -1260,7 +1282,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			"role=reviewer reviews the bound Task's latest WorkerReport; the launcher-validated ReviewResult arrives in details.review.",
 			"role=validator runs auxiliary oracle validation on the bound Task; its report supplements the worker report. It cannot create a standalone Task through planner_delegate.",
 			"Do not repeat objective, cwd, scope, constraints, acceptanceCriteria, validation, or acceptanceMode: the stored TaskSpec is authoritative. instructions apply to this child packet only and do not mutate it.",
-			"Omitting envelope uses the finite execution defaults (10 minutes wall clock, 100000 tokens). An explicit envelope replaces default/token inheritance. Ordinary execution walls are capped at the original Request remainder minus a provisional 60000ms reserve; insufficient remainder refuses launch without consuming recovery or correction state. A Task flagged recovery.required re-executes only with a matching recovery decision (retry_same_plan / fix_environment) or is aborted via planner_abort.",
+			"Omitting envelope uses the finite execution defaults (10 minutes wall clock, 100000 tokens). An explicit envelope replaces default/token inheritance. Ordinary execution walls are capped at the original Request remainder minus a provisional 60000ms reserve; insufficient remainder refuses launch without consuming recovery or correction state. A Task flagged recovery.required re-executes only with a matching recovery decision (retry_same_plan / fix_environment / resume_report_only) or is aborted via planner_abort.",
 			"recovery.executionId names the abnormal execution's details.executionId — never a child runId; a stray recovery on a Task without a pending requirement is refused (RECOVERY_NOT_APPLICABLE), not ignored.",
 		],
 		parameters: PLANNER_REDELEGATE_PARAMETERS,
@@ -1577,7 +1599,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		].join(" "),
 		promptSnippet: "planner_abort: abandon a blocked Task's abnormal execution — blocked verdict + consume recovery.required",
 		promptGuidelines: [
-			"Use planner_abort only on a Task flagged recovery.required when Root decides against re-executing; to keep working, re-enter with planner_redelegate and a retry_same_plan / fix_environment recovery decision instead.",
+			"Use planner_abort only on a Task flagged recovery.required when Root decides against re-executing; to keep working, re-enter with planner_redelegate and a retry_same_plan / fix_environment / resume_report_only recovery decision instead.",
 			"executionId is the abnormal execution's details.executionId (the toolCallId that ran it) — never a child runId.",
 			"worktreeDecision=manual releases the persisted writer hold only after the operator resolved the unconfirmed stop; otherwise keep.",
 		],

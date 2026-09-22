@@ -62,6 +62,9 @@ function validateValidationResult(value: unknown, index: number): string[] {
 	if (value.exitCode !== undefined && !Number.isInteger(value.exitCode)) {
 		errors.push(`${label}.exitCode must be an integer when present`);
 	}
+	if (value.receiptId !== undefined && !isNonEmptyString(value.receiptId)) {
+		errors.push(`${label}.receiptId must be a non-empty string when present`);
+	}
 	return errors;
 }
 

@@ -1635,6 +1635,12 @@ export class TaskStore {
 		}
 	}
 
+	/** Closeout association boundary: failures propagate after the sink fsyncs. */
+	persistOrThrow(record: TaskRecord): void {
+		if (!this.onPersist) throw new Error("strict Task persistence is unavailable");
+		this.onPersist(record);
+	}
+
 	/**
 	 * Install a snapshot from disk. Loading is not a mutation: do not touch()
 	 * or persist() (that would rewrite updatedAt). An in-memory record of the

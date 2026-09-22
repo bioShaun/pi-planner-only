@@ -20,11 +20,17 @@ import { Type, type Static } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	SUBAGENT_DELEGATION_CANCEL_EVENT,
+	SUBAGENT_DELEGATION_CLOSEOUT_ACK_EVENT,
+	SUBAGENT_DELEGATION_FOLLOWUP_ACK_EVENT,
+	SUBAGENT_DELEGATION_FOLLOWUP_EVENT,
 	SUBAGENT_DELEGATION_REQUEST_EVENT,
 	SUBAGENT_DELEGATION_RESPONSE_EVENT,
 	SUBAGENT_DELEGATION_STARTED_EVENT,
 	SUBAGENT_DELEGATION_UPDATE_EVENT,
 	type SubagentDelegationCancel,
+	type SubagentDelegationCloseoutAck,
+	type SubagentDelegationFollowUp,
+	type SubagentDelegationFollowUpAck,
 	type SubagentDelegationJsonSchemaObject,
 	type SubagentDelegationRequest,
 	type SubagentDelegationResponse,
@@ -58,6 +64,8 @@ import type { FreshReviewerTaskInput, ReviewDecision } from "./review.ts";
 import { childUsageFromValue } from "./usage.ts";
 import type { UsageLedger } from "./usage.ts";
 import { loadExecutionDefaults, REQUEST_EXECUTION_RESERVE_MS } from "./execution-defaults.ts";
+import { canonicalSha256 } from "./closeout-evidence.ts";
+import { CLOSEOUT_RECOVERY_ACTION, prepareCloseout, requireCloseoutOrigin, type CloseoutOrigin, type CloseoutRecoveryConfig, type PreparedCloseout } from "./closeout-recovery.ts";
 import type { RequestTimingObservation } from "./request-control.ts";
 import { acceptanceModeOf, isFinalTaskState, isTerminalTaskState } from "./types.ts";
 import { READ_ONLY_TOOLS } from "./policy.ts";
@@ -83,6 +91,7 @@ import type {
 	TaskExecutionRecord,
 	TaskLaunchRefusal,
 	TaskSpec,
+	SoftTokenWarning,
 	WorkerReport,
 } from "./types.ts";
 
@@ -163,6 +172,35 @@ function buildReportOnlyRepairInstructions(
 			"Repair only the WorkerReport declaration from the supplied typed report and Root evidence.",
 			"Do not invent missing work, validation, evidence, or workspace facts.",
 			"Submit exactly one structured WorkerReport and perform no other action.",
+		],
+	}, null, 2);
+}
+
+function buildCloseoutInstructions(
+	task: TaskRecord,
+	origin: TaskExecutionRecord,
+	prepared: PreparedCloseout,
+	callerInstructions: string,
+): string {
+	const tail = origin.updateTrace ?? [];
+	return JSON.stringify({
+		kind: "restricted-closeout-context-v1",
+		originExecutionId: origin.executionId,
+		inheritedChangedFiles: prepared.inheritedTruthPaths,
+		freshEvidence: prepared.snapshot.binding,
+		commands: prepared.grant.commands.map(({ commandId, originalCommand }) => ({ commandId, originalCommand })),
+		readableFiles: [...prepared.snapshot.files.entries()].map(([pathId, entry]) => ({ pathId, path: entry.path, bytes: entry.bytes })),
+		historicalDiagnostics: {
+			diffStat: origin.cTerminal?.diffStat ?? null,
+			recentTools: [...tail].reverse().find((item) => item.recentTools?.length)?.recentTools?.slice(-8) ?? [],
+			recentOutputLines: [...tail].reverse().find((item) => item.recentOutputLines?.length)?.recentOutputLines?.slice(-20) ?? [],
+		},
+		callerInstructions: callerInstructions.trim(),
+		rules: [
+			"The historical diagnostics are hints only and never count as validation.",
+			"Run every listed command exactly once with closeout_validate and copy each returned receiptId into the matching validation entry.",
+			"Declare inheritedChangedFiles exactly; this execution contributes no new source Truth.",
+			"Submit one honest WorkerReport. completed does not imply PASS; use blocked, partial, or failed when validation or evidence is incomplete.",
 		],
 	}, null, 2);
 }
@@ -329,6 +367,16 @@ function validateEnvelope(raw: PlannerDelegationParams["envelope"], toolName = "
 	const maxTokens = check("maxTokens", raw.maxTokens);
 	const maxWallMs = check("maxWallMs", raw.maxWallMs);
 	const maxReadOnlyTools = check("maxReadOnlyTools", raw.maxReadOnlyTools);
+	let softTokensShare: number | undefined;
+	if (raw.softTokensShare !== undefined) {
+		if (!Number.isFinite(raw.softTokensShare) || raw.softTokensShare <= 0 || raw.softTokensShare >= 1) {
+			throw new DelegationRefused("ENVELOPE_INVALID", `${toolName} refused: envelope.softTokensShare must be greater than 0 and less than 1, got ${raw.softTokensShare}`);
+		}
+		if (maxTokens === undefined) {
+			throw new DelegationRefused("ENVELOPE_INVALID", `${toolName} refused: envelope.softTokensShare requires envelope.maxTokens`);
+		}
+		softTokensShare = raw.softTokensShare;
+	}
 	let preparationTokensShare: number | undefined;
 	if (raw.preparationTokensShare !== undefined) {
 		if (!Number.isFinite(raw.preparationTokensShare) || raw.preparationTokensShare <= 0 || raw.preparationTokensShare > 1) {
@@ -339,7 +387,7 @@ function validateEnvelope(raw: PlannerDelegationParams["envelope"], toolName = "
 		}
 		preparationTokensShare = raw.preparationTokensShare;
 	}
-	if (maxTokens === undefined && maxWallMs === undefined && maxReadOnlyTools === undefined && preparationTokensShare === undefined) {
+	if (maxTokens === undefined && maxWallMs === undefined && maxReadOnlyTools === undefined && preparationTokensShare === undefined && softTokensShare === undefined) {
 		throw new DelegationRefused("ENVELOPE_INVALID", `${toolName} refused: envelope requires at least one configured bound`);
 	}
 	return {
@@ -347,12 +395,13 @@ function validateEnvelope(raw: PlannerDelegationParams["envelope"], toolName = "
 		...(maxWallMs !== undefined ? { maxWallMs } : {}),
 		...(maxReadOnlyTools !== undefined ? { maxReadOnlyTools } : {}),
 		...(preparationTokensShare !== undefined ? { preparationTokensShare } : {}),
+		...(softTokensShare !== undefined ? { softTokensShare } : {}),
 		source: "delegation-param",
 	};
 }
 
 /** P0-B — actions wired for planner_redelegate re-execution. */
-const DELEGATE_RECOVERY_ACTIONS = new Set(["retry_same_plan", "fix_environment"]);
+const DELEGATE_RECOVERY_ACTIONS = new Set(["retry_same_plan", "fix_environment", CLOSEOUT_RECOVERY_ACTION]);
 /** P0-B — actions that need P1 machinery and are refused until then. */
 const P1_RECOVERY_ACTIONS = new Set(["narrow_task", "add_information", "repair_protocol", "change_model", "change_tool_strategy"]);
 
@@ -381,6 +430,10 @@ export function validateRecoveryDecision(
 	}
 	if (required.consumedBy !== undefined) {
 		return `recovery for execution ${required.executionId} was already consumed by ${required.consumedBy}`;
+	}
+	const requiredExecution = task.executions.find((execution) => execution.executionId === required.executionId);
+	if (requiredExecution?.closeout && decision.action !== "retry_same_plan" && decision.action !== "abort") {
+		return `failed closeout execution ${required.executionId} permits only a full retry_same_plan or planner_abort`;
 	}
 	if (decision.action === "abort" && !allowedActions.has("abort")) {
 		return "recovery action abort goes through planner_abort, not planner_redelegate";
@@ -446,6 +499,7 @@ const DELEGATION_SPEC_PARAMETERS = {
 			maxWallMs: Type.Optional(Type.Number({ description: "Cancel the child when wall-clock since launch exceeds this many ms." })),
 			maxReadOnlyTools: Type.Optional(Type.Number({ description: "Worker-only: cancel after this many consecutive observed read-only tool calls before the first write-capable tool." })),
 			preparationTokensShare: Type.Optional(Type.Number({ description: "Worker-only: cancel when pre-write tokens exceed this share of maxTokens. Requires maxTokens." })),
+			softTokensShare: Type.Optional(Type.Number({ description: "Send one best-effort close-out reminder after cumulative tokens exceed this share of maxTokens. Must be greater than 0 and less than 1; requires maxTokens." })),
 		}, {
 			description: "Runaway envelope. When omitted on an ordinary execution, finite program/operator defaults apply (maxTokens 100000, maxWallMs 600000 unless operator-configured). An explicit envelope replaces default/token inheritance. The effective wall bound is capped at the original Request remainder minus a provisional 60000ms reserve; token-only envelopes receive that Request-derived wall cap.",
 		}),
@@ -554,6 +608,7 @@ export const WORKER_REPORT_SCHEMA = structuredClone(Type.Object(
 					Type.Literal("not-run"),
 				]),
 				exitCode: Type.Optional(Type.Integer()),
+				receiptId: Type.Optional(Type.String()),
 				summary: Type.String(),
 			}),
 		),
@@ -621,6 +676,10 @@ export interface DelegationLaunchHooks {
 	onStarted?: (started: SubagentDelegationStarted) => void;
 	/** 每条按身份三元组过滤后的 UPDATE。调用方不得阻塞。 */
 	onUpdate?: (update: SubagentDelegationUpdate) => void;
+	/** Control for a live child attempt; queue acknowledgement does not prove consumption or compliance. */
+	onControl?: (control: {
+		followUp(text: string): Promise<{ status: SubagentDelegationFollowUpAck["status"] | "unconfirmed"; reason?: string }>;
+	}) => void;
 	/**
 	 * WRC P0-A — an identity-matched terminal that arrived after the cancel
 	 * grace already rejected the wait. The launcher keeps its RESPONSE
@@ -646,6 +705,8 @@ export interface DelegationDeps {
 	restrictedReaderAgent?: string;
 	/** Registered tools:[] agent used exclusively for a pending report correction. */
 	reportOnlyAgent?: string;
+	/** Host-only one-shot closeout capability. Absence refuses resume_report_only. */
+	closeout?: CloseoutRecoveryConfig;
 	now?: () => Date;
 	/**
 	 * Wall-envelope clock: a monotonic `now()` plus the timer pair. Tests
@@ -881,6 +942,9 @@ export async function runDelegation(
 	let task!: TaskRecord;
 	let thisSpec: TaskSpec;
 	let recoveryDecision: RecoveryDecision | undefined;
+	let closeoutOrigin: CloseoutOrigin | undefined;
+	let preparedCloseout: PreparedCloseout | undefined;
+	let unregisterCloseout: (() => void) | undefined;
 	let reportOnlyGrant = false;
 	let reportOnlyOrigin: TaskExecutionRecord | undefined;
 	if (params.taskId) {
@@ -980,7 +1044,7 @@ export async function runDelegation(
 		reportOnlyGrant = reportCorrectionPending && (role === "worker" || role === "explorer");
 		if (reportOnlyGrant) {
 			reportOnlyOrigin = [...task.executions].reverse().find(
-				(item) => !item.auxiliary && !item.reportOnly && item.status !== "running" && item.status !== "cancel_requested",
+				(item) => !item.auxiliary && !item.reportOnly && !item.closeout && item.status !== "running" && item.status !== "cancel_requested",
 			);
 			if (!reportOnlyOrigin?.cReport) {
 				throw new DelegationRefused(
@@ -1003,6 +1067,12 @@ export async function runDelegation(
 				const refusal = validateRecoveryDecision(task, params.recovery as RecoveryDecision | undefined, DELEGATE_RECOVERY_ACTIONS);
 				if (refusal) throw new DelegationRefused("RECOVERY_REQUIRED", `${toolName} refused: ${refusal}`, task.taskId);
 				recoveryDecision = params.recovery as RecoveryDecision;
+				if (recoveryDecision.action === CLOSEOUT_RECOVERY_ACTION) {
+					if (role !== "worker") throw new DelegationRefused("CLOSEOUT_WORKER_REQUIRED", `${toolName} refused: resume_report_only requires role=worker`, task.taskId);
+					if (!deps.closeout) throw new DelegationRefused("CLOSEOUT_CAPABILITY_UNAVAILABLE", `${toolName} refused: closeout runtime registrar/profile is unavailable`, task.taskId);
+					try { closeoutOrigin = requireCloseoutOrigin(task, recoveryDecision, thisSpec); }
+					catch (error) { throw new DelegationRefused("CLOSEOUT_INADMISSIBLE", `${toolName} refused: ${error instanceof Error ? error.message : String(error)}`, task.taskId); }
+				}
 			} else {
 				throw new DelegationRefused(
 					"TASK_CLOSED",
@@ -1018,6 +1088,10 @@ export async function runDelegation(
 		// Minting validates the spec before any reservation or store write.
 		const taskId = deps.store.nextTaskId();
 		thisSpec = specFromParams(params, taskId, effectiveCwd);
+	}
+
+	if (params.recovery?.action === CLOSEOUT_RECOVERY_ACTION && !closeoutOrigin) {
+		throw new DelegationRefused("CLOSEOUT_INADMISSIBLE", `${toolName} refused: resume_report_only requires a blocked Task with an unused recovery origin`, task?.taskId);
 	}
 
 	// Reviewers returned above and remain Request-bounded. Every ordinary
@@ -1135,6 +1209,9 @@ export async function runDelegation(
 	const runController = new AbortController();
 	let runaway: RunawayObservation | undefined;
 	let maxTokensSeen = -1;
+	let maxStrictTokensSeen = -1;
+	let followUpControl: Parameters<NonNullable<DelegationLaunchHooks["onControl"]>>[0] | undefined;
+	let softTokenWarningAttempted = false;
 	const updateTrace: NonNullable<TaskExecutionRecord["updateTrace"]> = [];
 	let updateOrdinal = 0;
 	let priorToolCount = 0;
@@ -1156,6 +1233,48 @@ export async function runDelegation(
 		totalToolCalls: priorToolCount,
 		coalescedToolCalls,
 	});
+	const finishSoftTokenWarning = (
+		attemptedAt: string,
+		result: { status: Exclude<SoftTokenWarning["status"], "pending">; reason?: string },
+	) => {
+		try {
+			const current = deps.store.executionById(task.taskId, executionId)?.softTokenWarning;
+			if (!current || current.attemptedAt !== attemptedAt || current.status !== "pending") return;
+			deps.store.finalizeExecution(task.taskId, executionId, {
+				softTokenWarning: {
+					...current,
+					status: result.status,
+					completedAt: nowIso(),
+					...(result.reason ? { reason: result.reason } : {}),
+				},
+			});
+		} catch { /* warning diagnostics cannot change execution enforcement */ }
+	};
+	const attemptSoftTokenWarning = (observed: number, limit: number, threshold: number) => {
+		softTokenWarningAttempted = true;
+		const attemptedAt = nowIso();
+		const pending: SoftTokenWarning = { observed, limit, threshold, attemptedAt, status: "pending" };
+		try { deps.store.finalizeExecution(task.taskId, executionId, { softTokenWarning: pending }); } catch { /* continue enforcement */ }
+		if (!followUpControl) {
+			finishSoftTokenWarning(attemptedAt, { status: "unavailable", reason: "launcher did not expose live child control" });
+			return;
+		}
+		const control = followUpControl;
+		const scope = JSON.stringify(thisSpec.scope ?? {}).slice(0, 8_000);
+		const message = [
+			"Runtime budget control for this existing delegated execution; this is not a new Root task.",
+			`Cumulative input+output usage is ${observed}/${limit} tokens (cache read excluded); the soft close-out threshold was ${threshold}.`,
+			`Keep the original TaskSpec scope: ${scope}`,
+			"Stop expanding scope. Complete only the remaining necessary validation, then submit the structured WorkerReport.",
+			"This reminder grants no budget extension or grace; the hard execution envelope remains authoritative.",
+		].join("\n");
+		void Promise.resolve().then(() => runController.signal.aborted
+			? { status: "gone" as const, reason: "delegation cancellation started before warning injection" }
+			: control.followUp(message)).then(
+			(result) => finishSoftTokenWarning(attemptedAt, result),
+			(error) => finishSoftTokenWarning(attemptedAt, { status: "failed", reason: error instanceof Error ? error.message : String(error) }),
+		);
+	};
 	const persistUsageSnapshot = () => {
 		if (maxTokensSeen < 0) return;
 		deps.store.finalizeExecution(task.taskId, executionId, {
@@ -1306,7 +1425,7 @@ export async function runDelegation(
 				);
 			}
 			const freshOrigin = [...freshTask.executions].reverse().find(
-				(item) => !item.auxiliary && !item.reportOnly && item.status !== "running" && item.status !== "cancel_requested",
+				(item) => !item.auxiliary && !item.reportOnly && !item.closeout && item.status !== "running" && item.status !== "cancel_requested",
 			);
 			if (!freshOrigin?.cReport) {
 				throw new DelegationRefused(
@@ -1373,12 +1492,72 @@ export async function runDelegation(
 				throw error;
 			}
 		}
+		if (closeoutOrigin && recoveryDecision) {
+			const executionDeadline = new Date(Date.now() + Math.max(1, envelope.maxWallMs ?? 60_000)).toISOString();
+			try {
+				const originFreshness = compareFreshness(closeoutOrigin.origin.cTerminal!, aRun, {
+					...(thisSpec.scope ? { scope: thisSpec.scope } : {}),
+				});
+				if (!writerEvidenceAdmissible(aRun) || !originFreshness.verifiable || !originFreshness.fresh
+					|| !worktreeSamplesQuiet(closeoutOrigin.origin.cTerminal!, aRun)) {
+					throw new Error("closeout origin workspace drifted before recovery");
+				}
+				const originalEvidenceSha256 = canonicalSha256({ aRun: closeoutOrigin.origin.aRun, cTerminal: closeoutOrigin.origin.cTerminal });
+				preparedCloseout = await prepareCloseout({
+					config: deps.closeout!, task, spec: thisSpec, origin: closeoutOrigin,
+					executionId, requestId, ownerRunId: deps.ownerRunId, executionDeadline,
+					async beforeClaim() {
+						const currentSample = await captureEvidence(deps.gitRunner, sampleOptions(executionId));
+						if (!writerEvidenceAdmissible(currentSample) || !worktreeSamplesQuiet(aRun, currentSample)
+							|| !compareFreshness(aRun, currentSample, thisSpec.scope ? { scope: thisSpec.scope } : {}).fresh) {
+							throw new Error("closeout workspace drifted during preparation");
+						}
+						const freshTask = deps.store.require(task.taskId);
+						const refusal = validateRecoveryDecision(freshTask, recoveryDecision!, DELEGATE_RECOVERY_ACTIONS);
+						if (refusal || runController.signal.aborted || freshTask.state !== "blocked") throw new Error(refusal ?? "closeout admission no longer active");
+						const freshOrigin = requireCloseoutOrigin(freshTask, recoveryDecision!, thisSpec);
+						if (canonicalSha256({ aRun: freshOrigin.origin.aRun, cTerminal: freshOrigin.origin.cTerminal }) !== originalEvidenceSha256) {
+							throw new Error("origin evidence changed during closeout preparation");
+						}
+						task = freshTask;
+						closeoutOrigin = freshOrigin;
+					},
+					onClaim(journal, associationSha256) {
+						// Each store mutation persists independently. The first post-claim
+						// snapshot must carry the marker that restart reconciliation needs.
+						deps.store.beginExecution(task.taskId, {
+							executionId, ...(options.requestId ? { requestId: options.requestId } : {}), kind: role as DelegationKind, cwd: task.cwd, worktreeRoots, aRun,
+							capability: classification.capability, capabilityBasis: classification.basis,
+							startedAt: null, envelope, originalEnvelope: { ...originalEnvelope },
+							...(requestBudget ? { requestBudget, envelopeClamped } : {}),
+							closeout: { version: 1, requestId, originExecutionId: journal.grant.originExecutionId,
+								journalRoot: journal.root, journalId: journal.grant.journalId, grantSha256: journal.grantSha256,
+								associationSha256, originEvidenceSha256: originalEvidenceSha256,
+								inheritedTruthPaths: [...closeoutOrigin!.inheritedTruthPaths] },
+						});
+						task = deps.store.transition(task.taskId, "executing");
+						deps.store.consumeRecovery(task.taskId, recoveryDecision!, executionId);
+						deps.store.persistOrThrow(deps.store.require(task.taskId));
+					},
+				});
+			} catch (error) {
+				releaseReservation = true;
+				if (deps.store.executionById(task.taskId, executionId)?.closeout) {
+					deps.store.finalizeExecution(task.taskId, executionId, { status: "failed", endedReason: "launch_failure",
+						endedAt: nowIso(), terminationConfirmed: true, confirmationBasis: "no-launch", usageComplete: false });
+					try { deps.store.transition(task.taskId, "blocked"); } catch { /* already terminal */ }
+					deps.store.setRecoveryRequired(task.taskId, { executionId, reason: "closeout preparation consumed its origin; full retry_same_plan or planner_abort required" });
+					deps.store.persistOrThrow(deps.store.require(task.taskId));
+				}
+				throw new DelegationRefused("CLOSEOUT_PREPARATION_FAILED", `${toolName} refused: ${error instanceof Error ? error.message : String(error)}`, task.taskId);
+			}
+		}
 		// A refused admission leaves the Task in its prior state. Only an admitted
 		// ordinary execution transitions into executing.
 		if (["planning", "changes_requested", "report-invalid", "blocked", "failed"].includes(task.state)) {
 			task = deps.store.transition(task.taskId, "executing");
 		}
-		deps.store.beginExecution(task.taskId, {
+		if (!preparedCloseout) deps.store.beginExecution(task.taskId, {
 			executionId,
 			...((reportOnlyOrigin?.executionId ?? options.previousExecutionId)
 				? { previousExecutionId: reportOnlyOrigin?.executionId ?? options.previousExecutionId }
@@ -1442,12 +1621,37 @@ export async function runDelegation(
 		}
 		// P0-B — the recovery decision is consumed by the execution it
 		//    authorized; the same abnormal execution cannot be recovered twice.
-		if (recoveryDecision) {
+		if (recoveryDecision && !preparedCloseout) {
 			deps.store.consumeRecovery(task.taskId, recoveryDecision, executionId);
+		}
+		if (preparedCloseout) {
+			const execution = deps.store.executionById(task.taskId, executionId)!;
+			deps.store.completeExecution(task.taskId, executionId, { closeout: {
+				...execution.closeout!, snapshotManifestArtifact: preparedCloseout.snapshotManifestArtifact,
+			} });
+			await preparedCloseout.broker.associate(async () => {
+				deps.store.persistOrThrow(deps.store.require(task.taskId));
+				const stored = deps.store.executionById(task.taskId, executionId)?.closeout;
+				if (!stored || stored.associationSha256 !== preparedCloseout!.associationSha256
+					|| deps.store.require(task.taskId).recovery?.consumedBy !== executionId) {
+					throw new Error("durable closeout execution/recovery association mismatch");
+				}
+				return preparedCloseout!.associationSha256;
+			});
+			if (runController.signal.aborted || deps.store.require(task.taskId).state !== "executing"
+				|| deps.store.require(task.taskId).recovery?.consumedBy !== executionId) {
+				throw new Error("closeout no longer active before REQUEST");
+			}
+			unregisterCloseout = deps.closeout!.registrar.register({
+				requestId, ownerRunId: deps.ownerRunId, nodeId: task.taskId,
+				capability: preparedCloseout.broker.capability,
+			}, preparedCloseout.broker);
 		}
 
 		// 4. Structured delegation: the packet is rendered once, downward only.
-		const requestInstructions = reportOnly && reportOnlyOrigin
+		const requestInstructions = preparedCloseout && closeoutOrigin
+			? buildCloseoutInstructions(task, closeoutOrigin.origin, preparedCloseout, params.instructions ?? "")
+			: reportOnly && reportOnlyOrigin
 			? buildReportOnlyRepairInstructions(task, reportOnlyOrigin, params.instructions ?? "")
 			: params.instructions ?? "";
 		const priorExecution = recoveryDecision
@@ -1484,9 +1688,20 @@ export async function runDelegation(
 			ownerRunId: deps.ownerRunId,
 			nodeId: task.taskId,
 			agent: reportOnly ? REPORT_ONLY_AGENT : classification.agent ?? ROLE_AGENTS[role] ?? "worker",
-			task: buildTaskPacket(thisSpec, requestInstructions, { ...(priorExecution ? { priorExecution } : {}) }),
+			task: buildTaskPacket(thisSpec, requestInstructions, {
+				...(priorExecution ? { priorExecution } : {}),
+				...(!reportOnly ? {
+					budgetDisclosure: {
+						...(envelope.maxTokens !== undefined ? { maxTokens: envelope.maxTokens } : {}),
+						...(envelope.maxWallMs !== undefined ? { maxWallMs: envelope.maxWallMs } : {}),
+						accounting: "Cumulative input+output snapshots; cache read tokens are excluded.",
+						closingReserveGuidance: "Plan to stop substantive work by about 90% of maxTokens, reserving about 10% for verification and the final report.",
+					},
+				} : {}),
+			}),
 			context: "fresh",
 			cwd: task.cwd || effectiveCwd,
+			...(preparedCloseout ? { closeout: preparedCloseout.broker.capability, skill: false } : {}),
 			...(reportOnly ? { toolBudget: { ...REPORT_ONLY_TOOL_BUDGET } } : {}),
 			result: { kind: "structured", schema: WORKER_REPORT_SCHEMA },
 		};
@@ -1667,6 +1882,9 @@ export async function runDelegation(
 						deps.store.finalizeExecution(task.taskId, executionId, { startedAt: nowIso() });
 					}
 				},
+				onControl: (control) => {
+					followUpControl = control;
+				},
 				onUpdate: (update) => {
 					updateOrdinal += 1;
 					const clip = (value: string | undefined, max: number) => value === undefined ? undefined : value.slice(0, max);
@@ -1717,6 +1935,15 @@ export async function runDelegation(
 					if (typeof tokens === "number" && Number.isFinite(tokens) && tokens >= 0) {
 						maxTokensSeen = Math.max(maxTokensSeen, tokens);
 						if (envelope?.maxTokens !== undefined) {
+							const softThreshold = Math.floor(envelope.maxTokens * (envelope.softTokensShare ?? 0.7));
+							const strictlyMatched = update.requestId === request.requestId
+								&& update.ownerRunId === request.ownerRunId
+								&& update.nodeId === request.nodeId;
+							if (strictlyMatched) maxStrictTokensSeen = Math.max(maxStrictTokensSeen, tokens);
+							if (!reportOnly && !softTokenWarningAttempted && !runaway && !runController.signal.aborted && strictlyMatched
+								&& maxStrictTokensSeen > softThreshold && maxStrictTokensSeen <= envelope.maxTokens) {
+								attemptSoftTokenWarning(maxStrictTokensSeen, envelope.maxTokens, softThreshold);
+							}
 							if (maxTokensSeen > envelope.maxTokens) breach("tokens", maxTokensSeen, envelope.maxTokens);
 						}
 					}
@@ -1822,7 +2049,10 @@ export async function runDelegation(
 				usageComplete: false,
 			});
 			releaseReservation = true;
-			try { deps.store.transition(task.taskId, "failed"); } catch { /* already final */ }
+			try { deps.store.transition(task.taskId, preparedCloseout ? "blocked" : "failed"); } catch { /* already final */ }
+			if (preparedCloseout) deps.store.setRecoveryRequired(task.taskId, {
+				executionId, reason: "restricted closeout launch failed; choose a full retry_same_plan or planner_abort",
+			});
 			deps.store.setStateReason(task.taskId, reason);
 			return {
 				task: deps.store.require(task.taskId),
@@ -1861,7 +2091,7 @@ export async function runDelegation(
 				terminalRunId,
 				warnings,
 			);
-			const target = lateSuccess || BLOCKING_STATUSES.has(terminal.status) ? "blocked" : "failed";
+			const target = preparedCloseout || lateSuccess || BLOCKING_STATUSES.has(terminal.status) ? "blocked" : "failed";
 			try { deps.store.transition(task.taskId, target); } catch { /* already final */ }
 			deps.store.setStateReason(
 				task.taskId,
@@ -1934,9 +2164,9 @@ export async function runDelegation(
 			}
 			// P0-B — needs_replan: runaway or an unconfirmed stop requires a
 			//    RecoveryDecision before this Task may execute again.
-			if (runaway || !q.confirmed) {
+			if (preparedCloseout || runaway || !q.confirmed) {
 				deps.store.setRecoveryRequired(task.taskId, {
-					reason: runaway
+					reason: preparedCloseout ? "restricted closeout was consumed; choose a full retry_same_plan or planner_abort" : runaway
 						? `worker runaway: ${runaway.signal} ${runaway.observed} exceeded envelope ${runaway.limit}${q.confirmed ? "" : "; stop unconfirmed"}`
 						: "stop unconfirmed — await confirmation or operator resolution",
 					executionId,
@@ -2061,14 +2291,14 @@ export async function runDelegation(
 			.filter((item) => item.executionId !== executionId && item.executionId !== reportOnlyOrigin?.executionId && !item.auxiliary && !item.reportOnly && item.truthPaths?.length)
 			.flatMap((item) => item.truthPaths ?? []);
 		const observation = acceptanceModeOf(task) === "observation";
-		const truthRun = reportOnlyOrigin?.aRun ?? aRun;
-		const truthResult = reportOnlyOrigin?.cReport ?? cReport;
+		const truthRun = closeoutOrigin?.origin.aRun ?? reportOnlyOrigin?.aRun ?? aRun;
+		const truthResult = closeoutOrigin?.origin.cTerminal ?? reportOnlyOrigin?.cReport ?? cReport;
 		const truth = compareExecutionTruth(truthRun, truthResult, report, {
 			...(thisSpec.scope ? { scope: thisSpec.scope } : {}),
 			...(thisSpec.additionalWorktreeRoots?.length
 				? { additionalWorktreeRoots: thisSpec.additionalWorktreeRoots }
 				: {}),
-			...(reportOnly ? { reportOnly: true } : {}),
+			...(reportOnly || preparedCloseout ? { reportOnly: true } : {}),
 			...(reportOnly
 				? { readOnly: reportOnlyOrigin?.readOnly === true }
 				: role !== "worker" ? { readOnly: true } : {}),
@@ -2084,7 +2314,7 @@ export async function runDelegation(
 				...(thisSpec.additionalWorktreeRoots?.length
 					? { additionalWorktreeRoots: thisSpec.additionalWorktreeRoots }
 					: {}),
-				...(reportOnly ? { reportOnly: true } : {}),
+				...(reportOnly || preparedCloseout ? { reportOnly: true } : {}),
 				...(reportOnly
 					? { readOnly: reportOnlyOrigin?.readOnly === true }
 					: role !== "worker" ? { readOnly: true } : {}),
@@ -2109,14 +2339,23 @@ export async function runDelegation(
 				...(runId ? { workerRunId: runId } : {}),
 			})
 			: [];
+		let closeoutEvidenceError: string | undefined;
+		if (report && identityErrors.length === 0 && preparedCloseout && runId) {
+			try {
+				const submitted = stampWorkerReport(preparedCloseout.getSubmittedReport(), stampedRunId, []);
+				if (canonicalSha256(submitted) !== canonicalSha256(report)) throw new Error("closeout terminal report differs from host-submitted report");
+				preparedCloseout.verifyEvidence(runId, report.status === "completed");
+			}
+			catch (error) { closeoutEvidenceError = error instanceof Error ? error.message : String(error); }
+		}
 		const reportError = report
-			? (identityErrors.length > 0 ? identityErrors.join("; ") : undefined)
+			? (identityErrors.length > 0 ? identityErrors.join("; ") : closeoutEvidenceError)
 			: "completed delegation carried no structured WorkerReport";
 		// An identity-mismatched report is received-but-unaccepted material:
 		//    it stays bound to this execution for diagnostics but never enters
 		//    the report sequence and never binds a reportIndex — an accepted
 		//    revision must always name the Task and run that produced it.
-		const admittedReport = report && identityErrors.length === 0 ? report : undefined;
+		const admittedReport = report && identityErrors.length === 0 && !closeoutEvidenceError ? report : undefined;
 
 		// 8. Ledger: report and child usage land on the Task as-is.
 		let recorded = task;
@@ -2146,6 +2385,16 @@ export async function runDelegation(
 				? recorded.validatorReports.length - 1
 				: recorded.reports.length - 1
 			: -1;
+		const closeoutBindingSha256 = preparedCloseout && admittedReport && runId
+			? canonicalSha256({
+				version: 1, taskId: task.taskId, originExecutionId: preparedCloseout.grant.originExecutionId,
+				executionId, requestId, ownerRunId: deps.ownerRunId, runId, reportRevision: recorded.reports.length,
+				reportSha256: canonicalSha256(admittedReport), receiptIds: preparedCloseout.getReceiptIds(),
+				originEvidenceSha256: preparedCloseout.grant.originEvidenceSha256,
+				freshEvidenceSha256: canonicalSha256({ aRun, cReport }),
+				inheritedTruthPaths: preparedCloseout.inheritedTruthPaths, newTruthPaths: [],
+			})
+			: undefined;
 		deps.store.completeExecution(task.taskId, executionId, {
 			status: "completed",
 			endedReason: "normal",
@@ -2159,7 +2408,16 @@ export async function runDelegation(
 			//    residual record; writers get the second quiescence sample.
 			cTerminal: completionQuiescence.cTerminal ?? cReport,
 			...(runId ? { runId } : {}),
-			truthPaths: reportOnly ? [] : truth.truthPaths,
+			truthPaths: reportOnly || preparedCloseout ? [] : truth.truthPaths,
+			...(preparedCloseout ? { closeout: {
+				version: 1 as const, requestId, originExecutionId: preparedCloseout.grant.originExecutionId,
+				journalRoot: preparedCloseout.journal.root, journalId: preparedCloseout.grant.journalId,
+				grantSha256: preparedCloseout.journal.grantSha256, associationSha256: preparedCloseout.associationSha256,
+				originEvidenceSha256: preparedCloseout.grant.originEvidenceSha256,
+				inheritedTruthPaths: [...preparedCloseout.inheritedTruthPaths], receiptIds: preparedCloseout.getReceiptIds(),
+				snapshotManifestArtifact: preparedCloseout.snapshotManifestArtifact,
+				...(closeoutBindingSha256 ? { reportBindingSha256: closeoutBindingSha256 } : {}),
+			} } : {}),
 			executionChangedPaths: truth.executionChangedPaths,
 			committedPaths: truth.committedPaths,
 			observedExternalPaths: truth.observedExternalPaths,
@@ -2179,6 +2437,7 @@ export async function runDelegation(
 				}
 				: {}),
 		});
+		if (preparedCloseout) deps.store.persistOrThrow(deps.store.require(task.taskId));
 		deps.store.recordExecutionFindings(
 			task.taskId,
 			executionId,
@@ -2211,13 +2470,31 @@ export async function runDelegation(
 		if (!admittedReport && reportError) warnings.push(reportError);
 
 		// 9. Review loop decides what this report means for the Task.
-		const { task: reviewed, decision } = advanceReview({
-			store: deps.store,
-			taskId: task.taskId,
-			...(admittedReport ? { report: admittedReport } : {}),
-			...(reportError ? { reportError } : {}),
-			...(comparison ? { comparison } : {}),
-		});
+		const closeoutFailed = preparedCloseout && (!admittedReport || admittedReport.status !== "completed");
+		const reviewedResult = closeoutFailed
+			? (() => {
+				try { deps.store.transition(task.taskId, "blocked"); } catch { /* already blocked */ }
+				deps.store.setStateReason(task.taskId, `restricted closeout did not complete: ${reportError ?? admittedReport?.summary ?? "non-completed report"}`);
+				deps.store.setRecoveryRequired(task.taskId, {
+					reason: "restricted closeout was consumed; choose a full retry_same_plan or planner_abort",
+					executionId,
+				});
+				return { task: deps.store.require(task.taskId), decision: {
+					action: "blocked" as const, nextState: "blocked" as const, round: task.reviewRound,
+					consumesRound: false, failureClass: "evidence" as const, reasonCode: "closeout-failed",
+					reason: "restricted closeout failed and cannot receive a correction",
+					guidance: ["Choose an explicit full retry_same_plan or planner_abort."],
+				} };
+			})()
+			: advanceReview({
+				store: deps.store,
+				taskId: task.taskId,
+				...(admittedReport ? { report: admittedReport } : {}),
+				...(reportError ? { reportError } : {}),
+				...(comparison ? { comparison } : {}),
+			});
+		const { task: reviewed, decision } = reviewedResult;
+		if (preparedCloseout) deps.store.persistOrThrow(deps.store.require(task.taskId));
 		if (decision.action === "revalidate" && decision.evidenceKey) {
 			deps.store.markRevalidationGranted(task.taskId, decision.evidenceKey);
 		}
@@ -2234,7 +2511,25 @@ export async function runDelegation(
 			...(response.usage ? { usage: response.usage } : {}),
 			warnings,
 		};
+	} catch (error) {
+		const execution = deps.store.executionById(task.taskId, executionId);
+		if (execution?.closeout && (launchStartedAt === 0 || execution.terminationConfirmed === true)) {
+			// A consumed closeout must remain recoverable if a strict report/state
+			// write fails after the child stopped. Never release an unconfirmed writer.
+			releaseReservation = true;
+			deps.store.finalizeExecution(task.taskId, executionId, { status: "failed",
+				endedReason: launchStartedAt === 0 ? "launch_failure" : "tool_error",
+				endedAt: nowIso(), terminationConfirmed: true,
+				...(launchStartedAt === 0 ? { confirmationBasis: "no-launch", usageComplete: false } : {}) });
+			try { deps.store.transition(task.taskId, "blocked"); } catch { /* preserve an already terminal Task */ }
+			deps.store.setStateReason(task.taskId, `restricted closeout failed: ${error instanceof Error ? error.message : String(error)}`);
+			deps.store.setRecoveryRequired(task.taskId, { executionId, reason: "consumed closeout failed; full retry_same_plan or planner_abort required" });
+			deps.store.persistOrThrow(deps.store.require(task.taskId));
+		}
+		throw error;
 	} finally {
+		try { preparedCloseout?.broker.revoke("Planner closeout invocation ended"); } catch { /* permanent claim remains consumed */ }
+		try { unregisterCloseout?.(); } catch { /* capability is already one-shot */ }
 		stopWallTimer();
 		options.signal?.removeEventListener("abort", forwardAbort);
 		runController.signal.removeEventListener("abort", onSignalAbort);
@@ -2432,7 +2727,9 @@ async function runReviewInvocation(
 		.at(-1);
 	// A corrected revision belongs to the report-only execution, while its
 	// work and read-only classification remain bound to the immutable origin.
-	const origin = latest?.reportOnly
+	const origin = latest?.closeout
+		? fresh.executions.find((item) => item.executionId === latest.closeout!.originExecutionId)
+		: latest?.reportOnly
 		? fresh.executions.find((item) => item.executionId === latest.previousExecutionId && !item.auxiliary && !item.reportOnly)
 		: latest;
 	const priorTruthPaths = origin
@@ -2573,6 +2870,15 @@ export function renderDelegationOutcome(outcome: DelegationOutcome, toolName = "
 		);
 		if (typeof t.error === "string" && t.error.length > 0) lines.push(`error: ${t.error}`);
 		if (t.anomaly) {
+			if (t.anomaly.signal === "tokens") {
+				lines.push(`TOKEN_ENVELOPE_EXCEEDED: observed=${t.anomaly.observed}/limit=${t.anomaly.limit} (cumulative input+output snapshot, no cache read)`);
+				const maxTokenDelta = outcome.task.executions
+					.find((execution) => execution.executionId === outcome.executionId)
+					?.traceSummary?.maxTokenDelta;
+				if (maxTokenDelta !== undefined && maxTokenDelta > t.anomaly.limit * 0.1) {
+					lines.push(`single-turn token delta: ${maxTokenDelta} tokens (aggregate input+output snapshot delta; no cache read accounting)`);
+				}
+			}
 			lines.push(`anomaly: ${t.anomaly.signal} observed=${t.anomaly.observed} limit=${t.anomaly.limit} (source: ${t.anomaly.source})`);
 		}
 		if (t.executionStatus === "stop_unconfirmed" && t.writerHold === true) {
@@ -2585,6 +2891,12 @@ export function renderDelegationOutcome(outcome: DelegationOutcome, toolName = "
 		if (t.reportReceived === true && t.reportAccepted === false) {
 			lines.push("report: received but not admitted — kept as diagnostic material on the execution record");
 		}
+	}
+	const softTokenWarning = outcome.task.executions
+		.find((execution) => execution.executionId === outcome.executionId)
+		?.softTokenWarning;
+	if (softTokenWarning) {
+		lines.push(`soft token warning: ${softTokenWarning.status} observed=${softTokenWarning.observed} threshold=${softTokenWarning.threshold} limit=${softTokenWarning.limit}${softTokenWarning.reason ? ` — ${softTokenWarning.reason}` : ""}`);
 	}
 	if (outcome.task.recovery?.required) {
 		const r = outcome.task.recovery;
@@ -2602,6 +2914,8 @@ export interface HostLauncherOptions {
 	 * DelegationAborted.
 	 */
 	cancelGraceMs?: number;
+	/** Bounded wait for a matching follow-up acknowledgement. */
+	followUpAckWaitMs?: number;
 	/** Optional synchronous admission wrapper used by request-global accounting. */
 	beforeDispatch?: (request: SubagentDelegationRequest, local?: DelegationLaunchHooks["beforeDispatch"]) => void;
 }
@@ -2637,6 +2951,7 @@ export function cancelInFlightDelegations(pi: ExtensionAPI): number {
  */
 export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOptions = {}): DelegationDeps["launch"] {
 	const cancelGraceMs = options.cancelGraceMs ?? 5000;
+	const followUpAckWaitMs = options.followUpAckWaitMs ?? 1000;
 	const launcher: DelegationDeps["launch"] = (request, signal, hooks) => new Promise((resolve, reject) => {
 		if (signal?.aborted) {
 			reject(new DelegationAborted(request.nodeId, false));
@@ -2645,6 +2960,9 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
 		let settled = false;
 		let aborting = false;
 		let graceTimer: ReturnType<typeof setTimeout> | undefined;
+		let closeoutReady = request.closeout === undefined;
+		let closeoutFailure: string | undefined;
+		const pendingControls = new Map<string, (reason?: string) => void>();
 		const cancelPayload: SubagentDelegationCancel = {
 			requestId: request.requestId,
 			ownerRunId: request.ownerRunId,
@@ -2655,13 +2973,24 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
 			&& (payload.ownerRunId === undefined || payload.ownerRunId === request.ownerRunId)
 			&& (payload.nodeId === undefined || payload.nodeId === request.nodeId);
 		const cleanup = () => {
+			for (const settleGone of [...pendingControls.values()]) settleGone("delegation attempt ended before acknowledgement");
+			pendingControls.clear();
 			unsubscribeResponse();
 			unsubscribeStarted();
 			unsubscribeUpdate();
+			unsubscribeCloseoutAck();
 			signal?.removeEventListener("abort", onAbort);
 			if (graceTimer !== undefined) clearTimeout(graceTimer);
 			inFlight.delete(request.requestId);
 		};
+		const unsubscribeCloseoutAck = pi.events.on(SUBAGENT_DELEGATION_CLOSEOUT_ACK_EVENT, (payload) => {
+			if (!request.closeout || !payload || typeof payload !== "object" || Array.isArray(payload)) return;
+			const ack = payload as SubagentDelegationCloseoutAck;
+			if (ack.requestId !== request.requestId || ack.ownerRunId !== request.ownerRunId || ack.nodeId !== request.nodeId
+				|| ack.grantId !== request.closeout.grantId || ack.grantSha256 !== request.closeout.grantSha256) return;
+			if (ack.status === "ready" && ack.activeTools.join("\0") === "closeout_read\0closeout_validate\0structured_output") closeoutReady = true;
+			else closeoutFailure = ack.status === "unavailable" ? ack.reason : "closeout runtime acknowledged an invalid tool set";
+		});
 		const unsubscribeResponse = pi.events.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (payload) => {
 			const response = payload as SubagentDelegationResponse;
 			if (!matches(response)) return;
@@ -2675,7 +3004,9 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
 			}
 			settled = true;
 			cleanup();
-			resolve(response);
+			if (request.closeout && response.status !== "invalid_request" && (!closeoutReady || closeoutFailure)) {
+				resolve({ ...response, status: "failed", error: closeoutFailure ?? "closeout runtime did not acknowledge capability before terminal" });
+			} else resolve(response);
 		});
 		const unsubscribeStarted = pi.events.on(SUBAGENT_DELEGATION_STARTED_EVENT, (payload) => {
 			if (settled) return;
@@ -2691,9 +3022,55 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
 			if (!matches(update)) return;
 			hooks?.onUpdate?.(update);
 		});
+		const followUp = (text: string): Promise<{ status: SubagentDelegationFollowUpAck["status"] | "unconfirmed"; reason?: string }> => {
+			if (settled || aborting) return Promise.resolve({ status: "gone", reason: "delegation attempt is no longer active" });
+			if (typeof text !== "string" || text.trim().length === 0 || text.length > 16_000) {
+				return Promise.resolve({ status: "failed", reason: "follow-up text must be nonblank and at most 16000 characters" });
+			}
+			const messageId = randomUUID();
+			const outbound: SubagentDelegationFollowUp = {
+				requestId: request.requestId,
+				ownerRunId: request.ownerRunId,
+				nodeId: request.nodeId,
+				messageId,
+				text,
+			};
+			return new Promise((resolveControl) => {
+				let done = false;
+				let timer: ReturnType<typeof setTimeout> | undefined;
+				const finish = (status: SubagentDelegationFollowUpAck["status"] | "unconfirmed", reason?: string) => {
+					if (done) return;
+					done = true;
+					unsubscribeAck();
+					if (timer !== undefined) clearTimeout(timer);
+					pendingControls.delete(messageId);
+					resolveControl({ status, ...(reason ? { reason } : {}) });
+				};
+				const unsubscribeAck = pi.events.on(SUBAGENT_DELEGATION_FOLLOWUP_ACK_EVENT, (payload) => {
+					if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
+					const ack = payload as Partial<SubagentDelegationFollowUpAck>;
+					if (ack.requestId !== request.requestId
+						|| ack.ownerRunId !== request.ownerRunId
+						|| ack.nodeId !== request.nodeId
+						|| ack.messageId !== messageId) return;
+					if (ack.status !== "queued" && ack.status !== "unavailable" && ack.status !== "gone" && ack.status !== "failed") return;
+					if (ack.reason !== undefined && typeof ack.reason !== "string") return;
+					finish(ack.status, ack.reason);
+				});
+				pendingControls.set(messageId, (reason) => finish("gone", reason));
+				timer = setTimeout(() => finish("unconfirmed", `no matching acknowledgement within ${followUpAckWaitMs}ms`), followUpAckWaitMs);
+				try {
+					pi.events.emit(SUBAGENT_DELEGATION_FOLLOWUP_EVENT, outbound);
+				} catch (error) {
+					finish("failed", error instanceof Error ? error.message : String(error));
+				}
+			});
+		};
+		try { hooks?.onControl?.({ followUp }); } catch { /* an unused control sink cannot disrupt launch */ }
 		const onAbort = () => {
 			if (settled || aborting) return;
 			aborting = true;
+			for (const settleGone of [...pendingControls.values()]) settleGone("delegation cancellation started before acknowledgement");
 			try { pi.events.emit(SUBAGENT_DELEGATION_CANCEL_EVENT, cancelPayload); } catch { /* cancellation remains unconfirmed until terminal */ }
 			if (settled) return;
 			graceTimer = setTimeout(() => {
@@ -2726,6 +3103,7 @@ export function createHostLauncher(pi: ExtensionAPI, options: HostLauncherOption
 			// Keep the committed charge and RESPONSE subscription; treat the send as
 			// unknown/emitted so runDelegation retains the writer reservation.
 			settled = true;
+			for (const settleGone of [...pendingControls.values()]) settleGone("delegation request emission failed after control was requested");
 			try { pi.events.emit(SUBAGENT_DELEGATION_CANCEL_EVENT, cancelPayload); } catch { /* retain the hold */ }
 			unsubscribeUpdate();
 			signal?.removeEventListener("abort", onAbort);

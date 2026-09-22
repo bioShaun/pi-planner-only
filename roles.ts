@@ -62,7 +62,13 @@ export function lastWorkerValidationPassed(report: WorkerReport | undefined): bo
  */
 export function buildTaskPacket(
 	spec: TaskSpec,
-	prompt: string,	details: { candidateText?: string; candidate?: Record<string, unknown>; priorExecution?: TaskPacket["priorExecution"] } = {},
+	prompt: string,
+	details: {
+		candidateText?: string;
+		candidate?: Record<string, unknown>;
+		priorExecution?: TaskPacket["priorExecution"];
+		budgetDisclosure?: TaskPacket["budgetDisclosure"];
+	} = {},
 ): string {
 	let instructions = prompt.trim();
 	const existingValue = (() => {
@@ -91,6 +97,7 @@ export function buildTaskPacket(
 			instructions: typeof existing.instructions === "string" ? existing.instructions : "",
 			knownFacts,
 			artifactRefs,
+			...(details.budgetDisclosure ? { budgetDisclosure: details.budgetDisclosure } : {}),
 			...(details.priorExecution ? { priorExecution: details.priorExecution } : {}),
 		} satisfies TaskPacket, null, 2);
 	}
@@ -122,6 +129,7 @@ export function buildTaskPacket(
 		instructions,
 		knownFacts,
 		artifactRefs,
+		...(details.budgetDisclosure ? { budgetDisclosure: details.budgetDisclosure } : {}),
 		...(details.priorExecution ? { priorExecution: details.priorExecution } : {}),
 	} satisfies TaskPacket, null, 2);
 }

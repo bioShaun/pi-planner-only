@@ -20,6 +20,8 @@ import {
 } from "./delegate.ts";
 import {
 	SUBAGENT_DELEGATION_CANCEL_EVENT,
+	SUBAGENT_DELEGATION_FOLLOWUP_ACK_EVENT,
+	SUBAGENT_DELEGATION_FOLLOWUP_EVENT,
 	SUBAGENT_DELEGATION_REQUEST_EVENT,
 	SUBAGENT_DELEGATION_RESPONSE_EVENT,
 	SUBAGENT_DELEGATION_STARTED_EVENT,
@@ -211,6 +213,10 @@ async function expectRefusal(promise, code) {
 	const packet = JSON.parse(request.task);
 	assert.equal(packet.spec.taskId, outcome.task.taskId);
 	assert.equal(packet.spec.objective, "implement the thing");
+	assert.equal(packet.budgetDisclosure.maxTokens, 100_000);
+	assert.equal(packet.budgetDisclosure.maxWallMs, 600_000);
+	assert.match(packet.budgetDisclosure.accounting, /input\+output.*cache read tokens are excluded/i);
+	assert.match(packet.budgetDisclosure.closingReserveGuidance, /10%.*verification.*final report/i);
 	// The schema survives a JSON round-trip unchanged (plain data).
 	assert.deepEqual(JSON.parse(JSON.stringify(request.result.schema)), request.result.schema);
 }
@@ -1344,7 +1350,7 @@ function reviewerParams(taskId, overrides = {}) {
 // ============================================================================
 
 const repoDir = new URL(".", import.meta.url).pathname;
-const UPSTREAM_DELEGATION_TS = join(
+const UPSTREAM_DELEGATION_TS = process.env.PI_PLANNER_ONLY_UPSTREAM_DELEGATION_TS ?? join(
 	homedir(), ".pi", "agent", "npm", "node_modules", "pi-subagents", "src", "api", "delegation.ts",
 );
 
@@ -1387,7 +1393,7 @@ function launcherRequest(overrides = {}) {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ---------------------------------------------------------------------------
-// D1: the contract copy matches the installed pi-subagents source — the five
+// D1: the contract copy matches the installed pi-subagents source — all
 // event-name constants and the SubagentDelegationUpdate field list, compared
 // as text, not by eye. Absent package → skip with a printed reason.
 // ---------------------------------------------------------------------------
@@ -1407,6 +1413,22 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 			return [...block[1].matchAll(/(\w+)\?:/g)].map((m) => m[1]);
 		};
 		assert.deepEqual(updateFields(local), updateFields(upstream), "SubagentDelegationUpdate fields diverge from the installed package");
+		const interfaceShape = (text, name) => {
+			const block = text.match(new RegExp(`export interface ${name} extends SubagentDelegationStarted \\{([\\s\\S]*?)\\n\\}`));
+			assert.ok(block, `${name} declaration not found`);
+			return [...block[1].matchAll(/(\w+)(\?)?:\s*([^;]+);/g)].map((match) => ({ name: match[1], optional: match[2] === "?", type: match[3].replace(/\s+/g, " ").trim() }));
+		};
+		assert.deepEqual(interfaceShape(local, "SubagentDelegationFollowUp"), interfaceShape(upstream, "SubagentDelegationFollowUp"), "follow-up fields diverge from upstream");
+		assert.deepEqual(interfaceShape(local, "SubagentDelegationFollowUpAck"), interfaceShape(upstream, "SubagentDelegationFollowUpAck"), "follow-up ACK fields or statuses diverge from upstream");
+		const requestFields = (text) => {
+			const block = text.match(/export interface SubagentDelegationRequest \{([\s\S]*?)\n\}/);
+			assert.ok(block, "SubagentDelegationRequest declaration not found");
+			return [...block[1].matchAll(/^\s*(\w+)(\?)?:\s*([^;]+);/gm)].map((match) => ({
+				name: match[1], optional: match[2] === "?",
+				type: match[1] === "intercomBridge" ? "host-opaque" : match[3].replace(/\s+/g, " ").trim(),
+			}));
+		};
+		assert.deepEqual(requestFields(local), requestFields(upstream), "request fields diverge from upstream");
 	}
 }
 
@@ -1547,6 +1569,68 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 	bus.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, { ...triple, status: "completed" });
 	const response = await promise;
 	assert.equal(response.status, "completed", "matching RESPONSE resolves the wait");
+}
+
+// Follow-up control subscribes before emit, requires the full attempt identity
+// plus messageId, and distinguishes acknowledgement from mere emission.
+{
+	const bus = tinyEmitter();
+	const launcher = createHostLauncher({ events: bus }, { followUpAckWaitMs: 15 });
+	let control;
+	const promise = launcher(launcherRequest({ requestId: "req-followup" }), undefined, {
+		onControl: (value) => { control = value; },
+	});
+	bus.on(SUBAGENT_DELEGATION_FOLLOWUP_EVENT, (payload) => {
+		bus.emit(SUBAGENT_DELEGATION_FOLLOWUP_ACK_EVENT, null);
+		bus.emit(SUBAGENT_DELEGATION_FOLLOWUP_ACK_EVENT, { ...payload, status: "bogus" });
+		bus.emit(SUBAGENT_DELEGATION_FOLLOWUP_ACK_EVENT, { ...payload, status: "failed", reason: { malformed: true } });
+		bus.emit(SUBAGENT_DELEGATION_FOLLOWUP_ACK_EVENT, { ...payload, ownerRunId: "wrong", status: "queued" });
+		bus.emit(SUBAGENT_DELEGATION_FOLLOWUP_ACK_EVENT, { ...payload, messageId: "wrong", status: "queued" });
+		bus.emit(SUBAGENT_DELEGATION_FOLLOWUP_ACK_EVENT, {
+			requestId: payload.requestId, ownerRunId: payload.ownerRunId, nodeId: payload.nodeId,
+			messageId: payload.messageId, status: "queued",
+		});
+	});
+	const ack = await control.followUp("close out now");
+	assert.deepEqual(ack, { status: "queued" }, "a synchronous exact ACK is observed without a race");
+	const sent = bus.emitted.find((entry) => entry.event === SUBAGENT_DELEGATION_FOLLOWUP_EVENT).payload;
+	assert.equal(sent.text, "close out now");
+	assert.ok(sent.messageId);
+	bus.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: "req-followup", ownerRunId: "owner-1", nodeId: "T-20260915-500", status: "completed",
+	});
+	await promise;
+}
+
+{
+	const bus = tinyEmitter();
+	const launcher = createHostLauncher({ events: bus }, { followUpAckWaitMs: 5 });
+	let control;
+	const promise = launcher(launcherRequest({ requestId: "req-no-ack" }), undefined, { onControl: (value) => { control = value; } });
+	assert.match((await control.followUp("finish")).reason, /no matching acknowledgement/);
+	const pending = control.followUp("finish again");
+	bus.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: "req-no-ack", ownerRunId: "owner-1", nodeId: "T-20260915-500", status: "completed",
+	});
+	assert.deepEqual(await pending, { status: "gone", reason: "delegation attempt ended before acknowledgement" });
+	await promise;
+	assert.equal((await control.followUp("too late")).status, "gone");
+}
+
+for (const status of ["unavailable", "failed"]) {
+	const bus = tinyEmitter();
+	const launcher = createHostLauncher({ events: bus }, { followUpAckWaitMs: 15 });
+	let control;
+	const promise = launcher(launcherRequest({ requestId: `req-${status}` }), undefined, { onControl: (value) => { control = value; } });
+	bus.on(SUBAGENT_DELEGATION_FOLLOWUP_EVENT, (payload) => bus.emit(SUBAGENT_DELEGATION_FOLLOWUP_ACK_EVENT, {
+		requestId: payload.requestId, ownerRunId: payload.ownerRunId, nodeId: payload.nodeId,
+		messageId: payload.messageId, status, reason: `${status} reason`,
+	}));
+	assert.deepEqual(await control.followUp("finish"), { status, reason: `${status} reason` });
+	bus.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
+		requestId: `req-${status}`, ownerRunId: "owner-1", nodeId: "T-20260915-500", status: "completed",
+	});
+	await promise;
 }
 
 // Issue 07 step one — persisted execution timing begins at REQUEST outbound,
@@ -1716,6 +1800,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 	const concurrency = new ConcurrencyController();
 	const usage = new UsageLedger({ pricing: { version: 1, currency: "USD", rates: {} } });
 	const requestAbort = new AbortController();
+	let followUpsAfterCancel = 0;
 	const { deps } = makeDeps({
 		store,
 		concurrency,
@@ -1723,7 +1808,9 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 		gitRunner: async (args, cwd) => realGit(cwd ?? dir, ...args),
 		launch: async (request, _signal, hooks) => {
 			hooks.onRequest(request);
+			hooks.onControl({ followUp: async () => { followUpsAfterCancel += 1; return { status: "queued" }; } });
 			requestAbort.abort();
+			hooks.onUpdate({ requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId, tokens: 80_000 });
 			return {
 				requestId: request.requestId,
 				ownerRunId: request.ownerRunId,
@@ -1768,6 +1855,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 	assert.equal(execution.requestClosed, "active-time-limit");
 	assert.equal(execution.requestClosedAt, "2026-09-20T10:15:00.000Z");
 	assert.equal(execution.usageComplete, true);
+	assert.equal(execution.softTokenWarning, undefined, "an UPDATE after operator cancellation cannot inject a warning");
+	assert.equal(followUpsAfterCancel, 0);
 	assert.ok(execution.cTerminal?.gitStatusHash, "residual C_terminal recorded");
 	assert.equal(record.writerHold, undefined);
 }
@@ -2230,7 +2319,89 @@ for (const [index, [status, expectedState]] of [
 	await expectRefusal(runDelegation(deps, makeParams({ envelope: { maxTokens: 0 } }), dir, { executionId: "e-inv2" }), "ENVELOPE_INVALID");
 	await expectRefusal(runDelegation(deps, makeParams({ envelope: { maxWallMs: Number.NaN } }), dir, { executionId: "e-inv3" }), "ENVELOPE_INVALID");
 	await expectRefusal(runDelegation(deps, makeParams({ envelope: { maxTokens: 0.5 } }), dir, { executionId: "e-inv4" }), "ENVELOPE_INVALID");
+	await expectRefusal(runDelegation(deps, makeParams({ envelope: { maxTokens: 100, softTokensShare: 0 } }), dir, { executionId: "e-inv5" }), "ENVELOPE_INVALID");
+	await expectRefusal(runDelegation(deps, makeParams({ envelope: { maxTokens: 100, softTokensShare: 1 } }), dir, { executionId: "e-inv6" }), "ENVELOPE_INVALID");
+	await expectRefusal(runDelegation(deps, makeParams({ envelope: { maxWallMs: 100, softTokensShare: 0.5 } }), dir, { executionId: "e-inv7" }), "ENVELOPE_INVALID");
 	assert.equal(launches.length, 0, "invalid envelope never reaches the launcher");
+}
+
+// The default 70% warning is attempted once on a strictly identity-matched
+// soft crossing, without aborting or changing the hard envelope.
+{
+	const dir = initRealRepo();
+	const messages = [];
+	const { deps } = makeDeps({
+		gitRunner: async (args, cwd) => realGit(dir, ...args),
+		launch: async (request, signal, hooks) => {
+			hooks.onControl({ followUp: async (text) => { messages.push(text); return { status: "queued" }; } });
+			const base = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
+			hooks.onUpdate({ ...base, tokens: 70_000 });
+			hooks.onUpdate({ requestId: request.requestId, tokens: 95_000 }); // permissive telemetry, never control
+			hooks.onUpdate({ ...base, tokens: 80_000 });
+			hooks.onUpdate({ ...base, tokens: 90_000 });
+			assert.equal(signal.aborted, false);
+			await Promise.resolve();
+			return { ...base, status: "completed", runId: "run-soft", agent: "worker",
+				result: { kind: "structured", value: makeReport(request.nodeId, "run-soft", request.cwd) } };
+		},
+	});
+	const outcome = await runDelegation(deps, makeParams(), dir, { executionId: "call-soft" });
+	assert.equal(messages.length, 1, "one execution sends at most one warning");
+	assert.match(messages[0], /Runtime budget control/);
+	assert.match(messages[0], /Cumulative input\+output usage is 80000\/100000 tokens \(cache read excluded\)/);
+	assert.match(messages[0], /Stop expanding scope/);
+	assert.match(messages[0], /structured WorkerReport/);
+	assert.match(messages[0], /no budget extension or grace/);
+	assert.deepEqual(outcome.task.executions[0].softTokenWarning, {
+		observed: 80_000, limit: 100_000, threshold: 70_000,
+		attemptedAt: outcome.task.executions[0].softTokenWarning.attemptedAt,
+		status: "queued", completedAt: outcome.task.executions[0].softTokenWarning.completedAt,
+	});
+	assert.match(renderDelegationOutcome(outcome), /soft token warning: queued observed=80000 threshold=70000 limit=100000/);
+}
+
+// A custom threshold is durable even when the launcher has no control sink.
+{
+	const dir = initRealRepo();
+	const { deps } = makeDeps({
+		gitRunner: async (args, cwd) => realGit(dir, ...args),
+		launch: async (request, signal, hooks) => {
+			const base = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
+			hooks.onUpdate({ ...base, tokens: 51 });
+			assert.equal(signal.aborted, false);
+			return { ...base, status: "completed", runId: "run-soft-unavailable", agent: "worker",
+				result: { kind: "structured", value: makeReport(request.nodeId, "run-soft-unavailable", request.cwd) } };
+		},
+	});
+	const outcome = await runDelegation(deps, makeParams({ envelope: { maxTokens: 100, softTokensShare: 0.5 } }), dir, { executionId: "call-soft-unavailable" });
+	assert.equal(outcome.task.executions[0].softTokenWarning.status, "unavailable");
+	assert.equal(outcome.task.executions[0].softTokenWarning.threshold, 50);
+	assert.match(outcome.task.executions[0].softTokenWarning.reason, /did not expose live child control/);
+}
+
+for (const controlFailure of ["throw", "reject"]) {
+	const dir = initRealRepo();
+	const { deps } = makeDeps({
+		gitRunner: async (args, cwd) => realGit(dir, ...args),
+		launch: async (request, signal, hooks) => {
+			hooks.onControl({ followUp: () => {
+				if (controlFailure === "throw") throw new Error("synchronous control failure");
+				return Promise.reject(new Error("asynchronous control failure"));
+			} });
+			const base = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
+			hooks.onUpdate({ ...base, tokens: 80 });
+			await Promise.resolve();
+			await Promise.resolve();
+			hooks.onUpdate({ ...base, tokens: 101 });
+			assert.equal(signal.aborted, true, `${controlFailure}: hard breach remains immediate`);
+			return { ...base, status: "cancelled", runId: `run-control-${controlFailure}`, agent: "worker" };
+		},
+	});
+	const outcome = await runDelegation(deps, makeParams({ envelope: { maxTokens: 100 } }), dir, { executionId: `call-control-${controlFailure}` });
+	assert.equal(outcome.termination.reason, "worker_runaway");
+	assert.equal(outcome.termination.anomaly.observed, 101);
+	assert.equal(outcome.task.executions[0].softTokenWarning.status, "failed");
+	assert.match(outcome.task.executions[0].softTokenWarning.reason, /control failure/);
 }
 
 // ---------------------------------------------------------------------------
@@ -2270,9 +2441,51 @@ for (const [index, [status, expectedState]] of [
 	assert.equal(exec.endedReason, "worker_runaway");
 	assert.equal(exec.runawayObservation.signal, "tokens");
 	assert.equal(exec.envelope.maxTokens, 5000);
+	assert.equal(exec.softTokenWarning, undefined, "a direct hard-limit jump cancels immediately without creating grace");
 	assert.equal(record.recovery.required, true, "runaway flags needs_replan");
 	assert.equal(record.recovery.executionId, "call-r1");
 	assert.match(record.recovery.reason, /tokens 7000 exceeded envelope 5000/);
+	const rendered = renderDelegationOutcome(outcome);
+	assert.match(rendered, /TOKEN_ENVELOPE_EXCEEDED: observed=7000\/limit=5000 \(cumulative input\+output snapshot, no cache read\)/);
+	assert.match(rendered, /single-turn token delta: 4000 tokens \(aggregate input\+output snapshot delta; no cache read accounting\)/);
+	assert.match(rendered, /anomaly: tokens observed=7000 limit=5000 \(source: delegation-param\)/, "the existing anomaly line remains byte-compatible");
+}
+
+// A gradual breach keeps the token heading but does not borrow a large delta
+// from another execution; non-token anomalies retain their existing display.
+{
+	const dir = initRealRepo();
+	const { deps } = makeDeps({
+		gitRunner: async (args, cwd) => realGit(dir, ...args),
+		launch: async (request, signal, hooks) => {
+			const base = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
+			for (let tokens = 500; tokens <= 5_500; tokens += 500) hooks.onUpdate({ ...base, tokens });
+			assert.equal(signal.aborted, true);
+			return { ...base, status: "cancelled", runId: "run-gradual", agent: "worker" };
+		},
+	});
+	const outcome = await runDelegation(deps, makeParams({ envelope: { maxTokens: 5_000 } }), dir, { executionId: "call-gradual" });
+	const currentExecution = outcome.task.executions.find((execution) => execution.executionId === outcome.executionId);
+	const staleExecution = {
+		...currentExecution,
+		executionId: "stale-token-spike",
+		traceSummary: { ...currentExecution.traceSummary, maxTokenDelta: 9_999 },
+	};
+	const rendered = renderDelegationOutcome({
+		...outcome,
+		task: { ...outcome.task, executions: [staleExecution, ...outcome.task.executions] },
+	});
+	assert.match(rendered, /TOKEN_ENVELOPE_EXCEEDED: observed=5500\/limit=5000/);
+	assert.doesNotMatch(rendered, /single-turn token delta:/, "a gradual current execution ignores the stale execution's spike");
+
+	for (const signal of ["wall", "preparation"]) {
+		const nonToken = renderDelegationOutcome({
+			...outcome,
+			termination: { ...outcome.termination, anomaly: { signal, observed: 6_000, limit: 5_000, source: "delegation-param" } },
+		});
+		assert.doesNotMatch(nonToken, /TOKEN_ENVELOPE_EXCEEDED|single-turn token delta:/);
+		assert.match(nonToken, new RegExp(`anomaly: ${signal} observed=6000 limit=5000 \\(source: delegation-param\\)`));
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -2301,6 +2514,45 @@ for (const [index, [status, expectedState]] of [
 	assert.equal(outcome.termination, undefined);
 	assert.equal(outcome.task.recovery, undefined);
 	assert.deepEqual(outcome.task.executions[0].envelope, { maxTokens: 100_000, maxWallMs: 600_000, source: "default" });
+}
+
+// Report-only correction uses its independent tool budget and omits the
+// worker execution envelope disclosure from the child packet.
+{
+	const dir = initRealRepo();
+	const requests = [];
+	let launchNo = 0;
+	let reportOnlyFollowUps = 0;
+	const { deps } = makeDeps({
+		gitRunner: async (args, cwd) => realGit(dir, ...args),
+		reportOnlyAgent: "planner-report-only",
+		launch: async (request, _signal, hooks) => {
+			requests.push(request);
+			launchNo += 1;
+			const runId = `run-report-only-${launchNo}`;
+			if (launchNo === 2) {
+				hooks.onControl({ followUp: async () => { reportOnlyFollowUps += 1; return { status: "queued" }; } });
+				hooks.onUpdate({ requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId, tokens: 80_000 });
+			}
+			return {
+				requestId: request.requestId,
+				ownerRunId: request.ownerRunId,
+				nodeId: request.nodeId,
+				status: "completed",
+				runId,
+				agent: launchNo === 1 ? "worker" : "planner-report-only",
+				result: { kind: "structured", value: makeReport(launchNo === 1 ? "T-99999999-999" : request.nodeId, runId, request.cwd) },
+			};
+		},
+	});
+	const malformed = await runDelegation(deps, makeParams(), dir, { executionId: "report-only-origin" });
+	assert.equal(malformed.decision.action, "report_correction");
+	const repaired = await runDelegation(deps, makeParams({ taskId: malformed.task.taskId }), dir, { executionId: "report-only-repair" });
+	assert.equal(requests[1].agent, "planner-report-only");
+	assert.deepEqual(requests[1].toolBudget, { hard: 1, block: "*" });
+	assert.equal(JSON.parse(requests[1].task).budgetDisclosure, undefined);
+	assert.equal(reportOnlyFollowUps, 0, "report-only executions never receive token close-out reminders");
+	assert.equal(repaired.task.executions.at(-1).softTokenWarning, undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -2346,6 +2598,9 @@ for (const [index, [status, expectedState]] of [
 	assert.equal(clampedExecution.requestBudget.reserveMs, 60_000);
 	assert.match(clampedOutcome.warnings.join("\n"), /clamped to 30000ms/);
 	assert.deepEqual(clampedTimerDelays, [30_000], "wall timer uses the effective Request-clamped bound");
+	const clampedDisclosure = JSON.parse(clamped.launches[0].task).budgetDisclosure;
+	assert.equal(clampedDisclosure.maxTokens, 7);
+	assert.equal(clampedDisclosure.maxWallMs, 30_000, "packet discloses the final Request-clamped wall envelope");
 
 	let delayedRemaining = 90_000;
 	const delayedGit = async (args, cwd) => {

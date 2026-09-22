@@ -25,6 +25,7 @@ import type {
 import { evidenceAction } from "./evidence.ts";
 import type { EvidenceComparison } from "./evidence.ts";
 import { stableStringify } from "./report.ts";
+import { validatePersistedCloseout } from "./closeout-recovery.ts";
 import { TASK_TRANSITIONS } from "./task.ts";
 import type { TaskRecord, TaskStore } from "./task.ts";
 
@@ -302,6 +303,8 @@ export function reviewAttributionOf(task: TaskRecord): {
 	attributionIncomplete?: string;
 } {
 	const executions = task.executions.filter((execution) => !execution.auxiliary && !execution.reportOnly);
+	const recoveredOrigins = new Map(executions.filter((execution) => execution.closeout && execution.cReport && execution.reportIndex !== undefined)
+		.map((execution) => [execution.closeout!.originExecutionId, execution]));
 	const rounds: ReviewRoundAttribution[] = executions.map((execution) => ({
 		executionId: execution.executionId,
 		role: execution.kind,
@@ -309,7 +312,10 @@ export function reviewAttributionOf(task: TaskRecord): {
 		...(execution.reportIndex !== undefined ? { reportRevision: execution.reportIndex + 1 } : {}),
 		...(execution.aRun.finalGitRef ? { aRef: execution.aRun.finalGitRef } : {}),
 		...(execution.cReport?.finalGitRef ? { cRef: execution.cReport.finalGitRef } : {}),
-		attributedFiles: execution.truthPaths ?? [],
+		...(recoveredOrigins.has(execution.executionId) && execution.cTerminal?.finalGitRef ? { terminalRef: execution.cTerminal.finalGitRef } : {}),
+		...(execution.closeout ? { closeout: { originExecutionId: execution.closeout.originExecutionId,
+			inheritedFiles: execution.closeout.inheritedTruthPaths, receiptIds: execution.closeout.receiptIds ?? [] } } : {}),
+		attributedFiles: recoveredOrigins.get(execution.executionId)?.closeout?.inheritedTruthPaths ?? execution.truthPaths ?? [],
 		...(execution.executionChangedPaths?.length ? { executionChangedFiles: execution.executionChangedPaths } : {}),
 		...(execution.committedPaths?.length ? { committedFiles: execution.committedPaths } : {}),
 		...(execution.observedExternalPaths?.length ? { observedExternalFiles: execution.observedExternalPaths } : {}),
@@ -329,7 +335,7 @@ export function reviewAttributionOf(task: TaskRecord): {
 	}
 	for (const execution of executions) {
 		if (!execution.aRun.finalGitRef) incomplete.push(`execution ${execution.executionId} has no A_run ref`);
-		if (!execution.cReport) incomplete.push(`execution ${execution.executionId} has no C_report sample`);
+		if (!execution.cReport && !(execution.cTerminal && recoveredOrigins.has(execution.executionId))) incomplete.push(`execution ${execution.executionId} has no C_report sample`);
 	}
 	const baselineRef = executions.find((execution) => execution.aRun.finalGitRef)?.aRun.finalGitRef
 		?? task.baseEvidence?.finalGitRef;
@@ -924,12 +930,25 @@ export function advanceReview(input: AdvanceReviewInput): {
 	decision: ReviewDecision;
 } {
 	const task = input.store.require(input.taskId);
-	const decision = decideReview({
+	let decision = decideReview({
 		task,
 		...(input.report ? { report: input.report } : {}),
 		...(input.reportError ? { reportError: input.reportError } : {}),
 		...(input.comparison ? { comparison: input.comparison } : {}),
 		...(input.review ? { review: input.review } : {}),
 	});
+	const report = task.reports.at(-1);
+	const producer = task.executions.find((item) => item.reportIndex === task.reports.length - 1);
+	if (producer?.closeout && report) {
+		const errors = validatePersistedCloseout(task, producer, report);
+		if (input.report && stableStringify(input.report) !== stableStringify(report)) errors.push("closeout report changed during review");
+		if (errors.length || !["accept", "review_pending"].includes(decision.action)) {
+			decision = { action: "blocked", nextState: "blocked", round: task.reviewRound, consumesRound: false,
+				failureClass: "evidence", reasonCode: "closeout-final",
+				reason: errors.length ? `closeout evidence failed: ${errors.join("; ")}` : "closeout cannot receive correction or automatic revalidation",
+				guidance: ["Choose an explicit full retry_same_plan or planner_abort."] };
+			input.store.setRecoveryRequired(task.taskId, { executionId: producer.executionId, reason: decision.reason });
+		}
+	}
 	return { task: applyReviewDecision(input.store, input.taskId, decision), decision };
 }

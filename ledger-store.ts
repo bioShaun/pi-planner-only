@@ -115,6 +115,16 @@ function executionShapeError(value: unknown, index: number): string | undefined 
 	if (value.rawTerminal !== undefined && !isPlainObject(value.rawTerminal)) {
 		return `${label}.rawTerminal must be an object`;
 	}
+	if (value.closeout !== undefined) {
+		if (!isPlainObject(value.closeout) || value.closeout.version !== 1) return `${label}.closeout must be a version 1 object`;
+		for (const field of ["requestId", "originExecutionId", "journalRoot", "journalId", "grantSha256", "associationSha256", "originEvidenceSha256"] as const) {
+			if (typeof value.closeout[field] !== "string" || value.closeout[field].length === 0) return `${label}.closeout.${field} must be a non-empty string`;
+		}
+		if (!Array.isArray(value.closeout.inheritedTruthPaths) || value.closeout.inheritedTruthPaths.some((item) => typeof item !== "string")) return `${label}.closeout.inheritedTruthPaths must be an array of strings`;
+		if (value.closeout.receiptIds !== undefined && (!Array.isArray(value.closeout.receiptIds) || value.closeout.receiptIds.some((item) => typeof item !== "string"))) return `${label}.closeout.receiptIds must be an array of strings`;
+		if (value.closeout.reportBindingSha256 !== undefined && typeof value.closeout.reportBindingSha256 !== "string") return `${label}.closeout.reportBindingSha256 must be a string`;
+		if (value.closeout.snapshotManifestArtifact !== undefined && !isPlainObject(value.closeout.snapshotManifestArtifact)) return `${label}.closeout.snapshotManifestArtifact must be an object`;
+	}
 	if (value.updateTrace !== undefined) {
 		if (!Array.isArray(value.updateTrace) || value.updateTrace.length > 64) return `${label}.updateTrace must be an array of at most 64 entries`;
 		for (let i = 0; i < value.updateTrace.length; i += 1) {
@@ -518,8 +528,14 @@ export class LedgerSnapshotStore {
 		});
 		fs.mkdirSync(ledgerDir, { recursive: true });
 		try {
-			fs.writeFileSync(tmpPath, body, "utf8");
+			fs.writeFileSync(tmpPath, body, { encoding: "utf8", flag: "wx", mode: 0o600 });
+			const fd = fs.openSync(tmpPath, "r+");
+			try {
+				fs.fsyncSync(fd);
+			} finally { fs.closeSync(fd); }
 			fs.renameSync(tmpPath, finalPath);
+			const directory = fs.openSync(ledgerDir, "r");
+			try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
 		} catch (err) {
 			try {
 				fs.unlinkSync(tmpPath);

@@ -1735,6 +1735,15 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 		endedReason: "operator_cancel",
 		endedAt: "2026-09-05T00:00:00.000Z",
 		terminationConfirmed: false,
+		softTokenWarning: {
+			observed: 75_000,
+			limit: 100_000,
+			threshold: 70_000,
+			attemptedAt: "2026-09-05T00:00:00.000Z",
+			status: "unconfirmed",
+			completedAt: "2026-09-05T00:00:01.000Z",
+			reason: "no matching acknowledgement",
+		},
 		unacceptedReport: {
 			version: 1,
 			taskId: task.taskId,
@@ -1766,6 +1775,8 @@ function spentTaskRecord(taskId, costUsd = 0.04, limit = 0.05) {
 	assert.equal(execution.terminationConfirmed, false);
 	assert.equal(execution.reportReceived, true);
 	assert.equal(execution.reportAccepted, false);
+	assert.equal(execution.softTokenWarning.status, "unconfirmed");
+	assert.match(execution.guidance.join("\n"), /soft token warning unconfirmed.*75000.*70000.*100000/);
 	assert.equal(execution.unacceptedReport.status, "completed");
 	assert.equal(execution.unacceptedReport.workerRunId, "run-dg1");
 	assert.equal(execution.probeFailures[0].kind, "not-a-git-repository");
