@@ -20,4 +20,4 @@
 ## Issues
 
 - `issues/01-clear-statereason-on-re-execution.md` (Status: ready-for-agent)
-- `issues/02-project-local-tmpdir-for-test-suite.md` (Status: ready-for-agent)
+- `issues/02-project-local-tmpdir-for-test-suite.md` (Status: done)
