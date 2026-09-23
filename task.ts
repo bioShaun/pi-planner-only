@@ -1297,7 +1297,13 @@ export interface TaskRecord {
 		evidenceKey: string;
 		at: string;
 	};
-	/** Reason for an operator-forced terminal state, when applicable. */
+	/**
+	 * Why the current state needs attention (a block, a failure, a stale
+	 * holder). It belongs to that state: `transition` clears it on the way
+	 * into re-execution (`executing`), review (`reviewing`), or acceptance
+	 * (`completed`). `blocked` and `failed` keep the reason until a caller
+	 * records a new one.
+	 */
 	stateReason?: string;
 	/**
 	 * Set when the Task enters `blocked` (ticket 41). Marks the Task as sealed
@@ -1694,6 +1700,8 @@ export class TaskStore {
 
 	transition(taskId: string, next: TaskState): TaskRecord {
 		const record = this.require(taskId);
+		// A no-op stays put, including a reason the current state still needs
+		// (for example "needs reconcile" while the Task is still executing).
 		if (record.state === next) return record;
 		if (!canTransition(record.state, next)) {
 			throw new Error(`illegal task transition: ${record.state} -> ${next}`);
@@ -1703,6 +1711,9 @@ export class TaskStore {
 			if (!record.sealedAt) record.sealedAt = this.now().toISOString();
 		} else if (record.sealedAt) {
 			delete record.sealedAt;
+		}
+		if (next === "executing" || next === "reviewing" || next === "completed") {
+			delete record.stateReason;
 		}
 		return this.touch(record);
 	}
@@ -2044,9 +2055,13 @@ export class TaskStore {
 	}
 
 	/**
-	 * Record why a Task needs attention (e.g. a stale write-lock holder that
-	 * needs reconcile). Task memory fields such as `stateReason` are written
-	 * only here — Orchestration must not mutate a TaskRecord in place.
+	 * Record why the Task's current state needs attention (e.g. a stale
+	 * write-lock holder that needs reconcile, or a block/failure reason set
+	 * after `transition`). Task memory fields such as `stateReason` are
+	 * written only here — Orchestration must not mutate a TaskRecord in
+	 * place. Entering `executing`, `reviewing`, or `completed` drops the
+	 * previous reason inside `transition`; this method does not have to
+	 * clear it.
 	 */
 	setStateReason(taskId: string, reason: string): TaskRecord {
 		const record = this.require(taskId);

@@ -1,6 +1,6 @@
 # 01: 任务重新派工或成功流转时清理残留的 `stateReason`
 
-Status: ready-for-agent
+Status: done
 Type: task
 Blocked by: none
 来源：0.8.0 真实宿主验收观察（场景 A 账本 `evidence/A/ledger.json:2349`）
@@ -29,3 +29,4 @@ Blocked by: none
 ## Comments
 
 - 2026-09-18 开票。在 0.8.0 场景 A 账本发现此现象，不阻塞 0.8.0 身份链路发布，作为后续小版本优化。
+- 2026-09-23 落地。`TaskStore.transition` 进入 `executing` / `reviewing` / `completed` 时清除 `stateReason`；仍停在 `blocked` / `failed` 时保留。PR: https://github.com/bioShaun/pi-planner-only/pull/13

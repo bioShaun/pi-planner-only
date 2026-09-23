@@ -536,6 +536,33 @@ assert.throws(() => store.abandon(abandoned.taskId), /terminal task/);
 	assert.equal(blockedStore.require(blocked.taskId).stateReason, "stop-loss");
 }
 
+// post-0.8.0 follow-up 01: a runaway stateReason belongs to the blocked state.
+// Re-execution, review, and acceptance drop it; staying blocked (or a no-op
+// transition while the current state still needs the text) keeps it.
+{
+	const reasonStore = new TaskStore();
+	const stuck = reasonStore.create(createTaskSpec({ objective: "clear stale reason", cwd }, "T-clear-reason"));
+	const runaway = "worker runaway: tokens 17027 exceeded envelope 12000; delegation cancelled";
+	reasonStore.transition(stuck.taskId, "executing");
+	reasonStore.transition(stuck.taskId, "blocked");
+	reasonStore.setStateReason(stuck.taskId, runaway);
+	assert.equal(reasonStore.require(stuck.taskId).stateReason, runaway, "blocked keeps the runaway reason");
+	reasonStore.transition(stuck.taskId, "blocked");
+	assert.equal(reasonStore.require(stuck.taskId).stateReason, runaway, "a no-op blocked transition keeps the reason");
+	reasonStore.transition(stuck.taskId, "executing");
+	assert.equal(reasonStore.require(stuck.taskId).state, "executing");
+	assert.equal(reasonStore.require(stuck.taskId).stateReason, undefined, "re-execution clears the runaway reason");
+	reasonStore.setStateReason(stuck.taskId, "needs reconcile");
+	reasonStore.transition(stuck.taskId, "executing");
+	assert.equal(reasonStore.require(stuck.taskId).stateReason, "needs reconcile", "staying executing keeps a reason the current state still needs");
+	reasonStore.transition(stuck.taskId, "reviewing");
+	assert.equal(reasonStore.require(stuck.taskId).stateReason, undefined, "entering review clears a stale reason");
+	reasonStore.setStateReason(stuck.taskId, runaway);
+	reasonStore.transition(stuck.taskId, "completed");
+	assert.equal(reasonStore.require(stuck.taskId).state, "completed");
+	assert.equal(reasonStore.require(stuck.taskId).stateReason, undefined, "acceptance clears a stale reason");
+}
+
 // L-2: setBaseEvidence is write-once; clearBaseEvidence then set takes the new ref
 {
 	const once = new TaskStore();

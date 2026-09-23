@@ -27,7 +27,7 @@ import {
 	SUBAGENT_DELEGATION_STARTED_EVENT,
 	SUBAGENT_DELEGATION_UPDATE_EVENT,
 } from "./subagent-delegation-contract.ts";
-import { FINDING_CATEGORIES, FINDING_SEVERITIES, REVIEW_VERDICTS } from "./review.ts";
+import { FINDING_CATEGORIES, FINDING_SEVERITIES, REVIEW_VERDICTS, advanceReview } from "./review.ts";
 import { ConcurrencyController } from "./concurrency.ts";
 import { LedgerSnapshotStore } from "./ledger-store.ts";
 import { TaskStore, createTaskSpec } from "./task.ts";
@@ -2938,6 +2938,76 @@ function makeFakeWallClock() {
 		const refusal = validateRecoveryDecision(retry.task, decision, new Set(["retry_same_plan", "fix_environment"]));
 		assert.match(refusal ?? "", /equivalent recovery decision|new basis/);
 	}
+}
+
+// ---------------------------------------------------------------------------
+// post-0.8.0 follow-up 01 — worker_runaway records stateReason on blocked.
+// planner_redelegate.recovery that finishes and is accepted must not leave
+// that runaway text on a completed Task.
+// ---------------------------------------------------------------------------
+{
+	const dir = initCommittedRepo();
+	const runawayReason = "worker runaway: tokens 17027 exceeded envelope 12000; delegation cancelled";
+	let workerCalls = 0;
+	const { deps } = makeReviewDeps(dir, {
+		reviewFor: (request) => makeReview(request.nodeId),
+	});
+	const innerLaunch = deps.launch;
+	deps.launch = async (request, signal, hooks) => {
+		if (request.agent === "reviewer") return innerLaunch(request, signal, hooks);
+		workerCalls += 1;
+		if (workerCalls === 1) {
+			const base = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
+			hooks.onUpdate({ ...base, tokens: 17027 });
+			assert.equal(signal.aborted, true, "the runaway breach aborts the child");
+			return { ...base, status: "cancelled", runId: "run-runaway", agent: "worker" };
+		}
+		return innerLaunch(request, signal, hooks);
+	};
+
+	const runaway = await runDelegation(
+		deps,
+		makeParams({ envelope: { maxTokens: 12000 } }),
+		dir,
+		{ executionId: "call-runaway" },
+	);
+	assert.equal(runaway.task.state, "blocked");
+	assert.equal(runaway.task.stateReason, runawayReason, "blocked keeps the runaway reason");
+	assert.equal(runaway.task.recovery.required, true);
+
+	const taskId = runaway.task.taskId;
+	const recovered = await runDelegation(
+		deps,
+		makeParams({
+			taskId,
+			envelope: { maxTokens: 200000 },
+			recovery: {
+				executionId: "call-runaway",
+				action: "retry_same_plan",
+				reason: "third attempt after runaway; same plan with a wider envelope",
+				worktreeDecision: "keep",
+			},
+		}),
+		dir,
+		{ executionId: "call-recovery", toolName: "planner_redelegate" },
+	);
+	assert.equal(recovered.task.state, "reviewing", "recovery redelegate parks the new report in review");
+	assert.equal(recovered.task.stateReason, undefined, "re-execution drops the runaway stateReason");
+	assert.equal(recovered.task.recovery?.required, false, "the recovery decision was consumed");
+
+	// A cancelled runaway execution has no admitted C_report, so a fresh
+	// reviewer PASS over that chain is ineligible. Acceptance is the same
+	// advanceReview transition a Root verdict uses once the recovered report
+	// is on the Task.
+	const accepted = advanceReview({
+		store: deps.store,
+		taskId,
+		report: deps.store.require(taskId).reports.at(-1),
+		review: makeReview(taskId),
+	});
+	assert.equal(accepted.decision.action, "accept");
+	assert.equal(accepted.task.state, "completed");
+	assert.equal(accepted.task.stateReason, undefined, "completed does not keep the runaway stateReason");
 }
 
 // ---------------------------------------------------------------------------
