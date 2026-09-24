@@ -19,6 +19,13 @@ Lite rewrite (`docs/pi-planner-only-subtraction-plan.md`). The 0.8.0 code is at 
   - The delegation summary now tells "not a work tree" apart from "no commits yet". The prompt tells Root to pass `cwd` when the target repository is not the session cwd.
   - A child that does not complete now reports its runId and last activity (tool and arguments from the last progress update). When the output artifact exists at the default `session` location, the result includes its text and the transcript path. Otherwise it shows the child's recent output and says the artifact was not found.
   - The task text and the Root prompt state the child's time limit (`PI_PLANNER_ONLY_TIMEOUT_MS`, in whole minutes).
+- om09 run4 follow-ups (`.scratch/om09-run4/spec.md`):
+  - A child that does not complete also returns a transcript tail: slow tools and slow model turns (60s or more), the last 12 tool calls with time offsets, durations, commands and result excerpts, and the last assistant text. Root can reuse checks the child already ran.
+  - The Git summary leaves out paths that were uncommitted before the delegation and that the child did not change, and lists them on a separate line. Paths the child changed again get a note about the earlier edits. Works with git 1.8.
+  - The task text tells the child to report as soon as the required checks pass, to never search the whole filesystem, and to wrap slow commands in `timeout`.
+  - The Root prompt tells Root to reuse a timed-out child's results, and to check a child's change against its own task before saying who made it.
+  - The status line uses k/M/B units, shows Root's share of both tokens and cost, and counts children that did not complete: `root 4.17M $3.854 · children(3, 1 failed) 2.82M $0.103 · root share 60% tok · 97% $`.
+  - `git_commit` accepts messages up to 2000 characters (was 500).
 - Large-task measurement (`docs/lite-measurement-2026-09-24.md`): 12/12 runs pass; lite costs 0.48 of direct at opus-priced Root, 0.46 at astra, 0.52 at gpt-6-sol, with luna children.
 
 ## 0.8.0 - 2026-09-18

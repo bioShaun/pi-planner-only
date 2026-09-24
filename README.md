@@ -37,7 +37,7 @@ delegate larger work, judge results by the diff and check output rather than
 the child's claims, and re-delegate with the previous report plus specific
 fixes when rework is needed.
 
-The status line shows Root and child tokens and cost for the session.
+The status line shows Root and child tokens and cost for the session, and Root's share of each, for example `root 4.17M $3.854 · children(3, 1 failed) 2.82M $0.103 · root share 60% tok · 97% $`. Token counts include cache reads.
 
 ## Models
 

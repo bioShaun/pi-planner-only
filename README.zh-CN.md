@@ -27,7 +27,7 @@ agent 有 bash 或 write 权限就会占用 cwd：同一目录里第二个这样
 
 Root 还会收到一段约 300 token 的提示：小事自己做，大活委派；按 diff 和检查输出判断结果，不信子代理自述；返工时带上上次报告和具体修改意见重新委派。
 
-状态栏显示本会话 Root 与子代理的 token 和费用。
+状态栏显示本会话 Root 与子代理的 token 和费用，以及 Root 在两者中各自的占比，例如 `root 4.17M $3.854 · children(3, 1 failed) 2.82M $0.103 · root share 60% tok · 97% $`。token 计数包含缓存读取。
 
 ## 模型
 
