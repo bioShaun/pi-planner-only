@@ -1,0 +1,50 @@
+host: git version 1.8.3.1
+OK   git_audit status
+     ## master
+      M a.txt
+     ?? b.txt
+OK   git_audit diff-stat
+      a.txt | 2 +-
+      1 file changed, 1 insertion(+), 1 deletion(-)
+OK   git_audit diff
+     diff --git a/a.txt b/a.txt
+     index 5626abf..f719efd 100644
+     --- a/a.txt
+     +++ b/a.txt
+     @@ -1 +1 @@
+     -one
+     +two
+OK   git_audit log
+     dc05a7c init
+OK   git_audit diff base=HEAD~0
+     diff --git a/a.txt b/a.txt
+     index 5626abf..f719efd 100644
+     --- a/a.txt
+     +++ b/a.txt
+     @@ -1 +1 @@
+     -one
+     +two
+OK   git_commit paths=[b.txt]
+     5e4eb60 f1 partial
+      b.txt | 1 +
+      1 file changed, 1 insertion(+)
+OK   git_commit all
+     7d38717 f1 all
+      a.txt | 2 +-
+      1 file changed, 1 insertion(+), 1 deletion(-)
+OK   git_audit log after commits
+     7d38717 f1 all
+     5e4eb60 f1 partial
+     dc05a7c init
+summarizeWork:
+New commits:
+7d38717 f1 all
+5e4eb60 f1 partial
+Diff since dc05a7c0:
+ a.txt | 2 +-
+ b.txt | 1 +
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+OK   non-repo message: /home/glx/ppo-f1-check-1790241709/plain is not inside a git work tree; pass cwd=<repo>
+probes=1 no-optional-locks=0 porcelain==0 missing-fsmonitor=0 calls=29
+F1 CHECK PASSED
+exit=
