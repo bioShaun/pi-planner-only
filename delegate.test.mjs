@@ -8,7 +8,7 @@ import {
 	SUBAGENT_DELEGATION_STARTED_EVENT as STARTED,
 	SUBAGENT_DELEGATION_UPDATE_EVENT as UPDATE,
 } from "./subagent-delegation-contract.ts";
-import { ROLE_AGENTS, buildTaskText, clipChildText, loadLimits, runDelegation } from "./delegate.ts";
+import { ROLE_AGENTS, buildTaskText, clipChildText, formatTokens, loadLimits, runDelegation } from "./delegate.ts";
 import { fakeBus, noGit, tempDir, tick, usage } from "./test-helpers.mjs";
 
 const limits = { timeoutMs: 60_000, maxTokens: 1_000, startTimeoutMs: 40, cancelGraceMs: 40 };
@@ -179,6 +179,18 @@ const respond = (bus, req, over = {}) =>
 	assert.match(buildTaskText("worker", "t", "/w", loadLimits({}).timeoutMs), /\nTime limit: 10 minutes wall clock, then you are stopped/);
 	assert.match(buildTaskText("worker", "t", "/w", loadLimits({ PI_PLANNER_ONLY_TIMEOUT_MS: "300000" }).timeoutMs), /\nTime limit: 5 minutes wall clock/);
 	assert.match(buildTaskText("worker", "t", "/w", 1_000), /Time limit: 1 minutes/);
+	// Pacing (om09 run4: required checks passed, then `find /` ate the budget before the report).
+	const pacing = buildTaskText("worker", "t", "/w");
+	assert.match(pacing, /Write your report as soon as the required checks pass/);
+	assert.match(pacing, /Never search the whole filesystem \(e\.g\. `find \/`\); wrap commands that may be slow in `timeout 60`/);
+	assert.ok(pacing.indexOf("Time limit:") < pacing.indexOf("Write your report as soon"), "pacing follows the budget line");
+}
+
+// Token units: k/M/B, ~3 significant digits, no trailing zeros, no "1000k".
+{
+	const cases = [[0, "0"], [950, "950"], [1_500, "1.5k"], [3_500, "3.5k"], [65_436, "65.4k"], [806_400, "806k"],
+		[999_999, "1M"], [1_356_600, "1.36M"], [4_166_000, "4.17M"], [2_100_000_000, "2.1B"], [Number.NaN, "0"]];
+	for (const [n, want] of cases) assert.equal(formatTokens(n), want, `formatTokens(${n})`);
 }
 
 // Refusals: bad role, empty task, busy cwd for exclusive roles (reviewer still allowed).

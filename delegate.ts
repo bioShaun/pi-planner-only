@@ -126,7 +126,8 @@ export function timeoutMinutes(limits: Pick<DelegationLimits, "timeoutMs">): num
 
 export function buildTaskText(role: Role, task: string, cwd: string, timeoutMs = DEFAULT_LIMITS.timeoutMs): string {
 	const budget = `Time limit: ${timeoutMinutes({ timeoutMs })} minutes wall clock, then you are stopped and unsaved work is lost. Make edits early and in small steps. Do not start commands that cannot finish within the limit (full pipelines, long test suites); list them in your report instead.`;
-	return `${task.trim()}\n\n---\nWorking directory: ${cwd}\n${budget}\n${ROLE_AGENTS[role].closing}`;
+	const pacing = "Write your report as soon as the required checks pass; do optional checks only after that. Never search the whole filesystem (e.g. `find /`); wrap commands that may be slow in `timeout 60`.";
+	return `${task.trim()}\n\n---\nWorking directory: ${cwd}\n${budget}\n${pacing}\n${ROLE_AGENTS[role].closing}`;
 }
 
 /** The last progress update seen for a child; pi-subagents sends these, bounded, during the run. */
@@ -190,8 +191,22 @@ export function clipChildText(text: string, max = MAX_CHILD_TEXT_CHARS): string 
 	return `${text.slice(0, head)}\n… [${text.length - max} chars omitted] …\n${text.slice(text.length - (max - head))}`;
 }
 
-function formatTokens(n: number): string {
-	return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+/** Token counts with k/M/B units, about three significant digits, no trailing zeros: 950, 3.5k, 65.4k, 806k, 1.36M, 2.1B. */
+export function formatTokens(n: number): string {
+	if (!Number.isFinite(n)) return "0";
+	const units: Array<[number, string]> = [[1e9, "B"], [1e6, "M"], [1e3, "k"]];
+	for (let i = 0; i < units.length; i++) {
+		const [size, unit] = units[i];
+		if (Math.abs(n) < size) continue;
+		const v = n / size;
+		const digits = Math.abs(v) < 10 ? 2 : Math.abs(v) < 100 ? 1 : 0;
+		const trim = (s: string) => (s.includes(".") ? s.replace(/\.?0+$/, "") : s);
+		const text = v.toFixed(digits);
+		// 999.5k rounds to "1000k": promote to the next unit instead.
+		if (i > 0 && Math.abs(Number(text)) >= 1000) return `${trim((n / units[i - 1][0]).toFixed(2))}${units[i - 1][1]}`;
+		return `${trim(text)}${unit}`;
+	}
+	return String(Math.round(n));
 }
 
 export function formatUsage(usage: SubagentDelegationUsage | undefined): string {

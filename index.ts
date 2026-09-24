@@ -9,7 +9,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_LIMITS, ROLES, loadLimits, runDelegation, timeoutMinutes } from "./delegate.ts";
+import { DEFAULT_LIMITS, ROLES, formatTokens, loadLimits, runDelegation, timeoutMinutes } from "./delegate.ts";
 import type { DelegationLimits, DelegationParams, EventBus } from "./delegate.ts";
 import { GIT_AUDIT_OPERATIONS, gitCommit, runGitAudit } from "./git.ts";
 import type { GitAuditRequest, GitRunner } from "./git.ts";
@@ -20,6 +20,7 @@ const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
 export const OFF_MARKER = join(AGENT_DIR, "planner-only.off");
 const STATUS_KEY = "planner-only";
 const GIT_TIMEOUT_MS = 30_000;
+export const MAX_COMMIT_MESSAGE_CHARS = 2_000;
 export const PLUGIN_TOOLS = ["delegate", "git_audit", "git_commit"] as const;
 export const STRICT_BLOCKED_TOOLS = new Set(["edit", "write", "bash"]);
 /** pi-subagents' own Root-facing tools; hidden while planner-only is enabled. */
@@ -55,6 +56,8 @@ export function plannerPrompt(strict: boolean, limits: DelegationLimits = DEFAUL
 		"- When the target repository is not the session cwd, pass `cwd` to delegate, git_audit, and git_commit.",
 		"- Judge results by the returned diff summary and check output, not by the child's claims. Inspect the actual changes (read, git_audit) before accepting.",
 		"- To fix a child's work, delegate again with its previous report and the specific corrections.",
+		"- A timed-out child's result ends with its last tool results; reuse them instead of redoing its checks.",
+		"- Before reverting or reporting a child's change, check it against your task: yours or its own?",
 		"- After accepting changes, commit with git_commit.",
 	].join("\n");
 }
@@ -65,9 +68,11 @@ interface CostTotals {
 	childTokens: number;
 	childCost: number;
 	children: number;
+	/** children whose run did not complete (timed out, failed, stopped). */
+	failed: number;
 }
 
-const emptyTotals = (): CostTotals => ({ rootTokens: 0, rootCost: 0, childTokens: 0, childCost: 0, children: 0 });
+const emptyTotals = (): CostTotals => ({ rootTokens: 0, rootCost: 0, childTokens: 0, childCost: 0, children: 0, failed: 0 });
 
 /** Tokens and cost from a pi-ai assistant message usage, tolerating missing fields. */
 export function rootUsageOf(message: unknown): { tokens: number; cost: number } | undefined {
@@ -79,11 +84,21 @@ export function rootUsageOf(message: unknown): { tokens: number; cost: number } 
 	return { tokens: n(u.input) + n(u.output) + n(u.cacheRead) + n(u.cacheWrite), cost };
 }
 
+/**
+ * `root 4.17M $3.854 · children(3, 1 failed) 2.82M $0.103 · root share 60% tok · 97% $`
+ * Tokens include cache reads on both sides, so the two shares are comparable.
+ */
 export function formatTotals(t: CostTotals): string {
-	const k = (n: number) => `${(n / 1000).toFixed(0)}k`;
-	const total = t.rootCost + t.childCost;
-	const share = total > 0 ? ` · root ${Math.round((t.rootCost / total) * 100)}%` : "";
-	return `root ${k(t.rootTokens)} $${t.rootCost.toFixed(3)} · children(${t.children}) ${k(t.childTokens)} $${t.childCost.toFixed(3)}${share}`;
+	const pct = (part: number, whole: number) => `${Math.round((part / whole) * 100)}%`;
+	const tokenTotal = t.rootTokens + t.childTokens;
+	const costTotal = t.rootCost + t.childCost;
+	const shares = [
+		tokenTotal > 0 ? `${pct(t.rootTokens, tokenTotal)} tok` : "",
+		costTotal > 0 ? `${pct(t.rootCost, costTotal)} $` : "",
+	].filter(Boolean);
+	const share = t.children > 0 && shares.length ? ` · root share ${shares.join(" · ")}` : "";
+	const kids = t.failed > 0 ? `children(${t.children}, ${t.failed} failed)` : `children(${t.children})`;
+	return `root ${formatTokens(t.rootTokens)} $${t.rootCost.toFixed(3)} · ${kids} ${formatTokens(t.childTokens)} $${t.childCost.toFixed(3)}${share}`;
 }
 
 export default function plannerOnly(pi: ExtensionAPI): void {
@@ -155,6 +170,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				totals.children += 1;
 				totals.childTokens += usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
 				totals.childCost += usage.cost;
+				if (outcome.details.status !== "completed") totals.failed += 1;
 				updateStatus(ctx);
 			}
 			return { content: [{ type: "text", text: outcome.text }], details: outcome.details };
@@ -186,7 +202,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		description: "Stage and commit accepted changes. Without paths, stages everything (git add -A). Never pushes.",
 		promptSnippet: "git_commit: commit accepted changes (optionally only the given paths)",
 		parameters: Type.Object({
-			message: Type.String({ minLength: 1, maxLength: 500 }),
+			message: Type.String({ minLength: 1, maxLength: MAX_COMMIT_MESSAGE_CHARS, description: "Subject line, optionally a blank line and a few short bullets." }),
 			paths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Only stage these paths (relative to cwd)." })),
 			cwd: Type.Optional(Type.String({ description: REPO_CWD_DESCRIPTION })),
 		}),

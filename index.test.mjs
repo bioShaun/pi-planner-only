@@ -8,7 +8,7 @@ process.env.PI_CODING_AGENT_DIR = agentDir;
 delete process.env.PI_PLANNER_ONLY;
 delete process.env.PI_PLANNER_ONLY_STRICT;
 delete process.env.PI_SUBAGENT_CHILD;
-const { default: plannerOnly, OFF_MARKER, plannerPrompt, rootUsageOf } = await import("./index.ts");
+const { default: plannerOnly, MAX_COMMIT_MESSAGE_CHARS, OFF_MARKER, formatTotals, plannerPrompt, rootUsageOf } = await import("./index.ts");
 
 function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async () => ({ stdout: "", stderr: "not a repo", code: 128 })) {
 	const tools = new Map();
@@ -45,6 +45,9 @@ try {
 
 	const h = fakePi();
 	assert.deepEqual([...h.tools.keys()], ["delegate", "git_audit", "git_commit"]);
+	// om09 run4: a 540-char message was rejected at the old 500 cap.
+	assert.equal(MAX_COMMIT_MESSAGE_CHARS, 2_000);
+	assert.equal(h.tools.get("git_commit").parameters.properties.message.maxLength, MAX_COMMIT_MESSAGE_CHARS);
 	assert.ok(h.commands.has("planner-only"));
 
 	// Prompt: appended when enabled, short, strict variant differs.
@@ -58,6 +61,8 @@ try {
 	assert.match(plannerPrompt(false), /A child has 10 minutes\. Do not delegate work that needs longer/);
 	assert.match(plannerPrompt(false, loadLimits({ PI_PLANNER_ONLY_TIMEOUT_MS: "300000" })), /A child has 5 minutes\./);
 	assert.match(plannerPrompt(false), /pass `cwd` to delegate, git_audit, and git_commit/);
+	assert.match(plannerPrompt(false), /timed-out child's result ends with its last tool results; reuse them/);
+	assert.match(plannerPrompt(false), /Before reverting or reporting a child's change, check it against your task/);
 	process.env.PI_PLANNER_ONLY_TIMEOUT_MS = "300000";
 	assert.match((await h.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, h.ctx)).systemPrompt, /A child has 5 minutes\./);
 	delete process.env.PI_PLANNER_ONLY_TIMEOUT_MS;
@@ -99,7 +104,7 @@ try {
 	await h.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 10_000, output: 2_000, cacheRead: 0, cacheWrite: 0, cost: { total: 0.03 } } } }, h.ctx);
 	await h.handlers.get("message_end")({ message: { role: "user", content: "hi" } }, h.ctx);
 	await h.commands.get("planner-only").handler("status", h.ctx);
-	assert.match(h.notes.at(-1), /root 12k \$0\.030 · children\(1\) 4k \$0\.010 · root 75%/);
+	assert.match(h.notes.at(-1), /root 12k \$0\.030 · children\(1\) 3\.5k \$0\.010 · root share 77% tok · 75% \$/);
 
 	// git_audit refusals come back as text, not exceptions.
 	const audit = await h.tools.get("git_audit").execute("call-2", { operation: "diff", base: "--output=x" }, undefined, undefined, h.ctx);
@@ -177,3 +182,11 @@ try {
 }
 
 console.log("index.test: ok");
+
+// Status line: k/M/B units, root share by tokens and by cost, non-completed children counted.
+{
+	const line = formatTotals({ rootTokens: 4_166_000, rootCost: 3.854, childTokens: 2_822_000, childCost: 0.103, children: 3, failed: 1 });
+	assert.equal(line, "root 4.17M $3.854 · children(3, 1 failed) 2.82M $0.103 · root share 60% tok · 97% $");
+	assert.equal(formatTotals({ rootTokens: 12_000, rootCost: 0.05, childTokens: 0, childCost: 0, children: 0, failed: 0 }), "root 12k $0.050 · children(0) 0 $0.000");
+	assert.equal(formatTotals({ rootTokens: 0, rootCost: 0, childTokens: 500, childCost: 0, children: 1, failed: 0 }), "root 0 $0.000 · children(1) 500 $0.000 · root share 0% tok");
+}
