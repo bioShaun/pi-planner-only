@@ -30,14 +30,20 @@ function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async 
 	const statuses = [];
 	const statusColors = [];
 	const sentMessages = [];
+	const sentUserMessages = [];
+	const sessionCalls = [];
+	const replaced = { sent: [], editor: [], notes: [], ui: { notify: (m) => replaced.notes.push(m), setEditorText: (m) => replaced.editor.push(m) }, sendUserMessage: async (m) => replaced.sent.push(m) };
 	const ctx = {
 		cwd: "/w",
 		hasUI: true,
-		sessionManager: { getSessionId: () => "session-1" },
+		isIdle: () => true,
+		sessionManager: { getSessionId: () => "session-1", getSessionFile: () => "/sessions/previous.jsonl" },
+		newSession: async (opts) => { sessionCalls.push(opts); await opts.withSession(replaced); return {}; },
 		ui: { setStatus: (k, v) => statuses.push(v), notify: (m) => notes.push(m), theme: { fg: (c, s) => { statusColors.push(c); return s; } } },
 	};
 	pi.sendMessage = (...args) => sentMessages.push(args);
-	return { pi, tools, handlers, commands, events, ctx, notes, statuses, statusColors, sentMessages, active: () => active };
+	pi.sendUserMessage = (...args) => sentUserMessages.push(args);
+	return { pi, tools, handlers, commands, events, ctx, notes, statuses, statusColors, sentMessages, sentUserMessages, sessionCalls, replaced, active: () => active };
 }
 
 try {
@@ -47,7 +53,7 @@ try {
 	delete process.env.PI_SUBAGENT_CHILD;
 
 	const h = fakePi();
-	assert.deepEqual([...h.tools.keys()], ["delegate", "git_audit", "git_commit"]);
+	assert.deepEqual([...h.tools.keys()], ["delegate", "git_audit", "git_commit", "handoff"]);
 	// om09 run4: a 540-char message was rejected at the old 500 cap.
 	assert.equal(MAX_COMMIT_MESSAGE_CHARS, 2_000);
 	assert.equal(h.tools.get("git_commit").parameters.properties.message.maxLength, MAX_COMMIT_MESSAGE_CHARS);
@@ -55,7 +61,7 @@ try {
 
 	// Prompt: appended when enabled, short, strict variant differs.
 	await h.handlers.get("session_start")({}, h.ctx);
-	assert.deepEqual(h.active(), ["read", "bash", "edit", "write", "delegate", "git_audit", "git_commit"]);
+	assert.deepEqual(h.active(), ["read", "bash", "edit", "write", "delegate", "git_audit", "git_commit", "handoff"]);
 	const injected = await h.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, h.ctx);
 	assert.ok(injected.systemPrompt.startsWith("BASE\n\n[PLANNER-ONLY]"));
 	for (const strict of [false, true]) assert.ok(plannerPrompt(strict).length < 1_300, "prompt should stay ~300 tokens");
@@ -100,6 +106,111 @@ try {
 	assert.ok(!existsSync(OFF_MARKER));
 	assert.ok(h.active().includes("delegate"));
 
+	const brief = "Continue the parser migration in this repository. Goal: finish the streaming parser. Decisions: preserve the public API and avoid dependencies. Constraints: TypeScript, existing tests, no commits. Relevant files: index.ts and index.test.mjs. Done: analysis and initial implementation. Open: validate edge cases and update tests. Exact next step: inspect parser tests, implement missing cases, then run npm run test:release.";
+	const gate = fakePi();
+	const gateTool = gate.tools.get("handoff");
+	const unrequestedRefusal = await gateTool.execute("small-unrequested", { brief }, undefined, undefined, gate.ctx);
+	assert.equal(unrequestedRefusal.details.ok, false);
+	assert.match(unrequestedRefusal.content[0].text, /below the 150k threshold, and the user did not request a handoff/);
+	await gate.commands.get("planner-only").handler("handoff", gate.ctx);
+	assert.equal((await gateTool.execute("manual-request", { brief }, undefined, undefined, gate.ctx)).details.ok, true);
+	await gate.commands.get("planner-only").handler("handoff", gate.ctx);
+	await gate.handlers.get("session_start")({}, gate.ctx);
+	const secondSmallCall = await gateTool.execute("after-handoff", { brief }, undefined, undefined, gate.ctx);
+	assert.equal(secondSmallCall.details.ok, false);
+	const high = fakePi();
+	await high.handlers.get("session_start")({}, high.ctx);
+	await high.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200_000, output: 0, cacheRead: 0, cacheWrite: 0 } } }, high.ctx);
+	assert.equal((await high.tools.get("handoff").execute("high-context", { brief }, undefined, undefined, high.ctx)).details.ok, true);
+	const handoffTool = h.tools.get("handoff");
+	assert.equal((await handoffTool.execute("short", { brief: "too short" }, undefined, undefined, h.ctx)).details.ok, false);
+	assert.equal((await handoffTool.execute("no-ui", { brief }, undefined, undefined, { ...h.ctx, hasUI: false })).details.ok, false);
+	await h.commands.get("planner-only").handler("handoff", h.ctx);
+	assert.equal((await handoffTool.execute("handoff-1", { brief, cwd: "repo" }, undefined, undefined, h.ctx)).details.ok, true);
+	assert.equal((await handoffTool.execute("handoff-2", { brief }, undefined, undefined, h.ctx)).details.ok, false);
+	await h.handlers.get("agent_settled")({}, h.ctx);
+	assert.deepEqual(h.sentUserMessages.at(-1), ["/planner-only handoff", { expandPromptTemplates: true }]);
+	await h.commands.get("planner-only").handler("handoff", h.ctx);
+	assert.equal(h.sessionCalls.at(-1).parentSession, "/sessions/previous.jsonl");
+	assert.ok(h.replaced.sent.at(-1).startsWith("[planner-only handoff] You are the new Root session."));
+	assert.match(h.replaced.sent.at(-1), /## Brief/);
+	assert.match(h.replaced.sent.at(-1), /Facts from the previous session/);
+	assert.match(h.replaced.sent.at(-1), /Not inside a git work tree/);
+	assert.match(h.replaced.sent.at(-1), /Continue the parser migration/);
+	const gitFacts = fakePi(undefined, async (_cmd, args) => {
+		if (args[0] === "--version") return { stdout: "git version 2.43.0", stderr: "", code: 0 };
+		if (args.includes("--is-inside-work-tree")) return { stdout: "true", stderr: "", code: 0 };
+		if (args.includes("status")) return { stdout: " M index.ts\n?? new.ts\n", stderr: "", code: 0 };
+		if (args.includes("log")) return { stdout: "abc123 latest change\n", stderr: "", code: 0 };
+		return { stdout: "", stderr: "", code: 0 };
+	});
+	await gitFacts.commands.get("planner-only").handler("handoff", gitFacts.ctx);
+	await gitFacts.tools.get("handoff").execute("facts", { brief, cwd: "repo" }, undefined, undefined, gitFacts.ctx);
+	await gitFacts.commands.get("planner-only").handler("handoff", gitFacts.ctx);
+	assert.match(gitFacts.replaced.sent[0], /M index.ts/);
+	assert.match(gitFacts.replaced.sent[0], /abc123 latest change/);
+	assert.match(gitFacts.replaced.sent[0], /Repository \(git facts below\): \/w\/repo/);
+	const cancelled = fakePi();
+	let cancelSession = true;
+	cancelled.ctx.newSession = async (opts) => { cancelled.sessionCalls.push(opts); if (cancelSession) return { cancelled: true }; await opts.withSession(cancelled.replaced); return {}; };
+	await cancelled.commands.get("planner-only").handler("handoff", cancelled.ctx);
+	await cancelled.tools.get("handoff").execute("cancel", { brief }, undefined, undefined, cancelled.ctx);
+	await cancelled.commands.get("planner-only").handler("handoff", cancelled.ctx);
+	assert.match(cancelled.notes.at(-1), /handoff cancelled/);
+	await cancelled.handlers.get("agent_settled")({}, cancelled.ctx);
+	assert.equal(cancelled.sentUserMessages.length, 1);
+	cancelSession = false;
+	await cancelled.commands.get("planner-only").handler("handoff", cancelled.ctx);
+	assert.equal(cancelled.sessionCalls.length, 2);
+	assert.match(cancelled.replaced.sent.at(-1), /Continue the parser migration/);
+	await cancelled.tools.get("handoff").execute("drop", { brief }, undefined, undefined, cancelled.ctx);
+	await cancelled.commands.get("planner-only").handler("handoff drop", cancelled.ctx);
+	assert.match(cancelled.notes.at(-1), /handoff dropped/);
+	const thrown = fakePi();
+	thrown.ctx.newSession = async () => { throw new Error("new session boom"); };
+	await thrown.commands.get("planner-only").handler("handoff", thrown.ctx);
+	await thrown.tools.get("handoff").execute("throw", { brief }, undefined, undefined, thrown.ctx);
+	await assert.doesNotReject(thrown.commands.get("planner-only").handler("handoff", thrown.ctx));
+	assert.match(thrown.notes.at(-1), /handoff failed/);
+	await thrown.handlers.get("agent_settled")({}, thrown.ctx);
+	assert.equal(thrown.sentUserMessages.length, 1);
+	const gitFailure = fakePi(undefined, async () => { throw new Error("git unavailable"); });
+	await gitFailure.commands.get("planner-only").handler("handoff", gitFailure.ctx);
+	await gitFailure.tools.get("handoff").execute("git-failure", { brief }, undefined, undefined, gitFailure.ctx);
+	await gitFailure.commands.get("planner-only").handler("handoff", gitFailure.ctx);
+	assert.match(gitFailure.replaced.sent[0], /git facts unavailable: git unavailable/);
+	const disabledHandoff = fakePi();
+	await disabledHandoff.commands.get("planner-only").handler("handoff", disabledHandoff.ctx);
+	await disabledHandoff.tools.get("handoff").execute("off-handoff", { brief }, undefined, undefined, disabledHandoff.ctx);
+	await disabledHandoff.commands.get("planner-only").handler("off", disabledHandoff.ctx);
+	await disabledHandoff.handlers.get("agent_settled")({}, disabledHandoff.ctx);
+	await disabledHandoff.commands.get("planner-only").handler("on", disabledHandoff.ctx);
+	await disabledHandoff.handlers.get("agent_settled")({}, disabledHandoff.ctx);
+	assert.equal(disabledHandoff.sentUserMessages.length, 1);
+	const confirm = fakePi();
+	await confirm.commands.get("planner-only").handler("handoff", confirm.ctx);
+	await confirm.tools.get("handoff").execute("confirm", { brief }, undefined, undefined, confirm.ctx);
+	process.env.PI_PLANNER_ONLY_HANDOFF = "confirm";
+	await confirm.commands.get("planner-only").handler("handoff", confirm.ctx);
+	delete process.env.PI_PLANNER_ONLY_HANDOFF;
+	assert.equal(confirm.replaced.editor.length, 1);
+	assert.equal(confirm.replaced.sent.length, 0);
+	const manual = fakePi();
+	await manual.commands.get("planner-only").handler("handoff next goal", manual.ctx);
+	assert.match(manual.sentUserMessages[0][0], /Call the handoff tool/);
+	assert.match(manual.sentUserMessages[0][0], /next goal/);
+
+	const inflight = fakePi();
+	let finishReviewer;
+	inflight.events.on(SUBAGENT_DELEGATION_REQUEST_EVENT, (req) => { finishReviewer = () => inflight.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, { requestId: req.requestId, nodeId: req.nodeId, agent: req.agent, status: "completed", result: { kind: "text", text: "reviewed" }, usage: usage() }); });
+	const reviewerPromise = inflight.tools.get("delegate").execute("review-inflight", { role: "reviewer", task: "review" }, undefined, undefined, inflight.ctx);
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	await inflight.commands.get("planner-only").handler("handoff", inflight.ctx);
+	const inflightRefusal = await inflight.tools.get("handoff").execute("inflight-refusal", { brief }, undefined, undefined, inflight.ctx);
+	assert.match(inflightRefusal.content[0].text, /a delegated child is still running/);
+	finishReviewer();
+	await reviewerPromise;
+
 	// delegate end to end over pi.events; child and Root usage are both counted.
 	let reply = { status: "completed", result: { kind: "text", text: "done" }, usage: usage({ cost: 0.01 }) };
 	h.events.on(SUBAGENT_DELEGATION_REQUEST_EVENT, (req) => {
@@ -120,7 +231,7 @@ try {
 	assert.equal(hc.sentMessages[0][1].deliverAs, "nextTurn");
 	assert.match(hc.sentMessages[0][0].content, /about 200k tokens/);
 	assert.match(hc.sentMessages[0][0].content, /\/compact/);
-	assert.match(hc.sentMessages[0][0].content, /new session/);
+	assert.match(hc.sentMessages[0][0].content, /fresh session/);
 	await hc.handlers.get("message_end")(largeContext, hc.ctx);
 	assert.equal(hc.sentMessages.length, 1);
 	await hc.commands.get("planner-only").handler("status", hc.ctx);
@@ -167,6 +278,9 @@ try {
 	// git_audit refusals come back as text, not exceptions.
 	const audit = await h.tools.get("git_audit").execute("call-2", { operation: "diff", base: "--output=x" }, undefined, undefined, h.ctx);
 	assert.match(audit.content[0].text, /refused/);
+	// An empty optional path (common from models) means "no filter", not a refusal.
+	const emptyPath = await h.tools.get("git_audit").execute("call-2b", { operation: "status", path: "" }, undefined, undefined, h.ctx);
+	assert.doesNotMatch(emptyPath.content[0].text, /path must be non-empty/);
 
 	// git_audit/git_commit: cwd resolves against ctx.cwd; non-repos get a clear hint.
 	const notRepo = await h.tools.get("git_audit").execute("call-3", { operation: "status", cwd: "elsewhere" }, undefined, undefined, h.ctx);
@@ -200,12 +314,11 @@ try {
 	// HIDDEN_HOST_TOOLS: while enabled, subagents_enable/subagent are stripped.
 	const h2 = fakePi(["read", "bash", "subagents_enable", "subagent"]);
 	await h2.handlers.get("session_start")({}, h2.ctx);
-	assert.deepEqual(h2.active(), ["read", "bash", "delegate", "git_audit", "git_commit"]);
-
+	assert.deepEqual(h2.active(), ["read", "bash", "delegate", "git_audit", "git_commit", "handoff"]);
 	// pi-subagents re-adds the loader on its own hooks; before_agent_start strips again.
 	h2.pi.setActiveTools([...h2.active(), "subagents_enable", "subagent"]);
 	await h2.handlers.get("before_agent_start")({ systemPrompt: "B" }, h2.ctx);
-	assert.deepEqual(h2.active(), ["read", "bash", "delegate", "git_audit", "git_commit"]);
+	assert.deepEqual(h2.active(), ["read", "bash", "delegate", "git_audit", "git_commit", "handoff"]);
 
 	// off: subagents_enable comes back, subagent does not; on: stripped again.
 	await h2.commands.get("planner-only").handler("off", h2.ctx);
@@ -220,7 +333,7 @@ try {
 	// before_agent_start scrubs systemPromptOptions.selectedTools when enabled.
 	const evSel = { systemPrompt: "B", systemPromptOptions: { selectedTools: ["read", "subagents_enable", "subagent", "bash"] } };
 	await h2.handlers.get("before_agent_start")(evSel, h2.ctx);
-	assert.deepEqual(evSel.systemPromptOptions.selectedTools, ["read", "bash", "delegate", "git_audit", "git_commit"]);
+	assert.deepEqual(evSel.systemPromptOptions.selectedTools, ["read", "bash", "delegate", "git_audit", "git_commit", "handoff"]);
 
 	// tool_call: hidden tools are blocked even without strict; ordinary tools are not.
 	const callTool = (toolName) => h2.handlers.get("tool_call")({ toolName }, h2.ctx);

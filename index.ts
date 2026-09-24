@@ -11,7 +11,7 @@ import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_LIMITS, ROLES, formatTokens, loadLimits, runDelegation, timeoutMinutes } from "./delegate.ts";
 import type { DelegationLimits, DelegationParams, EventBus } from "./delegate.ts";
-import { GIT_AUDIT_OPERATIONS, gitCommit, runGitAudit } from "./git.ts";
+import { GIT_AUDIT_OPERATIONS, gitCommit, gitSafePrefix, isWorkTree, runGitAudit } from "./git.ts";
 import type { GitAuditRequest, GitRunner } from "./git.ts";
 
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
@@ -21,7 +21,7 @@ export const OFF_MARKER = join(AGENT_DIR, "planner-only.off");
 const STATUS_KEY = "planner-only";
 const GIT_TIMEOUT_MS = 30_000;
 export const MAX_COMMIT_MESSAGE_CHARS = 2_000;
-export const PLUGIN_TOOLS = ["delegate", "git_audit", "git_commit"] as const;
+export const PLUGIN_TOOLS = ["delegate", "git_audit", "git_commit", "handoff"] as const;
 export const STRICT_BLOCKED_TOOLS = new Set(["edit", "write", "bash"]);
 /** pi-subagents' own Root-facing tools; hidden while planner-only is enabled. */
 export const HIDDEN_HOST_TOOLS = ["subagents_enable", "subagent"] as const;
@@ -112,6 +112,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	let totals = emptyTotals();
 	let rootContext: number | undefined;
 	let contextWarned = false;
+	let handoffRequested = false;
+	let pendingHandoff: { brief: string; cwd: string; sessionFile?: string; manualOnly?: boolean } | undefined;
+	let delegationsInFlight = 0;
 	let hidLoader = false;
 	const contextWarnThreshold = () => {
 		const value = Number(process.env.PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS);
@@ -123,7 +126,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		try {
 			pi.sendMessage?.({
 				customType: "planner-only-context",
-				content: `[planner-only] Root context is about ${formatTokens(tokens)} tokens (warning threshold ${formatTokens(contextWarnThreshold())}); every turn re-reads it. From now on delegate reading-heavy and multi-file work. At the next task boundary: if the next step is a new task, write the brief (goal, decisions, constraints, relevant files, open items) to a file and ask the user to start a new session from it (/new, or /handoff if installed); if still mid-task and the context is mostly stale exploration, ask the user to run /compact with what to keep.`,
+				content: `[planner-only] Root context is about ${formatTokens(tokens)} tokens (warning threshold ${formatTokens(contextWarnThreshold())}); every turn re-reads it. From now on delegate reading-heavy and multi-file work. At the next task boundary: if the next step is a new task, call the handoff tool with a complete brief (it starts a fresh session automatically); if still mid-task and the context is mostly stale exploration, ask the user to run /compact with what to keep.`,
 				display: true,
 			}, { deliverAs: "nextTurn" });
 		} catch { /* Warnings must never interrupt the host handler. */ }
@@ -171,7 +174,10 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			})),
 		}),
 		async execute(_toolCallId, params: DelegationParams, signal, onUpdate, ctx) {
-			const outcome = await runDelegation(
+			delegationsInFlight += 1;
+			let outcome;
+			try {
+				outcome = await runDelegation(
 				{
 					events: pi.events as unknown as EventBus,
 					git: gitRunner,
@@ -183,7 +189,10 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				{ ...params, cwd: resolveCwd(ctx, params.cwd) },
 				signal,
 				(text) => onUpdate?.({ content: [{ type: "text", text }], details: {} }),
-			);
+				);
+			} finally {
+				delegationsInFlight -= 1;
+			}
 			const { usage, status } = outcome.details;
 			// Refusals never launched a child; everything else counts, with or without usage.
 			if (status !== "refused") {
@@ -213,6 +222,8 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		}),
 		async execute(_toolCallId, params: GitAuditRequest & { cwd?: string }, _signal, _onUpdate, ctx) {
 			const { cwd, ...request } = params;
+			// Models often send optional fields as ""; treat an empty path as "no path filter".
+			if (request.path === "") delete request.path;
 			const outcome = await runGitAudit(gitRunner, request, resolveCwd(ctx, cwd));
 			return { content: [{ type: "text", text: outcome.text }], details: { ok: outcome.ok } };
 		},
@@ -234,12 +245,86 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		},
 	});
 
+	pi.registerTool({
+		name: "handoff",
+		label: "Handoff",
+		description: "Start a fresh Root session with a complete, self-contained task brief.",
+		promptSnippet: "handoff: at a task boundary when your context is large, continue in a fresh session from a brief",
+		parameters: Type.Object({
+			brief: Type.String({ minLength: 200, description: "Self-contained brief for the next Root session: goal, decisions made, constraints, relevant files/specs, what is done, open items, and the exact next step." }),
+			cwd: Type.Optional(Type.String({ description: REPO_CWD_DESCRIPTION })),
+		}),
+		async execute(_toolCallId, params: { brief: string; cwd?: string }, _signal, _onUpdate, ctx) {
+			if (!ctx.hasUI) return { content: [{ type: "text", text: "Handoff refused: a UI session is required." }], details: { ok: false } };
+			if (busy.size > 0) return { content: [{ type: "text", text: "Handoff refused: an exclusive child is still running." }], details: { ok: false } };
+			if (delegationsInFlight > 0) return { content: [{ type: "text", text: "Handoff refused: a delegated child is still running." }], details: { ok: false } };
+			if (pendingHandoff) return { content: [{ type: "text", text: "Handoff refused: one is already pending." }], details: { ok: false } };
+			const threshold = contextWarnThreshold();
+			if (!handoffRequested && (rootContext ?? 0) <= threshold) return { content: [{ type: "text", text: `Handoff refused: your context is about ${formatTokens(rootContext ?? 0)} tokens, below the ${formatTokens(threshold)} threshold, and the user did not request a handoff. Continue the work in this session.` }], details: { ok: false } };
+			if (params.brief.length < 200) return { content: [{ type: "text", text: "Handoff refused: brief must be at least 200 characters." }], details: { ok: false } };
+			handoffRequested = false;
+			pendingHandoff = { brief: params.brief, cwd: resolveCwd(ctx, params.cwd), sessionFile: ctx.sessionManager?.getSessionFile?.() };
+			return { content: [{ type: "text", text: "Handoff scheduled: a new session will start with this brief after this turn ends. Stop working now; end your turn with a one-line note to the user." }], details: { ok: true } };
+		},
+	});
+
 	pi.registerCommand("planner-only", {
-		description: "planner-only on | off | status",
+		description: "planner-only on | off | status | handoff [goal]",
 		handler: async (args, ctx) => {
-			const cmd = args.trim().toLowerCase();
+			const raw = args.trim();
+			const cmd = raw.toLowerCase();
+			if (cmd === "handoff drop") {
+				pendingHandoff = undefined;
+				handoffRequested = false;
+				ctx.ui.notify("handoff dropped", "info");
+				return;
+			}
+			if (cmd === "handoff" || cmd.startsWith("handoff ")) {
+				if (!pendingHandoff) {
+					handoffRequested = true;
+					const goal = raw.slice("handoff".length).trim();
+					pi.sendUserMessage(`[planner-only] The user asked for a handoff${goal ? ` (next goal: ${goal})` : ""}. Call the handoff tool now with a complete brief.`, ctx.isIdle?.() ? undefined : { deliverAs: "followUp" });
+					return;
+				}
+				const handoff = pendingHandoff;
+				let facts: string;
+				try {
+					const prefix = await gitSafePrefix(gitRunner, handoff.cwd);
+					if (!(await isWorkTree(gitRunner, handoff.cwd))) facts = "Not inside a git work tree.";
+					else {
+						const [status, log] = await Promise.all([
+							gitRunner([...prefix, "status", "--porcelain"], handoff.cwd),
+							gitRunner([...prefix, "log", "--oneline", "-n5"], handoff.cwd),
+						]);
+						facts = `git status (porcelain):\n${status.code === 0 ? status.stdout.split("\\n").slice(0, 30).join("\\n") || "(clean)" : (status.stderr || status.stdout).trim()}\n\ngit log --oneline -n5:\n${log.code === 0 ? log.stdout.trim() || "(no commits)" : (log.stderr || log.stdout).trim()}`;
+					}
+				} catch (error) {
+					facts = `git facts unavailable: ${error instanceof Error ? error.message : String(error)}`;
+				}
+				const prompt = `[planner-only handoff] You are the new Root session. The previous session handed this work to you because its context was large. "This session"/"the next session" in the brief below both mean YOU: do the next step now. Do not call the handoff tool unless your own context grows past the warning threshold.\n\n## Brief\n${handoff.brief}\n\n## Facts from the previous session\nPrevious session file: ${handoff.sessionFile ?? "unknown"}\nRepository (git facts below): ${handoff.cwd}\n${facts}\n\nContinue as Root under planner-only; the brief is authoritative.`;
+				const mode = (process.env.PI_PLANNER_ONLY_HANDOFF ?? "auto").trim().toLowerCase();
+				try {
+					const result = await ctx.newSession({ parentSession: handoff.sessionFile, withSession: async (rctx) => {
+						rctx.ui.notify("planner-only: handoff from previous session", "info");
+						if (mode === "confirm") {
+							rctx.ui.setEditorText(prompt);
+							rctx.ui.notify("Handoff ready. Submit when ready.", "info");
+						} else await rctx.sendUserMessage(prompt);
+					} });
+					if (result?.cancelled) {
+						pendingHandoff = { ...handoff, manualOnly: true };
+						ctx.ui.notify("handoff cancelled; run /planner-only handoff to retry, or /planner-only handoff drop to discard it", "warning");
+					} else pendingHandoff = undefined;
+				} catch (error) {
+					pendingHandoff = { ...handoff, manualOnly: true };
+					const reason = error instanceof Error ? error.message : String(error);
+					ctx.ui.notify(`handoff failed (${reason}); run /planner-only handoff to retry, or /planner-only handoff drop to discard it`, "warning");
+				}
+				return;
+			}
 			if (cmd === "on" || cmd === "off") {
 				if (cmd === "off") {
+					pendingHandoff = undefined;
 					mkdirSync(dirname(OFF_MARKER), { recursive: true });
 					writeFileSync(OFF_MARKER, "");
 				} else rmSync(OFF_MARKER, { force: true });
@@ -255,8 +340,23 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		totals = emptyTotals();
 		rootContext = undefined;
 		contextWarned = false;
+		handoffRequested = false;
+		pendingHandoff = undefined;
 		syncTools();
 		updateStatus(ctx);
+	});
+
+	pi.on("agent_settled", async () => {
+		if (!isEnabled()) {
+			pendingHandoff = undefined;
+			return;
+		}
+		if (!pendingHandoff || pendingHandoff.manualOnly) return;
+		try { pi.sendUserMessage("/planner-only handoff", { expandPromptTemplates: true }); }
+		catch {
+			pendingHandoff = undefined;
+			pi.sendMessage?.({ customType: "planner-only-handoff", content: "[planner-only] Handoff dispatch failed; run /planner-only handoff manually.", display: true });
+		}
 	});
 
 	pi.on("before_agent_start", async (event) => {

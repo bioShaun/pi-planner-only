@@ -75,12 +75,14 @@ Restart Pi or run `/reload`. Requires pi-subagents `>=0.70 <1`.
 |---|---|
 | `/planner-only on` / `off` | Toggle via the marker file `~/.pi/agent/planner-only.off`. |
 | `/planner-only status` | Show state and session cost totals. |
+| `/planner-only handoff [goal]` | Ask Root to write a brief and continue in a fresh session (`handoff drop` discards a failed one). Root can also call the `handoff` tool itself once its context is above the warning threshold; the new session starts with the brief and git facts and begins work automatically. |
 | `PI_PLANNER_ONLY=1` / `0` | Force on / off, overriding the marker. |
 | `PI_PLANNER_ONLY_STRICT=1` | Block Root's own `edit`, `write`, and `bash`. Off by default, because small tasks are cheaper done directly. |
 | `PI_PLANNER_ONLY_TIMEOUT_MS` | Child wall-clock limit passed to the host (default 600000). |
 | `PI_PLANNER_ONLY_MAX_TOKENS` | Cancel a child whose reported tokens exceed this (default 1500000). The count is the child's cumulative input+output tokens from its progress events, excluding cache reads. |
 | `PI_PLANNER_ONLY_START_TIMEOUT_MS` | Give up if the child has not started (default 30000). |
 | `PI_PLANNER_ONLY_CANCEL_GRACE_MS` | Wait for a cancel to be confirmed (default 5000). |
+| `PI_PLANNER_ONLY_HANDOFF` | `auto` (default) submits the handoff brief in the new session; `confirm` puts it in the editor for review. |
 | `PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS` | Root context size that turns the status red and sends Root one message suggesting delegation, a new session, or `/compact` (default 150000). |
 
 When disabled, the three tools are removed from the active set and no prompt is
