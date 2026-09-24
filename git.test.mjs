@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { auditArgv, captureBase, gitCommit, runGitAudit, summarizeWork } from "./git.ts";
+import { MAX_FINGERPRINT_PATHS, auditArgv, captureBase, gitCommit, parseStatusZ, runGitAudit, summarizeWork } from "./git.ts";
 import { noGit, tempDir } from "./test-helpers.mjs";
 
 // Every call carries the safe prefix; diffs never run external drivers.
@@ -67,6 +67,44 @@ assert.ok(auditArgv({ operation: "log", maxEntries: 0 }).args.includes("-n1"));
 	assert.equal(called, false);
 }
 
+// status -z parsing: renames/copies carry the old path as an extra field.
+assert.deepEqual(parseStatusZ(" M a.ts\0R  new.txt\0old.txt\0?? un.txt\0C  c2\0c1\0 D gone\0"), ["a.ts", "new.txt", "un.txt", "c2", "gone"]);
+assert.deepEqual(parseStatusZ(""), []);
+assert.deepEqual(parseStatusZ("x"), []);
+
+// Fingerprints: one failing hash-object batch falls back to per-path hashing; too many paths skip it (old note).
+{
+	const script = (statusOut, hash) => {
+		const calls = [];
+		const run = async (args) => {
+			calls.push(args);
+			const a = args.slice(2);
+			if (a[0] === "--version") return { stdout: "git version 1.8.3.1\n", code: 0 };
+			if (a[0] === "rev-parse") return { stdout: a[1] === "--show-toplevel" ? "/w\n" : a[1] === "HEAD" ? "abc1234def\n" : "true\n", code: 0 };
+			if (a[0] === "status") return { stdout: statusOut, code: 0 };
+			if (a[0] === "hash-object") return hash(a.slice(2));
+			return { stdout: "", code: 0 };
+		};
+		return { run, calls };
+	};
+	const perPath = script(" M keep.txt\0 D gone.txt\0", (paths) => paths.length > 1
+		? { stdout: "", stderr: "fatal: could not open 'gone.txt'", code: 128 }
+		: paths[0] === "keep.txt" ? { stdout: "1111\n", code: 0 } : { stdout: "", code: 128 });
+	const b1 = await captureBase(perPath.run, "/w/sub");
+	assert.deepEqual(b1.dirty, { "keep.txt": "1111", "gone.txt": "absent" });
+	assert.equal(b1.root, "/w");
+	assert.ok(perPath.calls.filter((c) => c[2] === "hash-object").every((c) => c.includes("--")));
+	const s1 = await summarizeWork(perPath.run, "/w/sub", b1);
+	assert.match(s1, /Unchanged by the child \(already uncommitted before; excluded above\): keep\.txt, gone\.txt/);
+
+	const many = Array.from({ length: MAX_FINGERPRINT_PATHS + 1 }, (_, i) => `?? f${i}\0`).join("");
+	const big = script(many, () => { throw new Error("must not hash"); });
+	const b2 = await captureBase(big.run, "/w");
+	assert.equal(b2.dirtyBefore, MAX_FINGERPRINT_PATHS + 1);
+	assert.equal(b2.dirty, undefined);
+	assert.match(await summarizeWork(big.run, "/w", b2), new RegExp(`Note: ${MAX_FINGERPRINT_PATHS + 1} path\\(s\\) were already uncommitted before this delegation; the diff includes them\\.`));
+}
+
 // Real repository: summarizeWork reports commits, tracked diffs, untracked files.
 const dir = tempDir("ppo-git-");
 try {
@@ -105,12 +143,17 @@ try {
 	g("commit", "-qam", "child commit");
 	writeFileSync(join(dir, "a.txt"), "three\n");
 	writeFileSync(join(dir, "new.txt"), "n\n");
+	// The child also edits pre.txt, which was already uncommitted: it stays listed, with the note.
+	writeFileSync(join(dir, "pre.txt"), "dirty, edited by child\n");
 	const summary = await summarizeWork(run, dir, base);
 	assert.match(summary, /New commits:\n[0-9a-f]+ child commit/);
 	assert.match(summary, /a\.txt/);
 	assert.match(summary, /Untracked files \(2\):/);
 	assert.match(summary, /new\.txt/);
 	assert.match(summary, /1 path\(s\) were already uncommitted/);
+	assert.match(summary, /changed again; their diff includes the earlier edits: pre\.txt/);
+	assert.doesNotMatch(summary, /Unchanged by the child/);
+
 
 	const committed = await gitCommit(run, dir, "accept", ["new.txt"]);
 	assert.equal(committed.ok, true, committed.text);
@@ -118,6 +161,32 @@ try {
 	assert.match(g("status", "--porcelain"), / M a\.txt/);
 	const audit = await runGitAudit(run, { operation: "log", maxEntries: 2 }, dir);
 	assert.match(audit.text, /accept\n.*child commit/);
+
+	// om09 run4: a user's uncommitted README.md that the child never touched is excluded, even from a subdirectory cwd.
+	g("add", "-A");
+	g("commit", "-qm", "reset");
+	writeFileSync(join(dir, "README.md"), "user notes\n");
+	g("add", "README.md");
+	g("commit", "-qm", "readme");
+	writeFileSync(join(dir, "README.md"), "user notes, uncommitted edit\n");
+	writeFileSync(join(dir, "user-scratch.txt"), "mine\n");
+	mkdirSync(join(dir, "sub"));
+	const subBase = await captureBase(run, join(dir, "sub"));
+	assert.equal(subBase.dirtyBefore, 2);
+	assert.deepEqual(Object.keys(subBase.dirty).sort(), ["README.md", "user-scratch.txt"]);
+	const quiet = await summarizeWork(run, join(dir, "sub"), subBase);
+	assert.match(quiet, /^Tracked files: no changes\.$/m);
+	assert.doesNotMatch(quiet, /Untracked files/);
+	assert.match(quiet, /Unchanged by the child \(already uncommitted before; excluded above\): (README\.md, user-scratch\.txt|user-scratch\.txt, README\.md)/);
+	writeFileSync(join(dir, "a.txt"), "child edit\n");
+	writeFileSync(join(dir, "sub", "child.txt"), "c\n");
+	const busy = await summarizeWork(run, join(dir, "sub"), subBase);
+	assert.match(busy, /Diff since [0-9a-f]{8}:\n a\.txt/);
+	assert.doesNotMatch(busy, /README\.md \|/);
+	assert.match(busy, /Untracked files \(1\):\nsub\/child\.txt/);
+	assert.doesNotMatch(busy, /already uncommitted before this delegation/);
+	g("add", "-A");
+	g("commit", "-qm", "child work");
 } finally {
 	rmSync(dir, { recursive: true, force: true });
 }
