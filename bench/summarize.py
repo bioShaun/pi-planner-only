@@ -42,7 +42,10 @@ def parse_run(directory,rid,weight):
                 rec['root_turns']+=1; u=e['message'].get('usage') or {}
                 for k in FIELDS: rec['root'][k]+=int(u.get(k) or 0)
             elif e.get('type')=='tool_execution_end' and e.get('toolName')=='delegate':
-                rec['delegates']+=1; d=(e.get('result') or {}).get('details') or {}; u=d.get('usage') or {}; key=model_key(d.get('model'))
+                d=(e.get('result') or {}).get('details') or {}
+                # A refused delegate launched no child: no model, no usage, no cost.
+                if d.get('status')=='refused' and not d.get('usage'): rec['refused']=rec.get('refused',0)+1; continue
+                rec['delegates']+=1; u=d.get('usage') or {}; key=model_key(d.get('model'))
                 if key: rec['child_cost']+=price({k:int(u.get(k) or 0) for k in FIELDS},PRICES['models'][key])
                 else: unknown.append(d.get('model'))
                 models.append(d.get('model'))

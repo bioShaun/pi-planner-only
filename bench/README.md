@@ -51,3 +51,17 @@ slot cpu -- bench/run.sh T1 lite-sol 1
 ```
 
 也可用 `slot cpu -b` 后台提交。每次启动重跑前必须执行 `slot audit` 与 `slot status`，并把输出记录到 campaign 日志。运行结果、stderr、耗时、退出码及评测分别保存在 `runs/` 下；克隆默认在成功评测后删除，可设 `BENCH_KEEP_CLONE=1` 保留。`BENCH_DRY_RUN=1` 只执行预检和命令展示，不启动 pi。
+
+## 初筛 Root 的选择（2026-09-25 试跑）
+
+T1–T3 × 2 次，成本按 opus 价，参照 2026-09-24 的 sol lite（轮数 15–22，每次委派 5–7 次，$1.05–2.01）：
+
+| arm | 通过 | Root 轮数 | 每次委派 | 每次成本 |
+|---|---|---|---|---|
+| lite-kimi | 6/6 | 18–32 | 0–1 | $0.61–1.68 |
+| lite-gemini | 6/6 | 35–106 | 1–11 | $2.57–9.54 |
+| lite-kimi-strict | 6/6 | 14–18 | 3–8 | $0.57–1.12 |
+
+- kimi 在默认模式下几乎不委派，等于 direct 模式；gemini 轮数多、波动大，实价也不比 sol 便宜。
+- 初筛用 `lite-kimi-strict`（kimi + `PI_PLANNER_ONLY_STRICT=1`）：行为最接近 sol，同任务两次差异最小。
+- 它测的是严格模式。改提示词措辞、调整"小事自己做"这类改动，结论必须在 `lite-opus` 上确认。
