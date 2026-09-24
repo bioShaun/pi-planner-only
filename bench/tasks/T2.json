@@ -1,0 +1,10 @@
+{
+  "id": "T2",
+  "repo": "/public/scripts/tc-probe-design-v2",
+  "target": "46d408a34211bf39558430342abc97bc71e655f8",
+  "parent": "a131527abe53dc8a55a45e3ccb88f8ad7ef24a4b",
+  "tests": ["tests/contracts/test_ref_alt_stage_fold_to_long.py"],
+  "prompt": "T2.md",
+  "python": "/public/scripts/tc-probe-design-v2/.venv/bin/python",
+  "baseline": "../baselines/T2.failures.txt"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "T1",
+  "repo": "/public/scripts/tc-probe-design-v2",
+  "target": "978392faf6d19ca137f682df2a77ca6dfca0a316",
+  "parent": "d91f2d03dec97577198b60587898635778009636",
+  "tests": ["tests/contracts/test_external_tool_timeout.py", "tests/contracts/test_prefilter_calibration_profile.py", "tests/unit/test_external_tool_version_reporting.py"],
+  "prompt": "T1.md",
+  "python": "/public/scripts/tc-probe-design-v2/.venv/bin/python",
+  "baseline": "../baselines/T1.failures.txt"
+}

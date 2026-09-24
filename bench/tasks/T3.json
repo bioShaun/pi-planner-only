@@ -1,0 +1,10 @@
+{
+  "id": "T3",
+  "repo": "/public/scripts/tc-probe-design-v2",
+  "target": "e9270779747d2b14a531d5bbf856f3287d15f4f7",
+  "parent": "712e9ff772033f39fa14eceaf4f1fc3fa4aa0ce6",
+  "tests": ["tests/contracts/test_bed_region_fail_closed.py", "tests/contracts/test_pyranges_annotation_contract.py", "tests/unit/test_annotate_region.py"],
+  "prompt": "T3.md",
+  "python": "/public/scripts/tc-probe-design-v2/.venv/bin/python",
+  "baseline": "../baselines/T3.failures.txt"
+}

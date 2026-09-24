@@ -1,0 +1,14 @@
+tests/contracts/test_annotate_pipeline_validation_contract.py::TestAnnotatePipelineValidation::test_analysis_log_can_be_disabled
+tests/contracts/test_annotate_pipeline_validation_contract.py::TestAnnotatePipelineValidation::test_analysis_log_records_validation_error
+tests/contracts/test_annotate_pipeline_validation_contract.py::TestAnnotatePipelineValidation::test_default_analysis_log_is_written
+tests/contracts/test_annotate_pipeline_validation_contract.py::TestAnnotatePipelineValidation::test_out_of_range_site_aborts_before_design
+tests/contracts/test_annotate_pipeline_validation_contract.py::TestAnnotatePipelineValidation::test_unknown_chrom_aborts_before_design
+tests/contracts/test_documentation_contract.py::test_archive_index_local_links_resolve[index_path0]
+tests/contracts/test_exception_policy_contract.py::test_production_code_does_not_catch_blanket_exception
+tests/contracts/test_json_summary_contract.py::test_annotate_one_json_summary_param_exists
+tests/contracts/test_json_summary_contract.py::test_annotate_one_json_summary_write_failure_is_fatal
+tests/contracts/test_json_summary_contract.py::test_annotate_one_json_summary_written_when_final_tsv_is_skipped
+tests/contracts/test_provenance_contract.py::test_provenance_json_schema_and_generation
+tests/unit/test_io_and_cli.py::TestExternalCommandFailureHandling::test_run_command_timeout_raises_alignment_error
+tests/unit/test_probe_pipeline_decomposition.py::test_compute_single_design_calculates_sequence_metrics_once
+# duration: ======================= 13 failed, 1118 passed in 29.03s =======================

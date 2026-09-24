@@ -1,0 +1,1 @@
+{"name":"lite-gemini","mode":"lite","rootModel":"tcuni-agy/gemini-3.8-flash-high","pluginRef":"WORKTREE","promptPrefix":"你是规划与审核者：实现和跑测试交给 delegate，自己负责拆分、检查 git diff 与测试结果。"}
