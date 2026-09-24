@@ -247,7 +247,7 @@ const respond = (bus, req, over = {}) =>
 	const both = summarizeTranscript([
 		{ recordType: "tool_start", ts: 1, toolCallId: "p", toolName: "bash", argsPreview: "cd /repo && mkdir -p /x/ol...", argsPayload: JSON.stringify({ command: "cd /repo && mkdir -p /x/old_script && git show HEAD:a.R" }) },
 		{ recordType: "tool_end", ts: 2, toolCallId: "p", toolName: "bash", isError: false },
-		{ recordType: "message", role: "toolResult", ts: 3, toolCallId: "p", toolName: "bash", text: "\u001b[31mERROR: no java\u001b(B\u001b[m" },
+		{ recordType: "message", role: "toolResult", ts: 3, toolCallId: "p", toolName: "bash", text: "\u001b[?25l\u001b]0;title\u0007\u001b[31mERROR: no java\u001b(B\u001b[m" },
 	].map((r) => JSON.stringify(r)).join("\n"));
 	assert.match(both, /bash 0s: cd \/repo && mkdir -p \/x\/old_script && git show HEAD:a\.R/);
 	assert.match(both, /result: ERROR: no java$/m);

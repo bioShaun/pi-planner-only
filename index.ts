@@ -165,12 +165,15 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				signal,
 				(text) => onUpdate?.({ content: [{ type: "text", text }], details: {} }),
 			);
-			const usage = outcome.details.usage;
-			if (usage) {
+			const { usage, status } = outcome.details;
+			// Refusals never launched a child; everything else counts, with or without usage.
+			if (status !== "refused") {
 				totals.children += 1;
-				totals.childTokens += usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
-				totals.childCost += usage.cost;
-				if (outcome.details.status !== "completed") totals.failed += 1;
+				if (status !== "completed") totals.failed += 1;
+				if (usage) {
+					totals.childTokens += usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+					totals.childCost += usage.cost;
+				}
 				updateStatus(ctx);
 			}
 			return { content: [{ type: "text", text: outcome.text }], details: outcome.details };

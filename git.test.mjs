@@ -187,6 +187,17 @@ try {
 	assert.doesNotMatch(busy, /already uncommitted before this delegation/);
 	g("add", "-A");
 	g("commit", "-qm", "child work");
+
+	// Review blocker: a child that commits an already-dirty file without changing it must not hide it.
+	writeFileSync(join(dir, "README.md"), "user notes, dirty again\n");
+	const commitBase = await captureBase(run, dir);
+	assert.deepEqual(Object.keys(commitBase.dirty), ["README.md"]);
+	g("commit", "-qam", "child commits the user's README");
+	const committedByChild = await summarizeWork(run, dir, commitBase);
+	assert.match(committedByChild, /New commits:\n[0-9a-f]+ child commits the user's README/);
+	assert.match(committedByChild, /README\.md \|/);
+	assert.match(committedByChild, /changed again; their diff includes the earlier edits: README\.md/);
+	assert.doesNotMatch(committedByChild, /Unchanged by the child/);
 } finally {
 	rmSync(dir, { recursive: true, force: true });
 }

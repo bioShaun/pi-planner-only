@@ -93,10 +93,11 @@ try {
 	assert.ok(h.active().includes("delegate"));
 
 	// delegate end to end over pi.events; child and Root usage are both counted.
+	let reply = { status: "completed", result: { kind: "text", text: "done" }, usage: usage({ cost: 0.01 }) };
 	h.events.on(SUBAGENT_DELEGATION_REQUEST_EVENT, (req) => {
 		assert.equal(req.ownerRunId, "session-1");
 		assert.equal(req.cwd, "/w/sub");
-		h.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, { requestId: req.requestId, nodeId: req.nodeId, status: "completed", agent: req.agent, result: { kind: "text", text: "done" }, usage: usage({ cost: 0.01 }) });
+		h.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, { requestId: req.requestId, nodeId: req.nodeId, agent: req.agent, ...reply });
 	});
 	const result = await h.tools.get("delegate").execute("call-1", { role: "worker", task: "t", cwd: "sub" }, undefined, undefined, h.ctx);
 	assert.match(result.content[0].text, /Child report:\ndone/);
@@ -105,6 +106,15 @@ try {
 	await h.handlers.get("message_end")({ message: { role: "user", content: "hi" } }, h.ctx);
 	await h.commands.get("planner-only").handler("status", h.ctx);
 	assert.match(h.notes.at(-1), /root 12k \$0\.030 · children\(1\) 3\.5k \$0\.010 · root share 77% tok · 75% \$/);
+
+	// A child that did not complete counts as failed even without usage; a refusal launched nothing and is not counted.
+	reply = { status: "timed_out", error: "Subagent timed out after 600000ms." };
+	const timedOut = await h.tools.get("delegate").execute("call-1b", { role: "worker", task: "t", cwd: "sub" }, undefined, undefined, h.ctx);
+	assert.equal(timedOut.details.status, "timed_out");
+	const refused = await h.tools.get("delegate").execute("call-1c", { role: "worker", task: "   ", cwd: "sub" }, undefined, undefined, h.ctx);
+	assert.equal(refused.details.status, "refused");
+	await h.commands.get("planner-only").handler("status", h.ctx);
+	assert.match(h.notes.at(-1), /children\(2, 1 failed\) 3\.5k \$0\.010/);
 
 	// git_audit refusals come back as text, not exceptions.
 	const audit = await h.tools.get("git_audit").execute("call-2", { operation: "diff", base: "--output=x" }, undefined, undefined, h.ctx);

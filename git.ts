@@ -183,21 +183,29 @@ export async function summarizeWork(run: GitRunner, cwd: string, base: WorkBase,
 	}
 	if (!base.head) return "Workspace changes: not a git repository (or no commits); inspect the files directly.";
 	const lines: string[] = [];
+	// All path-level calls run at the work-tree root, where status/diff paths are anchored.
+	const root = base.root ?? cwd;
 	const head = await git(run, ["rev-parse", "HEAD"], cwd);
-	if (head.code === 0 && head.stdout.trim() !== base.head) {
+	const moved = head.code === 0 && head.stdout.trim() !== base.head;
+	if (moved) {
 		const log = await git(run, ["log", "--oneline", "-n20", `${base.head}..HEAD`], cwd);
 		if (log.code === 0 && log.stdout.trim()) lines.push("New commits:", log.stdout.trimEnd());
 	}
 	// Paths that were uncommitted before and still have the same content: the child did not touch them.
-	// All path-level calls run at the work-tree root, where status/diff paths are anchored.
-	const root = base.root ?? cwd;
+	// A path the child committed is never "untouched", even if its work-tree content is unchanged.
 	const untouched = new Set<string>();
 	const touchedDirty: string[] = [];
 	const before = base.dirty;
-	const now = before ? await fingerprint(run, root, Object.keys(before)).catch(() => undefined) : undefined;
+	let now = before ? await fingerprint(run, root, Object.keys(before)).catch(() => undefined) : undefined;
+	let committed = new Set<string>();
+	if (now && moved) {
+		const inCommits = await git(run, ["diff", "--name-only", "--no-renames", "-z", ...DIFF_SAFE, base.head, "HEAD"], root);
+		if (inCommits.code === 0) committed = new Set(inCommits.stdout.split("\0").filter(Boolean));
+		else now = undefined; // cannot tell what the commits touched: keep the plain note
+	}
 	if (before && now) {
 		for (const p of Object.keys(before)) {
-			if (now[p] === before[p]) untouched.add(p);
+			if (now[p] === before[p] && !committed.has(p)) untouched.add(p);
 			else touchedDirty.push(p);
 		}
 	}

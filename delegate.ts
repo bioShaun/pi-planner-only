@@ -171,7 +171,7 @@ function transcriptArgsPreview(record: Record<string, unknown>): string {
 /** One readable result line: newlines become " | ", long text keeps head 120 + tail 220. */
 function transcriptResultExcerpt(text: string): string {
 	// eslint-disable-next-line no-control-regex -- strip ANSI colour codes from tool output
-	const plain = text.replace(/\x1b\[[0-9;]*[A-Za-z]|\x1b\([A-Z]/g, "");
+	const plain = text.replace(/\x1b\[[0-9;?<=>]*[ -/]*[@-~]|\x1b[()][A-Z0-9]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
 	const flat = plain.replace(/\s*\n\s*/g, " | ").replace(/\s+/g, " ").trim();
 	return flat.length <= 340 ? flat : `${flat.slice(0, 120)} … ${flat.slice(-220)}`;
 }
