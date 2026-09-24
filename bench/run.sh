@@ -15,13 +15,15 @@ source "$HOME/.config/pi/secrets.zsh"
 readarray -t CONFIG < <(python3 - "$TASK_FILE" "$ARM_FILE" <<'PY'
 import json, sys
 T=json.load(open(sys.argv[1])); A=json.load(open(sys.argv[2]))
-for value in (T['id'],T['repo'],T['target'],T['parent'],T['python'],T['prompt'],T['baseline'],json.dumps(T['tests']),A['name'],A['mode'],A['rootModel'],A['pluginRef'],A['promptPrefix']):
+for value in (T['id'],T['repo'],T['target'],T['parent'],T['python'],T['prompt'],T['baseline'],json.dumps(T['tests']),A['name'],A['mode'],A['rootModel'],A['pluginRef'],A['promptPrefix'],json.dumps(A.get('env',{}))):
  print(value)
 PY
 )
 TASK=${CONFIG[0]} REPO=${CONFIG[1]} TARGET=${CONFIG[2]} PARENT=${CONFIG[3]}
 PYTHON=${CONFIG[4]} PROMPT_FILE=$ROOT/bench/tasks/${CONFIG[5]} BASELINE=$ROOT/bench/tasks/${CONFIG[6]}
 TESTS_JSON=${CONFIG[7]} ARM=${CONFIG[8]} MODE=${CONFIG[9]} ROOT_MODEL=${CONFIG[10]} PLUGIN_REF=${BENCH_PLUGIN_REF:-${CONFIG[11]}} PREFIX=${CONFIG[12]}
+# Optional arm "env": extra environment variables for the pi process (e.g. PI_PLANNER_ONLY_STRICT).
+ARM_ENV=(); mapfile -t ARM_ENV < <(python3 -c 'import json,sys; [print(f"{k}={v}") for k,v in json.loads(sys.argv[1]).items()]' "${CONFIG[13]}")
 TESTS=(); mapfile -t TESTS < <(python3 -c 'import json,sys; print("\n".join(json.loads(sys.argv[1])))' "$TESTS_JSON")
 ID=$TASK-$ARM-$REP
 RUNS=$BENCH_OUT/runs
@@ -78,6 +80,7 @@ $BODY"; else PROMPT=$BODY; fi
 PI_ARGS=(-ne --model "$ROOT_MODEL" --no-session --mode json -p "$PROMPT")
 if [[ $MODE == lite ]]; then PI_ARGS=(-ne -e "$SUBAGENTS" -e "$PLUGIN" --model "$ROOT_MODEL" --no-session --mode json -p "$PROMPT"); fi
 if [[ ${BENCH_DRY_RUN:-0} == 1 ]]; then
+  (( ${#ARM_ENV[@]} )) && echo "arm env: ${ARM_ENV[*]}"
   python3 - "${PI_ARGS[@]}" "$PROMPT" <<'PY'
 import sys
 args=sys.argv[1:-1]; prompt=sys.argv[-1]
@@ -100,7 +103,7 @@ git add -A && git commit -qm 'bench: target tests' || exit 2
 BASE=$(git rev-parse HEAD)
 echo "base=$BASE clone=$CLONE"
 T_START=$(date +%s)
-if [[ $MODE == lite ]]; then PI_PLANNER_ONLY=1 timeout 3600 pi "${PI_ARGS[@]}" </dev/null >"$RUNS/$ID.jsonl" 2>"$RUNS/$ID.stderr"; else timeout 3600 pi "${PI_ARGS[@]}" </dev/null >"$RUNS/$ID.jsonl" 2>"$RUNS/$ID.stderr"; fi
+if [[ $MODE == lite ]]; then env "${ARM_ENV[@]}" PI_PLANNER_ONLY=1 timeout 3600 pi "${PI_ARGS[@]}" </dev/null >"$RUNS/$ID.jsonl" 2>"$RUNS/$ID.stderr"; else env "${ARM_ENV[@]}" timeout 3600 pi "${PI_ARGS[@]}" </dev/null >"$RUNS/$ID.jsonl" 2>"$RUNS/$ID.stderr"; fi
 PI_EXIT=$?
 echo $(($(date +%s)-T_START)) >"$RUNS/$ID.wall"
 echo "$PI_EXIT" >"$RUNS/$ID.exit"
