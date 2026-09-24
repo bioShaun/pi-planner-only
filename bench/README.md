@@ -7,8 +7,29 @@
 - `tasks/`: 任务元数据与原始提示词；`baseline/` 不在此目录，基线位于 `baselines/`。
 - `arms/`: 对比配置。Lite arm 指定 root 模型与插件 ref，direct 不加载插件。
 - `run.sh`: 执行单次运行并写入 `$BENCH_OUT/runs/`。
+- `campaign.sh`: 配对、交错地提交多任务 campaign。
+- `summarize.py` / `prices.json`: 汇总 token、成本和评测结果。
 
 新增任务时添加同名 JSON 和 Markdown prompt，并提供 masked-suite baseline；新增 arm 时添加 JSON，字段沿用现有配置。`pluginRef` 可设为 `WORKTREE` 使用当前工作树，或用 git ref 固定插件快照。
+
+## Campaign
+
+```bash
+bench/campaign.sh <名称> <重复次数> <任务逗号列表> <arm逗号列表>
+bench/campaign.sh pilot-root 2 T1,T2,T3 lite-kimi,lite-gemini
+bench/campaign.sh pilot-root 2 T1,T2,T3 lite-kimi,lite-gemini --dry-run
+bench/campaign.sh pilot-root 2 T1,T2,T3 lite-kimi,lite-gemini --resume
+```
+
+Campaign 输出位于 `/project/tmp/ppo-bench/results/<名称>`。提交前会把 `slot audit`、`slot status` 和各 task/rep 的随机化 arm 顺序写入 `campaign.log`，顺序种子也写入 `campaign.json`。`--resume` 只跳过已有 `.eval.json` 的 run。
+
+## 汇总
+
+```bash
+python3 bench/summarize.py /project/tmp/ppo-bench/results/<名称>/runs --weight opus --baseline direct --json summary.json
+```
+
+支持多个 runs 目录及 `opus`、`astra`、`sol`、`actual` 权重。缺少评测文件的 run 会列为 `INCOMPLETE`，并排除在汇总外。便宜 Root 模型的成本按 opus 权重计算的 token 成本，只能在相同 Root 模型之间比较；得出结论前，应在真实 Root（`lite-opus`）上确认结果。
 
 ## 运行
 

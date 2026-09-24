@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+import argparse, json, os, random, re, statistics, sys
+from pathlib import Path
+FIELDS=("input","output","cacheRead","cacheWrite")
+SUFFIXES={"low","medium","high","minimal","none"}
+BASE=Path(__file__).resolve().parent
+PRICES=json.loads((BASE/"prices.json").read_text())
+
+def price(t,p): return sum(t[k]*p[short] for k,short in zip(FIELDS,("in","out","cacheRead","cacheWrite")))/1e6
+def model_key(m):
+    if m in PRICES["models"]: return m
+    if m and ":" in m:
+        b,s=m.rsplit(":",1)
+        if s in SUFFIXES and b in PRICES["models"]: return b
+    return None
+
+def parse_run(directory,rid,weight):
+    m=re.match(r'^(T\d+[a-z]?)-(.+)-(\d+)$',rid)
+    task,arm,rep=(m.group(1),m.group(2),int(m.group(3))) if m else (None,None,None)
+    evp=directory/(rid+'.eval.json')
+    if not evp.exists(): return None,[]
+    ev=json.loads(evp.read_text()); meta={}
+    mp=directory/(rid+'.meta.json')
+    if mp.exists():
+        try: meta=json.loads(mp.read_text())
+        except ValueError: pass
+    arm=(ev.get('arm') or (ev.get('arm') if isinstance(ev.get('arm'),str) else None) or (meta.get('arm') or {}).get('name') or arm)
+    if isinstance(arm,dict): arm=arm.get('name') or (m.group(2) if m else None)
+    rec=dict(id=rid,task=ev.get('task') or task,arm=arm,rep=ev.get('rep',rep),exit=None,passed=ev.get('pass'),wall=None,root_turns=0,delegates=0,root={k:0 for k in FIELDS},child_cost=0,root_cost=0,total_cost=0)
+    for ext,key,cast in [('exit','exit',int),('wall','wall',int)]:
+        p=directory/(rid+'.'+ext)
+        if p.exists():
+            try: rec[key]=cast(p.read_text().strip())
+            except ValueError: rec[key]=p.read_text().strip()
+    unknown=[]; models=[]
+    jp=directory/(rid+'.jsonl')
+    if jp.exists():
+        for line in jp.open():
+            try:e=json.loads(line)
+            except (ValueError,TypeError):continue
+            if e.get('type')=='message_end' and (e.get('message') or {}).get('role')=='assistant':
+                rec['root_turns']+=1; u=e['message'].get('usage') or {}
+                for k in FIELDS: rec['root'][k]+=int(u.get(k) or 0)
+            elif e.get('type')=='tool_execution_end' and e.get('toolName')=='delegate':
+                rec['delegates']+=1; d=(e.get('result') or {}).get('details') or {}; u=d.get('usage') or {}; key=model_key(d.get('model'))
+                if key: rec['child_cost']+=price({k:int(u.get(k) or 0) for k in FIELDS},PRICES['models'][key])
+                else: unknown.append(d.get('model'))
+                models.append(d.get('model'))
+    root_model=(meta.get('arm') or {}).get('rootModel') or (meta.get('arm') or {}).get('root_model')
+    table=PRICES['weights'].get(weight) if weight!='actual' else PRICES['models'].get(model_key(root_model))
+    rec['root_cost']=price(rec['root'],table) if table else None
+    rec['total_cost']=rec['root_cost']+rec['child_cost'] if rec['root_cost'] is not None else None
+    return rec,unknown
+
+def med(xs): return statistics.median(xs) if xs else None
+def mean(xs): return statistics.mean(xs) if xs else None
+def main():
+    ap=argparse.ArgumentParser(); ap.add_argument('runs',nargs='+'); ap.add_argument('--weight',choices=['opus','astra','sol','actual'],default='opus'); ap.add_argument('--baseline'); ap.add_argument('--json',dest='json_out'); a=ap.parse_args()
+    records=[]; incomplete=[]; unknown=[]
+    for folder in a.runs:
+        directory=Path(folder)
+        for p in sorted(directory.glob('*.jsonl')):
+            r,u=parse_run(directory,p.stem,a.weight)
+            if r is None: print(f'{p.stem}: INCOMPLETE'); incomplete.append(p.stem); continue
+            records.append(r); unknown.extend((p.stem,m) for m in u)
+    for rid,m in unknown: print(f'{rid}: UNPRICED child model: {m}')
+    for r in records:
+        print(f"{r['task']} {r['arm']} {r['rep']}: exit={r['exit']} pass={r['passed']} wall={r['wall']} root_turns={r['root_turns']} delegates={r['delegates']} tokens(in/out/cacheRead/cacheWrite)="+"/".join(str(r['root'][k]) for k in FIELDS)+f" root_cost=${r['root_cost']:.4f}" if r['root_cost'] is not None else f"{r['task']} {r['arm']} {r['rep']}: root_cost=UNPRICED")
+        if r['root_cost'] is not None: print(f"  child_cost=${r['child_cost']:.4f} total_cost=${r['total_cost']:.4f}")
+    arms=sorted({r['arm'] for r in records if r['arm']}); aggs={}; task_aggs={}
+    for arm in arms:
+        rs=[r for r in records if r['arm']==arm]; passed=[r for r in rs if r['passed'] is True]
+        costs=[r['total_cost'] for r in passed if r['total_cost'] is not None]
+        aggs[arm]={'runs':len(rs),'pass':sum(r['passed'] is True for r in rs),'pass_rate':sum(r['passed'] is True for r in rs)/len(rs) if rs else None,'median_cost':med(costs),'mean_cost':mean(costs),'median_root_turns':med([r['root_turns'] for r in rs]),'median_wall':med([r['wall'] for r in rs if isinstance(r['wall'],int)]),'root_tokens':{k:sum(r['root'][k] for r in rs) for k in FIELDS}}
+    tasks=sorted({r['task'] for r in records})
+    for t in tasks:
+        for arm in arms:
+            rs=[r for r in records if r['task']==t and r['arm']==arm]; costs=[r['total_cost'] for r in rs if r['passed'] is True and r['total_cost'] is not None]
+            if rs: task_aggs[(t,arm)]={'n':len(rs),'pass':sum(r['passed'] is True for r in rs),'median_cost':med(costs),'min_cost':min(costs) if costs else None,'max_cost':max(costs) if costs else None}
+    print('AGGREGATES')
+    for arm,x in aggs.items(): print(f"{arm}: runs={x['runs']} pass={x['pass']}/{x['runs']} median=${x['median_cost']:.4f} mean=${x['mean_cost']:.4f}" if x['median_cost'] is not None else f'{arm}: runs={x["runs"]} pass={x["pass"]}/{x["runs"]} cost=NA')
+    for (t,arm),x in task_aggs.items(): print(f"{t} {arm}: n={x['n']} pass={x['pass']} median_cost={x['median_cost']}")
+    comparisons={}
+    if a.baseline:
+        base=a.baseline; comparisons={'baseline':base,'arms':{}}
+        for arm in arms:
+            if arm==base:continue
+            pairs=[]; allpairs=[]
+            for t in tasks:
+                aa=[r['total_cost'] for r in records if r['task']==t and r['arm']==arm and r['total_cost'] is not None]; bb=[r['total_cost'] for r in records if r['task']==t and r['arm']==base and r['total_cost'] is not None]
+                pa=[r['total_cost'] for r in records if r['task']==t and r['arm']==arm and r['passed'] is True and r['total_cost'] is not None]; pb=[r['total_cost'] for r in records if r['task']==t and r['arm']==base and r['passed'] is True and r['total_cost'] is not None]
+                if pa and pb: pairs.append((t,pa,pb))
+                if aa and bb: allpairs.append((t,aa,bb))
+            def ratio(ps,bootstrap=False):
+                den=sum(mean(y) for _,_,y in ps); num=sum(mean(x) for _,x,_ in ps)
+                point=num/den if den else None
+                if not bootstrap or not ps:return point,None
+                rng=random.Random(0); vals=[]
+                for _ in range(2000):
+                    n=d=0
+                    for _,x,y in ps:
+                        n+=mean([rng.choice(x) for i in x]); d+=mean([rng.choice(y) for i in y])
+                    if d: vals.append(n/d)
+                vals.sort(); return point,[vals[int(.05*(len(vals)-1))],vals[int(.95*(len(vals)-1))]]
+            point,ci=ratio(pairs,True); allpoint,_=ratio(allpairs)
+            tr={t:med(x)/med(y) for t,x,y in pairs if med(y)}
+            print(f'{arm}/{base} passing task ratios={tr} overall={point} CI90={ci}; all-runs={allpoint}')
+            comparisons['arms'][arm]={'passing_task_ratios':tr,'passing_overall_ratio':point,'passing_ci90':ci,'all_runs_task_ratios':{t:med(x)/med(y) for t,x,y in allpairs if med(y)},'all_runs_overall_ratio':allpoint}
+    if a.json_out:
+        data={'runs':records,'incomplete':incomplete,'aggregates':aggs,'task_aggregates':{f'{t}|{arm}':v for (t,arm),v in task_aggs.items()},'comparisons':comparisons}
+        Path(a.json_out).write_text(json.dumps(data,indent=2)+'\n')
+    return 1 if unknown else 0
+if __name__=='__main__': sys.exit(main())
