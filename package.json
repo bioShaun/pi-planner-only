@@ -42,7 +42,8 @@
   "scripts": {
     "test": "node --experimental-strip-types contract.test.mjs && node --experimental-strip-types git.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types host.test.mjs && node --experimental-strip-types index.test.mjs",
     "typecheck": "tsc --noEmit",
-    "test:release": "npm run typecheck && npm test"
+    "test:release": "npm run typecheck && npm test",
+    "bench:overhead": "node --experimental-strip-types bench/overhead.mjs static"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=0.84 <1",

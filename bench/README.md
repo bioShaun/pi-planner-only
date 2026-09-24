@@ -12,6 +12,16 @@
 
 新增任务时添加同名 JSON 和 Markdown prompt，并提供 masked-suite baseline；新增 arm 时添加 JSON，字段沿用现有配置。`pluginRef` 可设为 `WORKTREE` 使用当前工作树，或用 git ref 固定插件快照。
 
+## 第一层：确定性开销
+
+```bash
+npm run bench:overhead
+node --experimental-strip-types bench/overhead.mjs static --ref HEAD~2 --ref HEAD
+node --experimental-strip-types bench/overhead.mjs corpus .handoff/p21-r100/runs
+```
+
+`static` 对比插件系统提示词与工具定义的字符数及近似 token；可用 `--json OUT` 保存结果，指定一个 ref 时与工作树对比，指定两个 ref 时直接对比。`corpus` 汇总 pi JSONL Root assistant 轮次和工具结果长度，并估算结果在后续轮次中的重读成本。近似 token 算法仅用于相对比较，不等同于模型 tokenizer。两条命令都不调用 LLM，通常数秒内完成。
+
 ## Campaign
 
 ```bash
