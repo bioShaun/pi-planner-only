@@ -10,12 +10,12 @@ delete process.env.PI_PLANNER_ONLY_STRICT;
 delete process.env.PI_SUBAGENT_CHILD;
 const { default: plannerOnly, OFF_MARKER, plannerPrompt, rootUsageOf } = await import("./index.ts");
 
-function fakePi() {
+function fakePi(initialActive = ["read", "bash", "edit", "write"]) {
 	const tools = new Map();
 	const handlers = new Map();
 	const commands = new Map();
 	const events = fakeBus();
-	let active = ["read", "bash", "edit", "write"];
+	let active = initialActive;
 	const pi = {
 		registerTool: (t) => tools.set(t.name, t),
 		registerCommand: (name, c) => commands.set(name, c),
@@ -100,6 +100,46 @@ try {
 
 	assert.equal(rootUsageOf({ role: "assistant", usage: { input: 5, output: "x" } }).tokens, 5);
 	assert.equal(rootUsageOf(undefined), undefined);
+
+	// HIDDEN_HOST_TOOLS: while enabled, subagents_enable/subagent are stripped.
+	const h2 = fakePi(["read", "bash", "subagents_enable", "subagent"]);
+	await h2.handlers.get("session_start")({}, h2.ctx);
+	assert.deepEqual(h2.active(), ["read", "bash", "delegate", "git_audit", "git_commit"]);
+
+	// pi-subagents re-adds the loader on its own hooks; before_agent_start strips again.
+	h2.pi.setActiveTools([...h2.active(), "subagents_enable", "subagent"]);
+	await h2.handlers.get("before_agent_start")({ systemPrompt: "B" }, h2.ctx);
+	assert.deepEqual(h2.active(), ["read", "bash", "delegate", "git_audit", "git_commit"]);
+
+	// off: subagents_enable comes back, subagent does not; on: stripped again.
+	await h2.commands.get("planner-only").handler("off", h2.ctx);
+	assert.ok(h2.active().includes("subagents_enable"));
+	assert.ok(!h2.active().includes("subagent"));
+	assert.ok(!h2.active().includes("delegate"));
+	await h2.commands.get("planner-only").handler("on", h2.ctx);
+	assert.ok(!h2.active().includes("subagents_enable"));
+	assert.ok(!h2.active().includes("subagent"));
+	assert.ok(h2.active().includes("delegate"));
+
+	// before_agent_start scrubs systemPromptOptions.selectedTools when enabled.
+	const evSel = { systemPrompt: "B", systemPromptOptions: { selectedTools: ["read", "subagents_enable", "subagent", "bash"] } };
+	await h2.handlers.get("before_agent_start")(evSel, h2.ctx);
+	assert.deepEqual(evSel.systemPromptOptions.selectedTools, ["read", "bash", "delegate", "git_audit", "git_commit"]);
+
+	// tool_call: hidden tools are blocked even without strict; ordinary tools are not.
+	const callTool = (toolName) => h2.handlers.get("tool_call")({ toolName }, h2.ctx);
+	assert.equal((await callTool("subagents_enable")).block, true);
+	assert.match((await callTool("subagent")).reason, /use the delegate tool instead of subagent\./);
+	assert.equal(await callTool("read"), undefined);
+	assert.equal(await callTool("bash"), undefined);
+
+	// Disabled: selectedTools left untouched, hidden tools not blocked.
+	await h2.commands.get("planner-only").handler("off", h2.ctx);
+	const evSelOff = { systemPrompt: "B", systemPromptOptions: { selectedTools: ["read", "subagents_enable", "subagent"] } };
+	await h2.handlers.get("before_agent_start")(evSelOff, h2.ctx);
+	assert.deepEqual(evSelOff.systemPromptOptions.selectedTools, ["read", "subagents_enable", "subagent"]);
+	assert.equal(await callTool("subagents_enable"), undefined);
+	assert.equal(await callTool("subagent"), undefined);
 } finally {
 	rmSync(agentDir, { recursive: true, force: true });
 }

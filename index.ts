@@ -22,6 +22,9 @@ const STATUS_KEY = "planner-only";
 const GIT_TIMEOUT_MS = 30_000;
 export const PLUGIN_TOOLS = ["delegate", "git_audit", "git_commit"] as const;
 export const STRICT_BLOCKED_TOOLS = new Set(["edit", "write", "bash"]);
+/** pi-subagents' own Root-facing tools; hidden while planner-only is enabled. */
+export const HIDDEN_HOST_TOOLS = ["subagents_enable", "subagent"] as const;
+const HIDDEN_HOST_TOOL_SET = new Set<string>(HIDDEN_HOST_TOOLS);
 
 const flag = (value: string | undefined, set: string[]) => set.includes((value ?? "").trim().toLowerCase());
 
@@ -87,6 +90,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	};
 	const busy = new Set<string>();
 	let totals = emptyTotals();
+	let hidLoader = false;
 
 	const updateStatus = (ctx: ExtensionContext) => {
 		if (!ctx.hasUI) return;
@@ -97,9 +101,16 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	const syncTools = () => {
 		const active = pi.getActiveTools();
 		const ours = new Set<string>(PLUGIN_TOOLS);
-		const next = isEnabled()
-			? [...active, ...PLUGIN_TOOLS.filter((t) => !active.includes(t))]
-			: active.filter((t) => !ours.has(t));
+		let next: string[];
+		if (isEnabled()) {
+			hidLoader ||= active.includes("subagents_enable");
+			next = [...active, ...PLUGIN_TOOLS.filter((t) => !active.includes(t))]
+				.filter((t) => !HIDDEN_HOST_TOOL_SET.has(t));
+		} else {
+			next = active.filter((t) => !ours.has(t));
+			if (hidLoader && !next.includes("subagents_enable")) next = [...next, "subagents_enable"];
+			hidLoader = false;
+		}
 		if (next.length !== active.length || next.some((t, i) => t !== active[i])) pi.setActiveTools(next);
 	};
 
@@ -198,13 +209,24 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", async (event) => {
+		if (isEnabled()) {
+			const sel = event.systemPromptOptions?.selectedTools;
+			if (sel) {
+				const kept = sel.filter((t) => !HIDDEN_HOST_TOOL_SET.has(t));
+				event.systemPromptOptions.selectedTools = [...kept, ...PLUGIN_TOOLS.filter((t) => !kept.includes(t))];
+			}
+		}
 		syncTools();
 		if (!isEnabled()) return;
 		return { systemPrompt: `${event.systemPrompt}\n\n${plannerPrompt(isStrict())}` };
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
-		if (!isEnabled() || !isStrict() || !STRICT_BLOCKED_TOOLS.has(event.toolName)) return;
+		if (!isEnabled()) return;
+		if (HIDDEN_HOST_TOOL_SET.has(event.toolName)) {
+			return { block: true, reason: `planner-only: use the delegate tool instead of ${event.toolName}.` };
+		}
+		if (!isStrict() || !STRICT_BLOCKED_TOOLS.has(event.toolName)) return;
 		if (ctx.hasUI) ctx.ui.notify(`planner-only strict: blocked ${event.toolName}`, "warning");
 		return { block: true, reason: `planner-only strict mode: Root may not use ${event.toolName}. Delegate it (role "worker" to change files, "validator" to run commands).` };
 	});

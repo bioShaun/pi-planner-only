@@ -12,6 +12,7 @@ Lite rewrite (`docs/pi-planner-only-subtraction-plan.md`). The 0.8.0 code is at 
 - Git calls now also disable fsmonitor (`-c core.fsmonitor=false`) and diffs disable textconv.
 - Supported pi-subagents range: `>=0.70 <1`.
 - Child token cap default raised from 200000 to 1500000 (`PI_PLANNER_ONLY_MAX_TOKENS`); the count is the child's cumulative non-cached input+output, and 200k cancelled real workers after about 90 seconds.
+- While enabled, pi-subagents' `subagents_enable` and `subagent` are removed from Root's tools and system prompt and blocked if called, so delegation goes through `delegate`.
 - Large-task measurement (`docs/lite-measurement-2026-09-24.md`): 12/12 runs pass; lite costs 0.48 of direct at opus-priced Root, 0.46 at astra, 0.52 at gpt-6-sol, with luna children.
 
 ## 0.8.0 - 2026-09-18
