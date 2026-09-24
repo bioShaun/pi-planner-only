@@ -1,6 +1,6 @@
 # om09 实地运行修复（插件层）
 
-Status: F1–F5 are implemented and pass the local tests. Still to do: the F1 live check on om09, the post-merge rerun on om09, and the upstream `partial` PR (F4 step 3).
+Status: F1–F5 are implemented and pass the local tests. The F1 live check on om09 passed (2026-09-24; see `.scratch/om09-f1-check/result.txt`). Still to do: the post-merge rerun on om09 and the upstream `partial` PR (F4 step 3).
 来源：2026-09-24 om09 实地运行分析。原始记录已拷到 `.scratch/om09-run/`。
 范围：lite 版（`delegate.ts`、`git.ts`、`index.ts`、`subagent-delegation-contract.ts`）。
 
