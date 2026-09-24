@@ -8,7 +8,10 @@ node_modules/
 
 # herdr-pair round handoffs and per-round command logs
 .handoff/
+# Old paths stay listed so untracked local leftovers (never committed) stay ignored
+# after the legacy campaign moved under .scratch/archive/legacy-full-audit/.
 .scratch/planner-only-cost-control/**/*.log
+.scratch/archive/legacy-full-audit/planner-only-cost-control/**/*.log
 .scratch/**/*.bak-*
 
 # raw session transcripts from the phase-a-08 runs; the small evidence
@@ -16,16 +19,21 @@ node_modules/
 .scratch/planner-only-cost-control/phase-a-08-run*/artifacts/root-session.jsonl
 .scratch/planner-only-cost-control/phase-a-08-run*/artifacts/subagent-artifacts/*_transcript.jsonl
 .scratch/planner-only-cost-control/phase-a-08-run*/artifacts/session-tree/
+.scratch/archive/legacy-full-audit/planner-only-cost-control/phase-a-08-run*/artifacts/root-session.jsonl
+.scratch/archive/legacy-full-audit/planner-only-cost-control/phase-a-08-run*/artifacts/subagent-artifacts/*_transcript.jsonl
+.scratch/archive/legacy-full-audit/planner-only-cost-control/phase-a-08-run*/artifacts/session-tree/
 
 # local leftovers (untracked dumps; p19 agent-dir contains auth.json)
 .scratch/oracle-no-bash-repro/
 .scratch/planner-only-cost-control/quarantine/p19-wt-leftover-r085-agent-dir/
+.scratch/archive/legacy-full-audit/planner-only-cost-control/quarantine/p19-wt-leftover-r085-agent-dir/
 
 # local pre-pull backup dumps
 .scratch/.local-backup*/
 
 # ticket 05 B host-verification probe repo (the collected artifacts around it stay committed)
 .scratch/typed-delegation/host-05/probe-repo/
+.scratch/archive/legacy-full-audit/typed-delegation/host-05/probe-repo/
 
 # local Codex subagent config (machine-specific)
 .codex/
@@ -34,6 +42,9 @@ node_modules/
 .scratch/explorer-model-config/acceptance/agent/
 .scratch/explorer-model-config/acceptance/workspace/
 .scratch/explorer-model-config/acceptance/runs/
+.scratch/archive/legacy-full-audit/explorer-model-config/acceptance/agent/
+.scratch/archive/legacy-full-audit/explorer-model-config/acceptance/workspace/
+.scratch/archive/legacy-full-audit/explorer-model-config/acceptance/runs/
 
 # Root-stamped run-identity acceptance runtime state and credentials
 .scratch/root-stamped-run-identity/acceptance/agent-*/
@@ -41,20 +52,26 @@ node_modules/
 .scratch/root-stamped-run-identity/acceptance/tmp-*/
 .scratch/root-stamped-run-identity/acceptance/*.jsonl
 .scratch/root-stamped-run-identity/acceptance/*.txt
+.scratch/archive/legacy-full-audit/root-stamped-run-identity/acceptance/agent-*/
+.scratch/archive/legacy-full-audit/root-stamped-run-identity/acceptance/workspace-*/
+.scratch/archive/legacy-full-audit/root-stamped-run-identity/acceptance/tmp-*/
+.scratch/archive/legacy-full-audit/root-stamped-run-identity/acceptance/*.jsonl
+.scratch/archive/legacy-full-audit/root-stamped-run-identity/acceptance/*.txt
 
 # bulky runtime artifacts inside .scratch work dirs: node compile cache, npm
 # cache, whole-repo validation snapshots/candidates, ad-hoc probe scratch
-.scratch/*/runtime-tmp/
-.scratch/*/npm-cache/
-.scratch/*/independent-validation/
-.scratch/*/validation/snapshot/
-.scratch/*/validation-tmp/
-.scratch/*/node-compile-cache/
+.scratch/**/runtime-tmp/
+.scratch/**/npm-cache/
+.scratch/**/independent-validation/
+.scratch/**/validation/snapshot/
+.scratch/**/validation-tmp/
+.scratch/**/node-compile-cache/
 
 # P0 request-admission acceptance (2026-09-20): isolated agent dirs carry provider
 # credentials and raw sessions; workspaces are embedded git repos; temp roots hold
 # node compile caches. The small evidence next to them stays committed.
 .scratch/request-stop-p0-20260919/cli-acceptance/cli-run-*/agent/
 .scratch/request-stop-p0-20260919/cli-acceptance/cli-run-*/workspace/
+.scratch/archive/legacy-full-audit/request-stop-p0-20260919/cli-acceptance/cli-run-*/agent/
+.scratch/archive/legacy-full-audit/request-stop-p0-20260919/cli-acceptance/cli-run-*/workspace/
 .scratch/**/tmp/node-compile-cache/
-.scratch/**/npm-cache/
