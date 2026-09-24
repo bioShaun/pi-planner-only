@@ -17,7 +17,7 @@ Lite rewrite (`docs/pi-planner-only-subtraction-plan.md`). The 0.8.0 code is at 
   - Git 1.8 works: `--no-optional-locks` is sent only when `git --version` reports 2.15 or later (probed once per session). `status` uses `--porcelain` instead of `--porcelain=v1`.
   - `git_audit` and `git_commit` take an optional `cwd`. Outside a work tree they return `<cwd> is not inside a git work tree; pass cwd=<repo>`.
   - The delegation summary now tells "not a work tree" apart from "no commits yet". The prompt tells Root to pass `cwd` when the target repository is not the session cwd.
-  - A child that does not complete now reports its runId. When the output artifact exists at the default `session` location, the result includes its text and the transcript path; otherwise it says the artifact was not found.
+  - A child that does not complete now reports its runId and last activity (tool and arguments from the last progress update). When the output artifact exists at the default `session` location, the result includes its text and the transcript path. Otherwise it shows the child's recent output and says the artifact was not found.
   - The task text and the Root prompt state the child's time limit (`PI_PLANNER_ONLY_TIMEOUT_MS`, in whole minutes).
 - Large-task measurement (`docs/lite-measurement-2026-09-24.md`): 12/12 runs pass; lite costs 0.48 of direct at opus-priced Root, 0.46 at astra, 0.52 at gpt-6-sol, with luna children.
 

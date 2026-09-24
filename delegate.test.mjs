@@ -121,13 +121,38 @@ const respond = (bus, req, over = {}) =>
 			assert.match(out.text, /artifacts not found at the default location/);
 		}
 
-		// Upstream `partial` wins over the artifact fallback.
-		const bus = fakeBus();
-		bus.on(REQUEST, (req) => respond(bus, req, { status: "timed_out", runId: "run-42", result: undefined, partial: { text: "half done", transcriptPath: "/t.jsonl", currentTool: "bash" } }));
-		const partial = await runDelegation({ ...deps(bus), sessionFile }, { role: "worker", task: "t", cwd: "/w" });
-		assert.match(partial.text, /Interrupted during: bash\nTranscript: \/t\.jsonl/);
-		assert.match(partial.text, /Child report:\nhalf done/);
-		assert.doesNotMatch(partial.text, /artifacts not found/);
+		// The last progress update supplies runId, the tool in flight, and recent output
+		// when the terminal has no runId and no artifact exists.
+		{
+			const bus = fakeBus();
+			bus.on(REQUEST, (req) => {
+				const id = { requestId: req.requestId, nodeId: req.nodeId };
+				bus.emit(UPDATE, { ...id, runId: "run-7", currentTool: "read", recentOutput: "old" });
+				bus.emit(UPDATE, { ...id, currentTool: "edit", currentToolArgs: "main.nf\n  line two", recentOutputLines: ["planning the edit", "calling edit"] });
+				respond(bus, req, { status: "timed_out", result: undefined });
+			});
+			const out = await runDelegation({ ...deps(bus), sessionFile }, { role: "worker", task: "t", cwd: "/w" });
+			assert.match(out.text, /Run id: run-7\nLast activity: edit main\.nf line two\n/);
+			assert.match(out.text, /runId=run-7/);
+			assert.match(out.text, /Child report:\n\(recent output from the last progress update\)\nplanning the edit\ncalling edit/);
+		}
+		// With the artifact present, the artifact text wins over recent output; completed runs ignore both.
+		writeFileSync(join(artifacts, "run-7_worker_0_output.md"), "ARTIFACT TEXT");
+		for (const status of ["timed_out", "completed"]) {
+			const bus = fakeBus();
+			bus.on(REQUEST, (req) => {
+				bus.emit(UPDATE, { requestId: req.requestId, nodeId: req.nodeId, runId: "run-7", currentTool: "bash", recentOutput: "recent" });
+				respond(bus, req, status === "completed" ? {} : { status, result: undefined });
+			});
+			const out = await runDelegation({ ...deps(bus), sessionFile }, { role: "worker", task: "t", cwd: "/w" });
+			if (status === "completed") {
+				assert.doesNotMatch(out.text, /Run id|Last activity|ARTIFACT/);
+			} else {
+				assert.match(out.text, /Child report:\nARTIFACT TEXT/);
+				assert.match(out.text, /Last activity: bash/);
+				assert.doesNotMatch(out.text, /recent output from the last progress update/);
+			}
+		}
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

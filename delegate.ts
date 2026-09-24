@@ -129,38 +129,58 @@ export function buildTaskText(role: Role, task: string, cwd: string, timeoutMs =
 	return `${task.trim()}\n\n---\nWorking directory: ${cwd}\n${budget}\n${ROLE_AGENTS[role].closing}`;
 }
 
+/** The last progress update seen for a child; pi-subagents sends these, bounded, during the run. */
+export interface LastActivity {
+	runId?: string;
+	currentTool?: string;
+	currentToolArgs?: string;
+	recentOutput?: string;
+}
+
+const MAX_RECENT_OUTPUT_CHARS = 1_500;
+
 /**
  * What a child that did not complete left behind, for Root.
  *
- * Preferred source: `response.partial` (proposed upstream field). Fallback:
- * pi-subagents 0.71.0 writes the partial output and recovery summary only to
- * artifact files, so read `<dirname(sessionFile)>/subagent-artifacts/
- * <runId>_<agent>_0_output.md`. That path assumes pi-subagents' default
- * `artifactDir: "session"` layout (src/shared/artifacts.js getArtifactsDir /
- * getArtifactPaths); with `temp` or `project` the files live elsewhere and we
- * only report the runId.
+ * pi-subagents 0.71.0 withholds `result` unless the run completed and keeps
+ * completion details to bounded routing evidence, so the partial output and
+ * its timeout recovery summary reach only artifact files. Two sources, both
+ * existing primitives:
+ * - the last UPDATE event (runId, current tool, recent output);
+ * - fallback that depends on the upstream layout: the output artifact at
+ *   `<dirname(sessionFile)>/subagent-artifacts/<runId>_<agent>_0_output.md`,
+ *   which assumes the default `artifactDir: "session"` (src/shared/artifacts.js
+ *   getArtifactsDir / getArtifactPaths). With `temp` or `project` the files live
+ *   elsewhere and only the runId is reported.
  */
-export function recoverPartial(response: SubagentDelegationResponse, agent: string, sessionFile: string | undefined): { text?: string; lines: string[] } {
-	if (response.partial) {
-		const lines: string[] = [];
-		if (response.runId) lines.push(`Run id: ${response.runId}`);
-		if (response.partial.currentTool) lines.push(`Interrupted during: ${response.partial.currentTool}`);
-		if (response.partial.transcriptPath) lines.push(`Transcript: ${response.partial.transcriptPath}`);
-		return { text: response.partial.text, lines };
+export function recoverPartial(
+	response: SubagentDelegationResponse,
+	agent: string,
+	sessionFile: string | undefined,
+	last: LastActivity = {},
+): { text?: string; lines: string[] } {
+	const lines: string[] = [];
+	const runId = response.runId ?? last.runId;
+	if (runId) lines.push(`Run id: ${runId}`);
+	if (last.currentTool) {
+		const args = last.currentToolArgs ? ` ${clip(last.currentToolArgs.replace(/\s+/g, " "), 200)}` : "";
+		lines.push(`Last activity: ${last.currentTool}${args}`);
 	}
-	if (!response.runId) return { lines: [] };
-	const lines = [`Run id: ${response.runId}`];
+	const recent = last.recentOutput?.trim()
+		? `(recent output from the last progress update)\n${clip(last.recentOutput.trim(), MAX_RECENT_OUTPUT_CHARS)}`
+		: undefined;
+	if (!runId) return { text: recent, lines };
 	const safeName = /^[A-Za-z0-9_-]+$/;
-	if (sessionFile && safeName.test(response.runId) && safeName.test(agent)) {
-		const base = join(dirname(sessionFile), "subagent-artifacts", `${response.runId}_${agent}_0`);
+	if (sessionFile && safeName.test(runId) && safeName.test(agent)) {
+		const base = join(dirname(sessionFile), "subagent-artifacts", `${runId}_${agent}_0`);
 		try {
 			const text = readFileSync(`${base}_output.md`, "utf8");
 			lines.push(`Transcript: ${base}_transcript.jsonl`);
-			return { text, lines };
+			return { text: text.trim() ? text : recent, lines };
 		} catch { /* fall through */ }
 	}
-	lines.push(`artifacts not found at the default location (pi-subagents artifactDir may be temp/project); runId=${response.runId}`);
-	return { lines };
+	lines.push(`artifacts not found at the default location (pi-subagents artifactDir may be temp/project); runId=${runId}`);
+	return { text: recent, lines };
 }
 
 /** Keep the head and the tail: children put the report at the end. */
@@ -184,6 +204,7 @@ interface Terminal {
 	response?: SubagentDelegationResponse;
 	stopReason?: string;
 	started: boolean;
+	last: LastActivity;
 }
 
 export async function runDelegation(
@@ -256,7 +277,7 @@ export async function runDelegation(
 	let childText = response.result?.kind === "text" ? response.result.text
 		: response.result ? JSON.stringify(response.result.value) : "";
 	if (response.status !== "completed") {
-		const recovered = recoverPartial(response, response.agent ?? profile.agent, deps.sessionFile);
+		const recovered = recoverPartial(response, response.agent ?? profile.agent, deps.sessionFile, terminal.last);
 		lines.push(...recovered.lines);
 		if (!childText.trim() && recovered.text) childText = recovered.text;
 	}
@@ -279,7 +300,7 @@ function launch(
 ): Promise<Terminal> {
 	const { events, limits } = deps;
 	return new Promise<Terminal>((resolveTerminal) => {
-		const state: Terminal = { started: false };
+		const state: Terminal = { started: false, last: {} };
 		let settled = false;
 		let stopping = false;
 		const timers: ReturnType<typeof setTimeout>[] = [];
@@ -329,6 +350,14 @@ function launch(
 		offAll.push(events.on(SUBAGENT_DELEGATION_UPDATE_EVENT, (data) => {
 			if (!mine(data)) return;
 			state.started = true;
+			// Updates are replacement snapshots, not deltas: keep the latest fields.
+			const recentOutput = data.recentOutputLines?.length ? data.recentOutputLines.join("\n") : data.recentOutput;
+			state.last = {
+				runId: data.runId ?? state.last.runId,
+				currentTool: data.currentTool,
+				currentToolArgs: data.currentToolArgs,
+				recentOutput: recentOutput ?? state.last.recentOutput,
+			};
 			const tokens = data.tokens ?? 0;
 			if (tokens > limits.maxTokens) stop(`token cap ${limits.maxTokens} exceeded (${tokens})`);
 			onProgress?.(`${request.agent}: ${data.toolCount ?? 0} tools${data.currentTool ? ` · ${data.currentTool}` : ""} · ${formatTokens(tokens)} tok`);

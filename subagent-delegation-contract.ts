@@ -28,7 +28,11 @@ export interface SubagentDelegationRequest extends SubagentDelegationIdentity {
 }
 
 export interface SubagentDelegationUpdate extends SubagentDelegationIdentity {
+	runId?: string;
 	currentTool?: string;
+	currentToolArgs?: string;
+	recentOutput?: string;
+	recentOutputLines?: string[];
 	model?: string;
 	toolCount?: number;
 	durationMs?: number;
@@ -67,8 +71,6 @@ export interface SubagentDelegationResponse {
 	error?: string;
 	/** Host run id; pi-subagents sends it although older contract copies omit it. */
 	runId?: string;
-	/** Proposed upstream: what a non-completed child left behind. Not sent by pi-subagents 0.71.0. */
-	partial?: { text: string; transcriptPath?: string; currentTool?: string };
 	agent?: string;
 	model?: string;
 	result?: { kind: "text"; text: string } | { kind: "structured"; value: unknown };

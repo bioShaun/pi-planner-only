@@ -1,6 +1,6 @@
 # om09 实地运行修复（插件层）
 
-Status: F1–F5 are implemented and pass the local tests. The F1 live check on om09 passed (2026-09-24; see `.scratch/om09-f1-check/result.txt`). Still to do: the post-merge rerun on om09 and the upstream `partial` PR (F4 step 3).
+Status: F1–F5 are implemented and pass the local tests. The F1 live check on om09 passed (2026-09-24; see `.scratch/om09-f1-check/result.txt`). F4 step 3 (the upstream `partial` PR) is dropped; see "F4 step 3 decision" at the end. Still to do: the post-merge rerun on om09.
 来源：2026-09-24 om09 实地运行分析。原始记录已拷到 `.scratch/om09-run/`。
 范围：lite 版（`delegate.ts`、`git.ts`、`index.ts`、`subagent-delegation-contract.ts`）。
 
@@ -146,6 +146,22 @@ om09（git 1.8.3.1，pi 0.87.1，pi-subagents 0.71.0）上，Root 用 `claude-op
 - 委派结果里有正确的 workspace 摘要；
 - 超时时能看到 transcript 路径；
 - 任务文本里有时间预算。
+
+## F4 step 3 decision (2026-09-24): no upstream `partial` PR
+
+Checked against pi-subagents main `ab60be9` (0.71.0 + Unreleased) and its `VISION.md`, which serves as the project's acceptance policy.
+
+The PR does not fit upstream:
+- **Compose before inventing.** UPDATE events already carry `runId`, `currentTool`, `currentToolArgs`, `recentOutput`, and `recentOutputLines` (`src/api/delegation.d.ts`). "Which tool was running" and "what it last printed" are therefore available today. Only the transcript path is missing.
+- **Bounded evidence, not raw output.** `projectTimeoutRecovery` (`src/runs/shared/mutation-evidence.ts`) is commented "Keep status and completion details to bounded routing evidence, not raw output or effects". The async-completion projection deliberately drops `transcriptPath`, `sessionFile`, and `currentTool`. The delegation adapter fills `result` only for `completed`. A `partial.text` field would go against both.
+- **Public API change.** VISION requires owner approval before a change touches a public API. The value is low: the plugin's own Git summary already reports changed files.
+
+If an upstream change is ever needed, the version that fits is narrow: put the existing `TimeoutRecoveryProjection` (`changedFiles`, `recoveryNeeded`, `reportStatus`) on the delegation terminal response, the same way async completions already carry it. Open an issue before writing it. It gives this plugin nothing its Git summary does not already provide, so it is not pursued.
+
+What the plugin does instead:
+- It keeps the last UPDATE snapshot and reports `Run id` and `Last activity: <tool> <args>` when the run did not complete.
+- The child report is taken from the artifact output (default `session` layout) if one exists, otherwise from the recent output in that last update.
+- The speculative `partial` field has been removed from the local contract type.
 
 ## 后续测量（不在本 spec 内，修完再做）
 
