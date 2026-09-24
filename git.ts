@@ -3,13 +3,19 @@
  *
  * Repository config must not make Root run programs: every call disables
  * fsmonitor, and every diff disables external diff drivers and textconv.
+ *
+ * `--no-optional-locks` (git >= 2.15) only keeps Root from taking index.lock;
+ * it is added when `git --version` says it is supported, and dropped on older
+ * git (e.g. 1.8) or when the probe fails. Env vars are not an option: pi.exec
+ * cannot pass them.
  */
 export type GitRunner = (
 	args: readonly string[],
 	cwd: string,
 ) => Promise<{ stdout: string; stderr?: string; code: number }>;
 
-export const GIT_SAFE_PREFIX = ["--no-optional-locks", "-c", "core.fsmonitor=false"] as const;
+export const FSMONITOR_OFF = ["-c", "core.fsmonitor=false"] as const;
+export const GIT_SAFE_PREFIX = ["--no-optional-locks", ...FSMONITOR_OFF] as const;
 const DIFF_SAFE = ["--no-ext-diff", "--no-textconv"] as const;
 
 export const GIT_AUDIT_OPERATIONS = ["status", "diff-stat", "diff", "log"] as const;
@@ -30,9 +36,40 @@ export function clip(text: string, max = MAX_GIT_OUTPUT_CHARS): string {
 	return `${text.slice(0, max)}\n… [truncated ${text.length - max} chars]`;
 }
 
-function git(run: GitRunner, args: readonly string[], cwd: string) {
-	return run([...GIT_SAFE_PREFIX, ...args], cwd);
+/** True when `git --version` output reports 2.15 or later. */
+export function supportsNoOptionalLocks(versionOutput: string): boolean {
+	const m = /git version (\d+)\.(\d+)/.exec(versionOutput);
+	if (!m) return false;
+	const [major, minor] = [Number(m[1]), Number(m[2])];
+	return major > 2 || (major === 2 && minor >= 15);
 }
+
+const prefixes = new WeakMap<GitRunner, Promise<readonly string[]>>();
+
+/** The safe argv prefix for this runner; `git --version` is probed once per runner. */
+export function gitSafePrefix(run: GitRunner, cwd: string): Promise<readonly string[]> {
+	let prefix = prefixes.get(run);
+	if (!prefix) {
+		prefix = Promise.resolve()
+			.then(() => run(["--version"], cwd))
+			.then((r) => (r.code === 0 && supportsNoOptionalLocks(r.stdout) ? GIT_SAFE_PREFIX : FSMONITOR_OFF))
+			.catch(() => FSMONITOR_OFF);
+		prefixes.set(run, prefix);
+	}
+	return prefix;
+}
+
+async function git(run: GitRunner, args: readonly string[], cwd: string) {
+	return run([...(await gitSafePrefix(run, cwd)), ...args], cwd);
+}
+
+/** `rev-parse --is-inside-work-tree`; false when git fails or reports "false" (inside .git). */
+export async function isWorkTree(run: GitRunner, cwd: string): Promise<boolean> {
+	const r = await git(run, ["rev-parse", "--is-inside-work-tree"], cwd);
+	return r.code === 0 && r.stdout.trim() !== "false";
+}
+
+export const notWorkTree = (cwd: string) => `${cwd} is not inside a git work tree; pass cwd=<repo>`;
 
 /** Build the argv for one git_audit operation, or explain why it is refused. */
 export function auditArgv(request: GitAuditRequest): { ok: true; args: string[] } | { ok: false; error: string } {
@@ -46,7 +83,7 @@ export function auditArgv(request: GitAuditRequest): { ok: true; args: string[] 
 	const pathArgs = path ? ["--", path] : [];
 	switch (operation) {
 		case "status":
-			return { ok: true, args: ["status", "--porcelain=v1", "--branch", "--untracked-files=all", ...pathArgs] };
+			return { ok: true, args: ["status", "--porcelain", "--branch", "--untracked-files=all", ...pathArgs] };
 		case "diff-stat":
 			return { ok: true, args: ["diff", "--stat", ...DIFF_SAFE, ...(base ? [base] : []), ...pathArgs] };
 		case "diff":
@@ -63,6 +100,7 @@ export function auditArgv(request: GitAuditRequest): { ok: true; args: string[] 
 export async function runGitAudit(run: GitRunner, request: GitAuditRequest, cwd: string): Promise<{ ok: boolean; text: string }> {
 	const argv = auditArgv(request);
 	if (!argv.ok) return { ok: false, text: `git_audit refused: ${argv.error}` };
+	if (!(await isWorkTree(run, cwd))) return { ok: false, text: notWorkTree(cwd) };
 	const result = await git(run, argv.args, cwd);
 	if (result.code !== 0) return { ok: false, text: `git ${request.operation} failed: ${(result.stderr || result.stdout).trim()}` };
 	return { ok: true, text: clip(result.stdout.trimEnd() || "(no output)") };
@@ -70,20 +108,26 @@ export async function runGitAudit(run: GitRunner, request: GitAuditRequest, cwd:
 
 /** What the workspace looked like when a delegation started. */
 export interface WorkBase {
+	/** false: cwd is not in a git work tree; undefined: unknown (git threw). */
+	inWorkTree?: boolean;
 	head?: string;
 	dirtyBefore: number;
 }
 
 export async function captureBase(run: GitRunner, cwd: string): Promise<WorkBase> {
+	if (!(await isWorkTree(run, cwd))) return { inWorkTree: false, dirtyBefore: 0 };
 	const head = await git(run, ["rev-parse", "HEAD"], cwd);
-	if (head.code !== 0) return { dirtyBefore: 0 };
-	const status = await git(run, ["status", "--porcelain=v1"], cwd);
+	if (head.code !== 0) return { inWorkTree: true, dirtyBefore: 0 };
+	const status = await git(run, ["status", "--porcelain"], cwd);
 	const dirtyBefore = status.code === 0 ? status.stdout.split("\n").filter(Boolean).length : 0;
-	return { head: head.stdout.trim(), dirtyBefore };
+	return { inWorkTree: true, head: head.stdout.trim(), dirtyBefore };
 }
 
 /** Changes since the base: new commits, tracked diff stat, untracked files. */
 export async function summarizeWork(run: GitRunner, cwd: string, base: WorkBase, maxChars = 3_000): Promise<string> {
+	if (base.inWorkTree === false) {
+		return `Workspace changes: ${cwd} is not a git work tree — if the child edited another repository, pass that repository as cwd next time.`;
+	}
 	if (!base.head) return "Workspace changes: not a git repository (or no commits); inspect the files directly.";
 	const lines: string[] = [];
 	const head = await git(run, ["rev-parse", "HEAD"], cwd);
@@ -110,6 +154,7 @@ export async function gitCommit(run: GitRunner, cwd: string, message: string, pa
 	if (paths?.some((p) => !p.trim() || p.startsWith("-"))) {
 		return { ok: false, text: "git_commit refused: paths must be non-empty and must not start with '-'" };
 	}
+	if (!(await isWorkTree(run, cwd))) return { ok: false, text: notWorkTree(cwd) };
 	const add = await git(run, paths?.length ? ["add", "--", ...paths] : ["add", "-A"], cwd);
 	if (add.code !== 0) return { ok: false, text: `git add failed: ${(add.stderr || add.stdout).trim()}` };
 	const commit = await git(run, ["commit", "-m", message], cwd);

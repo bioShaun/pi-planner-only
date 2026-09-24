@@ -9,8 +9,8 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { ROLES, loadLimits, runDelegation } from "./delegate.ts";
-import type { DelegationParams, EventBus } from "./delegate.ts";
+import { DEFAULT_LIMITS, ROLES, loadLimits, runDelegation, timeoutMinutes } from "./delegate.ts";
+import type { DelegationLimits, DelegationParams, EventBus } from "./delegate.ts";
 import { GIT_AUDIT_OPERATIONS, gitCommit, runGitAudit } from "./git.ts";
 import type { GitAuditRequest, GitRunner } from "./git.ts";
 
@@ -26,6 +26,9 @@ export const STRICT_BLOCKED_TOOLS = new Set(["edit", "write", "bash"]);
 export const HIDDEN_HOST_TOOLS = ["subagents_enable", "subagent"] as const;
 const HIDDEN_HOST_TOOL_SET = new Set<string>(HIDDEN_HOST_TOOLS);
 
+const REPO_CWD_DESCRIPTION = "Repository to run in (absolute or relative to the session cwd). Defaults to the session cwd.";
+const resolveCwd = (ctx: { cwd: string }, cwd: string | undefined) => (cwd ? resolve(ctx.cwd, cwd) : ctx.cwd);
+
 const flag = (value: string | undefined, set: string[]) => set.includes((value ?? "").trim().toLowerCase());
 
 /** PI_PLANNER_ONLY=1 forces on, =0 forces off; otherwise the off marker decides. */
@@ -39,7 +42,7 @@ export function isStrict(env: NodeJS.ProcessEnv = process.env): boolean {
 	return flag(env.PI_PLANNER_ONLY_STRICT, ["1", "true", "on"]);
 }
 
-export function plannerPrompt(strict: boolean): string {
+export function plannerPrompt(strict: boolean, limits: DelegationLimits = DEFAULT_LIMITS): string {
 	return [
 		"[PLANNER-ONLY]",
 		"You plan and review; cheaper child agents do the bulk of the work through `delegate`.",
@@ -48,6 +51,8 @@ export function plannerPrompt(strict: boolean): string {
 			: "- Do small things yourself (about ≤2 files or ≤10 minutes of work). Delegate larger implementation to role \"worker\".",
 		"- Other roles: \"explorer\" for broad code searches, \"validator\" to run tests/checks, \"reviewer\" for an independent read-only review.",
 		"- Children do not see this conversation. Put the goal, relevant paths, constraints, and how to verify into `task`.",
+		`- A child has ${timeoutMinutes(limits)} minutes. Do not delegate work that needs longer (full pipeline runs, long waits); split it.`,
+		"- When the target repository is not the session cwd, pass `cwd` to delegate, git_audit, and git_commit.",
 		"- Judge results by the returned diff summary and check output, not by the child's claims. Inspect the actual changes (read, git_audit) before accepting.",
 		"- To fix a child's work, delegate again with its previous report and the specific corrections.",
 		"- After accepting changes, commit with git_commit.",
@@ -127,7 +132,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				minLength: 1,
 				description: "Self-contained instructions: goal, relevant paths, constraints, and how to verify. The child does not see this conversation.",
 			}),
-			cwd: Type.Optional(Type.String({ description: "Working directory. Defaults to the session cwd." })),
+			cwd: Type.Optional(Type.String({
+				description: "The repository or directory the child works in. Set it when the target is not the session cwd; the diff summary and the per-cwd lock use it.",
+			})),
 		}),
 		async execute(_toolCallId, params: DelegationParams, signal, onUpdate, ctx) {
 			const outcome = await runDelegation(
@@ -137,8 +144,9 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					ownerRunId: ctx.sessionManager?.getSessionId?.() || randomUUID(),
 					limits: loadLimits(),
 					busy,
+					sessionFile: ctx.sessionManager?.getSessionFile?.(),
 				},
-				{ ...params, cwd: params.cwd ? resolve(ctx.cwd, params.cwd) : ctx.cwd },
+				{ ...params, cwd: resolveCwd(ctx, params.cwd) },
 				signal,
 				(text) => onUpdate?.({ content: [{ type: "text", text }], details: {} }),
 			);
@@ -163,9 +171,11 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			base: Type.Optional(Type.String({ description: "Commit sha (7-40 hex) or HEAD / HEAD~N to diff against." })),
 			path: Type.Optional(Type.String({ description: "Limit to one path." })),
 			maxEntries: Type.Optional(Type.Integer({ minimum: 1, maximum: 50, description: "log only: number of commits." })),
+			cwd: Type.Optional(Type.String({ description: REPO_CWD_DESCRIPTION })),
 		}),
-		async execute(_toolCallId, params: GitAuditRequest, _signal, _onUpdate, ctx) {
-			const outcome = await runGitAudit(gitRunner, params, ctx.cwd);
+		async execute(_toolCallId, params: GitAuditRequest & { cwd?: string }, _signal, _onUpdate, ctx) {
+			const { cwd, ...request } = params;
+			const outcome = await runGitAudit(gitRunner, request, resolveCwd(ctx, cwd));
 			return { content: [{ type: "text", text: outcome.text }], details: { ok: outcome.ok } };
 		},
 	});
@@ -177,10 +187,11 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		promptSnippet: "git_commit: commit accepted changes (optionally only the given paths)",
 		parameters: Type.Object({
 			message: Type.String({ minLength: 1, maxLength: 500 }),
-			paths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Only stage these paths." })),
+			paths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Only stage these paths (relative to cwd)." })),
+			cwd: Type.Optional(Type.String({ description: REPO_CWD_DESCRIPTION })),
 		}),
-		async execute(_toolCallId, params: { message: string; paths?: string[] }, _signal, _onUpdate, ctx) {
-			const outcome = await gitCommit(gitRunner, ctx.cwd, params.message, params.paths);
+		async execute(_toolCallId, params: { message: string; paths?: string[]; cwd?: string }, _signal, _onUpdate, ctx) {
+			const outcome = await gitCommit(gitRunner, resolveCwd(ctx, params.cwd), params.message, params.paths);
 			return { content: [{ type: "text", text: outcome.text }], details: { ok: outcome.ok } };
 		},
 	});
@@ -218,7 +229,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		}
 		syncTools();
 		if (!isEnabled()) return;
-		return { systemPrompt: `${event.systemPrompt}\n\n${plannerPrompt(isStrict())}` };
+		return { systemPrompt: `${event.systemPrompt}\n\n${plannerPrompt(isStrict(), loadLimits())}` };
 	});
 
 	pi.on("tool_call", async (event, ctx) => {

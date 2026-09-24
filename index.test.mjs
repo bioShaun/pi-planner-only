@@ -10,7 +10,7 @@ delete process.env.PI_PLANNER_ONLY_STRICT;
 delete process.env.PI_SUBAGENT_CHILD;
 const { default: plannerOnly, OFF_MARKER, plannerPrompt, rootUsageOf } = await import("./index.ts");
 
-function fakePi(initialActive = ["read", "bash", "edit", "write"]) {
+function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async () => ({ stdout: "", stderr: "not a repo", code: 128 })) {
 	const tools = new Map();
 	const handlers = new Map();
 	const commands = new Map();
@@ -22,7 +22,7 @@ function fakePi(initialActive = ["read", "bash", "edit", "write"]) {
 		on: (event, h) => handlers.set(event, h),
 		getActiveTools: () => active,
 		setActiveTools: (next) => (active = next),
-		exec: async () => ({ stdout: "", stderr: "not a repo", code: 128 }),
+		exec,
 		events,
 	};
 	plannerOnly(pi);
@@ -54,6 +54,13 @@ try {
 	assert.ok(injected.systemPrompt.startsWith("BASE\n\n[PLANNER-ONLY]"));
 	for (const strict of [false, true]) assert.ok(plannerPrompt(strict).length < 1_300, "prompt should stay ~300 tokens");
 	assert.match(plannerPrompt(true), /Strict mode/);
+	const { loadLimits } = await import("./delegate.ts");
+	assert.match(plannerPrompt(false), /A child has 10 minutes\. Do not delegate work that needs longer/);
+	assert.match(plannerPrompt(false, loadLimits({ PI_PLANNER_ONLY_TIMEOUT_MS: "300000" })), /A child has 5 minutes\./);
+	assert.match(plannerPrompt(false), /pass `cwd` to delegate, git_audit, and git_commit/);
+	process.env.PI_PLANNER_ONLY_TIMEOUT_MS = "300000";
+	assert.match((await h.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, h.ctx)).systemPrompt, /A child has 5 minutes\./);
+	delete process.env.PI_PLANNER_ONLY_TIMEOUT_MS;
 
 	// Strict mode blocks only edit/write/bash, and only when enabled.
 	const toolCall = h.handlers.get("tool_call");
@@ -97,6 +104,31 @@ try {
 	// git_audit refusals come back as text, not exceptions.
 	const audit = await h.tools.get("git_audit").execute("call-2", { operation: "diff", base: "--output=x" }, undefined, undefined, h.ctx);
 	assert.match(audit.content[0].text, /refused/);
+
+	// git_audit/git_commit: cwd resolves against ctx.cwd; non-repos get a clear hint.
+	const notRepo = await h.tools.get("git_audit").execute("call-3", { operation: "status", cwd: "elsewhere" }, undefined, undefined, h.ctx);
+	assert.equal(notRepo.content[0].text, "/w/elsewhere is not inside a git work tree; pass cwd=<repo>");
+	assert.equal(notRepo.details.ok, false);
+	const notRepoCommit = await h.tools.get("git_commit").execute("call-4", { message: "m" }, undefined, undefined, h.ctx);
+	assert.equal(notRepoCommit.content[0].text, "/w is not inside a git work tree; pass cwd=<repo>");
+	assert.equal(notRepoCommit.details.ok, false);
+	{
+		const seen = [];
+		const hg = fakePi(undefined, async (cmd, args, opts) => {
+			assert.equal(cmd, "git");
+			seen.push([args.filter((a) => !a.startsWith("-") && a !== "core.fsmonitor=false")[0], opts.cwd]);
+			return { stdout: args[0] === "--version" ? "git version 2.43.0" : "ok", stderr: "", code: 0 };
+		});
+		const cwdOf = (op) => seen.filter(([o]) => o === op).map(([, c]) => c);
+		assert.equal((await hg.tools.get("git_audit").execute("a", { operation: "log", cwd: "../repo" }, undefined, undefined, hg.ctx)).details.ok, true);
+		assert.deepEqual(cwdOf("log"), ["/repo"]);
+		await hg.tools.get("git_audit").execute("b", { operation: "diff" }, undefined, undefined, hg.ctx);
+		assert.deepEqual(cwdOf("diff"), ["/w"]);
+		assert.equal((await hg.tools.get("git_commit").execute("c", { message: "m", paths: ["a.ts"], cwd: "/abs/repo" }, undefined, undefined, hg.ctx)).details.ok, true);
+		assert.deepEqual(cwdOf("commit"), ["/abs/repo"]);
+		await hg.tools.get("git_commit").execute("d", { message: "m" }, undefined, undefined, hg.ctx);
+		assert.deepEqual(cwdOf("commit"), ["/abs/repo", "/w"]);
+	}
 
 	assert.equal(rootUsageOf({ role: "assistant", usage: { input: 5, output: "x" } }).tokens, 5);
 	assert.equal(rootUsageOf(undefined), undefined);

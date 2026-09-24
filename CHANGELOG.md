@@ -13,6 +13,12 @@ Lite rewrite (`docs/pi-planner-only-subtraction-plan.md`). The 0.8.0 code is at 
 - Supported pi-subagents range: `>=0.70 <1`.
 - Child token cap default raised from 200000 to 1500000 (`PI_PLANNER_ONLY_MAX_TOKENS`); the count is the child's cumulative non-cached input+output, and 200k cancelled real workers after about 90 seconds.
 - While enabled, pi-subagents' `subagents_enable` and `subagent` are removed from Root's tools and system prompt and blocked if called, so delegation goes through `delegate`.
+- om09 field fixes (`.scratch/om09-field-fixes/spec.md`):
+  - Git 1.8 works: `--no-optional-locks` is sent only when `git --version` reports 2.15 or later (probed once per session). `status` uses `--porcelain` instead of `--porcelain=v1`.
+  - `git_audit` and `git_commit` take an optional `cwd`. Outside a work tree they return `<cwd> is not inside a git work tree; pass cwd=<repo>`.
+  - The delegation summary now tells "not a work tree" apart from "no commits yet". The prompt tells Root to pass `cwd` when the target repository is not the session cwd.
+  - A child that does not complete now reports its runId. When the output artifact exists at the default `session` location, the result includes its text and the transcript path; otherwise it says the artifact was not found.
+  - The task text and the Root prompt state the child's time limit (`PI_PLANNER_ONLY_TIMEOUT_MS`, in whole minutes).
 - Large-task measurement (`docs/lite-measurement-2026-09-24.md`): 12/12 runs pass; lite costs 0.48 of direct at opus-priced Root, 0.46 at astra, 0.52 at gpt-6-sol, with luna children.
 
 ## 0.8.0 - 2026-09-18

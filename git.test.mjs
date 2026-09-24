@@ -3,18 +3,47 @@ import { execFileSync } from "node:child_process";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { auditArgv, captureBase, gitCommit, runGitAudit, summarizeWork } from "./git.ts";
-import { tempDir } from "./test-helpers.mjs";
+import { noGit, tempDir } from "./test-helpers.mjs";
 
 // Every call carries the safe prefix; diffs never run external drivers.
-{
+// --no-optional-locks only when `git --version` says >= 2.15; probed once per runner.
+for (const [version, expected] of [
+	[{ stdout: "git version 1.8.3.1\n", code: 0 }, ["-c", "core.fsmonitor=false"]],
+	[{ stdout: "git version 2.43.0\n", code: 0 }, ["--no-optional-locks", "-c", "core.fsmonitor=false"]],
+	[{ stdout: "", stderr: "boom", code: 1 }, ["-c", "core.fsmonitor=false"]],
+	["throw", ["-c", "core.fsmonitor=false"]],
+]) {
 	const calls = [];
-	const run = async (args) => (calls.push(args), { stdout: "x", code: 0 });
+	const run = async (args) => {
+		calls.push(args);
+		if (args[0] === "--version") {
+			if (version === "throw") throw new Error("spawn failed");
+			return version;
+		}
+		return { stdout: "x", code: 0 };
+	};
 	for (const operation of ["status", "diff-stat", "diff", "log"]) await runGitAudit(run, { operation }, "/w");
 	await gitCommit(run, "/w", "msg");
-	for (const args of calls) assert.deepEqual(args.slice(0, 3), ["--no-optional-locks", "-c", "core.fsmonitor=false"]);
-	for (const args of calls.filter((a) => a[3] === "diff" || a[3] === "show")) {
+	await captureBase(run, "/w");
+	assert.equal(calls.filter((a) => a[0] === "--version").length, 1, "probe once per runner");
+	assert.deepEqual(calls[0], ["--version"]);
+	const gitCalls = calls.slice(1);
+	assert.ok(gitCalls.length >= 12);
+	for (const args of gitCalls) assert.deepEqual(args.slice(0, expected.length), expected, JSON.stringify(version));
+	for (const args of gitCalls) assert.ok(args.includes("-c") && args.includes("core.fsmonitor=false"), args.join(" "));
+	assert.equal(gitCalls.some((a) => a.includes("--no-optional-locks")), expected.length === 3);
+	for (const args of gitCalls) assert.ok(!args.some((a) => a.startsWith("--porcelain=")), args.join(" "));
+	for (const args of gitCalls.filter((a) => a[expected.length] === "diff" || a[expected.length] === "show")) {
 		assert.ok(args.includes("--no-ext-diff") && args.includes("--no-textconv"), args.join(" "));
 	}
+}
+
+// Outside a work tree git_audit/git_commit say so instead of forwarding git's stderr.
+{
+	const audit = await runGitAudit(noGit, { operation: "status" }, "/nowhere");
+	assert.deepEqual(audit, { ok: false, text: "/nowhere is not inside a git work tree; pass cwd=<repo>" });
+	const commit = await gitCommit(noGit, "/nowhere", "m");
+	assert.deepEqual(commit, { ok: false, text: "/nowhere is not inside a git work tree; pass cwd=<repo>" });
 }
 
 // Refusals: option-looking refs and paths never reach git.
@@ -51,9 +80,18 @@ try {
 	};
 	const notRepo = await captureBase(run, dir);
 	assert.equal(notRepo.head, undefined);
-	assert.match(await summarizeWork(run, dir, notRepo), /not a git repository/);
+	assert.equal(notRepo.inWorkTree, false);
+	assert.match(await summarizeWork(run, dir, notRepo), /is not a git work tree .* pass that repository as cwd/);
 
 	g("init", "-q");
+	// A work tree with no commits keeps the old wording, distinct from "not a work tree".
+	const noCommits = await captureBase(run, dir);
+	assert.equal(noCommits.inWorkTree, true);
+	assert.equal(noCommits.head, undefined);
+	const noCommitsText = await summarizeWork(run, dir, noCommits);
+	assert.match(noCommitsText, /not a git repository \(or no commits\)/);
+	assert.doesNotMatch(noCommitsText, /pass that repository as cwd/);
+
 	g("config", "user.email", "t@example.com");
 	g("config", "user.name", "t");
 	writeFileSync(join(dir, "a.txt"), "one\n");

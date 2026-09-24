@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
 	SUBAGENT_DELEGATION_CANCEL_EVENT as CANCEL,
 	SUBAGENT_DELEGATION_REQUEST_EVENT as REQUEST,
@@ -6,8 +8,8 @@ import {
 	SUBAGENT_DELEGATION_STARTED_EVENT as STARTED,
 	SUBAGENT_DELEGATION_UPDATE_EVENT as UPDATE,
 } from "./subagent-delegation-contract.ts";
-import { ROLE_AGENTS, clipChildText, loadLimits, runDelegation } from "./delegate.ts";
-import { fakeBus, noGit, tick, usage } from "./test-helpers.mjs";
+import { ROLE_AGENTS, buildTaskText, clipChildText, loadLimits, runDelegation } from "./delegate.ts";
+import { fakeBus, noGit, tempDir, tick, usage } from "./test-helpers.mjs";
 
 const limits = { timeoutMs: 60_000, maxTokens: 1_000, startTimeoutMs: 40, cancelGraceMs: 40 };
 const deps = (bus, busy = new Set()) => ({ events: bus, git: noGit, ownerRunId: "owner-1", limits, busy });
@@ -28,7 +30,7 @@ const respond = (bus, req, over = {}) =>
 	assert.equal(req.ownerRunId, "owner-1");
 	assert.equal(req.timeoutMs, 60_000);
 	assert.deepEqual(req.result, { kind: "text" });
-	assert.match(req.task, /^implement X\n\n---\nWorking directory: \/w\n/);
+	assert.match(req.task, /^implement X\n\n---\nWorking directory: \/w\nTime limit: 1 minutes wall clock/);
 	assert.ok(req.task.endsWith(ROLE_AGENTS.worker.closing));
 	assert.equal(out.ok, true);
 	assert.equal(out.details.status, "completed");
@@ -36,7 +38,7 @@ const respond = (bus, req, over = {}) =>
 	assert.equal(out.details.usage.cost, 0.0123);
 	assert.match(out.text, /^\[worker\/worker\] completed · cheap\/model · 3\.5k tok · \$0\.0123 · 3 turns · 12s/);
 	assert.match(out.text, /Child report:\nchanged a\.ts; tests pass/);
-	assert.match(out.text, /not a git repository/);
+	assert.match(out.text, /Workspace changes: \/w is not a git work tree .* pass that repository as cwd next time\./);
 	assert.equal(busy.size, 0);
 	assert.equal(bus.totalListeners(), 1); // only the test's own REQUEST responder
 }
@@ -62,6 +64,80 @@ const respond = (bus, req, over = {}) =>
 	assert.equal(out.details.status, "timed_out");
 	assert.match(out.text, /Error: exceeded 60s/);
 	assert.match(out.text, /Child report:\n\(empty\)/);
+}
+
+// Workspace summary: "not a work tree" and "work tree without commits" read differently.
+{
+	const noCommits = async (args) => {
+		const a = args.slice(args.indexOf("core.fsmonitor=false") + 1);
+		if (args[0] === "--version") return { stdout: "git version 2.43.0", code: 0 };
+		if (a[0] === "rev-parse" && a[1] === "--is-inside-work-tree") return { stdout: "true\n", code: 0 };
+		return { stdout: "", stderr: "fatal: bad revision HEAD", code: 128 };
+	};
+	const texts = [];
+	for (const git of [noGit, noCommits]) {
+		const bus = fakeBus();
+		bus.on(REQUEST, (req) => respond(bus, req));
+		texts.push((await runDelegation({ ...deps(bus), git }, { role: "worker", task: "t", cwd: "/w" })).text);
+	}
+	assert.match(texts[0], /pass that repository as cwd/);
+	assert.doesNotMatch(texts[1], /pass that repository as cwd/);
+	assert.match(texts[1], /Workspace changes: not a git repository \(or no commits\)/);
+}
+
+// Timed out with a runId: the default-layout artifact is read; missing artifacts are reported, not thrown.
+{
+	const dir = tempDir("ppo-artifacts-");
+	try {
+		const sessionFile = join(dir, "2026-09-24T07-17-07_root.jsonl");
+		const artifacts = join(dir, "subagent-artifacts");
+		mkdirSync(artifacts);
+		const output = join(artifacts, "run-42_worker_0_output.md");
+		writeFileSync(output, "Subagent timed out.\n\nRecovery summary:\n- currentTool: edit\n");
+		const run = async () => {
+			const bus = fakeBus();
+			bus.on(REQUEST, (req) => respond(bus, req, { status: "timed_out", error: "Subagent timed out after 600000ms.", runId: "run-42", result: undefined }));
+			return runDelegation({ ...deps(bus), sessionFile }, { role: "worker", task: "t", cwd: "/w" });
+		};
+		const found = await run();
+		assert.equal(found.ok, false);
+		assert.match(found.text, /Run id: run-42/);
+		assert.match(found.text, /Child report:\nSubagent timed out\.\n\nRecovery summary:\n- currentTool: edit/);
+		assert.ok(found.text.includes(`Transcript: ${join(artifacts, "run-42_worker_0_transcript.jsonl")}`));
+		assert.doesNotMatch(found.text, /\(empty\)/);
+
+		rmSync(output);
+		const missing = await run();
+		assert.match(missing.text, /artifacts not found at the default location \(pi-subagents artifactDir may be temp\/project\); runId=run-42/);
+		assert.match(missing.text, /Child report:\n\(empty\)/);
+
+		// A runId that is not a plain name never becomes a path.
+		writeFileSync(join(dir, "escape_worker_0_output.md"), "LEAKED");
+		{
+			const bus = fakeBus();
+			bus.on(REQUEST, (req) => respond(bus, req, { status: "failed", runId: "../escape", result: undefined }));
+			const out = await runDelegation({ ...deps(bus), sessionFile }, { role: "worker", task: "t", cwd: "/w" });
+			assert.doesNotMatch(out.text, /LEAKED/);
+			assert.match(out.text, /artifacts not found at the default location/);
+		}
+
+		// Upstream `partial` wins over the artifact fallback.
+		const bus = fakeBus();
+		bus.on(REQUEST, (req) => respond(bus, req, { status: "timed_out", runId: "run-42", result: undefined, partial: { text: "half done", transcriptPath: "/t.jsonl", currentTool: "bash" } }));
+		const partial = await runDelegation({ ...deps(bus), sessionFile }, { role: "worker", task: "t", cwd: "/w" });
+		assert.match(partial.text, /Interrupted during: bash\nTranscript: \/t\.jsonl/);
+		assert.match(partial.text, /Child report:\nhalf done/);
+		assert.doesNotMatch(partial.text, /artifacts not found/);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// Time budget in the task text follows PI_PLANNER_ONLY_TIMEOUT_MS.
+{
+	assert.match(buildTaskText("worker", "t", "/w", loadLimits({}).timeoutMs), /\nTime limit: 10 minutes wall clock, then you are stopped/);
+	assert.match(buildTaskText("worker", "t", "/w", loadLimits({ PI_PLANNER_ONLY_TIMEOUT_MS: "300000" }).timeoutMs), /\nTime limit: 5 minutes wall clock/);
+	assert.match(buildTaskText("worker", "t", "/w", 1_000), /Time limit: 1 minutes/);
 }
 
 // Refusals: bad role, empty task, busy cwd for exclusive roles (reviewer still allowed).

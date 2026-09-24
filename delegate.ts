@@ -6,7 +6,8 @@
  * run in-process and end with Root.
  */
 import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import {
 	SUBAGENT_DELEGATION_CANCEL_EVENT,
 	SUBAGENT_DELEGATION_REQUEST_EVENT,
@@ -93,6 +94,8 @@ export interface DelegationDeps {
 	limits: DelegationLimits;
 	/** cwds held by a running exclusive child; shared across calls. */
 	busy: Set<string>;
+	/** Root's session file; locates pi-subagents artifacts after a failed run. */
+	sessionFile?: string;
 }
 
 export interface DelegationParams {
@@ -116,8 +119,48 @@ export interface DelegationOutcome {
 
 export const MAX_CHILD_TEXT_CHARS = 4_000;
 
-export function buildTaskText(role: Role, task: string, cwd: string): string {
-	return `${task.trim()}\n\n---\nWorking directory: ${cwd}\n${ROLE_AGENTS[role].closing}`;
+/** Whole minutes a child gets, at least 1. */
+export function timeoutMinutes(limits: Pick<DelegationLimits, "timeoutMs">): number {
+	return Math.max(1, Math.floor(limits.timeoutMs / 60_000));
+}
+
+export function buildTaskText(role: Role, task: string, cwd: string, timeoutMs = DEFAULT_LIMITS.timeoutMs): string {
+	const budget = `Time limit: ${timeoutMinutes({ timeoutMs })} minutes wall clock, then you are stopped and unsaved work is lost. Make edits early and in small steps. Do not start commands that cannot finish within the limit (full pipelines, long test suites); list them in your report instead.`;
+	return `${task.trim()}\n\n---\nWorking directory: ${cwd}\n${budget}\n${ROLE_AGENTS[role].closing}`;
+}
+
+/**
+ * What a child that did not complete left behind, for Root.
+ *
+ * Preferred source: `response.partial` (proposed upstream field). Fallback:
+ * pi-subagents 0.71.0 writes the partial output and recovery summary only to
+ * artifact files, so read `<dirname(sessionFile)>/subagent-artifacts/
+ * <runId>_<agent>_0_output.md`. That path assumes pi-subagents' default
+ * `artifactDir: "session"` layout (src/shared/artifacts.js getArtifactsDir /
+ * getArtifactPaths); with `temp` or `project` the files live elsewhere and we
+ * only report the runId.
+ */
+export function recoverPartial(response: SubagentDelegationResponse, agent: string, sessionFile: string | undefined): { text?: string; lines: string[] } {
+	if (response.partial) {
+		const lines: string[] = [];
+		if (response.runId) lines.push(`Run id: ${response.runId}`);
+		if (response.partial.currentTool) lines.push(`Interrupted during: ${response.partial.currentTool}`);
+		if (response.partial.transcriptPath) lines.push(`Transcript: ${response.partial.transcriptPath}`);
+		return { text: response.partial.text, lines };
+	}
+	if (!response.runId) return { lines: [] };
+	const lines = [`Run id: ${response.runId}`];
+	const safeName = /^[A-Za-z0-9_-]+$/;
+	if (sessionFile && safeName.test(response.runId) && safeName.test(agent)) {
+		const base = join(dirname(sessionFile), "subagent-artifacts", `${response.runId}_${agent}_0`);
+		try {
+			const text = readFileSync(`${base}_output.md`, "utf8");
+			lines.push(`Transcript: ${base}_transcript.jsonl`);
+			return { text, lines };
+		} catch { /* fall through */ }
+	}
+	lines.push(`artifacts not found at the default location (pi-subagents artifactDir may be temp/project); runId=${response.runId}`);
+	return { lines };
 }
 
 /** Keep the head and the tail: children put the report at the end. */
@@ -180,7 +223,7 @@ export async function runDelegation(
 			ownerRunId: deps.ownerRunId,
 			nodeId: `${role}-${randomUUID().slice(0, 8)}`,
 			agent: profile.agent,
-			task: buildTaskText(role, params.task, cwd),
+			task: buildTaskText(role, params.task, cwd, deps.limits.timeoutMs),
 			context: "fresh",
 			cwd,
 			timeoutMs: deps.limits.timeoutMs,
@@ -210,8 +253,13 @@ export async function runDelegation(
 	if (response.agent && response.agent !== profile.agent) lines.push(`WARNING: requested agent ${profile.agent}, host ran ${response.agent}.`);
 	if (terminal.stopReason) lines.push(`Stopped: ${terminal.stopReason}.`);
 	if (response.error) lines.push(`Error: ${clip(response.error, 1_000)}`);
-	const childText = response.result?.kind === "text" ? response.result.text
+	let childText = response.result?.kind === "text" ? response.result.text
 		: response.result ? JSON.stringify(response.result.value) : "";
+	if (response.status !== "completed") {
+		const recovered = recoverPartial(response, response.agent ?? profile.agent, deps.sessionFile);
+		lines.push(...recovered.lines);
+		if (!childText.trim() && recovered.text) childText = recovered.text;
+	}
 	lines.push("", "Child report:", childText.trim() ? clipChildText(childText.trim()) : "(empty)");
 	if (role !== "reviewer") lines.push("", await summarizeWork(deps.git, cwd, base).catch((e) => `Workspace changes: git failed (${String(e)})`));
 	return {
