@@ -8,7 +8,7 @@ import {
 	SUBAGENT_DELEGATION_STARTED_EVENT as STARTED,
 	SUBAGENT_DELEGATION_UPDATE_EVENT as UPDATE,
 } from "./subagent-delegation-contract.ts";
-import { ROLE_AGENTS, buildTaskText, clipChildText, formatTokens, loadLimits, runDelegation } from "./delegate.ts";
+import { ROLE_AGENTS, buildTaskText, clipChildText, formatTokens, loadLimits, runDelegation, summarizeTranscript } from "./delegate.ts";
 import { fakeBus, noGit, tempDir, tick, usage } from "./test-helpers.mjs";
 
 const limits = { timeoutMs: 60_000, maxTokens: 1_000, startTimeoutMs: 40, cancelGraceMs: 40 };
@@ -94,6 +94,12 @@ const respond = (bus, req, over = {}) =>
 		mkdirSync(artifacts);
 		const output = join(artifacts, "run-42_worker_0_output.md");
 		writeFileSync(output, "Subagent timed out.\n\nRecovery summary:\n- currentTool: edit\n");
+		const transcript = join(artifacts, "run-42_worker_0_transcript.jsonl");
+		writeFileSync(transcript, [
+			JSON.stringify({ recordType: "tool_start", ts: 1_000, toolCallId: "c1", toolName: "bash", argsPreview: "npm run test:release" }),
+			JSON.stringify({ recordType: "tool_end", ts: 6_000, toolCallId: "c1", toolName: "bash", isError: false }),
+			JSON.stringify({ recordType: "message", role: "toolResult", ts: 6_100, toolCallId: "c1", toolName: "bash", isError: false, text: "all 4 suites pass" }),
+		].join("\n"));
 		const run = async () => {
 			const bus = fakeBus();
 			bus.on(REQUEST, (req) => respond(bus, req, { status: "timed_out", error: "Subagent timed out after 600000ms.", runId: "run-42", result: undefined }));
@@ -105,6 +111,18 @@ const respond = (bus, req, over = {}) =>
 		assert.match(found.text, /Child report:\nSubagent timed out\.\n\nRecovery summary:\n- currentTool: edit/);
 		assert.ok(found.text.includes(`Transcript: ${join(artifacts, "run-42_worker_0_transcript.jsonl")}`));
 		assert.doesNotMatch(found.text, /\(empty\)/);
+		// The transcript tail sits after the child report and before the workspace summary.
+		const tailAt = found.text.indexOf("Transcript tail");
+		assert.ok(tailAt > found.text.indexOf("Child report:"));
+		assert.ok(tailAt < found.text.indexOf("Workspace changes"));
+		assert.match(found.text, /result: all 4 suites pass/);
+
+		// Without the transcript file the output artifact still reaches Root, with no tail and no throw.
+		rmSync(transcript);
+		const noTail = await run();
+		assert.equal(noTail.ok, false);
+		assert.match(noTail.text, /Child report:\nSubagent timed out/);
+		assert.doesNotMatch(noTail.text, /Transcript tail/);
 
 		rmSync(output);
 		const missing = await run();
@@ -154,6 +172,7 @@ const respond = (bus, req, over = {}) =>
 		}
 		// With the artifact present, the artifact text wins over recent output; completed runs ignore both.
 		writeFileSync(join(artifacts, "run-7_worker_0_output.md"), "ARTIFACT TEXT");
+		writeFileSync(join(artifacts, "run-7_worker_0_transcript.jsonl"), `${JSON.stringify({ recordType: "tool_start", ts: 1_000, toolCallId: "c7", toolName: "bash", argsPreview: "run7cmd" })}\n`);
 		for (const status of ["timed_out", "completed"]) {
 			const bus = fakeBus();
 			bus.on(REQUEST, (req) => {
@@ -163,8 +182,10 @@ const respond = (bus, req, over = {}) =>
 			const out = await runDelegation({ ...deps(bus), sessionFile }, { role: "worker", task: "t", cwd: "/w" });
 			if (status === "completed") {
 				assert.doesNotMatch(out.text, /Run id|Last activity|ARTIFACT/);
+				assert.doesNotMatch(out.text, /Transcript tail/);
 			} else {
 				assert.match(out.text, /Child report:\nARTIFACT TEXT/);
+				assert.match(out.text, /Transcript tail/);
 				assert.match(out.text, /Last activity: bash/);
 				assert.doesNotMatch(out.text, /recent output from the last progress update/);
 			}
@@ -172,6 +193,69 @@ const respond = (bus, req, over = {}) =>
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
+}
+
+// Transcript tail: slow tools, offsets/durations, running tools, errors, clipping, malformed lines.
+{
+	const t0 = 1_790_000_000_000;
+	const recs = [
+		{ recordType: "tool_start", ts: t0, toolCallId: "c1", toolName: "bash", argsPreview: 'find / -name "read_kallisto_h5.R" 2>/dev/null' },
+		{ recordType: "tool_end", ts: t0 + 61_000, toolCallId: "c1", toolName: "bash", isError: false },
+		{ recordType: "message", role: "toolResult", ts: t0 + 61_100, toolCallId: "c1", toolName: "bash", isError: false, text: `head\n\n${"x".repeat(400)}\n tail line` },
+		"{malformed json",
+		{ recordType: "tool_start", ts: t0 + 62_000, toolCallId: "c2", toolName: "bash", argsPayload: JSON.stringify({ command: "npm run\n test:release" }) },
+		{ recordType: "tool_end", ts: t0 + 65_000, toolCallId: "c2", toolName: "bash", isError: true },
+		{ recordType: "message", role: "toolResult", ts: t0 + 65_100, toolCallId: "c2", toolName: "bash", isError: true, text: "FAIL contract.test.mjs" },
+		// No tool_end: still running when the transcript stopped.
+		{ recordType: "tool_start", ts: t0 + 70_000, toolCallId: "c3", toolName: "read", argsPayload: JSON.stringify({ path: "/home/x/file.ts" }) },
+		{ recordType: "message", role: "assistant", ts: t0 + 71_000, message: { content: [{ type: "text", text: "final words ".repeat(100) }] } },
+	];
+	const s = summarizeTranscript(recs.map((r) => (typeof r === "string" ? r : JSON.stringify(r))).join("\n"));
+	assert.ok(s);
+	assert.match(s, /^Transcript tail \(child did not finish; newest last\):$/m);
+	// Slow tool: >=60s, longest first, duration and args shown.
+	assert.match(s, /Slow tools \(>=60s\):\n- bash 61s: find \/ -name/);
+	// Offsets from the first record, duration = tool_end - tool_start, error marked, args from payload.
+	assert.match(s, /\[\+00:00\] bash 61s: find \/ -name/);
+	assert.match(s, /\[\+01:02\] bash 3s ERROR: npm run test:release/);
+	// Long result clipped with " … "; short results verbatim.
+	assert.match(s, /result: head \| x/);
+	assert.ok(s.includes(" … "));
+	assert.match(s, /result: FAIL contract\.test\.mjs/);
+	// A tool_start without tool_end is measured to the last record ts; payload path used as preview.
+	assert.match(s, /\[\+01:10\] read running when stopped, 1s: \/home\/x\/file\.ts/);
+	// Last assistant text, capped at 500 chars.
+	const lastLine = s.split("\n").find((l) => l.startsWith("Last assistant text:"));
+	assert.ok(lastLine.startsWith("Last assistant text: final words "));
+	assert.ok(lastLine.length <= "Last assistant text: ".length + 500);
+
+	// >12 calls: only the newest 12 entries remain.
+	const many = [];
+	for (let i = 0; i < 15; i++) {
+		const ts = 1_000_000 + i * 1_000;
+		many.push({ recordType: "tool_start", ts, toolCallId: `c${i}`, toolName: "bash", argsPreview: `check ${i} done` });
+		many.push({ recordType: "tool_end", ts: ts + 400, toolCallId: `c${i}`, toolName: "bash", isError: false });
+		many.push({ recordType: "message", role: "toolResult", ts: ts + 500, toolCallId: `c${i}`, toolName: "bash", isError: false, text: `out-${i}` });
+	}
+	const twelve = summarizeTranscript(many.map((r) => JSON.stringify(r)).join("\n"));
+	assert.equal((twelve.match(/^- \[\+/gm) ?? []).length, 12);
+	assert.doesNotMatch(twelve, /check [0-2] done/);
+	assert.match(twelve, /check 3 done/);
+	assert.match(twelve, /check 14 done/);
+
+	// argsPayload beats the pre-clipped argsPreview; ANSI colour codes are stripped from results.
+	const both = summarizeTranscript([
+		{ recordType: "tool_start", ts: 1, toolCallId: "p", toolName: "bash", argsPreview: "cd /repo && mkdir -p /x/ol...", argsPayload: JSON.stringify({ command: "cd /repo && mkdir -p /x/old_script && git show HEAD:a.R" }) },
+		{ recordType: "tool_end", ts: 2, toolCallId: "p", toolName: "bash", isError: false },
+		{ recordType: "message", role: "toolResult", ts: 3, toolCallId: "p", toolName: "bash", text: "\u001b[31mERROR: no java\u001b(B\u001b[m" },
+	].map((r) => JSON.stringify(r)).join("\n"));
+	assert.match(both, /bash 0s: cd \/repo && mkdir -p \/x\/old_script && git show HEAD:a\.R/);
+	assert.match(both, /result: ERROR: no java$/m);
+	assert.ok(!both.includes("\u001b"), "no escape characters");
+
+	// Empty or unparseable input -> undefined, never a throw.
+	assert.equal(summarizeTranscript(""), undefined);
+	assert.equal(summarizeTranscript("not json\n{\"broken\": \n\ngarbage"), undefined);
 }
 
 // Time budget in the task text follows PI_PLANNER_ONLY_TIMEOUT_MS.

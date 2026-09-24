@@ -56,7 +56,7 @@ export function plannerPrompt(strict: boolean, limits: DelegationLimits = DEFAUL
 		"- When the target repository is not the session cwd, pass `cwd` to delegate, git_audit, and git_commit.",
 		"- Judge results by the returned diff summary and check output, not by the child's claims. Inspect the actual changes (read, git_audit) before accepting.",
 		"- To fix a child's work, delegate again with its previous report and the specific corrections.",
-		"- A timed-out child's result ends with its last tool results; reuse them instead of redoing its checks.",
+		"- A timed-out child's result includes its last tool results; reuse them instead of redoing its checks.",
 		"- Before reverting or reporting a child's change, check it against your task: yours or its own?",
 		"- After accepting changes, commit with git_commit.",
 	].join("\n");

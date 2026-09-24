@@ -6,7 +6,7 @@
  * run in-process and end with Root.
  */
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import {
 	SUBAGENT_DELEGATION_CANCEL_EVENT,
@@ -140,6 +140,153 @@ export interface LastActivity {
 
 const MAX_RECENT_OUTPUT_CHARS = 1_500;
 
+const TRANSCRIPT_TAIL_BYTES = 8 * 1024 * 1024;
+/** Room for ~12 tool calls with full-command previews (om09 run4: the passing check was 11 calls back). */
+export const MAX_TAIL_CALLS_CHARS = 6_500;
+
+function collapseWs(text: string): string {
+	return text.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * One short line of tool args, clipped to 120 chars: the parsed argsPayload
+ * (command, path, or first string field) first, since pi-subagents' argsPreview
+ * is already cut to ~60 chars; argsPreview only as fallback.
+ */
+function transcriptArgsPreview(record: Record<string, unknown>): string {
+	const clip120 = (text: string) => (text.length > 120 ? `${text.slice(0, 119)}…` : text);
+	if (typeof record.argsPayload === "string") {
+		try {
+			const args = JSON.parse(record.argsPayload) as unknown;
+			if (args && typeof args === "object") {
+				const fields = args as Record<string, unknown>;
+				const pick = [fields.command, fields.path, ...Object.values(fields)].find((v) => typeof v === "string" && v.trim());
+				if (typeof pick === "string") return clip120(collapseWs(pick));
+			}
+		} catch { /* fall back to argsPreview */ }
+	}
+	return typeof record.argsPreview === "string" ? clip120(collapseWs(record.argsPreview)) : "";
+}
+
+/** One readable result line: newlines become " | ", long text keeps head 120 + tail 220. */
+function transcriptResultExcerpt(text: string): string {
+	// eslint-disable-next-line no-control-regex -- strip ANSI colour codes from tool output
+	const plain = text.replace(/\x1b\[[0-9;]*[A-Za-z]|\x1b\([A-Z]/g, "");
+	const flat = plain.replace(/\s*\n\s*/g, " | ").replace(/\s+/g, " ").trim();
+	return flat.length <= 340 ? flat : `${flat.slice(0, 120)} … ${flat.slice(-220)}`;
+}
+
+/** Offset `+mm:ss` from the transcript's first timestamp. */
+function transcriptOffset(ts: number, base: number): string {
+	const s = Math.max(0, Math.floor((ts - base) / 1000));
+	return `+${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/**
+ * Compact tail of a child's JSONL artifact transcript for a run that did not
+ * finish: slow tools, the last tool calls with offsets, durations and result
+ * excerpts, and the last assistant text. Malformed lines are skipped;
+ * undefined when nothing is parseable.
+ */
+export function summarizeTranscript(jsonlText: string): string | undefined {
+	interface Call {
+		startTs: number;
+		tool: string;
+		args: string;
+		endTs?: number;
+		isError?: boolean;
+		result?: string;
+	}
+	const calls: Call[] = [];
+	const byId = new Map<string, Call>();
+	let firstTs: number | undefined;
+	let lastTs: number | undefined;
+	let lastText: string | undefined;
+	for (const line of jsonlText.split("\n")) {
+		if (!line.trim()) continue;
+		let record: Record<string, unknown>;
+		try { record = JSON.parse(line); } catch { continue; }
+		if (!record || typeof record !== "object") continue;
+		const ts = typeof record.ts === "number" && Number.isFinite(record.ts) ? record.ts : undefined;
+		if (ts !== undefined) { firstTs ??= ts; lastTs = ts; }
+		const id = typeof record.toolCallId === "string" ? record.toolCallId : undefined;
+		if (record.recordType === "tool_start" && ts !== undefined) {
+			const call: Call = { startTs: ts, tool: typeof record.toolName === "string" ? record.toolName : "tool", args: transcriptArgsPreview(record) };
+			calls.push(call);
+			if (id) byId.set(id, call);
+		} else if (record.recordType === "tool_end" && id) {
+			const call = byId.get(id);
+			if (call && ts !== undefined) { call.endTs = ts; call.isError = call.isError || record.isError === true; }
+		} else if (record.recordType === "message" && record.role === "toolResult" && id) {
+			const call = byId.get(id);
+			if (call) {
+				if (typeof record.text === "string" && record.text) call.result = record.text;
+				if (record.isError === true) call.isError = true;
+			}
+		} else if (record.recordType === "message" && record.role === "assistant") {
+			const content = (record.message as { content?: unknown } | undefined)?.content;
+			const parts = typeof content === "string" ? [content]
+				: Array.isArray(content) ? content.flatMap((part) => {
+					const item = part as { type?: unknown; text?: unknown } | null;
+					return item && typeof item === "object" && item.type === "text" && typeof item.text === "string" ? [item.text] : [];
+				}) : [];
+			const text = parts.join(" ").trim();
+			if (text) lastText = text;
+		}
+	}
+	if (calls.length === 0 && !lastText) return undefined;
+	const base = firstTs ?? 0;
+	const ref = lastTs ?? base;
+	const slow: Array<{ ms: number; line: string }> = [];
+	const entries: string[] = [];
+	for (const call of calls) {
+		const running = call.endTs === undefined;
+		const end = call.endTs ?? ref;
+		const ms = Math.max(0, end - call.startTs);
+		const dur = running ? `running when stopped, ${Math.round(ms / 1000)}s` : `${Math.round(ms / 1000)}s`;
+		const err = call.isError ? " ERROR" : "";
+		const head = `- [${transcriptOffset(call.startTs, base)}] ${call.tool} ${dur}${err}: ${call.args}`;
+		const excerpt = call.result ? transcriptResultExcerpt(call.result) : "";
+		entries.push(excerpt ? `${head}\n    result: ${excerpt}` : head);
+		if (ms >= 60_000) slow.push({ ms, line: `- ${call.tool} ${dur}${err}: ${call.args}` });
+	}
+	// Newest 12 calls; the section stays <=MAX_TAIL_CALLS_CHARS, dropping the oldest entries first.
+	let kept = entries.slice(-12);
+	while (kept.length > 1 && kept.join("\n").length > MAX_TAIL_CALLS_CHARS) kept.shift();
+	slow.sort((a, b) => b.ms - a.ms);
+	const out = ["Transcript tail (child did not finish; newest last):"];
+	if (slow.length) out.push("Slow tools (>=60s):", ...slow.slice(0, 3).map((s) => s.line));
+	if (kept.length) out.push("Last tool calls:", ...kept);
+	if (lastText) {
+		const text = collapseWs(lastText);
+		out.push(`Last assistant text: ${text.length > 500 ? `${text.slice(0, 499)}…` : text}`);
+	}
+	return out.length > 1 ? out.join("\n") : undefined;
+}
+
+/**
+ * Read a child's transcript for summarizing. Over 8 MB reads only the last
+ * 8 MB and drops the first partial line. Missing/unreadable -> undefined.
+ */
+function readTranscriptTail(path: string): string | undefined {
+	try {
+		const size = statSync(path).size;
+		if (size <= TRANSCRIPT_TAIL_BYTES) return readFileSync(path, "utf8");
+		const fd = openSync(path, "r");
+		try {
+			const buf = Buffer.alloc(TRANSCRIPT_TAIL_BYTES);
+			const read = readSync(fd, buf, 0, TRANSCRIPT_TAIL_BYTES, size - TRANSCRIPT_TAIL_BYTES);
+			const chunk = buf.toString("utf8", 0, read);
+			const nl = chunk.indexOf("\n");
+			return nl === -1 ? undefined : chunk.slice(nl + 1);
+		} finally {
+			closeSync(fd);
+		}
+	} catch {
+		return undefined;
+	}
+}
+
 /**
  * What a child that did not complete left behind, for Root.
  *
@@ -159,7 +306,7 @@ export function recoverPartial(
 	agent: string,
 	sessionFile: string | undefined,
 	last: LastActivity = {},
-): { text?: string; lines: string[] } {
+): { text?: string; tail?: string; lines: string[] } {
 	const lines: string[] = [];
 	const runId = response.runId ?? last.runId;
 	if (runId) lines.push(`Run id: ${runId}`);
@@ -177,7 +324,9 @@ export function recoverPartial(
 		try {
 			const text = readFileSync(`${base}_output.md`, "utf8");
 			lines.push(`Transcript: ${base}_transcript.jsonl`);
-			return { text: text.trim() ? text : recent, lines };
+			const jsonl = readTranscriptTail(`${base}_transcript.jsonl`);
+			const tail = jsonl ? summarizeTranscript(jsonl) : undefined;
+			return { text: text.trim() ? text : recent, tail, lines };
 		} catch { /* fall through */ }
 	}
 	lines.push(`artifacts not found at the default location (pi-subagents artifactDir may be temp/project); runId=${runId}`);
@@ -291,12 +440,15 @@ export async function runDelegation(
 	if (response.error) lines.push(`Error: ${clip(response.error, 1_000)}`);
 	let childText = response.result?.kind === "text" ? response.result.text
 		: response.result ? JSON.stringify(response.result.value) : "";
+	let tail: string | undefined;
 	if (response.status !== "completed") {
 		const recovered = recoverPartial(response, response.agent ?? profile.agent, deps.sessionFile, terminal.last);
 		lines.push(...recovered.lines);
 		if (!childText.trim() && recovered.text) childText = recovered.text;
+		tail = recovered.tail;
 	}
 	lines.push("", "Child report:", childText.trim() ? clipChildText(childText.trim()) : "(empty)");
+	if (tail) lines.push("", tail);
 	if (role !== "reviewer") lines.push("", await summarizeWork(deps.git, cwd, base).catch((e) => `Workspace changes: git failed (${String(e)})`));
 	return {
 		ok: response.status === "completed",

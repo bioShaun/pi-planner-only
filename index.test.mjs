@@ -61,7 +61,7 @@ try {
 	assert.match(plannerPrompt(false), /A child has 10 minutes\. Do not delegate work that needs longer/);
 	assert.match(plannerPrompt(false, loadLimits({ PI_PLANNER_ONLY_TIMEOUT_MS: "300000" })), /A child has 5 minutes\./);
 	assert.match(plannerPrompt(false), /pass `cwd` to delegate, git_audit, and git_commit/);
-	assert.match(plannerPrompt(false), /timed-out child's result ends with its last tool results; reuse them/);
+	assert.match(plannerPrompt(false), /timed-out child's result includes its last tool results; reuse them/);
 	assert.match(plannerPrompt(false), /Before reverting or reporting a child's change, check it against your task/);
 	process.env.PI_PLANNER_ONLY_TIMEOUT_MS = "300000";
 	assert.match((await h.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, h.ctx)).systemPrompt, /A child has 5 minutes\./);
