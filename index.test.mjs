@@ -28,13 +28,16 @@ function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async 
 	plannerOnly(pi);
 	const notes = [];
 	const statuses = [];
+	const statusColors = [];
+	const sentMessages = [];
 	const ctx = {
 		cwd: "/w",
 		hasUI: true,
 		sessionManager: { getSessionId: () => "session-1" },
-		ui: { setStatus: (k, v) => statuses.push(v), notify: (m) => notes.push(m), theme: { fg: (_c, s) => s } },
+		ui: { setStatus: (k, v) => statuses.push(v), notify: (m) => notes.push(m), theme: { fg: (c, s) => { statusColors.push(c); return s; } } },
 	};
-	return { pi, tools, handlers, commands, events, ctx, notes, statuses, active: () => active };
+	pi.sendMessage = (...args) => sentMessages.push(args);
+	return { pi, tools, handlers, commands, events, ctx, notes, statuses, statusColors, sentMessages, active: () => active };
 }
 
 try {
@@ -63,6 +66,11 @@ try {
 	assert.match(plannerPrompt(false), /pass `cwd` to delegate, git_audit, and git_commit/);
 	assert.match(plannerPrompt(false), /timed-out child's result includes its last tool results; reuse them/);
 	assert.match(plannerPrompt(false), /Before reverting or reporting a child's change, check it against your task/);
+	assert.match(plannerPrompt(false), /explorer.*reading-heavy.*logs\/transcripts.*only its findings enter your context/);
+	assert.match(plannerPrompt(false), /reviewer.*no shell.*uncommitted changes only.*before git_commit/);
+	assert.match(plannerPrompt(false), /fails or times out.*narrower task.*report\/last tool results before doing the work yourself/);
+	assert.match(h.tools.get("delegate").parameters.properties.role.description, /logs, or transcripts and return findings/);
+	assert.match(h.tools.get("delegate").parameters.properties.role.description, /no shell, sees files and uncommitted changes \(review before committing\)/);
 	process.env.PI_PLANNER_ONLY_TIMEOUT_MS = "300000";
 	assert.match((await h.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, h.ctx)).systemPrompt, /A child has 5 minutes\./);
 	delete process.env.PI_PLANNER_ONLY_TIMEOUT_MS;
@@ -102,6 +110,46 @@ try {
 	const result = await h.tools.get("delegate").execute("call-1", { role: "worker", task: "t", cwd: "sub" }, undefined, undefined, h.ctx);
 	assert.match(result.content[0].text, /Child report:\ndone/);
 	assert.equal(result.details.status, "completed");
+	const hc = fakePi();
+	await hc.handlers.get("session_start")({}, hc.ctx);
+	assert.equal(rootUsageOf({ role: "assistant", usage: { input: 5, output: "x", cacheRead: 7, cacheWrite: 3 } }).context, 15);
+	const largeContext = { message: { role: "assistant", usage: { input: 0, output: 0, cacheRead: 200_000, cacheWrite: 0, cost: { total: 0 } } } };
+	await hc.handlers.get("message_end")(largeContext, hc.ctx);
+	assert.equal(hc.sentMessages.length, 1);
+	assert.equal(hc.sentMessages[0][0].customType, "planner-only-context");
+	assert.equal(hc.sentMessages[0][1].deliverAs, "nextTurn");
+	assert.match(hc.sentMessages[0][0].content, /about 200k tokens/);
+	assert.match(hc.sentMessages[0][0].content, /\/compact/);
+	assert.match(hc.sentMessages[0][0].content, /new session/);
+	await hc.handlers.get("message_end")(largeContext, hc.ctx);
+	assert.equal(hc.sentMessages.length, 1);
+	await hc.commands.get("planner-only").handler("status", hc.ctx);
+	assert.match(hc.notes.at(-1), /ctx 200k/);
+	assert.equal(hc.statusColors.at(-1), "error");
+	assert.doesNotMatch((await hc.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, hc.ctx)).systemPrompt, /Root context is about/);
+	await hc.handlers.get("session_compact")({}, hc.ctx);
+	await hc.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 10_000, output: 0, cacheRead: 0, cacheWrite: 0 } } }, hc.ctx);
+	await hc.handlers.get("message_end")(largeContext, hc.ctx);
+	assert.equal(hc.sentMessages.length, 2);
+	const preferred = fakePi();
+	await preferred.handlers.get("session_start")({}, preferred.ctx);
+	preferred.ctx.getContextUsage = () => ({ tokens: 180_000 });
+	await preferred.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 10_000, output: 0, cacheRead: 0, cacheWrite: 0 } } }, preferred.ctx);
+	await preferred.commands.get("planner-only").handler("status", preferred.ctx);
+	assert.match(preferred.notes.at(-1), /ctx 180k/);
+	assert.equal(preferred.sentMessages.length, 1);
+	const threshold = fakePi();
+	await threshold.handlers.get("session_start")({}, threshold.ctx);
+	process.env.PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS = "300000";
+	await threshold.handlers.get("message_end")(largeContext, threshold.ctx);
+	assert.equal(threshold.sentMessages.length, 0);
+	delete process.env.PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS;
+	process.env.PI_PLANNER_ONLY = "0";
+	const disabled = fakePi();
+	await disabled.handlers.get("session_start")({}, disabled.ctx);
+	await disabled.handlers.get("message_end")(largeContext, disabled.ctx);
+	assert.equal(disabled.sentMessages.length, 0);
+	delete process.env.PI_PLANNER_ONLY;
 	await h.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 10_000, output: 2_000, cacheRead: 0, cacheWrite: 0, cost: { total: 0.03 } } } }, h.ctx);
 	await h.handlers.get("message_end")({ message: { role: "user", content: "hi" } }, h.ctx);
 	await h.commands.get("planner-only").handler("status", h.ctx);
@@ -146,6 +194,7 @@ try {
 	}
 
 	assert.equal(rootUsageOf({ role: "assistant", usage: { input: 5, output: "x" } }).tokens, 5);
+	assert.equal(rootUsageOf({ role: "assistant", usage: { input: 5, output: "x" } }).context, 5);
 	assert.equal(rootUsageOf(undefined), undefined);
 
 	// HIDDEN_HOST_TOOLS: while enabled, subagents_enable/subagent are stripped.

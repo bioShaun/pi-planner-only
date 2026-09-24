@@ -50,13 +50,13 @@ export function plannerPrompt(strict: boolean, limits: DelegationLimits = DEFAUL
 		strict
 			? "- Strict mode: you cannot edit, write, or run bash yourself. Delegate implementation to role \"worker\" and check runs to \"validator\"."
 			: "- Do small things yourself (about ≤2 files or ≤10 minutes of work). Delegate larger implementation to role \"worker\".",
-		"- Other roles: \"explorer\" for broad code searches, \"validator\" to run tests/checks, \"reviewer\" for an independent read-only review.",
-		"- Children do not see this conversation. Put the goal, relevant paths, constraints, and how to verify into `task`.",
-		`- A child has ${timeoutMinutes(limits)} minutes. Do not delegate work that needs longer (full pipeline runs, long waits); split it.`,
-		"- When the target repository is not the session cwd, pass `cwd` to delegate, git_audit, and git_commit.",
-		"- Judge results by the returned diff summary and check output, not by the child's claims. Inspect the actual changes (read, git_audit) before accepting.",
-		"- To fix a child's work, delegate again with its previous report and the specific corrections.",
-		"- A timed-out child's result includes its last tool results; reuse them instead of redoing its checks.",
+		"- Other roles: \"explorer\" for broad code searches and reading-heavy work (logs/transcripts); only its findings enter your context. \"validator\" runs checks; \"reviewer\" is read-only, has no shell, and sees files plus uncommitted changes only, so run it before git_commit.",
+		"- Children cannot see this conversation; give `task` the goal, paths, constraints, and verification.",
+		`- A child has ${timeoutMinutes(limits)} minutes. Do not delegate work that needs longer; split it.`,
+		"- For another repository, pass `cwd` to delegate, git_audit, and git_commit.",
+		"- Check the diff and command output yourself before accepting; do not rely on child claims.",
+		"- If a child fails or times out, delegate again with a narrower task and its report/last tool results before doing the work yourself.",
+		"- A timed-out child's result includes its last tool results; reuse them.",
 		"- Before reverting or reporting a child's change, check it against your task: yours or its own?",
 		"- After accepting changes, commit with git_commit.",
 	].join("\n");
@@ -75,13 +75,13 @@ interface CostTotals {
 const emptyTotals = (): CostTotals => ({ rootTokens: 0, rootCost: 0, childTokens: 0, childCost: 0, children: 0, failed: 0 });
 
 /** Tokens and cost from a pi-ai assistant message usage, tolerating missing fields. */
-export function rootUsageOf(message: unknown): { tokens: number; cost: number } | undefined {
+export function rootUsageOf(message: unknown): { tokens: number; context: number; cost: number } | undefined {
 	const m = message as { role?: string; usage?: Record<string, unknown> } | undefined;
 	if (m?.role !== "assistant" || !m.usage) return undefined;
 	const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 	const u = m.usage;
 	const cost = u.cost && typeof u.cost === "object" ? n((u.cost as Record<string, unknown>).total) : 0;
-	return { tokens: n(u.input) + n(u.output) + n(u.cacheRead) + n(u.cacheWrite), cost };
+	return { tokens: n(u.input) + n(u.output) + n(u.cacheRead) + n(u.cacheWrite), context: n(u.input) + n(u.cacheRead) + n(u.cacheWrite), cost };
 }
 
 /**
@@ -110,12 +110,31 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	};
 	const busy = new Set<string>();
 	let totals = emptyTotals();
+	let rootContext: number | undefined;
+	let contextWarned = false;
 	let hidLoader = false;
+	const contextWarnThreshold = () => {
+		const value = Number(process.env.PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS);
+		return Number.isInteger(value) && value > 0 ? value : 150_000;
+	};
+	const sendContextWarning = (tokens: number) => {
+		if (!isEnabled() || contextWarned || tokens <= contextWarnThreshold()) return;
+		contextWarned = true;
+		try {
+			pi.sendMessage?.({
+				customType: "planner-only-context",
+				content: `[planner-only] Root context is about ${formatTokens(tokens)} tokens (warning threshold ${formatTokens(contextWarnThreshold())}); every turn re-reads it. From now on delegate reading-heavy and multi-file work. At the next task boundary: if the next step is a new task, write the brief (goal, decisions, constraints, relevant files, open items) to a file and ask the user to start a new session from it (/new, or /handoff if installed); if still mid-task and the context is mostly stale exploration, ask the user to run /compact with what to keep.`,
+				display: true,
+			}, { deliverAs: "nextTurn" });
+		} catch { /* Warnings must never interrupt the host handler. */ }
+	};
+	const statusTotals = () => `${formatTotals(totals)}${rootContext && rootContext > 0 ? ` · ctx ${formatTokens(rootContext)}` : ""}`;
 
 	const updateStatus = (ctx: ExtensionContext) => {
 		if (!ctx.hasUI) return;
-		const label = isEnabled() ? `planner-only${isStrict() ? " (strict)" : ""} · ${formatTotals(totals)}` : "planner-only: off";
-		ctx.ui.setStatus(STATUS_KEY, ctx.ui.theme.fg(isEnabled() ? "warning" : "muted", label));
+		const highContext = rootContext !== undefined && rootContext > contextWarnThreshold();
+		const label = isEnabled() ? `planner-only${isStrict() ? " (strict)" : ""} · ${statusTotals()}` : "planner-only: off";
+		ctx.ui.setStatus(STATUS_KEY, ctx.ui.theme.fg(!isEnabled() ? "muted" : highContext ? "error" : "warning", label));
 	};
 
 	const syncTools = () => {
@@ -141,7 +160,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		promptSnippet: "delegate: hand a self-contained task to a cheaper child agent (worker, explorer, validator, reviewer)",
 		parameters: Type.Object({
 			role: Type.Union(ROLES.map((r) => Type.Literal(r)), {
-				description: "worker: implement; explorer: search/read code; validator: run tests/checks; reviewer: independent read-only review.",
+				description: "worker: implement; explorer: search/read code, logs, or transcripts and return findings; validator: run tests/checks; reviewer: independent read-only review; no shell, sees files and uncommitted changes (review before committing).",
 			}),
 			task: Type.String({
 				minLength: 1,
@@ -228,12 +247,14 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			}
 			updateStatus(ctx);
 			const env = process.env.PI_PLANNER_ONLY ? ` (PI_PLANNER_ONLY=${process.env.PI_PLANNER_ONLY} overrides the marker)` : "";
-			ctx.ui.notify(`planner-only ${isEnabled() ? "on" : "off"}${isStrict() ? ", strict" : ""}${env}\n${formatTotals(totals)}`, "info");
+			ctx.ui.notify(`planner-only ${isEnabled() ? "on" : "off"}${isStrict() ? ", strict" : ""}${env}\n${statusTotals()}`, "info");
 		},
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
 		totals = emptyTotals();
+		rootContext = undefined;
+		contextWarned = false;
 		syncTools();
 		updateStatus(ctx);
 	});
@@ -261,9 +282,21 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		return { block: true, reason: `planner-only strict mode: Root may not use ${event.toolName}. Delegate it (role "worker" to change files, "validator" to run commands).` };
 	});
 
+	pi.on("session_compact", async (_event, ctx) => {
+		rootContext = undefined;
+		contextWarned = false;
+		updateStatus(ctx);
+	});
+
 	pi.on("message_end", async (event, ctx) => {
 		const usage = rootUsageOf(event.message);
 		if (!usage) return;
+		const contextUsage = (ctx as ExtensionContext & { getContextUsage?: () => { tokens?: unknown } }).getContextUsage?.()?.tokens;
+		rootContext = typeof contextUsage === "number" && Number.isFinite(contextUsage) && contextUsage > 0
+			? contextUsage
+			: usage.context;
+		if (rootContext <= contextWarnThreshold()) contextWarned = false;
+		sendContextWarning(rootContext);
 		totals.rootTokens += usage.tokens;
 		totals.rootCost += usage.cost;
 		updateStatus(ctx);

@@ -26,6 +26,8 @@ Lite rewrite (`docs/pi-planner-only-subtraction-plan.md`). The 0.8.0 code is at 
   - The Root prompt tells Root to reuse a timed-out child's results, and to check a child's change against its own task before saying who made it.
   - The status line uses k/M/B units, shows Root's share of both tokens and cost, and counts children that did not complete: `root 4.17M $3.854 · children(3, 1 failed) 2.82M $0.103 · root share 60% tok · 97% $`.
   - `git_commit` accepts messages up to 2000 characters (was 500).
+  - The status line shows Root's current context (`ctx 245k`) and turns red above `PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS` (default 150000). On crossing it, Root gets one message (appended, so the cached prompt prefix is kept): delegate reading-heavy work; at a new task write a brief and ask for a new session (`/new` or `/handoff`); mid-task with stale exploration ask for `/compact <what to keep>`. It re-arms after compaction.
+  - The prompt tells Root that the reviewer has no shell and sees only uncommitted changes (review before `git_commit`), that reading-heavy work such as log analysis goes to explorer, and to re-delegate a narrower task after a child fails before taking it over.
 - Large-task measurement (`docs/lite-measurement-2026-09-24.md`): 12/12 runs pass; lite costs 0.48 of direct at opus-priced Root, 0.46 at astra, 0.52 at gpt-6-sol, with luna children.
 
 ## 0.8.0 - 2026-09-18

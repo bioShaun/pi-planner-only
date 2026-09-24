@@ -81,6 +81,7 @@ Restart Pi or run `/reload`. Requires pi-subagents `>=0.70 <1`.
 | `PI_PLANNER_ONLY_MAX_TOKENS` | Cancel a child whose reported tokens exceed this (default 1500000). The count is the child's cumulative input+output tokens from its progress events, excluding cache reads. |
 | `PI_PLANNER_ONLY_START_TIMEOUT_MS` | Give up if the child has not started (default 30000). |
 | `PI_PLANNER_ONLY_CANCEL_GRACE_MS` | Wait for a cancel to be confirmed (default 5000). |
+| `PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS` | Root context size that turns the status red and sends Root one message suggesting delegation, a new session, or `/compact` (default 150000). |
 
 When disabled, the three tools are removed from the active set and no prompt is
 added. Child processes (`PI_SUBAGENT_CHILD=1`) never load the extension.
