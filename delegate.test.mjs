@@ -136,6 +136,22 @@ const respond = (bus, req, over = {}) =>
 			assert.match(out.text, /runId=run-7/);
 			assert.match(out.text, /Child report:\n\(recent output from the last progress update\)\nplanning the edit\ncalling edit/);
 		}
+		// F4: a timeout kills bash, so the last update has no currentTool. The newest
+		// ended tool (recentTools) is reported; with no recentTools the previous tool is kept.
+		for (const [final, want] of [
+			[{ recentTools: [{ tool: "read", args: "a" }, { tool: "bash", args: "sleep 10" }] }, /Last activity: bash sleep 10\n/],
+			[{}, /Last activity: bash for i in 1 2\n/],
+		]) {
+			const bus = fakeBus();
+			bus.on(REQUEST, (req) => {
+				const id = { requestId: req.requestId, nodeId: req.nodeId };
+				bus.emit(UPDATE, { ...id, runId: "run-9", currentTool: "bash", currentToolArgs: "for i in 1 2" });
+				bus.emit(UPDATE, { ...id, toolCount: 3, ...final });
+				respond(bus, req, { status: "timed_out", result: undefined });
+			});
+			const out = await runDelegation({ ...deps(bus), sessionFile }, { role: "worker", task: "t", cwd: "/w" });
+			assert.match(out.text, want);
+		}
 		// With the artifact present, the artifact text wins over recent output; completed runs ignore both.
 		writeFileSync(join(artifacts, "run-7_worker_0_output.md"), "ARTIFACT TEXT");
 		for (const status of ["timed_out", "completed"]) {

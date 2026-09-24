@@ -352,10 +352,16 @@ function launch(
 			state.started = true;
 			// Updates are replacement snapshots, not deltas: keep the latest fields.
 			const recentOutput = data.recentOutputLines?.length ? data.recentOutputLines.join("\n") : data.recentOutput;
+			// A tool_execution_end update (also sent when a timeout kills the tool)
+			// clears currentTool; fall back to the newest ended tool, then the previous one.
+			const ended = data.recentTools?.at(-1);
+			const tool = data.currentTool
+				? { currentTool: data.currentTool, currentToolArgs: data.currentToolArgs }
+				: ended ? { currentTool: ended.tool, currentToolArgs: ended.args }
+				: { currentTool: state.last.currentTool, currentToolArgs: state.last.currentToolArgs };
 			state.last = {
 				runId: data.runId ?? state.last.runId,
-				currentTool: data.currentTool,
-				currentToolArgs: data.currentToolArgs,
+				...tool,
 				recentOutput: recentOutput ?? state.last.recentOutput,
 			};
 			const tokens = data.tokens ?? 0;

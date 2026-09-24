@@ -33,6 +33,8 @@ export interface SubagentDelegationUpdate extends SubagentDelegationIdentity {
 	currentToolArgs?: string;
 	recentOutput?: string;
 	recentOutputLines?: string[];
+	/** Recently ended tools, oldest first. */
+	recentTools?: Array<{ tool: string; args: string }>;
 	model?: string;
 	toolCount?: number;
 	durationMs?: number;
