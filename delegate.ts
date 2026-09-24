@@ -176,6 +176,12 @@ function transcriptResultExcerpt(text: string): string {
 	return flat.length <= 340 ? flat : `${flat.slice(0, 120)} … ${flat.slice(-220)}`;
 }
 
+/** 45s, 8m21s */
+function formatSeconds(ms: number): string {
+	const s = Math.round(ms / 1000);
+	return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
+}
+
 /** Offset `+mm:ss` from the transcript's first timestamp. */
 function transcriptOffset(ts: number, base: number): string {
 	const s = Math.max(0, Math.floor((ts - base) / 1000));
@@ -184,8 +190,9 @@ function transcriptOffset(ts: number, base: number): string {
 
 /**
  * Compact tail of a child's JSONL artifact transcript for a run that did not
- * finish: slow tools, the last tool calls with offsets, durations and result
- * excerpts, and the last assistant text. Malformed lines are skipped;
+ * finish: slow tools, slow model turns (no tool running, e.g. a long thinking
+ * turn), the last tool calls with offsets, durations and result excerpts, and
+ * the last assistant text. Malformed lines are skipped;
  * undefined when nothing is parseable.
  */
 export function summarizeTranscript(jsonlText: string): string | undefined {
@@ -202,21 +209,32 @@ export function summarizeTranscript(jsonlText: string): string | undefined {
 	let firstTs: number | undefined;
 	let lastTs: number | undefined;
 	let lastText: string | undefined;
+	// Model time: gaps with no tool running, from the last tool end (or the start) to the next tool start.
+	let idleSince: number | undefined;
+	let running = 0;
+	const turns: Array<{ ms: number; at: number; next?: string }> = [];
 	for (const line of jsonlText.split("\n")) {
 		if (!line.trim()) continue;
 		let record: Record<string, unknown>;
 		try { record = JSON.parse(line); } catch { continue; }
 		if (!record || typeof record !== "object") continue;
 		const ts = typeof record.ts === "number" && Number.isFinite(record.ts) ? record.ts : undefined;
-		if (ts !== undefined) { firstTs ??= ts; lastTs = ts; }
+		if (ts !== undefined) { firstTs ??= ts; lastTs = ts; idleSince ??= ts; }
 		const id = typeof record.toolCallId === "string" ? record.toolCallId : undefined;
 		if (record.recordType === "tool_start" && ts !== undefined) {
 			const call: Call = { startTs: ts, tool: typeof record.toolName === "string" ? record.toolName : "tool", args: transcriptArgsPreview(record) };
 			calls.push(call);
 			if (id) byId.set(id, call);
+			if (running === 0 && idleSince !== undefined) turns.push({ ms: ts - idleSince, at: idleSince, next: `${call.tool}: ${call.args}` });
+			running++;
 		} else if (record.recordType === "tool_end" && id) {
 			const call = byId.get(id);
-			if (call && ts !== undefined) { call.endTs = ts; call.isError = call.isError || record.isError === true; }
+			if (call && ts !== undefined && call.endTs === undefined) {
+				call.endTs = ts;
+				call.isError = call.isError || record.isError === true;
+				running = Math.max(0, running - 1);
+				if (running === 0) idleSince = ts;
+			}
 		} else if (record.recordType === "message" && record.role === "toolResult" && id) {
 			const call = byId.get(id);
 			if (call) {
@@ -237,6 +255,9 @@ export function summarizeTranscript(jsonlText: string): string | undefined {
 	if (calls.length === 0 && !lastText) return undefined;
 	const base = firstTs ?? 0;
 	const ref = lastTs ?? base;
+	if (running === 0 && idleSince !== undefined && lastTs !== undefined) turns.push({ ms: lastTs - idleSince, at: idleSince });
+	const slowTurns = turns.filter((t) => t.ms >= 60_000).sort((a, b) => b.ms - a.ms).slice(0, 3)
+		.map((t) => `- [${transcriptOffset(t.at, base)}] ${formatSeconds(t.ms)}, ${t.next ? `then ${t.next}` : "still in this turn when stopped"}`);
 	const slow: Array<{ ms: number; line: string }> = [];
 	const entries: string[] = [];
 	for (const call of calls) {
@@ -256,6 +277,7 @@ export function summarizeTranscript(jsonlText: string): string | undefined {
 	slow.sort((a, b) => b.ms - a.ms);
 	const out = ["Transcript tail (child did not finish; newest last):"];
 	if (slow.length) out.push("Slow tools (>=60s):", ...slow.slice(0, 3).map((s) => s.line));
+	if (slowTurns.length) out.push("Slow model turns (>=60s with no tool running):", ...slowTurns);
 	if (kept.length) out.push("Last tool calls:", ...kept);
 	if (lastText) {
 		const text = collapseWs(lastText);

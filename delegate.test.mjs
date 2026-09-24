@@ -253,6 +253,19 @@ const respond = (bus, req, over = {}) =>
 	assert.match(both, /result: ERROR: no java$/m);
 	assert.ok(!both.includes("\u001b"), "no escape characters");
 
+	// Slow model turns: a long gap with no tool running (om09-style 8-minute thinking turn), and one still open at the stop.
+	const thinking = summarizeTranscript([
+		{ recordType: "tool_start", ts: 0, toolCallId: "a", toolName: "read", argsPayload: JSON.stringify({ path: "git.ts" }) },
+		{ recordType: "tool_end", ts: 1_000, toolCallId: "a", toolName: "read" },
+		{ recordType: "tool_start", ts: 502_000, toolCallId: "b", toolName: "bash", argsPayload: JSON.stringify({ command: "grep -n summarizeWork git.ts" }) },
+		{ recordType: "tool_start", ts: 502_100, toolCallId: "c", toolName: "bash", argsPayload: JSON.stringify({ command: "parallel call" }) },
+		{ recordType: "tool_end", ts: 503_000, toolCallId: "b", toolName: "bash" },
+		{ recordType: "tool_end", ts: 504_000, toolCallId: "c", toolName: "bash" },
+		{ recordType: "message", role: "assistant", ts: 600_000, message: { content: [] } },
+	].map((r) => JSON.stringify(r)).join("\n"));
+	assert.match(thinking, /Slow model turns \(>=60s with no tool running\):\n- \[\+00:01\] 8m21s, then bash: grep -n summarizeWork git\.ts\n- \[\+08:24\] 1m36s, still in this turn when stopped/);
+	assert.doesNotMatch(thinking, /then bash: parallel call/, "a parallel start is not a model turn");
+
 	// Empty or unparseable input -> undefined, never a throw.
 	assert.equal(summarizeTranscript(""), undefined);
 	assert.equal(summarizeTranscript("not json\n{\"broken\": \n\ngarbage"), undefined);
