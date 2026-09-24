@@ -1,6 +1,6 @@
 # The Root/child contract is typed data, never prompt text
 
-Status: accepted 2026-09-16 (spike `.scratch/typed-delegation/issues/02`, `03`)
+Status: Superseded 2026-09-24 by the lite rewrite (`docs/pi-planner-only-subtraction-plan.md`); kept for history. Code: tag `legacy-full-audit`.
 
 Root delegates to a child through a tool the plugin registers itself, with a
 TypeBox schema for the TaskSpec; the child returns a WorkerReport through

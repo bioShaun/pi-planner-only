@@ -1,5 +1,7 @@
 # Durable Request admission is separate from Task lifecycle
 
+Status: Superseded 2026-09-24 by the lite rewrite (`docs/pi-planner-only-subtraction-plan.md`); kept for history. Code: tag `legacy-full-audit`.
+
 Root could avoid Task-local retry limits by changing arguments, creating another Task, or recovering another execution. A Request now owns frozen finite limits, failure chains, and durable closure across those operations; TaskStore continues to own Task lifecycle, the three evidence-revalidation dispatches, and Writer holds. Program-selected correction edges resolve only accepted, same-Task, same-family causal ancestors. Valid reports, unrelated success, and different wording are insufficient evidence of progress.
 
 A child launch consumes a durable, identity-bound claim immediately before transport emission. Local revalidation is committed after the Request precheck and before its claim, without an asynchronous gap; if a subsequent commit or send fails, committed allowances are conservatively retained. Disk persistence and external transport cannot form one transaction, so committed, observed-emitted, terminal-received, and stop-confirmed are distinct facts. Atomic state replacement uses an exclusive pending marker and stale-owner checks; missing, malformed, conflicting, or interrupted state closes admission. A public session entry for the same (session, workspace) namespace also distinguishes a lost namespace from first installation; an entry written for another workspace of the same session is first contact for this namespace, not a lost record.

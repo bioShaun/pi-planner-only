@@ -1,6 +1,6 @@
 # Clamp ordinary execution wall time to the Request remainder with a provisional reserve
 
-Status: accepted 2026-09-20
+Status: Superseded 2026-09-24 by the lite rewrite (`docs/pi-planner-only-subtraction-plan.md`); kept for history. Code: tag `legacy-full-audit`.
 
 An execution launched late in a Request can advertise more time than the Request permits. We choose automatic clamping with durable attribution and a Root warning, rather than rejecting an otherwise usable execution or merely warning about a bound that cannot be honoured. Ordinary worker, explorer and validator executions, including report-only correction, use a provisional reserve of **60,000 ms**; Reviewer invocations remain bounded by the enclosing Request and can use the remaining review window.
 

@@ -1,6 +1,7 @@
 # ADR-0008: Default execution wall clock is ten minutes; heavy workers get a full explicit envelope
 
 Status: Accepted (operational default; no claim of an empirically optimal threshold)
+Lite (2026-09-24): the ten-minute default is kept (`PI_PLANNER_ONLY_TIMEOUT_MS`, sent to the host as `timeoutMs`); the explicit heavy-worker envelope is gone.
 Date: 2026-09-20
 
 ## Context

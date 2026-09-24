@@ -1,6 +1,6 @@
 # Report-only correction uses a closed report-submission capability
 
-Status: accepted 2026-09-20
+Status: Superseded 2026-09-24 by the lite rewrite (`docs/pi-planner-only-subtraction-plan.md`); kept for history. Code: tag `legacy-full-audit`.
 
 pi-subagents 0.69.0 preserves an empty runtime-agent tool list and dynamically appends its structured result tool. The first real probe (`.scratch/stability-next-20260920/report-only-run-xMGYAr`) disproved the earlier zero-budget design: `hard: 0, block: "*"` blocked both workspace tools and structured output, ending `structured_output_failed`. By operator decision, the Task's single report-only correction now binds a registered `planner-report-only` agent with `tools: []`, inherited context and skills disabled, and only the launcher's structured report submission available; `toolBudget: { hard: 1, block: "*" }` permits that submission and no later call. The immutable execution record persists the exact budget, registration proof, agent binding, and raw public terminal, contributes no new Truth paths, and links to the prior execution whose evidence the repaired declaration describes. Ordinary executions omit this agent and budget; validator/reviewer invocations cannot bypass a pending correction, and another malformed report blocks without dispatch. Version 0.69.0 still exposes neither pre-budget partial grace nor malformed structured-output diagnostics, so transcripts and raw upstream TypeScript remain ineligible substitutes.
 

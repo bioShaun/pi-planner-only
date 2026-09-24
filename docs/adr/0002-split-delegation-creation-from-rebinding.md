@@ -1,6 +1,6 @@
 # Delegation creation and rebinding are separate tools
 
-Status: accepted 2026-09-16 (`.scratch/nx-followups/issues/17`)
+Status: Superseded 2026-09-24 by the lite rewrite (`docs/pi-planner-only-subtraction-plan.md`); kept for history. Code: tag `legacy-full-audit`.
 
 `planner_delegate` is split into two tool surfaces over the same
 `runDelegation` seam:

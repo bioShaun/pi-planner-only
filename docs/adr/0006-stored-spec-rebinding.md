@@ -1,3 +1,5 @@
 # Rebinding uses the stored TaskSpec
 
+Status: Superseded 2026-09-24 by the lite rewrite (`docs/pi-planner-only-subtraction-plan.md`); kept for history. Code: tag `legacy-full-audit`.
+
 `planner_redelegate` accepts a canonical Task id, execution role, optional instructions, envelope and recovery decision; the child receives the original stored TaskSpec. Older callers' repeated definition fields are ignored with diagnostics because reconstructing an invocation spec could silently change scope or validation while the ledger continued to display the original contract. Workspace admission uses the host's current workspace, and the existing creation-only acceptance-mode guard remains explicit. Per-execution instructions and limits may vary without rebinding or mutating the Task's intent.

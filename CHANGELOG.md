@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.0-lite.0 - unreleased
+
+Lite rewrite (`docs/pi-planner-only-subtraction-plan.md`). The 0.8.0 code is at tag `legacy-full-audit`.
+
+- Root tools are now `delegate({role, task, cwd?})`, `git_audit`, and `git_commit`. `planner_delegate`, `planner_redelegate`, `planner_abort`, `planner_tasks`, and `planner_verdict` are removed.
+- Children return plain text. TaskSpec/WorkerReport, the Task ledger, evidence snapshots, review rounds, closeout, request control, the refusal breaker, role-model routing, and the pricing table are removed (about 23k source lines down to about 700).
+- Roles map to builtin pi-subagents agents (`worker`, `scout`, `oracle`, `reviewer`); models come from `subagents.agentOverrides`. The request no longer sends fields that pi-subagents 0.70 rejects.
+- Every delegation returns the host status, actual model, usage, and a Git summary (new commits, diff stat, untracked files).
+- Strict mode (blocking Root's `edit`/`write`/`bash`) is now opt-in with `PI_PLANNER_ONLY_STRICT=1`; the default prompt tells Root to do small tasks itself.
+- Git calls now also disable fsmonitor (`-c core.fsmonitor=false`) and diffs disable textconv.
+- Supported pi-subagents range: `>=0.70 <1`.
+- Child token cap default raised from 200000 to 1500000 (`PI_PLANNER_ONLY_MAX_TOKENS`); the count is the child's cumulative non-cached input+output, and 200k cancelled real workers after about 90 seconds.
+- Large-task measurement (`docs/lite-measurement-2026-09-24.md`): 12/12 runs pass; lite costs 0.48 of direct at opus-priced Root, 0.46 at astra, 0.52 at gpt-6-sol, with luna children.
+
 ## 0.8.0 - 2026-09-18
 
 - **Run identity is Root-stamped (ADR-0004)**: child-facing schema drops `evidence.workerRunId`; Root stamps the launcher terminal's `response.runId` (defaulting to `executionId`) at the admission boundary; child-supplied passthrough values are stripped and disclosed in warnings; incident sentinel values (`planner-scout`, `T-20260918-004`, `not-provided-in-launch-packet`) no longer cause rejection.

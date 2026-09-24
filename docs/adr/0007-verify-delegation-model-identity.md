@@ -1,6 +1,6 @@
 # ADR-0007: Verify operator-selected delegation model identity
 
-Status: Accepted
+Status: Superseded 2026-09-24 by the lite rewrite (`docs/pi-planner-only-subtraction-plan.md`); kept for history. Code: tag `legacy-full-audit`.
 Date: 2026-09-20
 
 ## Context

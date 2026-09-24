@@ -1,94 +1,34 @@
 /**
- * Local copy of the pi-subagents structured-delegation contract.
+ * Local copy of the pi-subagents structured-delegation contract, limited to
+ * the fields this plugin sends and reads.
  *
- * Based on pi-subagents@0.70.0 `src/api/delegation.ts`. The core event
- * names are the established extension-to-extension transport described in
- * that package's docs; the request/response shapes mirror the launcher
- * contract exactly, and `SubagentDelegationUpdate` (the progress payload
- * re-emitted from the child's onUpdate) is likewise verbatim.
- * `IntercomBridgeConfig` is deliberately not copied — the `intercomBridge`
- * field below is typed `unknown` instead.
- *
- * We do not `import "pi-subagents/delegation"`: that package's exports map to
- * raw `.ts` sources, which cannot be type-checked under our flags and cannot
- * be loaded at all by `node --experimental-strip-types` (our test runner).
- * Acceptance diffs the copied event names against the installed package.
+ * Based on pi-subagents@0.70.1 `src/api/delegation.js` and
+ * `src/slash/delegation-request.js`. contract.test.mjs checks the event names
+ * against the installed package.
  */
-
-import type { CloseoutCapabilityAck, CloseoutRequestCapability } from "./closeout-types.ts";
-
-// This is the established extension-to-extension transport. The structured
-// delegation API intentionally reuses it instead of adding a second event
-// protocol. Unstructured legacy direct payloads are rejected.
 export const SUBAGENT_DELEGATION_REQUEST_EVENT = "prompt-template:subagent:request";
 export const SUBAGENT_DELEGATION_STARTED_EVENT = "prompt-template:subagent:started";
 export const SUBAGENT_DELEGATION_UPDATE_EVENT = "prompt-template:subagent:update";
 export const SUBAGENT_DELEGATION_RESPONSE_EVENT = "prompt-template:subagent:response";
 export const SUBAGENT_DELEGATION_CANCEL_EVENT = "prompt-template:subagent:cancel";
-export const SUBAGENT_DELEGATION_FOLLOWUP_EVENT = "prompt-template:subagent:followup";
-export const SUBAGENT_DELEGATION_FOLLOWUP_ACK_EVENT = "prompt-template:subagent:followup-ack";
-export const SUBAGENT_DELEGATION_CLOSEOUT_REGISTRAR_EVENT = "pi-subagents:closeout-registrar:v1";
-export const SUBAGENT_DELEGATION_CLOSEOUT_ACK_EVENT = "pi-subagents:delegation:closeout-ack:v1";
-export type SubagentDelegationCloseoutAck = CloseoutCapabilityAck;
 
-export interface SubagentDelegationToolBudget {
-	soft?: number;
-	hard: number;
-	block?: string[] | "*";
-}
-
-export type SubagentDelegationJsonSchemaObject = Record<string, unknown>;
-
-export type SubagentDelegationThinking = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-
-export type SubagentDelegationResultRequest =
-	| { kind: "text" }
-	| { kind: "structured"; schema: SubagentDelegationJsonSchemaObject };
-
-export interface SubagentDelegationRequest {
+export interface SubagentDelegationIdentity {
 	requestId: string;
 	ownerRunId: string;
 	nodeId: string;
+}
+
+export interface SubagentDelegationRequest extends SubagentDelegationIdentity {
 	agent: string;
 	task: string;
 	context: "fresh" | "fork";
 	cwd: string;
-	model?: string;
-	thinking?: SubagentDelegationThinking;
 	timeoutMs?: number;
-	toolBudget?: SubagentDelegationToolBudget;
-	skill?: string | string[] | boolean;
-	artifacts?: boolean;
-	/** Per-launch bridge config; replaces the global `intercomBridge` config. Pass the same value to preflight to compare digests. */
-	intercomBridge?: unknown;
-	closeout?: CloseoutRequestCapability;
-	result: SubagentDelegationResultRequest;
+	result: { kind: "text" };
 }
 
-export interface SubagentDelegationStarted {
-	requestId: string;
-	ownerRunId: string;
-	nodeId: string;
-}
-
-export interface SubagentDelegationFollowUp extends SubagentDelegationStarted {
-	messageId: string;
-	text: string;
-}
-
-export interface SubagentDelegationFollowUpAck extends SubagentDelegationStarted {
-	messageId: string;
-	status: "queued" | "unavailable" | "gone" | "failed";
-	reason?: string;
-}
-
-export interface SubagentDelegationUpdate extends SubagentDelegationStarted {
-	runId?: string;
+export interface SubagentDelegationUpdate extends SubagentDelegationIdentity {
 	currentTool?: string;
-	currentToolArgs?: string;
-	recentOutput?: string;
-	recentOutputLines?: string[];
-	recentTools?: Array<{ tool: string; args: string }>;
 	model?: string;
 	toolCount?: number;
 	durationMs?: number;
@@ -108,10 +48,6 @@ export type SubagentDelegationStatus =
 	| "unavailable_context"
 	| "duplicate_node";
 
-export type SubagentDelegationValue =
-	| { kind: "text"; text: string }
-	| { kind: "structured"; value: unknown };
-
 export interface SubagentDelegationUsage {
 	input: number;
 	output: number;
@@ -123,28 +59,14 @@ export interface SubagentDelegationUsage {
 	durationMs: number;
 }
 
-export interface SubagentDelegationTerminalResponse extends SubagentDelegationStarted {
-	status: Exclude<SubagentDelegationStatus, "invalid_request">;
-	error?: string;
-	runId?: string;
-	agent?: string;
-	model?: string;
-	thinking?: string;
-	exitCode?: number;
-	launchContractDigest?: string;
-	result?: SubagentDelegationValue;
-	usage?: SubagentDelegationUsage;
-}
-
-/** A malformed structured request can only be correlated by the valid identity fields it supplied. */
-export interface SubagentDelegationInvalidResponse {
+export interface SubagentDelegationResponse {
 	requestId: string;
 	ownerRunId?: string;
 	nodeId?: string;
-	status: "invalid_request";
+	status: SubagentDelegationStatus;
 	error?: string;
+	agent?: string;
+	model?: string;
+	result?: { kind: "text"; text: string } | { kind: "structured"; value: unknown };
+	usage?: SubagentDelegationUsage;
 }
-
-export type SubagentDelegationResponse = SubagentDelegationTerminalResponse | SubagentDelegationInvalidResponse;
-
-export interface SubagentDelegationCancel extends SubagentDelegationStarted {}

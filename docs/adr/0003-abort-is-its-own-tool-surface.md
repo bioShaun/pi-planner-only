@@ -1,6 +1,6 @@
 # Abandoning an abnormal execution is its own tool surface
 
-Status: accepted 2026-09-17 (`.scratch/wrc-incident-followups/issues/02`)
+Status: Superseded 2026-09-24 by the lite rewrite (`docs/pi-planner-only-subtraction-plan.md`); kept for history. Code: tag `legacy-full-audit`.
 
 `planner_verdict` no longer carries a `recovery` key at all. Giving up on an
 abnormal execution — the `action:"abort"` half of the old RecoveryDecision —

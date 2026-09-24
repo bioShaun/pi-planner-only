@@ -1,6 +1,6 @@
 # Run identity is Root-stamped, never child-declared
 
-Status: accepted 2026-09-18
+Status: Superseded 2026-09-24 by the lite rewrite (`docs/pi-planner-only-subtraction-plan.md`); kept for history. Code: tag `legacy-full-audit`.
 
 A child's WorkerReport does not declare `evidence.workerRunId` (the child-facing schema omits this property entirely); Root stamps the launcher terminal's `response.runId` (defaulting to `executionId`) at the admission boundary before saving the report into the Task ledger. Any child-supplied passthrough values are stripped and disclosed in `warnings` rather than causing rejection.
 
