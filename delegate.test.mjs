@@ -8,13 +8,13 @@ import {
 	SUBAGENT_DELEGATION_STARTED_EVENT as STARTED,
 	SUBAGENT_DELEGATION_UPDATE_EVENT as UPDATE,
 } from "./subagent-delegation-contract.ts";
-import { ROLE_AGENTS, buildTaskText, clipChildText, loadLimits, runDelegation, summarizeTranscript } from "./delegate.ts";
+import { ROLE_AGENTS, buildTaskText, clipChildText, createCwdLocks, loadLimits, matchesIdentity, newRunIdentity, runDelegation, summarizeTranscript } from "./delegate.ts";
 import { formatTokens } from "./format.ts";
 import { DEFAULT_CONFIG, loadConfig } from "./config.ts";
 import { fakeBus, noGit, tempDir, tick, usage } from "./test-helpers.mjs";
 
 const limits = { timeoutMs: 60_000, maxTokens: 1_000, startTimeoutMs: 40, cancelGraceMs: 40 };
-const deps = (bus, busy = new Set()) => ({ events: bus, git: noGit, ownerRunId: "owner-1", limits, busy });
+const deps = (bus, locks = createCwdLocks(), extra = {}) => ({ events: bus, git: noGit, ownerRunId: "owner-1", limits, locks, ...extra });
 const sent = (bus, event) => bus.emitted.filter(([e]) => e === event).map(([, d]) => d);
 const respond = (bus, req, over = {}) =>
 	bus.emit(RESPONSE, { requestId: req.requestId, nodeId: req.nodeId, status: "completed", agent: req.agent, model: "cheap/model", result: { kind: "text", text: "changed a.ts; tests pass" }, usage: usage(), ...over });
@@ -22,9 +22,9 @@ const respond = (bus, req, over = {}) =>
 // Completed: request shape, report formatting, lock released, no listeners left.
 {
 	const bus = fakeBus();
-	const busy = new Set();
+	const locks = createCwdLocks();
 	bus.on(REQUEST, (req) => respond(bus, req));
-	const out = await runDelegation(deps(bus, busy), { role: "worker", task: "  implement X  ", cwd: "/w" });
+	const out = await runDelegation(deps(bus, locks), { role: "worker", task: "  implement X  ", cwd: "/w" });
 	const [req] = sent(bus, REQUEST);
 	assert.equal(req.agent, "worker");
 	assert.equal(req.context, "fresh");
@@ -41,7 +41,7 @@ const respond = (bus, req, over = {}) =>
 	assert.match(out.text, /^\[worker\/worker\] completed · cheap\/model · 3\.5k tok · \$0\.0123 · 3 turns · 12s/);
 	assert.match(out.text, /Child report:\nchanged a\.ts; tests pass/);
 	assert.match(out.text, /Workspace changes: \/w is not a git work tree .* pass that repository as cwd next time\./);
-	assert.equal(busy.size, 0);
+	assert.equal(locks.size, 0);
 	assert.equal(bus.totalListeners(), 1); // only the test's own REQUEST responder
 }
 
@@ -298,14 +298,15 @@ const respond = (bus, req, over = {}) =>
 	bus.on(REQUEST, (req) => respond(bus, req));
 	assert.equal((await runDelegation(deps(bus), { role: "boss", task: "t" })).details.status, "refused");
 	assert.equal((await runDelegation(deps(bus), { role: "worker", task: " " })).details.status, "refused");
-	const busy = new Set(["/w"]);
+	const locks = createCwdLocks();
+	locks.tryAcquire("/w");
 	for (const role of ["worker", "explorer", "validator"]) {
-		const out = await runDelegation(deps(bus, busy), { role, task: "t", cwd: "/w" });
+		const out = await runDelegation(deps(bus, locks), { role, task: "t", cwd: "/w" });
 		assert.equal(out.details.status, "refused", role);
 	}
-	assert.equal((await runDelegation(deps(bus, busy), { role: "reviewer", task: "t", cwd: "/w" })).ok, true);
+	assert.equal((await runDelegation(deps(bus, locks), { role: "reviewer", task: "t", cwd: "/w" })).ok, true);
 	assert.equal(sent(bus, REQUEST).length, 1);
-	assert.deepEqual([...busy], ["/w"]);
+	assert.deepEqual(locks.held(), ["/w"]);
 }
 
 // Token cap: an update over maxTokens emits cancel; the host's cancelled terminal is reported.
@@ -339,37 +340,37 @@ const respond = (bus, req, over = {}) =>
 // Abort after start with no confirmation: stop_unconfirmed, cwd stays held until the late terminal.
 {
 	const bus = fakeBus();
-	const busy = new Set();
+	const locks = createCwdLocks();
 	const ac = new AbortController();
 	let req;
 	bus.on(REQUEST, (r) => {
 		req = r;
 		bus.emit(STARTED, { requestId: r.requestId, nodeId: r.nodeId });
 	});
-	const pending = runDelegation(deps(bus, busy), { role: "worker", task: "t", cwd: "/w" }, ac.signal);
+	const pending = runDelegation(deps(bus, locks), { role: "worker", task: "t", cwd: "/w" }, ac.signal);
 	await tick(5);
 	ac.abort();
 	const out = await pending;
 	assert.equal(sent(bus, CANCEL).length, 1);
 	assert.equal(out.details.status, "stop_unconfirmed");
 	assert.equal(out.details.stopReason, "cancelled by Root");
-	assert.deepEqual([...busy], ["/w"]);
+	assert.deepEqual(locks.held(), ["/w"]);
 	assert.equal(bus.listeners(RESPONSE), 1);
 	assert.equal(bus.listeners(UPDATE) + bus.listeners(STARTED), 0);
 	respond(bus, req, { status: "cancelled" });
-	assert.equal(busy.size, 0);
+	assert.equal(locks.size, 0);
 	assert.equal(bus.listeners(RESPONSE), 0);
 }
 
 // Never started: not_started after the start timeout, lock released, nothing left listening.
 {
 	const bus = fakeBus();
-	const busy = new Set();
-	const out = await runDelegation(deps(bus, busy), { role: "worker", task: "t", cwd: "/w" });
+	const locks = createCwdLocks();
+	const out = await runDelegation(deps(bus, locks), { role: "worker", task: "t", cwd: "/w" });
 	assert.equal(out.details.status, "not_started");
 	assert.match(out.text, /pi-subagents did not start the child/);
 	assert.equal(sent(bus, CANCEL).length, 1);
-	assert.equal(busy.size, 0);
+	assert.equal(locks.size, 0);
 	assert.equal(bus.totalListeners(), 0);
 }
 
@@ -393,6 +394,62 @@ const respond = (bus, req, over = {}) =>
 	assert.ok(clipped.endsWith("FINAL REPORT"));
 	assert.match(clipped, /\[4012 chars omitted\]/);
 	assert.equal(clipChildText("short", 1_000), "short");
+}
+
+// CwdLocks: second acquire of a held cwd fails; release is idempotent; handoff guard sees size.
+{
+	const locks = createCwdLocks();
+	const release = locks.tryAcquire("/a");
+	assert.equal(typeof release, "function");
+	assert.equal(locks.tryAcquire("/a"), null);
+	assert.equal(locks.isHeld("/a"), true);
+	assert.equal(typeof locks.tryAcquire("/b"), "function");
+	assert.deepEqual(locks.held(), ["/a", "/b"]);
+	assert.equal(locks.size, 2);
+	release();
+	release();
+	assert.equal(locks.isHeld("/a"), false);
+	assert.equal(locks.size, 1);
+}
+
+// Run identity: ownerRunId passed through, requestId a full uuid, nodeId `<role>-<8 chars>`; events match by requestId (+ nodeId when sent).
+{
+	const ids = ["11111111-aaaa-4bbb-8ccc-dddddddddddd", "22222222-eeee-4fff-8000-111111111111"];
+	const id = newRunIdentity("explorer", "owner-9", () => ids.shift());
+	assert.deepEqual(id, { ownerRunId: "owner-9", requestId: "11111111-aaaa-4bbb-8ccc-dddddddddddd", nodeId: "explorer-22222222" });
+	const real = newRunIdentity("worker", "o");
+	assert.match(real.requestId, /^[0-9a-f-]{36}$/);
+	assert.match(real.nodeId, /^worker-[0-9a-f]{8}$/);
+	assert.equal(matchesIdentity(id, { requestId: id.requestId }), true);
+	assert.equal(matchesIdentity(id, { requestId: id.requestId, nodeId: id.nodeId }), true);
+	assert.equal(matchesIdentity(id, { requestId: id.requestId, nodeId: "other" }), false);
+	assert.equal(matchesIdentity(id, { requestId: "x" }), false);
+	assert.equal(matchesIdentity(id, undefined), false);
+}
+
+// Injected timers: start timeout and cancel grace run on the fake clock, and are cleared on settle.
+{
+	const scheduled = [];
+	const cleared = [];
+	const timers = {
+		setTimeout: (fn, ms) => { const h = { fn, ms }; scheduled.push(h); return h; },
+		clearTimeout: (h) => cleared.push(h),
+	};
+	const bus = fakeBus();
+	const locks = createCwdLocks();
+	const pending = runDelegation(deps(bus, locks, { timers, limits: { ...limits, startTimeoutMs: 99_000, cancelGraceMs: 77_000 } }), { role: "worker", task: "t", cwd: "/w" });
+	await tick(5);
+	assert.deepEqual(scheduled.map((h) => h.ms), [99_000]);
+	assert.deepEqual(locks.held(), ["/w"]);
+	scheduled[0].fn();
+	assert.equal(sent(bus, CANCEL).length, 1);
+	assert.deepEqual(scheduled.map((h) => h.ms), [99_000, 77_000]);
+	scheduled[1].fn();
+	const out = await pending;
+	assert.equal(out.details.status, "not_started");
+	assert.equal(cleared.length, 2);
+	assert.equal(locks.size, 0);
+	assert.equal(bus.totalListeners(), 0);
 }
 
 // Limits from env; junk falls back to defaults.

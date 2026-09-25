@@ -10,7 +10,7 @@ import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_LIMITS, loadConfig } from "./config.ts";
 import type { DelegationLimits } from "./config.ts";
-import { ROLES, runDelegation, timeoutMinutes } from "./delegate.ts";
+import { ROLES, createCwdLocks, runDelegation, timeoutMinutes } from "./delegate.ts";
 import type { DelegationParams } from "./delegate.ts";
 import { formatTokens } from "./format.ts";
 import { createHostAdapter, rootUsageOf } from "./host.ts";
@@ -116,13 +116,13 @@ export function contextWarnThreshold(env: NodeJS.ProcessEnv = process.env): numb
 
 /**
  * All mutable plugin state. Conversation-scoped fields are cleared by `reset()`
- * on session start; the process-scoped ones (`busy`, `delegationsInFlight`,
+ * on session start; the process-scoped ones (`locks`, `delegationsInFlight`,
  * `hidLoader`) outlive a session because they track children and host tools
  * that do too.
  */
 export class PlannerSession {
 	/** Exclusive per-cwd child locks (owned by the delegation engine). */
-	readonly busy = new Set<string>();
+	readonly locks = createCwdLocks();
 	delegationsInFlight = 0;
 	/** Whether we hid pi-subagents' loader tool and must restore it on `off`. */
 	hidLoader = false;
@@ -186,7 +186,7 @@ export class PlannerSession {
 
 	/** Why a handoff cannot be scheduled right now, or undefined when it can. */
 	handoffRefusal(brief: string): string | undefined {
-		if (this.busy.size > 0) return "an exclusive child is still running.";
+		if (this.locks.size > 0) return "an exclusive child is still running.";
 		if (this.delegationsInFlight > 0) return "a delegated child is still running.";
 		if (this.pendingHandoff) return "one is already pending.";
 		const threshold = contextWarnThreshold();
@@ -281,7 +281,7 @@ async function executeDelegate(
 			git,
 			ownerRunId: host.sessionId(ctx),
 			limits: loadConfig().limits,
-			busy: session.busy,
+			locks: session.locks,
 			sessionFile: host.sessionFile(ctx),
 		},
 		{ ...params, cwd: resolveCwd(ctx, params.cwd) },

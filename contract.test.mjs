@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as local from "./subagent-delegation-contract.ts";
-import { DEFAULT_LIMITS, ROLE_AGENTS, runDelegation } from "./delegate.ts";
+import { DEFAULT_LIMITS, ROLE_AGENTS, createCwdLocks, runDelegation } from "./delegate.ts";
 import { fakeBus, noGit, usage } from "./test-helpers.mjs";
 
 const root = process.env.PI_SUBAGENTS_DIR ?? join(homedir(), ".pi", "agent", "npm", "node_modules", "pi-subagents");
@@ -37,7 +37,7 @@ for (const role of ["worker", "explorer", "validator", "reviewer"]) {
 	bus.on(local.SUBAGENT_DELEGATION_REQUEST_EVENT, (req) => {
 		bus.emit(local.SUBAGENT_DELEGATION_RESPONSE_EVENT, { requestId: req.requestId, nodeId: req.nodeId, status: "completed", agent: req.agent, result: { kind: "text", text: "ok" }, usage: usage() });
 	});
-	await runDelegation({ events: bus, git: noGit, ownerRunId: "owner", limits: DEFAULT_LIMITS, busy: new Set() }, { role, task: "do it", cwd: "/work" });
+	await runDelegation({ events: bus, git: noGit, ownerRunId: "owner", limits: DEFAULT_LIMITS, locks: createCwdLocks() }, { role, task: "do it", cwd: "/work" });
 	const request = bus.emitted.find(([e]) => e === local.SUBAGENT_DELEGATION_REQUEST_EVENT)[1];
 	const parsed = parseSubagentDelegationRequest(request);
 	assert.equal(parsed.ok, true, `${role} request rejected by installed parser: ${parsed.error}`);
