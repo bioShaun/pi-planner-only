@@ -30,6 +30,9 @@ const HIDDEN_HOST_TOOL_SET = new Set<string>(HIDDEN_HOST_TOOLS);
 const REPO_CWD_DESCRIPTION = "Repository to run in (absolute or relative to the session cwd). Defaults to the session cwd.";
 const resolveCwd = (ctx: { cwd: string }, cwd: string | undefined) => (cwd ? resolve(ctx.cwd, cwd) : ctx.cwd);
 
+const textResult = <T>(text: string, details: T) => ({ content: [{ type: "text" as const, text }], details });
+const refusal = (text: string) => textResult(text, { ok: false });
+
 const flag = (value: string | undefined, set: string[]) => set.includes((value ?? "").trim().toLowerCase());
 
 /** PI_PLANNER_ONLY=1 forces on, =0 forces off; otherwise the off marker decides. */
@@ -188,7 +191,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				},
 				{ ...params, cwd: resolveCwd(ctx, params.cwd) },
 				signal,
-				(text) => onUpdate?.({ content: [{ type: "text", text }], details: {} }),
+				(text) => onUpdate?.(textResult(text, {})),
 				);
 			} finally {
 				delegationsInFlight -= 1;
@@ -204,7 +207,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 				}
 				updateStatus(ctx);
 			}
-			return { content: [{ type: "text", text: outcome.text }], details: outcome.details };
+			return textResult(outcome.text, outcome.details);
 		},
 	});
 
@@ -225,7 +228,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			// Models often send optional fields as ""; treat an empty path as "no path filter".
 			if (request.path === "") delete request.path;
 			const outcome = await runGitAudit(gitRunner, request, resolveCwd(ctx, cwd));
-			return { content: [{ type: "text", text: outcome.text }], details: { ok: outcome.ok } };
+			return textResult(outcome.text, { ok: outcome.ok });
 		},
 	});
 
@@ -241,7 +244,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		}),
 		async execute(_toolCallId, params: { message: string; paths?: string[]; cwd?: string }, _signal, _onUpdate, ctx) {
 			const outcome = await gitCommit(gitRunner, resolveCwd(ctx, params.cwd), params.message, params.paths);
-			return { content: [{ type: "text", text: outcome.text }], details: { ok: outcome.ok } };
+			return textResult(outcome.text, { ok: outcome.ok });
 		},
 	});
 
@@ -255,16 +258,20 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			cwd: Type.Optional(Type.String({ description: REPO_CWD_DESCRIPTION })),
 		}),
 		async execute(_toolCallId, params: { brief: string; cwd?: string }, _signal, _onUpdate, ctx) {
-			if (!ctx.hasUI) return { content: [{ type: "text", text: "Handoff refused: a UI session is required." }], details: { ok: false } };
-			if (busy.size > 0) return { content: [{ type: "text", text: "Handoff refused: an exclusive child is still running." }], details: { ok: false } };
-			if (delegationsInFlight > 0) return { content: [{ type: "text", text: "Handoff refused: a delegated child is still running." }], details: { ok: false } };
-			if (pendingHandoff) return { content: [{ type: "text", text: "Handoff refused: one is already pending." }], details: { ok: false } };
 			const threshold = contextWarnThreshold();
-			if (!handoffRequested && (rootContext ?? 0) <= threshold) return { content: [{ type: "text", text: `Handoff refused: your context is about ${formatTokens(rootContext ?? 0)} tokens, below the ${formatTokens(threshold)} threshold, and the user did not request a handoff. Continue the work in this session.` }], details: { ok: false } };
-			if (params.brief.length < 200) return { content: [{ type: "text", text: "Handoff refused: brief must be at least 200 characters." }], details: { ok: false } };
+			const guards = [
+				{ when: !ctx.hasUI, message: "Handoff refused: a UI session is required." },
+				{ when: busy.size > 0, message: "Handoff refused: an exclusive child is still running." },
+				{ when: delegationsInFlight > 0, message: "Handoff refused: a delegated child is still running." },
+				{ when: pendingHandoff !== undefined, message: "Handoff refused: one is already pending." },
+				{ when: !handoffRequested && (rootContext ?? 0) <= threshold, message: `Handoff refused: your context is about ${formatTokens(rootContext ?? 0)} tokens, below the ${formatTokens(threshold)} threshold, and the user did not request a handoff. Continue the work in this session.` },
+				{ when: params.brief.length < 200, message: "Handoff refused: brief must be at least 200 characters." },
+			];
+			const failed = guards.find((guard) => guard.when);
+			if (failed) return refusal(failed.message);
 			handoffRequested = false;
 			pendingHandoff = { brief: params.brief, cwd: resolveCwd(ctx, params.cwd), sessionFile: ctx.sessionManager?.getSessionFile?.() };
-			return { content: [{ type: "text", text: "Handoff scheduled: a new session will start with this brief after this turn ends. Stop working now; end your turn with a one-line note to the user." }], details: { ok: true } };
+			return textResult("Handoff scheduled: a new session will start with this brief after this turn ends. Stop working now; end your turn with a one-line note to the user.", { ok: true });
 		},
 	});
 
