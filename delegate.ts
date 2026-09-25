@@ -7,6 +7,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { DEFAULT_LIMITS, loadLimits } from "./config.ts";
 import type { DelegationLimits } from "./config.ts";
@@ -179,10 +180,14 @@ export function timeoutMinutes(limits: Pick<DelegationLimits, "timeoutMs">): num
 	return Math.max(1, Math.floor(limits.timeoutMs / 60_000));
 }
 
-export function buildTaskText(role: Role, task: string, cwd: string, timeoutMs = DEFAULT_LIMITS.timeoutMs): string {
+/**
+ * `home` is stated because a child without a shell (reviewer) cannot look it
+ * up and guesses `/root` or other users' homes for `~` paths in the task.
+ */
+export function buildTaskText(role: Role, task: string, cwd: string, timeoutMs = DEFAULT_LIMITS.timeoutMs, home = homedir()): string {
 	const budget = `Time limit: ${timeoutMinutes({ timeoutMs })} minutes wall clock, then you are stopped and unsaved work is lost. Make edits early and in small steps. Do not start commands that cannot finish within the limit (full pipelines, long test suites); list them in your report instead.`;
 	const pacing = "Write your report as soon as the required checks pass; do optional checks only after that. Never search the whole filesystem (e.g. `find /`); wrap commands that may be slow in `timeout 60`.";
-	return `${task.trim()}\n\n---\nWorking directory: ${cwd}\n${budget}\n${pacing}\n${ROLE_AGENTS[role].closing}`;
+	return `${task.trim()}\n\n---\nWorking directory: ${cwd}\nHome directory: ${home} (\`~\` in paths means this directory)\n${budget}\n${pacing}\n${ROLE_AGENTS[role].closing}`;
 }
 
 /** The last progress update seen for a child; pi-subagents sends these, bounded, during the run. */

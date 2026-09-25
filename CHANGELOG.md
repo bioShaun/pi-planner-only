@@ -21,6 +21,7 @@ Lite rewrite (`docs/pi-planner-only-subtraction-plan.md`). The 0.8.0 code is at 
   - A child that does not complete now reports its runId and last activity (tool and arguments from the last progress update). When the output artifact exists, the result includes its text and the transcript path. Otherwise it shows the child's recent output and says where the artifact was expected.
   - Artifact locations come from a single adapter (`subagent-artifacts.ts`) that honors pi-subagents' configured `artifactDir` (`session`, `temp`, `project`) and `PI_SUBAGENTS_TEMP_ROOT`; `contract.test.mjs` checks it against the installed package.
   - The task text and the Root prompt state the child's time limit (`PI_PLANNER_ONLY_TIMEOUT_MS`, in whole minutes).
+  - The task text also states the home directory and that `~` means it. A reviewer has no shell; in a 2026-09-25 PR review it guessed `/root` and other users' homes for `~/.pi/...` and could not check the upstream source.
 - om09 run4 follow-ups (`.scratch/om09-run4/spec.md`):
   - A child that does not complete also returns a transcript tail: slow tools and slow model turns (60s or more), the last 12 tool calls with time offsets, durations, commands and result excerpts, and the last assistant text. Root can reuse checks the child already ran.
   - The Git summary leaves out paths that were uncommitted before the delegation and that the child did not change, and lists them on a separate line. Paths the child changed again get a note about the earlier edits. Works with git 1.8.
