@@ -33,7 +33,7 @@ for (const [version, expected] of [
 	for (const args of gitCalls) assert.ok(args.includes("-c") && args.includes("core.fsmonitor=false"), args.join(" "));
 	assert.equal(gitCalls.some((a) => a.includes("--no-optional-locks")), expected.length === 3);
 	for (const args of gitCalls) assert.ok(!args.some((a) => a.startsWith("--porcelain=")), args.join(" "));
-	for (const args of gitCalls.filter((a) => a[expected.length] === "diff" || a[expected.length] === "show")) {
+	for (const args of gitCalls.filter((a) => a[expected.length] === "diff" || a[expected.length] === "show" || a[expected.length] === "diff-tree")) {
 		assert.ok(args.includes("--no-ext-diff") && args.includes("--no-textconv"), args.join(" "));
 	}
 }
@@ -121,6 +121,28 @@ assert.deepEqual(parseStatusZ("x"), []);
 	assert.match(await summarizeWork(big.run, "/w", b2), new RegExp(`Note: ${MAX_FINGERPRINT_PATHS + 1} path\\(s\\) were already uncommitted before this delegation; the diff includes them\\.`));
 }
 
+// git_commit names every staged file even when --stat output is clipped (fault injection: tiny show --stat).
+{
+	const calls = [];
+	const run = async (args) => {
+		calls.push(args);
+		const a = args.slice(2);
+		if (a[0] === "--version") return { stdout: "git version 2.43.0\n", code: 0 };
+		if (a[0] === "rev-parse") return { stdout: "true\n", code: 0 };
+		if (a[0] === "add") return { stdout: "", code: 0 };
+		if (a[0] === "commit") return { stdout: "[main abc1234] m", code: 0 };
+		if (a[0] === "diff-tree") return { stdout: "a.ts\0b.ts\0unrelated.txt\0", code: 0 };
+		if (a[0] === "show") return { stdout: "abc1234 m\n a.ts | 1 +\n", code: 0 };
+		return { stdout: "", code: 0 };
+	};
+	const out = await gitCommit(run, "/w", "m");
+	assert.equal(out.ok, true);
+	assert.match(out.text, /Committed files \(3\): a\.ts, b\.ts, unrelated\.txt/);
+	assert.match(out.text, /abc1234 m/);
+	assert.ok(calls.some((c) => c.includes("diff-tree") && c.includes("--name-only") && c.includes("-z") && c.includes("HEAD")), JSON.stringify(calls));
+	assert.ok(calls.every((c) => c[0] === "--version" || (c.includes("-c") && c.includes("core.fsmonitor=false"))), JSON.stringify(calls));
+}
+
 // Real repository: summarizeWork reports commits, tracked diffs, untracked files.
 const dir = tempDir("ppo-git-");
 try {
@@ -174,6 +196,7 @@ try {
 	const committed = await gitCommit(run, dir, "accept", ["new.txt"]);
 	assert.equal(committed.ok, true, committed.text);
 	assert.match(committed.text, /accept/);
+	assert.match(committed.text, /Committed files \(1\): new\.txt/);
 	assert.match(g("status", "--porcelain"), / M a\.txt/);
 	const audit = await runGitAudit(run, { operation: "log", maxEntries: 2 }, dir);
 	assert.match(audit.text, /accept\n.*child commit/);

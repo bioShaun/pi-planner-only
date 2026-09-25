@@ -60,7 +60,7 @@ export function plannerPrompt(strict: boolean, limits: DelegationLimits = DEFAUL
 		"- If a child fails or times out, delegate again with a narrower task and its report/last tool results before doing the work yourself.",
 		"- A timed-out child's result includes its last tool results; reuse them.",
 		"- Before reverting or reporting a child's change, check it against your task: yours or its own?",
-		"- After accepting changes, commit with git_commit.",
+		"- After accepting changes, commit with git_commit: pass paths when the work tree has unrelated changes.",
 	].join("\n");
 }
 

@@ -72,6 +72,7 @@ try {
 	assert.match(plannerPrompt(false), /pass `cwd` to delegate, git_audit, and git_commit/);
 	assert.match(plannerPrompt(false), /timed-out child's result includes its last tool results; reuse them/);
 	assert.match(plannerPrompt(false), /Before reverting or reporting a child's change, check it against your task/);
+	assert.match(plannerPrompt(false), /commit with git_commit: pass paths when the work tree has unrelated changes/);
 	assert.match(plannerPrompt(false), /explorer.*reading-heavy.*logs\/transcripts.*only its findings enter your context/);
 	assert.match(plannerPrompt(false), /reviewer.*no shell.*uncommitted changes only.*before git_commit/);
 	assert.match(plannerPrompt(false), /fails or times out.*narrower task.*report\/last tool results before doing the work yourself/);

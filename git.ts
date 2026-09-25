@@ -122,6 +122,8 @@ export interface WorkBase {
 export const MAX_FINGERPRINT_PATHS = 500;
 /** Above this many changed paths, the diff stat runs without a pathspec. */
 const MAX_PATHSPEC_PATHS = 200;
+/** Above this many files in one commit, the committed-files echo lists the first 100 plus `… N more`. */
+const MAX_COMMIT_FILES = 100;
 const ABSENT = "absent";
 
 /** Paths from `status --porcelain -z`: `XY path\0`, renames/copies add `old\0` after the new path. */
@@ -300,6 +302,18 @@ export async function gitCommit(run: GitRunner, cwd: string, message: string, pa
 	if (add.code !== 0) return { ok: false, text: `git add failed: ${(add.stderr || add.stdout).trim()}` };
 	const commit = await git(run, ["commit", "-m", message], cwd);
 	if (commit.code !== 0) return { ok: false, text: `git commit failed: ${(commit.stderr || commit.stdout).trim()}` };
+	const files = await committedFiles(run, cwd);
 	const show = await git(run, ["show", "--stat", "--oneline", ...DIFF_SAFE, "HEAD"], cwd);
-	return { ok: true, text: clip(show.code === 0 ? show.stdout.trimEnd() : commit.stdout.trimEnd(), 3_000) };
+	const stat = show.code === 0 ? show.stdout.trimEnd() : commit.stdout.trimEnd();
+	return { ok: true, text: clip(files ? `${files}\n${stat}` : stat, 3_000) };
+}
+
+/** Paths changed by HEAD, so the commit result names every staged file even when `--stat` is clipped. */
+async function committedFiles(run: GitRunner, cwd: string): Promise<string | undefined> {
+	const names = await git(run, ["diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "-z", ...DIFF_SAFE, "HEAD"], cwd);
+	if (names.code !== 0) return undefined;
+	const files = splitZ(names.stdout).filter((p) => p.trim());
+	if (!files.length) return undefined;
+	const shown = files.slice(0, MAX_COMMIT_FILES);
+	return `Committed files (${files.length}): ${shown.join(", ")}${files.length > shown.length ? `, … ${files.length - shown.length} more` : ""}`;
 }
