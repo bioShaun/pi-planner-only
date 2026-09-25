@@ -23,6 +23,7 @@
     "README.zh-CN.md",
     "index.ts",
     "delegate.ts",
+    "format.ts",
     "git.ts",
     "subagent-delegation-contract.ts"
   ],

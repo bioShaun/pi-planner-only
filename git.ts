@@ -9,6 +9,8 @@
  * git (e.g. 1.8) or when the probe fails. Env vars are not an option: pi.exec
  * cannot pass them.
  */
+import { clip } from "./format.ts";
+
 export type GitRunner = (
 	args: readonly string[],
 	cwd: string,
@@ -29,11 +31,6 @@ export interface GitAuditRequest {
 	base?: string;
 	path?: string;
 	maxEntries?: number;
-}
-
-export function clip(text: string, max = MAX_GIT_OUTPUT_CHARS): string {
-	if (text.length <= max) return text;
-	return `${text.slice(0, max)}\n… [truncated ${text.length - max} chars]`;
 }
 
 /** True when `git --version` output reports 2.15 or later. */
@@ -103,7 +100,7 @@ export async function runGitAudit(run: GitRunner, request: GitAuditRequest, cwd:
 	if (!(await isWorkTree(run, cwd))) return { ok: false, text: notWorkTree(cwd) };
 	const result = await git(run, argv.args, cwd);
 	if (result.code !== 0) return { ok: false, text: `git ${request.operation} failed: ${(result.stderr || result.stdout).trim()}` };
-	return { ok: true, text: clip(result.stdout.trimEnd() || "(no output)") };
+	return { ok: true, text: clip(result.stdout.trimEnd() || "(no output)", MAX_GIT_OUTPUT_CHARS) };
 }
 
 /** What the workspace looked like when a delegation started. */
