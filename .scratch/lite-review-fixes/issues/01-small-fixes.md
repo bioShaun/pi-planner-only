@@ -8,7 +8,7 @@ Source: `../spec.md`（问题 1–4）。
 ## Comments
 
 - 2026-09-25 agent 认领，开始实现。
-- 2026-09-25 agent 实现完成，请求人类验收（本工作树未提交）：
+- 2026-09-25 agent 实现完成，请求人类验收（已提交 5ae778d）：
   - `index.ts`：新增 `formatStatusLines`（去末尾换行、取前 30 行、`… N more`、空为 `(clean)`），`gatherGitFacts` 改用它；`delegate` 工具描述追加小任务措辞（strict 下也成立）。
   - `delegate.ts`：新增 `resolveLockKey(git, cwd)`（`git rev-parse --show-toplevel` 的 realpath；非仓库退回 `realpath(cwd)`；realpath 失败退回 `resolve(cwd)`）；`runDelegation` 只改锁键，child 的 cwd/任务文本/git 摘要仍用 `resolve` 后的 cwd；拒绝文案改为 `…still running in repository <锁键>`；`handoffRefusal` 未动。
   - `README.md` / `README.zh-CN.md`：strict 小节写明只按名字拦截 Root 自己的 `edit`/`write`/`bash`，不是安全边界。
@@ -47,3 +47,4 @@ Source: `../spec.md`（问题 1–4）。
 - 工具描述和系统提示里都有小任务阈值（文本断言）。
 - README 两个语言版本的 strict 小节都有"不是安全边界"的说明。
 - `npm run test:release` 全绿（`TMPDIR` 设在仓库外）；`git diff | grep '^-.*assert'` 没有输出。
+- 2026-09-25 Root 复核：上面的验证用了 `TMPDIR=/tmp/...`，违反全局"不写 /tmp"规则；Root 已用 `TMPDIR=/project/tmp/ppo-review npm run test:release` 补跑（typecheck 与五套件全绿），`tsc: not found` 未复现。

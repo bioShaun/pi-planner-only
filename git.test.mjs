@@ -126,7 +126,7 @@ assert.deepEqual(parseStatusZ("x"), []);
 	const calls = [];
 	const run = async (args) => {
 		calls.push(args);
-		const a = args.slice(2);
+		const a = args[0] === "--version" ? args : args.slice(args.indexOf("core.fsmonitor=false") + 1);
 		if (a[0] === "--version") return { stdout: "git version 2.43.0\n", code: 0 };
 		if (a[0] === "rev-parse") return { stdout: "true\n", code: 0 };
 		if (a[0] === "add") return { stdout: "", code: 0 };
@@ -139,8 +139,50 @@ assert.deepEqual(parseStatusZ("x"), []);
 	assert.equal(out.ok, true);
 	assert.match(out.text, /Committed files \(3\): a\.ts, b\.ts, unrelated\.txt/);
 	assert.match(out.text, /abc1234 m/);
+	assert.equal(out.text.split("\n")[0], "abc1234 m");
+	assert.ok(out.text.split("\n")[1].startsWith("Committed files (3):"));
 	assert.ok(calls.some((c) => c.includes("diff-tree") && c.includes("--name-only") && c.includes("-z") && c.includes("HEAD")), JSON.stringify(calls));
+	assert.ok(calls.some((c) => c.includes("diff-tree") && c.includes("--no-optional-locks")), JSON.stringify(calls));
 	assert.ok(calls.every((c) => c[0] === "--version" || (c.includes("-c") && c.includes("core.fsmonitor=false"))), JSON.stringify(calls));
+}
+
+// git_commit falls back to the show stat when diff-tree cannot enumerate paths.
+{
+	const run = async (args) => {
+		if (args[0] === "--version") return { stdout: "git version 2.43.0\n", code: 0 };
+		const a = args.slice(args.indexOf("core.fsmonitor=false") + 1);
+		if (a[0] === "rev-parse") return { stdout: "true\n", code: 0 };
+		if (a[0] === "add") return { stdout: "", code: 0 };
+		if (a[0] === "commit") return { stdout: "[main abc1234] m", code: 0 };
+		if (a[0] === "diff-tree") return { stdout: "", stderr: "injected failure", code: 128 };
+		if (a[0] === "show") return { stdout: "abc1234 m\n a.ts | 1 +\n", code: 0 };
+		return { stdout: "", code: 0 };
+	};
+	const out = await gitCommit(run, "/w", "m");
+	assert.equal(out.ok, true);
+	assert.doesNotMatch(out.text, /Committed files/);
+	assert.match(out.text, /abc1234 m\n a\.ts \| 1 \+/);
+}
+
+// git_commit caps the displayed paths at MAX_COMMIT_FILES while retaining the count and header.
+{
+	const paths = Array.from({ length: 105 }, (_, i) => `path${i + 1}.ts`).join("\0") + "\0";
+	const run = async (args) => {
+		if (args[0] === "--version") return { stdout: "git version 2.43.0\n", code: 0 };
+		const a = args.slice(args.indexOf("core.fsmonitor=false") + 1);
+		if (a[0] === "rev-parse") return { stdout: "true\n", code: 0 };
+		if (a[0] === "add") return { stdout: "", code: 0 };
+		if (a[0] === "commit") return { stdout: "[main abc1234] m", code: 0 };
+		if (a[0] === "diff-tree") return { stdout: paths, code: 0 };
+		if (a[0] === "show") return { stdout: "abc1234 m\n stat line\n", code: 0 };
+		return { stdout: "", code: 0 };
+	};
+	const out = await gitCommit(run, "/w", "m");
+	assert.equal(out.ok, true);
+	assert.match(out.text, /Committed files \(105\):/);
+	assert.match(out.text, /… 5 more/);
+	assert.doesNotMatch(out.text, /path101\.ts/);
+	assert.equal(out.text.split("\n")[0], "abc1234 m");
 }
 
 // Real repository: summarizeWork reports commits, tracked diffs, untracked files.

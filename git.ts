@@ -305,7 +305,12 @@ export async function gitCommit(run: GitRunner, cwd: string, message: string, pa
 	const files = await committedFiles(run, cwd);
 	const show = await git(run, ["show", "--stat", "--oneline", ...DIFF_SAFE, "HEAD"], cwd);
 	const stat = show.code === 0 ? show.stdout.trimEnd() : commit.stdout.trimEnd();
-	return { ok: true, text: clip(files ? `${files}\n${stat}` : stat, 3_000) };
+	let text = stat;
+	if (files) {
+		const [header, ...remaining] = stat.split("\n");
+		text = [header, files, ...remaining].filter((line) => line !== undefined).join("\n");
+	}
+	return { ok: true, text: clip(text, 3_000) };
 }
 
 /** Paths changed by HEAD, so the commit result names every staged file even when `--stat` is clipped. */

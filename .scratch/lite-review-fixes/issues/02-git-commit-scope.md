@@ -38,14 +38,18 @@ B. **只做提示和回显**：保留 `add -A` 的行为。提交结果里列出
 
 - 方案 B（2026-09-25 维护者已批准）：保留 `add -A`；提交结果首行显式列出本次改动的全部路径
   （`git diff-tree --name-only -z HEAD`，超 100 文件时 `… N more`）；系统提示加一句
-  \"commit with git_commit: pass paths when the work tree has unrelated changes\"。
+  "commit with git_commit: pass paths when the work tree has unrelated changes"。
 - 带 paths 的行为不变；不删改既有断言。
 
 ## Comments
 
-- 2026-09-25 agent 实现完成（本工作树未提交）：
+- 2026-09-25 agent 实现完成（已提交 059561b）：
   - `git.ts`：`gitCommit` 在 `show --stat` 之前先跑 `diff-tree … -z HEAD`，结果首行回显
     `Committed files (N): …`（路径全部来自 `-z` 全量列表，不受 `--stat` 截断影响）；`diff-tree` 失败时回退到原来的纯 stat 文本。
   - `index.ts`：系统提示 `After accepting changes…` 句追加 `pass paths when the work tree has unrelated changes`（提示长度 1240/1256 字符，仍 <1300）。
   - 测试：`git.test.mjs`（假 runner：tiny `--stat` 下仍列出 3 个文件 + 真仓库断言 `Committed files (1): new.txt`；既有安全前缀循环覆盖 `diff-tree` 的 `--no-ext-diff/--no-textconv`）、`index.test.mjs`（新提示句文本断言）。
   - 验证：typecheck 退出 0；五套件全绿（TMPDIR 在仓库外）；`git diff | grep '^-.*assert'` 无输出。
+- 2026-09-25 Root 复核后跟进：
+  - `clip(3000)` 只保留开头，文件列表过长时会挤掉提交号那一行。改为先输出 `show --oneline` 的首行，再输出 `Committed files` 行，最后是其余 stat。
+  - 补故障注入测试：`diff-tree` 失败时回退到纯 stat；105 个文件时显示 `Committed files (105)`、`… 5 more`，首行仍是提交号。
+  - 假 runner 改为按真实前缀剥离，测试覆盖了三段安全前缀（含 `--no-optional-locks`）。
