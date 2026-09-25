@@ -18,6 +18,38 @@ MAX_ATTEMPTS=${BENCH_MAX_ATTEMPTS:-2}; RETRY_DELAY=${BENCH_RETRY_DELAY:-120}
 [[ $MAX_ATTEMPTS =~ ^[1-9][0-9]*$ && $RETRY_DELAY =~ ^[0-9]+$ ]] || { echo 'BENCH_MAX_ATTEMPTS must be a positive integer and BENCH_RETRY_DELAY a non-negative integer' >&2; exit 2; }
 IFS=, read -r -a TASKS <<< "$TASKS_CSV"; IFS=, read -r -a ARMS <<< "$ARMS_CSV"
 OUT=/project/tmp/ppo-bench/results/$NAME; mkdir -p "$OUT"
+PLUGIN_SOURCES=(index.ts delegate.ts git.ts format.ts config.ts host.ts subagent-artifacts.ts subagent-delegation-contract.ts)
+HAS_WORKTREE=$(python3 - "$ROOT" "${ARMS[@]}" <<'PY'
+import json, pathlib, sys
+root=pathlib.Path(sys.argv[1])
+for name in sys.argv[2:]:
+    try: arm=json.loads((root/'bench'/'arms'/f'{name}.json').read_text())
+    except (OSError,ValueError): continue
+    if arm.get('pluginRef') == 'WORKTREE': print('yes'); break
+else: print('no')
+PY
+)
+sha=$(git -C "$ROOT" rev-parse HEAD)
+worktree_sha=
+if (( RESUME )); then
+  if [[ -f $OUT/campaign.json ]]; then
+    worktree_sha=$(python3 - "$OUT/campaign.json" <<'PY'
+import json,sys
+try: print(json.load(open(sys.argv[1])).get('worktreeSha') or '')
+except (OSError,ValueError): print('')
+PY
+)
+  fi
+  if [[ $HAS_WORKTREE == yes && -z $worktree_sha ]]; then
+    echo 'WARNING: resumed campaign has no worktreeSha; WORKTREE arms will use legacy behavior' | tee -a "$OUT/campaign.log"
+  fi
+elif [[ $HAS_WORKTREE == yes ]]; then
+  if ! git -C "$ROOT" diff --quiet HEAD -- "${PLUGIN_SOURCES[@]}"; then
+    echo 'REFUSED: plugin source changes are present; commit or discard them before creating a WORKTREE campaign' | tee -a "$OUT/campaign.log" >&2
+    exit 2
+  fi
+  worktree_sha=$sha
+fi
 if (( RESUME )); then
   if [[ -f $OUT/STOP && $DRY == 0 ]]; then mv "$OUT/STOP" "$OUT/STOP.$(date +%Y%m%dT%H%M%S)"; echo "renamed STOP for resume" | tee -a "$OUT/campaign.log"; fi
 elif [[ -f $OUT/STOP ]]; then echo "STOP exists at $OUT/STOP (use --resume)" >&2; exit 2
@@ -34,11 +66,11 @@ for rep in range(1,int(reps)+1):
   print(f'{rep}\t{task}\t{seed}\t'+','.join(order))
 PY
 )
-sha=$(git -C "$ROOT" rev-parse HEAD)
-python3 - "$OUT/campaign.json" "$NAME" "$REPS" "$TASKS_CSV" "$ARMS_CSV" "$sha" "$ORDER" "$PARALLEL" <<'PY'
+python3 - "$OUT/campaign.json" "$NAME" "$REPS" "$TASKS_CSV" "$ARMS_CSV" "$sha" "$ORDER" "$PARALLEL" "$worktree_sha" <<'PY'
 import json,sys,datetime
-p,n,reps,tasks,arms,sha,order,parallel=sys.argv[1:]
+p,n,reps,tasks,arms,sha,order,parallel,worktree_sha=sys.argv[1:]
 data={'name':n,'reps':int(reps),'tasks':tasks.split(','),'arms':arms.split(','),'repo_head':sha,'parallel':int(parallel),'created':datetime.datetime.now().astimezone().isoformat(),'order':[{'rep':int(x.split('\t')[0]),'task':x.split('\t')[1],'seed':int(x.split('\t')[2]),'arms':x.split('\t')[3].split(',')} for x in order.splitlines()]}
+if worktree_sha: data['worktreeSha']=worktree_sha
 open(p,'w').write(json.dumps(data,indent=2)+'\n')
 PY
 printf 'Order:\n%s\n' "$ORDER" | tee -a "$OUT/campaign.log"
@@ -78,7 +110,18 @@ for ((k=0;k<lanes;k++)); do
       fi
       # run.sh exit 5 = failed attempt with attempts left: archive it, wait, retry unless STOP appeared meanwhile.
       printf 'for attempt in $(seq 1 %d); do\n' "$MAX_ATTEMPTS"
-      printf '  env BENCH_OUT=%q BENCH_ATTEMPT="$attempt" BENCH_MAX_ATTEMPTS=%d %q %q %q %q; rc=$?\n' "$OUT" "$MAX_ATTEMPTS" "$ROOT/bench/run.sh" "${taskof[$id]}" "${armof[$id]}" "${repof[$id]}"
+      if [[ ${armof[$id]} != '' && $HAS_WORKTREE == yes ]]; then
+        arm_ref=$(python3 - "$ROOT/bench/arms/${armof[$id]}.json" <<'PY'
+import json,sys
+print(json.load(open(sys.argv[1])).get('pluginRef',''))
+PY
+)
+      else arm_ref=; fi
+      if [[ $arm_ref == WORKTREE && -n $worktree_sha ]]; then
+        printf '  env BENCH_OUT=%q BENCH_PLUGIN_REF=%q BENCH_ATTEMPT="$attempt" BENCH_MAX_ATTEMPTS=%d %q %q %q %q; rc=$?\n' "$OUT" "$worktree_sha" "$MAX_ATTEMPTS" "$ROOT/bench/run.sh" "${taskof[$id]}" "${armof[$id]}" "${repof[$id]}"
+      else
+        printf '  env BENCH_OUT=%q BENCH_ATTEMPT="$attempt" BENCH_MAX_ATTEMPTS=%d %q %q %q %q; rc=$?\n' "$OUT" "$MAX_ATTEMPTS" "$ROOT/bench/run.sh" "${taskof[$id]}" "${armof[$id]}" "${repof[$id]}"
+      fi
       printf '  (( rc == 5 )) || break\n'
       printf '  d="$OUT/void/%s-attempt$attempt-$(date +%%Y%%m%%dT%%H%%M%%S)"; mkdir -p "$d"; shopt -s nullglob; files=("$OUT/runs/%s."*); if ((${#files[@]})); then mv "${files[@]}" "$d"/; fi\n' "$id" "$id"
       printf '  echo %q; sleep %d\n' "lane $k: $id attempt failed, retrying" "$RETRY_DELAY"
@@ -90,7 +133,7 @@ for ((k=0;k<lanes;k++)); do
   lane_ids=(); for ((i=k;i<${#ids[@]};i+=lanes)); do [[ ${skip[${ids[i]}]:-0} == 1 ]] || lane_ids+=("${ids[i]}"); done
   printf -v lane_list '%s ' "${lane_ids[@]}"
   if (( DRY )); then
-    { echo "lane $k: ${lane_list% }"; echo "slot cpu -b -- bash $lane"; } | tee -a "$OUT/campaign.log"
+    { echo "lane $k: ${lane_list% }"; grep 'env BENCH_OUT=' "$lane" || true; echo "slot cpu -b -- bash $lane"; } | tee -a "$OUT/campaign.log"
   fi
 done
 if (( DRY )); then exit 0; fi

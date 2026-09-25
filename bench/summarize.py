@@ -61,7 +61,7 @@ def med(xs): return statistics.median(xs) if xs else None
 def mean(xs): return statistics.mean(xs) if xs else None
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument('runs',nargs='+'); ap.add_argument('--weight',choices=['opus','astra','sol','actual'],default='opus'); ap.add_argument('--baseline'); ap.add_argument('--json',dest='json_out'); a=ap.parse_args()
-    records=[]; incomplete=[]; unknown=[]; invalid=[]
+    records=[]; incomplete=[]; unknown=[]; invalid=[]; plugin_shas={}
     for folder in a.runs:
         directory=Path(folder)
         for p in sorted(directory.glob('*.jsonl')):
@@ -72,6 +72,18 @@ def main():
             r,u=parse_run(directory,p.stem,a.weight)
             if r is None: print(f'{p.stem}: INCOMPLETE'); incomplete.append(p.stem); continue
             records.append(r); unknown.extend((p.stem,m) for m in u)
+            mp=directory/(p.stem+'.meta.json')
+            if mp.exists():
+                try: plugin_sha=json.loads(mp.read_text()).get('pluginSha')
+                except (OSError,ValueError): plugin_sha=None
+                if plugin_sha: plugin_shas.setdefault(r['arm'],[]).append(plugin_sha)
+    mixed_plugin={}
+    for arm,shas in plugin_shas.items():
+        counts={sha:shas.count(sha) for sha in sorted(set(shas))}
+        if len(counts)>1:
+            mixed_plugin[arm]=counts
+            detail=', '.join(f'{sha[:7]} ({count})' for sha,count in counts.items())
+            print(f'MIXED pluginSha {arm}: {detail}')
     for rid,m in unknown: print(f'{rid}: UNPRICED child model: {m}')
     for r in records:
         print(f"{r['task']} {r['arm']} {r['rep']}: exit={r['exit']} pass={r['passed']} wall={r['wall']} root_turns={r['root_turns']} delegates={r['delegates']} tokens(in/out/cacheRead/cacheWrite)="+"/".join(str(r['root'][k]) for k in FIELDS)+f" root_cost=${r['root_cost']:.4f}" if r['root_cost'] is not None else f"{r['task']} {r['arm']} {r['rep']}: root_cost=UNPRICED")
@@ -116,7 +128,7 @@ def main():
             print(f'{arm}/{base} passing task ratios={tr} overall={point} CI90={ci}; all-runs={allpoint}')
             comparisons['arms'][arm]={'passing_task_ratios':tr,'passing_overall_ratio':point,'passing_ci90':ci,'all_runs_task_ratios':{t:med(x)/med(y) for t,x,y in allpairs if med(y)},'all_runs_overall_ratio':allpoint}
     if a.json_out:
-        data={'runs':records,'incomplete':incomplete,'invalid':invalid,'aggregates':aggs,'task_aggregates':{f'{t}|{arm}':v for (t,arm),v in task_aggs.items()},'comparisons':comparisons}
+        data={'runs':records,'incomplete':incomplete,'invalid':invalid,'aggregates':aggs,'task_aggregates':{f'{t}|{arm}':v for (t,arm),v in task_aggs.items()},'comparisons':comparisons,'mixed_plugin':mixed_plugin}
         Path(a.json_out).write_text(json.dumps(data,indent=2)+'\n')
     return 1 if unknown else 0
 if __name__=='__main__': sys.exit(main())

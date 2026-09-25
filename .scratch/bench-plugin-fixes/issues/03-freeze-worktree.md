@@ -1,6 +1,6 @@
 # 03：campaign 把 WORKTREE 冻结成提交号
 
-Status: ready-for-agent
+Status: done
 Type: task
 
 ## Problem
@@ -18,3 +18,8 @@ arm 写 `pluginRef: WORKTREE` 时，每条 run 在启动时各自取 HEAD。cont
 - `--dry-run` 显示的命令里带着冻结后的 sha。
 - 工作树有脏改动时启动 campaign 会被拒绝，拒绝原因写进日志。
 - 对 `/project/tmp/ppo-bench/results/control-gemini-strict/runs` 跑 summarize，会打印 MIXED 警告。
+
+## Comments
+
+Implemented and verified WORKTREE freezing, dirty-source refusal, and mixed `pluginSha` reporting. The requested summary output identified only `lite-gemini-strict` and `lite-gemini-strict-readall` as mixed.
+- 2026-09-25 Root 验收：检查了 diff。冻结后的 WORKTREE arm 通过 BENCH_PLUGIN_REF 走 git archive 快照，campaign 跑到一半时工作树再怎么改都不会影响它。拒绝启动时仍会创建结果目录并写入日志，这是有意保留的。

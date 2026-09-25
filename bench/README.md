@@ -10,7 +10,7 @@
 - `campaign.sh`: 配对、交错地提交多任务 campaign。
 - `summarize.py` / `prices.json`: 汇总 token、成本和评测结果。
 
-新增任务时添加同名 JSON 和 Markdown prompt，并提供 masked-suite baseline。新增 arm 时添加 JSON，字段沿用现有配置。`pluginRef` 可设为 `WORKTREE` 使用当前工作树，或用 git ref 固定插件快照。
+新增任务时添加同名 JSON 和 Markdown prompt，并提供 masked-suite baseline。新增 arm 时添加 JSON，字段沿用现有配置。`pluginRef` 可设为 `WORKTREE` 使用当前工作树，或用 git ref 固定插件快照；campaign 会把干净工作树的 WORKTREE arm 固定到 campaign 创建时的 HEAD。
 
 ## 标准答案检查
 

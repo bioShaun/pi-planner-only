@@ -89,7 +89,7 @@ if [[ $MODE == lite ]]; then
   if [[ $PLUGIN_REF == WORKTREE ]]; then
     PLUGIN_SHA=$(git -C "$ROOT" rev-parse HEAD)
     # Any uncommitted change to a shipped plugin source counts as dirty.
-    if ! git -C "$ROOT" diff --quiet HEAD -- index.ts delegate.ts git.ts subagent-delegation-contract.ts; then WORKTREE_DIRTY=true; fi
+    if ! git -C "$ROOT" diff --quiet HEAD -- index.ts delegate.ts git.ts format.ts config.ts host.ts subagent-artifacts.ts subagent-delegation-contract.ts; then WORKTREE_DIRTY=true; fi
     PLUGIN=$ROOT/index.ts
   else
     PLUGIN_SHA=$(git -C "$ROOT" rev-parse "$PLUGIN_REF^{commit}") || { echo "invalid plugin ref: $PLUGIN_REF" >&2; exit 2; }
