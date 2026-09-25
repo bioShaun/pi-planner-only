@@ -6,7 +6,7 @@
 
 - `tasks/`: 任务元数据与原始提示词；`baseline/` 不在此目录，基线位于 `baselines/`。
 - `arms/`: 对比配置。Lite arm 指定 root 模型与插件 ref，direct 不加载插件。
-- `run.sh`: 执行单次运行并写入 `$BENCH_OUT/runs/`。
+- `run.sh`: 执行单次运行并写入 `$BENCH_OUT/runs/`。每个克隆只包含 parent 可达历史，测试文件取自 target；`runcheck.py` 会标记 transcript 中对 target 提交的引用。
 - `campaign.sh`: 配对、交错地提交多任务 campaign。
 - `summarize.py` / `prices.json`: 汇总 token、成本和评测结果。
 

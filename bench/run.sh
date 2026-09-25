@@ -138,13 +138,9 @@ fi
 source "$HOME/.config/pi/secrets.zsh"
 [[ -d $CLONE_ROOT ]] || mkdir -p "$CLONE_ROOT"
 rm -rf "$CLONE"
-git clone -q "$REPO" "$CLONE" || exit 2
+BASE_LINE=$("$ROOT/bench/prepare-clone.sh" "$TASK" "$CLONE") || exit 2
 cd "$CLONE" || exit 2
-git config user.email bench@example.com && git config user.name bench
-git checkout -q "$PARENT" || exit 2
-git checkout -q "$TARGET" -- "${TESTS[@]}" || exit 2
-git add -A && git commit -qm 'bench: target tests' || exit 2
-BASE=$(git rev-parse HEAD)
+BASE=${BASE_LINE#BASE=}
 echo "base=$BASE clone=$CLONE"
 T_START=$(date +%s)
 if [[ $MODE == lite ]]; then env "${ARM_ENV[@]}" PI_PLANNER_ONLY=1 timeout 3600 pi "${PI_ARGS[@]}" </dev/null >"$RUNS/$ID.jsonl" 2>"$RUNS/$ID.stderr"; else env "${ARM_ENV[@]}" timeout 3600 pi "${PI_ARGS[@]}" </dev/null >"$RUNS/$ID.jsonl" 2>"$RUNS/$ID.stderr"; fi
