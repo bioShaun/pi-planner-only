@@ -1,6 +1,6 @@
-# 03：explorer 共享读锁（待评估）
+# 03：explorer 共享读锁（不做）
 
-Status: needs-triage
+Status: wontfix
 Type: task
 
 Source: `../spec.md`（问题 6）。
@@ -35,6 +35,11 @@ Source: `../spec.md`（问题 6）。
     全量共 40 次 `still running` 锁拒绝，分布在 37 个 run（绝大多数是 explorer×validator 等异构并行被串行化）。
   - 结论：explorer 共享读锁能解锁的只是这 7 turn 里的部分串行等待；validator 之间、worker 之间、
     explorer×validator 之间仍须互斥（构建产物/锁文件竞争，见复核发现）。收益上限很小，
-    代价是改契约测试的独占规则（\"独占 == 有写工具，explorer 除外\"）并接受 scout 偶尔写文件的风险。
+    代价是改契约测试的独占规则（"独占 == 有写工具，explorer 除外"）并接受 scout 偶尔写文件的风险。
   - 建议：改为 wontfix。若维护者同意，我再把本票 Status 改为 wontfix 并在 spec 处置表里同步一行；
     若仍想做，再按票面做 explorer 例外（需先接受上述风险）。
+- 2026-09-25 Root 复核并定为 wontfix：
+  - 独立脚本重算，数字一致（49 个多 delegate turn、7 个含 2+ explorer、40 次拒绝分布在 37 个 run）；文件数是 141 个 JSONL，不是 139。
+  - 组合分布：explorer+validator ×22、reviewer+validator ×9、explorer+explorer ×6、explorer+worker ×5，其余各 ≤2。
+    拒绝的主因是 Root 不知道 worker/explorer/validator 按仓库互斥，而不是 explorer 之间缺共享锁。
+  - 共享锁不做；改为在工具描述里写明互斥规则，见票 05。

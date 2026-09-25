@@ -79,6 +79,8 @@ try {
 	assert.match(h.tools.get("delegate").parameters.properties.role.description, /logs, or transcripts and return findings/);
 	assert.match(h.tools.get("delegate").parameters.properties.role.description, /no shell, sees files and uncommitted changes \(review before committing\)/);
 	assert.match(h.tools.get("delegate").description, /Worth it for multi-file work or long reading; outside strict mode, do small tasks \(about ≤2 files\) yourself\./);
+	assert.match(h.tools.get("delegate").description, /worker, explorer, and validator run one at a time per repository \(a second one is refused\); a reviewer or another repository can run alongside\./);
+	assert.match(h.tools.get("delegate").parameters.properties.cwd.description, /the diff summary uses it, and the lock covers its whole repository\./);
 	assert.match(plannerPrompt(false), /Do small things yourself \(about ≤2 files/);
 	process.env.PI_PLANNER_ONLY_TIMEOUT_MS = "300000";
 	assert.match((await h.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, h.ctx)).systemPrompt, /A child has 5 minutes\./);

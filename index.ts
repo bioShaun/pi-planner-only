@@ -445,7 +445,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 	pi.registerTool({
 		name: "delegate",
 		label: "Delegate",
-		description: "Run one child agent on a self-contained task and wait for it. Returns the child's report, host status and usage, and a git summary of what changed. Worth it for multi-file work or long reading; outside strict mode, do small tasks (about ≤2 files) yourself.",
+		description: "Run one child agent on a self-contained task and wait for it. Returns the child's report, host status and usage, and a git summary of what changed. Worth it for multi-file work or long reading; outside strict mode, do small tasks (about ≤2 files) yourself. worker, explorer, and validator run one at a time per repository (a second one is refused); a reviewer or another repository can run alongside.",
 		promptSnippet: "delegate: hand a self-contained task to a cheaper child agent (worker, explorer, validator, reviewer)",
 		parameters: Type.Object({
 			role: Type.Union(ROLES.map((r) => Type.Literal(r)), {
@@ -456,7 +456,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 				description: "Self-contained instructions: goal, relevant paths, constraints, and how to verify. The child does not see this conversation.",
 			}),
 			cwd: Type.Optional(Type.String({
-				description: "The repository or directory the child works in. Set it when the target is not the session cwd; the diff summary and the per-cwd lock use it.",
+				description: "The repository or directory the child works in. Set it when the target is not the session cwd; the diff summary uses it, and the lock covers its whole repository.",
 			})),
 		}),
 		execute: (_toolCallId, params: DelegationParams, signal, onUpdate, ctx) =>

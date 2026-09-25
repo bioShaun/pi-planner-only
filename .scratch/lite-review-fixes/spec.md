@@ -29,7 +29,7 @@ lite 总体通过门槛（约 0.47），但小任务 T3 反而更贵（1.12）�
 | strict 语义 | 只补文档 | 01 |
 | 小任务阈值指引 | 改工具描述的措辞 | 01 |
 | `git_commit` 默认 `add -A` | 问题属实，原方案有缺陷，需要重新定方案 | 02 |
-| 只读角色共享锁 | 前提有误，缩小范围后待评估 | 03 |
+| 只读角色共享锁 | 前提有误；评估后不做（bench 里只有 7 个 turn 受益），改为在工具描述里写明按仓库互斥 | 03（wontfix）、05 |
 | 关闭时恢复宿主工具、启动钩子回加插件工具、本地后备 timer、终态 token 上限、README 口径、交接拒绝范围、开关缓存、异步读 transcript | 不做 | 04 |
 
 ## Problem Statement
@@ -47,7 +47,8 @@ lite 总体通过门槛（约 0.47），但小任务 T3 反而更贵（1.12）�
 
 - 票 01（ready-for-agent）：交接事实截断、锁键规范化、strict 文档、小任务措辞四处小改动。
 - 票 02（needs-triage）：由维护者在两个替代方案里选一个，选定后改为 ready-for-agent。
-- 票 03（needs-triage）：先评估收益，再决定做不做。
+- 票 03（wontfix）：收益评估后不做共享锁。
+- 票 05（ready-for-human）：`delegate` 与 `cwd` 描述写明 worker/explorer/validator 按仓库互斥。
 - 票 04（wontfix）：记录不做的条目和理由，避免以后重复提出。
 
 ## Testing Decisions
