@@ -13,6 +13,7 @@ import { DEFAULT_LIMITS, ROLES, formatTokens, loadLimits, runDelegation, timeout
 import type { DelegationLimits, DelegationParams, EventBus } from "./delegate.ts";
 import { GIT_AUDIT_OPERATIONS, gitCommit, gitSafePrefix, isWorkTree, runGitAudit } from "./git.ts";
 import type { GitAuditRequest, GitRunner } from "./git.ts";
+import { loadArtifactDir } from "./subagent-artifacts.ts";
 
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
 	? resolve(process.env.PI_CODING_AGENT_DIR)
@@ -185,6 +186,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					limits: loadLimits(),
 					busy,
 					sessionFile: ctx.sessionManager?.getSessionFile?.(),
+					artifactDir: loadArtifactDir(),
 				},
 				{ ...params, cwd: resolveCwd(ctx, params.cwd) },
 				signal,

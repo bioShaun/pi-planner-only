@@ -24,6 +24,7 @@
     "index.ts",
     "delegate.ts",
     "git.ts",
+    "subagent-artifacts.ts",
     "subagent-delegation-contract.ts"
   ],
   "pi": {

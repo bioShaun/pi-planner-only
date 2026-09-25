@@ -7,7 +7,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { resolve } from "node:path";
 import {
 	SUBAGENT_DELEGATION_CANCEL_EVENT,
 	SUBAGENT_DELEGATION_REQUEST_EVENT,
@@ -23,6 +23,8 @@ import type {
 } from "./subagent-delegation-contract.ts";
 import { captureBase, clip, summarizeWork } from "./git.ts";
 import type { GitRunner } from "./git.ts";
+import { resolveArtifacts } from "./subagent-artifacts.ts";
+import type { ArtifactDir } from "./subagent-artifacts.ts";
 
 export const ROLES = ["worker", "explorer", "validator", "reviewer"] as const;
 export type Role = (typeof ROLES)[number];
@@ -96,6 +98,8 @@ export interface DelegationDeps {
 	busy: Set<string>;
 	/** Root's session file; locates pi-subagents artifacts after a failed run. */
 	sessionFile?: string;
+	/** pi-subagents' configured `artifactDir`; see loadArtifactDir. Defaults to the upstream default. */
+	artifactDir?: ArtifactDir;
 }
 
 export interface DelegationParams {
@@ -317,16 +321,19 @@ function readTranscriptTail(path: string): string | undefined {
  * its timeout recovery summary reach only artifact files. Two sources, both
  * existing primitives:
  * - the last UPDATE event (runId, current tool, recent output);
- * - fallback that depends on the upstream layout: the output artifact at
- *   `<dirname(sessionFile)>/subagent-artifacts/<runId>_<agent>_0_output.md`,
- *   which assumes the default `artifactDir: "session"` (src/shared/artifacts.js
- *   getArtifactsDir / getArtifactPaths). With `temp` or `project` the files live
- *   elsewhere and only the runId is reported.
+ * - the output and transcript artifacts, located by the subagent-artifacts
+ *   adapter for the configured `artifactDir` (session/temp/project).
  */
+export interface ArtifactSource {
+	sessionFile?: string;
+	cwd: string;
+	artifactDir?: ArtifactDir;
+}
+
 export function recoverPartial(
 	response: SubagentDelegationResponse,
 	agent: string,
-	sessionFile: string | undefined,
+	source: ArtifactSource,
 	last: LastActivity = {},
 ): { text?: string; tail?: string; lines: string[] } {
 	const lines: string[] = [];
@@ -340,18 +347,17 @@ export function recoverPartial(
 		? `(recent output from the last progress update)\n${clip(last.recentOutput.trim(), MAX_RECENT_OUTPUT_CHARS)}`
 		: undefined;
 	if (!runId) return { text: recent, lines };
-	const safeName = /^[A-Za-z0-9_-]+$/;
-	if (sessionFile && safeName.test(runId) && safeName.test(agent)) {
-		const base = join(dirname(sessionFile), "subagent-artifacts", `${runId}_${agent}_0`);
+	const paths = resolveArtifacts({ runId, agent, ...source });
+	if (paths) {
 		try {
-			const text = readFileSync(`${base}_output.md`, "utf8");
-			lines.push(`Transcript: ${base}_transcript.jsonl`);
-			const jsonl = readTranscriptTail(`${base}_transcript.jsonl`);
+			const text = readFileSync(paths.outputPath, "utf8");
+			lines.push(`Transcript: ${paths.transcriptPath}`);
+			const jsonl = readTranscriptTail(paths.transcriptPath);
 			const tail = jsonl ? summarizeTranscript(jsonl) : undefined;
 			return { text: text.trim() ? text : recent, tail, lines };
 		} catch { /* fall through */ }
 	}
-	lines.push(`artifacts not found at the default location (pi-subagents artifactDir may be temp/project); runId=${runId}`);
+	lines.push(`artifacts not found (artifactDir=${source.artifactDir ?? "session"}${paths ? `, expected ${paths.outputPath}` : ""}); runId=${runId}`);
 	return { text: recent, lines };
 }
 
@@ -464,7 +470,7 @@ export async function runDelegation(
 		: response.result ? JSON.stringify(response.result.value) : "";
 	let tail: string | undefined;
 	if (response.status !== "completed") {
-		const recovered = recoverPartial(response, response.agent ?? profile.agent, deps.sessionFile, terminal.last);
+		const recovered = recoverPartial(response, response.agent ?? profile.agent, { sessionFile: deps.sessionFile, cwd, artifactDir: deps.artifactDir }, terminal.last);
 		lines.push(...recovered.lines);
 		if (!childText.trim() && recovered.text) childText = recovered.text;
 		tail = recovered.tail;

@@ -17,7 +17,8 @@ Lite rewrite (`docs/pi-planner-only-subtraction-plan.md`). The 0.8.0 code is at 
   - Git 1.8 works: `--no-optional-locks` is sent only when `git --version` reports 2.15 or later (probed once per session). `status` uses `--porcelain` instead of `--porcelain=v1`.
   - `git_audit` and `git_commit` take an optional `cwd`. Outside a work tree they return `<cwd> is not inside a git work tree; pass cwd=<repo>`.
   - The delegation summary now tells "not a work tree" apart from "no commits yet". The prompt tells Root to pass `cwd` when the target repository is not the session cwd.
-  - A child that does not complete now reports its runId and last activity (tool and arguments from the last progress update). When the output artifact exists at the default `session` location, the result includes its text and the transcript path. Otherwise it shows the child's recent output and says the artifact was not found.
+  - A child that does not complete now reports its runId and last activity (tool and arguments from the last progress update). When the output artifact exists, the result includes its text and the transcript path. Otherwise it shows the child's recent output and says where the artifact was expected.
+  - Artifact locations come from a single adapter (`subagent-artifacts.ts`) that honors pi-subagents' configured `artifactDir` (`session`, `temp`, `project`) and `PI_SUBAGENTS_TEMP_ROOT`; `contract.test.mjs` checks it against the installed package.
   - The task text and the Root prompt state the child's time limit (`PI_PLANNER_ONLY_TIMEOUT_MS`, in whole minutes).
 - om09 run4 follow-ups (`.scratch/om09-run4/spec.md`):
   - A child that does not complete also returns a transcript tail: slow tools and slow model turns (60s or more), the last 12 tool calls with time offsets, durations, commands and result excerpts, and the last assistant text. Root can reuse checks the child already ran.
