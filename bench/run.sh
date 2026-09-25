@@ -6,6 +6,20 @@ TASK_ID=${1:?usage: bench/run.sh <task-id> <arm-name> <rep>}
 ARM_NAME=${2:?}
 REP=${3:?}
 : "${BENCH_OUT:?BENCH_OUT must name the campaign output directory}"
+# Retry protocol: a failed attempt below BENCH_MAX_ATTEMPTS logs to RETRY and exits 5 (caller retries);
+# only the last attempt writes STOP. Default 1 attempt keeps the old fail-fast behaviour.
+ATTEMPT=${BENCH_ATTEMPT:-1} MAX_ATTEMPTS=${BENCH_MAX_ATTEMPTS:-1}
+[[ $ATTEMPT =~ ^[1-9][0-9]*$ && $MAX_ATTEMPTS =~ ^[1-9][0-9]*$ ]] || { echo "BENCH_ATTEMPT/BENCH_MAX_ATTEMPTS must be positive integers" >&2; exit 2; }
+# Record a failure: RETRY + exit 5 while attempts remain, else STOP + the given exit code.
+fail_run() {
+  local code=$1 msg=$2
+  if (( ATTEMPT < MAX_ATTEMPTS )); then
+    printf '%s %s attempt=%s/%s %s\n' "$(date -Is)" "$ID" "$ATTEMPT" "$MAX_ATTEMPTS" "$msg" >>"$BENCH_OUT/RETRY"
+    exit 5
+  fi
+  printf '%s %s %s\n' "$(date -Is)" "$ID" "$msg" >>"$BENCH_OUT/STOP"
+  exit "$code"
+}
 TASK_FILE=$ROOT/bench/tasks/$TASK_ID.json
 ARM_FILE=$ROOT/bench/arms/$ARM_NAME.json
 [[ -f $TASK_FILE && -f $ARM_FILE ]] || { echo "missing task or arm config" >&2; exit 2; }
@@ -66,8 +80,7 @@ else
       last_line=$(tail -n 1 <<<"${health_msg:-$health_out}")
       line="BLOCKED health $m: ${last_line:-exit $health_rc}"
       echo "$line" >&2
-      printf '%s %s %s\n' "$(date -Is)" "$ID" "$line" >>"$BENCH_OUT/STOP"
-      exit 3
+      fail_run 3 "$line"
     fi
   done
 fi
@@ -172,6 +185,5 @@ if [[ ${BENCH_KEEP_CLONE:-0} != 1 ]]; then rm -rf "$CLONE"; fi
 echo "run_done $ID pi_exit=$PI_EXIT"
 if (( CHECK_EXIT != 0 )); then
   reasons=$(python3 -c 'import json,sys; print("; ".join(json.loads(sys.argv[1])["reasons"]))' "$CHECK")
-  printf '%s %s %s\n' "$(date -Is)" "$ID" "$reasons" >>"$BENCH_OUT/STOP"
-  exit 4
+  fail_run 4 "$reasons"
 fi

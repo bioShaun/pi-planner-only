@@ -13,6 +13,9 @@ while (($#)); do
   esac
 done
 [[ $REPS =~ ^[1-9][0-9]*$ && $PARALLEL =~ ^[1-9][0-9]*$ ]] || { echo 'reps and parallel must be positive integers' >&2; exit 2; }
+# Each run gets up to MAX_ATTEMPTS tries; failed attempts go to void/ and only the last one writes STOP.
+MAX_ATTEMPTS=${BENCH_MAX_ATTEMPTS:-2}; RETRY_DELAY=${BENCH_RETRY_DELAY:-120}
+[[ $MAX_ATTEMPTS =~ ^[1-9][0-9]*$ && $RETRY_DELAY =~ ^[0-9]+$ ]] || { echo 'BENCH_MAX_ATTEMPTS must be a positive integer and BENCH_RETRY_DELAY a non-negative integer' >&2; exit 2; }
 IFS=, read -r -a TASKS <<< "$TASKS_CSV"; IFS=, read -r -a ARMS <<< "$ARMS_CSV"
 OUT=/project/tmp/ppo-bench/results/$NAME; mkdir -p "$OUT"
 if (( RESUME )); then
@@ -73,7 +76,14 @@ for ((k=0;k<lanes;k++)); do
         printf 'mkdir -p %q\n' "$void"
         printf 'shopt -s nullglob; files=("$OUT/runs/%s."*); if ((${#files[@]})); then mv "${files[@]}" %q/; fi\n' "$id" "$void"
       fi
-      printf 'env BENCH_OUT=%q %q %q %q %q\n' "$OUT" "$ROOT/bench/run.sh" "${taskof[$id]}" "${armof[$id]}" "${repof[$id]}"
+      # run.sh exit 5 = failed attempt with attempts left: archive it, wait, retry unless STOP appeared meanwhile.
+      printf 'for attempt in $(seq 1 %d); do\n' "$MAX_ATTEMPTS"
+      printf '  env BENCH_OUT=%q BENCH_ATTEMPT="$attempt" BENCH_MAX_ATTEMPTS=%d %q %q %q %q; rc=$?\n' "$OUT" "$MAX_ATTEMPTS" "$ROOT/bench/run.sh" "${taskof[$id]}" "${armof[$id]}" "${repof[$id]}"
+      printf '  (( rc == 5 )) || break\n'
+      printf '  d="$OUT/void/%s-attempt$attempt-$(date +%%Y%%m%%dT%%H%%M%%S)"; mkdir -p "$d"; shopt -s nullglob; files=("$OUT/runs/%s."*); if ((${#files[@]})); then mv "${files[@]}" "$d"/; fi\n' "$id" "$id"
+      printf '  echo %q; sleep %d\n' "lane $k: $id attempt failed, retrying" "$RETRY_DELAY"
+      printf '  [[ -f "$OUT/STOP" ]] && { echo %q; exit 0; }\n' "lane $k: STOP present, abandoning retry of $id"
+      printf 'done\n'
     done
   } > "$lane"
   chmod +x "$lane"

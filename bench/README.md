@@ -31,7 +31,7 @@ bench/campaign.sh pilot-root 2 T1,T2,T3 lite-kimi,lite-gemini --dry-run --parall
 bench/campaign.sh pilot-root 2 T1,T2,T3 lite-kimi,lite-gemini --resume
 ```
 
-Campaign 输出位于 `/project/tmp/ppo-bench/results/<名称>`。提交前会把 `slot audit`、`slot status` 和各 task/rep 的随机化 arm 顺序写入 `campaign.log`，顺序种子及并行 lane 数写入 `campaign.json`。`--parallel N` 将交错后的 run 顺序轮询分配到最多 N 个 lane，每个 lane 顺序执行。`--dry-run` 只显示 lane 分配和提交命令。执行前会按 Root 与 child 模型做健康检查；可用 `BENCH_SKIP_HEALTH=1` 跳过。检查失败退出码为 3，runcheck 判定运行无效时退出码为 4，并写入 `STOP` 熔断后续 lane。`--resume` 归档 STOP，跳过 eval 标记有效的 run；旧 eval 无 `valid` 字段时按 JSONL 重新检查，无效 run 的旧文件会在 lane 执行时移入 `void/` 后重跑。
+Campaign 输出位于 `/project/tmp/ppo-bench/results/<名称>`。提交前会把 `slot audit`、`slot status` 和各 task/rep 的随机化 arm 顺序写入 `campaign.log`，顺序种子及并行 lane 数写入 `campaign.json`。`--parallel N` 将交错后的 run 顺序轮询分配到最多 N 个 lane，每个 lane 顺序执行。`--dry-run` 只显示 lane 分配和提交命令。执行前会按 Root 与 child 模型做健康检查；可用 `BENCH_SKIP_HEALTH=1` 跳过。检查失败退出码为 3，runcheck 判定运行无效时退出码为 4，并写入 `STOP` 熔断后续 lane。campaign 的每条 run 最多尝试 `BENCH_MAX_ATTEMPTS` 次（默认 2）：非最后一次失败时 `run.sh` 只追加一行 `RETRY` 并以退出码 5 退出，lane 把该次文件移入 `void/<id>-attempt<N>-<时间>`，等待 `BENCH_RETRY_DELAY` 秒（默认 120）后重试；最后一次仍失败才写 `STOP`。直接调用 `run.sh` 时默认只尝试 1 次，行为不变。`--resume` 归档 STOP，跳过 eval 标记有效的 run；旧 eval 无 `valid` 字段时按 JSONL 重新检查，无效 run 的旧文件会在 lane 执行时移入 `void/` 后重跑。
 
 ## 汇总
 
