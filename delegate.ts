@@ -8,6 +8,8 @@
 import { randomUUID } from "node:crypto";
 import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { DEFAULT_LIMITS, loadLimits } from "./config.ts";
+import type { DelegationLimits } from "./config.ts";
 import {
 	SUBAGENT_DELEGATION_CANCEL_EVENT,
 	SUBAGENT_DELEGATION_REQUEST_EVENT,
@@ -55,32 +57,8 @@ export const ROLE_AGENTS: Record<Role, { agent: string; exclusive: boolean; clos
 	},
 };
 
-export interface DelegationLimits {
-	timeoutMs: number;
-	maxTokens: number;
-	startTimeoutMs: number;
-	cancelGraceMs: number;
-}
-
-export const DEFAULT_LIMITS: DelegationLimits = {
-	timeoutMs: 600_000,
-	maxTokens: 1_500_000,
-	startTimeoutMs: 30_000,
-	cancelGraceMs: 5_000,
-};
-
-export function loadLimits(env: NodeJS.ProcessEnv = process.env): DelegationLimits {
-	const num = (name: string, fallback: number) => {
-		const value = Number(env[name]);
-		return Number.isInteger(value) && value > 0 ? value : fallback;
-	};
-	return {
-		timeoutMs: num("PI_PLANNER_ONLY_TIMEOUT_MS", DEFAULT_LIMITS.timeoutMs),
-		maxTokens: num("PI_PLANNER_ONLY_MAX_TOKENS", DEFAULT_LIMITS.maxTokens),
-		startTimeoutMs: num("PI_PLANNER_ONLY_START_TIMEOUT_MS", DEFAULT_LIMITS.startTimeoutMs),
-		cancelGraceMs: num("PI_PLANNER_ONLY_CANCEL_GRACE_MS", DEFAULT_LIMITS.cancelGraceMs),
-	};
-}
+export { DEFAULT_LIMITS, loadLimits };
+export type { DelegationLimits };
 
 export interface EventBus {
 	on(event: string, handler: (data: unknown) => void): () => void;
