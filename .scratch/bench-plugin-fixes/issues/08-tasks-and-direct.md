@@ -1,6 +1,6 @@
 # 08：新任务与 direct arm
 
-Status: needs-info
+Status: ready-for-agent
 Type: task
 Blocked by: 01, 02
 
@@ -21,3 +21,13 @@ Blocked by: 01, 02
   | nf-batch-design-probe | b647c04 / f9fc7ed | 8 个文件，669 行 | 太大 |
 
 - 阻塞项：这些仓库都没有 `.venv`，需要维护者确认能否用它们做任务，以及用哪个 Python 环境。前三个是单源文件改动，通过率可能接近 100%，达不到 30–70% 的目标。要找到难度适中的任务，可能得选多文件改动（例如 nf-pangenome-design），或者自己设计任务。
+- 2026-09-25 Root 决定（维护者授权由 Root 判断）：
+  - 先接入 **nf-pangenome-design `a04c1d7`**，作为 T4。这个改动涉及 3 个文件、289 行，同时改了 2 个测试文件，最有可能让通过率落在 30–70%。
+  - genonova-cli、system-py、hermes_bio_job_manager 这三个暂不接入。它们都是只改一个源文件的小改动，通过率大概率接近 100%，加进来只会增加费用和重复次数，区分不出差异。等以后需要多仓库冒烟时再说。nf-batch-design-probe 改动太大，不用。
+  - Python 环境：不改 /public/scripts。在 `/project/tmp/ppo-bench/envs/nf-pangenome-design/` 建一个专用 venv，按仓库声明的依赖安装，T4.json 的 `python` 字段指向它。
+  - 接入 T4 的门槛：
+    - 在 BASE 上，目标测试必须失败；
+    - `bench/goldcheck.sh T4` 必须 PASS；
+    - 基线用 masked suite 生成。
+  - 上线前先用 `lite-pds-strict-head` 跑 2 次，看通过率。如果两次都通过，再找更难的任务（比如自己设计一个多文件任务）。
+  - 目前暂停：维护者要求今天先停止测试，控制 token 消耗。

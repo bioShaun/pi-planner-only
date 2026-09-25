@@ -1,6 +1,6 @@
 # 09：A/B 测量
 
-Status: ready-for-human
+Status: ready-for-human (paused 2026-09-25: maintainer asked to hold testing)
 Type: task
 Blocked by: 01, 02, 03, 04, 05, 06
 
