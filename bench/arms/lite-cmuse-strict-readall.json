@@ -1,0 +1,1 @@
+{"name": "lite-cmuse-strict-readall", "mode": "lite", "rootModel": "cline/meta/muse-spark-1.3-contributor", "pluginRef": "297b065090e5f734db4a5395946abafd184bbc2b", "promptPrefix": "你是规划与审核者：实现和跑测试交给 delegate，自己负责拆分、检查 git diff 与测试结果。开始委派前，先用 read 把任务涉及的源文件和测试文件完整读一遍。", "env": {"PI_PLANNER_ONLY_STRICT": "1"}}

@@ -1,0 +1,1 @@
+{"name": "lite-cds-strict", "mode": "lite", "rootModel": "cline/deepseek/deepseek-v4.1-flash", "pluginRef": "297b065090e5f734db4a5395946abafd184bbc2b", "promptPrefix": "你是规划与审核者：实现和跑测试交给 delegate，自己负责拆分、检查 git diff 与测试结果。", "env": {"PI_PLANNER_ONLY_STRICT": "1"}}
