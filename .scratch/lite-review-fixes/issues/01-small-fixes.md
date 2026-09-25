@@ -1,9 +1,20 @@
 # 01：交接事实截断、锁键规范化、strict 文档、小任务措辞
 
-Status: ready-for-agent
+Status: ready-for-human
 Type: task
 
 Source: `../spec.md`（问题 1–4）。
+
+## Comments
+
+- 2026-09-25 agent 认领，开始实现。
+- 2026-09-25 agent 实现完成，请求人类验收（本工作树未提交）：
+  - `index.ts`：新增 `formatStatusLines`（去末尾换行、取前 30 行、`… N more`、空为 `(clean)`），`gatherGitFacts` 改用它；`delegate` 工具描述追加小任务措辞（strict 下也成立）。
+  - `delegate.ts`：新增 `resolveLockKey(git, cwd)`（`git rev-parse --show-toplevel` 的 realpath；非仓库退回 `realpath(cwd)`；realpath 失败退回 `resolve(cwd)`）；`runDelegation` 只改锁键，child 的 cwd/任务文本/git 摘要仍用 `resolve` 后的 cwd；拒绝文案改为 `…still running in repository <锁键>`；`handoffRefusal` 未动。
+  - `README.md` / `README.zh-CN.md`：strict 小节写明只按名字拦截 Root 自己的 `edit`/`write`/`bash`，不是安全边界。
+  - 新增故障注入测试：`index.test.mjs`（40 行 status 截断 + 空 status `(clean)`）、`delegate.test.mjs`（子目录/symlink 互斥、双仓库并行、非仓库 realpath 锁、拒绝文案含锁键）。
+  - 验证：`TMPDIR=/tmp/ppo-tmp-outside npm test` 五套件全绿（contract/git/delegate/host/index）；`./node_modules/.bin/tsc --noEmit` 退出 0；`git diff | grep '^-.*assert'` 无输出（无既有断言删除）。`npm run test:release` 未跑通（`tsc: not found`，PATH 无 tsc，但同等内容已用本地 tsc 直调验证）。
+  - 未动：票 02（git_commit 范围，needs-triage，待维护者二选一）、票 03（explorer 共享锁，needs-triage，待 bench transcript 并行度统计）、票 04（wontfix）。
 
 ## Changes
 

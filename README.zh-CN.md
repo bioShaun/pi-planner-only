@@ -66,7 +66,7 @@ pi install /path/to/pi-planner-only                          # 本地 checkout
 | `/planner-only status` | 显示状态和本会话费用合计。 |
 | `/planner-only handoff [目标]` | 让 Root 写简报并在新会话里继续（`handoff drop` 丢弃失败的交接）。Root 上下文超过警告阈值后也可以自己调用 `handoff` 工具；新会话带着简报和 git 状态自动开始工作。 |
 | `PI_PLANNER_ONLY=1` / `0` | 强制开 / 关，优先于标记文件。 |
-| `PI_PLANNER_ONLY_STRICT=1` | 禁止 Root 自己用 `edit`、`write`、`bash`。默认关闭，因为小任务直接做更省。 |
+| `PI_PLANNER_ONLY_STRICT=1` | 按名字禁止 Root 自己用 `edit`、`write`、`bash`。不拦截其他插件提供的写能力，不是安全边界。默认关闭，因为小任务直接做更省。 |
 | `PI_PLANNER_ONLY_TIMEOUT_MS` | 传给宿主的子代理时限（默认 600000）。 |
 | `PI_PLANNER_ONLY_MAX_TOKENS` | 子代理上报的 token 超过此值就取消（默认 1500000）。计数取子代理进度事件里的累计 input+output token，不含缓存读取。 |
 | `PI_PLANNER_ONLY_START_TIMEOUT_MS` | 子代理迟迟不启动时放弃（默认 30000）。 |

@@ -77,6 +77,8 @@ try {
 	assert.match(plannerPrompt(false), /fails or times out.*narrower task.*report\/last tool results before doing the work yourself/);
 	assert.match(h.tools.get("delegate").parameters.properties.role.description, /logs, or transcripts and return findings/);
 	assert.match(h.tools.get("delegate").parameters.properties.role.description, /no shell, sees files and uncommitted changes \(review before committing\)/);
+	assert.match(h.tools.get("delegate").description, /Worth it for multi-file work or long reading; outside strict mode, do small tasks \(about ≤2 files\) yourself\./);
+	assert.match(plannerPrompt(false), /Do small things yourself \(about ≤2 files/);
 	process.env.PI_PLANNER_ONLY_TIMEOUT_MS = "300000";
 	assert.match((await h.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, h.ctx)).systemPrompt, /A child has 5 minutes\./);
 	delete process.env.PI_PLANNER_ONLY_TIMEOUT_MS;
@@ -153,6 +155,33 @@ try {
 	assert.match(gitFacts.replaced.sent[0], /M index.ts/);
 	assert.match(gitFacts.replaced.sent[0], /abc123 latest change/);
 	assert.match(gitFacts.replaced.sent[0], /Repository \(git facts below\): \/w\/repo/);
+	// Handoff facts truncate a long status: first 30 lines plus "… N more"; empty stays "(clean)".
+	const longStatus = Array.from({ length: 40 }, (_, i) => ` M file${i}.ts`).join("\n") + "\n";
+	const truncFacts = fakePi(undefined, async (_cmd, args) => {
+		if (args[0] === "--version") return { stdout: "git version 2.43.0", stderr: "", code: 0 };
+		if (args.includes("--is-inside-work-tree")) return { stdout: "true", stderr: "", code: 0 };
+		if (args.includes("status")) return { stdout: longStatus, stderr: "", code: 0 };
+		if (args.includes("log")) return { stdout: "abc123 latest change\n", stderr: "", code: 0 };
+		return { stdout: "", stderr: "", code: 0 };
+	});
+	await truncFacts.commands.get("planner-only").handler("handoff", truncFacts.ctx);
+	await truncFacts.tools.get("handoff").execute("facts-trunc", { brief, cwd: "repo" }, undefined, undefined, truncFacts.ctx);
+	await truncFacts.commands.get("planner-only").handler("handoff", truncFacts.ctx);
+	assert.match(truncFacts.replaced.sent[0], / M file0\.ts/);
+	assert.match(truncFacts.replaced.sent[0], / M file29\.ts/);
+	assert.match(truncFacts.replaced.sent[0], /… 10 more/);
+	assert.doesNotMatch(truncFacts.replaced.sent[0], / M file30\.ts/);
+	const cleanFacts = fakePi(undefined, async (_cmd, args) => {
+		if (args[0] === "--version") return { stdout: "git version 2.43.0", stderr: "", code: 0 };
+		if (args.includes("--is-inside-work-tree")) return { stdout: "true", stderr: "", code: 0 };
+		if (args.includes("status")) return { stdout: "", stderr: "", code: 0 };
+		if (args.includes("log")) return { stdout: "abc123 latest change\n", stderr: "", code: 0 };
+		return { stdout: "", stderr: "", code: 0 };
+	});
+	await cleanFacts.commands.get("planner-only").handler("handoff", cleanFacts.ctx);
+	await cleanFacts.tools.get("handoff").execute("facts-clean", { brief, cwd: "repo" }, undefined, undefined, cleanFacts.ctx);
+	await cleanFacts.commands.get("planner-only").handler("handoff", cleanFacts.ctx);
+	assert.match(cleanFacts.replaced.sent[0], /\(clean\)/);
 	const cancelled = fakePi();
 	let cancelSession = true;
 	cancelled.ctx.newSession = async (opts) => { cancelled.sessionCalls.push(opts); if (cancelSession) return { cancelled: true }; await opts.withSession(cancelled.replaced); return {}; };

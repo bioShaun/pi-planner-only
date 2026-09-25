@@ -316,6 +316,14 @@ function executeHandoff(session: PlannerSession, host: HostAdapter, params: { br
 	return textResult("Handoff scheduled: a new session will start with this brief after this turn ends. Stop working now; end your turn with a one-line note to the user.", { ok: true });
 }
 
+export function formatStatusLines(stdout: string, max = 30): string {
+	const body = stdout.endsWith("\n") ? stdout.slice(0, -1) : stdout;
+	if (!body) return "(clean)";
+	const lines = body.split("\n");
+	if (lines.length <= max) return body;
+	return [...lines.slice(0, max), `… ${lines.length - max} more`].join("\n");
+}
+
 async function gatherGitFacts(git: GitRunner, cwd: string): Promise<string> {
 	try {
 		const prefix = await gitSafePrefix(git, cwd);
@@ -324,7 +332,8 @@ async function gatherGitFacts(git: GitRunner, cwd: string): Promise<string> {
 			git([...prefix, "status", "--porcelain"], cwd),
 			git([...prefix, "log", "--oneline", "-n5"], cwd),
 		]);
-		return `git status (porcelain):\n${status.code === 0 ? status.stdout.split("\\n").slice(0, 30).join("\\n") || "(clean)" : (status.stderr || status.stdout).trim()}\n\ngit log --oneline -n5:\n${log.code === 0 ? log.stdout.trim() || "(no commits)" : (log.stderr || log.stdout).trim()}`;
+		const statusText = status.code === 0 ? formatStatusLines(status.stdout) : (status.stderr || status.stdout).trim();
+		return `git status (porcelain):\n${statusText}\n\ngit log --oneline -n5:\n${log.code === 0 ? log.stdout.trim() || "(no commits)" : (log.stderr || log.stdout).trim()}`;
 	} catch (error) {
 		return `git facts unavailable: ${error instanceof Error ? error.message : String(error)}`;
 	}
@@ -436,7 +445,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 	pi.registerTool({
 		name: "delegate",
 		label: "Delegate",
-		description: "Run one child agent on a self-contained task and wait for it. Returns the child's report, host status and usage, and a git summary of what changed.",
+		description: "Run one child agent on a self-contained task and wait for it. Returns the child's report, host status and usage, and a git summary of what changed. Worth it for multi-file work or long reading; outside strict mode, do small tasks (about ≤2 files) yourself.",
 		promptSnippet: "delegate: hand a self-contained task to a cheaper child agent (worker, explorer, validator, reviewer)",
 		parameters: Type.Object({
 			role: Type.Union(ROLES.map((r) => Type.Literal(r)), {

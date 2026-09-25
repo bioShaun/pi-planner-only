@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -9,7 +9,7 @@ import {
 	SUBAGENT_DELEGATION_STARTED_EVENT as STARTED,
 	SUBAGENT_DELEGATION_UPDATE_EVENT as UPDATE,
 } from "./subagent-delegation-contract.ts";
-import { ROLE_AGENTS, buildTaskText, clipChildText, createCwdLocks, loadLimits, matchesIdentity, newRunIdentity, runDelegation, summarizeTranscript } from "./delegate.ts";
+import { ROLE_AGENTS, buildTaskText, clipChildText, createCwdLocks, loadLimits, matchesIdentity, newRunIdentity, resolveLockKey, runDelegation, summarizeTranscript } from "./delegate.ts";
 import { formatTokens } from "./format.ts";
 import { DEFAULT_CONFIG, loadConfig } from "./config.ts";
 import { artifactsDir, loadArtifactDir, resolveArtifacts, tempArtifactsDir } from "./subagent-artifacts.ts";
@@ -529,6 +529,75 @@ const respond = (bus, req, over = {}) =>
 	assert.equal(loadConfig({ PI_PLANNER_ONLY_STRICT: "yes" }).strict, false);
 	assert.equal(loadConfig({ PI_PLANNER_ONLY_HANDOFF: "bogus" }).handoffMode, "auto");
 	assert.equal(loadConfig({ PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS: "0" }).contextWarnTokens, 150_000);
+}
+
+// Lock key: git toplevel realpath, so /repo and /repo/src share one lock; symlink spellings too.
+// Outside a repo, the realpath cwd is used; a realpath failure falls back to the resolved cwd.
+{
+	const repo = tempDir("ppo-lock-repo-");
+	const sub = join(repo, "src");
+	mkdirSync(sub, { recursive: true });
+	const other = tempDir("ppo-lock-other-");
+	const link = join(tempDir("ppo-lock-linkdir-"), "repo-link");
+	symlinkSync(repo, link);
+	const repoGit = async (args) => {
+		if (args[0] === "--version") return { stdout: "git version 2.43.0", stderr: "", code: 0 };
+		if (args.includes("--show-toplevel")) return { stdout: `${repo}\n`, stderr: "", code: 0 };
+		return { stdout: "", stderr: "", code: 0 };
+	};
+	const plainGit = async (args) => {
+		if (args[0] === "--version") return { stdout: "git version 2.43.0", stderr: "", code: 0 };
+		return { stdout: "", stderr: "not a repo", code: 128 };
+	};
+	try {
+		assert.equal(await resolveLockKey(repoGit, sub), realpathSync(repo));
+		assert.equal(await resolveLockKey(repoGit, link), realpathSync(repo));
+		assert.equal(await resolveLockKey(plainGit, sub), realpathSync(sub));
+		assert.equal(await resolveLockKey(async () => { throw new Error("git exploded"); }, sub), sub);
+
+		// /repo busy => /repo/src and the symlink spelling are refused; the refusal names the lock key.
+		const bus = fakeBus();
+		bus.on(REQUEST, (req) => respond(bus, req));
+		const locks = createCwdLocks();
+		const repoDeps = { events: bus, git: repoGit, ownerRunId: "owner-1", limits, locks };
+		const held = locks.tryAcquire(realpathSync(repo));
+		assert.ok(held);
+		const subRefused = await runDelegation(repoDeps, { role: "worker", task: "t", cwd: sub });
+		assert.equal(subRefused.details.status, "refused");
+		assert.match(subRefused.text, new RegExp(`still running in repository ${realpathSync(repo).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+		const linkRefused = await runDelegation(repoDeps, { role: "explorer", task: "t", cwd: link });
+		assert.equal(linkRefused.details.status, "refused");
+		held();
+		// Two different repositories run in parallel: the first stays in flight
+		// (deferred response) while the second completes.
+		const bus2 = fakeBus();
+		let firstReq;
+		bus2.on(REQUEST, (req) => { if (req.cwd === repo) firstReq = req; else respond(bus2, req); });
+		const locks2 = createCwdLocks();
+		const first = runDelegation({ events: bus2, git: repoGit, ownerRunId: "owner-1", limits, locks: locks2 }, { role: "worker", task: "t", cwd: repo });
+		await tick(5);
+		const second = await runDelegation({ events: bus2, git: async (args) => (args[0] === "--version" ? { stdout: "git version 2.43.0", stderr: "", code: 0 } : (args.includes("--show-toplevel") ? { stdout: `${other}\n`, stderr: "", code: 0 } : { stdout: "", stderr: "", code: 0 })), ownerRunId: "owner-1", limits, locks: locks2 }, { role: "worker", task: "t", cwd: other });
+		assert.equal(second.ok, true);
+		respond(bus2, firstReq);
+		assert.equal((await first).ok, true);
+		// Outside a repo the realpath cwd is the lock identity: a second
+		// delegation in the same dir is refused while the first is in flight.
+		const bus3 = fakeBus();
+		let pendingReq;
+		bus3.on(REQUEST, (req) => { pendingReq = req; });
+		const locks3 = createCwdLocks();
+		const plainDeps = { events: bus3, git: plainGit, ownerRunId: "owner-1", limits, locks: locks3 };
+		const running = runDelegation(plainDeps, { role: "worker", task: "t", cwd: sub });
+		await tick(5);
+		const again = await runDelegation(plainDeps, { role: "worker", task: "t", cwd: sub });
+		assert.equal(again.details.status, "refused");
+		respond(bus3, pendingReq);
+		await running;
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+		rmSync(other, { recursive: true, force: true });
+		rmSync(dirname(link), { recursive: true, force: true });
+	}
 }
 
 console.log("delegate.test: ok");

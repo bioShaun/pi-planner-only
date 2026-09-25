@@ -6,11 +6,14 @@
  * run in-process and end with Root.
  */
 import { randomUUID } from "node:crypto";
-import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { closeSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { DEFAULT_LIMITS, loadLimits } from "./config.ts";
 import type { DelegationLimits } from "./config.ts";
+import { clip, clipHeadTail, collapseWs, formatSeconds, formatTokens, formatUsage } from "./format.ts";
+import { captureBase, gitSafePrefix, summarizeWork } from "./git.ts";
+import type { GitRunner } from "./git.ts";
 import {
 	SUBAGENT_DELEGATION_CANCEL_EVENT,
 	SUBAGENT_DELEGATION_REQUEST_EVENT,
@@ -25,9 +28,6 @@ import type {
 	SubagentDelegationUpdate,
 	SubagentDelegationUsage,
 } from "./subagent-delegation-contract.ts";
-import { clip, clipHeadTail, collapseWs, formatSeconds, formatTokens, formatUsage } from "./format.ts";
-import { captureBase, summarizeWork } from "./git.ts";
-import type { GitRunner } from "./git.ts";
 import { resolveArtifacts } from "./subagent-artifacts.ts";
 import type { ArtifactDir } from "./subagent-artifacts.ts";
 
@@ -81,6 +81,25 @@ export interface CwdLocks {
 	/** cwds currently held, in acquisition order. */
 	held(): string[];
 	readonly size: number;
+}
+
+/**
+ * Lock identity for one cwd: the git work-tree root when inside a repository
+ * (so `/repo` and `/repo/src` share one lock), else the resolved cwd itself.
+ * Symlinks and `..` are normalized through `realpath`; when that fails the
+ * unresolved path is used so a delegation is never refused by mistake.
+ * The child's `cwd`, task text, and git summary keep using the resolved cwd.
+ */
+export async function resolveLockKey(git: GitRunner, cwd: string): Promise<string> {
+	const canonical = (p: string): string => {
+		try { return realpathSync(p); } catch { return p; }
+	};
+	try {
+		const prefix = await gitSafePrefix(git, cwd);
+		const top = await git([...prefix, "rev-parse", "--show-toplevel"], cwd);
+		if (top.code === 0 && top.stdout.trim()) return canonical(top.stdout.trim());
+	} catch { /* fall through to the cwd fallback */ }
+	return canonical(cwd);
 }
 
 export function createCwdLocks(): CwdLocks {
@@ -448,9 +467,10 @@ export async function runDelegation(
 	const cwd = resolve(params.cwd || process.cwd());
 	const details = { role, agent: profile.agent };
 	if (!params.task?.trim()) return refusal(details, "task is empty");
-	const release = profile.exclusive ? deps.locks.tryAcquire(cwd) : () => {};
+	const lockKey = profile.exclusive ? await resolveLockKey(deps.git, cwd).catch(() => cwd) : cwd;
+	const release = profile.exclusive ? deps.locks.tryAcquire(lockKey) : () => {};
 	if (!release) {
-		return refusal(details, `another worker/explorer/validator child is still running in ${cwd}. Wait for it to finish, or use role "reviewer" (read-only).`);
+		return refusal(details, `another worker/explorer/validator child is still running in repository ${lockKey}. Wait for it to finish, or use role "reviewer" (read-only).`);
 	}
 
 	const base = await captureBase(deps.git, cwd).catch(() => ({ dirtyBefore: 0 }));
