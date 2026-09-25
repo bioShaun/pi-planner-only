@@ -65,3 +65,9 @@ T1–T3 × 2 次，成本按 opus 价，参照 2026-09-24 的 sol lite（轮数 
 - kimi 在默认模式下几乎不委派，等于 direct 模式；gemini 轮数多、波动大，实价也不比 sol 便宜。
 - 初筛用 `lite-kimi-strict`（kimi + `PI_PLANNER_ONLY_STRICT=1`）：行为最接近 sol，同任务两次差异最小。
 - 它测的是严格模式。改提示词措辞、调整"小事自己做"这类改动，结论必须在 `lite-opus` 上确认。
+
+### Root 走 Cline / Command Code 的路由（2026-09-25）
+
+- Cline 的模型 ID 不带 `cline-pass/` 前缀时按 Cline Credits 计费。`control-cline-{muse,mimo,ds}-strict` 三组在 13:15 起收到 402 余额不足，已跑的 12 次全部 INVALID，三组作废。
+- ClinePass 在本地区不提供 muse，也没有 mimo-v2.6-flash。这两个模型改走 Command Code Provider API（pi provider `commandcode`，key 为 `TCUNI_COMMAND_KEY`），对应 arm 为 `lite-ccmuse-strict*`、`lite-ccmimo-strict*`。glm-5.3-flash 与 deepseek-v4.1-flash 走 ClinePass，对应 arm 为 `lite-pglm-strict*`、`lite-pds-strict*`。provider 定义在本机 `~/.pi/agent/models.json`，不在仓库内。
+- ClinePass 按 5 小时滚动、周、月三层额度计量，撞限会写 STOP，用 `--resume` 续跑。
