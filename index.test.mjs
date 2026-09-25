@@ -8,7 +8,7 @@ process.env.PI_CODING_AGENT_DIR = agentDir;
 delete process.env.PI_PLANNER_ONLY;
 delete process.env.PI_PLANNER_ONLY_STRICT;
 delete process.env.PI_SUBAGENT_CHILD;
-const { default: plannerOnly, MAX_COMMIT_MESSAGE_CHARS, OFF_MARKER, formatTotals, plannerPrompt, rootUsageOf } = await import("./index.ts");
+const { default: plannerOnly, MAX_COMMIT_MESSAGE_CHARS, OFF_MARKER, PlannerSession, formatTotals, plannerPrompt, rootUsageOf } = await import("./index.ts");
 
 function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async () => ({ stdout: "", stderr: "not a repo", code: 128 })) {
 	const tools = new Map();
@@ -351,6 +351,39 @@ try {
 	assert.equal(await callTool("subagent"), undefined);
 } finally {
 	rmSync(agentDir, { recursive: true, force: true });
+}
+
+// PlannerSession: transitions are testable without the pi event loop.
+{
+	const s = new PlannerSession();
+	assert.equal(s.recordChildRun("refused", undefined), false);
+	assert.equal(s.recordChildRun("timed_out", usage()), true);
+	assert.deepEqual([s.totals.children, s.totals.failed, s.totals.childTokens], [1, 1, 3_500]);
+	assert.match(s.handoffRefusal("x".repeat(200)), /below the 150k threshold/);
+	s.requestHandoff();
+	assert.match(s.handoffRefusal("short"), /at least 200 characters/);
+	assert.equal(s.handoffRefusal("x".repeat(200)), undefined);
+	s.scheduleHandoff({ brief: "b", cwd: "/w" });
+	assert.equal(s.handoffRequested, false);
+	assert.match(s.handoffRefusal("x".repeat(200)), /already pending/);
+	s.deferHandoff(s.pendingHandoff);
+	assert.equal(s.pendingHandoff.manualOnly, true);
+	s.recordRootTurn({ tokens: 10, cost: 0.1 }, 200_000);
+	assert.equal(s.claimContextWarning(), true);
+	assert.equal(s.claimContextWarning(), false);
+	s.recordRootTurn({ tokens: 10, cost: 0.1 }, 100_000);
+	s.recordRootTurn({ tokens: 10, cost: 0.1 }, 200_000);
+	assert.equal(s.claimContextWarning(), true, "re-arms after dropping below the threshold");
+	s.noteCompacted();
+	assert.deepEqual([s.rootContext, s.contextWarned], [undefined, false]);
+	s.delegationsInFlight = 1;
+	s.hidLoader = true;
+	s.reset();
+	assert.deepEqual([s.totals.rootTokens, s.pendingHandoff, s.handoffRequested], [0, undefined, false]);
+	assert.deepEqual([s.delegationsInFlight, s.hidLoader], [1, true], "process-scoped fields survive session_start");
+	let inFlight;
+	await s.trackDelegation(async () => { inFlight = s.delegationsInFlight; });
+	assert.deepEqual([inFlight, s.delegationsInFlight], [2, 1]);
 }
 
 console.log("index.test: ok");
