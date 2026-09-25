@@ -1,6 +1,6 @@
 # 04：summarize 加机制指标
 
-Status: ready-for-agent
+Status: done
 Type: task
 
 ## Problem
@@ -23,3 +23,7 @@ Type: task
 
 - 对 `control-cpass-ds-strict/runs` 跑出的 refused 合计为 11、truncated 合计为 117（与复盘数字一致）。
 - 原有输出行和 JSON 字段保持不变，只做追加。
+
+## Comments
+Implemented mechanism metrics and selectable paired-comparison metric in `bench/summarize.py`; verified against reference metrics for valid runs.
+- 2026-09-25 Root 验收：runcheck 现在会把泄漏的 run 判为无效，cpass-ds 只剩 17 条有效 run，所以合计是 refused=5、truncated=51，不是 11 和 117；在同样 17 条 run 上逐条核对，和 metrics.json 一致。修了一处崩溃：某个计数指标全为 0 时，bootstrap 没有样本，会抛 IndexError，现在返回 CI=None。
