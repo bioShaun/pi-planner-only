@@ -11,10 +11,12 @@ import json, sys
 task = json.load(open(sys.argv[1]))
 for value in (task['repo'], task['target'], task['parent'], *task['tests']):
     print(value)
+print(json.dumps(task.get('testRefs', {})))
 PY
 )
 REPO=${CONFIG[0]} TARGET=${CONFIG[1]} PARENT=${CONFIG[2]}
-TESTS=("${CONFIG[@]:3}")
+TESTS=("${CONFIG[@]:3:${#CONFIG[@]}-4}")
+TEST_REFS=${CONFIG[-1]}
 
 rm -rf "$DEST"
 git init -q "$DEST"
@@ -23,8 +25,9 @@ git -C "$DEST" checkout -q --detach FETCH_HEAD
 git -C "$DEST" config user.email bench@example.com
 git -C "$DEST" config user.name bench
 for path in "${TESTS[@]}"; do
+  ref=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get(sys.argv[2], sys.argv[3]))' "$TEST_REFS" "$path" "$TARGET")
   mkdir -p "$DEST/$(dirname "$path")"
-  git -C "$REPO" show "$TARGET:$path" >"$DEST/$path"
+  git -C "$REPO" show "$ref:$path" >"$DEST/$path"
 done
 git -C "$DEST" add -A
 git -C "$DEST" commit -qm 'bench: target tests'

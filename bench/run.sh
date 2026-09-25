@@ -148,26 +148,7 @@ PI_EXIT=$?
 echo $(($(date +%s)-T_START)) >"$RUNS/$ID.wall"
 echo "$PI_EXIT" >"$RUNS/$ID.exit"
 cd "$CLONE" || exit 2
-git checkout "$BASE" -- "${TESTS[@]}" 2>/dev/null
-PYTHONPATH=src "$PYTHON" -m pytest "${TESTS[@]}" >"$RUNS/$ID.eval-target.log" 2>&1; T_EXIT=$?
-IGN=(); for t in "${TESTS[@]}"; do IGN+=(--ignore "$t"); done
-PYTHONPATH=src "$PYTHON" -m pytest "${IGN[@]}" >"$RUNS/$ID.eval-suite.log" 2>&1; S_EXIT=$?
-TASK="$TASK" ARM="$ARM" ID="$ID" CLONE="$CLONE" BASE="$BASE" TESTS_JSON="$TESTS_JSON" T_EXIT="$T_EXIT" S_EXIT="$S_EXIT" BASELINE="$BASELINE" RUNS="$RUNS" python3 - <<'PY'
-import json,os,re,subprocess
-rid=os.environ['ID']; clone=os.environ['CLONE']; base=os.environ['BASE']
-def failures(path):
- try:
-  return {m.group(1) for line in open(path) if (m:=re.match(r'^(?:FAILED|ERROR) (\S+)',line))}
- except OSError: return set()
-target=sorted(failures(os.path.join(os.environ['RUNS'],rid+'.eval-target.log')))
-suite=failures(os.path.join(os.environ['RUNS'],rid+'.eval-suite.log'))
-baseline={x.strip() for x in open(os.environ['BASELINE']) if x.strip() and not x.startswith('#')}
-tracked=subprocess.run(['git','-C',clone,'diff','--name-only',base],capture_output=True,text=True).stdout.split()
-untracked=subprocess.run(['git','-C',clone,'ls-files','--others','--exclude-standard'],capture_output=True,text=True).stdout.split()
-changed=set(tracked)|set(untracked); targets=set(json.loads(os.environ['TESTS_JSON']))
-out={'task':os.environ['TASK'],'arm':os.environ['ARM'],'id':rid,'pass':not target and not(suite-baseline),'target_failed':target,'new_failures':sorted(suite-baseline),'files_changed':len(changed),'non_target_tests_changed':sorted(p for p in changed if p.startswith('tests/') and p not in targets),'target_test_exit':int(os.environ['T_EXIT']),'suite_exit':int(os.environ['S_EXIT']),'eval_semantics':'masked-suite (baseline and eval both --ignore target tests)'}
-json.dump(out,open(os.path.join(os.environ['RUNS'],rid+'.eval.json'),'w'),indent=2); print(json.dumps(out))
-PY
+ARM="$ARM" ID="$ID" "$ROOT/bench/evaluate.sh" "$TASK" "$CLONE" "$BASE" "$RUNS/$ID" || exit 2
 CHECK=$(python3 "$ROOT/bench/runcheck.py" "$RUNS/$ID.jsonl")
 CHECK_EXIT=$?
 CHECK="$CHECK" RUNS="$RUNS" ID="$ID" python3 - <<'PY'

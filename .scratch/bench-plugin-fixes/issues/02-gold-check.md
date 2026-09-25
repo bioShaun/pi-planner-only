@@ -1,6 +1,6 @@
 # 02：标准答案检查；修 T1
 
-Status: ready-for-agent
+Status: done
 Type: task
 Blocked by: 01
 
@@ -22,3 +22,12 @@ T1 的 target `978392f` 放在 parent 加目标测试之上，会让 `tests/cont
 
 - 三个任务的 goldcheck 都输出 PASS。
 - T1 的 prompt 和任务文件改动在票的 Comments 里说明理由。
+
+## Comments
+
+T2：`GOLD T2 PASS`，new_failures=[]，target_failed=[]。T3：`GOLD T3 PASS`，new_failures=[]，target_failed=[]（masked suite exit=1，但无相对 baseline 的新增失败）。
+
+T1 修正：将 `tests/contracts/test_replace_primaries_cli_wiring.py` 作为额外目标测试，来源固定为 `cee4c0f074bd43efebc76942d2682f152caeb074`，因为 TARGET 中 `_run_annotate` 改经 `ExternalTool.run`，该测试在上游 cee4c0f 版本中相应改为 patch `rp.ExternalTool.run`。prompt 和目标测试列表已同步；clone 准备脚本支持可选 `testRefs`，README 已记载。
+
+验证：重建 T1 masked baseline，仍为 13 个失败 ID，added=[]，removed=[]，因此 `bench/baselines/T1.failures.txt` 未改。`slot cpu -- bench/goldcheck.sh T1` 输出 `GOLD T1 PASS`（target_failed=[]，new_failures=[]，suite_exit=1）；`slot cpu -- bench/goldcheck.sh T3` 同样输出 `GOLD T3 PASS`。四目标文件在 BASE 上的 pytest 调用退出码为 2，因首个测试导入时缺少尚未实现的 `ExternalToolTimeoutError` 而在 collection 阶段中止。
+- 2026-09-25 Root 验收：evaluate.sh 与原来的评测代码逐行一致。修了一处回归：run.sh 调用 evaluate.sh 时没有传入 ARM/ID，eval.json 里的 arm 会变成 gold，现在显式传入。T1 的 `/project/tmp/ppo-bench/gold/T1.eval.json` 显示 pass=true、new_failures 为空。T1 改成 4 个目标测试，所以与旧的 T1 结果不能直接比较。

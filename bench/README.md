@@ -4,13 +4,17 @@
 
 ## 文件
 
-- `tasks/`: 任务元数据与原始提示词；`baseline/` 不在此目录，基线位于 `baselines/`。
+- `tasks/`: 任务元数据与原始提示词；任务 JSON 可用可选 `testRefs` 将单个目标测试路径映射到其来源 commit，未配置的测试从 target 读取；`baseline/` 不在此目录，基线位于 `baselines/`。
 - `arms/`: 对比配置。Lite arm 指定 root 模型与插件 ref，direct 不加载插件。
 - `run.sh`: 执行单次运行并写入 `$BENCH_OUT/runs/`。每个克隆只包含 parent 可达历史，测试文件取自 target；`runcheck.py` 会标记 transcript 中对 target 提交的引用。
 - `campaign.sh`: 配对、交错地提交多任务 campaign。
 - `summarize.py` / `prices.json`: 汇总 token、成本和评测结果。
 
-新增任务时添加同名 JSON 和 Markdown prompt，并提供 masked-suite baseline；新增 arm 时添加 JSON，字段沿用现有配置。`pluginRef` 可设为 `WORKTREE` 使用当前工作树，或用 git ref 固定插件快照。
+新增任务时添加同名 JSON 和 Markdown prompt，并提供 masked-suite baseline。新增 arm 时添加 JSON，字段沿用现有配置。`pluginRef` 可设为 `WORKTREE` 使用当前工作树，或用 git ref 固定插件快照。
+
+## 标准答案检查
+
+新增任务投入使用前，必须先通过 `bench/goldcheck.sh <task-id>`。
 
 ## 第一层：确定性开销
 
