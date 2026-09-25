@@ -39,7 +39,9 @@ mkdir -p /project/tmp/ppo-bench
 MODELS=$(pi --list-models 2>&1) || { echo "BLOCKED pi --list-models failed"; exit 3; }
 model_present() { awk -v want="$1" 'NF >= 2 && $1 "/" $2 == want {found=1} END {exit !found}' <<<"$MODELS"; }
 model_present "$ROOT_MODEL" || { echo "BLOCKED $ROOT_MODEL"; exit 3; }
-model_present tcuni-luna/gpt-6-luna || { echo "BLOCKED tcuni-luna/gpt-6-luna"; exit 3; }
+# Child models: whatever pi-subagents is configured to use for the roles the plugin launches.
+CHILD_MODELS=$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])).get("subagents",{}); o=s.get("agentOverrides",{}); print("\n".join(sorted({(o.get(a) or {}).get("model") or s.get("defaultModel","") for a in ("worker","scout","oracle","reviewer")} - {""})))' "$HOME/.pi/agent/settings.json")
+for m in $CHILD_MODELS; do model_present "$m" || { echo "BLOCKED child model $m"; exit 3; }; done
 
 if [[ $MODE == lite ]]; then
   if [[ $PLUGIN_REF == WORKTREE ]]; then
