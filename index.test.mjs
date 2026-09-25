@@ -124,7 +124,10 @@ try {
 	assert.equal((await high.tools.get("handoff").execute("high-context", { brief }, undefined, undefined, high.ctx)).details.ok, true);
 	const handoffTool = h.tools.get("handoff");
 	assert.equal((await handoffTool.execute("short", { brief: "too short" }, undefined, undefined, h.ctx)).details.ok, false);
-	assert.equal((await handoffTool.execute("no-ui", { brief }, undefined, undefined, { ...h.ctx, hasUI: false })).details.ok, false);
+	assert.deepStrictEqual(await handoffTool.execute("no-ui", { brief }, undefined, undefined, { ...h.ctx, hasUI: false }), {
+		content: [{ type: "text", text: "Handoff refused: a UI session is required." }],
+		details: { ok: false },
+	});
 	await h.commands.get("planner-only").handler("handoff", h.ctx);
 	assert.equal((await handoffTool.execute("handoff-1", { brief, cwd: "repo" }, undefined, undefined, h.ctx)).details.ok, true);
 	assert.equal((await handoffTool.execute("handoff-2", { brief }, undefined, undefined, h.ctx)).details.ok, false);
