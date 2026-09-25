@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { MAX_FINGERPRINT_PATHS, auditArgv, captureBase, gitCommit, parseStatusZ, runGitAudit, summarizeWork } from "./git.ts";
+import { MAX_FINGERPRINT_PATHS, auditArgv, captureBase, classifyChangedPaths, gitCommit, parseStatusZ, runGitAudit, summarizeWork } from "./git.ts";
 import { noGit, tempDir } from "./test-helpers.mjs";
 
 // Every call carries the safe prefix; diffs never run external drivers.
@@ -36,6 +36,22 @@ for (const [version, expected] of [
 	for (const args of gitCalls.filter((a) => a[expected.length] === "diff" || a[expected.length] === "show")) {
 		assert.ok(args.includes("--no-ext-diff") && args.includes("--no-textconv"), args.join(" "));
 	}
+}
+
+// classifyChangedPaths: same fingerprint and not committed -> untouched; anything else -> touchedDirty.
+{
+	const before = { same: "aaa", edited: "bbb", removed: "ccc", committed: "ddd", created: "absent" };
+	const now = { same: "aaa", edited: "bbb2", removed: "absent", committed: "ddd", created: "eee" };
+	const r = classifyChangedPaths(before, now, new Set(["committed", "never-dirty"]));
+	assert.deepEqual([...r.untouched], ["same"]);
+	assert.deepEqual(r.touchedDirty, ["edited", "removed", "committed", "created"], "order follows before");
+	assert.deepEqual(classifyChangedPaths({}, {}, new Set()), { untouched: new Set(), touchedDirty: [] });
+	const missingNow = classifyChangedPaths({ a: "x" }, {}, new Set());
+	assert.deepEqual([...missingNow.untouched], []);
+	assert.deepEqual(missingNow.touchedDirty, ["a"], "a path with no current fingerprint is not untouched");
+	const allSame = classifyChangedPaths({ a: "x", b: "y" }, { a: "x", b: "y" }, new Set());
+	assert.deepEqual([...allSame.untouched], ["a", "b"]);
+	assert.deepEqual(allSame.touchedDirty, []);
 }
 
 // Outside a work tree git_audit/git_commit say so instead of forwarding git's stderr.

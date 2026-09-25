@@ -176,6 +176,100 @@ export async function captureBase(run: GitRunner, cwd: string): Promise<WorkBase
 const listPaths = (paths: string[], max = 10) =>
 	paths.slice(0, max).join(", ") + (paths.length > max ? `, … ${paths.length - max} more` : "");
 
+/** How the paths that were already uncommitted at the base relate to the child's work. */
+export interface ChangedPaths {
+	/** Same content as before and not committed by the child: the child did not touch them. */
+	untouched: Set<string>;
+	/** Content changed, or committed by the child: their diff includes the earlier edits. */
+	touchedDirty: string[];
+}
+
+/**
+ * Pure reconciliation of the base fingerprints against the current ones.
+ * A path the child committed is never "untouched", even if its work-tree
+ * content is unchanged. Order of `touchedDirty` follows `before`.
+ */
+export function classifyChangedPaths(
+	before: Record<string, string>,
+	now: Record<string, string>,
+	committed: ReadonlySet<string>,
+): ChangedPaths {
+	const untouched = new Set<string>();
+	const touchedDirty: string[] = [];
+	for (const p of Object.keys(before)) {
+		if (now[p] === before[p] && !committed.has(p)) untouched.add(p);
+		else touchedDirty.push(p);
+	}
+	return { untouched, touchedDirty };
+}
+
+const splitZ = (out: string) => out.split("\0").filter(Boolean);
+
+/** `log --oneline base..HEAD` lines, or undefined when HEAD did not move or the log failed. */
+async function listNewCommits(run: GitRunner, cwd: string, baseHead: string): Promise<string | undefined> {
+	const head = await git(run, ["rev-parse", "HEAD"], cwd);
+	if (head.code !== 0 || head.stdout.trim() === baseHead) return undefined;
+	const log = await git(run, ["log", "--oneline", "-n20", `${baseHead}..HEAD`], cwd);
+	return log.code === 0 && log.stdout.trim() ? log.stdout.trimEnd() : "";
+}
+
+/**
+ * Re-fingerprint the paths dirty at the base and classify them; undefined when
+ * the base has no fingerprints or the current state cannot be determined.
+ */
+async function reconcileDirtyPaths(run: GitRunner, root: string, base: WorkBase, moved: boolean): Promise<ChangedPaths | undefined> {
+	const before = base.dirty;
+	if (!before || !base.head) return undefined;
+	const now = await fingerprint(run, root, Object.keys(before)).catch(() => undefined);
+	if (!now) return undefined;
+	let committed = new Set<string>();
+	if (moved) {
+		const inCommits = await git(run, ["diff", "--name-only", "--no-renames", "-z", ...DIFF_SAFE, base.head, "HEAD"], root);
+		if (inCommits.code !== 0) return undefined; // cannot tell what the commits touched: keep the plain note
+		committed = new Set(splitZ(inCommits.stdout));
+	}
+	return classifyChangedPaths(before, now, committed);
+}
+
+/**
+ * `diff --stat` since the base, restricted to paths the child touched; undefined
+ * when nothing remains. Above MAX_PATHSPEC_PATHS the pathspec is dropped.
+ */
+async function diffStatArgv(run: GitRunner, root: string, baseHead: string, untouched: ReadonlySet<string>): Promise<string[] | undefined> {
+	const statArgs = ["diff", "--stat", ...DIFF_SAFE, baseHead];
+	if (!untouched.size) return statArgs;
+	const names = await git(run, ["diff", "--name-only", "--no-renames", "-z", ...DIFF_SAFE, baseHead], root);
+	if (names.code !== 0) return statArgs;
+	const remaining = splitZ(names.stdout).filter((p) => !untouched.has(p));
+	if (!remaining.length) return undefined;
+	return remaining.length > MAX_PATHSPEC_PATHS ? statArgs : [...statArgs, "--", ...remaining];
+}
+
+async function diffStat(run: GitRunner, root: string, baseHead: string, untouched: ReadonlySet<string>): Promise<string> {
+	const argv = await diffStatArgv(run, root, baseHead, untouched);
+	const stat = argv ? await git(run, argv, root) : undefined;
+	return stat && stat.code === 0 && stat.stdout.trim() ? `Diff since ${baseHead.slice(0, 8)}:\n${stat.stdout.trimEnd()}` : "Tracked files: no changes.";
+}
+
+/** Untracked, non-ignored files minus the ones the child did not touch. */
+async function listUntracked(run: GitRunner, root: string, untouched: ReadonlySet<string>): Promise<string[]> {
+	const untracked = await git(run, ["ls-files", "--others", "--exclude-standard", "-z"], root);
+	return untracked.code === 0 ? splitZ(untracked.stdout).filter((p) => !untouched.has(p)) : [];
+}
+
+function dirtyNotes(base: WorkBase, changed: ChangedPaths | undefined): string[] {
+	if (!changed) {
+		return base.dirtyBefore > 0 ? [`Note: ${base.dirtyBefore} path(s) were already uncommitted before this delegation; the diff includes them.`] : [];
+	}
+	const lines: string[] = [];
+	const excluded = [...changed.untouched];
+	if (excluded.length) lines.push(`Unchanged by the child (already uncommitted before; excluded above): ${listPaths(excluded)}`);
+	if (changed.touchedDirty.length) {
+		lines.push(`Note: ${changed.touchedDirty.length} path(s) were already uncommitted before this delegation and changed again; their diff includes the earlier edits: ${listPaths(changed.touchedDirty)}`);
+	}
+	return lines;
+}
+
 /** Changes since the base: new commits, tracked diff stat, untracked files. */
 export async function summarizeWork(run: GitRunner, cwd: string, base: WorkBase, maxChars = 3_000): Promise<string> {
 	if (base.inWorkTree === false) {
@@ -185,56 +279,16 @@ export async function summarizeWork(run: GitRunner, cwd: string, base: WorkBase,
 	const lines: string[] = [];
 	// All path-level calls run at the work-tree root, where status/diff paths are anchored.
 	const root = base.root ?? cwd;
-	const head = await git(run, ["rev-parse", "HEAD"], cwd);
-	const moved = head.code === 0 && head.stdout.trim() !== base.head;
-	if (moved) {
-		const log = await git(run, ["log", "--oneline", "-n20", `${base.head}..HEAD`], cwd);
-		if (log.code === 0 && log.stdout.trim()) lines.push("New commits:", log.stdout.trimEnd());
-	}
-	// Paths that were uncommitted before and still have the same content: the child did not touch them.
-	// A path the child committed is never "untouched", even if its work-tree content is unchanged.
-	const untouched = new Set<string>();
-	const touchedDirty: string[] = [];
-	const before = base.dirty;
-	let now = before ? await fingerprint(run, root, Object.keys(before)).catch(() => undefined) : undefined;
-	let committed = new Set<string>();
-	if (now && moved) {
-		const inCommits = await git(run, ["diff", "--name-only", "--no-renames", "-z", ...DIFF_SAFE, base.head, "HEAD"], root);
-		if (inCommits.code === 0) committed = new Set(inCommits.stdout.split("\0").filter(Boolean));
-		else now = undefined; // cannot tell what the commits touched: keep the plain note
-	}
-	if (before && now) {
-		for (const p of Object.keys(before)) {
-			if (now[p] === before[p] && !committed.has(p)) untouched.add(p);
-			else touchedDirty.push(p);
-		}
-	}
-	let statArgs: string[] | undefined = ["diff", "--stat", ...DIFF_SAFE, base.head];
-	if (untouched.size) {
-		const names = await git(run, ["diff", "--name-only", "--no-renames", "-z", ...DIFF_SAFE, base.head], root);
-		if (names.code === 0) {
-			const remaining = names.stdout.split("\0").filter((p) => p && !untouched.has(p));
-			statArgs = !remaining.length ? undefined
-				: remaining.length > MAX_PATHSPEC_PATHS ? statArgs
-				: [...statArgs, "--", ...remaining];
-		}
-	}
-	const stat = statArgs ? await git(run, statArgs, root) : undefined;
-	lines.push(stat && stat.code === 0 && stat.stdout.trim() ? `Diff since ${base.head.slice(0, 8)}:\n${stat.stdout.trimEnd()}` : "Tracked files: no changes.");
-	const untracked = await git(run, ["ls-files", "--others", "--exclude-standard", "-z"], root);
-	const files = untracked.code === 0 ? untracked.stdout.split("\0").filter((p) => p && !untouched.has(p)) : [];
+	const commits = await listNewCommits(run, cwd, base.head);
+	if (commits) lines.push("New commits:", commits);
+	const changed = await reconcileDirtyPaths(run, root, base, commits !== undefined);
+	const untouched = changed?.untouched ?? new Set<string>();
+	lines.push(await diffStat(run, root, base.head, untouched));
+	const files = await listUntracked(run, root, untouched);
 	if (files.length) {
 		lines.push(`Untracked files (${files.length}):`, ...files.slice(0, 30), ...(files.length > 30 ? [`… ${files.length - 30} more`] : []));
 	}
-	if (before && now) {
-		const excluded = [...untouched];
-		if (excluded.length) lines.push(`Unchanged by the child (already uncommitted before; excluded above): ${listPaths(excluded)}`);
-		if (touchedDirty.length) {
-			lines.push(`Note: ${touchedDirty.length} path(s) were already uncommitted before this delegation and changed again; their diff includes the earlier edits: ${listPaths(touchedDirty)}`);
-		}
-	} else if (base.dirtyBefore > 0) {
-		lines.push(`Note: ${base.dirtyBefore} path(s) were already uncommitted before this delegation; the diff includes them.`);
-	}
+	lines.push(...dirtyNotes(base, changed));
 	return clip(lines.join("\n"), maxChars);
 }
 
