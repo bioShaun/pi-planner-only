@@ -43,6 +43,35 @@ model_present "$ROOT_MODEL" || { echo "BLOCKED $ROOT_MODEL"; exit 3; }
 CHILD_MODELS=$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])).get("subagents",{}); o=s.get("agentOverrides",{}); print("\n".join(sorted({(o.get(a) or {}).get("model") or s.get("defaultModel","") for a in ("worker","scout","oracle","reviewer")} - {""})))' "$HOME/.pi/agent/settings.json")
 for m in $CHILD_MODELS; do model_present "$m" || { echo "BLOCKED child model $m"; exit 3; }; done
 
+if [[ ${BENCH_SKIP_HEALTH:-0} == 1 ]]; then
+  echo "health: skipped"
+elif [[ ${BENCH_DRY_RUN:-0} == 1 ]]; then
+  echo "health: skipped (dry-run)"
+  declare -A shown_models=()
+  for m in "$ROOT_MODEL" $CHILD_MODELS; do
+    [[ -n ${shown_models[$m]:-} ]] && continue
+    shown_models[$m]=1
+    printf 'health command: timeout 120 pi -ne --no-session --model %q -p %q </dev/null\n' "$m" 'reply OK'
+  done
+else
+  declare -A checked_models=()
+  for m in "$ROOT_MODEL" $CHILD_MODELS; do
+    [[ -n ${checked_models[$m]:-} ]] && continue
+    checked_models[$m]=1
+    health_err=$(mktemp -p /project/tmp/ppo-bench health.XXXXXX)
+    # Judge stdout only: provider errors on stderr can contain "ok" (e.g. "token").
+    health_out=$(timeout 120 pi -ne --no-session --model "$m" -p "reply OK" </dev/null 2>"$health_err"); health_rc=$?
+    health_msg=$(tail -n 1 "$health_err"); rm -f "$health_err"
+    if (( health_rc != 0 )) || ! grep -Eqiw 'ok' <<<"$health_out"; then
+      last_line=$(tail -n 1 <<<"${health_msg:-$health_out}")
+      line="BLOCKED health $m: ${last_line:-exit $health_rc}"
+      echo "$line" >&2
+      printf '%s %s %s\n' "$(date -Is)" "$ID" "$line" >>"$BENCH_OUT/STOP"
+      exit 3
+    fi
+  done
+fi
+
 if [[ $MODE == lite ]]; then
   if [[ $PLUGIN_REF == WORKTREE ]]; then
     PLUGIN_SHA=$(git -C "$ROOT" rev-parse HEAD)
@@ -130,5 +159,19 @@ changed=set(tracked)|set(untracked); targets=set(json.loads(os.environ['TESTS_JS
 out={'task':os.environ['TASK'],'arm':os.environ['ARM'],'id':rid,'pass':not target and not(suite-baseline),'target_failed':target,'new_failures':sorted(suite-baseline),'files_changed':len(changed),'non_target_tests_changed':sorted(p for p in changed if p.startswith('tests/') and p not in targets),'target_test_exit':int(os.environ['T_EXIT']),'suite_exit':int(os.environ['S_EXIT']),'eval_semantics':'masked-suite (baseline and eval both --ignore target tests)'}
 json.dump(out,open(os.path.join(os.environ['RUNS'],rid+'.eval.json'),'w'),indent=2); print(json.dumps(out))
 PY
+CHECK=$(python3 "$ROOT/bench/runcheck.py" "$RUNS/$ID.jsonl")
+CHECK_EXIT=$?
+CHECK="$CHECK" RUNS="$RUNS" ID="$ID" python3 - <<'PY'
+import json, os
+p=os.path.join(os.environ['RUNS'],os.environ['ID']+'.eval.json')
+ev=json.load(open(p)); result=json.loads(os.environ['CHECK'])
+ev['valid']=result['valid']; ev['invalid_reasons']=result['reasons']
+json.dump(ev,open(p,'w'),indent=2)
+PY
 if [[ ${BENCH_KEEP_CLONE:-0} != 1 ]]; then rm -rf "$CLONE"; fi
 echo "run_done $ID pi_exit=$PI_EXIT"
+if (( CHECK_EXIT != 0 )); then
+  reasons=$(python3 -c 'import json,sys; print("; ".join(json.loads(sys.argv[1])["reasons"]))' "$CHECK")
+  printf '%s %s %s\n' "$(date -Is)" "$ID" "$reasons" >>"$BENCH_OUT/STOP"
+  exit 4
+fi

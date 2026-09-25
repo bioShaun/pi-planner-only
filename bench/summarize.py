@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 import argparse, json, os, random, re, statistics, sys
 from pathlib import Path
+BASE=Path(__file__).resolve().parent
+sys.path.insert(0, str(BASE))
+from runcheck import check as check_run
 FIELDS=("input","output","cacheRead","cacheWrite")
 SUFFIXES={"low","medium","high","minimal","none"}
-BASE=Path(__file__).resolve().parent
 PRICES=json.loads((BASE/"prices.json").read_text())
 
 def price(t,p): return sum(t[k]*p[short] for k,short in zip(FIELDS,("in","out","cacheRead","cacheWrite")))/1e6
@@ -59,10 +61,14 @@ def med(xs): return statistics.median(xs) if xs else None
 def mean(xs): return statistics.mean(xs) if xs else None
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument('runs',nargs='+'); ap.add_argument('--weight',choices=['opus','astra','sol','actual'],default='opus'); ap.add_argument('--baseline'); ap.add_argument('--json',dest='json_out'); a=ap.parse_args()
-    records=[]; incomplete=[]; unknown=[]
+    records=[]; incomplete=[]; unknown=[]; invalid=[]
     for folder in a.runs:
         directory=Path(folder)
         for p in sorted(directory.glob('*.jsonl')):
+            validity=check_run(p)
+            if not validity['valid']:
+                print(f"{p.stem}: INVALID {'; '.join(validity['reasons'])}")
+                invalid.append({'id':p.stem,'reasons':validity['reasons']}); continue
             r,u=parse_run(directory,p.stem,a.weight)
             if r is None: print(f'{p.stem}: INCOMPLETE'); incomplete.append(p.stem); continue
             records.append(r); unknown.extend((p.stem,m) for m in u)
@@ -110,7 +116,7 @@ def main():
             print(f'{arm}/{base} passing task ratios={tr} overall={point} CI90={ci}; all-runs={allpoint}')
             comparisons['arms'][arm]={'passing_task_ratios':tr,'passing_overall_ratio':point,'passing_ci90':ci,'all_runs_task_ratios':{t:med(x)/med(y) for t,x,y in allpairs if med(y)},'all_runs_overall_ratio':allpoint}
     if a.json_out:
-        data={'runs':records,'incomplete':incomplete,'aggregates':aggs,'task_aggregates':{f'{t}|{arm}':v for (t,arm),v in task_aggs.items()},'comparisons':comparisons}
+        data={'runs':records,'incomplete':incomplete,'invalid':invalid,'aggregates':aggs,'task_aggregates':{f'{t}|{arm}':v for (t,arm),v in task_aggs.items()},'comparisons':comparisons}
         Path(a.json_out).write_text(json.dumps(data,indent=2)+'\n')
     return 1 if unknown else 0
 if __name__=='__main__': sys.exit(main())

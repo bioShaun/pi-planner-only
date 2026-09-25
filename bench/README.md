@@ -25,13 +25,13 @@ node --experimental-strip-types bench/overhead.mjs corpus .handoff/p21-r100/runs
 ## Campaign
 
 ```bash
-bench/campaign.sh <名称> <重复次数> <任务逗号列表> <arm逗号列表>
-bench/campaign.sh pilot-root 2 T1,T2,T3 lite-kimi,lite-gemini
-bench/campaign.sh pilot-root 2 T1,T2,T3 lite-kimi,lite-gemini --dry-run
+bench/campaign.sh <名称> <重复次数> <任务逗号列表> <arm逗号列表> [--resume] [--dry-run] [--parallel N]
+bench/campaign.sh pilot-root 2 T1,T2,T3 lite-kimi,lite-gemini --parallel 4
+bench/campaign.sh pilot-root 2 T1,T2,T3 lite-kimi,lite-gemini --dry-run --parallel 4
 bench/campaign.sh pilot-root 2 T1,T2,T3 lite-kimi,lite-gemini --resume
 ```
 
-Campaign 输出位于 `/project/tmp/ppo-bench/results/<名称>`。提交前会把 `slot audit`、`slot status` 和各 task/rep 的随机化 arm 顺序写入 `campaign.log`，顺序种子也写入 `campaign.json`。`--resume` 只跳过已有 `.eval.json` 的 run。
+Campaign 输出位于 `/project/tmp/ppo-bench/results/<名称>`。提交前会把 `slot audit`、`slot status` 和各 task/rep 的随机化 arm 顺序写入 `campaign.log`，顺序种子及并行 lane 数写入 `campaign.json`。`--parallel N` 将交错后的 run 顺序轮询分配到最多 N 个 lane，每个 lane 顺序执行。`--dry-run` 只显示 lane 分配和提交命令。执行前会按 Root 与 child 模型做健康检查；可用 `BENCH_SKIP_HEALTH=1` 跳过。检查失败退出码为 3，runcheck 判定运行无效时退出码为 4，并写入 `STOP` 熔断后续 lane。`--resume` 归档 STOP，跳过 eval 标记有效的 run；旧 eval 无 `valid` 字段时按 JSONL 重新检查，无效 run 的旧文件会在 lane 执行时移入 `void/` 后重跑。
 
 ## 汇总
 
@@ -39,7 +39,7 @@ Campaign 输出位于 `/project/tmp/ppo-bench/results/<名称>`。提交前会�
 python3 bench/summarize.py /project/tmp/ppo-bench/results/<名称>/runs --weight opus --baseline direct --json summary.json
 ```
 
-支持多个 runs 目录及 `opus`、`astra`、`sol`、`actual` 权重。缺少评测文件的 run 会列为 `INCOMPLETE`，并排除在汇总外。便宜 Root 模型的成本按 opus 权重计算的 token 成本，只能在相同 Root 模型之间比较；得出结论前，应在真实 Root（`lite-opus`）上确认结果。
+支持多个 runs 目录及 `opus`、`astra`、`sol`、`actual` 权重。缺少评测文件的 run 会列为 `INCOMPLETE`，由 `bench/runcheck.py` 判定无效的 JSONL 会列为 `INVALID` 并从统计中排除。健康检查与 runcheck 不触发额外汇总；`BENCH_DRY_RUN=1` 会打印健康检查命令但不执行。
 
 ## 运行
 
