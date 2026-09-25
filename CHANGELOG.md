@@ -4,6 +4,8 @@
 
 Lite rewrite (`docs/pi-planner-only-subtraction-plan.md`). The 0.8.0 code is at tag `legacy-full-audit`.
 
+- Handoff (direction review 2026-09-25): `PI_PLANNER_ONLY_HANDOFF` now accepts `off` (default), `confirm`, and `auto`; unknown values mean `off` (previously `off` fell through to `auto`). With `off`, only a user-requested `/planner-only handoff` is accepted and the context warning suggests it to the user instead of telling Root to call the tool. `confirm` and `auto` keep Root self-initiation above the threshold; `auto` is experimental (its savings are not measured).
+
 - Root tools are now `delegate({role, task, cwd?})`, `git_audit`, and `git_commit`. `planner_delegate`, `planner_redelegate`, `planner_abort`, `planner_tasks`, and `planner_verdict` are removed.
 - Children return plain text. TaskSpec/WorkerReport, the Task ledger, evidence snapshots, review rounds, closeout, request control, the refusal breaker, role-model routing, and the pricing table are removed (about 23k source lines down to about 700).
 - Roles map to builtin pi-subagents agents (`worker`, `scout`, `oracle`, `reviewer`); models come from `subagents.agentOverrides`. The request no longer sends fields that pi-subagents 0.70 rejects.

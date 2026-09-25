@@ -10,7 +10,7 @@ export interface DelegationLimits {
 	cancelGraceMs: number;
 }
 
-export type HandoffMode = "auto" | "confirm";
+export type HandoffMode = "off" | "confirm" | "auto";
 
 export interface PlannerConfig {
 	limits: DelegationLimits;
@@ -34,7 +34,7 @@ export const DEFAULT_CONFIG: PlannerConfig = {
 	contextWarnTokens: 150_000,
 	enabled: undefined,
 	strict: false,
-	handoffMode: "auto",
+	handoffMode: "off",
 };
 
 const TRUE_VALUES = ["1", "true", "on"];
@@ -68,11 +68,12 @@ export function loadLimits(env: NodeJS.ProcessEnv = process.env): DelegationLimi
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): PlannerConfig {
+	const handoffMode = normalize(env.PI_PLANNER_ONLY_HANDOFF);
 	return {
 		limits: loadLimits(env),
 		contextWarnTokens: intEnv(env, "PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS", DEFAULT_CONFIG.contextWarnTokens),
 		enabled: boolEnv(env, "PI_PLANNER_ONLY"),
 		strict: boolEnv(env, "PI_PLANNER_ONLY_STRICT", DEFAULT_CONFIG.strict),
-		handoffMode: normalize(env.PI_PLANNER_ONLY_HANDOFF) === "confirm" ? "confirm" : DEFAULT_CONFIG.handoffMode,
+		handoffMode: handoffMode === "confirm" || handoffMode === "auto" ? handoffMode : "off",
 	};
 }

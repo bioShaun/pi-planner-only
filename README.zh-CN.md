@@ -64,14 +64,14 @@ pi install /path/to/pi-planner-only                          # 本地 checkout
 |---|---|
 | `/planner-only on` / `off` | 通过标记文件 `~/.pi/agent/planner-only.off` 开关。 |
 | `/planner-only status` | 显示状态和本会话费用合计。 |
-| `/planner-only handoff [目标]` | 让 Root 写简报并在新会话里继续（`handoff drop` 丢弃失败的交接）。Root 上下文超过警告阈值后也可以自己调用 `handoff` 工具；新会话带着简报和 git 状态自动开始工作。 |
+| `/planner-only handoff [目标]` | 让 Root 写简报并在新会话里继续（`handoff drop` 丢弃失败的交接）。只有 `PI_PLANNER_ONLY_HANDOFF=confirm` 或 `auto` 时，Root 才能在上下文超过阈值后自行发起。 |
 | `PI_PLANNER_ONLY=1` / `0` | 强制开 / 关，优先于标记文件。 |
 | `PI_PLANNER_ONLY_STRICT=1` | 按名字禁止 Root 自己用 `edit`、`write`、`bash`。不拦截其他插件提供的写能力，不是安全边界。默认关闭，因为小任务直接做更省。 |
 | `PI_PLANNER_ONLY_TIMEOUT_MS` | 传给宿主的子代理时限（默认 600000）。 |
 | `PI_PLANNER_ONLY_MAX_TOKENS` | 子代理上报的 token 超过此值就取消（默认 1500000）。计数取子代理进度事件里的累计 input+output token，不含缓存读取。 |
 | `PI_PLANNER_ONLY_START_TIMEOUT_MS` | 子代理迟迟不启动时放弃（默认 30000）。 |
 | `PI_PLANNER_ONLY_CANCEL_GRACE_MS` | 等待取消被确认的时间（默认 5000）。 |
-| `PI_PLANNER_ONLY_HANDOFF` | `auto`（默认）在新会话里直接提交交接简报；`confirm` 放进编辑框等你确认。 |
+| `PI_PLANNER_ONLY_HANDOFF` | `off`（默认）仅允许用户请求交接；`confirm` 也允许 Root 超过阈值后自行发起，并把简报放入编辑框；`auto` 同样允许自行发起并自动提交（实验性：节省效果尚未测量，冒烟测试仅确认流程可运行）。 |
 | `PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS` | Root 上下文超过此值时状态栏变红，并给 Root 发一条提示：委派、开新会话或 `/compact`（默认 150000）。 |
 
 关闭时三个工具从 active 工具集中移除，也不注入提示。子进程（`PI_SUBAGENT_CHILD=1`）不加载本扩展。

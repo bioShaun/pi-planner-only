@@ -535,7 +535,11 @@ const respond = (bus, req, over = {}) =>
 	assert.equal(loadConfig({ PI_PLANNER_ONLY: "off" }).enabled, false);
 	assert.equal(loadConfig({ PI_PLANNER_ONLY: "maybe" }).enabled, undefined);
 	assert.equal(loadConfig({ PI_PLANNER_ONLY_STRICT: "yes" }).strict, false);
-	assert.equal(loadConfig({ PI_PLANNER_ONLY_HANDOFF: "bogus" }).handoffMode, "auto");
+	assert.equal(loadConfig({ PI_PLANNER_ONLY_HANDOFF: "bogus" }).handoffMode, "off");
+	assert.equal(loadConfig({}).handoffMode, "off");
+	assert.equal(loadConfig({ PI_PLANNER_ONLY_HANDOFF: " OFF " }).handoffMode, "off");
+	assert.equal(loadConfig({ PI_PLANNER_ONLY_HANDOFF: "Auto" }).handoffMode, "auto");
+	assert.equal(loadConfig({ PI_PLANNER_ONLY_HANDOFF: "confirm" }).handoffMode, "confirm");
 	assert.equal(loadConfig({ PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS: "0" }).contextWarnTokens, 150_000);
 }
 

@@ -191,6 +191,9 @@ export class PlannerSession {
 		if (this.delegationsInFlight > 0) return "a delegated child is still running.";
 		if (this.pendingHandoff) return "one is already pending.";
 		const threshold = contextWarnThreshold();
+		if (!this.handoffRequested && loadConfig().handoffMode === "off") {
+			return "the user did not request a handoff and self-initiated handoff is off (PI_PLANNER_ONLY_HANDOFF=off). Continue in this session, or suggest the user run /planner-only handoff at a task boundary.";
+		}
 		if (!this.handoffRequested && (this.rootContext ?? 0) <= threshold) {
 			return `your context is about ${formatTokens(this.rootContext ?? 0)} tokens, below the ${formatTokens(threshold)} threshold, and the user did not request a handoff. Continue the work in this session.`;
 		}
@@ -261,9 +264,12 @@ function syncTools({ pi, session }: PlannerRuntime): void {
 }
 
 function sendContextWarning(host: HostAdapter, tokens: number): void {
+	const advice = loadConfig().handoffMode === "off"
+		? "At the next task boundary, if the next step is a new task, suggest the user run /planner-only handoff for a fresh session from a brief; if still mid-task and the context is mostly stale exploration, ask the user to run /compact with what to keep."
+		: "At the next task boundary: if the next step is a new task, call the handoff tool with a complete brief (it starts a fresh session automatically); if still mid-task and the context is mostly stale exploration, ask the user to run /compact with what to keep.";
 	host.sendMessage({
 		customType: "planner-only-context",
-		content: `[planner-only] Root context is about ${formatTokens(tokens)} tokens (warning threshold ${formatTokens(contextWarnThreshold())}); every turn re-reads it. From now on delegate reading-heavy and multi-file work. At the next task boundary: if the next step is a new task, call the handoff tool with a complete brief (it starts a fresh session automatically); if still mid-task and the context is mostly stale exploration, ask the user to run /compact with what to keep.`,
+		content: `[planner-only] Root context is about ${formatTokens(tokens)} tokens (warning threshold ${formatTokens(contextWarnThreshold())}); every turn re-reads it. From now on delegate reading-heavy and multi-file work. ${advice}`,
 		display: true,
 	}, { deliverAs: "nextTurn" });
 }
@@ -340,7 +346,7 @@ async function gatherGitFacts(git: GitRunner, cwd: string): Promise<string> {
 }
 
 function handoffPrompt(handoff: PendingHandoff, facts: string): string {
-	return `[planner-only handoff] You are the new Root session. The previous session handed this work to you because its context was large. "This session"/"the next session" in the brief below both mean YOU: do the next step now. Do not call the handoff tool unless your own context grows past the warning threshold.\n\n## Brief\n${handoff.brief}\n\n## Facts from the previous session\nPrevious session file: ${handoff.sessionFile ?? "unknown"}\nRepository (git facts below): ${handoff.cwd}\n${facts}\n\nContinue as Root under planner-only; the brief is authoritative.`;
+	return `[planner-only handoff] You are the new Root session. The previous session handed this work to you because its context was large. "This session"/"the next session" in the brief below both mean YOU: do the next step now. ${loadConfig().handoffMode === "off" ? "Do not call the handoff tool unless the user asks for one." : "Do not call the handoff tool unless your own context grows past the warning threshold."}\n\n## Brief\n${handoff.brief}\n\n## Facts from the previous session\nPrevious session file: ${handoff.sessionFile ?? "unknown"}\nRepository (git facts below): ${handoff.cwd}\n${facts}\n\nContinue as Root under planner-only; the brief is authoritative.`;
 }
 
 /** Starts the new Root session from the pending brief; on failure or cancel the brief stays for a manual retry. */
@@ -494,8 +500,8 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 	pi.registerTool({
 		name: "handoff",
 		label: "Handoff",
-		description: "Start a fresh Root session with a complete, self-contained task brief.",
-		promptSnippet: "handoff: at a task boundary when your context is large, continue in a fresh session from a brief",
+		description: "Start a fresh Root session with a complete brief; self-initiation above the context threshold is allowed only when PI_PLANNER_ONLY_HANDOFF is confirm or auto.",
+		promptSnippet: "handoff: continue in a fresh session from a brief when the user asks (/planner-only handoff)",
 		parameters: Type.Object({
 			brief: Type.String({ minLength: 200, description: "Self-contained brief for the next Root session: goal, decisions made, constraints, relevant files/specs, what is done, open items, and the exact next step." }),
 			cwd: Type.Optional(Type.String({ description: REPO_CWD_DESCRIPTION })),

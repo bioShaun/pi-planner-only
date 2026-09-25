@@ -116,17 +116,30 @@ try {
 	const gateTool = gate.tools.get("handoff");
 	const unrequestedRefusal = await gateTool.execute("small-unrequested", { brief }, undefined, undefined, gate.ctx);
 	assert.equal(unrequestedRefusal.details.ok, false);
-	assert.match(unrequestedRefusal.content[0].text, /below the 150k threshold, and the user did not request a handoff/);
+	assert.match(unrequestedRefusal.content[0].text, /user did not request a handoff and self-initiated handoff is off/);
 	await gate.commands.get("planner-only").handler("handoff", gate.ctx);
 	assert.equal((await gateTool.execute("manual-request", { brief }, undefined, undefined, gate.ctx)).details.ok, true);
 	await gate.commands.get("planner-only").handler("handoff", gate.ctx);
 	await gate.handlers.get("session_start")({}, gate.ctx);
 	const secondSmallCall = await gateTool.execute("after-handoff", { brief }, undefined, undefined, gate.ctx);
 	assert.equal(secondSmallCall.details.ok, false);
+	// Default (off): high context alone does not let Root self-initiate.
+	const highOff = fakePi();
+	await highOff.handlers.get("session_start")({}, highOff.ctx);
+	await highOff.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200_000, output: 0, cacheRead: 0, cacheWrite: 0 } } }, highOff.ctx);
+	const highOffRefusal = await highOff.tools.get("handoff").execute("high-off", { brief }, undefined, undefined, highOff.ctx);
+	assert.equal(highOffRefusal.details.ok, false);
+	assert.match(highOffRefusal.content[0].text, /self-initiated handoff is off/);
+	process.env.PI_PLANNER_ONLY_HANDOFF = "auto";
+	const lowAuto = fakePi();
+	const lowAutoRefusal = await lowAuto.tools.get("handoff").execute("low-auto", { brief }, undefined, undefined, lowAuto.ctx);
+	assert.match(lowAutoRefusal.content[0].text, /below the 150k threshold, and the user did not request a handoff/);
 	const high = fakePi();
 	await high.handlers.get("session_start")({}, high.ctx);
 	await high.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200_000, output: 0, cacheRead: 0, cacheWrite: 0 } } }, high.ctx);
 	assert.equal((await high.tools.get("handoff").execute("high-context", { brief }, undefined, undefined, high.ctx)).details.ok, true);
+	assert.match(high.sentMessages[0][0].content, /call the handoff tool with a complete brief/);
+	delete process.env.PI_PLANNER_ONLY_HANDOFF;
 	const handoffTool = h.tools.get("handoff");
 	assert.equal((await handoffTool.execute("short", { brief: "too short" }, undefined, undefined, h.ctx)).details.ok, false);
 	assert.deepStrictEqual(await handoffTool.execute("no-ui", { brief }, undefined, undefined, { ...h.ctx, hasUI: false }), {
@@ -266,7 +279,8 @@ try {
 	assert.equal(hc.sentMessages[0][1].deliverAs, "nextTurn");
 	assert.match(hc.sentMessages[0][0].content, /about 200k tokens/);
 	assert.match(hc.sentMessages[0][0].content, /\/compact/);
-	assert.match(hc.sentMessages[0][0].content, /fresh session/);
+	assert.match(hc.sentMessages[0][0].content, /suggest the user run \/planner-only handoff/);
+	assert.doesNotMatch(hc.sentMessages[0][0].content, /call the handoff tool/);
 	await hc.handlers.get("message_end")(largeContext, hc.ctx);
 	assert.equal(hc.sentMessages.length, 1);
 	await hc.commands.get("planner-only").handler("status", hc.ctx);
@@ -394,7 +408,7 @@ try {
 	assert.equal(s.recordChildRun("refused", undefined), false);
 	assert.equal(s.recordChildRun("timed_out", usage()), true);
 	assert.deepEqual([s.totals.children, s.totals.failed, s.totals.childTokens], [1, 1, 3_500]);
-	assert.match(s.handoffRefusal("x".repeat(200)), /below the 150k threshold/);
+	assert.match(s.handoffRefusal("x".repeat(200)), /self-initiated handoff is off/);
 	s.requestHandoff();
 	assert.match(s.handoffRefusal("short"), /at least 200 characters/);
 	assert.equal(s.handoffRefusal("x".repeat(200)), undefined);
