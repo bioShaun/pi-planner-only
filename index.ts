@@ -9,7 +9,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_LIMITS, ROLES, formatTokens, loadLimits, runDelegation, timeoutMinutes } from "./delegate.ts";
+import { DEFAULT_LIMITS, ROLES, createCwdLocks, formatTokens, loadLimits, runDelegation, timeoutMinutes } from "./delegate.ts";
 import type { DelegationLimits, DelegationParams, EventBus } from "./delegate.ts";
 import { GIT_AUDIT_OPERATIONS, gitCommit, gitSafePrefix, isWorkTree, runGitAudit } from "./git.ts";
 import type { GitAuditRequest, GitRunner } from "./git.ts";
@@ -108,7 +108,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		const result = await pi.exec("git", [...args], { cwd, timeout: GIT_TIMEOUT_MS });
 		return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", code: result.code };
 	};
-	const busy = new Set<string>();
+	const locks = createCwdLocks();
 	let totals = emptyTotals();
 	let rootContext: number | undefined;
 	let contextWarned = false;
@@ -183,7 +183,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					git: gitRunner,
 					ownerRunId: ctx.sessionManager?.getSessionId?.() || randomUUID(),
 					limits: loadLimits(),
-					busy,
+					locks,
 					sessionFile: ctx.sessionManager?.getSessionFile?.(),
 				},
 				{ ...params, cwd: resolveCwd(ctx, params.cwd) },
@@ -256,7 +256,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		}),
 		async execute(_toolCallId, params: { brief: string; cwd?: string }, _signal, _onUpdate, ctx) {
 			if (!ctx.hasUI) return { content: [{ type: "text", text: "Handoff refused: a UI session is required." }], details: { ok: false } };
-			if (busy.size > 0) return { content: [{ type: "text", text: "Handoff refused: an exclusive child is still running." }], details: { ok: false } };
+			if (locks.size > 0) return { content: [{ type: "text", text: "Handoff refused: an exclusive child is still running." }], details: { ok: false } };
 			if (delegationsInFlight > 0) return { content: [{ type: "text", text: "Handoff refused: a delegated child is still running." }], details: { ok: false } };
 			if (pendingHandoff) return { content: [{ type: "text", text: "Handoff refused: one is already pending." }], details: { ok: false } };
 			const threshold = contextWarnThreshold();

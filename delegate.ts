@@ -16,6 +16,7 @@ import {
 	SUBAGENT_DELEGATION_UPDATE_EVENT,
 } from "./subagent-delegation-contract.ts";
 import type {
+	SubagentDelegationIdentity,
 	SubagentDelegationRequest,
 	SubagentDelegationResponse,
 	SubagentDelegationUpdate,
@@ -87,15 +88,86 @@ export interface EventBus {
 	emit(event: string, data: unknown): void;
 }
 
+/**
+ * Per-cwd exclusivity for children that may write. One owner: created once
+ * by the extension, shared by every delegation and by the handoff guard.
+ */
+export interface CwdLocks {
+	/** Hold `cwd`; null when another exclusive child already holds it. The returned release is idempotent. */
+	tryAcquire(cwd: string): (() => void) | null;
+	isHeld(cwd: string): boolean;
+	/** cwds currently held, in acquisition order. */
+	held(): string[];
+	readonly size: number;
+}
+
+export function createCwdLocks(): CwdLocks {
+	const held = new Set<string>();
+	return {
+		tryAcquire(cwd) {
+			if (held.has(cwd)) return null;
+			held.add(cwd);
+			let released = false;
+			return () => {
+				if (released) return;
+				released = true;
+				held.delete(cwd);
+			};
+		},
+		isHeld: (cwd) => held.has(cwd),
+		held: () => [...held],
+		get size() {
+			return held.size;
+		},
+	};
+}
+
+/** Timer facility used by launch; injectable so timing policy can run under a fake clock. */
+export interface Timers {
+	setTimeout(fn: () => void, ms: number): unknown;
+	clearTimeout(handle: unknown): void;
+}
+
+const realTimers: Timers = {
+	setTimeout: (fn, ms) => setTimeout(fn, ms),
+	clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
+
+/**
+ * Root-side identity of one delegation. `requestId` (plus `nodeId`) matches
+ * host events to this delegation and addresses the cancel; `ownerRunId` is
+ * Root's session. The host's own `runId` is not minted here: it arrives on
+ * updates/responses and only locates artifacts (see `hostRunId`).
+ */
+export type RunIdentity = SubagentDelegationIdentity;
+
+export function newRunIdentity(role: Role, ownerRunId: string, uuid: () => string = randomUUID): RunIdentity {
+	return { ownerRunId, requestId: uuid(), nodeId: `${role}-${uuid().slice(0, 8)}` };
+}
+
+/** True when a host event belongs to `identity`: same requestId, and the same nodeId when the host sends one. */
+export function matchesIdentity(identity: RunIdentity, data: unknown): data is SubagentDelegationUpdate {
+	const d = data as Partial<SubagentDelegationUpdate> | undefined;
+	return Boolean(d) && d!.requestId === identity.requestId
+		&& (d!.nodeId === undefined || d!.nodeId === identity.nodeId);
+}
+
+/** The host-assigned run id that keys artifacts: the terminal's, else the last update's. */
+export function hostRunId(response: Pick<SubagentDelegationResponse, "runId">, last: LastActivity): string | undefined {
+	return response.runId ?? last.runId;
+}
+
 export interface DelegationDeps {
 	events: EventBus;
 	git: GitRunner;
 	ownerRunId: string;
 	limits: DelegationLimits;
 	/** cwds held by a running exclusive child; shared across calls. */
-	busy: Set<string>;
+	locks: CwdLocks;
 	/** Root's session file; locates pi-subagents artifacts after a failed run. */
 	sessionFile?: string;
+	/** Defaults to the global timers. */
+	timers?: Timers;
 }
 
 export interface DelegationParams {
@@ -330,7 +402,7 @@ export function recoverPartial(
 	last: LastActivity = {},
 ): { text?: string; tail?: string; lines: string[] } {
 	const lines: string[] = [];
-	const runId = response.runId ?? last.runId;
+	const runId = hostRunId(response, last);
 	if (runId) lines.push(`Run id: ${runId}`);
 	if (last.currentTool) {
 		const args = last.currentToolArgs ? ` ${clip(last.currentToolArgs.replace(/\s+/g, " "), 200)}` : "";
@@ -393,6 +465,23 @@ interface Terminal {
 	last: LastActivity;
 }
 
+type RoleProfile = (typeof ROLE_AGENTS)[Role];
+type OutcomeDetails = Pick<DelegationOutcome["details"], "role" | "agent">;
+
+function refusal(details: OutcomeDetails, why: string): DelegationOutcome {
+	return { ok: false, text: `delegate refused: ${why}`, details: { ...details, status: "refused" } };
+}
+
+function outcome(
+	ok: boolean,
+	text: string,
+	details: OutcomeDetails,
+	status: DelegationOutcome["details"]["status"],
+	extra: Pick<DelegationOutcome["details"], "model" | "usage" | "stopReason"> = {},
+): DelegationOutcome {
+	return { ok, text, details: { ...details, status, ...extra } };
+}
+
 export async function runDelegation(
 	deps: DelegationDeps,
 	params: DelegationParams,
@@ -401,59 +490,64 @@ export async function runDelegation(
 ): Promise<DelegationOutcome> {
 	const role = params.role;
 	const profile = ROLE_AGENTS[role];
-	if (!profile) {
-		return { ok: false, text: `delegate refused: role must be one of ${ROLES.join(", ")}`, details: { role, agent: "", status: "refused" } };
-	}
+	if (!profile) return refusal({ role, agent: "" }, `role must be one of ${ROLES.join(", ")}`);
 	const cwd = resolve(params.cwd || process.cwd());
 	const details = { role, agent: profile.agent };
-	if (!params.task?.trim()) return { ok: false, text: "delegate refused: task is empty", details: { ...details, status: "refused" } };
-	if (profile.exclusive && deps.busy.has(cwd)) {
-		return {
-			ok: false,
-			text: `delegate refused: another worker/explorer/validator child is still running in ${cwd}. Wait for it to finish, or use role "reviewer" (read-only).`,
-			details: { ...details, status: "refused" },
-		};
+	if (!params.task?.trim()) return refusal(details, "task is empty");
+	const release = profile.exclusive ? deps.locks.tryAcquire(cwd) : () => {};
+	if (!release) {
+		return refusal(details, `another worker/explorer/validator child is still running in ${cwd}. Wait for it to finish, or use role "reviewer" (read-only).`);
 	}
-	if (profile.exclusive) deps.busy.add(cwd);
-	let released = false;
-	const release = () => {
-		if (released) return;
-		released = true;
-		if (profile.exclusive) deps.busy.delete(cwd);
-	};
 
-	let terminal: Terminal;
 	const base = await captureBase(deps.git, cwd).catch(() => ({ dirtyBefore: 0 }));
+	let terminal: Terminal;
 	try {
-		terminal = await launch(deps, {
-			requestId: randomUUID(),
-			ownerRunId: deps.ownerRunId,
-			nodeId: `${role}-${randomUUID().slice(0, 8)}`,
-			agent: profile.agent,
-			task: buildTaskText(role, params.task, cwd, deps.limits.timeoutMs),
-			context: "fresh",
-			cwd,
-			timeoutMs: deps.limits.timeoutMs,
-			result: { kind: "text" },
-		}, signal, onProgress, release);
+		terminal = await launch(deps, buildRequest(deps, role, profile, params.task, cwd), signal, onProgress, release);
 	} catch (error) {
 		release();
 		throw error;
 	}
+	return terminal.response
+		? renderOutcome(deps, role, profile, cwd, base, terminal, terminal.response)
+		: renderNoTerminal(deps, role, profile, cwd, terminal);
+}
 
-	const response = terminal.response;
-	if (!response) {
-		// No terminal: the child may still be running, so the cwd stays held
-		// until a late terminal arrives (launch keeps listening for it).
-		const status = terminal.started ? "stop_unconfirmed" : "not_started";
-		const why = terminal.started
-			? `Stop was requested (${terminal.stopReason}) but the child has not confirmed it. It may still be writing in ${cwd}; this cwd stays locked until it ends.`
-			: terminal.stopReason === "child did not start"
-				? `pi-subagents did not start the child within ${Math.round(deps.limits.startTimeoutMs / 1000)}s. Check that pi-subagents is installed and loaded.`
-				: `Not started: ${terminal.stopReason ?? "unknown reason"}.`;
-		return { ok: false, text: `[${role}/${profile.agent}] ${status}\n${why}`, details: { ...details, status, stopReason: terminal.stopReason } };
-	}
+function buildRequest(deps: DelegationDeps, role: Role, profile: RoleProfile, task: string, cwd: string): SubagentDelegationRequest {
+	return {
+		...newRunIdentity(role, deps.ownerRunId),
+		agent: profile.agent,
+		task: buildTaskText(role, task, cwd, deps.limits.timeoutMs),
+		context: "fresh",
+		cwd,
+		timeoutMs: deps.limits.timeoutMs,
+		result: { kind: "text" },
+	};
+}
 
+/**
+ * No terminal: the child may still be running, so the cwd stays held until a
+ * late terminal arrives (launch keeps listening for it).
+ */
+function renderNoTerminal(deps: DelegationDeps, role: Role, profile: RoleProfile, cwd: string, terminal: Terminal): DelegationOutcome {
+	const status = terminal.started ? "stop_unconfirmed" : "not_started";
+	const why = terminal.started
+		? `Stop was requested (${terminal.stopReason}) but the child has not confirmed it. It may still be writing in ${cwd}; this cwd stays locked until it ends.`
+		: terminal.stopReason === "child did not start"
+			? `pi-subagents did not start the child within ${Math.round(deps.limits.startTimeoutMs / 1000)}s. Check that pi-subagents is installed and loaded.`
+			: `Not started: ${terminal.stopReason ?? "unknown reason"}.`;
+	return outcome(false, `[${role}/${profile.agent}] ${status}\n${why}`, { role, agent: profile.agent }, status, { stopReason: terminal.stopReason });
+}
+
+/** Header, recovery lines, child report, transcript tail, workspace summary. */
+async function renderOutcome(
+	deps: DelegationDeps,
+	role: Role,
+	profile: RoleProfile,
+	cwd: string,
+	base: Awaited<ReturnType<typeof captureBase>>,
+	terminal: Terminal,
+	response: SubagentDelegationResponse,
+): Promise<DelegationOutcome> {
 	const header = [`[${role}/${response.agent ?? profile.agent}] ${response.status}`, response.model, formatUsage(response.usage)]
 		.filter(Boolean).join(" · ");
 	const lines = [header];
@@ -472,12 +566,25 @@ export async function runDelegation(
 	lines.push("", "Child report:", childText.trim() ? clipChildText(childText.trim()) : "(empty)");
 	if (tail) lines.push("", tail);
 	if (role !== "reviewer") lines.push("", await summarizeWork(deps.git, cwd, base).catch((e) => `Workspace changes: git failed (${String(e)})`));
-	return {
-		ok: response.status === "completed",
-		text: lines.join("\n"),
-		details: { ...details, status: response.status, model: response.model, usage: response.usage, stopReason: terminal.stopReason },
-	};
+	return outcome(response.status === "completed", lines.join("\n"), { role, agent: profile.agent }, response.status, {
+		model: response.model,
+		usage: response.usage,
+		stopReason: terminal.stopReason,
+	});
 }
+
+/**
+ * Child lifecycle as seen by Root:
+ *   pending_start -> running            (STARTED/UPDATE/RESPONSE for this request)
+ *   pending_start | running -> stopping (abort, token cap, start timeout, emit failure)
+ *   any active -> settled               (terminal received, or stop confirmed/never started)
+ *   any active -> awaiting_late_terminal (stop requested, child started, no terminal:
+ *                                         the cwd stays held until its late RESPONSE)
+ *   awaiting_late_terminal -> settled   (late RESPONSE releases the cwd)
+ */
+type LaunchPhase = "pending_start" | "running" | "stopping" | "settled" | "awaiting_late_terminal";
+
+const ACTIVE_PHASES: ReadonlySet<LaunchPhase> = new Set(["pending_start", "running", "stopping"]);
 
 /** Emit one request and wait for its terminal, a stop, or a start timeout. */
 function launch(
@@ -488,57 +595,61 @@ function launch(
 	release: () => void,
 ): Promise<Terminal> {
 	const { events, limits } = deps;
+	const timers = deps.timers ?? realTimers;
 	return new Promise<Terminal>((resolveTerminal) => {
 		const state: Terminal = { started: false, last: {} };
-		let settled = false;
-		let stopping = false;
-		const timers: ReturnType<typeof setTimeout>[] = [];
-		const mine = (data: unknown): data is SubagentDelegationUpdate => {
-			const d = data as Partial<SubagentDelegationUpdate> | undefined;
-			return Boolean(d) && d!.requestId === request.requestId
-				&& (d!.nodeId === undefined || d!.nodeId === request.nodeId);
-		};
+		let phase: LaunchPhase = "pending_start";
+		const active = () => ACTIVE_PHASES.has(phase);
+		const pendingTimers: unknown[] = [];
+		const after = (ms: number, fn: () => void) => pendingTimers.push(timers.setTimeout(fn, ms));
 		const offAll: Array<() => void> = [];
+
+		// --- timeout / cancel policy ---
+		const markStarted = () => {
+			state.started = true;
+			if (phase === "pending_start") phase = "running";
+		};
 		const finish = () => {
-			if (settled) return;
-			settled = true;
-			for (const t of timers) clearTimeout(t);
+			if (!active()) return;
+			for (const t of pendingTimers.splice(0)) timers.clearTimeout(t);
 			signal?.removeEventListener("abort", onAbort);
-			// A child that started but never sent a terminal may still be
-			// running: keep the cwd held and wait for its late terminal.
 			const mayStillRun = state.started && !state.response;
+			phase = mayStillRun ? "awaiting_late_terminal" : "settled";
 			for (const off of offAll.splice(0)) if (!(mayStillRun && off === offResponse)) off();
 			if (!mayStillRun) release();
 			resolveTerminal(state);
 		};
 		const stop = (reason: string) => {
-			if (stopping || settled) return;
-			stopping = true;
+			if (!active() || phase === "stopping") return;
+			phase = "stopping";
 			state.stopReason = reason;
-			try { events.emit(SUBAGENT_DELEGATION_CANCEL_EVENT, { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId }); } catch { /* reported as unconfirmed */ }
-			timers.push(setTimeout(finish, limits.cancelGraceMs));
+			try { events.emit(SUBAGENT_DELEGATION_CANCEL_EVENT, identity); } catch { /* reported as unconfirmed */ }
+			after(limits.cancelGraceMs, finish);
 		};
 		const onAbort = () => stop("cancelled by Root");
+		const onLateTerminal = () => {
+			// Late terminal after an unconfirmed stop: the child is gone now.
+			phase = "settled";
+			offResponse();
+			release();
+		};
 
+		// --- event wiring ---
+		const identity: RunIdentity = { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId };
 		const offResponse = events.on(SUBAGENT_DELEGATION_RESPONSE_EVENT, (data) => {
-			if (!mine(data)) return;
-			if (settled) {
-				// Late terminal after an unconfirmed stop: the child is gone now.
-				offResponse();
-				release();
-				return;
-			}
+			if (!matchesIdentity(identity, data)) return;
+			if (!active()) return onLateTerminal();
 			state.response = data as SubagentDelegationResponse;
-			state.started = true;
+			markStarted();
 			finish();
 		});
 		offAll.push(offResponse);
 		offAll.push(events.on(SUBAGENT_DELEGATION_STARTED_EVENT, (data) => {
-			if (mine(data)) state.started = true;
+			if (matchesIdentity(identity, data)) markStarted();
 		}));
 		offAll.push(events.on(SUBAGENT_DELEGATION_UPDATE_EVENT, (data) => {
-			if (!mine(data)) return;
-			state.started = true;
+			if (!matchesIdentity(identity, data)) return;
+			markStarted();
 			// Updates are replacement snapshots, not deltas: keep the latest fields.
 			const recentOutput = data.recentOutputLines?.length ? data.recentOutputLines.join("\n") : data.recentOutput;
 			// A tool_execution_end update (also sent when a timeout kills the tool)
@@ -564,10 +675,10 @@ function launch(
 			return;
 		}
 		signal?.addEventListener("abort", onAbort, { once: true });
-		timers.push(setTimeout(() => {
-			if (state.started || settled) return;
+		after(limits.startTimeoutMs, () => {
+			if (state.started || !active()) return;
 			stop("child did not start");
-		}, limits.startTimeoutMs));
+		});
 		try {
 			events.emit(SUBAGENT_DELEGATION_REQUEST_EVENT, request);
 		} catch (error) {
