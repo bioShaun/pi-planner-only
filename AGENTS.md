@@ -18,4 +18,4 @@ When running implementation, verification, or independent review in native Codex
 
 ### Testing
 
-Run `npm run test:release` (typecheck plus `contract`, `git`, `delegate`, `index` suites) with `TMPDIR` outside the repository. `contract.test.mjs` reads the installed pi-subagents under `~/.pi/agent/npm/node_modules/pi-subagents` (override with `PI_SUBAGENTS_DIR`). Do not delete or weaken existing assertions; add a fault-injection check when adding a guard.
+Run `npm run test:release` (typecheck plus `contract`, `git`, `delegate`, `host`, `index` suites) with `TMPDIR` outside the repository. `contract.test.mjs` reads the installed pi-subagents under `~/.pi/agent/npm/node_modules/pi-subagents` (override with `PI_SUBAGENTS_DIR`). Do not delete or weaken existing assertions; add a fault-injection check when adding a guard.

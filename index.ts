@@ -4,7 +4,6 @@
  * prompt, optional strict mode, and a cost line; it keeps no durable state.
  */
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
@@ -12,10 +11,14 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { DEFAULT_LIMITS, loadConfig } from "./config.ts";
 import type { DelegationLimits } from "./config.ts";
 import { ROLES, runDelegation, timeoutMinutes } from "./delegate.ts";
-import type { DelegationParams, EventBus } from "./delegate.ts";
+import type { DelegationParams } from "./delegate.ts";
 import { formatTokens } from "./format.ts";
 import { GIT_AUDIT_OPERATIONS, gitCommit, gitSafePrefix, isWorkTree, runGitAudit } from "./git.ts";
 import type { GitAuditRequest, GitRunner } from "./git.ts";
+import { createHostAdapter, rootUsageOf } from "./host.ts";
+import type { HostAdapter } from "./host.ts";
+
+export { rootUsageOf } from "./host.ts";
 
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
 	? resolve(process.env.PI_CODING_AGENT_DIR)
@@ -76,16 +79,6 @@ interface CostTotals {
 
 const emptyTotals = (): CostTotals => ({ rootTokens: 0, rootCost: 0, childTokens: 0, childCost: 0, children: 0, failed: 0 });
 
-/** Tokens and cost from a pi-ai assistant message usage, tolerating missing fields. */
-export function rootUsageOf(message: unknown): { tokens: number; context: number; cost: number } | undefined {
-	const m = message as { role?: string; usage?: Record<string, unknown> } | undefined;
-	if (m?.role !== "assistant" || !m.usage) return undefined;
-	const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-	const u = m.usage;
-	const cost = u.cost && typeof u.cost === "object" ? n((u.cost as Record<string, unknown>).total) : 0;
-	return { tokens: n(u.input) + n(u.output) + n(u.cacheRead) + n(u.cacheWrite), context: n(u.input) + n(u.cacheRead) + n(u.cacheWrite), cost };
-}
-
 /**
  * `root 4.17M $3.854 · children(3, 1 failed) 2.82M $0.103 · root share 60% tok · 97% $`
  * Tokens include cache reads on both sides, so the two shares are comparable.
@@ -103,8 +96,9 @@ export function formatTotals(t: CostTotals): string {
 	return `root ${formatTokens(t.rootTokens)} $${t.rootCost.toFixed(3)} · ${kids} ${formatTokens(t.childTokens)} $${t.childCost.toFixed(3)}${share}`;
 }
 
-export default function plannerOnly(pi: ExtensionAPI): void {
+export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter): void {
 	if (process.env.PI_SUBAGENT_CHILD === "1") return;
+	const host = hostAdapter ?? createHostAdapter(pi);
 
 	const gitRunner: GitRunner = async (args, cwd) => {
 		const result = await pi.exec("git", [...args], { cwd, timeout: GIT_TIMEOUT_MS });
@@ -122,13 +116,11 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	const sendContextWarning = (tokens: number) => {
 		if (!isEnabled() || contextWarned || tokens <= contextWarnThreshold()) return;
 		contextWarned = true;
-		try {
-			pi.sendMessage?.({
-				customType: "planner-only-context",
-				content: `[planner-only] Root context is about ${formatTokens(tokens)} tokens (warning threshold ${formatTokens(contextWarnThreshold())}); every turn re-reads it. From now on delegate reading-heavy and multi-file work. At the next task boundary: if the next step is a new task, call the handoff tool with a complete brief (it starts a fresh session automatically); if still mid-task and the context is mostly stale exploration, ask the user to run /compact with what to keep.`,
-				display: true,
-			}, { deliverAs: "nextTurn" });
-		} catch { /* Warnings must never interrupt the host handler. */ }
+		host.sendMessage({
+			customType: "planner-only-context",
+			content: `[planner-only] Root context is about ${formatTokens(tokens)} tokens (warning threshold ${formatTokens(contextWarnThreshold())}); every turn re-reads it. From now on delegate reading-heavy and multi-file work. At the next task boundary: if the next step is a new task, call the handoff tool with a complete brief (it starts a fresh session automatically); if still mid-task and the context is mostly stale exploration, ask the user to run /compact with what to keep.`,
+			display: true,
+		}, { deliverAs: "nextTurn" });
 	};
 	const statusTotals = () => `${formatTotals(totals)}${rootContext && rootContext > 0 ? ` · ctx ${formatTokens(rootContext)}` : ""}`;
 
@@ -178,12 +170,12 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			try {
 				outcome = await runDelegation(
 				{
-					events: pi.events as unknown as EventBus,
+					events: host.events,
 					git: gitRunner,
-					ownerRunId: ctx.sessionManager?.getSessionId?.() || randomUUID(),
+					ownerRunId: host.sessionId(ctx),
 					limits: loadConfig().limits,
 					busy,
-					sessionFile: ctx.sessionManager?.getSessionFile?.(),
+					sessionFile: host.sessionFile(ctx),
 				},
 				{ ...params, cwd: resolveCwd(ctx, params.cwd) },
 				signal,
@@ -266,7 +258,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 			const failed = guards.find((guard) => guard.when);
 			if (failed) return refusal(failed.message);
 			handoffRequested = false;
-			pendingHandoff = { brief: params.brief, cwd: resolveCwd(ctx, params.cwd), sessionFile: ctx.sessionManager?.getSessionFile?.() };
+			pendingHandoff = { brief: params.brief, cwd: resolveCwd(ctx, params.cwd), sessionFile: host.sessionFile(ctx) };
 			return textResult("Handoff scheduled: a new session will start with this brief after this turn ends. Stop working now; end your turn with a one-line note to the user.", { ok: true });
 		},
 	});
@@ -358,7 +350,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		try { pi.sendUserMessage("/planner-only handoff", { expandPromptTemplates: true }); }
 		catch {
 			pendingHandoff = undefined;
-			pi.sendMessage?.({ customType: "planner-only-handoff", content: "[planner-only] Handoff dispatch failed; run /planner-only handoff manually.", display: true });
+			host.sendMessage({ customType: "planner-only-handoff", content: "[planner-only] Handoff dispatch failed; run /planner-only handoff manually.", display: true });
 		}
 	});
 
@@ -394,10 +386,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	pi.on("message_end", async (event, ctx) => {
 		const usage = rootUsageOf(event.message);
 		if (!usage) return;
-		const contextUsage = (ctx as ExtensionContext & { getContextUsage?: () => { tokens?: unknown } }).getContextUsage?.()?.tokens;
-		rootContext = typeof contextUsage === "number" && Number.isFinite(contextUsage) && contextUsage > 0
-			? contextUsage
-			: usage.context;
+		rootContext = host.contextTokens(ctx) ?? usage.context;
 		if (rootContext <= contextWarnThreshold()) contextWarned = false;
 		sendContextWarning(rootContext);
 		totals.rootTokens += usage.tokens;

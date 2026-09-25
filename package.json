@@ -26,6 +26,7 @@
     "delegate.ts",
     "format.ts",
     "git.ts",
+    "host.ts",
     "subagent-delegation-contract.ts"
   ],
   "pi": {
@@ -38,7 +39,7 @@
     "piHost": ">=0.84 <1"
   },
   "scripts": {
-    "test": "node --experimental-strip-types contract.test.mjs && node --experimental-strip-types git.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types index.test.mjs",
+    "test": "node --experimental-strip-types contract.test.mjs && node --experimental-strip-types git.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types host.test.mjs && node --experimental-strip-types index.test.mjs",
     "typecheck": "tsc --noEmit",
     "test:release": "npm run typecheck && npm test"
   },

@@ -11,6 +11,7 @@ Lite rewrite (`docs/pi-planner-only-subtraction-plan.md`). The 0.8.0 code is at 
 - Strict mode (blocking Root's `edit`/`write`/`bash`) is now opt-in with `PI_PLANNER_ONLY_STRICT=1`; the default prompt tells Root to do small tasks itself.
 - Git calls now also disable fsmonitor (`-c core.fsmonitor=false`) and diffs disable textconv.
 - Supported pi-subagents range: `>=0.70 <1`.
+- Host access (`pi.events`, session id/file, `getContextUsage`, `sendMessage`, assistant usage) goes through a typed adapter in `host.ts`; a host without an `on`/`emit` event bus is rejected at load.
 - Child token cap default raised from 200000 to 1500000 (`PI_PLANNER_ONLY_MAX_TOKENS`); the count is the child's cumulative non-cached input+output, and 200k cancelled real workers after about 90 seconds.
 - While enabled, pi-subagents' `subagents_enable` and `subagent` are removed from Root's tools and system prompt and blocked if called, so delegation goes through `delegate`.
 - om09 field fixes (`.scratch/om09-field-fixes/spec.md`):
