@@ -137,10 +137,25 @@ PY
   fi
 done
 if (( DRY )); then exit 0; fi
-{
-  echo '$ slot audit'; slot audit 2>&1 || true
-  echo '$ slot status'; slot status 2>&1 || true
-} | tee -a "$OUT/campaign.log"
+# Preflight: full audit/status go to campaign.log only; stdout gets a short summary
+# (ticket 10: the full output bloated Root's context). A bypassing heavy process
+# stops the launch unless BENCH_ALLOW_SLOT_CONFLICT=1; never kill it.
+audit_out=$(slot audit 2>&1) || true
+status_out=$(slot status 2>&1) || true
+printf '%s preflight\n$ slot audit\n%s\n$ slot status\n%s\n' "$(date -Is)" "$audit_out" "$status_out" >> "$OUT/campaign.log"
+conflicts=$(grep -F '绕过了 slot' <<<"$audit_out" || true)
+usage=$(grep -m1 -F '内存' <<<"$status_out" | sed 's/^ *//' || true)
+pools=$(awk '/^=== 池 /{if(p!="")printf "%s run=%d queued=%d; ",p,r,q; p=$3; sub(/（.*/,"",p); r=q=0; next} $2=="running"{r++} $2=="queued"{q++} END{if(p!="")printf "%s run=%d queued=%d",p,r,q}' <<<"$status_out")
+if [[ -n $conflicts ]]; then
+  echo "slot preflight: $(wc -l <<<"$conflicts") heavy process(es) bypass slot (full output in $OUT/campaign.log):"
+  printf '%s\n' "$conflicts"
+  if [[ ${BENCH_ALLOW_SLOT_CONFLICT:-0} != 1 ]]; then
+    echo 'Not launching: wait, lower concurrency, or report the conflict; BENCH_ALLOW_SLOT_CONFLICT=1 overrides.' | tee -a "$OUT/campaign.log"
+    exit 6
+  fi
+else
+  echo "slot preflight: audit clean; ${usage:-heavy.slice usage unknown}; ${pools:-pool status unknown} (full output in $OUT/campaign.log)"
+fi
 for ((k=0;k<lanes;k++)); do
   lane=$OUT/lanes/lane-$k.sh
   [[ -s $lane ]] || continue
