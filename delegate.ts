@@ -53,7 +53,7 @@ export const ROLE_AGENTS: Record<Role, { agent: string; exclusive: boolean; clos
 	validator: {
 		agent: "oracle",
 		exclusive: true,
-		closing: "Do not modify any files. Run the requested checks and report each command with its exit code and the relevant failure lines.",
+		closing: "Do not modify any files. You have a `bash` tool: run the requested checks yourself (never answer without running them) and report each command with its exit code and the relevant failure lines.",
 	},
 	reviewer: {
 		agent: "reviewer",

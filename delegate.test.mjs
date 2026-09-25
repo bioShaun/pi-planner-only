@@ -57,6 +57,8 @@ const respond = (bus, req, over = {}) =>
 	const exp = await runDelegation(deps(bus), { role: "explorer", task: "find", cwd: "/w" });
 	assert.match(exp.text, /WARNING: requested agent scout, host ran other/);
 	assert.match(ROLE_AGENTS.explorer.closing, /writing the report\/output file the runtime names is allowed/);
+	// Bench: 7/250 oracle validators answered "no execution tool" without trying bash (ticket 07).
+	assert.match(ROLE_AGENTS.validator.closing, /You have a `bash` tool: run the requested checks yourself/);
 	await runDelegation(deps(bus), { role: "validator", task: "check", cwd: "/w" });
 	assert.deepEqual(sent(bus, REQUEST).map((r) => r.agent), ["reviewer", "scout", "oracle"]);
 }
