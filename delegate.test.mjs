@@ -8,7 +8,8 @@ import {
 	SUBAGENT_DELEGATION_STARTED_EVENT as STARTED,
 	SUBAGENT_DELEGATION_UPDATE_EVENT as UPDATE,
 } from "./subagent-delegation-contract.ts";
-import { ROLE_AGENTS, buildTaskText, clipChildText, formatTokens, loadLimits, runDelegation, summarizeTranscript } from "./delegate.ts";
+import { ROLE_AGENTS, buildTaskText, clipChildText, loadLimits, runDelegation, summarizeTranscript } from "./delegate.ts";
+import { formatTokens } from "./format.ts";
 import { fakeBus, noGit, tempDir, tick, usage } from "./test-helpers.mjs";
 
 const limits = { timeoutMs: 60_000, maxTokens: 1_000, startTimeoutMs: 40, cancelGraceMs: 40 };

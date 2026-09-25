@@ -9,8 +9,9 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_LIMITS, ROLES, formatTokens, loadLimits, runDelegation, timeoutMinutes } from "./delegate.ts";
+import { DEFAULT_LIMITS, ROLES, loadLimits, runDelegation, timeoutMinutes } from "./delegate.ts";
 import type { DelegationLimits, DelegationParams, EventBus } from "./delegate.ts";
+import { formatTokens } from "./format.ts";
 import { GIT_AUDIT_OPERATIONS, gitCommit, gitSafePrefix, isWorkTree, runGitAudit } from "./git.ts";
 import type { GitAuditRequest, GitRunner } from "./git.ts";
 
