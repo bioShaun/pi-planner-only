@@ -1,6 +1,6 @@
 # 06：子报告长度要求与截断上限
 
-Status: ready-for-agent
+Status: done
 Type: task
 
 ## Problem
@@ -17,3 +17,8 @@ Type: task
 
 - 测试断言任务文本里有长度要求；截断测试按新比例断言，旧的截断断言如果和新比例冲突，只改数值，不删测试。
 - `npm run test:release` 全绿。
+
+## Comments
+
+- Implemented the 3,000-character child report target, 6,000-character clipping limit, and conclusion-first 60/40 clipping. Added task-text and clipping coverage. `TMPDIR=/project/tmp/ppo-review npm run test:release` passed; 25% fault injection failed on the new head-retention assertion as expected, then 60% was restored.
+- 2026-09-25 Root 验收：检查了 diff。另外 `clipChildText` 也用于失败 run 回收来的部分输出，那里保留的结尾部分从 75% 降到 40%，也就是 2400 字符，可以接受。效果由 09 的 truncated 和 root_reads 指标验证。

@@ -192,7 +192,9 @@ export interface DelegationOutcome {
 	};
 }
 
-export const MAX_CHILD_TEXT_CHARS = 4_000;
+// Bench evidence in ticket 06: 41% of child reports were clipped at the 4,000-character limit.
+export const CHILD_REPORT_TARGET_CHARS = 3_000;
+export const MAX_CHILD_TEXT_CHARS = 6_000;
 
 /** Whole minutes a child gets, at least 1. */
 export function timeoutMinutes(limits: Pick<DelegationLimits, "timeoutMs">): number {
@@ -206,7 +208,8 @@ export function timeoutMinutes(limits: Pick<DelegationLimits, "timeoutMs">): num
 export function buildTaskText(role: Role, task: string, cwd: string, timeoutMs = DEFAULT_LIMITS.timeoutMs, home = homedir()): string {
 	const budget = `Time limit: ${timeoutMinutes({ timeoutMs })} minutes wall clock, then you are stopped and unsaved work is lost. Make edits early and in small steps. Do not start commands that cannot finish within the limit (full pipelines, long test suites); list them in your report instead.`;
 	const pacing = "Write your report as soon as the required checks pass; do optional checks only after that. Never search the whole filesystem (e.g. `find /`); wrap commands that may be slow in `timeout 60`.";
-	return `${task.trim()}\n\n---\nWorking directory: ${cwd}\nHome directory: ${home} (\`~\` in paths means this directory)\n${budget}\n${pacing}\n${ROLE_AGENTS[role].closing}`;
+	const reportBudget = `Keep the final report under ${CHILD_REPORT_TARGET_CHARS.toLocaleString("en-US")} characters: conclusions and file:line first; quote only the key lines of long command output.`;
+	return `${task.trim()}\n\n---\nWorking directory: ${cwd}\nHome directory: ${home} (\`~\` in paths means this directory)\n${budget}\n${pacing}\n${reportBudget}\n${ROLE_AGENTS[role].closing}`;
 }
 
 /** The last progress update seen for a child; pi-subagents sends these, bounded, during the run. */
@@ -426,9 +429,9 @@ export function recoverPartial(
 	return { text: recent, lines };
 }
 
-/** Children put the report at the end, so keep the head and the tail. */
+/** The child message begins with conclusions, so prioritize its head. */
 export function clipChildText(text: string, max = MAX_CHILD_TEXT_CHARS): string {
-	return clipHeadTail(text, max);
+	return clipHeadTail(text, max, 0.6);
 }
 
 interface Terminal {

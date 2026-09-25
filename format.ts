@@ -10,10 +10,10 @@ export function clip(text: string, max: number): string {
 	return `${text.slice(0, max)}\n… [truncated ${text.length - max} chars]`;
 }
 
-/** Keep the head and the tail: children put the report at the end. */
-export function clipHeadTail(text: string, max: number): string {
+/** Keep the head and the tail. */
+export function clipHeadTail(text: string, max: number, headFraction = 0.25): string {
 	if (text.length <= max) return text;
-	const head = Math.floor(max * 0.25);
+	const head = Math.floor(max * headFraction);
 	return `${text.slice(0, head)}\n… [${text.length - max} chars omitted] …\n${text.slice(text.length - (max - head))}`;
 }
 

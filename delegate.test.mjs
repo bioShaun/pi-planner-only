@@ -9,7 +9,7 @@ import {
 	SUBAGENT_DELEGATION_STARTED_EVENT as STARTED,
 	SUBAGENT_DELEGATION_UPDATE_EVENT as UPDATE,
 } from "./subagent-delegation-contract.ts";
-import { ROLE_AGENTS, buildTaskText, clipChildText, createCwdLocks, loadLimits, matchesIdentity, newRunIdentity, resolveLockKey, runDelegation, summarizeTranscript } from "./delegate.ts";
+import { CHILD_REPORT_TARGET_CHARS, MAX_CHILD_TEXT_CHARS, ROLE_AGENTS, buildTaskText, clipChildText, createCwdLocks, loadLimits, matchesIdentity, newRunIdentity, resolveLockKey, runDelegation, summarizeTranscript } from "./delegate.ts";
 import { formatTokens } from "./format.ts";
 import { DEFAULT_CONFIG, loadConfig } from "./config.ts";
 import { artifactsDir, loadArtifactDir, resolveArtifacts, tempArtifactsDir } from "./subagent-artifacts.ts";
@@ -326,6 +326,7 @@ const respond = (bus, req, over = {}) =>
 	const pacing = buildTaskText("worker", "t", "/w");
 	assert.match(pacing, /Write your report as soon as the required checks pass/);
 	assert.match(pacing, /Never search the whole filesystem \(e\.g\. `find \/`\); wrap commands that may be slow in `timeout 60`/);
+	assert.ok(pacing.includes(`Keep the final report under ${CHILD_REPORT_TARGET_CHARS.toLocaleString("en-US")} characters: conclusions and file:line first; quote only the key lines of long command output.`));
 	assert.ok(pacing.indexOf("Time limit:") < pacing.indexOf("Write your report as soon"), "pacing follows the budget line");
 }
 
@@ -437,7 +438,7 @@ const respond = (bus, req, over = {}) =>
 	assert.equal(bus.totalListeners(), 0);
 }
 
-// Clipping keeps the tail, where children put their report.
+// Clipping prioritizes the report's conclusion-first head while retaining the tail.
 {
 	const text = `${"a".repeat(5_000)}FINAL REPORT`;
 	const clipped = clipChildText(text, 1_000);
@@ -445,6 +446,9 @@ const respond = (bus, req, over = {}) =>
 	assert.ok(clipped.endsWith("FINAL REPORT"));
 	assert.match(clipped, /\[4012 chars omitted\]/);
 	assert.equal(clipChildText("short", 1_000), "short");
+	const longText = `${"b".repeat(10_000)}`;
+	const defaultClipped = clipChildText(longText);
+	assert.ok(defaultClipped.startsWith("b".repeat(MAX_CHILD_TEXT_CHARS * 0.6)));
 }
 
 // CwdLocks: second acquire of a held cwd fails; release is idempotent; handoff guard sees size.
