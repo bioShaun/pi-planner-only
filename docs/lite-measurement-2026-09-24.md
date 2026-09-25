@@ -1,6 +1,13 @@
 # lite 大任务测量结果（2026-09-24）
 
-对应删减计划 §6（`docs/pi-planner-only-subtraction-plan.md`）。结论：**通过门槛，保留 lite**。
+对应删减计划 §6（`docs/pi-planner-only-subtraction-plan.md`）。当时结论：**通过门槛，保留 lite**（该结论现仅作历史参考，见下方适用范围）。
+
+> **适用范围（2026-09-25 补记，见 [方向评估 §2.4](lite-direction-review-2026-09-25.md)）**：本文结果降级为历史参考，不再用于支撑产品结论。
+>
+> - 实际 Root 是 gpt-6-sol，A/B 列只是按 opus/astra 价格重算；重算只改账单权重，不改变模型的委派、阅读和验收行为，不是 opus 实测。
+> - 单一仓库、3 个任务、各 2 次；lite 提示词额外要求"实现交给 delegate"，测到的是整套委派方式，不能区分插件本身的贡献。
+> - 待复核：运行时的克隆方式早于票 01 的 parent-only 修复（2026-09-25），是否存在答案泄漏未确认；当前 goldcheck/runcheck 通过不能追溯证明本次实验有效，复核需要对应的原始 Root 日志、子代理记录和实验条件。
+> - "lite 相对 direct 省多少"待票 09 用干净克隆（含原生 pi-subagents 对照臂）重测后再写。
 
 ## 设置
 

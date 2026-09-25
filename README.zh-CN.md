@@ -48,6 +48,8 @@ Root 还会收到一段约 300 token 的提示：小事自己做，大活委派�
 
 delegate 的结果里会写出宿主实际使用的模型。
 
+内置 `scout` 会写一个输出文件（`context.md`），其内容会替代它的最终回复成为 explorer 报告。explorer 的任务说明已考虑这一点；在 `scout` 的 override 里加 `"output": false` 可关闭该文件。
+
 ## 安装
 
 ```bash

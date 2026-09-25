@@ -59,6 +59,8 @@ Configure `subagents.agentOverrides` in `~/.pi/agent/settings.json`:
 
 The delegate result names the model the host actually ran.
 
+The builtin `scout` writes an output file (`context.md`) whose content replaces its final message as the explorer report. The explorer task text accounts for this; adding `"output": false` to the `scout` override turns the file off.
+
 ## Install
 
 ```bash

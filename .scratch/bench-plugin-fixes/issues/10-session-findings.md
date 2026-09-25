@@ -1,6 +1,6 @@
 # 10：2026-09-25 本仓库 Root session 暴露的插件问题
 
-Status: needs-triage
+Status: ready-for-human (1、3、4、5 已处理；2 待 A/B 观察)
 Type: task
 
 来源：维护者在本仓库用 planner-only 做票 01–09。整个 session 共委派 11 次（worker 7 次，explorer 4 次），Root 上下文涨到约 151k。
@@ -38,3 +38,12 @@ Type: task
 ## 待定
 
 先做第 1 条（git.ts，改动小，收益确定）和第 5 条（只改 bench）。第 3 条要先查清 scout 为什么提前返回：看 artifact 目录里那次 run 的 transcript。
+
+## Comments
+
+- 2026-09-25 按[方向评估 §4 第二步](../../../docs/lite-direction-review-2026-09-25.md)处理：
+  - 第 1 条：git 摘要对子代理没动过的既有脏路径只给数量（`Unchanged by the child: N pre-existing uncommitted path(s), excluded above.`），不新增"首次显示"记忆状态；子代理再次改动的既有脏路径仍列出路径。提交 c6a1496。
+  - 第 3 条根因查清：scout 的 frontmatter 带 `output: context.md`，pi-subagents 在子代理写了该文件时用文件内容替换最终回复（`src/runs/foreground/execution.js` 的 `resolveSingleOutput`）。那次 scout 先按模板写了一份占位 context.md，之后提取脚本输出被截断，最终回复如实写了"Could not complete"，但 Root 收到的是占位文件，状态 completed。结构化委派请求不支持按次关闭 `output`（`slash/delegation-request.js` 的字段白名单）。修法：explorer 结尾说明写明"Root 收到的是该文件而不是最终回复，只在最后写一次；没做完就以 INCOMPLETE 开头并列出缺什么"，并允许不套 code-context 模板。未换 agent、未加角色。运营者也可用 `subagents.agentOverrides.scout.output: false` 关掉输出文件。提交 c6a1496。
+  - 第 4 条：worker 结尾说明加"只按要求修改，不动无关行"。提交 c6a1496。
+  - 第 5 条：campaign.sh 把完整 audit/status 写进 campaign.log，stdout 一行摘要；发现绕过 slot 的重进程时列出并以退出码 6 拒绝提交（不终止进程，`BENCH_ALLOW_SLOT_CONFLICT=1` 可覆盖）。提交 15cbbbd。
+  - 第 2 条（报告截断）票 06 已改，效果待票 09 恢复测试时观察。

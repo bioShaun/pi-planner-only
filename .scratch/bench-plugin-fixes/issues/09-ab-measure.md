@@ -14,3 +14,8 @@ Blocked by: 01, 02, 03, 04, 05, 06
 - 待维护者确认后再启动（会消耗 ClinePass 额度，约 4–5 小时）：
   `bench/campaign.sh ab-head-vs-297 6 T1,T2,T3 lite-pds-strict,lite-pds-strict-head,direct-pds --parallel 3`
   共 54 条 run。汇总命令：`python3 bench/summarize.py .../ab-head-vs-297/runs --baseline lite-pds-strict --metric <cost|root_cache_read|root_reads|truncated|refused|detached>`。
+- 2026-09-25 方向评估（[§2.4、§4 第三/四步](../../../docs/lite-direction-review-2026-09-25.md)）补充计划，票仍暂停，未启动任何付费运行：
+  - 一次只回答一个问题：先验证当前修复是否减少返工和总成本；handoff 另做长会话实验，不放进本票。
+  - 加第三臂 **native**：原生 pi-subagents，加一句"实现交给子代理"的指引，不加载本插件。09-24 的 lite 提示词本身就带这句话，这一臂用来隔离插件在指引之外的贡献，回答插件有没有存在理由。需要先在 bench 里支持该模式（run.sh 加载方式、runcheck 与机制指标对 `subagent` 工具的口径），再定任务与次数。
+  - 固定日常回归模型（cpass-ds），少量目标 Root 实测用于校准；不扩大到全部模型和全部组合。
+  - 09-24 的 0.48 降级为历史参考；"lite 相对 direct 省多少"等本票用干净克隆重跑后再写。
