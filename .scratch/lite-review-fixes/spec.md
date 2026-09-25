@@ -45,10 +45,10 @@ lite 总体通过门槛（约 0.47），但小任务 T3 反而更贵（1.12）�
 
 ## Solution
 
-- 票 01（ready-for-agent）：交接事实截断、锁键规范化、strict 文档、小任务措辞四处小改动。
-- 票 02（needs-triage）：由维护者在两个替代方案里选一个，选定后改为 ready-for-agent。
+- 票 01（done）：交接事实截断、锁键规范化、strict 文档、小任务措辞四处小改动。
+- 票 02（done）：选方案 B，提交结果回显全部路径，系统提示提醒带 paths。
 - 票 03（wontfix）：收益评估后不做共享锁。
-- 票 05（ready-for-human）：`delegate` 与 `cwd` 描述写明 worker/explorer/validator 按仓库互斥。
+- 票 05（done）：`delegate` 与 `cwd` 描述写明 worker/explorer/validator 按仓库互斥。
 - 票 04（wontfix）：记录不做的条目和理由，避免以后重复提出。
 
 ## Testing Decisions
