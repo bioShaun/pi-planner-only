@@ -75,3 +75,4 @@ node_modules/
 .scratch/archive/legacy-full-audit/request-stop-p0-20260919/cli-acceptance/cli-run-*/agent/
 .scratch/archive/legacy-full-audit/request-stop-p0-20260919/cli-acceptance/cli-run-*/workspace/
 .scratch/**/tmp/node-compile-cache/
+__pycache__/
