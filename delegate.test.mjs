@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
 	SUBAGENT_DELEGATION_CANCEL_EVENT as CANCEL,
@@ -33,7 +34,7 @@ const respond = (bus, req, over = {}) =>
 	assert.equal(req.ownerRunId, "owner-1");
 	assert.equal(req.timeoutMs, 60_000);
 	assert.deepEqual(req.result, { kind: "text" });
-	assert.match(req.task, /^implement X\n\n---\nWorking directory: \/w\nTime limit: 1 minutes wall clock/);
+	assert.ok(req.task.startsWith(`implement X\n\n---\nWorking directory: /w\nHome directory: ${homedir()} (\`~\` in paths means this directory)\nTime limit: 1 minutes wall clock`));
 	assert.ok(req.task.endsWith(ROLE_AGENTS.worker.closing));
 	assert.equal(out.ok, true);
 	assert.equal(out.details.status, "completed");
@@ -324,6 +325,13 @@ const respond = (bus, req, over = {}) =>
 	assert.match(pacing, /Write your report as soon as the required checks pass/);
 	assert.match(pacing, /Never search the whole filesystem \(e\.g\. `find \/`\); wrap commands that may be slow in `timeout 60`/);
 	assert.ok(pacing.indexOf("Time limit:") < pacing.indexOf("Write your report as soon"), "pacing follows the budget line");
+}
+
+// Home directory in the task text: a reviewer has no shell and guessed /root for `~` paths.
+{
+	assert.ok(buildTaskText("reviewer", "t", "/w").includes(`\nHome directory: ${homedir()} (\`~\` in paths means this directory)\n`));
+	const text = buildTaskText("reviewer", "read ~/.pi/x", "/w", 60_000, "/home/alice");
+	assert.match(text, /\nWorking directory: \/w\nHome directory: \/home\/alice \(`~` in paths means this directory\)\nTime limit: 1 minutes/);
 }
 
 // Token units: k/M/B, ~3 significant digits, no trailing zeros, no "1000k".
