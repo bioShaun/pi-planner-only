@@ -2,6 +2,8 @@
 
 **日期：** 2026-09-24　**对照：** `e8ad415`（lite 重写）→ `d845501`（当前 main，自动交接）　**状态：** 协议。没有测量结果，下面也不填任何一次运行的花费或轮数。
 
+> **行号说明：** 本文所有 `index.ts:N`、`*.test.mjs:N` 行号都指提交 `d845501`（用 `git show d845501:index.ts` 查看），不是当前 main。之后合并的重构 PR #16–#23 改了结构：交接状态进了 `index.ts` 的 `PlannerSession`，`PI_PLANNER_ONLY_*` 解析进了 `config.ts`（`handoffMode` 仍然只有 `auto` / `confirm`），宿主调用进了 `host.ts`。行为未变，「关不掉」的结论仍成立。
+
 对应删减计划 §0 的判断标准和 §6 的测量设计（`docs/pi-planner-only-subtraction-plan.md`），以及已经做过的 12 次大任务测量（`docs/lite-measurement-2026-09-24.md`）。
 
 ## 0. 要回答的问题

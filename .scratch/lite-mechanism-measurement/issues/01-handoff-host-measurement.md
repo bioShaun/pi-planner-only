@@ -6,6 +6,8 @@ Blocked by: none
 
 来源：`docs/lite-handoff-measurement-protocol.md`。交接在 `d845501`，12 次大任务测量在 `e8ad415` 的 `docs/lite-measurement-2026-09-24.md`，不覆盖它。
 
+本票的 `index.ts:N` 行号都指 `d845501`；当前 main 经过 #16–#23 重构，行号已变，见协议开头的行号说明。
+
 ## 要做的事
 
 按协议 §2 跑交接臂和拒绝臂。任务必须真正越过 `PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS`。数据用宿主会话 jsonl，新会话用 `parentSession` 串回旧会话（`index.ts:307`）。不要读插件镜像，不要把 `type=custom` 计入花费。
