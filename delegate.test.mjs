@@ -33,6 +33,7 @@ const respond = (bus, req, over = {}) =>
 	assert.equal(req.cwd, "/w");
 	assert.equal(req.ownerRunId, "owner-1");
 	assert.equal(req.timeoutMs, 60_000);
+	assert.equal(req.intercomBridge.mode, "off");
 	assert.deepEqual(req.result, { kind: "text" });
 	assert.ok(req.task.startsWith(`implement X\n\n---\nWorking directory: /w\nHome directory: ${homedir()} (\`~\` in paths means this directory)\nTime limit: 1 minutes wall clock`));
 	assert.ok(req.task.endsWith(ROLE_AGENTS.worker.closing));
@@ -55,6 +56,7 @@ const respond = (bus, req, over = {}) =>
 	assert.doesNotMatch(rev.text, /Workspace changes|git repository/);
 	const exp = await runDelegation(deps(bus), { role: "explorer", task: "find", cwd: "/w" });
 	assert.match(exp.text, /WARNING: requested agent scout, host ran other/);
+	assert.match(ROLE_AGENTS.explorer.closing, /writing the report\/output file the runtime names is allowed/);
 	await runDelegation(deps(bus), { role: "validator", task: "check", cwd: "/w" });
 	assert.deepEqual(sent(bus, REQUEST).map((r) => r.agent), ["reviewer", "scout", "oracle"]);
 }

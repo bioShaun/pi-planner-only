@@ -24,6 +24,7 @@ export interface SubagentDelegationRequest extends SubagentDelegationIdentity {
 	context: "fresh" | "fork";
 	cwd: string;
 	timeoutMs?: number;
+	intercomBridge?: { mode?: "off" | "fork-only" | "always" };
 	result: { kind: "text" };
 }
 

@@ -48,7 +48,7 @@ export const ROLE_AGENTS: Record<Role, { agent: string; exclusive: boolean; clos
 	explorer: {
 		agent: "scout",
 		exclusive: true,
-		closing: "Do not modify any files. End with the findings Root asked for, as compact as possible (paths, line numbers, short excerpts).",
+		closing: "Do not modify project files; writing the report/output file the runtime names is allowed. End with the findings Root asked for, as compact as possible (paths, line numbers, short excerpts).",
 	},
 	validator: {
 		agent: "oracle",
@@ -494,6 +494,7 @@ function buildRequest(deps: DelegationDeps, role: Role, profile: RoleProfile, ta
 		context: "fresh",
 		cwd,
 		timeoutMs: deps.limits.timeoutMs,
+		intercomBridge: { mode: "off" },
 		result: { kind: "text" },
 	};
 }

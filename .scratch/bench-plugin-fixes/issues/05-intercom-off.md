@@ -1,6 +1,6 @@
 # 05：委派时关闭 intercom 桥
 
-Status: ready-for-agent
+Status: done
 Type: task
 
 ## Problem
@@ -18,3 +18,11 @@ Type: task
 - 测试断言请求里带有 `intercomBridge.mode === "off"`；故障注入：去掉这个字段时测试会失败。
 - `contract.test.mjs` 对照已安装的 pi-subagents，确认结构化请求能接受 `intercomBridge`。
 - `npm run test:release` 全绿，没有删除任何断言。
+
+## Comments
+
+- 委派请求现显式关闭 intercom bridge；同步更新请求类型、explorer 输出文件说明和 `CONTEXT.md` Decisions（子任务必须自包含）。
+- `contract.test.mjs` 验证安装版 parser 接受 `intercomBridge: { mode: "off" }`，且 adapter 将其带入 execution params。
+- 验证：`TMPDIR=/project/tmp/ppo-review npm run test:release` 全绿；fault injection 移除请求字段后 `delegate.test.mjs` 按预期失败，再恢复并通过 release suite。
+- `git diff | grep '^-.*assert'` 无输出。
+- 2026-09-25 Root 验收：检查了 diff。contract.test 用已安装的 parser 和 adapter 确认 `intercomBridge.mode=off` 能一路传到执行参数。实际能消除多少 detach，由 09 的 A/B 测量来验证。

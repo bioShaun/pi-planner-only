@@ -28,3 +28,4 @@ _Avoid_: task, execution (legacy ledger terms)
 - A child with bash or write holds its cwd until it ends; an unconfirmed stop keeps the hold until the late terminal.
 - The host enforces the wall-clock limit (`timeoutMs`); the plugin cancels on the reported token cap. Neither is a hard budget.
 - Child models are operator configuration (`subagents.agentOverrides`), never tool parameters.
+- Children run with the intercom bridge off and cannot ask Root mid-run, so each task must be self-contained.

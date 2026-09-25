@@ -42,6 +42,9 @@ for (const role of ["worker", "explorer", "validator", "reviewer"]) {
 	const request = bus.emitted.find(([e]) => e === local.SUBAGENT_DELEGATION_REQUEST_EVENT)[1];
 	const parsed = parseSubagentDelegationRequest(request);
 	assert.equal(parsed.ok, true, `${role} request rejected by installed parser: ${parsed.error}`);
+	assert.deepEqual(parsed.request.intercomBridge, { mode: "off" });
+	const { toSubagentDelegationExecutionParams } = await import(join(root, "src", "slash", "delegation-adapters.js"));
+	assert.deepEqual(toSubagentDelegationExecutionParams(parsed.request).intercomBridge, { mode: "off" });
 }
 
 // The artifact adapter resolves the same files as the installed getArtifactsDir/getArtifactPaths for every artifactDir.
