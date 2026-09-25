@@ -18,6 +18,7 @@ import type { HostAdapter } from "./host.ts";
 export { rootUsageOf } from "./host.ts";
 import { GIT_AUDIT_OPERATIONS, gitCommit, gitSafePrefix, isWorkTree, runGitAudit } from "./git.ts";
 import type { GitAuditRequest, GitRunner } from "./git.ts";
+import { loadArtifactDir } from "./subagent-artifacts.ts";
 
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
 	? resolve(process.env.PI_CODING_AGENT_DIR)
@@ -283,6 +284,7 @@ async function executeDelegate(
 			limits: loadConfig().limits,
 			locks: session.locks,
 			sessionFile: host.sessionFile(ctx),
+			artifactDir: loadArtifactDir(),
 		},
 		{ ...params, cwd: resolveCwd(ctx, params.cwd) },
 		signal,

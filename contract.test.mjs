@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import * as local from "./subagent-delegation-contract.ts";
 import { DEFAULT_LIMITS, ROLE_AGENTS, createCwdLocks, runDelegation } from "./delegate.ts";
+import { ARTIFACT_DIRS, resolveArtifacts } from "./subagent-artifacts.ts";
 import { fakeBus, noGit, usage } from "./test-helpers.mjs";
 
 const root = process.env.PI_SUBAGENTS_DIR ?? join(homedir(), ".pi", "agent", "npm", "node_modules", "pi-subagents");
@@ -41,6 +42,23 @@ for (const role of ["worker", "explorer", "validator", "reviewer"]) {
 	const request = bus.emitted.find(([e]) => e === local.SUBAGENT_DELEGATION_REQUEST_EVENT)[1];
 	const parsed = parseSubagentDelegationRequest(request);
 	assert.equal(parsed.ok, true, `${role} request rejected by installed parser: ${parsed.error}`);
+}
+
+// The artifact adapter resolves the same files as the installed getArtifactsDir/getArtifactPaths for every artifactDir.
+{
+	const artifactsApi = await import(join(root, "src", "shared", "artifacts.js"));
+	const sessionFile = join(root, "sessions", "2026-09-24T07-17-07_root.jsonl");
+	for (const artifactDir of ARTIFACT_DIRS) {
+		for (const cwd of ["/work/project", ""]) {
+			const upstreamDir = artifactsApi.getArtifactsDir(sessionFile, cwd || undefined, artifactDir);
+			const upstream = artifactsApi.getArtifactPaths(upstreamDir, "run-1", "worker", 0);
+			const local = resolveArtifacts({ runId: "run-1", agent: "worker", sessionFile, cwd, artifactDir });
+			assert.equal(local.outputPath, upstream.outputPath, `${artifactDir} output path differs from installed pi-subagents`);
+			assert.equal(local.transcriptPath, upstream.transcriptPath, `${artifactDir} transcript path differs from installed pi-subagents`);
+		}
+	}
+	const noSession = resolveArtifacts({ runId: "run-1", agent: "worker", cwd: "/work/project", artifactDir: "session" });
+	assert.equal(noSession.outputPath, artifactsApi.getArtifactPaths(artifactsApi.getArtifactsDir(null, "/work/project", "session"), "run-1", "worker", 0).outputPath);
 }
 
 console.log("contract.test: ok");

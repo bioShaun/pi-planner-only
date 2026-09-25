@@ -27,6 +27,7 @@
     "format.ts",
     "git.ts",
     "host.ts",
+    "subagent-artifacts.ts",
     "subagent-delegation-contract.ts"
   ],
   "pi": {

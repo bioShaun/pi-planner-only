@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
 	SUBAGENT_DELEGATION_CANCEL_EVENT as CANCEL,
 	SUBAGENT_DELEGATION_REQUEST_EVENT as REQUEST,
@@ -11,6 +11,7 @@ import {
 import { ROLE_AGENTS, buildTaskText, clipChildText, createCwdLocks, loadLimits, matchesIdentity, newRunIdentity, runDelegation, summarizeTranscript } from "./delegate.ts";
 import { formatTokens } from "./format.ts";
 import { DEFAULT_CONFIG, loadConfig } from "./config.ts";
+import { artifactsDir, loadArtifactDir, resolveArtifacts, tempArtifactsDir } from "./subagent-artifacts.ts";
 import { fakeBus, noGit, tempDir, tick, usage } from "./test-helpers.mjs";
 
 const limits = { timeoutMs: 60_000, maxTokens: 1_000, startTimeoutMs: 40, cancelGraceMs: 40 };
@@ -87,16 +88,17 @@ const respond = (bus, req, over = {}) =>
 	assert.match(texts[1], /Workspace changes: not a git repository \(or no commits\)/);
 }
 
-// Timed out with a runId: the default-layout artifact is read; missing artifacts are reported, not thrown.
+// Timed out with a runId: the artifact located by the adapter is read; missing artifacts are reported, not thrown.
 {
 	const dir = tempDir("ppo-artifacts-");
 	try {
 		const sessionFile = join(dir, "2026-09-24T07-17-07_root.jsonl");
-		const artifacts = join(dir, "subagent-artifacts");
+		const artifacts = artifactsDir(sessionFile, "/w", "session");
+		assert.equal(artifacts, join(dir, "subagent-artifacts"));
 		mkdirSync(artifacts);
-		const output = join(artifacts, "run-42_worker_0_output.md");
+		const { outputPath: output, transcriptPath: transcript } = resolveArtifacts({ runId: "run-42", agent: "worker", sessionFile, cwd: "/w" });
+		assert.equal(output, join(artifacts, "run-42_worker_0_output.md"));
 		writeFileSync(output, "Subagent timed out.\n\nRecovery summary:\n- currentTool: edit\n");
-		const transcript = join(artifacts, "run-42_worker_0_transcript.jsonl");
 		writeFileSync(transcript, [
 			JSON.stringify({ recordType: "tool_start", ts: 1_000, toolCallId: "c1", toolName: "bash", argsPreview: "npm run test:release" }),
 			JSON.stringify({ recordType: "tool_end", ts: 6_000, toolCallId: "c1", toolName: "bash", isError: false }),
@@ -111,7 +113,7 @@ const respond = (bus, req, over = {}) =>
 		assert.equal(found.ok, false);
 		assert.match(found.text, /Run id: run-42/);
 		assert.match(found.text, /Child report:\nSubagent timed out\.\n\nRecovery summary:\n- currentTool: edit/);
-		assert.ok(found.text.includes(`Transcript: ${join(artifacts, "run-42_worker_0_transcript.jsonl")}`));
+		assert.ok(found.text.includes(`Transcript: ${transcript}`));
 		assert.doesNotMatch(found.text, /\(empty\)/);
 		// The transcript tail sits after the child report and before the workspace summary.
 		const tailAt = found.text.indexOf("Transcript tail");
@@ -128,7 +130,7 @@ const respond = (bus, req, over = {}) =>
 
 		rmSync(output);
 		const missing = await run();
-		assert.match(missing.text, /artifacts not found at the default location \(pi-subagents artifactDir may be temp\/project\); runId=run-42/);
+		assert.ok(missing.text.includes(`artifacts not found (artifactDir=session, expected ${output}); runId=run-42`));
 		assert.match(missing.text, /Child report:\n\(empty\)/);
 
 		// A runId that is not a plain name never becomes a path.
@@ -138,8 +140,47 @@ const respond = (bus, req, over = {}) =>
 			bus.on(REQUEST, (req) => respond(bus, req, { status: "failed", runId: "../escape", result: undefined }));
 			const out = await runDelegation({ ...deps(bus), sessionFile }, { role: "worker", task: "t", cwd: "/w" });
 			assert.doesNotMatch(out.text, /LEAKED/);
-			assert.match(out.text, /artifacts not found at the default location/);
+			assert.match(out.text, /artifacts not found \(artifactDir=session\); runId=\.\.\/escape/);
 		}
+
+		// artifactDir=project reads from <cwd>/.pi/subagents/artifacts; artifactDir=temp from the pi-subagents temp root.
+		const project = join(dir, "project");
+		const tempRoot = join(dir, "temp-root");
+		const env = { ...process.env, PI_SUBAGENTS_TEMP_ROOT: tempRoot };
+		assert.equal(tempArtifactsDir(env), join(tempRoot, "artifacts"));
+		assert.equal(artifactsDir(sessionFile, project, "project"), join(project, ".pi", "subagents", "artifacts"));
+		assert.equal(artifactsDir(undefined, project, "session", env), join(tempRoot, "artifacts"));
+		for (const artifactDir of ["project", "temp"]) {
+			const paths = resolveArtifacts({ runId: "run-42", agent: "worker", sessionFile, cwd: project, artifactDir, env });
+			mkdirSync(dirname(paths.outputPath), { recursive: true });
+			writeFileSync(paths.outputPath, `${artifactDir.toUpperCase()} ARTIFACT`);
+			const prev = process.env.PI_SUBAGENTS_TEMP_ROOT;
+			process.env.PI_SUBAGENTS_TEMP_ROOT = tempRoot;
+			try {
+				const bus = fakeBus();
+				bus.on(REQUEST, (req) => respond(bus, req, { status: "timed_out", runId: "run-42", result: undefined }));
+				const out = await runDelegation({ ...deps(bus), sessionFile, artifactDir }, { role: "worker", task: "t", cwd: project });
+				assert.match(out.text, new RegExp(`Child report:\\n${artifactDir.toUpperCase()} ARTIFACT`));
+				assert.ok(out.text.includes(`Transcript: ${paths.transcriptPath}`));
+			} finally {
+				if (prev === undefined) delete process.env.PI_SUBAGENTS_TEMP_ROOT;
+				else process.env.PI_SUBAGENTS_TEMP_ROOT = prev;
+			}
+		}
+
+		// loadArtifactDir reads pi-subagents' config.json under the agent dir; absent, invalid or malformed -> "session".
+		const agentDir = join(dir, "agent");
+		const configPath = join(agentDir, "extensions", "subagent", "config.json");
+		mkdirSync(dirname(configPath), { recursive: true });
+		const agentEnv = { ...process.env, PI_CODING_AGENT_DIR: agentDir };
+		assert.equal(loadArtifactDir(agentEnv), "session");
+		writeFileSync(configPath, JSON.stringify({ artifactDir: "temp" }));
+		assert.equal(loadArtifactDir(agentEnv), "temp");
+		writeFileSync(configPath, JSON.stringify({ artifactDir: "elsewhere" }));
+		assert.equal(loadArtifactDir(agentEnv), "session");
+		writeFileSync(configPath, "{not json");
+		assert.equal(loadArtifactDir(agentEnv), "session");
+		assert.equal(loadArtifactDir({ ...process.env, HOME: dir, PI_CODING_AGENT_DIR: "~/agent" }), "session");
 
 		// The last progress update supplies runId, the tool in flight, and recent output
 		// when the terminal has no runId and no artifact exists.
