@@ -10,6 +10,7 @@ import {
 } from "./subagent-delegation-contract.ts";
 import { ROLE_AGENTS, buildTaskText, clipChildText, loadLimits, runDelegation, summarizeTranscript } from "./delegate.ts";
 import { formatTokens } from "./format.ts";
+import { DEFAULT_CONFIG, loadConfig } from "./config.ts";
 import { fakeBus, noGit, tempDir, tick, usage } from "./test-helpers.mjs";
 
 const limits = { timeoutMs: 60_000, maxTokens: 1_000, startTimeoutMs: 40, cancelGraceMs: 40 };
@@ -400,6 +401,28 @@ const respond = (bus, req, over = {}) =>
 	assert.equal(l.timeoutMs, 1234);
 	assert.equal(l.maxTokens, 1_500_000);
 	assert.equal(l.startTimeoutMs, 30_000);
+}
+
+// Whole config from env; every default lives in DEFAULT_CONFIG.
+{
+	assert.deepEqual(loadConfig({}), DEFAULT_CONFIG);
+	const c = loadConfig({
+		PI_PLANNER_ONLY: " On ",
+		PI_PLANNER_ONLY_STRICT: "true",
+		PI_PLANNER_ONLY_HANDOFF: " Confirm ",
+		PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS: "300000",
+		PI_PLANNER_ONLY_TIMEOUT_MS: "1234",
+	});
+	assert.equal(c.enabled, true);
+	assert.equal(c.strict, true);
+	assert.equal(c.handoffMode, "confirm");
+	assert.equal(c.contextWarnTokens, 300_000);
+	assert.equal(c.limits.timeoutMs, 1234);
+	assert.equal(loadConfig({ PI_PLANNER_ONLY: "off" }).enabled, false);
+	assert.equal(loadConfig({ PI_PLANNER_ONLY: "maybe" }).enabled, undefined);
+	assert.equal(loadConfig({ PI_PLANNER_ONLY_STRICT: "yes" }).strict, false);
+	assert.equal(loadConfig({ PI_PLANNER_ONLY_HANDOFF: "bogus" }).handoffMode, "auto");
+	assert.equal(loadConfig({ PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS: "0" }).contextWarnTokens, 150_000);
 }
 
 console.log("delegate.test: ok");

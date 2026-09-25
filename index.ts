@@ -9,8 +9,10 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_LIMITS, ROLES, loadLimits, runDelegation, timeoutMinutes } from "./delegate.ts";
-import type { DelegationLimits, DelegationParams, EventBus } from "./delegate.ts";
+import { DEFAULT_LIMITS, loadConfig } from "./config.ts";
+import type { DelegationLimits } from "./config.ts";
+import { ROLES, runDelegation, timeoutMinutes } from "./delegate.ts";
+import type { DelegationParams, EventBus } from "./delegate.ts";
 import { formatTokens } from "./format.ts";
 import { GIT_AUDIT_OPERATIONS, gitCommit, gitSafePrefix, isWorkTree, runGitAudit } from "./git.ts";
 import type { GitAuditRequest, GitRunner } from "./git.ts";
@@ -34,17 +36,13 @@ const resolveCwd = (ctx: { cwd: string }, cwd: string | undefined) => (cwd ? res
 const textResult = <T>(text: string, details: T) => ({ content: [{ type: "text" as const, text }], details });
 const refusal = (text: string) => textResult(text, { ok: false });
 
-const flag = (value: string | undefined, set: string[]) => set.includes((value ?? "").trim().toLowerCase());
-
 /** PI_PLANNER_ONLY=1 forces on, =0 forces off; otherwise the off marker decides. */
 export function isEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-	if (flag(env.PI_PLANNER_ONLY, ["1", "true", "on"])) return true;
-	if (flag(env.PI_PLANNER_ONLY, ["0", "false", "off"])) return false;
-	return !existsSync(OFF_MARKER);
+	return loadConfig(env).enabled ?? !existsSync(OFF_MARKER);
 }
 
 export function isStrict(env: NodeJS.ProcessEnv = process.env): boolean {
-	return flag(env.PI_PLANNER_ONLY_STRICT, ["1", "true", "on"]);
+	return loadConfig(env).strict;
 }
 
 export function plannerPrompt(strict: boolean, limits: DelegationLimits = DEFAULT_LIMITS): string {
@@ -120,10 +118,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 	let pendingHandoff: { brief: string; cwd: string; sessionFile?: string; manualOnly?: boolean } | undefined;
 	let delegationsInFlight = 0;
 	let hidLoader = false;
-	const contextWarnThreshold = () => {
-		const value = Number(process.env.PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS);
-		return Number.isInteger(value) && value > 0 ? value : 150_000;
-	};
+	const contextWarnThreshold = () => loadConfig().contextWarnTokens;
 	const sendContextWarning = (tokens: number) => {
 		if (!isEnabled() || contextWarned || tokens <= contextWarnThreshold()) return;
 		contextWarned = true;
@@ -186,7 +181,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					events: pi.events as unknown as EventBus,
 					git: gitRunner,
 					ownerRunId: ctx.sessionManager?.getSessionId?.() || randomUUID(),
-					limits: loadLimits(),
+					limits: loadConfig().limits,
 					busy,
 					sessionFile: ctx.sessionManager?.getSessionFile?.(),
 				},
@@ -310,7 +305,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 					facts = `git facts unavailable: ${error instanceof Error ? error.message : String(error)}`;
 				}
 				const prompt = `[planner-only handoff] You are the new Root session. The previous session handed this work to you because its context was large. "This session"/"the next session" in the brief below both mean YOU: do the next step now. Do not call the handoff tool unless your own context grows past the warning threshold.\n\n## Brief\n${handoff.brief}\n\n## Facts from the previous session\nPrevious session file: ${handoff.sessionFile ?? "unknown"}\nRepository (git facts below): ${handoff.cwd}\n${facts}\n\nContinue as Root under planner-only; the brief is authoritative.`;
-				const mode = (process.env.PI_PLANNER_ONLY_HANDOFF ?? "auto").trim().toLowerCase();
+				const mode = loadConfig().handoffMode;
 				try {
 					const result = await ctx.newSession({ parentSession: handoff.sessionFile, withSession: async (rctx) => {
 						rctx.ui.notify("planner-only: handoff from previous session", "info");
@@ -377,7 +372,7 @@ export default function plannerOnly(pi: ExtensionAPI): void {
 		}
 		syncTools();
 		if (!isEnabled()) return;
-		return { systemPrompt: `${event.systemPrompt}\n\n${plannerPrompt(isStrict(), loadLimits())}` };
+		return { systemPrompt: `${event.systemPrompt}\n\n${plannerPrompt(isStrict(), loadConfig().limits)}` };
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
