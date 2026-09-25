@@ -111,7 +111,8 @@ assert.deepEqual(parseStatusZ("x"), []);
 	assert.equal(b1.root, "/w");
 	assert.ok(perPath.calls.filter((c) => c[2] === "hash-object").every((c) => c.includes("--")));
 	const s1 = await summarizeWork(perPath.run, "/w/sub", b1);
-	assert.match(s1, /Unchanged by the child \(already uncommitted before; excluded above\): keep\.txt, gone\.txt/);
+	assert.match(s1, /Unchanged by the child: 2 pre-existing uncommitted path\(s\), excluded above\./);
+	assert.doesNotMatch(s1, /keep\.txt|gone\.txt/);
 
 	const many = Array.from({ length: MAX_FINGERPRINT_PATHS + 1 }, (_, i) => `?? f${i}\0`).join("");
 	const big = script(many, () => { throw new Error("must not hash"); });
@@ -258,7 +259,8 @@ try {
 	const quiet = await summarizeWork(run, join(dir, "sub"), subBase);
 	assert.match(quiet, /^Tracked files: no changes\.$/m);
 	assert.doesNotMatch(quiet, /Untracked files/);
-	assert.match(quiet, /Unchanged by the child \(already uncommitted before; excluded above\): (README\.md, user-scratch\.txt|user-scratch\.txt, README\.md)/);
+	assert.match(quiet, /Unchanged by the child: 2 pre-existing uncommitted path\(s\), excluded above\./);
+	assert.doesNotMatch(quiet, /README\.md|user-scratch\.txt/);
 	writeFileSync(join(dir, "a.txt"), "child edit\n");
 	writeFileSync(join(dir, "sub", "child.txt"), "c\n");
 	const busy = await summarizeWork(run, join(dir, "sub"), subBase);

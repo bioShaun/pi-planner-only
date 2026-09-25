@@ -500,8 +500,8 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 	pi.registerTool({
 		name: "handoff",
 		label: "Handoff",
-		description: "Start a fresh Root session with a complete brief; self-initiation above the context threshold is allowed only when PI_PLANNER_ONLY_HANDOFF is confirm or auto.",
-		promptSnippet: "handoff: continue in a fresh session from a brief when the user asks (/planner-only handoff)",
+		description: "Start a fresh Root session from a complete, self-contained brief when the user asks or the context warning says to.",
+		promptSnippet: "handoff: continue in a fresh session from a brief when the user asks",
 		parameters: Type.Object({
 			brief: Type.String({ minLength: 200, description: "Self-contained brief for the next Root session: goal, decisions made, constraints, relevant files/specs, what is done, open items, and the exact next step." }),
 			cwd: Type.Optional(Type.String({ description: REPO_CWD_DESCRIPTION })),

@@ -57,6 +57,10 @@ const respond = (bus, req, over = {}) =>
 	const exp = await runDelegation(deps(bus), { role: "explorer", task: "find", cwd: "/w" });
 	assert.match(exp.text, /WARNING: requested agent scout, host ran other/);
 	assert.match(ROLE_AGENTS.explorer.closing, /writing the report\/output file the runtime names is allowed/);
+	// Ticket 10: scout's output file replaces its final message; an early placeholder reached Root as "completed".
+	assert.match(ROLE_AGENTS.explorer.closing, /Root receives that file instead of your final message: write it once, at the end/);
+	assert.match(ROLE_AGENTS.explorer.closing, /If you did not finish, begin the report with INCOMPLETE/);
+	assert.match(ROLE_AGENTS.worker.closing, /Change only what the task asks; leave unrelated lines as they are\./);
 	// Bench: 7/250 oracle validators answered "no execution tool" without trying bash (ticket 07).
 	assert.match(ROLE_AGENTS.validator.closing, /You have a `bash` tool: run the requested checks yourself/);
 	await runDelegation(deps(bus), { role: "validator", task: "check", cwd: "/w" });

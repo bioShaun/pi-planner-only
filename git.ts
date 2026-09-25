@@ -261,8 +261,8 @@ function dirtyNotes(base: WorkBase, changed: ChangedPaths | undefined): string[]
 		return base.dirtyBefore > 0 ? [`Note: ${base.dirtyBefore} path(s) were already uncommitted before this delegation; the diff includes them.`] : [];
 	}
 	const lines: string[] = [];
-	const excluded = [...changed.untouched];
-	if (excluded.length) lines.push(`Unchanged by the child (already uncommitted before; excluded above): ${listPaths(excluded)}`);
+	// Count only: listing the same unrelated dirty paths after every delegation cost Root ~700 chars a turn (ticket 10).
+	if (changed.untouched.size) lines.push(`Unchanged by the child: ${changed.untouched.size} pre-existing uncommitted path(s), excluded above.`);
 	if (changed.touchedDirty.length) {
 		lines.push(`Note: ${changed.touchedDirty.length} path(s) were already uncommitted before this delegation and changed again; their diff includes the earlier edits: ${listPaths(changed.touchedDirty)}`);
 	}

@@ -43,12 +43,14 @@ export const ROLE_AGENTS: Record<Role, { agent: string; exclusive: boolean; clos
 	worker: {
 		agent: "worker",
 		exclusive: true,
-		closing: "When you finish, end with a short report (3-10 lines): what you changed, how you verified it (commands and results), and anything left undone.",
+		closing: "Change only what the task asks; leave unrelated lines as they are. When you finish, end with a short report (3-10 lines): what you changed, how you verified it (commands and results), and anything left undone.",
 	},
 	explorer: {
 		agent: "scout",
 		exclusive: true,
-		closing: "Do not modify project files; writing the report/output file the runtime names is allowed. End with the findings Root asked for, as compact as possible (paths, line numbers, short excerpts).",
+		// Ticket 10: scout's `output: context.md` file replaces its final message, so an early
+		// placeholder file reached Root as a "completed" report while the "could not finish" reply was lost.
+		closing: "Do not modify project files; writing the report/output file the runtime names is allowed. If the runtime names an output file, Root receives that file instead of your final message: write it once, at the end, with the full findings. Answer the questions asked; use the code-context headings only where they fit. If you did not finish, begin the report with INCOMPLETE and list what is done, what is missing, and why. Keep findings compact (paths, line numbers, short excerpts).",
 	},
 	validator: {
 		agent: "oracle",
