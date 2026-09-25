@@ -1,6 +1,6 @@
 # 02：git_commit 默认提交范围
 
-Status: ready-for-human
+Status: done
 Type: task
 
 Source: `../spec.md`（问题 5）。
@@ -36,7 +36,7 @@ B. **只做提示和回显**：保留 `add -A` 的行为。提交结果里列出
 
 ## Acceptance（选定方案后补全）
 
-- 方案 B（2026-09-25 维护者已批准）：保留 `add -A`；提交结果首行显式列出本次改动的全部路径
+- 方案 B（2026-09-25 维护者已批准）：保留 `add -A`；提交结果在提交号那一行之后显式列出本次改动的全部路径（原定"首行"，复核后改，理由见 Comments）
   （`git diff-tree --name-only -z HEAD`，超 100 文件时 `… N more`）；系统提示加一句
   "commit with git_commit: pass paths when the work tree has unrelated changes"。
 - 带 paths 的行为不变；不删改既有断言。
@@ -53,3 +53,4 @@ B. **只做提示和回显**：保留 `add -A` 的行为。提交结果里列出
   - `clip(3000)` 只保留开头，文件列表过长时会挤掉提交号那一行。改为先输出 `show --oneline` 的首行，再输出 `Committed files` 行，最后是其余 stat。
   - 补故障注入测试：`diff-tree` 失败时回退到纯 stat；105 个文件时显示 `Committed files (105)`、`… 5 more`，首行仍是提交号。
   - 假 runner 改为按真实前缀剥离，测试覆盖了三段安全前缀（含 `--no-optional-locks`）。
+- 2026-09-25 Root 代维护者验收通过（done）：验收条款逐条核对；`TMPDIR=/project/tmp/ppo-review npm run test:release` 全绿，无删除断言；真实 git 冒烟通过（root commit 和含 `, ` 的路径都能正确回显，计数准确；路径里含 `, ` 时列表有歧义，属于展示层面，不修）。

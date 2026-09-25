@@ -1,6 +1,6 @@
 # 01：交接事实截断、锁键规范化、strict 文档、小任务措辞
 
-Status: ready-for-human
+Status: done
 Type: task
 
 Source: `../spec.md`（问题 1–4）。
@@ -48,3 +48,4 @@ Source: `../spec.md`（问题 1–4）。
 - README 两个语言版本的 strict 小节都有"不是安全边界"的说明。
 - `npm run test:release` 全绿（`TMPDIR` 设在仓库外）；`git diff | grep '^-.*assert'` 没有输出。
 - 2026-09-25 Root 复核：上面的验证用了 `TMPDIR=/tmp/...`，违反全局"不写 /tmp"规则；Root 已用 `TMPDIR=/project/tmp/ppo-review npm run test:release` 补跑（typecheck 与五套件全绿），`tsc: not found` 未复现。
+- 2026-09-25 Root 代维护者验收通过（done）：验收条款逐条核对；`TMPDIR=/project/tmp/ppo-review npm run test:release` 全绿，无删除断言；真实 git 冒烟通过（子目录、symlink、`..` 写法都归到同一锁键；linked worktree 单独一把锁；非仓库目录和 `.git` 内部退回 realpath cwd，不抛错）。

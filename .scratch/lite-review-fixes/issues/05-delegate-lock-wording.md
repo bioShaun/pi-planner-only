@@ -1,6 +1,6 @@
 # 05：delegate 描述写明按仓库互斥
 
-Status: ready-for-human
+Status: done
 Type: task
 
 Source: 票 03 的 bench 统计。
@@ -29,3 +29,4 @@ bench 里有 40 次 `still running` 锁拒绝，最常见的是同一 turn 并�
 ## 已知未做
 
 - 不在 git 仓库时，拒绝文案仍写 "still running in repository <realpath cwd>"。要区分就得改 `resolveLockKey` 的返回类型并改动既有断言，收益太小，不做。
+- 2026-09-25 Root 代维护者验收通过（done）：验收条款逐条核对；`TMPDIR=/project/tmp/ppo-review npm run test:release` 全绿，无删除断言；真实 git 冒烟通过（描述文本与断言一致，系统提示未改）。
