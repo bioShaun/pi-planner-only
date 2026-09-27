@@ -11,6 +11,7 @@ export interface DelegationLimits {
 }
 
 export type HandoffMode = "off" | "confirm" | "auto";
+export type PlannerMode = "off" | "native" | "lite";
 
 export interface PlannerConfig {
 	limits: DelegationLimits;
@@ -18,6 +19,8 @@ export interface PlannerConfig {
 	contextWarnTokens: number;
 	/** PI_PLANNER_ONLY=1 forces on, =0 forces off; undefined leaves the decision to the off marker. */
 	enabled: boolean | undefined;
+	/** An invalid nonempty explicit mode fails closed. */
+	mode: PlannerMode | undefined;
 	strict: boolean;
 	handoffMode: HandoffMode;
 }
@@ -33,6 +36,7 @@ export const DEFAULT_CONFIG: PlannerConfig = {
 	limits: DEFAULT_LIMITS,
 	contextWarnTokens: 150_000,
 	enabled: undefined,
+	mode: undefined,
 	strict: false,
 	handoffMode: "off",
 };
@@ -69,10 +73,12 @@ export function loadLimits(env: NodeJS.ProcessEnv = process.env): DelegationLimi
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): PlannerConfig {
 	const handoffMode = normalize(env.PI_PLANNER_ONLY_HANDOFF);
+	const mode = normalize(env.PI_PLANNER_ONLY_MODE);
 	return {
 		limits: loadLimits(env),
 		contextWarnTokens: intEnv(env, "PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS", DEFAULT_CONFIG.contextWarnTokens),
 		enabled: boolEnv(env, "PI_PLANNER_ONLY"),
+		mode: mode ? (mode === "native" || mode === "lite" ? mode : "off") : undefined,
 		strict: boolEnv(env, "PI_PLANNER_ONLY_STRICT", DEFAULT_CONFIG.strict),
 		handoffMode: handoffMode === "confirm" || handoffMode === "auto" ? handoffMode : "off",
 	};

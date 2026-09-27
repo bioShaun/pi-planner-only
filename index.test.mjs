@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
-import { existsSync, rmSync } from "node:fs";
-import { SUBAGENT_DELEGATION_REQUEST_EVENT, SUBAGENT_DELEGATION_RESPONSE_EVENT } from "./subagent-delegation-contract.ts";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { SUBAGENT_DELEGATION_REQUEST_EVENT, SUBAGENT_DELEGATION_RESPONSE_EVENT, SUBAGENT_DELEGATION_STARTED_EVENT } from "./subagent-delegation-contract.ts";
 import { fakeBus, tempDir, usage } from "./test-helpers.mjs";
 
 const agentDir = tempDir("ppo-agent-");
 process.env.PI_CODING_AGENT_DIR = agentDir;
 delete process.env.PI_PLANNER_ONLY;
+delete process.env.PI_PLANNER_ONLY_MODE;
 delete process.env.PI_PLANNER_ONLY_STRICT;
 delete process.env.PI_SUBAGENT_CHILD;
-const { default: plannerOnly, MAX_COMMIT_MESSAGE_CHARS, OFF_MARKER, PlannerSession, formatTotals, plannerPrompt, rootUsageOf } = await import("./index.ts");
+const { default: plannerOnly, MAX_COMMIT_MESSAGE_CHARS, OFF_MARKER, MODE_PREFERENCE, NATIVE_PROMPT, PlannerSession, formatTotals, plannerPrompt, rootUsageOf, initialMode } = await import("./index.ts");
 
 function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async () => ({ stdout: "", stderr: "not a repo", code: 128 })) {
 	const tools = new Map();
@@ -16,12 +17,16 @@ function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async 
 	const commands = new Map();
 	const events = fakeBus();
 	let active = initialActive;
+	let branch = [];
+	let sessionId = "session-1";
+	const appended = [];
 	const pi = {
 		registerTool: (t) => tools.set(t.name, t),
 		registerCommand: (name, c) => commands.set(name, c),
 		on: (event, h) => handlers.set(event, h),
 		getActiveTools: () => active,
 		setActiveTools: (next) => (active = next),
+		appendEntry: (customType, data) => { const entry = { type: "custom", customType, data }; appended.push(entry); branch.push(entry); },
 		exec,
 		events,
 	};
@@ -37,13 +42,13 @@ function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async 
 		cwd: "/w",
 		hasUI: true,
 		isIdle: () => true,
-		sessionManager: { getSessionId: () => "session-1", getSessionFile: () => "/sessions/previous.jsonl" },
+		sessionManager: { getSessionId: () => sessionId, getSessionFile: () => "/sessions/previous.jsonl", getBranch: () => branch },
 		newSession: async (opts) => { sessionCalls.push(opts); await opts.withSession(replaced); return {}; },
 		ui: { setStatus: (k, v) => statuses.push(v), notify: (m) => notes.push(m), theme: { fg: (c, s) => { statusColors.push(c); return s; } } },
 	};
 	pi.sendMessage = (...args) => sentMessages.push(args);
 	pi.sendUserMessage = (...args) => sentUserMessages.push(args);
-	return { pi, tools, handlers, commands, events, ctx, notes, statuses, statusColors, sentMessages, sentUserMessages, sessionCalls, replaced, active: () => active };
+	return { pi, tools, handlers, commands, events, ctx, notes, statuses, statusColors, sentMessages, sentUserMessages, sessionCalls, replaced, active: () => active, appended, branch: (entries) => { branch = entries; }, sessionId: (id) => { sessionId = id; } };
 }
 
 try {
@@ -54,6 +59,9 @@ try {
 
 	const h = fakePi();
 	assert.deepEqual([...h.tools.keys()], ["delegate", "git_audit", "git_commit", "handoff"]);
+	for (const event of ["session_before_switch", "session_before_fork", "session_before_tree"]) {
+		assert.equal(await h.handlers.get(event)({}, h.ctx), undefined, `${event} permits idle session`);
+	}
 	// om09 run4: a 540-char message was rejected at the old 500 cap.
 	assert.equal(MAX_COMMIT_MESSAGE_CHARS, 2_000);
 	assert.equal(h.tools.get("git_commit").parameters.properties.message.maxLength, MAX_COMMIT_MESSAGE_CHARS);
@@ -398,6 +406,138 @@ try {
 	assert.deepEqual(evSelOff.systemPromptOptions.selectedTools, ["read", "subagents_enable", "subagent"]);
 	assert.equal(await callTool("subagents_enable"), undefined);
 	assert.equal(await callTool("subagent"), undefined);
+
+	// New MODE wins over legacy flag; unknown values fail closed and empty values are unset.
+	process.env.PI_PLANNER_ONLY_MODE = "native";
+	process.env.PI_PLANNER_ONLY = "0";
+	assert.equal(initialMode(), "native");
+	process.env.PI_PLANNER_ONLY_MODE = "typo";
+	assert.equal(initialMode(), "off");
+	process.env.PI_PLANNER_ONLY_MODE = "";
+	assert.equal(initialMode(), "off");
+	delete process.env.PI_PLANNER_ONLY;
+	delete process.env.PI_PLANNER_ONLY_MODE;
+	await h2.commands.get("planner-only").handler("native", h2.ctx);
+	assert.equal(readFileSync(MODE_PREFERENCE, "utf8"), "native\n");
+	assert.equal(initialMode(), "native");
+	assert.equal(h2.active().includes("subagents_enable"), true, "preference does not switch the current session");
+	assert.equal((await h2.handlers.get("before_agent_start")({ systemPrompt: "B" }, h2.ctx)), undefined);
+	// A fresh session binds the preference, while reload and resume retain its own entry.
+	h2.branch([]);
+	await h2.handlers.get("session_start")({ reason: "new" }, h2.ctx);
+	assert.deepEqual(h2.appended.at(-1), { type: "custom", customType: "planner-only-mode", data: { mode: "native" } });
+	assert.ok(!h2.active().includes("delegate"));
+	assert.ok(h2.active().includes("subagents_enable"));
+	const nativeEvent = { systemPrompt: "B", systemPromptOptions: { selectedTools: ["read", "subagents_enable", "subagent", "delegate", "bash"] } };
+	assert.deepEqual(await h2.handlers.get("before_agent_start")(nativeEvent, h2.ctx), { systemPrompt: `B\n\n${NATIVE_PROMPT}` });
+	assert.deepEqual(nativeEvent.systemPromptOptions.selectedTools, ["read", "subagents_enable", "subagent", "bash"]);
+	process.env.PI_PLANNER_ONLY_STRICT = "1";
+	process.env.PI_PLANNER_ONLY_HANDOFF = "auto";
+	assert.equal(await callTool("bash"), undefined);
+	assert.equal(await callTool("subagent"), undefined);
+	await h2.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200_000, output: 5, cost: { total: 1 } } } }, h2.ctx);
+	assert.equal(h2.sentMessages.length, 0);
+	assert.doesNotMatch(h2.statuses.at(-1), /children\(/);
+	const nativeTools = [
+		["delegate", { role: "worker", task: "task" }],
+		["git_audit", { operation: "status" }],
+		["git_commit", { message: "do not write" }],
+		["handoff", { brief: "x".repeat(200) }],
+	];
+	for (const [name, params] of nativeTools) {
+		assert.equal((await h2.tools.get(name).execute("id", params, undefined, undefined, h2.ctx)).details.ok, false, `${name} direct execute refused`);
+	}
+	assert.equal(h2.sessionCalls.length, 0);
+	await h2.commands.get("planner-only").handler("lite", h2.ctx);
+	assert.equal(h2.active().includes("delegate"), false);
+	await h2.handlers.get("session_start")({ reason: "reload" }, h2.ctx);
+	assert.equal(h2.active().includes("delegate"), false);
+	await h2.handlers.get("session_start")({ reason: "resume" }, h2.ctx);
+	assert.equal(h2.active().includes("delegate"), false);
+	h2.branch([]);
+	await h2.handlers.get("session_start")({ reason: "new" }, h2.ctx);
+	assert.ok(h2.active().includes("delegate"));
+	assert.ok(!h2.active().includes("subagents_enable"));
+	delete process.env.PI_PLANNER_ONLY_STRICT;
+	delete process.env.PI_PLANNER_ONLY_HANDOFF;
+	// Native never forces a host tool that Lite did not actually hide.
+	const noNative = fakePi(["read", "bash"]);
+	await noNative.handlers.get("session_start")({ reason: "new" }, noNative.ctx);
+	assert.ok(!noNative.active().includes("subagent"));
+	assert.ok(!noNative.active().includes("subagents_enable"));
+	// Legacy immediate commands update the bound branch, including resume into a new extension instance.
+	await h2.commands.get("planner-only").handler("off", h2.ctx);
+	assert.equal(h2.appended.at(-1).data.mode, "off");
+	for (const [name, params] of nativeTools) {
+		assert.equal((await h2.tools.get(name).execute("id", params, undefined, undefined, h2.ctx)).details.ok, false, `${name} direct execute refused while off`);
+	}
+	await h2.commands.get("planner-only").handler("on", h2.ctx);
+	assert.equal(h2.appended.at(-1).data.mode, "lite");
+	const resumed = fakePi(["read", "bash", "subagents_enable"]);
+	resumed.branch(h2.appended);
+	await resumed.handlers.get("session_start")({ reason: "resume" }, resumed.ctx);
+	assert.ok(resumed.active().includes("delegate"));
+	const startup = fakePi(["read", "bash"]);
+	startup.branch([]);
+	await startup.commands.get("planner-only").handler("native", startup.ctx);
+	await startup.handlers.get("session_start")({ reason: "startup" }, startup.ctx);
+	assert.equal(startup.appended.at(-1).data.mode, "native");
+	const reloaded = fakePi(["read", "bash"]);
+	reloaded.branch(startup.appended);
+	await reloaded.handlers.get("session_start")({ reason: "reload" }, reloaded.ctx);
+	assert.equal((await reloaded.handlers.get("before_agent_start")({ systemPrompt: "B" }, reloaded.ctx)).systemPrompt, `B\n\n${NATIVE_PROMPT}`);
+	reloaded.branch([...startup.appended, { type: "custom", customType: "planner-only-mode", data: { mode: "invalid" } }]);
+	await reloaded.handlers.get("session_start")({ reason: "resume" }, reloaded.ctx);
+	assert.equal((await reloaded.handlers.get("before_agent_start")({ systemPrompt: "B" }, reloaded.ctx)).systemPrompt, `B\n\n${NATIVE_PROMPT}`);
+	await startup.commands.get("planner-only").handler("lite", startup.ctx);
+	reloaded.branch([]);
+	reloaded.sessionId("session-2");
+	await reloaded.handlers.get("session_start")({}, reloaded.ctx);
+	assert.equal(reloaded.appended.at(-1).data.mode, "lite", "older hosts without reason still bind a fresh session");
+	// Actual in-flight child holds the Lite boundary; direct bypass cannot change mode.
+	const running = fakePi();
+	await running.handlers.get("session_start")({ reason: "new" }, running.ctx);
+	const child = running.tools.get("delegate").execute("id", { role: "worker", task: "wait" }, undefined, undefined, running.ctx);
+	for (let i = 0; i < 100 && !running.events.emitted.some(([name]) => name === SUBAGENT_DELEGATION_REQUEST_EVENT); i++) await new Promise((resolve) => setImmediate(resolve));
+	const request = running.events.emitted.find(([name]) => name === SUBAGENT_DELEGATION_REQUEST_EVENT)?.[1];
+	assert.ok(request, "fault injection reached in-flight child");
+	for (const event of ["session_before_switch", "session_before_fork", "session_before_tree"]) {
+		assert.deepEqual(await running.handlers.get(event)({}, running.ctx), { cancel: true }, `${event} cancels teardown while child runs`);
+	}
+	await running.commands.get("planner-only").handler("off", running.ctx);
+	assert.match(running.notes.at(-1), /mode change refused/);
+	assert.ok(running.active().includes("delegate"));
+	process.env.PI_PLANNER_ONLY_MODE = "native";
+	running.branch([]);
+	await running.handlers.get("session_start")({ reason: "new" }, running.ctx);
+	assert.ok(running.active().includes("delegate"));
+	assert.equal(running.appended.at(-1).data.mode, "lite");
+	delete process.env.PI_PLANNER_ONLY_MODE;
+	running.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, { requestId: request.requestId, nodeId: request.nodeId, status: "completed", agent: request.agent, result: { kind: "text", text: "done" }, usage: usage() });
+	await child;
+	assert.equal(await running.handlers.get("session_before_switch")({}, running.ctx), undefined);
+	process.env.PI_PLANNER_ONLY_CANCEL_GRACE_MS = "1";
+	const late = fakePi();
+	await late.handlers.get("session_start")({ reason: "new" }, late.ctx);
+	const abort = new AbortController();
+	const stopping = late.tools.get("delegate").execute("id", { role: "worker", task: "wait for late terminal" }, abort.signal, undefined, late.ctx);
+	for (let i = 0; i < 100 && !late.events.emitted.some(([name]) => name === SUBAGENT_DELEGATION_REQUEST_EVENT); i++) await new Promise((resolve) => setImmediate(resolve));
+	const lateRequest = late.events.emitted.find(([name]) => name === SUBAGENT_DELEGATION_REQUEST_EVENT)?.[1];
+	assert.ok(lateRequest);
+	late.events.emit(SUBAGENT_DELEGATION_STARTED_EVENT, { requestId: lateRequest.requestId, nodeId: lateRequest.nodeId });
+	abort.abort();
+	assert.equal((await stopping).details.status, "stop_unconfirmed");
+	for (const event of ["session_before_switch", "session_before_fork", "session_before_tree"]) {
+		assert.deepEqual(await late.handlers.get(event)({}, late.ctx), { cancel: true }, `${event} cancels teardown on late cwd lock`);
+	}
+	await late.commands.get("planner-only").handler("off", late.ctx);
+	assert.match(late.notes.at(-1), /mode change refused/);
+	assert.ok(late.active().includes("delegate"));
+	late.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, { requestId: lateRequest.requestId, nodeId: lateRequest.nodeId, status: "cancelled", agent: lateRequest.agent });
+	assert.equal(await late.handlers.get("session_before_switch")({}, late.ctx), undefined);
+	await late.commands.get("planner-only").handler("off", late.ctx);
+	assert.ok(!late.active().includes("delegate"));
+	delete process.env.PI_PLANNER_ONLY_CANCEL_GRACE_MS;
 } finally {
 	rmSync(agentDir, { recursive: true, force: true });
 }

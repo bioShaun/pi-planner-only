@@ -1,8 +1,20 @@
-# Planner-only (lite)
+# Planner-only
 
-Root spends the expensive tokens on planning and review; children do the bulk of the work on cheaper models. Children run **in-process** through pi-subagents structured delegation, so a cancelled or crashed Root ends them too (shell commands a child already spawned may still orphan). Nothing is persisted between delegations.
+In Lite, Root spends the expensive tokens on planning and review; children do the bulk of the work on cheaper models. Children run **in-process** through pi-subagents structured delegation, so a cancelled or crashed Root ends them too (shell commands a child already spawned may still orphan). No task ledger is persisted between delegations; mode selection is session metadata.
 
 ## Language
+
+**Mode**:
+One Root session's choice of Off, Native, or Lite delegation behavior.
+
+**Off**:
+The extension contributes no delegation instructions or active execution tools.
+
+**Native**:
+The neutral instruction only, with delegation and child lifecycle owned by pi-subagents. No Lite tools or cost accounting.
+
+**Lite**:
+The extension's guided delegation interface, change summaries, optional strict behavior, and acceptance by Root. The Root/child/role contract below applies here.
 
 **Root**:
 The parent session. It plans, delegates, inspects the actual changes, and commits. It may do small tasks itself unless strict mode is on.
@@ -24,7 +36,7 @@ _Avoid_: task, execution (legacy ledger terms)
 
 ## Decisions
 
-- Children return plain text; there is no structured report contract (legacy ADR-0001–0007, 0009 and 0010 are superseded; 0008 keeps only its ten-minute default).
+- In Lite, children return plain text; there is no structured report contract (legacy ADR-0001–0007, 0009 and 0010 are superseded; 0008 keeps only its ten-minute default).
 - A child with bash or write holds its cwd until it ends; an unconfirmed stop keeps the hold until the late terminal.
 - The host enforces the wall-clock limit (`timeoutMs`); the plugin cancels on the reported token cap. Neither is a hard budget.
 - Child models are operator configuration (`subagents.agentOverrides`), never tool parameters.

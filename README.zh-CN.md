@@ -4,7 +4,7 @@
 
 [Pi](https://pi.dev) 扩展，目标是省 token：贵的 **Root** 模型负责规划和审核，大部分执行工作通过 [pi-subagents](https://github.com/nicobailon/pi-subagents) 交给便宜的子代理。
 
-这是 **lite** 版本线（0.9+）。0.2–0.8 的完整审计编排（TaskSpec/WorkerReport、ledger、closeout、verdict 工具）保存在 tag `legacy-full-audit`；删减原因见 `docs/pi-planner-only-subtraction-plan.md`。
+0.9+ 版本线默认使用 **lite** 模式。0.2–0.8 的完整审计编排（TaskSpec/WorkerReport、ledger、closeout、verdict 工具）保存在 tag `legacy-full-audit`；删减原因见 `docs/pi-planner-only-subtraction-plan.md`。
 
 ## 提供什么
 
@@ -62,12 +62,30 @@ pi install /path/to/pi-planner-only                          # 本地 checkout
 
 ## 开关
 
+| 模式 | 行为 |
+|---|---|
+| `off` | 本扩展不工作；pi-subagents 自行管理自己的工具。 |
+| `native` | 仅注入「实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。」；pi-subagents 自行管理原生工具。不启用 Lite 工具、strict 拦截、交接、上下文提醒或费用统计。 |
+| `lite`（默认） | 启用上文的委派工具、提示、检查与费用状态栏。 |
+
+档位不会更换模型；对比时应保持相同的 Root 和子模型配置。
+
+**新会话**的优先级：非空 `PI_PLANNER_ONLY_MODE=off|native|lite` > 旧版
+`PI_PLANNER_ONLY=1|0` > `~/.pi/agent/planner-only.mode` 保存的偏好 >
+旧版 `planner-only.off` 标记 > `lite`。未知的非空 MODE 值按 `off` 处理，
+空值视为未设置。未设置 MODE 时，旧版 `PI_PLANNER_ONLY` 仍会即时覆盖当前模式。
+会话模式保存在会话历史中；`/reload` 和 `/resume` 延续该模式，`/new` 按当前
+设置重新选择。尚无模式记录的旧会话建议新开会话。公平 A/B 对比应在每种模式
+分别新开会话。Native 提示由扩展注入，不能保证与旧基准测试中用户消息前缀逐字节一致。
+
 | 设置 | 作用 |
 |---|---|
-| `/planner-only on` / `off` | 通过标记文件 `~/.pi/agent/planner-only.off` 开关。 |
-| `/planner-only status` | 显示状态和本会话费用合计。 |
+| `/planner-only native` / `lite` | 保存**下一个新会话**的模式偏好，不切换当前会话。 |
+| `/planner-only on` / `off` | 旧版即时切换 Lite/关闭，同时修改标记和新会话偏好；Lite 子代理运行中或 cwd 仍被占用时拒绝切换。 |
+| `/planner-only status` | 显示当前生效模式、新会话模式、保存的偏好，以及适用时的 Lite 费用合计。 |
+| `PI_PLANNER_ONLY_MODE=off|native|lite` | 新会话模式，优先级最高。 |
 | `/planner-only handoff [目标]` | 让 Root 写简报并在新会话里继续（`handoff drop` 丢弃失败的交接）。只有 `PI_PLANNER_ONLY_HANDOFF=confirm` 或 `auto` 时，Root 才能在上下文超过阈值后自行发起。 |
-| `PI_PLANNER_ONLY=1` / `0` | 强制开 / 关，优先于标记文件。 |
+| `PI_PLANNER_ONLY=1` / `0` | 未设置 MODE 时，旧版即时强制 Lite/关闭；新会话优先于保存的偏好和标记。 |
 | `PI_PLANNER_ONLY_STRICT=1` | 按名字禁止 Root 自己用 `edit`、`write`、`bash`。不拦截其他插件提供的写能力，不是安全边界。默认关闭，因为小任务直接做更省。 |
 | `PI_PLANNER_ONLY_TIMEOUT_MS` | 传给宿主的子代理时限（默认 600000）。 |
 | `PI_PLANNER_ONLY_MAX_TOKENS` | 子代理上报的 token 超过此值就取消（默认 1500000）。计数取子代理进度事件里的累计 input+output token，不含缓存读取。 |
@@ -76,7 +94,10 @@ pi install /path/to/pi-planner-only                          # 本地 checkout
 | `PI_PLANNER_ONLY_HANDOFF` | `off`（默认）仅允许用户请求交接；`confirm` 也允许 Root 超过阈值后自行发起，并把简报放入编辑框；`auto` 同样允许自行发起并自动提交（实验性：节省效果尚未测量，冒烟测试仅确认流程可运行）。 |
 | `PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS` | Root 上下文超过此值时状态栏变红，并给 Root 发一条提示：委派、开新会话或 `/compact`（默认 150000）。 |
 
-关闭时三个工具从 active 工具集中移除，也不注入提示。子进程（`PI_SUBAGENT_CHILD=1`）不加载本扩展。
+关闭或 Native 模式下，本扩展的四个 Lite 工具即使被直接调用也会拒绝执行。
+Native 仅恢复先前被 Lite 隐藏的 pi-subagents 工具，不会强行启用上游未注册或未启用的工具。
+子进程（`PI_SUBAGENT_CHILD=1`）不加载本扩展。偏好保存在用户 agent 目录的 `planner-only.mode`，适用于该目录下的新会话；不会修改 `settings.json`、模型配置或自动安装/重载扩展。
+Lite 委派未结束或停止尚未确认时，新建、恢复、fork 与树导航会被拒绝。运行中的 `/reload` 不提供跨插件实例的锁隔离保证；应先确认子任务结束，再重载扩展。
 
 ## 开发
 

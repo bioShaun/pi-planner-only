@@ -1,15 +1,15 @@
 /**
- * pi-planner-only (lite): Root plans and reviews, cheaper child agents do the
- * bulk of the work through `delegate`. The plugin adds three tools, a short
- * prompt, optional strict mode, and a cost line; it keeps no durable state.
+ * pi-planner-only: Native adds a neutral delegation instruction; Lite supplies
+ * four tools, a short prompt, optional strict mode, and a cost line. Mode
+ * preferences and session selection persist; delegated tasks have no ledger.
  */
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_LIMITS, loadConfig } from "./config.ts";
-import type { DelegationLimits } from "./config.ts";
+import type { DelegationLimits, PlannerMode } from "./config.ts";
 import { ROLES, createCwdLocks, runDelegation, timeoutMinutes } from "./delegate.ts";
 import type { DelegationParams } from "./delegate.ts";
 import { formatTokens } from "./format.ts";
@@ -24,6 +24,9 @@ const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
 	? resolve(process.env.PI_CODING_AGENT_DIR)
 	: join(homedir(), ".pi", "agent");
 export const OFF_MARKER = join(AGENT_DIR, "planner-only.off");
+export const MODE_PREFERENCE = join(AGENT_DIR, "planner-only.mode");
+const MODE_ENTRY = "planner-only-mode";
+export const NATIVE_PROMPT = "实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。";
 const STATUS_KEY = "planner-only";
 const GIT_TIMEOUT_MS = 30_000;
 export const MAX_COMMIT_MESSAGE_CHARS = 2_000;
@@ -36,9 +39,23 @@ const HIDDEN_HOST_TOOL_SET = new Set<string>(HIDDEN_HOST_TOOLS);
 const REPO_CWD_DESCRIPTION = "Repository to run in (absolute or relative to the session cwd). Defaults to the session cwd.";
 const resolveCwd = (ctx: { cwd: string }, cwd: string | undefined) => (cwd ? resolve(ctx.cwd, cwd) : ctx.cwd);
 
-/** PI_PLANNER_ONLY=1 forces on, =0 forces off; otherwise the off marker decides. */
+/** Legacy query for whether the fresh-session selection enables the Lite layer. */
 export function isEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-	return loadConfig(env).enabled ?? !existsSync(OFF_MARKER);
+	return initialMode(env) === "lite";
+}
+
+function preference(): PlannerMode | undefined {
+	try {
+		const value = readFileSync(MODE_PREFERENCE, "utf8").trim();
+		return value === "off" || value === "native" || value === "lite" ? value : undefined;
+	} catch { return undefined; }
+}
+
+/** Explicit mode, legacy flag, persisted preference, legacy marker, default. */
+export function initialMode(env: NodeJS.ProcessEnv = process.env): PlannerMode {
+	const config = loadConfig(env);
+	return config.mode ?? (config.enabled === undefined ? undefined : config.enabled ? "lite" : "off")
+		?? preference() ?? (existsSync(OFF_MARKER) ? "off" : "lite");
 }
 
 export function isStrict(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -127,6 +144,11 @@ export class PlannerSession {
 	delegationsInFlight = 0;
 	/** Whether we hid pi-subagents' loader tool and must restore it on `off`. */
 	hidLoader = false;
+	/** Native restores only the host tools that Lite actually hid. */
+	hiddenNativeTools = new Set<string>();
+	mode: PlannerMode = initialMode();
+	modeBound = false;
+	modeSessionId: string | undefined;
 	totals: CostTotals = emptyTotals();
 	rootContext: number | undefined;
 	contextWarned = false;
@@ -232,6 +254,50 @@ interface PlannerRuntime {
 	session: PlannerSession;
 }
 
+function modeOf({ session }: PlannerRuntime): PlannerMode {
+	// Preserve the old live PI_PLANNER_ONLY flag behavior; explicit MODE selects new sessions.
+	const enabled = loadConfig().enabled;
+	return loadConfig().mode === undefined && enabled !== undefined ? enabled ? "lite" : "off" : session.mode;
+}
+
+function busy(session: PlannerSession): boolean {
+	return session.delegationsInFlight > 0 || session.locks.size > 0;
+}
+
+const BUSY_MODE_MESSAGE = "mode change refused: Lite delegation is still running or its cwd remains held";
+
+function guardSessionBoundary(runtime: PlannerRuntime, ctx: ExtensionContext): { cancel: true } | undefined {
+	if (!busy(runtime.session)) return;
+	if (ctx.hasUI) ctx.ui.notify(BUSY_MODE_MESSAGE, "warning");
+	return { cancel: true };
+}
+
+function sessionEntry(ctx: ExtensionContext): PlannerMode | undefined {
+	const entries = ctx.sessionManager?.getBranch?.() ?? [];
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const entry = entries[i];
+		if (entry.type === "custom" && entry.customType === MODE_ENTRY) {
+			const mode = (entry.data as { mode?: unknown } | undefined)?.mode;
+			if (mode === "off" || mode === "native" || mode === "lite") return mode;
+		}
+	}
+	return undefined;
+}
+
+function bindMode(runtime: PlannerRuntime, reason: string | undefined, ctx: ExtensionContext): boolean {
+	const { session, pi } = runtime;
+	const recorded = sessionEntry(ctx);
+	const sessionId = ctx.sessionManager?.getSessionId?.();
+	const fresh = reason === "new" || (!recorded && (!session.modeBound || (!!sessionId && session.modeSessionId !== sessionId)));
+	const selected = fresh ? initialMode() : recorded ?? session.mode;
+	if (selected !== modeOf(runtime) && busy(session)) return false;
+	session.mode = selected;
+	session.modeBound = true;
+	session.modeSessionId = sessionId;
+	if (fresh && typeof pi.appendEntry === "function") pi.appendEntry(MODE_ENTRY, { mode: selected });
+	return true;
+}
+
 const textResult = <T>(text: string, details: T) => ({ content: [{ type: "text" as const, text }], details });
 const refusal = (text: string) => textResult(text, { ok: false });
 
@@ -240,25 +306,29 @@ function statusTotals(session: PlannerSession): string {
 	return `${formatTotals(session.totals)}${ctx}`;
 }
 
-function updateStatus(session: PlannerSession, ctx: ExtensionContext): void {
+function updateStatus(session: PlannerSession, ctx: ExtensionContext, mode: PlannerMode = session.mode): void {
 	if (!ctx.hasUI) return;
-	const label = isEnabled() ? `planner-only${isStrict() ? " (strict)" : ""} · ${statusTotals(session)}` : "planner-only: off";
-	ctx.ui.setStatus(STATUS_KEY, ctx.ui.theme.fg(!isEnabled() ? "muted" : session.highContext ? "error" : "warning", label));
+	const label = mode === "lite" ? `planner-only${isStrict() ? " (strict)" : ""} · ${statusTotals(session)}` : `planner-only: ${mode}`;
+	ctx.ui.setStatus(STATUS_KEY, ctx.ui.theme.fg(mode !== "lite" ? "muted" : session.highContext ? "error" : "warning", label));
 }
 
 /** Adds our tools and hides pi-subagents' loader while enabled; restores both when off. */
-function syncTools({ pi, session }: PlannerRuntime): void {
+function syncTools(runtime: PlannerRuntime): void {
+	const { pi, session } = runtime;
 	const active = pi.getActiveTools();
 	const ours = new Set<string>(PLUGIN_TOOLS);
 	let next: string[];
-	if (isEnabled()) {
+	if (modeOf(runtime) === "lite") {
+		for (const tool of HIDDEN_HOST_TOOLS) if (active.includes(tool)) session.hiddenNativeTools.add(tool);
 		session.hidLoader ||= active.includes("subagents_enable");
 		next = [...active, ...PLUGIN_TOOLS.filter((t) => !active.includes(t))]
 			.filter((t) => !HIDDEN_HOST_TOOL_SET.has(t));
 	} else {
 		next = active.filter((t) => !ours.has(t));
-		if (session.hidLoader && !next.includes("subagents_enable")) next = [...next, "subagents_enable"];
+		const restore = modeOf(runtime) === "native" ? session.hiddenNativeTools : session.hidLoader ? new Set(["subagents_enable"]) : new Set<string>();
+		for (const tool of restore) if (!next.includes(tool)) next.push(tool);
 		session.hidLoader = false;
+		if (modeOf(runtime) === "native") session.hiddenNativeTools.clear();
 	}
 	if (next.length !== active.length || next.some((t, i) => t !== active[i])) pi.setActiveTools(next);
 }
@@ -281,6 +351,7 @@ async function executeDelegate(
 	onUpdate: ((text: string) => void) | undefined,
 	ctx: ExtensionContext,
 ) {
+	if (modeOf(runtime) !== "lite") return refusal("Delegate unavailable: planner-only Lite mode is inactive.");
 	const { git, session, host } = runtime;
 	const outcome = await session.trackDelegation(() => runDelegation(
 		{
@@ -301,7 +372,9 @@ async function executeDelegate(
 	return textResult(outcome.text, outcome.details);
 }
 
-async function executeGitAudit(git: GitRunner, params: GitAuditRequest & { cwd?: string }, ctx: ExtensionContext) {
+async function executeGitAudit(runtime: PlannerRuntime, params: GitAuditRequest & { cwd?: string }, ctx: ExtensionContext) {
+	if (modeOf(runtime) !== "lite") return refusal("Git audit unavailable: planner-only Lite mode is inactive.");
+	const { git } = runtime;
 	const { cwd, ...request } = params;
 	// Models often send optional fields as ""; treat an empty path as "no path filter".
 	if (request.path === "") delete request.path;
@@ -309,12 +382,16 @@ async function executeGitAudit(git: GitRunner, params: GitAuditRequest & { cwd?:
 	return textResult(outcome.text, { ok: outcome.ok });
 }
 
-async function executeGitCommit(git: GitRunner, params: { message: string; paths?: string[]; cwd?: string }, ctx: ExtensionContext) {
+async function executeGitCommit(runtime: PlannerRuntime, params: { message: string; paths?: string[]; cwd?: string }, ctx: ExtensionContext) {
+	if (modeOf(runtime) !== "lite") return refusal("Git commit unavailable: planner-only Lite mode is inactive.");
+	const { git } = runtime;
 	const outcome = await gitCommit(git, resolveCwd(ctx, params.cwd), params.message, params.paths);
 	return textResult(outcome.text, { ok: outcome.ok });
 }
 
-function executeHandoff(session: PlannerSession, host: HostAdapter, params: { brief: string; cwd?: string }, ctx: ExtensionContext) {
+function executeHandoff(runtime: PlannerRuntime, params: { brief: string; cwd?: string }, ctx: ExtensionContext) {
+	if (modeOf(runtime) !== "lite") return refusal("Handoff unavailable: planner-only Lite mode is inactive.");
+	const { session, host } = runtime;
 	if (!ctx.hasUI) return refusal("Handoff refused: a UI session is required.");
 	const reason = session.handoffRefusal(params.brief);
 	if (reason) return refusal(`Handoff refused: ${reason}`);
@@ -374,6 +451,10 @@ async function dispatchHandoff({ git, session }: PlannerRuntime, handoff: Pendin
 
 /** `/planner-only handoff [goal]`: asks Root for a brief, or dispatches the one already scheduled. */
 async function commandHandoff(runtime: PlannerRuntime, goal: string, ctx: ExtensionCommandContext): Promise<void> {
+	if (modeOf(runtime) !== "lite") {
+		ctx.ui.notify("handoff requires planner-only Lite mode", "warning");
+		return;
+	}
 	const { pi, session } = runtime;
 	if (!session.pendingHandoff) {
 		session.requestHandoff();
@@ -384,19 +465,28 @@ async function commandHandoff(runtime: PlannerRuntime, goal: string, ctx: Extens
 }
 
 function setEnabled(runtime: PlannerRuntime, enabled: boolean): void {
+	if (busy(runtime.session) && modeOf(runtime) !== (enabled ? "lite" : "off")) return;
 	if (enabled) rmSync(OFF_MARKER, { force: true });
 	else {
 		runtime.session.clearPendingHandoff();
 		mkdirSync(dirname(OFF_MARKER), { recursive: true });
 		writeFileSync(OFF_MARKER, "");
 	}
+	mkdirSync(dirname(MODE_PREFERENCE), { recursive: true });
+	writeFileSync(MODE_PREFERENCE, enabled ? "lite\n" : "off\n");
+	runtime.session.mode = enabled ? "lite" : "off";
+	runtime.session.modeBound = true;
+	runtime.pi.appendEntry?.(MODE_ENTRY, { mode: runtime.session.mode });
 	syncTools(runtime);
 }
 
-function notifyStatus(session: PlannerSession, ctx: ExtensionContext): void {
-	updateStatus(session, ctx);
-	const env = process.env.PI_PLANNER_ONLY ? ` (PI_PLANNER_ONLY=${process.env.PI_PLANNER_ONLY} overrides the marker)` : "";
-	ctx.ui.notify(`planner-only ${isEnabled() ? "on" : "off"}${isStrict() ? ", strict" : ""}${env}\n${statusTotals(session)}`, "info");
+function notifyStatus(runtime: PlannerRuntime, ctx: ExtensionContext): void {
+	const { session } = runtime;
+	const mode = modeOf(runtime);
+	updateStatus(session, ctx, mode);
+	const env = process.env.PI_PLANNER_ONLY_MODE?.trim() ? ` (PI_PLANNER_ONLY_MODE=${process.env.PI_PLANNER_ONLY_MODE} selects new sessions)`
+		: process.env.PI_PLANNER_ONLY ? ` (PI_PLANNER_ONLY=${process.env.PI_PLANNER_ONLY} overrides the marker)` : "";
+	ctx.ui.notify(`planner-only ${mode === "lite" ? "on" : mode}${mode === "lite" && isStrict() ? ", strict" : ""}${env}; next fresh session: ${initialMode()}${preference() ? ` (preference: ${preference()})` : ""}${mode !== "lite" ? "" : `\n${statusTotals(session)}`}`, "info");
 }
 
 async function plannerCommand(runtime: PlannerRuntime, args: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -411,13 +501,23 @@ async function plannerCommand(runtime: PlannerRuntime, args: string, ctx: Extens
 		await commandHandoff(runtime, raw.slice("handoff".length).trim(), ctx);
 		return;
 	}
-	if (cmd === "on" || cmd === "off") setEnabled(runtime, cmd === "on");
-	notifyStatus(runtime.session, ctx);
+	if (cmd === "native" || cmd === "lite") {
+		mkdirSync(dirname(MODE_PREFERENCE), { recursive: true });
+		writeFileSync(MODE_PREFERENCE, `${cmd}\n`);
+	} else if (cmd === "on" || cmd === "off") {
+		if (busy(runtime.session) && modeOf(runtime) !== (cmd === "on" ? "lite" : "off")) {
+			ctx.ui.notify(BUSY_MODE_MESSAGE, "warning");
+			return;
+		}
+		setEnabled(runtime, cmd === "on");
+	}
+	notifyStatus(runtime, ctx);
 }
 
 /** After Root's turn: kick off a scheduled handoff through the command so it runs outside the tool call. */
-function onAgentSettled({ pi, session, host }: PlannerRuntime): void {
-	if (!isEnabled()) {
+function onAgentSettled(runtime: PlannerRuntime): void {
+	const { pi, session, host } = runtime;
+	if (modeOf(runtime) !== "lite") {
 		session.clearPendingHandoff();
 		return;
 	}
@@ -429,12 +529,14 @@ function onAgentSettled({ pi, session, host }: PlannerRuntime): void {
 	}
 }
 
-function onMessageEnd({ host, session }: PlannerRuntime, message: Parameters<typeof rootUsageOf>[0], ctx: ExtensionContext): void {
+function onMessageEnd(runtime: PlannerRuntime, message: Parameters<typeof rootUsageOf>[0], ctx: ExtensionContext): void {
+	if (modeOf(runtime) !== "lite") return;
+	const { host, session } = runtime;
 	const usage = rootUsageOf(message);
 	if (!usage) return;
 	const context = host.contextTokens(ctx) ?? usage.context;
 	session.recordRootTurn(usage, context);
-	if (isEnabled() && session.claimContextWarning()) sendContextWarning(host, context);
+	if (session.claimContextWarning()) sendContextWarning(host, context);
 	updateStatus(session, ctx);
 }
 
@@ -481,7 +583,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 			maxEntries: Type.Optional(Type.Integer({ minimum: 1, maximum: 50, description: "log only: number of commits." })),
 			cwd: Type.Optional(Type.String({ description: REPO_CWD_DESCRIPTION })),
 		}),
-		execute: (_toolCallId, params: GitAuditRequest & { cwd?: string }, _signal, _onUpdate, ctx) => executeGitAudit(git, params, ctx),
+		execute: (_toolCallId, params: GitAuditRequest & { cwd?: string }, _signal, _onUpdate, ctx) => executeGitAudit(runtime, params, ctx),
 	});
 
 	pi.registerTool({
@@ -494,7 +596,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 			paths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Only stage these paths (relative to cwd)." })),
 			cwd: Type.Optional(Type.String({ description: REPO_CWD_DESCRIPTION })),
 		}),
-		execute: (_toolCallId, params: { message: string; paths?: string[]; cwd?: string }, _signal, _onUpdate, ctx) => executeGitCommit(git, params, ctx),
+		execute: (_toolCallId, params: { message: string; paths?: string[]; cwd?: string }, _signal, _onUpdate, ctx) => executeGitCommit(runtime, params, ctx),
 	});
 
 	pi.registerTool({
@@ -506,37 +608,53 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 			brief: Type.String({ minLength: 200, description: "Self-contained brief for the next Root session: goal, decisions made, constraints, relevant files/specs, what is done, open items, and the exact next step." }),
 			cwd: Type.Optional(Type.String({ description: REPO_CWD_DESCRIPTION })),
 		}),
-		execute: async (_toolCallId, params: { brief: string; cwd?: string }, _signal, _onUpdate, ctx) => executeHandoff(session, runtime.host, params, ctx),
+		execute: async (_toolCallId, params: { brief: string; cwd?: string }, _signal, _onUpdate, ctx) => executeHandoff(runtime, params, ctx),
 	});
 
 	pi.registerCommand("planner-only", {
-		description: "planner-only on | off | status | handoff [goal]",
+		description: "planner-only on | off | native | lite | status | handoff [goal]",
 		handler: (args, ctx) => plannerCommand(runtime, args, ctx),
 	});
 
-	pi.on("session_start", async (_event, ctx) => {
+	pi.on("session_start", async (event, ctx) => {
+		if (!bindMode(runtime, event.reason, ctx)) {
+			ctx.ui.notify(BUSY_MODE_MESSAGE, "warning");
+			return;
+		}
 		session.reset();
 		syncTools(runtime);
-		updateStatus(session, ctx);
+		updateStatus(session, ctx, modeOf(runtime));
+	});
+	pi.on("session_before_switch", async (_event, ctx) => guardSessionBoundary(runtime, ctx));
+	pi.on("session_before_fork", async (_event, ctx) => guardSessionBoundary(runtime, ctx));
+	pi.on("session_before_tree", async (_event, ctx) => guardSessionBoundary(runtime, ctx));
+	pi.on("session_tree", async (_event, ctx) => {
+		if (bindMode(runtime, "resume", ctx)) syncTools(runtime);
+		updateStatus(session, ctx, modeOf(runtime));
 	});
 
 	pi.on("agent_settled", async () => onAgentSettled(runtime));
 
 	pi.on("before_agent_start", async (event) => {
-		if (isEnabled()) {
+		if (modeOf(runtime) === "lite") {
 			const sel = event.systemPromptOptions?.selectedTools;
 			if (sel) {
 				const kept = sel.filter((t) => !HIDDEN_HOST_TOOL_SET.has(t));
 				event.systemPromptOptions.selectedTools = [...kept, ...PLUGIN_TOOLS.filter((t) => !kept.includes(t))];
 			}
 		}
+		else {
+			const sel = event.systemPromptOptions?.selectedTools;
+			if (sel) event.systemPromptOptions.selectedTools = sel.filter((t) => !PLUGIN_TOOLS.includes(t as typeof PLUGIN_TOOLS[number]));
+		}
 		syncTools(runtime);
-		if (!isEnabled()) return;
+		if (modeOf(runtime) === "native") return { systemPrompt: `${event.systemPrompt}\n\n${NATIVE_PROMPT}` };
+		if (modeOf(runtime) !== "lite") return;
 		return { systemPrompt: `${event.systemPrompt}\n\n${plannerPrompt(isStrict(), loadConfig().limits)}` };
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
-		if (!isEnabled()) return;
+		if (modeOf(runtime) !== "lite") return;
 		if (HIDDEN_HOST_TOOL_SET.has(event.toolName)) {
 			return { block: true, reason: `planner-only: use the delegate tool instead of ${event.toolName}.` };
 		}
@@ -547,7 +665,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 
 	pi.on("session_compact", async (_event, ctx) => {
 		session.noteCompacted();
-		updateStatus(session, ctx);
+		updateStatus(session, ctx, modeOf(runtime));
 	});
 
 	pi.on("message_end", async (event, ctx) => onMessageEnd(runtime, event.message, ctx));
