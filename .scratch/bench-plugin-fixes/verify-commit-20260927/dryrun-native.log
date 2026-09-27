@@ -1,0 +1,5 @@
+temp guard: {"abi": 7, "backend": "landlock", "policy": "deny /tmp writes; allow safe root directories", "tmpdir": "/project/tmp/ppo-bench/temp-c1_kitj4"}
+health: skipped (dry-run)
+health command: timeout 120 pi -ne --no-session --model cline/cline-pass/deepseek-v4.1-flash -p reply\ OK </dev/null
+health command: timeout 120 pi -ne --no-session --model tcuni/gpt-6-luna -p reply\ OK </dev/null
+timeout 3600 pi -ne -e /home/tcuni-claw/.pi/agent/npm/node_modules/pi-subagents --model cline/cline-pass/deepseek-v4.1-flash --no-session --mode json -p '<prompt 1531 chars>'
