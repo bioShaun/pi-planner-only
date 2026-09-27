@@ -1,0 +1,12 @@
+COMMAND: python3 bench/summarize.py /project/tmp/ppo-bench/results/smoke-head-t3/runs --weight opus
+DATE: 2026-09-26T12:27:38+08:00
+SOURCE HEAD: ad51067da379edf5735cb9b03d70f17bda331675
+TMPDIR: /project/tmp/ppo-bench/regress-20260926
+ATTEMPT SPEND (current runs only, archived void excluded): $0.9248
+T3 lite-pds-strict-head 1: exit=0 pass=True wall=625 root_turns=15 delegates=6 tokens(in/out/cacheRead/cacheWrite)=41064/17233/491776/0 root_cost=$0.8820
+  child_cost=$0.0427 total_cost=$0.9248
+AGGREGATES
+lite-pds-strict-head: runs=1 pass=1/1 median=$0.9248 mean=$0.9248
+T3 lite-pds-strict-head: n=1 pass=1 median_cost=0.92476074
+MECH lite-pds-strict-head: refused=0 detached=0 truncated=1 root_reads_med=12 root_bash_med=0 cache_read_med=491776 turns_per_delegate_med=2.5 extra_tools=0
+SUMMARIZE_EXIT=0

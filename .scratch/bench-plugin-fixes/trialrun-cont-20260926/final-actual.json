@@ -1,0 +1,339 @@
+{
+  "runs": [
+    {
+      "id": "T3-native-pds-1",
+      "task": "T3",
+      "arm": "native-pds",
+      "rep": 1,
+      "mode": "native",
+      "exit": 0,
+      "passed": true,
+      "wall": 1063,
+      "root_turns": 39,
+      "delegates": 4,
+      "children": 4,
+      "root": {
+        "input": 106054,
+        "output": 30007,
+        "cacheRead": 1893120,
+        "cacheWrite": 0
+      },
+      "child_cost": 0.03190532,
+      "root_cost": 0.07918331999999999,
+      "total_cost": 0.11108863999999999,
+      "refused": null,
+      "detached": null,
+      "truncated": null,
+      "root_reads": 10,
+      "root_bash": 42,
+      "root_cache_read": 1893120,
+      "extra_tools": 0,
+      "turns_per_delegate": 9.75,
+      "rejected_duplicates": 1,
+      "known_cost_lower_bound": 0.11108863999999999
+    },
+    {
+      "id": "T3-direct-pds-1",
+      "task": "T3",
+      "arm": "direct-pds",
+      "rep": 1,
+      "mode": "direct",
+      "exit": 0,
+      "passed": true,
+      "wall": 189,
+      "root_turns": 24,
+      "delegates": 0,
+      "children": 0,
+      "root": {
+        "input": 44260,
+        "output": 15493,
+        "cacheRead": 1038592,
+        "cacheWrite": 0
+      },
+      "child_cost": 0,
+      "root_cost": 0.038101152,
+      "total_cost": 0.038101152,
+      "refused": 0,
+      "detached": 0,
+      "truncated": 0,
+      "root_reads": 8,
+      "root_bash": 21,
+      "root_cache_read": 1038592,
+      "extra_tools": 0,
+      "turns_per_delegate": null,
+      "known_cost_lower_bound": 0.038101152
+    },
+    {
+      "id": "T3-direct-pds-2",
+      "task": "T3",
+      "arm": "direct-pds",
+      "rep": 2,
+      "mode": "direct",
+      "exit": 0,
+      "passed": true,
+      "wall": 153,
+      "root_turns": 25,
+      "delegates": 0,
+      "children": 0,
+      "root": {
+        "input": 41906,
+        "output": 14711,
+        "cacheRead": 925440,
+        "cacheWrite": 0
+      },
+      "child_cost": 0,
+      "root_cost": 0.03577764,
+      "total_cost": 0.03577764,
+      "refused": 0,
+      "detached": 0,
+      "truncated": 0,
+      "root_reads": 7,
+      "root_bash": 22,
+      "root_cache_read": 925440,
+      "extra_tools": 0,
+      "turns_per_delegate": null,
+      "known_cost_lower_bound": 0.03577764
+    },
+    {
+      "id": "T3-lite-pds-head-1",
+      "task": "T3",
+      "arm": "lite-pds-head",
+      "rep": 1,
+      "mode": "lite",
+      "exit": 0,
+      "passed": true,
+      "wall": 513,
+      "root_turns": 47,
+      "delegates": 4,
+      "children": 0,
+      "root": {
+        "input": 58201,
+        "output": 29806,
+        "cacheRead": 2576128,
+        "cacheWrite": 0
+      },
+      "child_cost": 0.0207121,
+      "root_cost": 0.06868426799999999,
+      "total_cost": 0.08939636799999999,
+      "refused": 0,
+      "detached": 0,
+      "truncated": 0,
+      "root_reads": 5,
+      "root_bash": 51,
+      "root_cache_read": 2576128,
+      "extra_tools": 0,
+      "turns_per_delegate": 11.75,
+      "known_cost_lower_bound": 0.08939636799999999
+    },
+    {
+      "id": "T3-lite-pds-head-2",
+      "task": "T3",
+      "arm": "lite-pds-head",
+      "rep": 2,
+      "mode": "lite",
+      "exit": 0,
+      "passed": true,
+      "wall": 337,
+      "root_turns": 19,
+      "delegates": 2,
+      "children": 0,
+      "root": {
+        "input": 44358,
+        "output": 18300,
+        "cacheRead": 757888,
+        "cacheWrite": 0
+      },
+      "child_cost": 0.01008888,
+      "root_cost": 0.039814728,
+      "total_cost": 0.049903608,
+      "refused": 0,
+      "detached": 0,
+      "truncated": 0,
+      "root_reads": 2,
+      "root_bash": 22,
+      "root_cache_read": 757888,
+      "extra_tools": 0,
+      "turns_per_delegate": 9.5,
+      "known_cost_lower_bound": 0.049903608
+    },
+    {
+      "id": "T3-native-pds-2",
+      "task": "T3",
+      "arm": "native-pds",
+      "rep": 2,
+      "mode": "native",
+      "exit": 0,
+      "passed": true,
+      "wall": 336,
+      "root_turns": 27,
+      "delegates": 1,
+      "children": 1,
+      "root": {
+        "input": 92533,
+        "output": 16939,
+        "cacheRead": 1070720,
+        "cacheWrite": 0
+      },
+      "child_cost": 0.011626220000000001,
+      "root_cost": 0.05451101999999999,
+      "total_cost": 0.06613724,
+      "refused": null,
+      "detached": null,
+      "truncated": null,
+      "root_reads": 4,
+      "root_bash": 31,
+      "root_cache_read": 1070720,
+      "extra_tools": 0,
+      "turns_per_delegate": 27.0,
+      "rejected_duplicates": 0,
+      "known_cost_lower_bound": 0.06613724
+    }
+  ],
+  "incomplete": [],
+  "invalid": [],
+  "attempt_spend": [
+    {
+      "id": "T3-native-pds-1",
+      "cost": 0.11108863999999999,
+      "known_cost_lower_bound": 0.11108863999999999,
+      "valid": true
+    },
+    {
+      "id": "T3-direct-pds-1",
+      "cost": 0.038101152,
+      "known_cost_lower_bound": 0.038101152,
+      "valid": true
+    },
+    {
+      "id": "T3-direct-pds-2",
+      "cost": 0.03577764,
+      "known_cost_lower_bound": 0.03577764,
+      "valid": true
+    },
+    {
+      "id": "T3-lite-pds-head-1",
+      "cost": 0.08939636799999999,
+      "known_cost_lower_bound": 0.08939636799999999,
+      "valid": true
+    },
+    {
+      "id": "T3-lite-pds-head-2",
+      "cost": 0.049903608,
+      "known_cost_lower_bound": 0.049903608,
+      "valid": true
+    },
+    {
+      "id": "T3-native-pds-2",
+      "cost": 0.06613724,
+      "known_cost_lower_bound": 0.06613724,
+      "valid": true
+    }
+  ],
+  "attempt_spend_total": 0.39040464799999997,
+  "attempt_spend_scope": "current runs directory only; archived void attempts excluded",
+  "aggregates": {
+    "direct-pds": {
+      "runs": 2,
+      "pass": 2,
+      "pass_rate": 1.0,
+      "median_cost": 0.036939396,
+      "mean_cost": 0.036939396,
+      "median_root_turns": 24.5,
+      "median_wall": 171.0,
+      "root_tokens": {
+        "input": 86166,
+        "output": 30204,
+        "cacheRead": 1964032,
+        "cacheWrite": 0
+      },
+      "mechanism": {
+        "refused": 0,
+        "detached": 0,
+        "truncated": 0,
+        "rejected_duplicates": null,
+        "root_reads_med": 7.5,
+        "root_bash_med": 21.5,
+        "cache_read_med": 982016.0,
+        "turns_per_delegate_med": null,
+        "extra_tools": 0
+      }
+    },
+    "lite-pds-head": {
+      "runs": 2,
+      "pass": 2,
+      "pass_rate": 1.0,
+      "median_cost": 0.069649988,
+      "mean_cost": 0.069649988,
+      "median_root_turns": 33.0,
+      "median_wall": 425.0,
+      "root_tokens": {
+        "input": 102559,
+        "output": 48106,
+        "cacheRead": 3334016,
+        "cacheWrite": 0
+      },
+      "mechanism": {
+        "refused": 0,
+        "detached": 0,
+        "truncated": 0,
+        "rejected_duplicates": null,
+        "root_reads_med": 3.5,
+        "root_bash_med": 36.5,
+        "cache_read_med": 1667008.0,
+        "turns_per_delegate_med": 10.625,
+        "extra_tools": 0
+      }
+    },
+    "native-pds": {
+      "runs": 2,
+      "pass": 2,
+      "pass_rate": 1.0,
+      "median_cost": 0.08861294,
+      "mean_cost": 0.08861294,
+      "median_root_turns": 33.0,
+      "median_wall": 699.5,
+      "root_tokens": {
+        "input": 198587,
+        "output": 46946,
+        "cacheRead": 2963840,
+        "cacheWrite": 0
+      },
+      "mechanism": {
+        "refused": null,
+        "detached": null,
+        "truncated": null,
+        "rejected_duplicates": 1,
+        "root_reads_med": 7.0,
+        "root_bash_med": 36.5,
+        "cache_read_med": 1481920.0,
+        "turns_per_delegate_med": 18.375,
+        "extra_tools": 0
+      }
+    }
+  },
+  "task_aggregates": {
+    "T3|direct-pds": {
+      "n": 2,
+      "pass": 2,
+      "median_cost": 0.036939396,
+      "min_cost": 0.03577764,
+      "max_cost": 0.038101152
+    },
+    "T3|lite-pds-head": {
+      "n": 2,
+      "pass": 2,
+      "median_cost": 0.069649988,
+      "min_cost": 0.049903608,
+      "max_cost": 0.08939636799999999
+    },
+    "T3|native-pds": {
+      "n": 2,
+      "pass": 2,
+      "median_cost": 0.08861294,
+      "min_cost": 0.06613724,
+      "max_cost": 0.11108863999999999
+    }
+  },
+  "comparisons": {},
+  "mixed_plugin": {}
+}

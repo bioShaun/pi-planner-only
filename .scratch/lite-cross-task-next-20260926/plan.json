@@ -1,0 +1,77 @@
+{
+  "campaign": "opus-cross-task-t1-t2b-20260926",
+  "status": "stopped",
+  "authorization": {
+    "offline_preparation": "authorized by user continue",
+    "paid_execution": true,
+    "reason": "用户明确要求按照已推荐的四次/$10检查点方案推进。",
+    "confirmed_at": "2026-09-26T15:51:58.975830+00:00"
+  },
+  "root_model": "tcuni-claude/claude-opus-5-5",
+  "root_thinking": "high",
+  "plugin_ref": "ad51067da379edf5735cb9b03d70f17bda331675",
+  "strict": 0,
+  "handoff": "off",
+  "tasks": [
+    "T2b",
+    "T1"
+  ],
+  "arms": [
+    "native-opus-calibration",
+    "lite-opus-calibration"
+  ],
+  "order": [
+    {
+      "ordinal": 1,
+      "task": "T2b",
+      "arm": "native-opus-calibration",
+      "rep": 1
+    },
+    {
+      "ordinal": 2,
+      "task": "T2b",
+      "arm": "lite-opus-calibration",
+      "rep": 1
+    },
+    {
+      "ordinal": 3,
+      "task": "T1",
+      "arm": "lite-opus-calibration",
+      "rep": 1
+    },
+    {
+      "ordinal": 4,
+      "task": "T1",
+      "arm": "native-opus-calibration",
+      "rep": 1
+    }
+  ],
+  "seed": 517020842227833176,
+  "order_rule": "SHA256 campaign seed; shuffle tasks and first pair arms once; reverse arm order for second task",
+  "max_attempts": 4,
+  "parallel": 1,
+  "checkpoint_budget_usd": 10,
+  "budget_basis": "actual frozen model prices across every attempted run, including failed attempts",
+  "live_hard_budget": false,
+  "timeout_seconds": 3600,
+  "automatic_retry": false,
+  "resume": false,
+  "paid_health_requests": false,
+  "old_spend_included": false,
+  "keep_clone": true,
+  "runtime_preflight_required": true,
+  "paid_attempts_started": 1,
+  "created_at": "2026-09-26T15:39:53.220291+00:00",
+  "source_manifest": "freeze/execution-source.sha256.json",
+  "offline_validation": "PASS",
+  "independent_validation": "PASS",
+  "preparation_completed_at": "2026-09-26T15:47:21.668403+00:00",
+  "stop_reason": "Frozen native intercom terminal evidence incomplete; runcheck invalid and official total unknown.",
+  "paid_attempts_completed": 1,
+  "valid_attempts": 0,
+  "quality_test_passes": 1,
+  "remaining_unstarted": 3,
+  "actual_total": null,
+  "artifact_reconciled_total": 1.88898237,
+  "next_paid_action": "blocked pending measurement fix and task-boundary clarification plus refrozen execution decision"
+}

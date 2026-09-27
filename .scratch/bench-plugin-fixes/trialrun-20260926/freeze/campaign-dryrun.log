@@ -1,0 +1,11 @@
+Order:
+1	T3	11610575084440053455	native-pds,lite-pds-head,direct-pds
+2	T3	13383000289076264748	direct-pds,lite-pds-head,native-pds
+lane 0: T3-native-pds-1 T3-lite-pds-head-1 T3-direct-pds-1 T3-direct-pds-2 T3-lite-pds-head-2 T3-native-pds-2
+  env BENCH_OUT=/project/tmp/ppo-bench/results/native-pilot-t3 BENCH_ATTEMPT="$attempt" BENCH_MAX_ATTEMPTS=1 /home/tcuni-claw/pi/pi-planner-only/bench/run.sh T3 native-pds 1; rc=$?
+  env BENCH_OUT=/project/tmp/ppo-bench/results/native-pilot-t3 BENCH_PLUGIN_REF=ad51067da379edf5735cb9b03d70f17bda331675 BENCH_ATTEMPT="$attempt" BENCH_MAX_ATTEMPTS=1 /home/tcuni-claw/pi/pi-planner-only/bench/run.sh T3 lite-pds-head 1; rc=$?
+  env BENCH_OUT=/project/tmp/ppo-bench/results/native-pilot-t3 BENCH_PLUGIN_REF=ad51067da379edf5735cb9b03d70f17bda331675 BENCH_ATTEMPT="$attempt" BENCH_MAX_ATTEMPTS=1 /home/tcuni-claw/pi/pi-planner-only/bench/run.sh T3 direct-pds 1; rc=$?
+  env BENCH_OUT=/project/tmp/ppo-bench/results/native-pilot-t3 BENCH_PLUGIN_REF=ad51067da379edf5735cb9b03d70f17bda331675 BENCH_ATTEMPT="$attempt" BENCH_MAX_ATTEMPTS=1 /home/tcuni-claw/pi/pi-planner-only/bench/run.sh T3 direct-pds 2; rc=$?
+  env BENCH_OUT=/project/tmp/ppo-bench/results/native-pilot-t3 BENCH_PLUGIN_REF=ad51067da379edf5735cb9b03d70f17bda331675 BENCH_ATTEMPT="$attempt" BENCH_MAX_ATTEMPTS=1 /home/tcuni-claw/pi/pi-planner-only/bench/run.sh T3 lite-pds-head 2; rc=$?
+  env BENCH_OUT=/project/tmp/ppo-bench/results/native-pilot-t3 BENCH_ATTEMPT="$attempt" BENCH_MAX_ATTEMPTS=1 /home/tcuni-claw/pi/pi-planner-only/bench/run.sh T3 native-pds 2; rc=$?
+slot cpu -b -- bash /project/tmp/ppo-bench/results/native-pilot-t3/lanes/lane-0.sh

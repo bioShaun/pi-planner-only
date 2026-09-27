@@ -1,0 +1,18 @@
+### model/config preflight (no model call) @ 2026-09-26T12:30:36+08:00
+pi --list-models exit=0
+cline         cline-pass/deepseek-v4.1-flash   1.0M     393.2K   yes       no    
+cline         deepseek/deepseek-v4.1-flash     1.0M     393.2K   yes       yes   
+tcuni-ds      deepseek/deepseek-v4.1-flash     1.1M     128K     yes       yes   
+--- root model present?
+ROOT PRESENT
+--- child models from settings
+defaultModel: tcuni/gpt-6-luna
+worker tcuni/gpt-6-luna
+scout tcuni/gpt-6-luna
+oracle tcuni/gpt-6-luna
+reviewer tcuni/gpt-6-luna
+--- child models present in pi --list-models
+child OK: tcuni/gpt-6-luna
+--- pi-subagents version / plugin deps
+0.71.0
+0.87.1

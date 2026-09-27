@@ -1,0 +1,35 @@
+### T3 clone isolation proof @ 2026-09-26T12:13:11+08:00
+clone=/project/tmp/ppo-bench/clones/isolation-T3-20260926 target=e9270779747d2b14a531d5bbf856f3287d15f4f7 parent=712e9ff772033f39fa14eceaf4f1fc3fa4aa0ce6
+--- git cat-file -e target (expect failure/128)
+fatal: Not a valid object name e9270779747d2b14a531d5bbf856f3287d15f4f7^{commit}
+cat_file_exit=128
+--- short prefix cat-file
+/bin/sh: 1: Bad substitution
+--- short prefix cat-file (expect failure)
+fatal: Not a valid object name e927077^{commit}
+cat_file_short_exit=128
+--- log --all count in clone
+525
+--- parent reachable count in source
+524
+--- refs in clone
+refs_count=0
+--- FETCH_HEAD
+712e9ff772033f39fa14eceaf4f1fc3fa4aa0ce6		'71
+--- remotes (expect none)
+remotes_exit=0
+--- is target ancestor of clone HEAD?
+fatal: Not a valid commit name e9270779747d2b14a531d5bbf856f3287d15f4f7
+ancestor_exit=128
+--- grep for target sha anywhere in clone .git refs/logs
+0
+--- test files match target version
+tests/contracts/test_bed_region_fail_closed.py match=yes
+tests/contracts/test_pyranges_annotation_contract.py match=yes
+tests/unit/test_annotate_region.py match=yes
+--- target tests fail on BASE (pre-fix)
+FAILED tests/unit/test_annotate_region.py::TestAnnotateProbeRegions::test_empty_bed_dir_fails_closed
+FAILED tests/unit/test_annotate_region.py::TestAnnotateProbeRegions::test_missing_bed_dir_fails_closed
+FAILED tests/unit/test_annotate_region.py::TestLoadRegionBedAsPyranges::test_bed_load_failure_fails_closed
+======================== 12 failed, 18 passed in 0.35s =========================
+target_tests_exit=1

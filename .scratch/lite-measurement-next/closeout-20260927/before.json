@@ -1,0 +1,10 @@
+{
+  "files": {
+    ".scratch/lite-measurement-next/spec.md": "c421abfc3fa38ff87aace39eca71f66cf9dbeb0ccd0c04e72c9116c00c13d512",
+    "docs/lite-direction-review-2026-09-25.md": "146a49476fd508506e5a21290d8d1d758c387932fe5fff1bba921567062c955c",
+    "docs/lite-handoff-measurement-protocol.md": "348104cace50e1027c86cee90cce630165d771ce7b390a5dd44ce258fa45a622",
+    ".scratch/lite-t2c-preparation-20260927/issues/01-t1-socket-path-limit.md": "31164e93ef24ba03a78b99ecda899928ebb5c0d20dc48aab729e0dcdaa542e99"
+  },
+  "head": "ad51067da379edf5735cb9b03d70f17bda331675",
+  "scope": "documentation and evidence accounting only; zero new model requests"
+}

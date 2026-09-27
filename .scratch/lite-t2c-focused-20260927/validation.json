@@ -1,0 +1,37 @@
+{
+  "status": "PASS",
+  "shell_python_syntax": "PASS",
+  "forbidden_ordinals": [
+    0,
+    3,
+    4
+  ],
+  "forbidden_ordinal_exit": 2,
+  "dry_run_count": 2,
+  "dry_exit_codes": [
+    0,
+    0
+  ],
+  "health_skipped": 2,
+  "static_checks": {
+    "informed_data_authorization": true,
+    "authorized_gateway": true,
+    "only_T2c_pair": true,
+    "remaining_scope": true,
+    "path_map": true,
+    "plan_authorized": true,
+    "frozen_sources": true,
+    "historical_sources": true,
+    "root_settings": true,
+    "child_settings": true,
+    "host_package": true,
+    "subagents_package": true,
+    "plugin_cache": true,
+    "campaign_untouched": true
+  },
+  "new_paid_calls": 0,
+  "source_hash_reuse": "82 unchanged vs accepted short-runtime repair;36 and release not rerun because unchanged",
+  "legacy_cost": 1.29824603,
+  "gateway": "http://117.176.220.47:1989",
+  "user_informed_reply": "\u5141\u8bb8"
+}

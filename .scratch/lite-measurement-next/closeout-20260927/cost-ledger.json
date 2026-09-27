@@ -1,0 +1,50 @@
+{
+  "scope": "2026-09-26–27 five archived phases listed here, not all project history",
+  "rows": [
+    {
+      "phase": "T3 cpass三臂首轮",
+      "attempts": 6,
+      "cost_usd": "0.390404648",
+      "source": ".scratch/bench-plugin-fixes/trialrun-cont-20260926/final-actual.json",
+      "status": "当轮修复后口径6/6有效；原始停止记录保留"
+    },
+    {
+      "phase": "Opus首次三臂校准",
+      "attempts": 3,
+      "cost_usd": "3.735545210",
+      "source": ".scratch/lite-increment-review-20260926/calibration-final-actual.json",
+      "status": "质量/计费通过，临时目录规程FAIL保留"
+    },
+    {
+      "phase": "Opus受保护三臂校准",
+      "attempts": 3,
+      "cost_usd": "3.805692410",
+      "source": ".scratch/lite-increment-review-20260926/guarded-calibration-20260926/after-3-actual.json",
+      "status": "3/3有效及质量通过"
+    },
+    {
+      "phase": "T2b首次跨任务尝试",
+      "attempts": 1,
+      "cost_usd": "1.888982370",
+      "source": ".scratch/lite-cross-task-next-20260926/terminal-fix-20260927/offline-reprice.json",
+      "status": "终态修复后离线核算完整；原无效样本不追认"
+    },
+    {
+      "phase": "T1环境失败＋T2c两臂",
+      "attempts": 3,
+      "cost_usd": "3.89706611",
+      "source": ".scratch/lite-t2c-focused-20260927/execution/results.json",
+      "status": "T1原环境FAIL保留；T2c两臂有效合格；不混成T1配对"
+    }
+  ],
+  "attempts": 16,
+  "known_recorded_price_cost_usd": "13.717690748",
+  "latest_authorization_scope_usd": "3.89706611",
+  "budget_note": "These phases had separate authorization scopes; latest10USD checkpoint still totals3.89706611. Do not treat historical aggregate as one10USD budget.",
+  "excluded": [
+    "2026-09-24 and earlier measurements",
+    "offline diagnosis and outer coding-agent/audit costs",
+    "unrecorded provider billing adjustments"
+  ],
+  "basis": "Recorded usage times each frozen actual-price table, not supplier invoices; no savings percentages inferred"
+}

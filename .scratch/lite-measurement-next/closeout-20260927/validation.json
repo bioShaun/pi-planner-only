@@ -1,0 +1,36 @@
+{
+  "status": "PASS",
+  "new_model_calls": 0,
+  "documents_updated": [
+    ".scratch/lite-measurement-next/spec.md",
+    "docs/lite-direction-review-2026-09-25.md",
+    "docs/lite-handoff-measurement-protocol.md",
+    ".scratch/lite-t2c-preparation-20260927/issues/01-t1-socket-path-limit.md",
+    ".scratch/lite-measurement-next/closeout-20260927/report.md"
+  ],
+  "relative_links_checked": 58,
+  "missing_historical_links": [],
+  "new_links_exist": true,
+  "ledger_arithmetic": "PASS",
+  "frozen_evidence_unchanged": {
+    ".scratch/lite-t2c-focused-20260927/execution/all-raw.sha256.json": {
+      "count": 23,
+      "mismatches": []
+    },
+    ".scratch/lite-t2c-focused-20260927/execution/entry-source.sha256.json": {
+      "count": 11,
+      "mismatches": []
+    },
+    ".scratch/lite-t2c-focused-20260927/freeze/source.sha256.json": {
+      "count": 82,
+      "mismatches": []
+    },
+    ".scratch/lite-t2c-focused-20260927/execution/history.sha256.json": {
+      "count": 161,
+      "mismatches": []
+    }
+  },
+  "head_unchanged": true,
+  "validation": "Documentation/link/arithmetic/hash checks only; no suite rerun because no executable behavior changed",
+  "at": "2026-09-27T03:53:27.538159+00:00"
+}

@@ -1,0 +1,27 @@
+{
+  "ready": false,
+  "default_warning_threshold": 150000,
+  "threshold_source": "config.ts DEFAULT_CONFIG.contextWarnTokens",
+  "usage_proxy_only": "Host context can differ from usage fallback; do not treat this as complete host-context telemetry",
+  "runs": [
+    {
+      "arm": "lite",
+      "root_completed_messages": 16,
+      "max_request_input_plus_cache_tokens": 65367,
+      "observed_context_warning_events": [],
+      "source": "/project/tmp/ppo-bench/results/opus-t2c-pair-20260927/runs/T2c-lite-opus-calibration-1.jsonl"
+    },
+    {
+      "arm": "native",
+      "root_completed_messages": 17,
+      "max_request_input_plus_cache_tokens": 73102,
+      "observed_context_warning_events": [],
+      "source": "/project/tmp/ppo-bench/results/opus-t2c-pair-20260927/runs/T2c-native-opus-calibration-1.jsonl"
+    }
+  ],
+  "root_session_persistence": "bench/run-body.sh uses --no-session",
+  "same_checkpoint_isolation_tested": false,
+  "current_tasks_completed": true,
+  "reason": "No established resumable Root checkpoint with substantive remaining work; do not fabricate long context or infer restoration from child transcripts",
+  "new_model_calls": 0
+}

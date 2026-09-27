@@ -1,0 +1,38 @@
+{
+  "name": "native-pilot-t3",
+  "reps": 2,
+  "tasks": [
+    "T3"
+  ],
+  "arms": [
+    "direct-pds",
+    "native-pds",
+    "lite-pds-head"
+  ],
+  "repo_head": "ad51067da379edf5735cb9b03d70f17bda331675",
+  "parallel": 1,
+  "created": "2026-09-26T13:00:34.561202+08:00",
+  "order": [
+    {
+      "rep": 1,
+      "task": "T3",
+      "seed": 11610575084440053455,
+      "arms": [
+        "native-pds",
+        "lite-pds-head",
+        "direct-pds"
+      ]
+    },
+    {
+      "rep": 2,
+      "task": "T3",
+      "seed": 13383000289076264748,
+      "arms": [
+        "direct-pds",
+        "lite-pds-head",
+        "native-pds"
+      ]
+    }
+  ],
+  "worktreeSha": "ad51067da379edf5735cb9b03d70f17bda331675"
+}

@@ -1,0 +1,3999 @@
+[
+ {
+  "camp": "control-cc-mimo-strict",
+  "id": "T1-lite-ccmimo-strict-aa-1",
+  "task": "T1",
+  "arm": "lite-ccmimo-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 20,
+  "tools": {
+   "bash": 1,
+   "read": 10,
+   "git_audit": 7,
+   "delegate": 9
+  },
+  "roles": {
+   "explorer": 3,
+   "validator": 4,
+   "worker": 1
+  },
+  "status": {
+   "completed": 8,
+   "refused": 1
+  },
+  "refused": 1,
+  "truncated": 3,
+  "par_turns": 1,
+  "child_cost": 0.04651468,
+  "root_in": 91329,
+  "root_cr": 876608,
+  "root_out": 52233,
+  "max_ctx": 90707,
+  "reports_chars": 24445,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cc-mimo-strict",
+  "id": "T2-lite-ccmimo-strict-readall-1",
+  "task": "T2",
+  "arm": "lite-ccmimo-strict-readall",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 25,
+  "tools": {
+   "bash": 5,
+   "read": 23,
+   "delegate": 6,
+   "subagent_supervisor": 2,
+   "bg_wait": 2
+  },
+  "roles": {
+   "explorer": 3
+  },
+  "status": {
+   "refused": 3,
+   "completed": 1,
+   "failed": 2
+  },
+  "refused": 3,
+  "truncated": 0,
+  "par_turns": 2,
+  "child_cost": 0.012140920000000001,
+  "root_in": 169336,
+  "root_cr": 1700608,
+  "root_out": 100877,
+  "max_ctx": 170562,
+  "reports_chars": 5427,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T1-lite-pds-strict-1",
+  "task": "T1",
+  "arm": "lite-pds-strict",
+  "passed": false,
+  "new_fail": 2,
+  "turns": 23,
+  "tools": {
+   "bash": 2,
+   "read": 12,
+   "delegate": 12,
+   "subagent_supervisor": 1,
+   "bg_wait": 1,
+   "git_audit": 4
+  },
+  "roles": {
+   "explorer": 4,
+   "validator": 6,
+   "worker": 1
+  },
+  "status": {
+   "completed": 10,
+   "failed": 1,
+   "refused": 1
+  },
+  "refused": 1,
+  "truncated": 3,
+  "par_turns": 1,
+  "child_cost": 0.04374368,
+  "root_in": 59639,
+  "root_cr": 1160704,
+  "root_out": 26758,
+  "max_ctx": 83501,
+  "reports_chars": 28034,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T1-lite-pds-strict-2",
+  "task": "T1",
+  "arm": "lite-pds-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 33,
+  "tools": {
+   "read": 12,
+   "git_audit": 7,
+   "delegate": 18,
+   "subagent_supervisor": 2,
+   "bg_wait": 2,
+   "bash": 1
+  },
+  "roles": {
+   "explorer": 11,
+   "validator": 4,
+   "worker": 2
+  },
+  "status": {
+   "refused": 1,
+   "completed": 15,
+   "failed": 2
+  },
+  "refused": 1,
+  "truncated": 7,
+  "par_turns": 1,
+  "child_cost": 0.07409088000000001,
+  "root_in": 61441,
+  "root_cr": 2046336,
+  "root_out": 55293,
+  "max_ctx": 113507,
+  "reports_chars": 51677,
+  "commits": 0,
+  "suite_runs_by_root": 1
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T1-lite-pds-strict-3",
+  "task": "T1",
+  "arm": "lite-pds-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 39,
+  "tools": {
+   "bash": 2,
+   "delegate": 20,
+   "subagent_supervisor": 4,
+   "bg_wait": 4,
+   "read": 10,
+   "git_audit": 8
+  },
+  "roles": {
+   "explorer": 12,
+   "worker": 3,
+   "validator": 3,
+   "reviewer": 1
+  },
+  "status": {
+   "failed": 4,
+   "completed": 15,
+   "refused": 1
+  },
+  "refused": 1,
+  "truncated": 10,
+  "par_turns": 1,
+  "child_cost": 0.07990824000000002,
+  "root_in": 64730,
+  "root_cr": 2355456,
+  "root_out": 46956,
+  "max_ctx": 108884,
+  "reports_chars": 58825,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T1-lite-pds-strict-aa-1",
+  "task": "T1",
+  "arm": "lite-pds-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 32,
+  "tools": {
+   "bash": 1,
+   "read": 13,
+   "git_audit": 9,
+   "delegate": 19
+  },
+  "roles": {
+   "explorer": 4,
+   "validator": 1,
+   "worker": 13
+  },
+  "status": {
+   "refused": 1,
+   "completed": 18
+  },
+  "refused": 1,
+  "truncated": 12,
+  "par_turns": 1,
+  "child_cost": 0.06765856000000002,
+  "root_in": 62291,
+  "root_cr": 1802240,
+  "root_out": 46085,
+  "max_ctx": 105695,
+  "reports_chars": 59274,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T1-lite-pds-strict-aa-2",
+  "task": "T1",
+  "arm": "lite-pds-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 27,
+  "tools": {
+   "bash": 3,
+   "read": 16,
+   "delegate": 13,
+   "subagent_supervisor": 2,
+   "bg_wait": 2,
+   "git_audit": 3
+  },
+  "roles": {
+   "explorer": 5,
+   "validator": 5,
+   "worker": 1,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 10,
+   "refused": 1,
+   "failed": 2
+  },
+  "refused": 1,
+  "truncated": 4,
+  "par_turns": 1,
+  "child_cost": 0.060903219999999994,
+  "root_in": 70038,
+  "root_cr": 1595264,
+  "root_out": 38478,
+  "max_ctx": 104667,
+  "reports_chars": 30981,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T1-lite-pds-strict-aa-3",
+  "task": "T1",
+  "arm": "lite-pds-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 39,
+  "tools": {
+   "bash": 4,
+   "delegate": 21,
+   "read": 17,
+   "subagent_supervisor": 2,
+   "bg_wait": 2,
+   "git_audit": 1
+  },
+  "roles": {
+   "explorer": 3,
+   "validator": 1,
+   "worker": 17
+  },
+  "status": {
+   "completed": 19,
+   "failed": 2
+  },
+  "refused": 0,
+  "truncated": 8,
+  "par_turns": 0,
+  "child_cost": 0.05000349999999999,
+  "root_in": 72775,
+  "root_cr": 2446336,
+  "root_out": 49147,
+  "max_ctx": 118968,
+  "reports_chars": 55389,
+  "commits": 0,
+  "suite_runs_by_root": 1
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T1-lite-pds-strict-readall-1",
+  "task": "T1",
+  "arm": "lite-pds-strict-readall",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 32,
+  "tools": {
+   "bash": 3,
+   "read": 18,
+   "delegate": 17,
+   "subagent_supervisor": 1,
+   "bg_wait": 1,
+   "git_audit": 3
+  },
+  "roles": {
+   "explorer": 11,
+   "worker": 2,
+   "validator": 4
+  },
+  "status": {
+   "failed": 1,
+   "completed": 16
+  },
+  "refused": 0,
+  "truncated": 9,
+  "par_turns": 0,
+  "child_cost": 0.052250139999999994,
+  "root_in": 69858,
+  "root_cr": 2236160,
+  "root_out": 60803,
+  "max_ctx": 128107,
+  "reports_chars": 50929,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T1-lite-pds-strict-readall-2",
+  "task": "T1",
+  "arm": "lite-pds-strict-readall",
+  "passed": false,
+  "new_fail": 2,
+  "turns": 27,
+  "tools": {
+   "bash": 3,
+   "read": 11,
+   "delegate": 11,
+   "subagent_supervisor": 3,
+   "bg_wait": 3,
+   "git_audit": 3
+  },
+  "roles": {
+   "explorer": 7,
+   "worker": 2,
+   "validator": 2
+  },
+  "status": {
+   "completed": 8,
+   "failed": 3
+  },
+  "refused": 0,
+  "truncated": 4,
+  "par_turns": 0,
+  "child_cost": 0.058411740000000004,
+  "root_in": 67195,
+  "root_cr": 1574016,
+  "root_out": 38737,
+  "max_ctx": 103132,
+  "reports_chars": 28042,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T1-lite-pds-strict-readall-3",
+  "task": "T1",
+  "arm": "lite-pds-strict-readall",
+  "passed": false,
+  "new_fail": 2,
+  "turns": 25,
+  "tools": {
+   "bash": 2,
+   "read": 9,
+   "delegate": 15,
+   "subagent_supervisor": 2,
+   "bg_wait": 2,
+   "git_audit": 5
+  },
+  "roles": {
+   "explorer": 6,
+   "validator": 4,
+   "worker": 3,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 12,
+   "refused": 1,
+   "failed": 2
+  },
+  "refused": 1,
+  "truncated": 5,
+  "par_turns": 1,
+  "child_cost": 0.03507882,
+  "root_in": 51541,
+  "root_cr": 1255424,
+  "root_out": 39539,
+  "max_ctx": 88195,
+  "reports_chars": 36577,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T2-lite-pds-strict-1",
+  "task": "T2",
+  "arm": "lite-pds-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 29,
+  "tools": {
+   "bash": 2,
+   "read": 24,
+   "delegate": 12,
+   "git_audit": 2
+  },
+  "roles": {
+   "explorer": 5,
+   "worker": 3,
+   "validator": 3,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 12
+  },
+  "refused": 0,
+  "truncated": 4,
+  "par_turns": 0,
+  "child_cost": 0.06505717999999999,
+  "root_in": 71022,
+  "root_cr": 2033152,
+  "root_out": 44130,
+  "max_ctx": 111346,
+  "reports_chars": 28587,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T2-lite-pds-strict-2",
+  "task": "T2",
+  "arm": "lite-pds-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 28,
+  "tools": {
+   "bash": 4,
+   "read": 37,
+   "delegate": 12,
+   "git_audit": 1
+  },
+  "roles": {
+   "explorer": 4,
+   "worker": 5,
+   "validator": 1,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 11,
+   "refused": 1
+  },
+  "refused": 1,
+  "truncated": 4,
+  "par_turns": 1,
+  "child_cost": 0.11152408,
+  "root_in": 109205,
+  "root_cr": 2562432,
+  "root_out": 56802,
+  "max_ctx": 163666,
+  "reports_chars": 31139,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T2-lite-pds-strict-3",
+  "task": "T2",
+  "arm": "lite-pds-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 23,
+  "tools": {
+   "bash": 3,
+   "delegate": 7,
+   "read": 23,
+   "git_audit": 3
+  },
+  "roles": {
+   "explorer": 2,
+   "worker": 2,
+   "validator": 2,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 7
+  },
+  "refused": 0,
+  "truncated": 2,
+  "par_turns": 1,
+  "child_cost": 0.06927042,
+  "root_in": 69889,
+  "root_cr": 1353344,
+  "root_out": 41419,
+  "max_ctx": 107709,
+  "reports_chars": 16176,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T2-lite-pds-strict-aa-1",
+  "task": "T2",
+  "arm": "lite-pds-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 33,
+  "tools": {
+   "bash": 3,
+   "delegate": 10,
+   "read": 30,
+   "git_audit": 3
+  },
+  "roles": {
+   "explorer": 5,
+   "worker": 3,
+   "validator": 1,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 10
+  },
+  "refused": 0,
+  "truncated": 6,
+  "par_turns": 0,
+  "child_cost": 0.09104238000000002,
+  "root_in": 109136,
+  "root_cr": 2867200,
+  "root_out": 60542,
+  "max_ctx": 167105,
+  "reports_chars": 33156,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T2-lite-pds-strict-aa-2",
+  "task": "T2",
+  "arm": "lite-pds-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 31,
+  "tools": {
+   "bash": 3,
+   "delegate": 10,
+   "read": 33,
+   "git_audit": 2
+  },
+  "roles": {
+   "explorer": 6,
+   "worker": 2,
+   "validator": 1
+  },
+  "status": {
+   "refused": 1,
+   "completed": 9
+  },
+  "refused": 1,
+  "truncated": 6,
+  "par_turns": 1,
+  "child_cost": 0.08103598,
+  "root_in": 65496,
+  "root_cr": 1950720,
+  "root_out": 48678,
+  "max_ctx": 122277,
+  "reports_chars": 30171,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T2-lite-pds-strict-aa-3",
+  "task": "T2",
+  "arm": "lite-pds-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 30,
+  "tools": {
+   "bash": 3,
+   "delegate": 11,
+   "read": 19,
+   "subagent_supervisor": 2,
+   "bg_wait": 2,
+   "git_audit": 3
+  },
+  "roles": {
+   "explorer": 7,
+   "worker": 1,
+   "validator": 2
+  },
+  "status": {
+   "completed": 8,
+   "failed": 2,
+   "refused": 1
+  },
+  "refused": 1,
+  "truncated": 4,
+  "par_turns": 1,
+  "child_cost": 0.06437036,
+  "root_in": 96299,
+  "root_cr": 2117504,
+  "root_out": 45874,
+  "max_ctx": 139393,
+  "reports_chars": 23407,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T2-lite-pds-strict-readall-1",
+  "task": "T2",
+  "arm": "lite-pds-strict-readall",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 15,
+  "tools": {
+   "read": 21,
+   "bash": 1,
+   "delegate": 5,
+   "git_audit": 2
+  },
+  "roles": {
+   "explorer": 2,
+   "worker": 2,
+   "validator": 1
+  },
+  "status": {
+   "completed": 5
+  },
+  "refused": 0,
+  "truncated": 2,
+  "par_turns": 0,
+  "child_cost": 0.03858298,
+  "root_in": 68215,
+  "root_cr": 848384,
+  "root_out": 41623,
+  "max_ctx": 107820,
+  "reports_chars": 13107,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T2-lite-pds-strict-readall-2",
+  "task": "T2",
+  "arm": "lite-pds-strict-readall",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 21,
+  "tools": {
+   "bash": 3,
+   "read": 25,
+   "delegate": 3,
+   "git_audit": 3
+  },
+  "roles": {
+   "explorer": 1,
+   "worker": 1,
+   "validator": 1
+  },
+  "status": {
+   "completed": 3
+  },
+  "refused": 0,
+  "truncated": 1,
+  "par_turns": 0,
+  "child_cost": 0.03381648,
+  "root_in": 86625,
+  "root_cr": 1447808,
+  "root_out": 37375,
+  "max_ctx": 122419,
+  "reports_chars": 6651,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T2-lite-pds-strict-readall-3",
+  "task": "T2",
+  "arm": "lite-pds-strict-readall",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 29,
+  "tools": {
+   "bash": 3,
+   "read": 26,
+   "git_audit": 4,
+   "delegate": 8
+  },
+  "roles": {
+   "explorer": 2,
+   "worker": 3,
+   "validator": 2,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 8
+  },
+  "refused": 0,
+  "truncated": 3,
+  "par_turns": 0,
+  "child_cost": 0.0702716,
+  "root_in": 75917,
+  "root_cr": 2057600,
+  "root_out": 58207,
+  "max_ctx": 131378,
+  "reports_chars": 19488,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T3-lite-pds-strict-1",
+  "task": "T3",
+  "arm": "lite-pds-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 17,
+  "tools": {
+   "bash": 1,
+   "read": 10,
+   "git_audit": 3,
+   "delegate": 10
+  },
+  "roles": {
+   "explorer": 3,
+   "worker": 2,
+   "validator": 3,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 9,
+   "refused": 1
+  },
+  "refused": 1,
+  "truncated": 3,
+  "par_turns": 1,
+  "child_cost": 0.05933209999999999,
+  "root_in": 40930,
+  "root_cr": 626176,
+  "root_out": 17994,
+  "max_ctx": 57697,
+  "reports_chars": 22847,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T3-lite-pds-strict-2",
+  "task": "T3",
+  "arm": "lite-pds-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 16,
+  "tools": {
+   "read": 9,
+   "bash": 2,
+   "git_audit": 3,
+   "delegate": 10
+  },
+  "roles": {
+   "validator": 3,
+   "explorer": 2,
+   "worker": 4,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 10
+  },
+  "refused": 0,
+  "truncated": 3,
+  "par_turns": 1,
+  "child_cost": 0.04135438,
+  "root_in": 38389,
+  "root_cr": 537728,
+  "root_out": 15748,
+  "max_ctx": 52777,
+  "reports_chars": 26793,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T3-lite-pds-strict-3",
+  "task": "T3",
+  "arm": "lite-pds-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 18,
+  "tools": {
+   "bash": 3,
+   "read": 10,
+   "delegate": 8,
+   "git_audit": 3
+  },
+  "roles": {
+   "explorer": 2,
+   "worker": 2,
+   "validator": 3,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 8
+  },
+  "refused": 0,
+  "truncated": 3,
+  "par_turns": 0,
+  "child_cost": 0.05335448,
+  "root_in": 41518,
+  "root_cr": 652800,
+  "root_out": 19287,
+  "max_ctx": 59752,
+  "reports_chars": 26507,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T3-lite-pds-strict-aa-1",
+  "task": "T3",
+  "arm": "lite-pds-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 13,
+  "tools": {
+   "bash": 1,
+   "read": 8,
+   "delegate": 6,
+   "git_audit": 2
+  },
+  "roles": {
+   "explorer": 2,
+   "worker": 1,
+   "validator": 2
+  },
+  "status": {
+   "completed": 5,
+   "refused": 1
+  },
+  "refused": 1,
+  "truncated": 2,
+  "par_turns": 1,
+  "child_cost": 0.03525916,
+  "root_in": 34483,
+  "root_cr": 395904,
+  "root_out": 12753,
+  "max_ctx": 46480,
+  "reports_chars": 15812,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T3-lite-pds-strict-aa-2",
+  "task": "T3",
+  "arm": "lite-pds-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 13,
+  "tools": {
+   "read": 10,
+   "bash": 1,
+   "delegate": 7,
+   "git_audit": 1
+  },
+  "roles": {
+   "explorer": 3,
+   "worker": 1,
+   "validator": 2,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 7
+  },
+  "refused": 0,
+  "truncated": 3,
+  "par_turns": 0,
+  "child_cost": 0.05893604,
+  "root_in": 38713,
+  "root_cr": 436608,
+  "root_out": 18206,
+  "max_ctx": 56032,
+  "reports_chars": 22244,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T3-lite-pds-strict-aa-3",
+  "task": "T3",
+  "arm": "lite-pds-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 23,
+  "tools": {
+   "bash": 3,
+   "delegate": 11,
+   "read": 9,
+   "git_audit": 3,
+   "subagent_supervisor": 1,
+   "bg_wait": 1
+  },
+  "roles": {
+   "explorer": 2,
+   "worker": 3,
+   "validator": 5,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 10,
+   "failed": 1
+  },
+  "refused": 0,
+  "truncated": 3,
+  "par_turns": 1,
+  "child_cost": 0.04258184,
+  "root_in": 43007,
+  "root_cr": 1004288,
+  "root_out": 29708,
+  "max_ctx": 71347,
+  "reports_chars": 22438,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T3-lite-pds-strict-readall-1",
+  "task": "T3",
+  "arm": "lite-pds-strict-readall",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 21,
+  "tools": {
+   "read": 8,
+   "delegate": 10,
+   "git_audit": 4,
+   "subagent_supervisor": 2,
+   "bg_wait": 1
+  },
+  "roles": {
+   "explorer": 3,
+   "worker": 3,
+   "validator": 3,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 8,
+   "failed": 2
+  },
+  "refused": 0,
+  "truncated": 3,
+  "par_turns": 1,
+  "child_cost": 0.07292684,
+  "root_in": 41660,
+  "root_cr": 878208,
+  "root_out": 23278,
+  "max_ctx": 63111,
+  "reports_chars": 24704,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T3-lite-pds-strict-readall-2",
+  "task": "T3",
+  "arm": "lite-pds-strict-readall",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 19,
+  "tools": {
+   "bash": 2,
+   "read": 14,
+   "delegate": 8,
+   "git_audit": 3
+  },
+  "roles": {
+   "explorer": 2,
+   "validator": 3,
+   "worker": 2,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 8
+  },
+  "refused": 0,
+  "truncated": 2,
+  "par_turns": 0,
+  "child_cost": 0.046570600000000004,
+  "root_in": 44143,
+  "root_cr": 772736,
+  "root_out": 23049,
+  "max_ctx": 65718,
+  "reports_chars": 20683,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-ds-strict",
+  "id": "T3-lite-pds-strict-readall-3",
+  "task": "T3",
+  "arm": "lite-pds-strict-readall",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 15,
+  "tools": {
+   "bash": 2,
+   "read": 9,
+   "delegate": 4,
+   "git_audit": 4,
+   "subagent_supervisor": 1,
+   "bg_wait": 1
+  },
+  "roles": {
+   "explorer": 2,
+   "worker": 1,
+   "validator": 1
+  },
+  "status": {
+   "completed": 3,
+   "failed": 1
+  },
+  "refused": 0,
+  "truncated": 1,
+  "par_turns": 0,
+  "child_cost": 0.022557220000000003,
+  "root_in": 33856,
+  "root_cr": 432896,
+  "root_out": 10237,
+  "max_ctx": 42864,
+  "reports_chars": 9965,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-glm-strict",
+  "id": "T1-lite-pglm-strict-1",
+  "task": "T1",
+  "arm": "lite-pglm-strict",
+  "passed": false,
+  "new_fail": 2,
+  "turns": 80,
+  "tools": {
+   "bash": 16,
+   "git_audit": 20,
+   "delegate": 31,
+   "read": 29,
+   "subagent_supervisor": 7,
+   "bg_wait": 1
+  },
+  "roles": {
+   "explorer": 9,
+   "worker": 4,
+   "validator": 17
+  },
+  "status": {
+   "completed": 29,
+   "refused": 1,
+   "failed": 1
+  },
+  "refused": 1,
+  "truncated": 10,
+  "par_turns": 1,
+  "child_cost": 0.12920884000000005,
+  "root_in": 458687,
+  "root_cr": 4497825,
+  "root_out": 31923,
+  "max_ctx": 107810,
+  "reports_chars": 80970,
+  "commits": 0,
+  "suite_runs_by_root": 2
+ },
+ {
+  "camp": "control-cpass-glm-strict",
+  "id": "T1-lite-pglm-strict-aa-1",
+  "task": "T1",
+  "arm": "lite-pglm-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 72,
+  "tools": {
+   "bash": 18,
+   "read": 29,
+   "git_audit": 18,
+   "delegate": 26,
+   "subagent_supervisor": 5,
+   "bg_wait": 4
+  },
+  "roles": {
+   "explorer": 10,
+   "worker": 4,
+   "validator": 10
+  },
+  "status": {
+   "completed": 22,
+   "refused": 1,
+   "failed": 2
+  },
+  "refused": 1,
+  "truncated": 11,
+  "par_turns": 1,
+  "child_cost": 0.13291602,
+  "root_in": 410710,
+  "root_cr": 3907174,
+  "root_out": 33029,
+  "max_ctx": 99942,
+  "reports_chars": 69252,
+  "commits": 0,
+  "suite_runs_by_root": 2
+ },
+ {
+  "camp": "control-cpass-glm-strict",
+  "id": "T1-lite-pglm-strict-readall-1",
+  "task": "T1",
+  "arm": "lite-pglm-strict-readall",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 213,
+  "tools": {
+   "bash": 46,
+   "read": 203,
+   "git_audit": 32,
+   "delegate": 16,
+   "subagent_supervisor": 18,
+   "bg_wait": 3
+  },
+  "roles": {
+   "explorer": 5,
+   "worker": 2,
+   "validator": 9
+  },
+  "status": {
+   "failed": 3,
+   "completed": 13
+  },
+  "refused": 0,
+  "truncated": 1,
+  "par_turns": 0,
+  "child_cost": 0.05413948,
+  "root_in": 1132314,
+  "root_cr": 52138663,
+  "root_out": 44150,
+  "max_ctx": 489239,
+  "reports_chars": 35404,
+  "commits": 0,
+  "suite_runs_by_root": 3
+ },
+ {
+  "camp": "control-cpass-glm-strict",
+  "id": "T2-lite-pglm-strict-1",
+  "task": "T2",
+  "arm": "lite-pglm-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 107,
+  "tools": {
+   "bash": 21,
+   "git_audit": 32,
+   "read": 73,
+   "delegate": 18,
+   "subagent_supervisor": 1,
+   "bg_wait": 2
+  },
+  "roles": {
+   "explorer": 8,
+   "worker": 1,
+   "validator": 5,
+   "reviewer": 2
+  },
+  "status": {
+   "completed": 15,
+   "failed": 1,
+   "refused": 1
+  },
+  "refused": 1,
+  "truncated": 8,
+  "par_turns": 2,
+  "child_cost": 0.13744002,
+  "root_in": 605228,
+  "root_cr": 8380585,
+  "root_out": 27937,
+  "max_ctx": 151298,
+  "reports_chars": 49839,
+  "commits": 0,
+  "suite_runs_by_root": 2
+ },
+ {
+  "camp": "control-cpass-glm-strict",
+  "id": "T2-lite-pglm-strict-aa-1",
+  "task": "T2",
+  "arm": "lite-pglm-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 60,
+  "tools": {
+   "git_audit": 16,
+   "delegate": 11,
+   "read": 30,
+   "bash": 17,
+   "subagent_supervisor": 2,
+   "bg_wait": 1
+  },
+  "roles": {
+   "explorer": 3,
+   "validator": 5,
+   "worker": 2,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 9,
+   "failed": 2
+  },
+  "refused": 0,
+  "truncated": 3,
+  "par_turns": 0,
+  "child_cost": 0.05680119999999999,
+  "root_in": 279125,
+  "root_cr": 2708005,
+  "root_out": 28624,
+  "max_ctx": 84823,
+  "reports_chars": 24524,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-glm-strict",
+  "id": "T2-lite-pglm-strict-readall-1",
+  "task": "T2",
+  "arm": "lite-pglm-strict-readall",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 128,
+  "tools": {
+   "bash": 24,
+   "read": 99,
+   "delegate": 3,
+   "subagent_supervisor": 3,
+   "git_audit": 29,
+   "bg_wait": 2
+  },
+  "roles": {
+   "worker": 1,
+   "validator": 2
+  },
+  "status": {
+   "failed": 2,
+   "completed": 1
+  },
+  "refused": 0,
+  "truncated": 1,
+  "par_turns": 0,
+  "child_cost": 0.013711280000000001,
+  "root_in": 709636,
+  "root_cr": 13111366,
+  "root_out": 20263,
+  "max_ctx": 200857,
+  "reports_chars": 6714,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-cpass-glm-strict",
+  "id": "T3-lite-pglm-strict-1",
+  "task": "T3",
+  "arm": "lite-pglm-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 88,
+  "tools": {
+   "bash": 18,
+   "git_audit": 9,
+   "delegate": 20,
+   "read": 78
+  },
+  "roles": {
+   "explorer": 15,
+   "worker": 1,
+   "validator": 3,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 19,
+   "failed": 1
+  },
+  "refused": 0,
+  "truncated": 13,
+  "par_turns": 0,
+  "child_cost": 0.18793142000000002,
+  "root_in": 458281,
+  "root_cr": 9026363,
+  "root_out": 18433,
+  "max_ctx": 196465,
+  "reports_chars": 73013,
+  "commits": 0,
+  "suite_runs_by_root": 1
+ },
+ {
+  "camp": "control-cpass-glm-strict",
+  "id": "T3-lite-pglm-strict-readall-1",
+  "task": "T3",
+  "arm": "lite-pglm-strict-readall",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 168,
+  "tools": {
+   "bash": 43,
+   "read": 220,
+   "delegate": 6,
+   "git_audit": 11
+  },
+  "roles": {
+   "explorer": 5,
+   "validator": 1
+  },
+  "status": {
+   "completed": 6
+  },
+  "refused": 0,
+  "truncated": 4,
+  "par_turns": 0,
+  "child_cost": 0.023289259999999996,
+  "root_in": 848161,
+  "root_cr": 36730175,
+  "root_out": 27569,
+  "max_ctx": 402968,
+  "reports_chars": 23331,
+  "commits": 0,
+  "suite_runs_by_root": 1
+ },
+ {
+  "camp": "control-ds-strict",
+  "id": "T1-lite-ds-strict-1",
+  "task": "T1",
+  "arm": "lite-ds-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 45,
+  "tools": {
+   "bash": 4,
+   "read": 16,
+   "delegate": 23,
+   "subagent_supervisor": 5,
+   "bg_wait": 5,
+   "git_audit": 5
+  },
+  "roles": {
+   "explorer": 13,
+   "validator": 6,
+   "worker": 2,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 17,
+   "refused": 1,
+   "failed": 5
+  },
+  "refused": 1,
+  "truncated": 10,
+  "par_turns": 1,
+  "child_cost": 0.09728819999999999,
+  "root_in": 96524,
+  "root_cr": 2560896,
+  "root_out": 96117,
+  "max_ctx": 94168,
+  "reports_chars": 60977,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-ds-strict",
+  "id": "T1-lite-ds-strict-aa-1",
+  "task": "T1",
+  "arm": "lite-ds-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 36,
+  "tools": {
+   "bash": 3,
+   "read": 16,
+   "delegate": 21,
+   "subagent_supervisor": 4,
+   "bg_wait": 4,
+   "git_audit": 2
+  },
+  "roles": {
+   "explorer": 11,
+   "validator": 7,
+   "worker": 1,
+   "reviewer": 1
+  },
+  "status": {
+   "refused": 1,
+   "completed": 16,
+   "failed": 4
+  },
+  "refused": 1,
+  "truncated": 9,
+  "par_turns": 1,
+  "child_cost": 0.08298270000000002,
+  "root_in": 93647,
+  "root_cr": 2043520,
+  "root_out": 65004,
+  "max_ctx": 92677,
+  "reports_chars": 60238,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T1-lite-gemini-strict-1",
+  "task": "T1",
+  "arm": "lite-gemini-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 62,
+  "tools": {
+   "delegate": 46,
+   "subagent_supervisor": 3,
+   "bg_wait": 3,
+   "git_audit": 9
+  },
+  "roles": {
+   "explorer": 22,
+   "validator": 21,
+   "worker": 3
+  },
+  "status": {
+   "completed": 43,
+   "failed": 3
+  },
+  "refused": 0,
+  "truncated": 8,
+  "par_turns": 0,
+  "child_cost": 0.11350300000000002,
+  "root_in": 353086,
+  "root_cr": 3028523,
+  "root_out": 36803,
+  "max_ctx": 95798,
+  "reports_chars": 79103,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T1-lite-gemini-strict-2",
+  "task": "T1",
+  "arm": "lite-gemini-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 49,
+  "tools": {
+   "git_audit": 7,
+   "delegate": 33,
+   "subagent_supervisor": 4,
+   "bg_wait": 4
+  },
+  "roles": {
+   "explorer": 21,
+   "validator": 9,
+   "worker": 2,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 29,
+   "failed": 4
+  },
+  "refused": 0,
+  "truncated": 8,
+  "par_turns": 0,
+  "child_cost": 0.10738266000000003,
+  "root_in": 406121,
+  "root_cr": 2078427,
+  "root_out": 45399,
+  "max_ctx": 93769,
+  "reports_chars": 68473,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T1-lite-gemini-strict-3",
+  "task": "T1",
+  "arm": "lite-gemini-strict",
+  "passed": false,
+  "new_fail": 2,
+  "turns": 61,
+  "tools": {
+   "git_audit": 9,
+   "delegate": 32,
+   "read": 15,
+   "subagent_supervisor": 2,
+   "bg_wait": 2
+  },
+  "roles": {
+   "explorer": 23,
+   "validator": 7,
+   "worker": 1,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 30,
+   "failed": 2
+  },
+  "refused": 0,
+  "truncated": 5,
+  "par_turns": 0,
+  "child_cost": 0.09703294000000003,
+  "root_in": 427909,
+  "root_cr": 2746329,
+  "root_out": 42088,
+  "max_ctx": 96147,
+  "reports_chars": 60630,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T1-lite-gemini-strict-aa-1",
+  "task": "T1",
+  "arm": "lite-gemini-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 37,
+  "tools": {
+   "git_audit": 7,
+   "delegate": 23,
+   "subagent_supervisor": 3,
+   "bg_wait": 3
+  },
+  "roles": {
+   "validator": 8,
+   "explorer": 10,
+   "worker": 4,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 20,
+   "failed": 3
+  },
+  "refused": 0,
+  "truncated": 2,
+  "par_turns": 0,
+  "child_cost": 0.06474814,
+  "root_in": 212495,
+  "root_cr": 1181172,
+  "root_out": 25758,
+  "max_ctx": 69443,
+  "reports_chars": 41134,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T1-lite-gemini-strict-aa-2",
+  "task": "T1",
+  "arm": "lite-gemini-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 55,
+  "tools": {
+   "git_audit": 11,
+   "delegate": 39,
+   "subagent_supervisor": 2,
+   "bg_wait": 2
+  },
+  "roles": {
+   "validator": 6,
+   "explorer": 27,
+   "worker": 4,
+   "reviewer": 2
+  },
+  "status": {
+   "completed": 37,
+   "failed": 2
+  },
+  "refused": 0,
+  "truncated": 4,
+  "par_turns": 0,
+  "child_cost": 0.14015315999999997,
+  "root_in": 438656,
+  "root_cr": 2832424,
+  "root_out": 53981,
+  "max_ctx": 114225,
+  "reports_chars": 76049,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T1-lite-gemini-strict-aa-3",
+  "task": "T1",
+  "arm": "lite-gemini-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 53,
+  "tools": {
+   "delegate": 43,
+   "subagent_supervisor": 2,
+   "bg_wait": 2,
+   "git_audit": 5
+  },
+  "roles": {
+   "explorer": 29,
+   "validator": 7,
+   "worker": 6,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 41,
+   "failed": 2
+  },
+  "refused": 0,
+  "truncated": 4,
+  "par_turns": 0,
+  "child_cost": 0.10763888000000002,
+  "root_in": 338680,
+  "root_cr": 2629785,
+  "root_out": 48651,
+  "max_ctx": 99631,
+  "reports_chars": 73127,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T1-lite-gemini-strict-readall-1",
+  "task": "T1",
+  "arm": "lite-gemini-strict-readall",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 55,
+  "tools": {
+   "read": 25,
+   "git_audit": 6,
+   "delegate": 23
+  },
+  "roles": {
+   "explorer": 3,
+   "validator": 16,
+   "worker": 3,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 23
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.07093113999999999,
+  "root_in": 349955,
+  "root_cr": 3683625,
+  "root_out": 52586,
+  "max_ctx": 121774,
+  "reports_chars": 24912,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T1-lite-gemini-strict-readall-2",
+  "task": "T1",
+  "arm": "lite-gemini-strict-readall",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 63,
+  "tools": {
+   "read": 16,
+   "delegate": 29,
+   "git_audit": 11,
+   "subagent_supervisor": 3,
+   "bg_wait": 3
+  },
+  "roles": {
+   "explorer": 21,
+   "validator": 7,
+   "worker": 1
+  },
+  "status": {
+   "completed": 26,
+   "failed": 3
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.07033754000000002,
+  "root_in": 371392,
+  "root_cr": 4447849,
+  "root_out": 51958,
+  "max_ctx": 136120,
+  "reports_chars": 48297,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T1-lite-gemini-strict-readall-3",
+  "task": "T1",
+  "arm": "lite-gemini-strict-readall",
+  "passed": false,
+  "new_fail": 2,
+  "turns": 45,
+  "tools": {
+   "read": 11,
+   "delegate": 28,
+   "subagent_supervisor": 3,
+   "bg_wait": 3,
+   "git_audit": 3
+  },
+  "roles": {
+   "explorer": 20,
+   "worker": 2,
+   "validator": 5,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 25,
+   "failed": 3
+  },
+  "refused": 0,
+  "truncated": 5,
+  "par_turns": 0,
+  "child_cost": 0.06497280000000001,
+  "root_in": 426361,
+  "root_cr": 2279897,
+  "root_out": 32373,
+  "max_ctx": 96833,
+  "reports_chars": 55683,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T2-lite-gemini-strict-1",
+  "task": "T2",
+  "arm": "lite-gemini-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 49,
+  "tools": {
+   "delegate": 47,
+   "git_audit": 2
+  },
+  "roles": {
+   "explorer": 37,
+   "validator": 6,
+   "worker": 2,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 46
+  },
+  "refused": 0,
+  "truncated": 9,
+  "par_turns": 0,
+  "child_cost": 0.20248770000000005,
+  "root_in": 587597,
+  "root_cr": 2512046,
+  "root_out": 62305,
+  "max_ctx": 115425,
+  "reports_chars": 105626,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T2-lite-gemini-strict-2",
+  "task": "T2",
+  "arm": "lite-gemini-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 67,
+  "tools": {
+   "delegate": 19,
+   "read": 42,
+   "git_audit": 5
+  },
+  "roles": {
+   "explorer": 3,
+   "validator": 8,
+   "worker": 5,
+   "reviewer": 3
+  },
+  "status": {
+   "completed": 19
+  },
+  "refused": 0,
+  "truncated": 2,
+  "par_turns": 0,
+  "child_cost": 0.10287166000000002,
+  "root_in": 818237,
+  "root_cr": 4132840,
+  "root_out": 66231,
+  "max_ctx": 129501,
+  "reports_chars": 29471,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T2-lite-gemini-strict-3",
+  "task": "T2",
+  "arm": "lite-gemini-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 47,
+  "tools": {
+   "read": 33,
+   "delegate": 7,
+   "git_audit": 6
+  },
+  "roles": {
+   "explorer": 4,
+   "worker": 1,
+   "validator": 1,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 7
+  },
+  "refused": 0,
+  "truncated": 2,
+  "par_turns": 0,
+  "child_cost": 0.06380828,
+  "root_in": 287260,
+  "root_cr": 1871138,
+  "root_out": 26583,
+  "max_ctx": 78961,
+  "reports_chars": 20606,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T2-lite-gemini-strict-aa-1",
+  "task": "T2",
+  "arm": "lite-gemini-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 60,
+  "tools": {
+   "delegate": 8,
+   "read": 48,
+   "git_audit": 3
+  },
+  "roles": {
+   "explorer": 3,
+   "worker": 2,
+   "validator": 2,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 8
+  },
+  "refused": 0,
+  "truncated": 1,
+  "par_turns": 0,
+  "child_cost": 0.0980437,
+  "root_in": 625424,
+  "root_cr": 3482607,
+  "root_out": 56853,
+  "max_ctx": 129670,
+  "reports_chars": 17129,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T2-lite-gemini-strict-aa-2",
+  "task": "T2",
+  "arm": "lite-gemini-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 63,
+  "tools": {
+   "read": 42,
+   "git_audit": 8,
+   "delegate": 12
+  },
+  "roles": {
+   "validator": 5,
+   "explorer": 4,
+   "worker": 2,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 12
+  },
+  "refused": 0,
+  "truncated": 1,
+  "par_turns": 0,
+  "child_cost": 0.07468794000000001,
+  "root_in": 502515,
+  "root_cr": 4602750,
+  "root_out": 66287,
+  "max_ctx": 148007,
+  "reports_chars": 20101,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T2-lite-gemini-strict-aa-3",
+  "task": "T2",
+  "arm": "lite-gemini-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 57,
+  "tools": {
+   "git_audit": 5,
+   "delegate": 50,
+   "subagent_supervisor": 1,
+   "bg_wait": 1
+  },
+  "roles": {
+   "explorer": 40,
+   "validator": 5,
+   "worker": 3,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 48,
+   "failed": 1
+  },
+  "refused": 0,
+  "truncated": 12,
+  "par_turns": 0,
+  "child_cost": 0.21979127999999998,
+  "root_in": 576832,
+  "root_cr": 3071018,
+  "root_out": 61808,
+  "max_ctx": 120647,
+  "reports_chars": 116031,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T2-lite-gemini-strict-readall-1",
+  "task": "T2",
+  "arm": "lite-gemini-strict-readall",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 62,
+  "tools": {
+   "read": 51,
+   "delegate": 6,
+   "git_audit": 4
+  },
+  "roles": {
+   "worker": 2,
+   "validator": 3,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 6
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.05397662000000002,
+  "root_in": 435433,
+  "root_cr": 5155200,
+  "root_out": 61244,
+  "max_ctx": 153749,
+  "reports_chars": 6910,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T2-lite-gemini-strict-readall-2",
+  "task": "T2",
+  "arm": "lite-gemini-strict-readall",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 54,
+  "tools": {
+   "read": 43,
+   "delegate": 4,
+   "subagent_supervisor": 1,
+   "bg_wait": 1,
+   "git_audit": 4
+  },
+  "roles": {
+   "validator": 3,
+   "worker": 1
+  },
+  "status": {
+   "completed": 3,
+   "failed": 1
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.01762654,
+  "root_in": 311024,
+  "root_cr": 3805845,
+  "root_out": 55564,
+  "max_ctx": 129983,
+  "reports_chars": 4029,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T2-lite-gemini-strict-readall-3",
+  "task": "T2",
+  "arm": "lite-gemini-strict-readall",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 52,
+  "tools": {
+   "read": 34,
+   "delegate": 12,
+   "git_audit": 5
+  },
+  "roles": {
+   "explorer": 2,
+   "validator": 5,
+   "worker": 4,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 12
+  },
+  "refused": 0,
+  "truncated": 1,
+  "par_turns": 0,
+  "child_cost": 0.05821619999999999,
+  "root_in": 349807,
+  "root_cr": 6166003,
+  "root_out": 67499,
+  "max_ctx": 203522,
+  "reports_chars": 15067,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T3-lite-gemini-strict-1",
+  "task": "T3",
+  "arm": "lite-gemini-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 39,
+  "tools": {
+   "read": 19,
+   "delegate": 12,
+   "git_audit": 5,
+   "subagent_supervisor": 1,
+   "bg_wait": 1
+  },
+  "roles": {
+   "validator": 4,
+   "explorer": 4,
+   "worker": 2,
+   "reviewer": 2
+  },
+  "status": {
+   "completed": 11,
+   "failed": 1
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.048186360000000004,
+  "root_in": 304466,
+  "root_cr": 1631429,
+  "root_out": 38187,
+  "max_ctx": 84848,
+  "reports_chars": 15799,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T3-lite-gemini-strict-2",
+  "task": "T3",
+  "arm": "lite-gemini-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 37,
+  "tools": {
+   "git_audit": 6,
+   "delegate": 24,
+   "subagent_supervisor": 3,
+   "bg_wait": 3
+  },
+  "roles": {
+   "explorer": 14,
+   "validator": 7,
+   "worker": 2,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 21,
+   "failed": 3
+  },
+  "refused": 0,
+  "truncated": 5,
+  "par_turns": 0,
+  "child_cost": 0.08652096000000002,
+  "root_in": 214124,
+  "root_cr": 1422209,
+  "root_out": 30733,
+  "max_ctx": 71521,
+  "reports_chars": 48116,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T3-lite-gemini-strict-3",
+  "task": "T3",
+  "arm": "lite-gemini-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 36,
+  "tools": {
+   "git_audit": 4,
+   "delegate": 29,
+   "subagent_supervisor": 1,
+   "bg_wait": 1
+  },
+  "roles": {
+   "validator": 10,
+   "explorer": 15,
+   "worker": 2,
+   "reviewer": 2
+  },
+  "status": {
+   "completed": 28,
+   "failed": 1
+  },
+  "refused": 0,
+  "truncated": 4,
+  "par_turns": 0,
+  "child_cost": 0.09514587999999999,
+  "root_in": 237167,
+  "root_cr": 1192753,
+  "root_out": 23697,
+  "max_ctx": 58894,
+  "reports_chars": 54478,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T3-lite-gemini-strict-aa-1",
+  "task": "T3",
+  "arm": "lite-gemini-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 33,
+  "tools": {
+   "delegate": 23,
+   "subagent_supervisor": 3,
+   "bg_wait": 3,
+   "git_audit": 3
+  },
+  "roles": {
+   "explorer": 16,
+   "validator": 5,
+   "worker": 1,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 20,
+   "failed": 3
+  },
+  "refused": 0,
+  "truncated": 4,
+  "par_turns": 0,
+  "child_cost": 0.07077582,
+  "root_in": 209782,
+  "root_cr": 1077672,
+  "root_out": 26552,
+  "max_ctx": 61803,
+  "reports_chars": 50506,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T3-lite-gemini-strict-aa-2",
+  "task": "T3",
+  "arm": "lite-gemini-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 36,
+  "tools": {
+   "delegate": 29,
+   "git_audit": 6
+  },
+  "roles": {
+   "validator": 4,
+   "explorer": 21,
+   "worker": 3,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 29
+  },
+  "refused": 0,
+  "truncated": 5,
+  "par_turns": 0,
+  "child_cost": 0.09842161999999999,
+  "root_in": 243111,
+  "root_cr": 1616901,
+  "root_out": 43306,
+  "max_ctx": 85080,
+  "reports_chars": 61668,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T3-lite-gemini-strict-aa-3",
+  "task": "T3",
+  "arm": "lite-gemini-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 41,
+  "tools": {
+   "delegate": 33,
+   "subagent_supervisor": 1,
+   "bg_wait": 1,
+   "git_audit": 5
+  },
+  "roles": {
+   "explorer": 23,
+   "validator": 6,
+   "worker": 3,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 32,
+   "failed": 1
+  },
+  "refused": 0,
+  "truncated": 5,
+  "par_turns": 0,
+  "child_cost": 0.09652647999999997,
+  "root_in": 275112,
+  "root_cr": 1655792,
+  "root_out": 32815,
+  "max_ctx": 71622,
+  "reports_chars": 66783,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T3-lite-gemini-strict-readall-1",
+  "task": "T3",
+  "arm": "lite-gemini-strict-readall",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 33,
+  "tools": {
+   "read": 21,
+   "delegate": 8,
+   "git_audit": 3
+  },
+  "roles": {
+   "validator": 7,
+   "worker": 1
+  },
+  "status": {
+   "completed": 8
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.015818560000000002,
+  "root_in": 216281,
+  "root_cr": 1617076,
+  "root_out": 33171,
+  "max_ctx": 87889,
+  "reports_chars": 4890,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T3-lite-gemini-strict-readall-2",
+  "task": "T3",
+  "arm": "lite-gemini-strict-readall",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 34,
+  "tools": {
+   "read": 20,
+   "delegate": 9,
+   "git_audit": 4
+  },
+  "roles": {
+   "validator": 4,
+   "explorer": 4,
+   "worker": 1
+  },
+  "status": {
+   "completed": 9
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.025686439999999998,
+  "root_in": 389363,
+  "root_cr": 1541664,
+  "root_out": 32965,
+  "max_ctx": 93243,
+  "reports_chars": 11210,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-gemini-strict",
+  "id": "T3-lite-gemini-strict-readall-3",
+  "task": "T3",
+  "arm": "lite-gemini-strict-readall",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 34,
+  "tools": {
+   "read": 22,
+   "delegate": 7,
+   "git_audit": 4
+  },
+  "roles": {
+   "validator": 6,
+   "worker": 1
+  },
+  "status": {
+   "completed": 7
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0182936,
+  "root_in": 205439,
+  "root_cr": 1481020,
+  "root_out": 24202,
+  "max_ctx": 76991,
+  "reports_chars": 6578,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T1-lite-kimi-strict-1",
+  "task": "T1",
+  "arm": "lite-kimi-strict",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 38,
+  "tools": {
+   "bash": 4,
+   "delegate": 14,
+   "bg_wait": 1,
+   "subagent_supervisor": 2,
+   "read": 27
+  },
+  "roles": {
+   "explorer": 9,
+   "worker": 4,
+   "validator": 1
+  },
+  "status": {
+   "failed": 14
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 78842,
+  "root_cr": 1452544,
+  "root_out": 18248,
+  "max_ctx": 74093,
+  "reports_chars": 5834,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T1-lite-kimi-strict-2",
+  "task": "T1",
+  "arm": "lite-kimi-strict",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 40,
+  "tools": {
+   "bash": 7,
+   "delegate": 14,
+   "bg_wait": 6,
+   "read": 18
+  },
+  "roles": {
+   "explorer": 4,
+   "worker": 6,
+   "validator": 4
+  },
+  "status": {
+   "failed": 14
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 55852,
+  "root_cr": 1156864,
+  "root_out": 11582,
+  "max_ctx": 51395,
+  "reports_chars": 5844,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T1-lite-kimi-strict-3",
+  "task": "T1",
+  "arm": "lite-kimi-strict",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 5,
+  "tools": {
+   "read": 5,
+   "bash": 2,
+   "delegate": 1
+  },
+  "roles": {
+   "explorer": 1
+  },
+  "status": {
+   "failed": 1
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 21450,
+  "root_cr": 57088,
+  "root_out": 2411,
+  "max_ctx": 24061,
+  "reports_chars": 416,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T1-lite-kimi-strict-aa-1",
+  "task": "T1",
+  "arm": "lite-kimi-strict-aa",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 50,
+  "tools": {
+   "read": 25,
+   "bash": 2,
+   "git_audit": 17,
+   "delegate": 15,
+   "bg_wait": 1,
+   "edit": 1
+  },
+  "roles": {
+   "validator": 2,
+   "worker": 10,
+   "explorer": 2,
+   "reviewer": 1
+  },
+  "status": {
+   "failed": 15
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 105523,
+  "root_cr": 2753280,
+  "root_out": 40422,
+  "max_ctx": 99782,
+  "reports_chars": 6240,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T1-lite-kimi-strict-aa-2",
+  "task": "T1",
+  "arm": "lite-kimi-strict-aa",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 52,
+  "tools": {
+   "bash": 6,
+   "delegate": 13,
+   "bg_wait": 2,
+   "read": 38,
+   "git_audit": 11,
+   "subagent_supervisor": 1
+  },
+  "roles": {
+   "explorer": 2,
+   "worker": 10,
+   "validator": 1
+  },
+  "status": {
+   "failed": 13
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 78587,
+  "root_cr": 2141184,
+  "root_out": 20972,
+  "max_ctx": 71852,
+  "reports_chars": 5430,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T1-lite-kimi-strict-aa-3",
+  "task": "T1",
+  "arm": "lite-kimi-strict-aa",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 3,
+  "tools": {
+   "bash": 2,
+   "delegate": 1
+  },
+  "roles": {
+   "explorer": 1
+  },
+  "status": {
+   "failed": 1
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 9045,
+  "root_cr": 14592,
+  "root_out": 637,
+  "max_ctx": 11974,
+  "reports_chars": 416,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T1-lite-kimi-strict-readall-1",
+  "task": "T1",
+  "arm": "lite-kimi-strict-readall",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 39,
+  "tools": {
+   "bash": 1,
+   "read": 10,
+   "delegate": 18,
+   "bg_wait": 12,
+   "subagent_supervisor": 1
+  },
+  "roles": {
+   "validator": 1,
+   "explorer": 15,
+   "worker": 1
+  },
+  "status": {
+   "refused": 1,
+   "failed": 17
+  },
+  "refused": 1,
+  "truncated": 0,
+  "par_turns": 1,
+  "child_cost": 0.0,
+  "root_in": 43533,
+  "root_cr": 1218816,
+  "root_out": 7454,
+  "max_ctx": 39394,
+  "reports_chars": 7076,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T1-lite-kimi-strict-readall-2",
+  "task": "T1",
+  "arm": "lite-kimi-strict-readall",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 47,
+  "tools": {
+   "read": 35,
+   "bash": 2,
+   "delegate": 21,
+   "bg_wait": 4,
+   "subagent_supervisor": 1
+  },
+  "roles": {
+   "explorer": 12,
+   "worker": 9
+  },
+  "status": {
+   "failed": 21
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 70231,
+  "root_cr": 2031872,
+  "root_out": 14061,
+  "max_ctx": 65729,
+  "reports_chars": 8754,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T1-lite-kimi-strict-readall-3",
+  "task": "T1",
+  "arm": "lite-kimi-strict-readall",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 1,
+  "tools": {},
+  "roles": {},
+  "status": {},
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 0,
+  "root_cr": 0,
+  "root_out": 0,
+  "max_ctx": 0,
+  "reports_chars": 0,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T2-lite-kimi-strict-1",
+  "task": "T2",
+  "arm": "lite-kimi-strict",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 30,
+  "tools": {
+   "delegate": 14,
+   "bg_wait": 1,
+   "bash": 2,
+   "read": 23
+  },
+  "roles": {
+   "explorer": 7,
+   "validator": 1,
+   "worker": 5,
+   "reviewer": 1
+  },
+  "status": {
+   "failed": 14
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 84870,
+  "root_cr": 1258752,
+  "root_out": 20536,
+  "max_ctx": 81132,
+  "reports_chars": 5812,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T2-lite-kimi-strict-2",
+  "task": "T2",
+  "arm": "lite-kimi-strict",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 29,
+  "tools": {
+   "read": 28,
+   "bash": 4,
+   "delegate": 5
+  },
+  "roles": {
+   "explorer": 3,
+   "worker": 2
+  },
+  "status": {
+   "failed": 5
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 101919,
+  "root_cr": 1505536,
+  "root_out": 28236,
+  "max_ctx": 98924,
+  "reports_chars": 2084,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T2-lite-kimi-strict-3",
+  "task": "T2",
+  "arm": "lite-kimi-strict",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 1,
+  "tools": {},
+  "roles": {},
+  "status": {},
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 0,
+  "root_cr": 0,
+  "root_out": 0,
+  "max_ctx": 0,
+  "reports_chars": 0,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T2-lite-kimi-strict-aa-1",
+  "task": "T2",
+  "arm": "lite-kimi-strict-aa",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 30,
+  "tools": {
+   "read": 23,
+   "bash": 4,
+   "delegate": 10,
+   "bg_wait": 1,
+   "handoff": 1
+  },
+  "roles": {
+   "explorer": 2,
+   "validator": 1,
+   "worker": 7
+  },
+  "status": {
+   "failed": 10
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 89727,
+  "root_cr": 1492224,
+  "root_out": 25236,
+  "max_ctx": 87189,
+  "reports_chars": 4176,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T2-lite-kimi-strict-aa-2",
+  "task": "T2",
+  "arm": "lite-kimi-strict-aa",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 23,
+  "tools": {
+   "read": 26,
+   "bash": 1,
+   "delegate": 7
+  },
+  "roles": {
+   "explorer": 4,
+   "worker": 3
+  },
+  "status": {
+   "failed": 7
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 93464,
+  "root_cr": 889344,
+  "root_out": 27514,
+  "max_ctx": 90773,
+  "reports_chars": 2918,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T2-lite-kimi-strict-aa-3",
+  "task": "T2",
+  "arm": "lite-kimi-strict-aa",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 1,
+  "tools": {},
+  "roles": {},
+  "status": {},
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 0,
+  "root_cr": 0,
+  "root_out": 0,
+  "max_ctx": 0,
+  "reports_chars": 0,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T2-lite-kimi-strict-readall-1",
+  "task": "T2",
+  "arm": "lite-kimi-strict-readall",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 30,
+  "tools": {
+   "bash": 4,
+   "read": 18,
+   "delegate": 12,
+   "bg_wait": 1
+  },
+  "roles": {
+   "explorer": 3,
+   "worker": 6,
+   "validator": 3
+  },
+  "status": {
+   "failed": 12
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 72931,
+  "root_cr": 1273856,
+  "root_out": 23257,
+  "max_ctx": 69960,
+  "reports_chars": 5010,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T2-lite-kimi-strict-readall-2",
+  "task": "T2",
+  "arm": "lite-kimi-strict-readall",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 27,
+  "tools": {
+   "bash": 6,
+   "read": 20,
+   "delegate": 7,
+   "bg_wait": 1
+  },
+  "roles": {
+   "explorer": 3,
+   "worker": 3,
+   "validator": 1
+  },
+  "status": {
+   "failed": 7
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 79754,
+  "root_cr": 1103616,
+  "root_out": 27373,
+  "max_ctx": 77420,
+  "reports_chars": 2920,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T2-lite-kimi-strict-readall-3",
+  "task": "T2",
+  "arm": "lite-kimi-strict-readall",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 1,
+  "tools": {},
+  "roles": {},
+  "status": {},
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 0,
+  "root_cr": 0,
+  "root_out": 0,
+  "max_ctx": 0,
+  "reports_chars": 0,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T3-lite-kimi-strict-1",
+  "task": "T3",
+  "arm": "lite-kimi-strict",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 29,
+  "tools": {
+   "bash": 5,
+   "read": 10,
+   "delegate": 15,
+   "bg_wait": 2,
+   "git_audit": 1
+  },
+  "roles": {
+   "explorer": 2,
+   "validator": 7,
+   "worker": 5
+  },
+  "status": {
+   "refused": 1,
+   "failed": 14
+  },
+  "refused": 1,
+  "truncated": 0,
+  "par_turns": 1,
+  "child_cost": 0.0,
+  "root_in": 51139,
+  "root_cr": 844032,
+  "root_out": 18175,
+  "max_ctx": 47939,
+  "reports_chars": 5848,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T3-lite-kimi-strict-2",
+  "task": "T3",
+  "arm": "lite-kimi-strict",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 43,
+  "tools": {
+   "delegate": 14,
+   "bash": 8,
+   "git_audit": 1,
+   "read": 24,
+   "handoff": 1
+  },
+  "roles": {
+   "explorer": 6,
+   "worker": 8
+  },
+  "status": {
+   "failed": 14
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 72619,
+  "root_cr": 1512960,
+  "root_out": 23612,
+  "max_ctx": 67411,
+  "reports_chars": 5840,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T3-lite-kimi-strict-3",
+  "task": "T3",
+  "arm": "lite-kimi-strict",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 1,
+  "tools": {},
+  "roles": {},
+  "status": {},
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 0,
+  "root_cr": 0,
+  "root_out": 0,
+  "max_ctx": 0,
+  "reports_chars": 0,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T3-lite-kimi-strict-aa-1",
+  "task": "T3",
+  "arm": "lite-kimi-strict-aa",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 43,
+  "tools": {
+   "bash": 6,
+   "delegate": 20,
+   "bg_wait": 3,
+   "read": 16,
+   "git_audit": 4,
+   "handoff": 1
+  },
+  "roles": {
+   "explorer": 6,
+   "worker": 12,
+   "validator": 2
+  },
+  "status": {
+   "failed": 20
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 57669,
+  "root_cr": 1409024,
+  "root_out": 17269,
+  "max_ctx": 52586,
+  "reports_chars": 8348,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T3-lite-kimi-strict-aa-2",
+  "task": "T3",
+  "arm": "lite-kimi-strict-aa",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 22,
+  "tools": {
+   "bash": 4,
+   "read": 14,
+   "delegate": 7,
+   "bg_wait": 1
+  },
+  "roles": {
+   "explorer": 2,
+   "validator": 5
+  },
+  "status": {
+   "failed": 7
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 44947,
+  "root_cr": 593408,
+  "root_out": 8020,
+  "max_ctx": 46143,
+  "reports_chars": 2922,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T3-lite-kimi-strict-aa-3",
+  "task": "T3",
+  "arm": "lite-kimi-strict-aa",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 1,
+  "tools": {},
+  "roles": {},
+  "status": {},
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 0,
+  "root_cr": 0,
+  "root_out": 0,
+  "max_ctx": 0,
+  "reports_chars": 0,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T3-lite-kimi-strict-readall-1",
+  "task": "T3",
+  "arm": "lite-kimi-strict-readall",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 46,
+  "tools": {
+   "read": 25,
+   "bash": 2,
+   "delegate": 22,
+   "bg_wait": 1,
+   "subagent_supervisor": 1,
+   "handoff": 1
+  },
+  "roles": {
+   "explorer": 3,
+   "validator": 2,
+   "worker": 16,
+   "reviewer": 1
+  },
+  "status": {
+   "failed": 22
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 81783,
+  "root_cr": 2307840,
+  "root_out": 26205,
+  "max_ctx": 76930,
+  "reports_chars": 9164,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T3-lite-kimi-strict-readall-2",
+  "task": "T3",
+  "arm": "lite-kimi-strict-readall",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 23,
+  "tools": {
+   "read": 17,
+   "bash": 6,
+   "delegate": 6
+  },
+  "roles": {
+   "explorer": 4,
+   "worker": 2
+  },
+  "status": {
+   "failed": 6
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 41736,
+  "root_cr": 662528,
+  "root_out": 5827,
+  "max_ctx": 42448,
+  "reports_chars": 2500,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-kimi-strict",
+  "id": "T3-lite-kimi-strict-readall-3",
+  "task": "T3",
+  "arm": "lite-kimi-strict-readall",
+  "passed": false,
+  "new_fail": 0,
+  "turns": 1,
+  "tools": {},
+  "roles": {},
+  "status": {},
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 0,
+  "root_cr": 0,
+  "root_out": 0,
+  "max_ctx": 0,
+  "reports_chars": 0,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-mimo-strict",
+  "id": "T1-lite-mimo-strict-1",
+  "task": "T1",
+  "arm": "lite-mimo-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 31,
+  "tools": {
+   "bash": 3,
+   "delegate": 13,
+   "read": 12,
+   "subagent_supervisor": 4,
+   "bg_wait": 4,
+   "git_audit": 4
+  },
+  "roles": {
+   "explorer": 7,
+   "validator": 4,
+   "worker": 1,
+   "?": 1
+  },
+  "status": {
+   "completed": 8,
+   "failed": 4,
+   "error": 1
+  },
+  "refused": 0,
+  "truncated": 6,
+  "par_turns": 0,
+  "child_cost": 0.061699100000000014,
+  "root_in": 98316,
+  "root_cr": 1688896,
+  "root_out": 43886,
+  "max_ctx": 97293,
+  "reports_chars": 35811,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-mimo-strict",
+  "id": "T1-lite-mimo-strict-aa-1",
+  "task": "T1",
+  "arm": "lite-mimo-strict-aa",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 35,
+  "tools": {
+   "bash": 4,
+   "delegate": 22,
+   "read": 13,
+   "subagent_supervisor": 1,
+   "bg_wait": 1,
+   "git_audit": 1
+  },
+  "roles": {
+   "explorer": 9,
+   "validator": 6,
+   "worker": 5
+  },
+  "status": {
+   "completed": 19,
+   "failed": 1,
+   "refused": 1
+  },
+  "refused": 1,
+  "truncated": 7,
+  "par_turns": 1,
+  "child_cost": 0.07276462,
+  "root_in": 152141,
+  "root_cr": 2422720,
+  "root_out": 90872,
+  "max_ctx": 151166,
+  "reports_chars": 54235,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-mimo-strict",
+  "id": "T1-lite-mimo-strict-readall-1",
+  "task": "T1",
+  "arm": "lite-mimo-strict-readall",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 33,
+  "tools": {
+   "bash": 7,
+   "read": 15,
+   "delegate": 21,
+   "git_audit": 3
+  },
+  "roles": {
+   "explorer": 8,
+   "validator": 5,
+   "?": 1,
+   "worker": 4,
+   "reviewer": 2
+  },
+  "status": {
+   "completed": 19,
+   "error": 1,
+   "refused": 1
+  },
+  "refused": 1,
+  "truncated": 8,
+  "par_turns": 3,
+  "child_cost": 0.12305404,
+  "root_in": 122511,
+  "root_cr": 2153216,
+  "root_out": 66150,
+  "max_ctx": 121507,
+  "reports_chars": 66657,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-mimo-strict",
+  "id": "T2-lite-mimo-strict-1",
+  "task": "T2",
+  "arm": "lite-mimo-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 32,
+  "tools": {
+   "read": 19,
+   "bash": 2,
+   "delegate": 15,
+   "git_audit": 5
+  },
+  "roles": {
+   "explorer": 2,
+   "?": 1,
+   "worker": 6,
+   "validator": 3,
+   "reviewer": 2
+  },
+  "status": {
+   "completed": 13,
+   "error": 1,
+   "refused": 1
+  },
+  "refused": 1,
+  "truncated": 3,
+  "par_turns": 2,
+  "child_cost": 0.1059238,
+  "root_in": 235049,
+  "root_cr": 2665216,
+  "root_out": 70845,
+  "max_ctx": 138839,
+  "reports_chars": 26739,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "control-mimo-strict",
+  "id": "T2-lite-mimo-strict-readall-1",
+  "task": "T2",
+  "arm": "lite-mimo-strict-readall",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 27,
+  "tools": {
+   "bash": 1,
+   "read": 27,
+   "delegate": 8,
+   "subagent_supervisor": 2,
+   "bg_wait": 2,
+   "git_audit": 2
+  },
+  "roles": {
+   "explorer": 4,
+   "?": 1,
+   "worker": 2
+  },
+  "status": {
+   "completed": 5,
+   "error": 1,
+   "failed": 1
+  },
+  "refused": 0,
+  "truncated": 3,
+  "par_turns": 0,
+  "child_cost": 0.10078878,
+  "root_in": 169291,
+  "root_cr": 2556352,
+  "root_out": 79720,
+  "max_ctx": 168520,
+  "reports_chars": 33194,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "pilot-kimi-strict",
+  "id": "T1-lite-kimi-strict-1",
+  "task": "T1",
+  "arm": "lite-kimi-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 18,
+  "tools": {
+   "bash": 4,
+   "git_audit": 3,
+   "read": 7,
+   "delegate": 8
+  },
+  "roles": {
+   "explorer": 1,
+   "worker": 6,
+   "validator": 1
+  },
+  "status": {
+   "completed": 8
+  },
+  "refused": 0,
+  "truncated": 1,
+  "par_turns": 0,
+  "child_cost": 0.036115140000000004,
+  "root_in": 48909,
+  "root_cr": 551936,
+  "root_out": 17380,
+  "max_ctx": 49855,
+  "reports_chars": 13414,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "pilot-kimi-strict",
+  "id": "T1-lite-kimi-strict-2",
+  "task": "T1",
+  "arm": "lite-kimi-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 14,
+  "tools": {
+   "delegate": 7,
+   "read": 9,
+   "bash": 2,
+   "git_audit": 1
+  },
+  "roles": {
+   "explorer": 3,
+   "worker": 1,
+   "validator": 2
+  },
+  "status": {
+   "completed": 6,
+   "refused": 1
+  },
+  "refused": 1,
+  "truncated": 3,
+  "par_turns": 1,
+  "child_cost": 0.04305666,
+  "root_in": 51122,
+  "root_cr": 435456,
+  "root_out": 20211,
+  "max_ctx": 52600,
+  "reports_chars": 17489,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "pilot-kimi-strict",
+  "id": "T2-lite-kimi-strict-1",
+  "task": "T2",
+  "arm": "lite-kimi-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 15,
+  "tools": {
+   "bash": 3,
+   "read": 12,
+   "delegate": 5,
+   "git_audit": 1
+  },
+  "roles": {
+   "explorer": 2,
+   "worker": 2,
+   "validator": 1
+  },
+  "status": {
+   "completed": 5
+  },
+  "refused": 0,
+  "truncated": 3,
+  "par_turns": 0,
+  "child_cost": 0.05128812,
+  "root_in": 62027,
+  "root_cr": 500480,
+  "root_out": 22581,
+  "max_ctx": 63672,
+  "reports_chars": 14611,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "pilot-kimi-strict",
+  "id": "T2-lite-kimi-strict-2",
+  "task": "T2",
+  "arm": "lite-kimi-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 17,
+  "tools": {
+   "bash": 4,
+   "delegate": 3,
+   "read": 15,
+   "git_audit": 1
+  },
+  "roles": {
+   "explorer": 1,
+   "worker": 1,
+   "validator": 1
+  },
+  "status": {
+   "completed": 3
+  },
+  "refused": 0,
+  "truncated": 1,
+  "par_turns": 0,
+  "child_cost": 0.032174339999999996,
+  "root_in": 61707,
+  "root_cr": 529152,
+  "root_out": 19519,
+  "max_ctx": 62990,
+  "reports_chars": 6377,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "pilot-kimi-strict",
+  "id": "T3-lite-kimi-strict-1",
+  "task": "T3",
+  "arm": "lite-kimi-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 14,
+  "tools": {
+   "bash": 3,
+   "read": 6,
+   "delegate": 5,
+   "git_audit": 2,
+   "subagent_supervisor": 1,
+   "bg_wait": 1
+  },
+  "roles": {
+   "explorer": 1,
+   "worker": 2,
+   "validator": 2
+  },
+  "status": {
+   "completed": 4,
+   "failed": 1
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0235553,
+  "root_in": 36223,
+  "root_cr": 357888,
+  "root_out": 8400,
+  "max_ctx": 37826,
+  "reports_chars": 7228,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "pilot-kimi-strict",
+  "id": "T3-lite-kimi-strict-2",
+  "task": "T3",
+  "arm": "lite-kimi-strict",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 18,
+  "tools": {
+   "bash": 3,
+   "delegate": 8,
+   "read": 7,
+   "git_audit": 1,
+   "subagent_supervisor": 1,
+   "bg_wait": 1
+  },
+  "roles": {
+   "explorer": 3,
+   "worker": 3,
+   "validator": 2
+  },
+  "status": {
+   "completed": 7,
+   "failed": 1
+  },
+  "refused": 0,
+  "truncated": 2,
+  "par_turns": 0,
+  "child_cost": 0.05223840000000001,
+  "root_in": 42438,
+  "root_cr": 504064,
+  "root_out": 10182,
+  "max_ctx": 42959,
+  "reports_chars": 16117,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "pilot-root",
+  "id": "T1-lite-gemini-1",
+  "task": "T1",
+  "arm": "lite-gemini",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 75,
+  "tools": {
+   "delegate": 6,
+   "read": 19,
+   "bash": 39,
+   "git_audit": 8,
+   "edit": 2
+  },
+  "roles": {
+   "explorer": 1,
+   "validator": 4,
+   "worker": 1
+  },
+  "status": {
+   "completed": 6
+  },
+  "refused": 0,
+  "truncated": 1,
+  "par_turns": 0,
+  "child_cost": 0.03558332,
+  "root_in": 551921,
+  "root_cr": 4574797,
+  "root_out": 53312,
+  "max_ctx": 118384,
+  "reports_chars": 10821,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "pilot-root",
+  "id": "T1-lite-gemini-2",
+  "task": "T1",
+  "arm": "lite-gemini",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 95,
+  "tools": {
+   "git_audit": 9,
+   "read": 28,
+   "bash": 53,
+   "delegate": 1,
+   "edit": 3
+  },
+  "roles": {
+   "worker": 1
+  },
+  "status": {
+   "completed": 1
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.011626319999999999,
+  "root_in": 570638,
+  "root_cr": 8369480,
+  "root_out": 58090,
+  "max_ctx": 178083,
+  "reports_chars": 1270,
+  "commits": 0,
+  "suite_runs_by_root": 15
+ },
+ {
+  "camp": "pilot-root",
+  "id": "T1-lite-kimi-1",
+  "task": "T1",
+  "arm": "lite-kimi",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 32,
+  "tools": {
+   "bash": 31,
+   "read": 6,
+   "edit": 1
+  },
+  "roles": {},
+  "status": {},
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 54468,
+  "root_cr": 1136128,
+  "root_out": 15195,
+  "max_ctx": 51897,
+  "reports_chars": 0,
+  "commits": 0,
+  "suite_runs_by_root": 10
+ },
+ {
+  "camp": "pilot-root",
+  "id": "T1-lite-kimi-2",
+  "task": "T1",
+  "arm": "lite-kimi",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 32,
+  "tools": {
+   "bash": 25,
+   "git_audit": 1,
+   "read": 8,
+   "edit": 3
+  },
+  "roles": {},
+  "status": {},
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 53898,
+  "root_cr": 1123328,
+  "root_out": 13257,
+  "max_ctx": 51159,
+  "reports_chars": 0,
+  "commits": 0,
+  "suite_runs_by_root": 9
+ },
+ {
+  "camp": "pilot-root",
+  "id": "T2-lite-gemini-1",
+  "task": "T2",
+  "arm": "lite-gemini",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 62,
+  "tools": {
+   "read": 42,
+   "git_audit": 3,
+   "delegate": 11,
+   "edit": 3,
+   "bash": 2
+  },
+  "roles": {
+   "explorer": 2,
+   "validator": 7,
+   "worker": 1,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 11
+  },
+  "refused": 0,
+  "truncated": 2,
+  "par_turns": 0,
+  "child_cost": 0.05556136000000002,
+  "root_in": 426162,
+  "root_cr": 3945643,
+  "root_out": 51812,
+  "max_ctx": 109749,
+  "reports_chars": 16325,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "pilot-root",
+  "id": "T2-lite-gemini-2",
+  "task": "T2",
+  "arm": "lite-gemini",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 106,
+  "tools": {
+   "read": 15,
+   "bash": 70,
+   "delegate": 5,
+   "git_audit": 7,
+   "edit": 7
+  },
+  "roles": {
+   "worker": 1,
+   "validator": 3,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 5
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.044819120000000004,
+  "root_in": 577885,
+  "root_cr": 9699121,
+  "root_out": 70142,
+  "max_ctx": 177127,
+  "reports_chars": 5899,
+  "commits": 0,
+  "suite_runs_by_root": 4
+ },
+ {
+  "camp": "pilot-root",
+  "id": "T2-lite-kimi-1",
+  "task": "T2",
+  "arm": "lite-kimi",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 28,
+  "tools": {
+   "bash": 25,
+   "read": 6,
+   "delegate": 1,
+   "edit": 5
+  },
+  "roles": {
+   "worker": 1
+  },
+  "status": {
+   "completed": 1
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.020406619999999997,
+  "root_in": 76012,
+  "root_cr": 1544704,
+  "root_out": 20161,
+  "max_ctx": 74624,
+  "reports_chars": 1214,
+  "commits": 0,
+  "suite_runs_by_root": 4
+ },
+ {
+  "camp": "pilot-root",
+  "id": "T2-lite-kimi-2",
+  "task": "T2",
+  "arm": "lite-kimi",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 18,
+  "tools": {
+   "bash": 20,
+   "read": 3,
+   "delegate": 1,
+   "git_audit": 1,
+   "edit": 2
+  },
+  "roles": {
+   "worker": 1
+  },
+  "status": {
+   "completed": 1
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.025682519999999997,
+  "root_in": 53992,
+  "root_cr": 686336,
+  "root_out": 14721,
+  "max_ctx": 53668,
+  "reports_chars": 1139,
+  "commits": 0,
+  "suite_runs_by_root": 3
+ },
+ {
+  "camp": "pilot-root",
+  "id": "T3-lite-gemini-1",
+  "task": "T3",
+  "arm": "lite-gemini",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 35,
+  "tools": {
+   "read": 17,
+   "delegate": 9,
+   "git_audit": 7,
+   "edit": 1
+  },
+  "roles": {
+   "validator": 5,
+   "explorer": 2,
+   "worker": 1,
+   "reviewer": 1
+  },
+  "status": {
+   "completed": 9
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.03698448000000001,
+  "root_in": 199180,
+  "root_cr": 1331055,
+  "root_out": 34847,
+  "max_ctx": 78010,
+  "reports_chars": 15198,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "pilot-root",
+  "id": "T3-lite-gemini-2",
+  "task": "T3",
+  "arm": "lite-gemini",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 44,
+  "tools": {
+   "delegate": 9,
+   "read": 21,
+   "bash": 7,
+   "git_audit": 4,
+   "edit": 2
+  },
+  "roles": {
+   "validator": 2,
+   "explorer": 1,
+   "worker": 4,
+   "reviewer": 2
+  },
+  "status": {
+   "completed": 9
+  },
+  "refused": 0,
+  "truncated": 1,
+  "par_turns": 0,
+  "child_cost": 0.03756364000000001,
+  "root_in": 301494,
+  "root_cr": 1564083,
+  "root_out": 21931,
+  "max_ctx": 65609,
+  "reports_chars": 10842,
+  "commits": 0,
+  "suite_runs_by_root": 0
+ },
+ {
+  "camp": "pilot-root",
+  "id": "T3-lite-kimi-1",
+  "task": "T3",
+  "arm": "lite-kimi",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 18,
+  "tools": {
+   "bash": 13,
+   "read": 7,
+   "delegate": 1
+  },
+  "roles": {
+   "worker": 1
+  },
+  "status": {
+   "completed": 1
+  },
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.00849154,
+  "root_in": 37578,
+  "root_cr": 465664,
+  "root_out": 7384,
+  "max_ctx": 36260,
+  "reports_chars": 1159,
+  "commits": 0,
+  "suite_runs_by_root": 5
+ },
+ {
+  "camp": "pilot-root",
+  "id": "T3-lite-kimi-2",
+  "task": "T3",
+  "arm": "lite-kimi",
+  "passed": true,
+  "new_fail": 0,
+  "turns": 22,
+  "tools": {
+   "bash": 17,
+   "read": 7,
+   "edit": 4
+  },
+  "roles": {},
+  "status": {},
+  "refused": 0,
+  "truncated": 0,
+  "par_turns": 0,
+  "child_cost": 0.0,
+  "root_in": 40965,
+  "root_cr": 592384,
+  "root_out": 9442,
+  "max_ctx": 39143,
+  "reports_chars": 0,
+  "commits": 0,
+  "suite_runs_by_root": 4
+ }
+]

@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -uo pipefail
+exec >>/project/tmp/ppo-bench/results/native-pilot-t3/lanes/lane-0.log 2>&1
+OUT=/project/tmp/ppo-bench/results/native-pilot-t3
+[[ -f "$OUT/STOP" ]] && { echo lane\ 0:\ STOP\ present\,\ exiting\ before\ T3-native-pds-1; exit 0; }
+for attempt in $(seq 1 1); do
+  env BENCH_OUT=/project/tmp/ppo-bench/results/native-pilot-t3 BENCH_ATTEMPT="$attempt" BENCH_MAX_ATTEMPTS=1 /home/tcuni-claw/pi/pi-planner-only/bench/run.sh T3 native-pds 1; rc=$?
+  (( rc == 5 )) || break
+  d="$OUT/void/T3-native-pds-1-attempt$attempt-$(date +%Y%m%dT%H%M%S)"; mkdir -p "$d"; shopt -s nullglob; files=("$OUT/runs/T3-native-pds-1."*); if ((${#files[@]})); then mv "${files[@]}" "$d"/; fi
+  echo lane\ 0:\ T3-native-pds-1\ attempt\ failed\,\ retrying; sleep 120
+  [[ -f "$OUT/STOP" ]] && { echo lane\ 0:\ STOP\ present\,\ abandoning\ retry\ of\ T3-native-pds-1; exit 0; }
+done
+[[ -f "$OUT/STOP" ]] && { echo lane\ 0:\ STOP\ present\,\ exiting\ before\ T3-lite-pds-head-1; exit 0; }
+for attempt in $(seq 1 1); do
+  env BENCH_OUT=/project/tmp/ppo-bench/results/native-pilot-t3 BENCH_PLUGIN_REF=ad51067da379edf5735cb9b03d70f17bda331675 BENCH_ATTEMPT="$attempt" BENCH_MAX_ATTEMPTS=1 /home/tcuni-claw/pi/pi-planner-only/bench/run.sh T3 lite-pds-head 1; rc=$?
+  (( rc == 5 )) || break
+  d="$OUT/void/T3-lite-pds-head-1-attempt$attempt-$(date +%Y%m%dT%H%M%S)"; mkdir -p "$d"; shopt -s nullglob; files=("$OUT/runs/T3-lite-pds-head-1."*); if ((${#files[@]})); then mv "${files[@]}" "$d"/; fi
+  echo lane\ 0:\ T3-lite-pds-head-1\ attempt\ failed\,\ retrying; sleep 120
+  [[ -f "$OUT/STOP" ]] && { echo lane\ 0:\ STOP\ present\,\ abandoning\ retry\ of\ T3-lite-pds-head-1; exit 0; }
+done
+[[ -f "$OUT/STOP" ]] && { echo lane\ 0:\ STOP\ present\,\ exiting\ before\ T3-direct-pds-1; exit 0; }
+for attempt in $(seq 1 1); do
+  env BENCH_OUT=/project/tmp/ppo-bench/results/native-pilot-t3 BENCH_PLUGIN_REF=ad51067da379edf5735cb9b03d70f17bda331675 BENCH_ATTEMPT="$attempt" BENCH_MAX_ATTEMPTS=1 /home/tcuni-claw/pi/pi-planner-only/bench/run.sh T3 direct-pds 1; rc=$?
+  (( rc == 5 )) || break
+  d="$OUT/void/T3-direct-pds-1-attempt$attempt-$(date +%Y%m%dT%H%M%S)"; mkdir -p "$d"; shopt -s nullglob; files=("$OUT/runs/T3-direct-pds-1."*); if ((${#files[@]})); then mv "${files[@]}" "$d"/; fi
+  echo lane\ 0:\ T3-direct-pds-1\ attempt\ failed\,\ retrying; sleep 120
+  [[ -f "$OUT/STOP" ]] && { echo lane\ 0:\ STOP\ present\,\ abandoning\ retry\ of\ T3-direct-pds-1; exit 0; }
+done
+[[ -f "$OUT/STOP" ]] && { echo lane\ 0:\ STOP\ present\,\ exiting\ before\ T3-direct-pds-2; exit 0; }
+for attempt in $(seq 1 1); do
+  env BENCH_OUT=/project/tmp/ppo-bench/results/native-pilot-t3 BENCH_PLUGIN_REF=ad51067da379edf5735cb9b03d70f17bda331675 BENCH_ATTEMPT="$attempt" BENCH_MAX_ATTEMPTS=1 /home/tcuni-claw/pi/pi-planner-only/bench/run.sh T3 direct-pds 2; rc=$?
+  (( rc == 5 )) || break
+  d="$OUT/void/T3-direct-pds-2-attempt$attempt-$(date +%Y%m%dT%H%M%S)"; mkdir -p "$d"; shopt -s nullglob; files=("$OUT/runs/T3-direct-pds-2."*); if ((${#files[@]})); then mv "${files[@]}" "$d"/; fi
+  echo lane\ 0:\ T3-direct-pds-2\ attempt\ failed\,\ retrying; sleep 120
+  [[ -f "$OUT/STOP" ]] && { echo lane\ 0:\ STOP\ present\,\ abandoning\ retry\ of\ T3-direct-pds-2; exit 0; }
+done
+[[ -f "$OUT/STOP" ]] && { echo lane\ 0:\ STOP\ present\,\ exiting\ before\ T3-lite-pds-head-2; exit 0; }
+for attempt in $(seq 1 1); do
+  env BENCH_OUT=/project/tmp/ppo-bench/results/native-pilot-t3 BENCH_PLUGIN_REF=ad51067da379edf5735cb9b03d70f17bda331675 BENCH_ATTEMPT="$attempt" BENCH_MAX_ATTEMPTS=1 /home/tcuni-claw/pi/pi-planner-only/bench/run.sh T3 lite-pds-head 2; rc=$?
+  (( rc == 5 )) || break
+  d="$OUT/void/T3-lite-pds-head-2-attempt$attempt-$(date +%Y%m%dT%H%M%S)"; mkdir -p "$d"; shopt -s nullglob; files=("$OUT/runs/T3-lite-pds-head-2."*); if ((${#files[@]})); then mv "${files[@]}" "$d"/; fi
+  echo lane\ 0:\ T3-lite-pds-head-2\ attempt\ failed\,\ retrying; sleep 120
+  [[ -f "$OUT/STOP" ]] && { echo lane\ 0:\ STOP\ present\,\ abandoning\ retry\ of\ T3-lite-pds-head-2; exit 0; }
+done
+[[ -f "$OUT/STOP" ]] && { echo lane\ 0:\ STOP\ present\,\ exiting\ before\ T3-native-pds-2; exit 0; }
+for attempt in $(seq 1 1); do
+  env BENCH_OUT=/project/tmp/ppo-bench/results/native-pilot-t3 BENCH_ATTEMPT="$attempt" BENCH_MAX_ATTEMPTS=1 /home/tcuni-claw/pi/pi-planner-only/bench/run.sh T3 native-pds 2; rc=$?
+  (( rc == 5 )) || break
+  d="$OUT/void/T3-native-pds-2-attempt$attempt-$(date +%Y%m%dT%H%M%S)"; mkdir -p "$d"; shopt -s nullglob; files=("$OUT/runs/T3-native-pds-2."*); if ((${#files[@]})); then mv "${files[@]}" "$d"/; fi
+  echo lane\ 0:\ T3-native-pds-2\ attempt\ failed\,\ retrying; sleep 120
+  [[ -f "$OUT/STOP" ]] && { echo lane\ 0:\ STOP\ present\,\ abandoning\ retry\ of\ T3-native-pds-2; exit 0; }
+done

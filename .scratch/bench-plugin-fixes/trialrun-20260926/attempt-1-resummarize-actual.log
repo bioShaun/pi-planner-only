@@ -1,0 +1,7 @@
+ATTEMPT SPEND (current runs only, archived void excluded): $0.1111
+T3 native-pds 1: exit=0 pass=True wall=1063 root_turns=39 delegates=4 rejected_duplicates=1 tokens(in/out/cacheRead/cacheWrite)=106054/30007/1893120/0 root_cost=$0.0792
+  child_cost=$0.0319 total_cost=$0.1111
+AGGREGATES
+native-pds: runs=1 pass=1/1 median=$0.1111 mean=$0.1111
+T3 native-pds: n=1 pass=1 median_cost=0.11108863999999999
+MECH native-pds: refused=NA detached=NA truncated=NA rejected_duplicates=1 root_reads_med=10 root_bash_med=42 cache_read_med=1893120 turns_per_delegate_med=9.75 extra_tools=0

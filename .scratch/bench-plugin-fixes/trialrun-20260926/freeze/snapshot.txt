@@ -1,0 +1,69 @@
+### frozen source snapshot @ 2026-09-26T12:58:18+08:00
+baseline_commit=ad51067da379edf5735cb9b03d70f17bda331675
+hostname=tcuni-claw
+pi_version=0.87.1
+pi_subagents_version=0.71.0
+node=v24.14.0 npm=11.9.0 python3=Python 3.13.12
+task_python=/public/scripts/tc-probe-design-v2/.venv/bin/python (Python 3.12.13)
+task_repo=/public/scripts/tc-probe-design-v2 (read-only; source HEAD=462d5dfddc659ca8e8dd18adc816f89042e9d247)
+task_target=e9270779747d2b14a531d5bbf856f3287d15f4f7 task_parent=712e9ff772033f39fa14eceaf4f1fc3fa4aa0ce6
+plugin_shipped_sources_clean_vs_baseline=yes
+plugin_pinned_ref=ad51067da379edf5735cb9b03d70f17bda331675
+subagents_config: {
+ "defaultModel": "tcuni/gpt-6-luna",
+ "agentOverrides": {
+  "planner": {
+   "model": "tcuni-ds/deepseek/deepseek-v4.1-flash",
+   "thinking": "high"
+  },
+  "oracle": {
+   "model": "tcuni/gpt-6-luna",
+   "thinking": "low"
+  },
+  "reviewer": {
+   "model": "tcuni/gpt-6-luna",
+   "thinking": "high"
+  },
+  "worker": {
+   "model": "tcuni/gpt-6-luna",
+   "thinking": "medium"
+  },
+  "researcher": {
+   "model": "tcuni/gpt-6-luna",
+   "thinking": "medium"
+  },
+  "scout": {
+   "model": "tcuni/gpt-6-luna",
+   "thinking": "low"
+  },
+  "planner-scout": {
+   "model": "tcuni/gpt-6-luna",
+   "thinking": "low"
+  }
+ }
+}
+--- sha256 of trial-defining inputs
+412f8ab7c43f1353623ab2031053213a47aa9650834b1aad857251a14a54d812  bench/tasks/T3.json
+eb4b78c6264a958ee51460089853ae43e9c2cec8787c2a3524b400d160877445  bench/tasks/T3.md
+2e9c8a6e9f211aeefda811bcf60ff3a305446d5a624884b5a93a94d7ab805754  bench/baselines/T3.failures.txt
+3a0ad0ec2f9f730b260ae51233faa6b853e2da5ff80f9d9981d4cc85e39e4f20  bench/arms/direct-pds.json
+5d350e2a39a536c99cccd3577a940915b0ce323d56ce6f4eeb309dd43f0f2419  bench/arms/native-pds.json
+44713a192d62684e9a416a2d2b480a4a8456e925994e8b9d887d1e735e07d2bf  bench/arms/lite-pds-head.json
+4195515d885769a331af5f2342c2a01fdc79edd097f465e3a72a3d150ff2ea0f  bench/run.sh
+7d142f5aa81ab2f0a317771946d11bd7af27348a0340a16013b2e906996af14c  bench/runcheck.py
+046c4312bf801ec18629fa386ecb9c7d8ce483fb1796842830f09b49ce55b245  bench/summarize.py
+a6636b01863b914db14a9b739737a1e2d19389e95b8115a3f5dc6631ff8b44fe  bench/native_results.py
+5c832e9963edc96f2361486852e8950c612a55972a2b40f75e15f908866b9cff  bench/test_native.py
+c227a46a715db953502369998fd237540f5a5e4e347ce8b7ce32270e88a3869d  bench/prepare-clone.sh
+bc3e922172485e92a814e939b66036f08dfe0d87ca8c30ce896932e365413169  bench/evaluate.sh
+9e2ff1a34fd060a76241d465701233c8ee640b781f0b2ef46064ecaa1d1f2421  bench/goldcheck.sh
+8394da3af92c906531d5fa61eac47bc58dcd7b0a3143fe92ca02ef9c7994cabc  bench/campaign.sh
+07a556fc8126cb7c7d6903a2361ff40f3014cf892978663dd78fd5b189d961f4  bench/prices.json
+e81d30758313f63ca652152c970434d1a2128f8724f9965fb9da9d634db9388b  index.ts
+e6654ea4efe288d9c95331b18833f4ef2deda6b55866a46ed19ead5f843baa5b  delegate.ts
+aae25e5e4e22e3eee10956b271d173ab3bcc737174f3d25956be5c270453c904  git.ts
+d15d80d8098ec0646f972f92cf10b3752314d647bc0e1b77b35f3b30ede5a034  format.ts
+8efb6fbea9acd72db59e4376cd061b0f4f07da17bc993c99a560dec018087171  config.ts
+66f3067df0bdf0bfe58dc9a514cfb643cfc8cc5a5c5d1b9e9ffaf57991958877  host.ts
+07a1701a3ca1d4a90b9b3d5a081b3b5705600cec46ecaf1ef60035549aa56976  subagent-artifacts.ts
+604f58583620f54998989aceea0f88ee50292651395de3609f9e3b2f970fad9a  subagent-delegation-contract.ts
