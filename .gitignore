@@ -76,3 +76,45 @@ node_modules/
 .scratch/archive/legacy-full-audit/request-stop-p0-20260919/cli-acceptance/cli-run-*/workspace/
 .scratch/**/tmp/node-compile-cache/
 __pycache__/
+
+# CommandCode local taste profile (machine-local, like .codex/)
+.commandcode/
+
+# 2026-09-24 ad-hoc om09 measurement leftovers: raw sessions and transcripts
+.scratch/om09-run/
+.scratch/om09-run2/
+.scratch/om09-run3/
+.scratch/om09-run4/
+
+# lite-drift-review summary stays local on purpose (see docs/lite-direction-review-2026-09-25.md)
+.scratch/lite-drift-review/
+
+# bench run artifacts: clones are embedded git repos (a plain `git add -A` would make
+# them gitlinks), while transcripts, freeze archives, target-repo snapshots and temp
+# roots are raw or derived runtime output. The small report/json/log evidence next to
+# them stays committed.
+.scratch/**/clone/
+.scratch/**/task-source
+.scratch/**/validation.*/
+.scratch/**/reconstructed*/
+.scratch/**/reproduce-check/
+.scratch/**/freeze/*.tar
+.scratch/**/freeze/newfiles/
+.scratch/**/environment-evidence/
+.scratch/**/temp/
+.scratch/**/__pycache__/
+.scratch/**/*.bundle
+.scratch/**/*.tgz
+.scratch/**/session.jsonl
+.scratch/**/*_transcript.jsonl
+.scratch/**/child-evidence/**/*.jsonl
+.scratch/**/evidence/**/before/
+.scratch/**/evidence/**/after/
+.scratch/lite-smoke/run.jsonl
+
+# T2c task definition is not versioned yet: bench/tasks/T2c.json points `repo` at
+# .scratch/lite-t2c-preparation-20260927/task-source (excluded above) and its target
+# commit c3dd016 is not in the canonical /public/scripts/tc-probe-design-v2.
+# Prerequisite: .scratch/lite-t2c-focused-20260927/issues/01-publish-t2c-target-commit.md
+bench/tasks/T2c.json
+bench/tasks/T2c.md
