@@ -1,0 +1,25 @@
+test_launch_routes_and_rejects_unknown_mode (__main__.NativeBenchTest.test_launch_routes_and_rejects_unknown_mode) ... ok
+test_lite_child_missing_or_unknown_usage_never_claims_complete_spend (__main__.NativeBenchTest.test_lite_child_missing_or_unknown_usage_never_claims_complete_spend) ... ok
+test_missing_exit_cannot_certify_completed_cost (__main__.NativeBenchTest.test_missing_exit_cannot_certify_completed_cost) ... ok
+test_missing_model_usage_errors_and_async_are_invalid (__main__.NativeBenchTest.test_missing_model_usage_errors_and_async_are_invalid) ... ok
+test_missing_or_invalid_metadata_cannot_hide_native_spend (__main__.NativeBenchTest.test_missing_or_invalid_metadata_cannot_hide_native_spend) ... ok
+test_model_key_gate_and_pricing_agree_on_suffix (__main__.NativeBenchTest.test_model_key_gate_and_pricing_agree_on_suffix) ... ok
+test_nested_spend_requires_proof_even_with_parent_usage (__main__.NativeBenchTest.test_nested_spend_requires_proof_even_with_parent_usage) ... ok
+test_nonworker_declared_artifacts_collect (__main__.NativeBenchTest.test_nonworker_declared_artifacts_collect) ... ok
+test_parallel_same_run_distinct_indices (__main__.NativeBenchTest.test_parallel_same_run_distinct_indices) ... ok
+test_public_guard_rejects_long_runtime_socket_path_before_body (__main__.NativeBenchTest.test_public_guard_rejects_long_runtime_socket_path_before_body) ... ok
+test_rejected_duplicate_call_is_counted_not_a_billing_gap (__main__.NativeBenchTest.test_rejected_duplicate_call_is_counted_not_a_billing_gap) ... ok
+test_resume_same_session_is_new_spend_repeated_run_is_not (__main__.NativeBenchTest.test_resume_same_session_is_new_spend_repeated_run_is_not) ... ok
+test_root_usage_missing_in_any_mode_never_claims_complete_cost (__main__.NativeBenchTest.test_root_usage_missing_in_any_mode_never_claims_complete_cost) ... ok
+test_temp_guard_denies_tmp_and_child_writes_but_allows_external_temp (__main__.NativeBenchTest.test_temp_guard_denies_tmp_and_child_writes_but_allows_external_temp) ... ok
+test_temp_guard_rejects_bind_device_before_temp_creation (__main__.NativeBenchTest.test_temp_guard_rejects_bind_device_before_temp_creation) ... ok
+test_temp_guard_rejects_repo_local_and_tmp_alias_layout (__main__.NativeBenchTest.test_temp_guard_rejects_repo_local_and_tmp_alias_layout) ... ok
+test_temp_guard_rejects_temp_inside_runner_repo (__main__.NativeBenchTest.test_temp_guard_rejects_temp_inside_runner_repo) ... ok
+test_terminal_does_not_erase_failed_nested_or_invalid_partial (__main__.NativeBenchTest.test_terminal_does_not_erase_failed_nested_or_invalid_partial) ... ok
+test_truncation_and_nonzero_exit_leave_only_cost_lower_bound (__main__.NativeBenchTest.test_truncation_and_nonzero_exit_leave_only_cost_lower_bound) ... ok
+test_unpriced_child_never_gets_partial_total (__main__.NativeBenchTest.test_unpriced_child_never_gets_partial_total) ... ok
+
+----------------------------------------------------------------------
+Ran 36 tests in 6.667s
+
+OK

@@ -1,0 +1,17 @@
+
+> pi-planner-only@0.9.0-lite.0 test:release
+> npm run typecheck && npm test
+
+
+> pi-planner-only@0.9.0-lite.0 typecheck
+> tsc --noEmit
+
+
+> pi-planner-only@0.9.0-lite.0 test
+> node --experimental-strip-types contract.test.mjs && node --experimental-strip-types git.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types host.test.mjs && node --experimental-strip-types index.test.mjs
+
+contract.test: ok
+git.test: ok
+delegate.test: ok
+host.test: ok
+index.test: ok

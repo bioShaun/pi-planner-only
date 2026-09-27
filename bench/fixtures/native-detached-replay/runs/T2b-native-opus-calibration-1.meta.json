@@ -1,0 +1,64 @@
+{
+  "task": {
+    "id": "T2b",
+    "repo": "/public/scripts/tc-probe-design-v2",
+    "target": "46d408a34211bf39558430342abc97bc71e655f8",
+    "parent": "a131527abe53dc8a55a45e3ccb88f8ad7ef24a4b",
+    "tests": [
+      "tests/contracts/test_ref_alt_stage_fold_to_long.py"
+    ],
+    "prompt": "T2b.md",
+    "python": "/public/scripts/tc-probe-design-v2/.venv/bin/python",
+    "baseline": "../baselines/T2.failures.txt"
+  },
+  "arm": {
+    "name": "native-opus-calibration",
+    "mode": "native",
+    "rootModel": "tcuni-claude/claude-opus-5-5",
+    "pluginRef": "ad51067da379edf5735cb9b03d70f17bda331675",
+    "promptPrefix": "\u5b9e\u73b0\u548c\u8dd1\u6d4b\u8bd5\u4ea4\u7ed9\u5b50\u4ee3\u7406\uff0c\u81ea\u5df1\u8d1f\u8d23\u62c6\u5206\u3001\u68c0\u67e5 git diff \u4e0e\u6d4b\u8bd5\u7ed3\u679c\u3002"
+  },
+  "rep": "1",
+  "pluginSha": null,
+  "dirty": false,
+  "piVersion": "0.87.1",
+  "piSubagentsVersion": "0.71.0",
+  "childOverrides": {
+    "planner": {
+      "model": "tcuni-ds/deepseek/deepseek-v4.1-flash",
+      "thinking": "high"
+    },
+    "oracle": {
+      "model": "tcuni/gpt-6-luna",
+      "thinking": "low"
+    },
+    "reviewer": {
+      "model": "tcuni/gpt-6-luna",
+      "thinking": "high"
+    },
+    "worker": {
+      "model": "tcuni/gpt-6-luna",
+      "thinking": "medium"
+    },
+    "researcher": {
+      "model": "tcuni/gpt-6-luna",
+      "thinking": "medium"
+    },
+    "scout": {
+      "model": "tcuni/gpt-6-luna",
+      "thinking": "low"
+    },
+    "planner-scout": {
+      "model": "tcuni/gpt-6-luna",
+      "thinking": "low"
+    }
+  },
+  "start": "2026-09-26T23:54:51+08:00",
+  "hostname": "tcuni-claw",
+  "tempResource": {
+    "backend": "landlock",
+    "abi": 7,
+    "policy": "deny /tmp writes; allow safe root directories",
+    "tmpdir": "/project/tmp/ppo-bench/opus-cross-task-t1-t2b-20260926/T2b-native-opus-calibration-1"
+  }
+}

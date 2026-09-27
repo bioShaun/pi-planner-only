@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Offline fault injection for native benchmark routing and accounting."""
+import gzip
 import json
 import hashlib
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -18,6 +20,11 @@ from runcheck import check
 from summarize import parse_run
 
 BENCH = Path(__file__).resolve().parent
+# Archived T2b native attempt, committed as a gz fixture so the detached-terminal
+# replay runs from the repo instead of a machine-local campaign archive.
+FIXTURE = BENCH / 'fixtures' / 'native-detached-replay'
+FIXTURE_MAIN = 'T2b-native-opus-calibration-1.jsonl'
+FIXTURE_MAIN_SHA256 = '542c4ea51b620fa73ce2ad83855e25900fa1550abf15a46fa1b4f266a98bb0e4'
 MODEL = 'tcuni/gpt-6-luna'
 ROOT_MODEL = 'cline/cline-pass/deepseek-v4.1-flash'
 ROOT_USAGE = {'input': 10, 'output': 2, 'cacheRead': 0, 'cacheWrite': 0}
@@ -33,14 +40,50 @@ def child(**changes):
             'usage': {'input': 100, 'output': 10, 'cacheRead': 0, 'cacheWrite': 0}, **changes}
 
 
+def materialize_fixture(root):
+    """Expand the gz fixture under `root` and rebind the declared child artifact paths.
+
+    Returns (main jsonl, child-evidence directory, sha256 of the transcript before the
+    rebind), so the caller can pin the archived bytes separately from the relocation.
+    """
+    root = Path(root)
+    for path in sorted(FIXTURE.rglob('*')):
+        if not path.is_file() or path.suffix == '.md':
+            continue
+        target = root / path.relative_to(FIXTURE)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if path.suffix == '.gz':
+            target = target.with_suffix('')
+            target.write_bytes(gzip.decompress(path.read_bytes()))
+        else:
+            shutil.copyfile(path, target)
+    main = root / 'runs' / FIXTURE_MAIN
+    archived_sha = hashlib.sha256(main.read_bytes()).hexdigest()
+    evidence = root / 'child-evidence'
+    # The committed transcript still names the machine that produced it. Point every
+    # declared artifact at the expanded copy so collection works from the repo alone.
+    events = [json.loads(line) for line in main.read_text().splitlines()]
+    for event in events:
+        if event.get('type') != 'tool_execution_end' or event.get('toolName') != 'subagent':
+            continue
+        for row in ((event.get('result') or {}).get('details') or {}).get('results') or []:
+            declared = row.get('artifactPaths')
+            if not isinstance(declared, dict):
+                continue
+            for field in ('metadataPath', 'transcriptPath'):
+                if isinstance(declared.get(field), str):
+                    declared[field] = str(evidence / Path(declared[field]).name)
+    main.write_text('\n'.join(json.dumps(event) for event in events) + '\n')
+    return main, evidence, archived_sha
+
+
 class NativeBenchTest(unittest.TestCase):
     def test_archived_detached_terminal_replay(self):
-        archived = Path('/project/tmp/ppo-bench/results/opus-cross-task-t1-t2b-20260926/runs/T2b-native-opus-calibration-1.jsonl')
-        evidence = BENCH.parent / '.scratch/lite-cross-task-next-20260926/execution/child-evidence/T2b-native-opus-calibration-1'
-        if not archived.exists() or not evidence.exists():
-            self.skipTest('archived T2b evidence unavailable')
+        self.assertTrue((FIXTURE / 'runs' / (FIXTURE_MAIN + '.gz')).is_file(), 'native replay fixture missing')
         from native_results import collect_bundle
         with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            archived, evidence, archived_sha = materialize_fixture(Path(directory) / 'fixture')
+            self.assertEqual(archived_sha, FIXTURE_MAIN_SHA256, 'native replay fixture transcript changed')
             bundle = Path(directory) / 'bundle'
             collect_bundle(archived, evidence, bundle)
             self.assertTrue(check(archived, bundle=bundle)['valid'])

@@ -9,6 +9,7 @@
 - `run.sh`: 单次运行公共入口。它先由 `temp_guard.py` 安装并验证 Landlock 写入边界，再执行内部 `run-body.sh`；结果写入 `$BENCH_OUT/runs/`。每个克隆只包含 parent 可达历史，测试文件取自 target；`runcheck.py` 会标记 transcript 中对 target 提交的引用。
 - `campaign.sh`: 配对、交错地提交多任务 campaign。
 - `summarize.py` / `prices.json`: 汇总 token、成本和评测结果。
+- `fixtures/`: 测试用归档证据。`native-detached-replay/` 是 T2b native 那次 detached child 的真实主 JSONL 与两条 child 转录（`.gz`，运行时解压到 TMPDIR），`bench/test_native.py` 的终端回放用例读它，不再依赖机器本地的 campaign 归档。
 
 新增任务时添加同名 JSON 和 Markdown prompt，并提供 masked-suite baseline。新增 arm 时添加 JSON，字段沿用现有配置。`pluginRef` 可设为 `WORKTREE` 使用当前工作树，或用 git ref 固定插件快照；campaign 会把干净工作树的 WORKTREE arm 固定到 campaign 创建时的 HEAD。
 
@@ -55,7 +56,7 @@ Guard 从 `/proc/self/mountinfo` 读取 `/tmp` 及其子挂载的设备号，若
 
 公共入口要求 Linux x86_64/aarch64、Landlock ABI 3+ 与 `/project/tmp`。选定的临时目录必须位于 runner 源码仓库外，且 `/project/tmp`、选定目录和自动创建前已存在的 `ppo-bench` 父目录均不得与 `/tmp` 使用相同的文件系统设备号；这是保守的拒绝条件，即使某路径与 `/tmp` 并非 bind alias，同设备也会拒绝。为每条运行分配 `/project/tmp` 下短而唯一的**实际物理目录**，将语义运行 ID 保存在输出元数据中，不要放入 TMPDIR 路径；不同 Python 版本的 socket 名称不同，不存在通用安全长度保证。guard 安装 Landlock 并验证 `/tmp` 写入被拒后，会用任务 JSON 配置的 Python 解释器，在新进程中实际绑定并关闭 multiprocessing AF_UNIX socket；没有任务 JSON 的测试入口使用 guard 当前解释器。探测失败或超时会在执行内部脚本前拒绝启动。验证后设置 `TMPDIR`、`TMP`、`TEMP`，并向所有 arm 的 Root 提示词说明同一路径要传给委派 child、禁止使用 `/tmp`；子任务文字转发是行为要求，不保证注入 child 的系统提示词，进程继承的内核规则独立执行。规则覆盖文件写入、创建、删除、重命名、链接和截断；不限制读取或网络，也不声称约束已打开的文件描述符、所有元数据操作或远程机器执行。`run-body.sh` 是内部实现，不是受支持的直接调用入口。边界建立或验证失败时，在任何 Pi 调用前退出 3；若 `BENCH_OUT` 的安全父目录可写则写 `STOP`，即使配置了重试也不会写 `RETRY`。成功启动时 stderr 与 run metadata 的 `tempResource` 记录 backend、ABI、policy 与临时目录。Landlock 权限位以本机 `/usr/include/linux/landlock.h` 及 Linux kernel `userspace-api/landlock.html` 文档为准。
 
-离线回归（不调用模型）：`TMPDIR=/project/tmp python3 -B bench/test_native.py`。真实 guard 测试需要可写的 `/project/tmp`，不可使用仓库内 TMPDIR 替代；插件的 `npm run test:release` 同样要求仓库外 TMPDIR。
+离线回归（不调用模型）：`TMPDIR=/project/tmp python3 -B bench/test_native.py`。用例只读仓库内 fixture（终端回放用 `bench/fixtures/native-detached-replay/`，运行时解压到 TMPDIR），机器缺失本地归档不再让它跳过；真实 guard 测试需要可写的 `/project/tmp`，不可使用仓库内 TMPDIR 替代；插件的 `npm run test:release` 同样要求仓库外 TMPDIR。
 
 有效运行必须有包含 arm mode 和 Root 模型的元数据，以及明确为 0 的 Pi 退出记录。缺失/损坏元数据、截断 JSONL、缺失退出记录或非零 Pi 退出会阻止完整费用声明；JSON 中 `known_cost_lower_bound` 仅是已知费用下界，不能用它代替 `cost: null` 的未知总费用。
 

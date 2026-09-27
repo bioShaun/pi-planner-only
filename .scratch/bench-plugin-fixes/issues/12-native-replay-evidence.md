@@ -1,8 +1,8 @@
 # 12：native 回放用例依赖仓库外归档与本机 scratch，新克隆上恒跳过
 
-Status: needs-triage
+Status: done
 Type: task
-Execution: 未开始；本票只记录缺口，不改测试。
+Execution: 已实现（方案 B：gz 入库，运行时解压）。fixture 与断言哈希见 `../ticket12-fixture-20260927/fixture-shas.json`；可写 TMPDIR 下 36 项离线测试 OK 且无 skipped，`npm run test:release` 全过。
 
 ## Problem
 
@@ -23,7 +23,7 @@ Execution: 未开始；本票只记录缺口，不改测试。
 
 ## Options
 
-- 把这次 attempt 的主 JSONL 与两条 child transcript 作为 fixture 收进仓库（约 1.6MB），用例改读仓库内路径；
+- 把这次 attempt 的主 JSONL 与两条 child transcript 作为 fixture 收进仓库，用例改读仓库内路径；主 JSONL 实测 24.9MB、转录 1.54MB，故按 gz 入库（0.50MB + 0.32MB）运行时解压——**本项被采纳**；
 - 改成合成 fixture：保留被断言的事件形状（detached 终态 + 累计快照），不再依赖真实 transcript；
 - 明确接受它只是本机回归，并在 docstring 与 `bench/README.md` 写明前置条件。
 
@@ -37,3 +37,16 @@ Execution: 未开始；本票只记录缺口，不改测试。
 
 - 2026-09-27 建票：整理待提交清单时发现该用例的仓库外依赖；本次按现状提交 `bench/test_native.py`
   （用例在无归档的机器上跳过），缺口转本票处理。
+- 2026-09-27 实现：新增 `bench/fixtures/native-detached-replay/`——真实归档的 gz 主 JSONL 与两条 child 转录，
+  加原样的 `meta.json`/`eval.json`/`.exit`/`.wall` 与两条 child `meta.json`。`bench/test_native.py` 新增
+  `materialize_fixture()`：解压到 TMPDIR、钉住解压后主 JSONL 的 sha256（`542c4ea5…`，fixture 被替换即失败）、
+  并把 JSONL 里 `artifactPaths` 声明的机器本地路径重绑到解压后的 child 证据目录，让显式 source 与 CLI
+  两条采集路径都不再依赖 `/project/tmp` 归档；`skipTest` 改为缺失即失败。
+- 核对：归档原文件、仓库内旧拷贝与 fixture 解压后字节三方一致（主 JSONL `542c4ea5…`，转录 `fc18f20f…`
+  / `b3ec67aa…`，两条 child meta `30d4df11…` / `0da585b2…`）。`.exit` 必须随 fixture 入库：`runcheck` 现在把
+  缺失或非 0 的 Pi 退出记录判为无效。
+- 验证：`git check-ignore` 对新 fixture 无输出（未被忽略规则吃掉）；`TMPDIR=<仓库外可写> python3 -B
+  bench/test_native.py` 36 项 OK 且 skipped 为 0；`TMPDIR=<仓库外可写> npm run test:release` exit 0。
+  证据 [ticket12-fixture-20260927](../ticket12-fixture-20260927/)。
+- 估算修正：上面 Options 里写的"约 1.6MB"只算了 child 转录，主 JSONL 实为 24.9MB。gz 后合计 0.82MB；
+  仓库现有最大 blob 0.60MB、整个 pack 3.6MB，故选择 gz 而不是让工作树多背 26.5MB。

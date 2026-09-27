@@ -1,0 +1,21 @@
+{
+  "task": "T2b",
+  "arm": "native-opus-calibration",
+  "id": "T2b-native-opus-calibration-1",
+  "pass": true,
+  "target_failed": [],
+  "new_failures": [],
+  "files_changed": 14,
+  "non_target_tests_changed": [
+    "tests/contracts/test_annotate_allele_pair_lifecycle_contract.py",
+    "tests/contracts/test_annotate_config_contract.py"
+  ],
+  "target_test_exit": 0,
+  "suite_exit": 0,
+  "eval_semantics": "masked-suite (baseline and eval both --ignore target tests)",
+  "valid": false,
+  "invalid_reasons": [
+    "native subagent x1: failed child result",
+    "native subagent x1: nonterminal child result"
+  ]
+}
