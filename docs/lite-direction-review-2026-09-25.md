@@ -2,7 +2,7 @@
 
 日期：2026-09-25  
 评估基线：`4036a36`  
-状态：2026-09-25 采纳为方向决策。实施进度以各票为准：第一、二步已于同日实施（票 08–10 与 CHANGELOG），第三、四步随票 09 暂停。
+状态：2026-09-27 已完成目标Root校准与T2c最小配对，终态采集和短路径预检修复已验收；停止新增付费试跑。旧规程FAIL、无效样本及环境失败保留，不追认。下方历史分析保留原评估时点，最新判断见文末收尾更新。
 
 本文回应两个问题：是否同意 [lite-drift-review 总结](../.scratch/lite-drift-review/summary.md)，以及插件后续应该做什么、不做什么。该总结位于本地 `.scratch/`，未随本次文档新增纳入版本控制；本文保留了独立理解结论所需的背景。
 
@@ -17,6 +17,8 @@ Root 轮数、上下文大小和委派次数是解释指标。最终要看通过
 ## 2. 对原总结的五点修正
 
 ### 2.1 收紧自动 handoff，但区分自动与主动交接
+
+历史说明：本节“off无效”的问题已由`d2e85f7`修复，当前默认off；此处保留原诊断，不是待办。
 
 同意 handoff 应当收紧。当前配置只有 `auto`、`confirm`；设置 `off` 仍会落到 `auto`。`confirm` 也会创建新会话，只是等待用户提交简报。实现见 [config.ts](../config.ts) 和 [index.ts](../index.ts)。
 
@@ -84,6 +86,8 @@ token 数是脚本粗估，不是模型 tokenizer 的精确结果；工具定义
 
 ### 第一步：收紧产品承诺
 
+历史说明：本步关于修复off开关的工作已完成，当前不再重复实施。
+
 - 明确 0.48 的适用条件和待复核项。
 - 冻结新功能扩张，自动 handoff 默认关闭，保留主动交接入口。这需要改代码：现状是 `PI_PLANNER_ONLY_HANDOFF=off` 无效，任何非 `confirm` 的值都按 `auto` 处理。
 - 将未测收益的机制明确标为实验，不把已通过冒烟写成已证明省钱。
@@ -101,7 +105,9 @@ token 数是脚本粗估，不是模型 tokenizer 的精确结果；工具定义
 
 票 09 在 direct、lite 之外加第三臂：原生 pi-subagents 加一句“实现交给子代理”的指引，不加载本插件。09-24 的 lite 提示词本身就带了这句话，这一臂用来隔离插件在指引之外的贡献。它回答的是插件有没有存在理由，多一臂的费用值得。
 
-票 09 在本次评估时仍标记为暂停。这里提出的是后续顺序，不表示已经恢复测试或启动付费 campaign。
+票 09 在本次评估时仍标记为暂停。2026-09-26 更新：维护者已授权按推荐推进，先补 native 模式与离线验证，再做 T3 × direct/native/非 strict lite × 两次，最多六次尝试、串行且无自动重试。native/lite 使用同一委派指引，旧版回归比较另排，不恢复原 54 条 campaign。预算和停止条件见[票 09](../.scratch/bench-plugin-fixes/issues/09-ab-measure.md)。授权和准备完成不代表付费运行已经启动。
+
+Handoff 安排在三臂首轮有效比较之后，不必等所有重复结束；同时要求费用链路完整，并有自然达到阈值且还有后续工作的真实长会话。先从同一交接前检查点做“继续原会话 / 主动交接”的配对试验，计入准备、重探索与遗漏返工；确认有收益后再单独评估 confirm/auto 的触发体验。没有自然样本就继续延后，默认关闭不变。见[交接协议当前安排](lite-handoff-measurement-protocol.md#current-plan)。
 
 ### 第四步：判断插件自身的增量价值
 
@@ -124,3 +130,62 @@ token 数是脚本粗估，不是模型 tokenizer 的精确结果；工具定义
 - [票 08：新任务与 direct arm](../.scratch/bench-plugin-fixes/issues/08-tasks-and-direct.md)
 - [票 09：A/B 测量](../.scratch/bench-plugin-fixes/issues/09-ab-measure.md)
 - [票 10：实际会话暴露的问题](../.scratch/bench-plugin-fixes/issues/10-session-findings.md)
+
+## 2026-09-26 首轮执行结果更新
+
+T3 × direct/native/非 strict lite × 各两次已完成，有效及质量通过均为 6/6。
+计费守卫修复后原 attempt 1 只读恢复有效，所有尝试累计 opus $9.27323652、实际模型价 $0.390404648。
+首轮链路核验通过，但每臂仅两个 cpass-ds 样本，不能外推节省比例；lite 在 native 同指引之上的增量价值仍未稳定证明。
+下一步先重新评估增量价值，暂不扩展当前矩阵；handoff 继续等待自然长会话样本和隔离恢复验证。
+详见 [首轮报告](../.scratch/bench-plugin-fixes/trialrun-cont-20260926/report.md)。上述原方向分析保留其写作时点。
+
+## 增量复核后的校准提案
+
+[离线复核](../.scratch/lite-increment-review-20260926/assessment.md)发现，四条委派臂都到 Root 第 15–24 轮才首次委派；
+lite 的 Root 自行获取的信息也多于 child 报告正文。下一项应先校准目标 Root 的行为，而非继续压缩报告或扩大 cpass-ds 样本。
+源码对照明确了原生超时/取消与 lite 的小接口、cwd 锁、摘要和恢复之间的区别；未触发的保护机制继续保留。
+[具体方案](../.scratch/lite-increment-review-20260926/spec.md)为同一 T3 × Opus direct/native/lite 各一次，新 $10 actual 检查点预算，待确认后执行。
+
+## 目标 Root 校准结束与运行约束缺口
+
+[三次校准报告](../.scratch/lite-increment-review-20260926/calibration-report.md)：任务质量和计费核验通过，累计 $3.73554521；
+本次 lite 首次委派更早、Root 轮数与观测费用较少，仍仅是单样本线索。三臂内部都用了硬编码 /tmp，
+执行规程核验 FAIL。七个确认属于本轮的残留文件已归档清理，目录已移除；不能追认整体通过。
+下一步先完成 [统一运行约束](../.scratch/lite-increment-review-20260926/issues/02-runtime-temp-boundary.md)，离线验证硬编码路径被拒绝，
+再考虑新的固定样本与预算；不自动扩样本，handoff 继续延后。
+
+## 运行约束修复完成
+
+[共同入口保护](../.scratch/lite-increment-review-20260926/temp-guard-fix-20260926/report.md)已验收：29 项离线回归、三臂真实 dry-run、完整发布测试均通过，历史原始记录未改写。
+本地 Root/child/shell 继承内核写入限制，目录及挂载布局无法证明安全时在 Pi 启动前阻止。
+旧 Opus 校准的规程 FAIL 仍成立；保护和公共指引改变了后续条件，不能直接复用旧冻结或自动消耗剩余预算。
+
+## 受保护目标 Root 校准完成
+
+[新一轮报告](../.scratch/lite-increment-review-20260926/guarded-calibration-20260926/report.md)：在共同 Landlock 入口和冻结条件下，lite/native/direct 各一次均有效、质量通过，累计实际模型价 $3.80569241。独立证据核对通过，历史 72 个原始文件与冻结源码哈希未变。旧轮规程 FAIL 保留。
+
+本条 lite 首次委派前已有 6 个 Root 完成事件，native 为 11；Root 总完成事件分别为 12/16/31。lite 本条观测费用较低，native 出现一次 worker 返工；仍是单任务单样本，不发布节省比例。direct 最终完整测试 diff 未单独留存、benchmark 实际 skipped 的限制见报告。
+
+下一步先离线设计跨任务的 native/lite 固定对照，再另定预算；不继续当前 T3 或恢复全矩阵。handoff 仍等待自然长会话及同检查点恢复证据。票 03 的三次执行范围关闭，本轮不追加模型调用。
+
+## 跨任务离线准备完成
+
+[准备报告](../.scratch/lite-cross-task-next-20260926/readiness.md)已完成 T1 与 T2b 的 parent RED、gold、masked baseline、答案隔离及独立核对，完整发布检查通过。T2b 用新任务标识纠正旧 T2 的 stage 先后顺序文案，原 T2 不变；两臂都须额外审查 CLI/config/pipeline 接线。
+
+下一轮提案为 T2b native → T2b lite → T1 lite → T1 native，四次串行、新 $10 actual 运行间检查点，保留最终完整差异。离线准备未调用付费模型；新四次范围尚待确认，不复用已结束的三次授权。详见 [固定清单](../.scratch/lite-cross-task-next-20260926/plan.json)。
+
+## 2026-09-27 跨任务试跑按规则停止
+
+用户确认四次方案后，首条 T2b native 的目标10项与masked2654项通过，附加源码链路核对通过。但第二个 worker 经 intercom 脱离，bg_wait 只返回空管理结果；冻结守卫无法从主转录取得其完整终态，runner 写 STOP，剩余三条未启动。
+
+最终 child 产物辅助核算支出 $1.88898237，独立核对一致；原始 valid=false、未知总额和 STOP 保留，不形成有效配对结果。完整差异、新增文件与转录已归档。另确认原任务“无 ALT 空宽表”与无条件13列描述有边界歧义。下一步处理终态证据采集和任务定义，暂不追加运行。见 [停止报告](../.scratch/lite-cross-task-next-20260926/execution/report.md)。
+
+## 2026-09-27 最新收尾决定
+
+终态采集已能绑定主转录与child runId/index/agent、校验完整用量并避免累计快照重复相加。T2c用独立任务版本及44项新增边界测试澄清空表规则，原10项测试保持字节不变。T1长TMPDIR引发的18项失败经2×2对照证实为AF_UNIX路径限制；入口现用任务配置的Python真实验证socket，短物理目录保留完整runId映射。36项bench回归、完整release及独立验收通过。
+
+用户选择效果优先并控制预算后，范围收缩为T2c lite/native各一次。两臂均通过54项目标测试、完整masked及源码接线核对；lite费用$1.13968811、模型耗时759秒，native为$1.45913197、1136秒。首次实际委派前Root完成事件分别5／9；本次差额主要来自Root，child费用接近。单任务、每臂一次且自身追加测试不同，不能建立稳定收益或单一机制的因果结论。
+
+当前决定是保留最小委派核心、取消/写锁等已有可靠性保护，暂不扩展付费矩阵，也不因为一次正向信号增加角色、强化strict或启用handoff。下一阶段优先记录真实开发任务自然产生的效果与失败；只有出现具体缺口才做有针对性的修复。handoff仍等待合适检查点与隔离恢复证明。
+
+最新授权范围含原T1环境失败的累计费用为$3.89706611，已结束，不使用余额补样本。跨历史阶段的费用另列，避免把不同授权混成一个预算：[阶段收尾与台账](../.scratch/lite-measurement-next/closeout-20260927/report.md)。[完整T2c报告](../.scratch/lite-t2c-focused-20260927/execution/report.md)保留所有限制，克隆产物未提交到源仓库。
