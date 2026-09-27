@@ -1,0 +1,119 @@
+{
+  "id": "T1-native-opus-calibration-1",
+  "checks": {
+    "native_bundle": true,
+    "child_count": true,
+    "child_cost": true,
+    "all_children": true,
+    "all_priced": true
+  },
+  "children": [
+    {
+      "id": "c12ee51c-1649-449e-b47e-d7f465fe7fe9",
+      "index": 0,
+      "agent": "worker",
+      "model": "tcuni/gpt-6-luna:medium",
+      "usage": {
+        "input": 72312,
+        "output": 5422,
+        "cacheRead": 635392,
+        "cacheWrite": 0
+      },
+      "cost": 0.01629612,
+      "checks": {
+        "exit0": true,
+        "tokens_match": true,
+        "model_matches": true,
+        "reported_cost_matches": true,
+        "no_nested": true,
+        "no_api_errors": true,
+        "no_pending": true
+      },
+      "transcript": "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-preparation-20260927/execution/child-evidence/T1-native-opus-calibration-1/c12ee51c-1649-449e-b47e-d7f465fe7fe9_worker_0_transcript.jsonl",
+      "sha256": "ad1f5a64f26ef12ca20c347979f781a34d538d8d2506da4b79072ccfae219e13"
+    },
+    {
+      "id": "fab91c35-e3d0-496c-9bee-569e45650863",
+      "index": 0,
+      "agent": "worker",
+      "model": "tcuni/gpt-6-luna:medium",
+      "usage": {
+        "input": 29715,
+        "output": 3434,
+        "cacheRead": 181248,
+        "cacheWrite": 0
+      },
+      "cost": 0.00650098,
+      "checks": {
+        "exit0": true,
+        "tokens_match": true,
+        "model_matches": true,
+        "reported_cost_matches": true,
+        "no_nested": true,
+        "no_api_errors": true,
+        "no_pending": true
+      },
+      "transcript": "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-preparation-20260927/execution/child-evidence/T1-native-opus-calibration-1/fab91c35-e3d0-496c-9bee-569e45650863_worker_0_transcript.jsonl",
+      "sha256": "2fd3243f71b937bda4b31da2c3d69b5d4febd81e7a785a1536da00653aab005b"
+    },
+    {
+      "id": "f78cdf33-544b-4772-9d04-f9387ee451a5",
+      "index": 0,
+      "agent": "worker",
+      "model": "tcuni/gpt-6-luna:medium",
+      "usage": {
+        "input": 31334,
+        "output": 2086,
+        "cacheRead": 124928,
+        "cacheWrite": 0
+      },
+      "cost": 0.00542568,
+      "checks": {
+        "exit0": true,
+        "tokens_match": true,
+        "model_matches": true,
+        "reported_cost_matches": true,
+        "no_nested": true,
+        "no_api_errors": true,
+        "no_pending": true
+      },
+      "transcript": "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-preparation-20260927/execution/child-evidence/T1-native-opus-calibration-1/f78cdf33-544b-4772-9d04-f9387ee451a5_worker_0_transcript.jsonl",
+      "sha256": "3c666367682abcf58b8ce643c282af8ad872e0f8e838aa41cf4c783c31ca9a28"
+    }
+  ],
+  "tmp_references_requiring_review": [
+    {
+      "owner": "root",
+      "tool": "subagent",
+      "args": {
+        "agent": "worker",
+        "async": false,
+        "cwd": "/project/tmp/ppo-bench/clones/opus-cross-task-t1-t2c-20260927-T1-native-opus-calibration-1",
+        "task": "Repo: /project/tmp/ppo-bench/clones/opus-cross-task-t1-t2c-20260927-T1-native-opus-calibration-1 (read AGENTS.md first; follow its conventions: `from __future__ import annotations`, Chinese messages, project exception hierarchy, module docstring Public API/Related sections).\n\nTEMP DIR RULE: all temporary files MUST go in /project/tmp/ppo-bench/opus-cross-task-t1-t2c-20260927/T1-native-opus-calibration-1 . Never write to /tmp (kernel policy blocks it). Always `export TMPDIR=/project/tmp/ppo-bench/opus-cross-task-t1-t2c-20260927/T1-native-opus-calibration-1` before running python/pytest.\n\nTASK: implement \"fix(tools): bound all external subprocess calls with timeouts\" — Add ExternalToolTimeoutError, require positive timeouts for run and version probes, route replace-primaries annotate through ExternalTool.\n\nTarget tests (DO NOT MODIFY any test files; do NOT git commit):\n  tests/contracts/test_external_tool_timeout.py tests/contracts/test_prefilter_calibration_profile.py tests/unit/test_external_tool_version_reporting.py tests/contracts/test_replace_primaries_cli_wiring.py\nTest command: PYTHONPATH=src /public/scripts/tc-probe-design-v2/.venv/bin/python -m pytest <paths>\nAlso must pass existing tests/unit/test_io_and_cli.py::TestExternalCommandFailureHandling (expects `tool.run([\"1\"], timeout=0.01)` on BlastTool(\"sleep\") to raise AlignmentError matching \"外部命令执行超时\").\n\nRequired design:\n1. src/tc_probe_design/exceptions.py: add `class ExternalToolTimeoutError(AlignmentError)` (docstring in same style as neighbours). Construct with message containing \"外部命令执行超时\" (includes the word 超时) and the formatted command (so executable name e.g. hang.sh appears), details dict with at least \"tool\" (= self.executable string), \"timeout\" (the float passed), \"command\", and any captured stderr/stdout partial output if available.\n2. src/tc_probe_design/external_tools.py:\n   - Module constants for the tool policy, e.g. VERSION_PROBE_TIMEOUT_SECONDS = 30.0 and a generous DEFAULT_RUN_TIMEOUT_SECONDS (e.g. 24h = 86400.0) — heavy BLAST/bowtie2/snpEff jobs must not be cut off by the default.\n   - `run(self, args, *, timeout: float = DEFAULT_RUN_TIMEOUT_SECONDS)`: validate timeout > 0 else raise ConfigError mentioning \"timeout\" (validate BEFORE check_available). Call `subprocess.run(command, capture_output=True, text=True, check=False, timeout=timeout)` — exactly these kwargs (tests monkeypatch subprocess.run with a fake that accepts only capture_output/text/check/timeout). Catch subprocess.TimeoutExpired → raise ExternalToolTimeoutError(...) from exc (subprocess.run already kills the child on timeout). Keep existing nonzero-exit AlignmentError behavior.\n   - get_version: both subprocess.run calls pass `timeout=VERSION_PROBE_TIMEOUT_SECONDS` (unit test asserts exact call `subprocess.run([...], capture_output=True, text=True, check=False, timeout=30.0)`). Existing SubprocessError catch keeps covering TimeoutExpired.\n   - Check any subclass helper methods that call self.run — they may keep default; no signature drift. Update module docstring if needed. File is currently 375 lines; keep it under 500 and don't bloat.\n3. src/tc_probe_design/workflows/replace_primaries.py `_run_annotate`: remove `import subprocess` and the direct subprocess.run; instead `ExternalTool(argv[0]).run(argv[1:], timeout=<explicit module-level annotate timeout constant or DEFAULT_RUN_TIMEOUT_SECONDS>)` with `from tc_probe_design.external_tools import ExternalTool` imported at module level (tests monkeypatch `rp.ExternalTool.run` with signature `(self, args, **kwargs)` and args[-1] must be the output path). ExternalTool.run raises AlignmentError on nonzero exit; decide cleanly: either let it propagate or convert non-timeout AlignmentError into the previous ConfigError(\"外部 annotate 命令失败…\") — check src/tc_probe_design/cli/commands/replace_primaries.py error handling and any tests (rg \"annotate 命令失败\" tests src) to keep user-facing behavior consistent; timeouts must surface as ExternalToolTimeoutError. Keep the declared-artifact check logic intact. Update the docstring (no longer says it bypasses ExternalTool).\n4. `rg -n \"subprocess\" src/tc_probe_design` afterwards: only external_tools.py should call subprocess. Report the result.\n5. Docs sync (small, targeted): docs/runtime-safety-scientific-correctness-stabilization-spec-2026-07-10.md row for STAB-12 (line ~23, \"In progress\") → mark done consistent with how other completed rows are marked in that table; docs/PATTERNS.md external-tool section (~line 147) add one line that ExternalTool.run requires a positive timeout and raises ExternalToolTimeoutError; CODEMAP.md line ~33 consumer list add workflows/replace_primaries.py if appropriate. No unrelated edits.\n\nVerification you must run and report output summaries for:\n a) the 4 target test files + tests/unit/test_io_and_cli.py (command above)\n b) `/public/scripts/tc-probe-design-v2/.venv/bin/ruff check` and `ruff format --check` on changed src files (use the same venv's ruff if present; else `uv run ruff`), and `/public/scripts/tc-probe-design-v2/.venv/bin/python -m mypy` on the changed src files (if mypy config exists in pyproject)\n c) fast suite: `PYTHONPATH=src /public/scripts/tc-probe-design-v2/.venv/bin/python -m pytest -q -p no:randomly` (no path args; drop `-p no:randomly` if that plugin isn't installed) — report pass/fail counts and any failures; if a failure is pre-existing, prove it with `git stash` → rerun that single test → `git stash pop`.\nFinal reply: list of changed files, key design decisions, and exact test/lint results."
+      }
+    },
+    {
+      "owner": "root",
+      "tool": "subagent",
+      "args": {
+        "agent": "worker",
+        "async": false,
+        "cwd": "/project/tmp/ppo-bench/clones/opus-cross-task-t1-t2c-20260927-T1-native-opus-calibration-1",
+        "task": "Repo: /project/tmp/ppo-bench/clones/opus-cross-task-t1-t2c-20260927-T1-native-opus-calibration-1 . Uncommitted changes exist in the working tree (do NOT commit, do NOT modify tests).\nTEMP DIR RULE: all temp files go in /project/tmp/ppo-bench/opus-cross-task-t1-t2c-20260927/T1-native-opus-calibration-1 ; never write to /tmp. `export TMPDIR=/project/tmp/ppo-bench/opus-cross-task-t1-t2c-20260927/T1-native-opus-calibration-1` before any python.\n\nStep 1 (doc fix): in docs/runtime-safety-scientific-correctness-stabilization-spec-2026-07-10.md the STAB-12 row (line ~23) status says \"Committed\" but nothing is committed. Change the status cell to \"Implemented (uncommitted)\" and leave the rest of the row. No other edits.\n\nStep 2 (regression comparison): let T=/project/tmp/ppo-bench/opus-cross-task-t1-t2c-20260927/T1-native-opus-calibration-1.\n  a) With changes present: `PYTHONPATH=src /public/scripts/tc-probe-design-v2/.venv/bin/python -m pytest -q -p no:cacheprovider -rfE 2>&1 | tee $T/after.log` ; extract failing/erroring node ids (lines starting with FAILED/ERROR) sorted into $T/after_fail.txt.\n  b) `git stash push --include-untracked` (verify `git status --short` is empty), run the same command → $T/before.log / $T/before_fail.txt, then `git stash pop` and verify `git status --short` shows the 6 modified files again (CODEMAP.md, docs/PATTERNS.md, the spec doc, src/tc_probe_design/exceptions.py, external_tools.py, workflows/replace_primaries.py). Note: on baseline the 4 target test files will fail/error — that is expected.\n  c) Report: pass/fail counts for both runs, and `comm -13 before_fail.txt after_fail.txt` (new failures introduced by the change — must be empty; if not, show the failure tracebacks) and `comm -23` (fixed by change).\nFinal reply: the counts, both comm outputs verbatim, and confirmation the stash was popped cleanly."
+      }
+    },
+    {
+      "owner": "root",
+      "tool": "subagent",
+      "args": {
+        "agent": "worker",
+        "async": false,
+        "cwd": "/project/tmp/ppo-bench/clones/opus-cross-task-t1-t2c-20260927-T1-native-opus-calibration-1",
+        "task": "Repo: /project/tmp/ppo-bench/clones/opus-cross-task-t1-t2c-20260927-T1-native-opus-calibration-1 . Uncommitted changes in working tree: do NOT commit, do NOT edit any file.\nTEMP DIR RULE: temp files only in T=/project/tmp/ppo-bench/opus-cross-task-t1-t2c-20260927/T1-native-opus-calibration-1 ; never /tmp. `export TMPDIR=$T` before python.\n\n$T/after_fail.txt already holds the sorted FAILED/ERROR node ids with the changes applied (30 failures). Previous baseline run aborted on a collection error, so redo baseline:\n1) `git stash push --include-untracked`; confirm `git status --short` empty.\n2) `PYTHONPATH=src /public/scripts/tc-probe-design-v2/.venv/bin/python -m pytest -q -p no:cacheprovider -rfE --continue-on-collection-errors 2>&1 | tee $T/before2.log`; extract lines starting with FAILED/ERROR (strip trailing \" - message\" so only node ids remain; do the same normalization to after_fail.txt into $T/after_ids.txt) sorted into $T/before2_ids.txt.\n3) `git stash pop`; confirm the 6 modified files are back (CODEMAP.md, docs/PATTERNS.md, docs/runtime-safety-scientific-correctness-stabilization-spec-2026-07-10.md, src/tc_probe_design/exceptions.py, src/tc_probe_design/external_tools.py, src/tc_probe_design/workflows/replace_primaries.py) and `git diff --stat` matches.\n4) Report baseline pass/fail counts, then verbatim `comm -13 $T/before2_ids.txt $T/after_ids.txt` (new failures caused by the change) and `comm -23` (fixed). If comm -13 is non-empty, include the tracebacks for those tests from $T/after.log."
+      }
+    }
+  ],
+  "missing_lite_artifacts": false,
+  "command_count": 69,
+  "limitations": "Command references require manual interpretation; Landlock evidence covers local descendants, not arbitrary external services."
+}

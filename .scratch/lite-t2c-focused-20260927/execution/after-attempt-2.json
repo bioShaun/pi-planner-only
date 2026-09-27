@@ -1,0 +1,11 @@
+{
+  "continue": false,
+  "reason": "Both authorizedT2c attempts completed and accepted; stop at max2 new attempts, no expansion",
+  "new_attempts": 2,
+  "total_attempts": 3,
+  "actual_total": 3.89706611,
+  "segment_actual_total": 2.59882008,
+  "prior_actual_total": 1.29824603,
+  "quality_passes_new": 2,
+  "remaining_authorized_attempts": 0
+}

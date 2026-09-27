@@ -1,0 +1,135 @@
+{
+  "status": "PASS",
+  "as_of": "2026-09-27T11:03:57.089077+08:00",
+  "run_id": "T2c-lite-opus-calibration-1",
+  "quality": {
+    "task": "T2c",
+    "arm": "lite-opus-calibration",
+    "id": "T2c-lite-opus-calibration-1",
+    "pass": true,
+    "target_failed": [],
+    "new_failures": [],
+    "files_changed": 12,
+    "non_target_tests_changed": [
+      "tests/contracts/test_allele_pair_annotate_cli_contract.py"
+    ],
+    "target_test_exit": 0,
+    "suite_exit": 0,
+    "eval_semantics": "masked-suite (baseline and eval both --ignore target tests)",
+    "valid": true,
+    "invalid_reasons": []
+  },
+  "counts": {
+    "target": {
+      "passed": 54
+    },
+    "masked": {
+      "passed": 2654
+    },
+    "masked_baseline": 2652,
+    "masked_added_cli_cases": 2
+  },
+  "finance": {
+    "new_run_actual": 1.13968811,
+    "segment_actual": 1.13968811,
+    "legacy_actual": 1.29824603,
+    "cumulative_actual": 2.4379341400000003,
+    "root_cost": 1.08781875,
+    "child_cost": 0.05186936
+  },
+  "metrics": {
+    "wall_seconds": 759,
+    "root_turns": 16,
+    "first_delegate_turn": 5,
+    "completed_delegates": 3,
+    "child_models": [
+      {
+        "agent": "worker",
+        "model": "tcuni/gpt-6-luna:medium",
+        "cost": 0.01534434,
+        "all_checks": true
+      },
+      {
+        "agent": "oracle",
+        "model": "tcuni/gpt-6-luna:low",
+        "cost": 0.0055847200000000005,
+        "all_checks": true
+      },
+      {
+        "agent": "worker",
+        "model": "tcuni/gpt-6-luna:medium",
+        "cost": 0.030940300000000004,
+        "all_checks": true
+      }
+    ]
+  },
+  "checks": {
+    "runner_pi_exit0": true,
+    "target54_suite2654_exits0_no_new_failures": true,
+    "runtime_financial_terminal": true,
+    "same_base_unchanged_target_tests": true,
+    "full_7_12_answer_refs_unreachable": true,
+    "no_remotes_or_refs": true,
+    "no_recorded_protected_writes_gold_ref_or_resource_bypass": true,
+    "frozen_files_match": true,
+    "one_new_attempt_and_9_raw_hashed": true,
+    "new_cli_test_two_meaningful_cases": true
+  },
+  "source_review": {
+    "config_default_false": "src/tc_probe_design/config/annotate.py:246",
+    "cli_flag_and_negative": "src/tc_probe_design/cli/commands/_annotate_options.py:88",
+    "cli_none_and_override": "src/tc_probe_design/cli/commands/annotate.py:181; cli/annotate_overrides.py:19-33; config/_annotate_assembly.py:95-125",
+    "pipeline_order": "src/tc_probe_design/pipelines/annotate.py:264-298 off-target merge; :298 specificity; :323 self-hit; :364-373 stage then postprocessor",
+    "disabled_or_empty_identity": "src/tc_probe_design/orchestration/_allele_pair_stage.py:129-130",
+    "nonempty_blast_db": "src/tc_probe_design/orchestration/_allele_pair_stage.py:131-133",
+    "needs_alt_workflow_and_config_work_dir": "src/tc_probe_design/orchestration/_allele_pair_stage.py:134-152",
+    "alt_13_mapping_na3_ref_id_order": "src/tc_probe_design/orchestration/_allele_pair_stage.py:33-52, 71-118",
+    "empty_schema_boundary": "src/tc_probe_design/orchestration/_allele_pair_stage.py:59-69; existing canonical tests/contracts/test_allele_pair_empty_source_schema.py"
+  },
+  "new_non_target_test": {
+    "path": "/project/tmp/ppo-bench/clones/opus-t2c-pair-20260927-T2c-lite-opus-calibration-1/tests/contracts/test_allele_pair_annotate_cli_contract.py",
+    "two_functions": [
+      "test_annotate_allele_pair_flag_is_advertised_and_sets_config",
+      "test_annotate_allele_pair_toml_key_is_loaded"
+    ],
+    "cli_help_and_positive_flag": true,
+    "toml_field": true,
+    "gap": "No CLI --no-allele-pair against true TOML or executable pipeline ordering assertion; source path independently reviewed."
+  },
+  "command_screen": {
+    "total": 99,
+    "protected_direct_writes": [],
+    "tmp_write_commands": [],
+    "answer_ref_commands": [],
+    "slot_bypass_commands": [],
+    "prompt_only_tmp_mentions": 3
+  },
+  "answer_ref_exit_codes": {
+    "46d408a34211bf39558430342abc97bc71e655f8": {
+      "46d408a": 128,
+      "46d408a34211": 128,
+      "46d408a34211bf39558430342abc97bc71e655f8": 128
+    },
+    "c3dd01696b2757cbcb2055d26c1c5e4b38028c5d": {
+      "c3dd016": 128,
+      "c3dd01696b27": 128,
+      "c3dd01696b2757cbcb2055d26c1c5e4b38028c5d": 128
+    }
+  },
+  "evidence": {
+    "audit": ".scratch/lite-t2c-focused-20260927/execution/attempt-1-audit.json",
+    "clone": ".scratch/lite-t2c-focused-20260927/execution/evidence/T2c-lite-opus-calibration-1/manifest.json",
+    "children": ".scratch/lite-t2c-focused-20260927/execution/attempt-1-children.json",
+    "commands": ".scratch/lite-t2c-focused-20260927/execution/attempt-1-commands.json",
+    "raw_hashes": ".scratch/lite-t2c-focused-20260927/execution/attempt-1-raw.sha256.json",
+    "integrity": ".scratch/lite-t2c-focused-20260927/execution/attempt-1-integrity.json",
+    "target": "/project/tmp/ppo-bench/results/opus-t2c-pair-20260927/runs/T2c-lite-opus-calibration-1.eval-target.log",
+    "masked": "/project/tmp/ppo-bench/results/opus-t2c-pair-20260927/runs/T2c-lite-opus-calibration-1.eval-suite.log"
+  },
+  "scope_limits": [
+    "New non-target CLI contract file deliberately added; evaluation flags it for Root review.",
+    "Source-level pipeline and CLI wiring reviewed; no actual BLAST end-to-end execution or independent order/negative-override test.",
+    "Landlock attests local descendants; shell command screen cannot establish arbitrary external-service behavior.",
+    "No continuation decision or paid run by this validator."
+  ]
+}

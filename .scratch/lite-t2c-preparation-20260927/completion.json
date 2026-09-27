@@ -1,0 +1,20 @@
+{
+  "status": "completed",
+  "completed_at": "2026-09-27T00:48:25.801288+00:00",
+  "offline_validation": "PASS",
+  "independent_final_review": "PASS",
+  "paid_execution_authorized": false,
+  "paid_attempts_started": 0,
+  "report": "report.md",
+  "proposal": "plan.json",
+  "target": "c3dd01696b2757cbcb2055d26c1c5e4b38028c5d",
+  "target_tests_passed": 54,
+  "gold_masked_passed": 2652,
+  "bench_tests_passed": 35,
+  "release": "PASS",
+  "frozen_snapshot_files_checked": 82,
+  "snapshot_drift": [],
+  "preexisting_scope_drift": [],
+  "main_head_unchanged": true,
+  "next_action": "Decide whether to authorize frozen four-run/$10 actual proposal after runtime preflight; do not resume old T2b list."
+}

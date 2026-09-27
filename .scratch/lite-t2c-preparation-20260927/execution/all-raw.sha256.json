@@ -1,0 +1,20 @@
+{
+  "/project/tmp/ppo-bench/results/opus-cross-task-t1-t2c-20260927/STOP": "833d436e90bd6d2831509680da18ccaf51f2ce0305b5c417dc76e886f2e1bad2",
+  "/project/tmp/ppo-bench/results/opus-cross-task-t1-t2c-20260927/campaign.json": "37d8e7eb7c7195305a18e9fdf47e7c6dd2f1fb9a40897b8a2768bc38de5917bc",
+  "/project/tmp/ppo-bench/results/opus-cross-task-t1-t2c-20260927/runs/T1-native-opus-calibration-1.eval-suite.log": "44133745e156c41e757b04903ea79727d9185e66e6250671bcf31e1446fbae80",
+  "/project/tmp/ppo-bench/results/opus-cross-task-t1-t2c-20260927/runs/T1-native-opus-calibration-1.eval-target.log": "e65124f4427754c3174e702280b8e05893a988fbfbf4ec173fb0d1d54f8eee50",
+  "/project/tmp/ppo-bench/results/opus-cross-task-t1-t2c-20260927/runs/T1-native-opus-calibration-1.eval.json": "f55f43e882dd0d6460b373d6e8b08889bead33a5b2c1fa3a6e900f7014f8a6d9",
+  "/project/tmp/ppo-bench/results/opus-cross-task-t1-t2c-20260927/runs/T1-native-opus-calibration-1.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+  "/project/tmp/ppo-bench/results/opus-cross-task-t1-t2c-20260927/runs/T1-native-opus-calibration-1.jsonl": "57071a469b57ebc1a96d7c39d35c9e644229c0af06c5aaa60948806945efde90",
+  "/project/tmp/ppo-bench/results/opus-cross-task-t1-t2c-20260927/runs/T1-native-opus-calibration-1.meta.json": "9fddff467c953f47fda1e2ed6879cf5089e9d47c4e3c1fb5fa28a1006ac06d70",
+  "/project/tmp/ppo-bench/results/opus-cross-task-t1-t2c-20260927/runs/T1-native-opus-calibration-1.native-collection.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "/project/tmp/ppo-bench/results/opus-cross-task-t1-t2c-20260927/runs/T1-native-opus-calibration-1.native-evidence/c12ee51c-1649-449e-b47e-d7f465fe7fe9_worker_0_meta.json": "152fa31db713faf38ad0b0e1b766e2eb77032c5b49c5f2bd9ba4a156acc43026",
+  "/project/tmp/ppo-bench/results/opus-cross-task-t1-t2c-20260927/runs/T1-native-opus-calibration-1.native-evidence/c12ee51c-1649-449e-b47e-d7f465fe7fe9_worker_0_transcript.jsonl": "ad1f5a64f26ef12ca20c347979f781a34d538d8d2506da4b79072ccfae219e13",
+  "/project/tmp/ppo-bench/results/opus-cross-task-t1-t2c-20260927/runs/T1-native-opus-calibration-1.native-evidence/f78cdf33-544b-4772-9d04-f9387ee451a5_worker_0_meta.json": "0c1a5b4d6badeabf944a9c210c6e6c8134c5e08fec93cdb4eac7b49a3fb0cfe4",
+  "/project/tmp/ppo-bench/results/opus-cross-task-t1-t2c-20260927/runs/T1-native-opus-calibration-1.native-evidence/f78cdf33-544b-4772-9d04-f9387ee451a5_worker_0_transcript.jsonl": "3c666367682abcf58b8ce643c282af8ad872e0f8e838aa41cf4c783c31ca9a28",
+  "/project/tmp/ppo-bench/results/opus-cross-task-t1-t2c-20260927/runs/T1-native-opus-calibration-1.native-evidence/fab91c35-e3d0-496c-9bee-569e45650863_worker_0_meta.json": "1322fe3e8fc52ff2eac652be4299614841dc8c90e37253f910698c9d87dfa3c3",
+  "/project/tmp/ppo-bench/results/opus-cross-task-t1-t2c-20260927/runs/T1-native-opus-calibration-1.native-evidence/fab91c35-e3d0-496c-9bee-569e45650863_worker_0_transcript.jsonl": "2fd3243f71b937bda4b31da2c3d69b5d4febd81e7a785a1536da00653aab005b",
+  "/project/tmp/ppo-bench/results/opus-cross-task-t1-t2c-20260927/runs/T1-native-opus-calibration-1.native-evidence/manifest.json": "384fc35c92494789514914bfd6e92be6deae8b5c5e0d77f512cda91c37534a55",
+  "/project/tmp/ppo-bench/results/opus-cross-task-t1-t2c-20260927/runs/T1-native-opus-calibration-1.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "/project/tmp/ppo-bench/results/opus-cross-task-t1-t2c-20260927/runs/T1-native-opus-calibration-1.wall": "dee3cda5da49cf77a2362053f2c81f10d033b23be848446ff09dba34701d5a49"
+}

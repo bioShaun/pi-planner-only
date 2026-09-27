@@ -1,0 +1,13 @@
+{
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-focused-20260927/execution/audit.py": "c7537508365818ca1706fe09a49ce3546e744f792285ba519a590c3d1fbb9f98",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-focused-20260927/execution/authorization.json": "3fa21a08084b05f0bf9612ac4b78a38090d5b47cb48af2ab11ffbb5386d94c1e",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-focused-20260927/execution/capture-children.py": "1c82355c3b8c196b8babf3b61d05fd9e15ac8362c619c46cf0cfcb5eec8ac59a",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-focused-20260927/execution/capture-clone.py": "e7ac5f755aa1ba7e7f61a0ccd6e97101d8070588cc278d80e9911acb3409934e",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-focused-20260927/execution/dry-run.sh": "972a16b738691844a4055418fba1305ffa14e1de07e7cc7ee96d63aaf60c9f09",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-focused-20260927/execution/observe.py": "edffafcca55ac97f0259def189ca8524ac476fc3a1359d35d315c9558e188218",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-focused-20260927/execution/paths.json": "db0d90cdf0022e33c4090949df02b20133de5326a98d5787431947bab531451c",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-focused-20260927/execution/plan.json": "ec28d1be1d15f6c629df5f88e47d8e2ab6d4e2440b123a17043c995739834569",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-focused-20260927/execution/preflight.sh": "1557dc9234634f9d4bd3d4c969d23bb28cb39049244cd54c0cd3f885fa49d556",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-focused-20260927/execution/run-one.sh": "421946da4bca5d92cb36549c149c439ece81ecd39a8e3660f84a3488d5213f81",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-focused-20260927/execution/static-check.py": "21691c048130e573954c610364c95c3fb22d40090c3e98ac6359e8b02a632394"
+}

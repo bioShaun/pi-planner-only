@@ -1,0 +1,117 @@
+{
+  "id": "T1-native-opus-calibration-1",
+  "ordinal": 1,
+  "checks": {
+    "runner_exit0": true,
+    "pi_exit0": true,
+    "quality": false,
+    "baseline_no_new": false,
+    "target_actual_tests": true,
+    "suite_actual_tests": true,
+    "no_stop": true,
+    "attempt_count": true,
+    "source_unchanged": true,
+    "previous_pilot_unchanged": true,
+    "runtime_metadata": true,
+    "temp_resource": true,
+    "plugin_ref": true,
+    "actual_complete": true,
+    "opus_complete": true,
+    "no_pending_tool": true,
+    "no_root_api_error": true
+  },
+  "checks_passed": false,
+  "evaluation": {
+    "task": "T1",
+    "arm": "native-opus-calibration",
+    "id": "T1-native-opus-calibration-1",
+    "pass": false,
+    "target_failed": [],
+    "new_failures": [
+      "tests/contracts/test_design_round_contract.py::test_design_round_runs_successfully_and_writes_output",
+      "tests/contracts/test_sequence_metrics_serial_fallback.py::test_serial_and_parallel_metric_outputs_match",
+      "tests/unit/test_compute_stages.py::test_alignment_annotation_stage_adds_alignment_columns",
+      "tests/unit/test_compute_stages.py::test_alignment_stage_auto_small_panel_uses_full",
+      "tests/unit/test_compute_stages.py::test_alignment_stage_auto_without_index_uses_full",
+      "tests/unit/test_compute_stages.py::test_alignment_stage_dispatches_two_stage",
+      "tests/unit/test_compute_stages.py::test_sequence_extraction_stage_snp_produces_extraction_schema",
+      "tests/unit/test_extraction.py::TestExtractIndelCandidates::test_left_anchor_at_pos_minus_one",
+      "tests/unit/test_extraction.py::TestExtractIndelCandidates::test_produces_left_and_right_sides",
+      "tests/unit/test_extraction.py::TestExtractIndelCandidates::test_right_anchor_uses_ref_length",
+      "tests/unit/test_extraction.py::TestExtractSnpCandidates::test_boundary_auto_adjustment_near_chromosome_end",
+      "tests/unit/test_extraction.py::TestExtractSnpCandidates::test_center_probe_type_produces_center_offsets",
+      "tests/unit/test_extraction.py::TestExtractSnpCandidates::test_output_has_expected_columns",
+      "tests/unit/test_extraction.py::TestExtractSnpCandidates::test_sequence_length_matches_probe_length",
+      "tests/unit/test_probe_pipeline_decomposition.py::test_compute_persist_inplace_matches_historical_layout",
+      "tests/unit/test_probe_pipeline_decomposition.py::test_compute_single_design_records_separate_sequence_metric_timing",
+      "tests/unit/test_probe_pipeline_decomposition.py::test_compute_single_design_uses_workspace_not_out_dir",
+      "tests/unit/test_probe_pipeline_decomposition.py::test_persist_design_copies_intermediate_and_writes_tables"
+    ],
+    "files_changed": 6,
+    "non_target_tests_changed": [],
+    "target_test_exit": 0,
+    "suite_exit": 1,
+    "eval_semantics": "masked-suite (baseline and eval both --ignore target tests)",
+    "valid": true,
+    "invalid_reasons": []
+  },
+  "target_test_counts": {
+    "passed": 30
+  },
+  "suite_test_counts": {
+    "failed": 30,
+    "passed": 1093
+  },
+  "removed_baseline_failures": [
+    "tests/unit/test_io_and_cli.py::TestExternalCommandFailureHandling::test_run_command_timeout_raises_alignment_error"
+  ],
+  "non_target_tests_require_review": [],
+  "totals": {
+    "actual": 1.29824603,
+    "opus": 1.29824603
+  },
+  "record": {
+    "id": "T1-native-opus-calibration-1",
+    "task": "T1",
+    "arm": "native-opus-calibration",
+    "rep": 1,
+    "mode": "native",
+    "exit": 0,
+    "passed": false,
+    "wall": 609,
+    "root_turns": 19,
+    "delegates": 3,
+    "children": 3,
+    "root": {
+      "input": 40,
+      "output": 13940,
+      "cacheRead": 726209,
+      "cacheWrite": 89315
+    },
+    "child_cost": 0.028222780000000003,
+    "root_cost": 1.27002325,
+    "total_cost": 1.29824603,
+    "refused": null,
+    "detached": null,
+    "truncated": null,
+    "root_reads": 2,
+    "root_bash": 13,
+    "root_cache_read": 726209,
+    "extra_tools": 0,
+    "turns_per_delegate": 6.333333333333333,
+    "rejected_duplicates": 0,
+    "known_cost_lower_bound": 1.29824603
+  },
+  "first_delegate_start_turn": 11,
+  "root_tool_calls": {
+    "bash": 13,
+    "subagents_enable": 1,
+    "subagent": 4,
+    "read": 2
+  },
+  "delegate_roles": {},
+  "delegate_states": {},
+  "pending": {},
+  "stderr_bytes": 0,
+  "git_diff_results": 2
+}

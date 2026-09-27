@@ -1,0 +1,23 @@
+{
+  "all-raw.sha256.json": {
+    "verified": 23,
+    "mismatches": []
+  },
+  "entry-source.sha256.json": {
+    "verified": 11,
+    "mismatches": []
+  },
+  "source.sha256.json": {
+    "verified": 82,
+    "mismatches": []
+  },
+  "history.sha256.json": {
+    "verified": 161,
+    "mismatches": []
+  },
+  "clone_archives": {
+    "verified": true,
+    "same_initial_tree": true,
+    "clones_retained": true
+  }
+}

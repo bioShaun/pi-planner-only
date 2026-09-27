@@ -1,0 +1,114 @@
+{
+  "run": "T1-native-opus-calibration-1",
+  "base": "4aab15597bf291bec38ce0d6248623c17f810ab6",
+  "head": "4aab15597bf291bec38ce0d6248623c17f810ab6",
+  "head_unchanged": true,
+  "clone": "/project/tmp/ppo-bench/clones/opus-cross-task-t1-t2c-20260927-T1-native-opus-calibration-1",
+  "answer_refs_unreachable": {
+    "978392faf6d19ca137f682df2a77ca6dfca0a316": {
+      "978392faf6d19ca137f682df2a77ca6dfca0a316": 128,
+      "978392faf6d1": 128
+    },
+    "cee4c0f074bd43efebc76942d2682f152caeb074": {
+      "cee4c0f074bd43efebc76942d2682f152caeb074": 128,
+      "cee4c0f074bd": 128
+    }
+  },
+  "changed": [
+    "CODEMAP.md",
+    "docs/PATTERNS.md",
+    "docs/runtime-safety-scientific-correctness-stabilization-spec-2026-07-10.md",
+    "src/tc_probe_design/exceptions.py",
+    "src/tc_probe_design/external_tools.py",
+    "src/tc_probe_design/workflows/replace_primaries.py"
+  ],
+  "untracked": [],
+  "files": [
+    {
+      "path": "CODEMAP.md",
+      "changed": true,
+      "untracked": false,
+      "symlink": false,
+      "before_sha256": "470e37cd293494db496b504afde2668b6deb13b1161e2a999bea178fc7db7127",
+      "after_sha256": "84f9c66a98383d867b416d48b8e6b6c618c0954b8a3f31f93d6ec504aa06fafb"
+    },
+    {
+      "path": "docs/PATTERNS.md",
+      "changed": true,
+      "untracked": false,
+      "symlink": false,
+      "before_sha256": "8bcd4a976e987b1ee8ba5a0446ef92b77dc60cf0dbc127c54dbe6f062a22ae50",
+      "after_sha256": "0fc3f7ef3e101d56811993fdfcee0eb2cd791fac78c2017c557280bb84bbd010"
+    },
+    {
+      "path": "docs/runtime-safety-scientific-correctness-stabilization-spec-2026-07-10.md",
+      "changed": true,
+      "untracked": false,
+      "symlink": false,
+      "before_sha256": "d957fdaf514ede51e873676e70c223a3f789f11ffbe61b38d19a71319f6ba792",
+      "after_sha256": "25db328638f9dc9524f2ae93f5b89c765e9b0a412edee5cbf92bc4a07977f2d3"
+    },
+    {
+      "path": "src/tc_probe_design/exceptions.py",
+      "changed": true,
+      "untracked": false,
+      "symlink": false,
+      "before_sha256": "872dc201fa52408b69a66d8b012f1605f5590a1589db5735c1335830a8524eab",
+      "after_sha256": "4f0dc4ae4b6fd833eddf30705416fad1ad2f4d06ec4c260c5948536912a93804"
+    },
+    {
+      "path": "src/tc_probe_design/external_tools.py",
+      "changed": true,
+      "untracked": false,
+      "symlink": false,
+      "before_sha256": "1fe8ca6c837ca0ff2d631d0789cce5e863ab8215341cc1cc5597d65ca137f4a9",
+      "after_sha256": "0fc7a8b332421a8d356df5f21bf21c3dbc5c4244539ac67ef270fbc82b96d52e"
+    },
+    {
+      "path": "src/tc_probe_design/workflows/replace_primaries.py",
+      "changed": true,
+      "untracked": false,
+      "symlink": false,
+      "before_sha256": "f130b1f400ca64f4e1e6eeba3c9028f38b87a8aee2b9a57801a104000f72ce82",
+      "after_sha256": "e70e7eab0cb03b7cdf95d77ba7bd55900374dd67d3172a79614762e9ad40ed5a"
+    },
+    {
+      "path": "tests/contracts/test_external_tool_timeout.py",
+      "changed": false,
+      "untracked": false,
+      "symlink": false,
+      "before_sha256": "caf5e21dcd5d87e7d5a6929c38a0f6442e39c31848fb385cff098ad8b0c1f1d6",
+      "after_sha256": "caf5e21dcd5d87e7d5a6929c38a0f6442e39c31848fb385cff098ad8b0c1f1d6",
+      "assert_statements_identical": true
+    },
+    {
+      "path": "tests/contracts/test_prefilter_calibration_profile.py",
+      "changed": false,
+      "untracked": false,
+      "symlink": false,
+      "before_sha256": "b710ee8e049b7f57de8f966fe83fa33c293ea639157f262e79900b7e4a0fa657",
+      "after_sha256": "b710ee8e049b7f57de8f966fe83fa33c293ea639157f262e79900b7e4a0fa657",
+      "assert_statements_identical": true
+    },
+    {
+      "path": "tests/contracts/test_replace_primaries_cli_wiring.py",
+      "changed": false,
+      "untracked": false,
+      "symlink": false,
+      "before_sha256": "f89c6bb383cf7c8916177cc994661b2e69f1a786a16f99b5ce15725eaf9e9663",
+      "after_sha256": "f89c6bb383cf7c8916177cc994661b2e69f1a786a16f99b5ce15725eaf9e9663",
+      "assert_statements_identical": true
+    },
+    {
+      "path": "tests/unit/test_external_tool_version_reporting.py",
+      "changed": false,
+      "untracked": false,
+      "symlink": false,
+      "before_sha256": "c41dffab32176e9c91bf5799c68f36bc3b1e712fb728eaab6d1686c37bc8fc52",
+      "after_sha256": "c41dffab32176e9c91bf5799c68f36bc3b1e712fb728eaab6d1686c37bc8fc52",
+      "assert_statements_identical": true
+    }
+  ],
+  "canonical_target_files_unchanged_after_evaluation": true,
+  "note": "Snapshot after canonical test restoration by evaluate.sh. Review tool events for prior protected-test mutations and actual tests run."
+}

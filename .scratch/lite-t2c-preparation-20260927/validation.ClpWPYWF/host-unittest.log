@@ -1,0 +1,455 @@
+EEEE.EE.EE.EEEEEEEEEEEEE.EEEEEEE.EE
+======================================================================
+ERROR: test_archived_detached_terminal_replay (bench.test_native.NativeBenchTest.test_archived_detached_terminal_replay)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 43, in test_archived_detached_terminal_replay
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmpsr8binqo'
+
+======================================================================
+ERROR: test_child_pricing_and_dedup_in_single_parallel_chain (bench.test_native.NativeBenchTest.test_child_pricing_and_dedup_in_single_parallel_chain)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 265, in test_child_pricing_and_dedup_in_single_parallel_chain
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmpfqkcu2eg'
+
+======================================================================
+ERROR: test_cli_attempt_spend_includes_invalid_and_excludes_unknown_totals (bench.test_native.NativeBenchTest.test_cli_attempt_spend_includes_invalid_and_excludes_unknown_totals)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 481, in test_cli_attempt_spend_includes_invalid_and_excludes_unknown_totals
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmpvt7r013p'
+
+======================================================================
+ERROR: test_collector_rejects_unbound_child_identity_and_artifacts (bench.test_native.NativeBenchTest.test_collector_rejects_unbound_child_identity_and_artifacts)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 128, in test_collector_rejects_unbound_child_identity_and_artifacts
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmpnr6wcegw'
+
+======================================================================
+ERROR: test_failed_guard_blocks_before_pi_and_records_stop_not_retry (bench.test_native.NativeBenchTest.test_failed_guard_blocks_before_pi_and_records_stop_not_retry)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 749, in test_failed_guard_blocks_before_pi_and_records_stop_not_retry
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmpj7dtl16h'
+
+======================================================================
+ERROR: test_guard_malformed_mountinfo_blocks_before_policy_or_output (bench.test_native.NativeBenchTest.test_guard_malformed_mountinfo_blocks_before_policy_or_output)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 875, in test_guard_malformed_mountinfo_blocks_before_policy_or_output
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmpxn2dmttr'
+
+======================================================================
+ERROR: test_guard_outside_alias_blocks_startup_but_records_safe_stop (bench.test_native.NativeBenchTest.test_guard_outside_alias_blocks_startup_but_records_safe_stop)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 861, in test_guard_outside_alias_blocks_startup_but_records_safe_stop
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmp1kyxfm9d'
+
+======================================================================
+ERROR: test_guard_rejects_output_on_forbidden_device_before_exec (bench.test_native.NativeBenchTest.test_guard_rejects_output_on_forbidden_device_before_exec)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 936, in test_guard_rejects_output_on_forbidden_device_before_exec
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmpowb7qz4e'
+
+======================================================================
+ERROR: test_guard_rejects_wrong_reason_bash_exit (bench.test_native.NativeBenchTest.test_guard_rejects_wrong_reason_bash_exit)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 1008, in test_guard_rejects_wrong_reason_bash_exit
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmpdgfvr4zs'
+
+======================================================================
+ERROR: test_guard_rejects_wrong_reason_child_exit (bench.test_native.NativeBenchTest.test_guard_rejects_wrong_reason_child_exit)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 996, in test_guard_rejects_wrong_reason_child_exit
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmp69ijg8qz'
+
+======================================================================
+ERROR: test_guard_stop_refuses_forbidden_existing_dir_or_file_device (bench.test_native.NativeBenchTest.test_guard_stop_refuses_forbidden_existing_dir_or_file_device)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 953, in test_guard_stop_refuses_forbidden_existing_dir_or_file_device
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmpwktygopi'
+
+======================================================================
+ERROR: test_guard_stop_refuses_forbidden_parent_device_before_mkdir (bench.test_native.NativeBenchTest.test_guard_stop_refuses_forbidden_parent_device_before_mkdir)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 921, in test_guard_stop_refuses_forbidden_parent_device_before_mkdir
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmpymem2una'
+
+======================================================================
+ERROR: test_guard_stop_refuses_symlink_without_touching_target (bench.test_native.NativeBenchTest.test_guard_stop_refuses_symlink_without_touching_target)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 906, in test_guard_stop_refuses_symlink_without_touching_target
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmptrw2yj4u'
+
+======================================================================
+ERROR: test_launch_routes_and_rejects_unknown_mode (bench.test_native.NativeBenchTest.test_launch_routes_and_rejects_unknown_mode)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 650, in test_launch_routes_and_rejects_unknown_mode
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmpoboqigra'
+
+======================================================================
+ERROR: test_lite_child_missing_or_unknown_usage_never_claims_complete_spend (bench.test_native.NativeBenchTest.test_lite_child_missing_or_unknown_usage_never_claims_complete_spend)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 531, in test_lite_child_missing_or_unknown_usage_never_claims_complete_spend
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmp51h3fe7x'
+
+======================================================================
+ERROR: test_missing_exit_cannot_certify_completed_cost (bench.test_native.NativeBenchTest.test_missing_exit_cannot_certify_completed_cost)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 624, in test_missing_exit_cannot_certify_completed_cost
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmpbjv4e1_2'
+
+======================================================================
+ERROR: test_missing_model_usage_errors_and_async_are_invalid (bench.test_native.NativeBenchTest.test_missing_model_usage_errors_and_async_are_invalid)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 338, in test_missing_model_usage_errors_and_async_are_invalid
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmp7a9t5885'
+
+======================================================================
+ERROR: test_missing_or_invalid_metadata_cannot_hide_native_spend (bench.test_native.NativeBenchTest.test_missing_or_invalid_metadata_cannot_hide_native_spend)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 565, in test_missing_or_invalid_metadata_cannot_hide_native_spend
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmp8a00wc5r'
+
+======================================================================
+ERROR: test_model_key_gate_and_pricing_agree_on_suffix (bench.test_native.NativeBenchTest.test_model_key_gate_and_pricing_agree_on_suffix)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 159, in test_model_key_gate_and_pricing_agree_on_suffix
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmp8gcne431'
+
+======================================================================
+ERROR: test_nested_spend_requires_proof_even_with_parent_usage (bench.test_native.NativeBenchTest.test_nested_spend_requires_proof_even_with_parent_usage)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 303, in test_nested_spend_requires_proof_even_with_parent_usage
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmp54mf5212'
+
+======================================================================
+ERROR: test_nonworker_declared_artifacts_collect (bench.test_native.NativeBenchTest.test_nonworker_declared_artifacts_collect)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 175, in test_nonworker_declared_artifacts_collect
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmp90xjiu2b'
+
+======================================================================
+ERROR: test_rejected_duplicate_call_is_counted_not_a_billing_gap (bench.test_native.NativeBenchTest.test_rejected_duplicate_call_is_counted_not_a_billing_gap)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 367, in test_rejected_duplicate_call_is_counted_not_a_billing_gap
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmphd6yolm5'
+
+======================================================================
+ERROR: test_resume_same_session_is_new_spend_repeated_run_is_not (bench.test_native.NativeBenchTest.test_resume_same_session_is_new_spend_repeated_run_is_not)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 286, in test_resume_same_session_is_new_spend_repeated_run_is_not
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmp1bbqkced'
+
+======================================================================
+ERROR: test_root_usage_missing_in_any_mode_never_claims_complete_cost (bench.test_native.NativeBenchTest.test_root_usage_missing_in_any_mode_never_claims_complete_cost)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 548, in test_root_usage_missing_in_any_mode_never_claims_complete_cost
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmpzx2nq8mj'
+
+======================================================================
+ERROR: test_temp_guard_denies_tmp_and_child_writes_but_allows_external_temp (bench.test_native.NativeBenchTest.test_temp_guard_denies_tmp_and_child_writes_but_allows_external_temp)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 700, in test_temp_guard_denies_tmp_and_child_writes_but_allows_external_temp
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmpzoutgsph'
+
+======================================================================
+ERROR: test_temp_guard_rejects_bind_device_before_temp_creation (bench.test_native.NativeBenchTest.test_temp_guard_rejects_bind_device_before_temp_creation)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 800, in test_temp_guard_rejects_bind_device_before_temp_creation
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmpb4kgkcmx'
+
+======================================================================
+ERROR: test_temp_guard_rejects_repo_local_and_tmp_alias_layout (bench.test_native.NativeBenchTest.test_temp_guard_rejects_repo_local_and_tmp_alias_layout)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 772, in test_temp_guard_rejects_repo_local_and_tmp_alias_layout
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmp0hluimc4'
+
+======================================================================
+ERROR: test_temp_guard_rejects_temp_inside_runner_repo (bench.test_native.NativeBenchTest.test_temp_guard_rejects_temp_inside_runner_repo)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 891, in test_temp_guard_rejects_temp_inside_runner_repo
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmp_sgb9rt2'
+
+======================================================================
+ERROR: test_truncation_and_nonzero_exit_leave_only_cost_lower_bound (bench.test_native.NativeBenchTest.test_truncation_and_nonzero_exit_leave_only_cost_lower_bound)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 590, in test_truncation_and_nonzero_exit_leave_only_cost_lower_bound
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmp3mfjngu_'
+
+======================================================================
+ERROR: test_unpriced_child_never_gets_partial_total (bench.test_native.NativeBenchTest.test_unpriced_child_never_gets_partial_total)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 459, in test_unpriced_child_never_gets_partial_total
+    with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 887, in __init__
+    self.name = mkdtemp(suffix, prefix, dir)
+                ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/project/software/miniforge3/lib/python3.13/tempfile.py", line 385, in mkdtemp
+    _os.mkdir(file, 0o700)
+    ~~~~~~~~~^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/project/tmp/ppo-bench/t2c-validation.foIOmTer/tmpj1xxi56b'
+
+----------------------------------------------------------------------
+Ran 35 tests in 0.024s
+
+FAILED (errors=30)

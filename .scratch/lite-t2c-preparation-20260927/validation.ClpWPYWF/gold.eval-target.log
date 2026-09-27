@@ -1,0 +1,66 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-9.0.2, pluggy-1.6.0 -- /public/scripts/tc-probe-design-v2/.venv/bin/python
+cachedir: .pytest_cache
+hypothesis profile 'dev' -> max_examples=200, deadline=timedelta(milliseconds=2000)
+benchmark: 5.2.3 (defaults: timer=time.perf_counter disable_gc=False min_rounds=5 min_time=0.000005 max_time=1.0 calibration_precision=10 warmup=False warmup_iterations=100000)
+rootdir: /home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-preparation-20260927/validation.ClpWPYWF/candidate
+configfile: pyproject.toml
+plugins: testmon-2.2.0, cov-7.0.0, hypothesis-6.155.1, benchmark-5.2.3
+collecting ... collected 54 items
+
+tests/contracts/test_ref_alt_stage_fold_to_long.py::TestFoldAllelePairsToLongTableContract::test_13_columns_overridden_from_alt_sources PASSED [  1%]
+tests/contracts/test_ref_alt_stage_fold_to_long.py::TestFoldAllelePairsToLongTableContract::test_alt_probe_id_suffix_and_ref_probe_id_unchanged PASSED [  3%]
+tests/contracts/test_ref_alt_stage_fold_to_long.py::TestFoldAllelePairsToLongTableContract::test_off_target_columns_are_na_for_alt PASSED [  5%]
+tests/contracts/test_ref_alt_stage_fold_to_long.py::TestFoldAllelePairsToLongTableContract::test_both_sides_ref_produces_no_alt_rows PASSED [  7%]
+tests/contracts/test_ref_alt_stage_fold_to_long.py::TestFoldAllelePairsToLongTableContract::test_row_order_ref_before_alt PASSED [  9%]
+tests/contracts/test_ref_alt_stage_fold_to_long.py::TestFoldAllelePairsToLongTableContract::test_missing_alt_source_column_raises_validation_error PASSED [ 11%]
+tests/contracts/test_ref_alt_stage_fold_to_long.py::TestFoldAllelePairsToLongTableContract::test_empty_policy_df_returns_empty PASSED [ 12%]
+tests/contracts/test_ref_alt_stage_fold_to_long.py::TestAllelePairStageContract::test_stage_disabled_returns_result_unchanged PASSED [ 14%]
+tests/contracts/test_ref_alt_stage_fold_to_long.py::TestAllelePairStageContract::test_stage_empty_final_df_returns_result_unchanged PASSED [ 16%]
+tests/contracts/test_ref_alt_stage_fold_to_long.py::TestAllelePairStageContract::test_stage_enabled_without_blast_db_raises_config_error PASSED [ 18%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_empty_policy_returns_empty_without_wide_schema PASSED [ 20%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_no_alt_and_zero_column_wide_keeps_ref_only PASSED [ 22%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_alt_required_and_zero_column_wide_reports_all_missing_sources PASSED [ 24%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_declared_full_schema_with_zero_rows_keeps_ref_only[False] PASSED [ 25%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_declared_full_schema_with_zero_rows_keeps_ref_only[True] PASSED [ 27%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_alt_required_zero_row_wide_rejects_each_missing_source[alt_sequence] PASSED [ 29%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_alt_required_zero_row_wide_rejects_each_missing_source[alt_GC] PASSED [ 31%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_alt_required_zero_row_wide_rejects_each_missing_source[alt_tm] PASSED [ 33%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_alt_required_zero_row_wide_rejects_each_missing_source[alt_N_count] PASSED [ 35%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_alt_required_zero_row_wide_rejects_each_missing_source[alt_seq_complexity] PASSED [ 37%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_alt_required_zero_row_wide_rejects_each_missing_source[alt_max_homopolymer] PASSED [ 38%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_alt_required_zero_row_wide_rejects_each_missing_source[alt_tandem_repeat] PASSED [ 40%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_alt_required_zero_row_wide_rejects_each_missing_source[alt_max_tandem_repeat_count] PASSED [ 42%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_alt_required_zero_row_wide_rejects_each_missing_source[alt_hairpin_stem] PASSED [ 44%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_alt_required_zero_row_wide_rejects_each_missing_source[alt_genome_hits] PASSED [ 46%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_alt_required_zero_row_wide_rejects_each_missing_source[alt_specificity_status] PASSED [ 48%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_alt_required_zero_row_wide_rejects_each_missing_source[alt_probe_level] PASSED [ 50%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_alt_required_zero_row_wide_rejects_each_missing_source[alt_probe_level_reason] PASSED [ 51%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_sequence-False] PASSED [ 53%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_sequence-True] PASSED [ 55%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_GC-False] PASSED [ 57%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_GC-True] PASSED [ 59%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_tm-False] PASSED [ 61%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_tm-True] PASSED [ 62%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_N_count-False] PASSED [ 64%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_N_count-True] PASSED [ 66%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_seq_complexity-False] PASSED [ 68%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_seq_complexity-True] PASSED [ 70%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_max_homopolymer-False] PASSED [ 72%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_max_homopolymer-True] PASSED [ 74%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_tandem_repeat-False] PASSED [ 75%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_tandem_repeat-True] PASSED [ 77%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_max_tandem_repeat_count-False] PASSED [ 79%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_max_tandem_repeat_count-True] PASSED [ 81%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_hairpin_stem-False] PASSED [ 83%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_hairpin_stem-True] PASSED [ 85%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_genome_hits-False] PASSED [ 87%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_genome_hits-True] PASSED [ 88%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_specificity_status-False] PASSED [ 90%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_specificity_status-True] PASSED [ 92%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_probe_level-False] PASSED [ 94%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_probe_level-True] PASSED [ 96%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_probe_level_reason-False] PASSED [ 98%]
+tests/contracts/test_allele_pair_empty_source_schema.py::test_nonempty_wide_rejects_each_missing_source[alt_probe_level_reason-True] PASSED [100%]
+
+============================== 54 passed in 0.29s ==============================

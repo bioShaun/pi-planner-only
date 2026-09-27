@@ -1,0 +1,11 @@
+{
+  "ready": true,
+  "at": "2026-09-27T01:04:29.278336+00:00",
+  "four_guarded_dry_runs": "PASS",
+  "static_sources_and_history": "82+106 hashes match",
+  "settings_and_host": "match frozen",
+  "cached_plugin": "eight sources match pinned commit",
+  "paid_health_requests": 0,
+  "audit_summary_parser": "checked actual T1/T2c logs including mm:ss suffix",
+  "authorization": "local execution/plan.json; fixed4/$10 actual"
+}

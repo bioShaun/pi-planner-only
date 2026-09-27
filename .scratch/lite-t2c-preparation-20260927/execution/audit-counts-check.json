@@ -1,0 +1,15 @@
+{
+  "T1target": {
+    "passed": 30
+  },
+  "T1suite": {
+    "failed": 12,
+    "passed": 1111
+  },
+  "T2ctarget": {
+    "passed": 54
+  },
+  "T2csuite": {
+    "passed": 2652
+  }
+}

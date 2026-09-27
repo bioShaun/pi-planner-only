@@ -1,0 +1,11 @@
+{
+  "continue": false,
+  "attempts": 1,
+  "valid_attempts": 1,
+  "quality_passes": 0,
+  "actual_total": 1.29824603,
+  "reason": "T1 native masked suite has18 new failures; target30 passes; complete accounting",
+  "remaining_unstarted": 3,
+  "automatic_retry": false,
+  "at": "2026-09-27T01:20:47.530941+00:00"
+}

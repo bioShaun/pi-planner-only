@@ -1,0 +1,147 @@
+{
+  "status": "PASS",
+  "as_of": "2026-09-27T11:32:40.036079+08:00",
+  "id": "T2c-native-opus-calibration-1",
+  "quality": {
+    "task": "T2c",
+    "arm": "native-opus-calibration",
+    "id": "T2c-native-opus-calibration-1",
+    "pass": true,
+    "target_failed": [],
+    "new_failures": [],
+    "files_changed": 13,
+    "non_target_tests_changed": [
+      "tests/contracts/test_annotate_allele_pair_cli_contract.py"
+    ],
+    "target_test_exit": 0,
+    "suite_exit": 0,
+    "eval_semantics": "masked-suite (baseline and eval both --ignore target tests)",
+    "valid": true,
+    "invalid_reasons": []
+  },
+  "counts": {
+    "target": {
+      "passed": 54
+    },
+    "masked": {
+      "passed": 2653
+    },
+    "baseline": 2652,
+    "one_added_cli_case": [
+      "test_allele_pair_cli_override_and_default"
+    ]
+  },
+  "fees": {
+    "this_native": 1.45913197,
+    "this_native_root": 1.40573175,
+    "this_native_children": 0.053400220000000005,
+    "segment_both_T2c": 2.5988200800000003,
+    "historical_T1": 1.29824603,
+    "cumulative_all_three": 3.8970661100000004,
+    "checkpoint": 10
+  },
+  "metrics": {
+    "wall_seconds": 1136,
+    "root_turns": 17,
+    "first_actual_delegate_turn": 9,
+    "management_subagent_list_calls": 1,
+    "actual_children": 2,
+    "models": [
+      {
+        "agent": "worker",
+        "model": "tcuni/gpt-6-luna:medium",
+        "cost": 0.049420660000000005,
+        "checks": {
+          "exit0": true,
+          "tokens_match": true,
+          "model_matches": true,
+          "reported_cost_matches": true,
+          "no_nested": true,
+          "no_api_errors": true,
+          "no_pending": true
+        }
+      },
+      {
+        "agent": "worker",
+        "model": "tcuni/gpt-6-luna:medium",
+        "cost": 0.00397956,
+        "checks": {
+          "exit0": true,
+          "tokens_match": true,
+          "model_matches": true,
+          "reported_cost_matches": true,
+          "no_nested": true,
+          "no_api_errors": true,
+          "no_pending": true
+        }
+      }
+    ]
+  },
+  "checks": {
+    "runner_pi_exit0": true,
+    "target54_suite2653_both_exit0_no_new": true,
+    "full_terminal_and_cost": true,
+    "main_bundle_bound_two_children": true,
+    "base_head_and_canonical_tests": true,
+    "answer_refs_full_7_12_unreachable": true,
+    "no_remote_or_refs": true,
+    "no_recorded_protected_test_mutation_gold_or_bypass": true,
+    "entry82_history161_and_first_raw9_stable": true,
+    "two_new_campaign_runs": true,
+    "full_campaign_raw_hashed": true,
+    "under_cumulative_checkpoint": true,
+    "one_added_cli_test_checks_default_and_positive": true
+  },
+  "source_review": {
+    "config_default_false": "src/tc_probe_design/config/annotate.py:242",
+    "cli_positive_negative_and_default": "src/tc_probe_design/cli/commands/_annotate_options.py:50-56; cli/commands/annotate.py:181",
+    "config_file_and_explicit_cli_override": "src/tc_probe_design/cli/annotate_overrides.py:30; config/_annotate_assembly.py:95-125 (unchanged assembly)",
+    "pipeline_order": "src/tc_probe_design/pipelines/annotate.py:264-296 off-target join, :298 specificity, :323 self-hit, :361 stage, :362 postprocessor",
+    "disabled_empty_identity": "src/tc_probe_design/orchestration/_allele_pair_stage.py:123-124",
+    "blast_db_nonempty_gate": "src/tc_probe_design/orchestration/_allele_pair_stage.py:125-126",
+    "only_needs_alt_and_helper_forwarding": "src/tc_probe_design/orchestration/_allele_pair_stage.py:128-146",
+    "thirteen_literal_ALT_columns_and_NA3_REFid_adjacentALT_siteattrs": "src/tc_probe_design/orchestration/_allele_pair_stage.py:29-55,77-112",
+    "empty_schema": "src/tc_probe_design/orchestration/_allele_pair_stage.py:62-75; canonical test_allele_pair_empty_source_schema.py"
+  },
+  "command_screen": {
+    "count": 105,
+    "direct_protected_edits": [],
+    "shell_protected_writes": [],
+    "tmp_output_commands": [],
+    "answer_ref_commands": [],
+    "slot_bypass_commands": [],
+    "prompt_only_tmp_mentions": 2,
+    "new_test_initial_write_and_final_write": [
+      75,
+      90
+    ]
+  },
+  "refs": {
+    "46d408a34211bf39558430342abc97bc71e655f8": {
+      "46d408a": 128,
+      "46d408a34211": 128,
+      "46d408a34211bf39558430342abc97bc71e655f8": 128
+    },
+    "c3dd01696b2757cbcb2055d26c1c5e4b38028c5d": {
+      "c3dd016": 128,
+      "c3dd01696b27": 128,
+      "c3dd01696b2757cbcb2055d26c1c5e4b38028c5d": 128
+    }
+  },
+  "evidence": {
+    "audit": ".scratch/lite-t2c-focused-20260927/execution/attempt-2-audit.json",
+    "clone": ".scratch/lite-t2c-focused-20260927/execution/evidence/T2c-native-opus-calibration-1/manifest.json",
+    "children": ".scratch/lite-t2c-focused-20260927/execution/attempt-2-children.json",
+    "commands": ".scratch/lite-t2c-focused-20260927/execution/attempt-2-commands.json",
+    "native_bundle": "/project/tmp/ppo-bench/results/opus-t2c-pair-20260927/runs/T2c-native-opus-calibration-1.native-evidence/manifest.json",
+    "raw": ".scratch/lite-t2c-focused-20260927/execution/attempt-2-raw.sha256.json",
+    "integrity": ".scratch/lite-t2c-focused-20260927/execution/attempt-2-integrity.json"
+  },
+  "limitations": [
+    "One newly created non-target CLI contract file is flagged by evaluation; Root must review its intended scope.",
+    "One test function checks default and positive CLI flag; negative flag and TOML override verified by source wiring only.",
+    "Pipeline sequence reviewed in source; no actual BLAST end-to-end test or independent live ordering assertion.",
+    "Two paired T2c runs passed under different test counts (lite 2654, native 2653); no stable savings-ratio inference from this pair.",
+    "Landlock protects local descendants, not arbitrary external-service behavior; no continuation decision from this validator."
+  ]
+}

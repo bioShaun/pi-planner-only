@@ -1,0 +1,24 @@
+{
+  "status": "PASS",
+  "kind": "read-only input reconciliation; prior executed tests reused, no rerun",
+  "checks": {
+    "tests/contracts/test_external_tool_timeout.py": true,
+    "tests/contracts/test_prefilter_calibration_profile.py": true,
+    "tests/unit/test_external_tool_version_reporting.py": true,
+    "tests/contracts/test_replace_primaries_cli_wiring.py": true,
+    "gold_patch": true,
+    "bench/tasks/T1.json": true,
+    "bench/tasks/T1.md": true,
+    "bench/baselines/T1.failures.txt": true,
+    "bench/prepare-clone.sh": true,
+    "bench/evaluate.sh": true,
+    "bench/temp_guard.py": true
+  },
+  "prior_result": "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-cross-task-next-20260926/T1-result.json",
+  "target_passed": 30,
+  "parent_baseline_failures": 13,
+  "gold_baseline_failures": 12,
+  "fixed_existing_failure": [
+    "tests/unit/test_io_and_cli.py::TestExternalCommandFailureHandling::test_run_command_timeout_raises_alignment_error"
+  ]
+}

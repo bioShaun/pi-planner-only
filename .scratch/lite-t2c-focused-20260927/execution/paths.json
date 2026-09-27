@@ -1,0 +1,12 @@
+{
+  "T2c-lite-opus-calibration-1": {
+    "ordinal": 1,
+    "tmpdir": "/project/tmp/pt-668156d8/r1",
+    "clone": "/project/tmp/ppo-bench/clones/opus-t2c-pair-20260927-T2c-lite-opus-calibration-1"
+  },
+  "T2c-native-opus-calibration-1": {
+    "ordinal": 2,
+    "tmpdir": "/project/tmp/pt-668156d8/r2",
+    "clone": "/project/tmp/ppo-bench/clones/opus-t2c-pair-20260927-T2c-native-opus-calibration-1"
+  }
+}

@@ -1,0 +1,149 @@
+{
+  "run": "T2c-lite-opus-calibration-1",
+  "base": "b8449f7f7447060216c0cb5a0d92b47b41068a4e",
+  "head": "b8449f7f7447060216c0cb5a0d92b47b41068a4e",
+  "head_unchanged": true,
+  "clone": "/project/tmp/ppo-bench/clones/opus-t2c-pair-20260927-T2c-lite-opus-calibration-1",
+  "answer_refs_unreachable": {
+    "46d408a34211bf39558430342abc97bc71e655f8": {
+      "46d408a34211bf39558430342abc97bc71e655f8": 128,
+      "46d408a34211": 128
+    },
+    "c3dd01696b2757cbcb2055d26c1c5e4b38028c5d": {
+      "c3dd01696b2757cbcb2055d26c1c5e4b38028c5d": 128,
+      "c3dd01696b27": 128
+    }
+  },
+  "changed": [
+    "CODEMAP.md",
+    "docs/USER_GUIDE.md",
+    "src/tc_probe_design/cli/annotate_overrides.py",
+    "src/tc_probe_design/cli/commands/_annotate_options.py",
+    "src/tc_probe_design/cli/commands/annotate.py",
+    "src/tc_probe_design/config/annotate.py",
+    "src/tc_probe_design/config/enums.py",
+    "src/tc_probe_design/orchestration/AGENTS.md",
+    "src/tc_probe_design/orchestration/performance_log/_types.py",
+    "src/tc_probe_design/pipelines/annotate.py"
+  ],
+  "untracked": [
+    "src/tc_probe_design/orchestration/_allele_pair_stage.py",
+    "tests/contracts/test_allele_pair_annotate_cli_contract.py"
+  ],
+  "files": [
+    {
+      "path": "CODEMAP.md",
+      "changed": true,
+      "untracked": false,
+      "symlink": false,
+      "before_sha256": "5aa64e4cf3d9a0134e9678905b5157283f49f0a154df03897a06ff444a7cebf0",
+      "after_sha256": "3dfce84490750cebbc8cc69b6e587e41f180e917da3309c4211eae4af5983782"
+    },
+    {
+      "path": "docs/USER_GUIDE.md",
+      "changed": true,
+      "untracked": false,
+      "symlink": false,
+      "before_sha256": "7c51af5e50ab3cec8ffcf02f6189d37878f5af4056911ee5eae382f59d7fb4b7",
+      "after_sha256": "a2221555ebf8e4d6dc5ac7b7cd6781dbf415926ac37da97658816ebb91ab855a"
+    },
+    {
+      "path": "src/tc_probe_design/cli/annotate_overrides.py",
+      "changed": true,
+      "untracked": false,
+      "symlink": false,
+      "before_sha256": "74bc87dcfd3906f231f08a38d78f055bac0398d3dbf29b600539bda444f8f261",
+      "after_sha256": "df6297660daab43692297aae74ddfaa1956ce26ceb428cd57e80b1ba8c97b28b"
+    },
+    {
+      "path": "src/tc_probe_design/cli/commands/_annotate_options.py",
+      "changed": true,
+      "untracked": false,
+      "symlink": false,
+      "before_sha256": "803ef1af78d051b417a0e75bb1e90b0a243034b71e2c5891094bfa09cdecc049",
+      "after_sha256": "f184e6047782d260d0673063497a023bd5ac5ad707841988bf099ac74f9dc397"
+    },
+    {
+      "path": "src/tc_probe_design/cli/commands/annotate.py",
+      "changed": true,
+      "untracked": false,
+      "symlink": false,
+      "before_sha256": "a6270af83b890cbabc8b26d78b541a69156623dd9865ed327df5d03d815c414b",
+      "after_sha256": "de13d1d10932229ce11adaa073350e33535cc7a24d35705347c2cbf6530f454d"
+    },
+    {
+      "path": "src/tc_probe_design/config/annotate.py",
+      "changed": true,
+      "untracked": false,
+      "symlink": false,
+      "before_sha256": "8eaaaafe8dddc471a78ee832d50b227175b159d7cf78d6049d0e18b45d9f0be4",
+      "after_sha256": "36102452ca168e250ff7e1d6e3bb93ffd9aa3b2bb6a52dc94e91be504724b9b1"
+    },
+    {
+      "path": "src/tc_probe_design/config/enums.py",
+      "changed": true,
+      "untracked": false,
+      "symlink": false,
+      "before_sha256": "7f1342b9437cafae61f320c6c36694ec36a4257d383c8df487998e628eb3e974",
+      "after_sha256": "ec95949331521229b4f108bb19ecc1e3c93ec1392196c876c7868bab319d7d8d"
+    },
+    {
+      "path": "src/tc_probe_design/orchestration/AGENTS.md",
+      "changed": true,
+      "untracked": false,
+      "symlink": false,
+      "before_sha256": "a859ff8858f36f4a69095f9a05d9817c61786f6dc38d9e21aa0ece9d811f872f",
+      "after_sha256": "d4c2b14196e349f35320e73a79494d96f035192a26ad1abf0f4e100174d07c9c"
+    },
+    {
+      "path": "src/tc_probe_design/orchestration/_allele_pair_stage.py",
+      "changed": false,
+      "untracked": true,
+      "symlink": false,
+      "after_sha256": "4bc84a43f83908e80b7a488fc4f83fde12118c0566ad98b525a4d7d5a1c2119b"
+    },
+    {
+      "path": "src/tc_probe_design/orchestration/performance_log/_types.py",
+      "changed": true,
+      "untracked": false,
+      "symlink": false,
+      "before_sha256": "8491a913ead5381196886a5f04b9012af538dc4c1f1df660bd5c8a2cc056d083",
+      "after_sha256": "9721df30e3042c043f56faa45e5a40a519afe29eca2ac6844f97f69efd6364a8"
+    },
+    {
+      "path": "src/tc_probe_design/pipelines/annotate.py",
+      "changed": true,
+      "untracked": false,
+      "symlink": false,
+      "before_sha256": "9dd63670234eb879b632f69396ab1545cdd301dff2aadb649e965baae858a57e",
+      "after_sha256": "8127ae7aff9960b90198a29845f8a017d5034a2eab4c9a770b738dbd426a927c"
+    },
+    {
+      "path": "tests/contracts/test_allele_pair_annotate_cli_contract.py",
+      "changed": false,
+      "untracked": true,
+      "symlink": false,
+      "after_sha256": "94cb4ccb5c619c8eaad679a6bec9f427ecefe27e75ebb48e7d50b85d71e3bf2a"
+    },
+    {
+      "path": "tests/contracts/test_allele_pair_empty_source_schema.py",
+      "changed": false,
+      "untracked": false,
+      "symlink": false,
+      "before_sha256": "c75f51f3b3edf51b98d88b76356590d490b7b1a963e8a843a86f3b3b51fe15b5",
+      "after_sha256": "c75f51f3b3edf51b98d88b76356590d490b7b1a963e8a843a86f3b3b51fe15b5",
+      "assert_statements_identical": true
+    },
+    {
+      "path": "tests/contracts/test_ref_alt_stage_fold_to_long.py",
+      "changed": false,
+      "untracked": false,
+      "symlink": false,
+      "before_sha256": "d0038f743a1150fc09d5e19b015dc7cfdc2f304cb11488363374bf56d1464cd1",
+      "after_sha256": "d0038f743a1150fc09d5e19b015dc7cfdc2f304cb11488363374bf56d1464cd1",
+      "assert_statements_identical": true
+    }
+  ],
+  "canonical_target_files_unchanged_after_evaluation": true,
+  "note": "Snapshot after canonical test restoration by evaluate.sh. Review tool events for prior protected-test mutations and actual tests run."
+}

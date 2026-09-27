@@ -1,0 +1,50 @@
+{
+  "status": "PASS",
+  "kind": "independent offline validation",
+  "evidence_directory": "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-preparation-20260927/validation.ClpWPYWF",
+  "wrapper_command": "bash .scratch/lite-t2c-preparation-20260927/validate-t2c.sh",
+  "wrapper_exit": 0,
+  "oldgold_red": {
+    "exit": 1,
+    "failed": 14,
+    "passed": 30,
+    "scope": "new44 only"
+  },
+  "corrected_gold_target": {
+    "exit": 0,
+    "passed": 54
+  },
+  "parent_target": {
+    "exit": 2,
+    "reason": "stage module not implemented"
+  },
+  "parent_masked": {
+    "exit": 0,
+    "passed": 2652
+  },
+  "gold_masked": {
+    "exit": 0,
+    "passed": 2652
+  },
+  "native_suite": {
+    "exit": 0,
+    "passed": 35
+  },
+  "release": {
+    "exit": 0,
+    "typecheck_and_all_five_suites": true
+  },
+  "bundle_reconstructed": true,
+  "candidate_trees_equal": true,
+  "target_commits_unreachable": true,
+  "old_files_unchanged": true,
+  "source_worktree_clean": true,
+  "T1": "prior executed tests reused, inputs reconciled; no rerun",
+  "paid_model_calls": 0,
+  "failed_attempts": [
+    "validation.9hKZUoD3/failed-attempt.log",
+    "validation.ClpWPYWF/host-unittest.log"
+  ],
+  "failure_reason": "sandbox external-directory denial; exact authorized reruns passed",
+  "source_repair_during_validation": false
+}

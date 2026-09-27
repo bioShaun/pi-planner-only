@@ -1,0 +1,10 @@
+{
+  "status": "proposed-no-paid-preflight-evidence",
+  "static": "dry-static.json: 9 checks true, 82 frozen files and 106 historical files match; cached eight plugin sources match pinned commit",
+  "slot": "dry-preflight.log: audit and status before dry run, no bypassed heavy process reported",
+  "dry": "dry-run-verified.log: four ordered dry runs exited 0; each produced per-run metadata, pi 0.87.1, pi-subagents 0.71.0; health skipped",
+  "initial_failure": "dry-run.log and dry-T1-native-opus-calibration/runs/STOP retained: sandbox rejected dedicated /project/tmp temp guard check; rerun with approved escalation passed",
+  "paid_attempts_started": 0,
+  "campaign_output_exists": false,
+  "root_decision": "Root must inspect and create preflight-complete.json before any paid run"
+}

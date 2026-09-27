@@ -1,0 +1,12 @@
+ M CODEMAP.md
+ M docs/USER_GUIDE.md
+ M src/tc_probe_design/cli/annotate_overrides.py
+ M src/tc_probe_design/cli/commands/_annotate_options.py
+ M src/tc_probe_design/cli/commands/annotate.py
+ M src/tc_probe_design/config/annotate.py
+ M src/tc_probe_design/config/enums.py
+ M src/tc_probe_design/orchestration/AGENTS.md
+ M src/tc_probe_design/orchestration/performance_log/_types.py
+ M src/tc_probe_design/pipelines/annotate.py
+?? src/tc_probe_design/orchestration/_allele_pair_stage.py
+?? tests/contracts/test_allele_pair_annotate_cli_contract.py

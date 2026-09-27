@@ -1,0 +1,10 @@
+{
+  "ready": true,
+  "user_informed_authorization": "\u5141\u8bb8",
+  "scope": "two T2c comparisons only",
+  "gateway": "http://117.176.220.47:1989",
+  "prior_cost": 1.29824603,
+  "cumulative_checkpoint": 10,
+  "independent_readiness": "PASS",
+  "at": "2026-09-27T02:43:33.503175+00:00"
+}

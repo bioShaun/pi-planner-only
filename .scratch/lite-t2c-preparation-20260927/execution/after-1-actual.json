@@ -1,0 +1,87 @@
+{
+  "runs": [
+    {
+      "id": "T1-native-opus-calibration-1",
+      "task": "T1",
+      "arm": "native-opus-calibration",
+      "rep": 1,
+      "mode": "native",
+      "exit": 0,
+      "passed": false,
+      "wall": 609,
+      "root_turns": 19,
+      "delegates": 3,
+      "children": 3,
+      "root": {
+        "input": 40,
+        "output": 13940,
+        "cacheRead": 726209,
+        "cacheWrite": 89315
+      },
+      "child_cost": 0.028222780000000003,
+      "root_cost": 1.27002325,
+      "total_cost": 1.29824603,
+      "refused": null,
+      "detached": null,
+      "truncated": null,
+      "root_reads": 2,
+      "root_bash": 13,
+      "root_cache_read": 726209,
+      "extra_tools": 0,
+      "turns_per_delegate": 6.333333333333333,
+      "rejected_duplicates": 0,
+      "known_cost_lower_bound": 1.29824603
+    }
+  ],
+  "incomplete": [],
+  "invalid": [],
+  "attempt_spend": [
+    {
+      "id": "T1-native-opus-calibration-1",
+      "cost": 1.29824603,
+      "known_cost_lower_bound": 1.29824603,
+      "valid": true
+    }
+  ],
+  "attempt_spend_total": 1.29824603,
+  "attempt_spend_scope": "current runs directory only; archived void attempts excluded",
+  "aggregates": {
+    "native-opus-calibration": {
+      "runs": 1,
+      "pass": 0,
+      "pass_rate": 0.0,
+      "median_cost": null,
+      "mean_cost": null,
+      "median_root_turns": 19,
+      "median_wall": 609,
+      "root_tokens": {
+        "input": 40,
+        "output": 13940,
+        "cacheRead": 726209,
+        "cacheWrite": 89315
+      },
+      "mechanism": {
+        "refused": null,
+        "detached": null,
+        "truncated": null,
+        "rejected_duplicates": 0,
+        "root_reads_med": 2,
+        "root_bash_med": 13,
+        "cache_read_med": 726209,
+        "turns_per_delegate_med": 6.333333333333333,
+        "extra_tools": 0
+      }
+    }
+  },
+  "task_aggregates": {
+    "T1|native-opus-calibration": {
+      "n": 1,
+      "pass": 0,
+      "median_cost": null,
+      "min_cost": null,
+      "max_cost": null
+    }
+  },
+  "comparisons": {},
+  "mixed_plugin": {}
+}

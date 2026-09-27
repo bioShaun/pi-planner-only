@@ -1,0 +1,5 @@
+PASS (final)
+
+Verified all 39 frozen-file hashes against the snapshot. The controller permits only the two ordered T2c attempts, uses separate 27-byte temporary paths, preserves the fresh campaign, and includes the prior $1.29824603 in its cumulative $10 checkpoint. The configured provider gateways match the authorized address. The supplied dry runs and static checks passed.
+
+This is a readiness verdict. No paid T2c run has occurred. Before the second run, Root must review the first run’s quality, terminal, wiring, and complete-cost evidence before setting continue: true; run-one.sh:40 enforces that Root decision and the attempt counters.

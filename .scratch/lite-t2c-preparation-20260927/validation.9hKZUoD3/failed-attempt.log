@@ -1,0 +1,6 @@
+timestamp=2026-09-27T08:32:19.247634860+08:00 (directory creation timestamp)
+command=bash .scratch/lite-t2c-preparation-20260927/validate-t2c.sh
+exit=1
+stdout=
+stderr=mktemp: Read-only file system (os error 30) at path "/project/tmp/ppo-bench/t2c-validation.LAGKBF4k"
+correction=same exact command rerun with require_escalated; evidence=../validation.ClpWPYWF

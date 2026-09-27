@@ -1,0 +1,19 @@
+{
+  "status": "stopped",
+  "scope_completed": "bounded execution stopped on first quality failure; no further attempts",
+  "paid_attempts_started": 1,
+  "paid_attempts_completed": 1,
+  "accounting_valid_attempts": 1,
+  "quality_passes": 0,
+  "remaining_unstarted": 3,
+  "actual_total": 1.29824603,
+  "target_passed": 30,
+  "masked_passed": 1093,
+  "masked_failed": 30,
+  "new_failures": 18,
+  "independent_stop_verification": "PASS (not model-quality PASS)",
+  "cause_evidence": "all18 fail on unchanged-source comparison with AF_UNIX path too long; short-path corrected evaluation not run",
+  "report": "report.md",
+  "next_issue": "../issues/01-t1-socket-path-limit.md",
+  "finished_at": "2026-09-27T01:26:46.098060+00:00"
+}

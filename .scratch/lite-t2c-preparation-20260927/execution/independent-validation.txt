@@ -1,0 +1,9 @@
+PASS — independently confirmed that Root’s STOP decision matches the recorded quality gate. This is **not** a model-quality PASS.
+
+The retained evaluation shows 30/30 target tests passing, but the masked suite failed 30 tests with 1,093 passing: 18 failures beyond the 13-node baseline, with one baseline timeout failure fixed. Runner and Pi exits were 0; the suite exit was 1. Actual cost reconciles to $1.29824603 ($1.27002325 root + $0.02822278 across three children). Audit, evaluation, and STOP agree; three attempts remain unstarted.
+
+The 18 “new” failures should not be attributed to the implementation on this evidence. All18 also failed in the worker’s unchanged-source comparison; their traces show pandarallel workers ending in EOFError after OSError: AF_UNIX path too long. The configured task temp path is83 characters before multiprocessing adds its socket name. The six-file source diff does not touch that code path. This supports an environment/path-length explanation, though no corrected-environment evaluation was run. Evidence: raw eval-suite.log, per-run temp before2.log, archived changes.patch.
+
+Read-only hash probes confirmed all18 raw files,82 frozen source files,106 history files,10 entry files, and retained clone’s10 manifest files. Four protected target tests match their before hashes. Preflight records slot audit/status before slot cpu launch; reviewed command evidence shows no /tmp task artifact or bypassed heavy launch. No mutations. Remaining offline question: whether shorter authorized temp path removes these failures on both unchanged and changed sources; this audit did not rerun tests or authorize another paid attempt.
+
+Original validator response retained in parent session. Paths resolve through report.md and environment-evidence/reconciliation.json.

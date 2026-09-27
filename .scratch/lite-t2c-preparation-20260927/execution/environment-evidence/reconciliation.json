@@ -1,0 +1,35 @@
+{
+  "tmpdir": "/project/tmp/ppo-bench/opus-cross-task-t1-t2c-20260927/T1-native-opus-calibration-1",
+  "tmpdir_characters": 83,
+  "new_failures": [
+    "tests/contracts/test_design_round_contract.py::test_design_round_runs_successfully_and_writes_output",
+    "tests/contracts/test_sequence_metrics_serial_fallback.py::test_serial_and_parallel_metric_outputs_match",
+    "tests/unit/test_compute_stages.py::test_alignment_annotation_stage_adds_alignment_columns",
+    "tests/unit/test_compute_stages.py::test_alignment_stage_auto_small_panel_uses_full",
+    "tests/unit/test_compute_stages.py::test_alignment_stage_auto_without_index_uses_full",
+    "tests/unit/test_compute_stages.py::test_alignment_stage_dispatches_two_stage",
+    "tests/unit/test_compute_stages.py::test_sequence_extraction_stage_snp_produces_extraction_schema",
+    "tests/unit/test_extraction.py::TestExtractIndelCandidates::test_left_anchor_at_pos_minus_one",
+    "tests/unit/test_extraction.py::TestExtractIndelCandidates::test_produces_left_and_right_sides",
+    "tests/unit/test_extraction.py::TestExtractIndelCandidates::test_right_anchor_uses_ref_length",
+    "tests/unit/test_extraction.py::TestExtractSnpCandidates::test_boundary_auto_adjustment_near_chromosome_end",
+    "tests/unit/test_extraction.py::TestExtractSnpCandidates::test_center_probe_type_produces_center_offsets",
+    "tests/unit/test_extraction.py::TestExtractSnpCandidates::test_output_has_expected_columns",
+    "tests/unit/test_extraction.py::TestExtractSnpCandidates::test_sequence_length_matches_probe_length",
+    "tests/unit/test_probe_pipeline_decomposition.py::test_compute_persist_inplace_matches_historical_layout",
+    "tests/unit/test_probe_pipeline_decomposition.py::test_compute_single_design_records_separate_sequence_metric_timing",
+    "tests/unit/test_probe_pipeline_decomposition.py::test_compute_single_design_uses_workspace_not_out_dir",
+    "tests/unit/test_probe_pipeline_decomposition.py::test_persist_design_copies_intermediate_and_writes_tables"
+  ],
+  "all18_also_fail_in_worker_unchanged_source_comparison": true,
+  "unchanged_source_full_suite_not_masked": true,
+  "before2_socket_errors": 18,
+  "current_masked_socket_errors": 18,
+  "short_path_rerun_performed": false,
+  "interpretation": "Evidence supports environment/socket pathname limitation; not sufficient to attribute18 failures to implementation. Original quality gate remains FAIL.",
+  "files": {
+    ".scratch/lite-t2c-preparation-20260927/execution/environment-evidence/before2.log": "0f41219f30ad57d43ac5ce785e2c365da4356045efb8b2c98bdd8e76c0e762c6",
+    ".scratch/lite-t2c-preparation-20260927/execution/environment-evidence/before.log": "d0c36c606e51ac6eda22214c377bfa89d24edacbc4909ade172a26b66c646f82",
+    ".scratch/lite-t2c-preparation-20260927/execution/environment-evidence/after.log": "13380b91dc9b47c7fe10e02b62fe89aaa9f1dbb24a7125db14fd476e8141e38c"
+  }
+}

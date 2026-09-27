@@ -1,0 +1,12 @@
+{
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-preparation-20260927/execution/audit.py": "618aaf756fd83250c70d07192b4b75e9d655f68276161f7ed1f7ad0cc23daf1b",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-preparation-20260927/execution/authorization.json": "3458dca77abee2f8a56de96b983af3e43694d09c17203ccb3e83a40423199f77",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-preparation-20260927/execution/capture-children.py": "17d23b6a151cd03c13977de90725f932dd9be58713e92bc8f4b4c8dcb2526743",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-preparation-20260927/execution/capture-clone.py": "e7ac5f755aa1ba7e7f61a0ccd6e97101d8070588cc278d80e9911acb3409934e",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-preparation-20260927/execution/dry-run.sh": "5eb280c97a5ea3173a2c82a47626e97674bba0eaebc2cfcc0b8fca24941d6061",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-preparation-20260927/execution/observe.py": "0202fbafd5fd58eef594cb06e07e759274aaabf0961af7bb5c8651d2766af772",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-preparation-20260927/execution/plan.json": "37d8e7eb7c7195305a18e9fdf47e7c6dd2f1fb9a40897b8a2768bc38de5917bc",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-preparation-20260927/execution/preflight.sh": "95c05bc09b98fe168efbb5b432859af6222c0e3724294f31c2bdf9ea86569ec5",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-preparation-20260927/execution/run-one.sh": "d9ed0be22ce7a1ae64d99e97dd0ef4a1c703624576828732e060472c5b796977",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-preparation-20260927/execution/static-check.py": "7f31070923ab07ae8c00eea7cc4275ee045bcd7d29aefb1221b186ad81ba337e"
+}

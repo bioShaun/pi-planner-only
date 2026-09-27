@@ -1,0 +1,67 @@
+{
+  "status": "completed",
+  "rows": [
+    {
+      "arm": "lite",
+      "quality": "PASS",
+      "accounting": "PASS",
+      "target_passed": 54,
+      "masked_passed": 2654,
+      "baseline_masked_passed": 2652,
+      "new_cli_test_cases": 2,
+      "root_cost_usd": 1.08781875,
+      "child_cost_usd": 0.05186936,
+      "total_cost_usd": 1.13968811,
+      "model_wall_seconds": 759,
+      "root_completed_events": 16,
+      "completed_events_before_first_actual_delegate": 5,
+      "actual_children": 3,
+      "child_roles": [
+        "worker",
+        "oracle",
+        "worker"
+      ],
+      "raw_run_id": "T2c-lite-opus-calibration-1"
+    },
+    {
+      "arm": "native",
+      "quality": "PASS",
+      "accounting": "PASS",
+      "target_passed": 54,
+      "masked_passed": 2653,
+      "baseline_masked_passed": 2652,
+      "new_cli_test_cases": 1,
+      "root_cost_usd": 1.40573175,
+      "child_cost_usd": 0.05340022,
+      "total_cost_usd": 1.45913197,
+      "model_wall_seconds": 1136,
+      "root_completed_events": 17,
+      "completed_events_before_first_actual_delegate": 9,
+      "actual_children": 2,
+      "child_roles": [
+        "worker",
+        "worker"
+      ],
+      "raw_run_id": "T2c-native-opus-calibration-1"
+    }
+  ],
+  "identical_initial_tree": "32aa84a57baee303cb35d93d38dcb63d64c4e8a7",
+  "pair_actual_usd": "2.59882008",
+  "prior_T1_environment_failed_attempt_usd": "1.29824603",
+  "cumulative_actual_usd": "3.89706611",
+  "checkpoint_usd": 10,
+  "new_attempts": 2,
+  "total_attempts_including_prior": 3,
+  "no_more_model_runs": true,
+  "unrun_T1_lite": "omitted by narrowed user-approved scope",
+  "interpretation": "Single-task signal: lite lower cost and model wall time here; no stable savings or capability ranking established.",
+  "limitations": [
+    "Only one task and one attempt per arm",
+    "Source-level CLI/config/pipeline checks, no realBLAST E2E",
+    "CLInegativeflag/config-fileoverride not independently executed ascombinedcases",
+    "Extra non-target CLI test counts differ; original54 targets identical",
+    "Costs use recordedusage and frozenprices, notsupplierinvoice",
+    "OldT1modelcost included but oldqualityFAIL/STOPnotreclassified"
+  ],
+  "at": "2026-09-27T03:36:54.283186+00:00"
+}

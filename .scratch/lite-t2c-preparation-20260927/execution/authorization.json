@@ -1,0 +1,37 @@
+{
+  "user_message": "下一步",
+  "scope": [
+    {
+      "ordinal": 1,
+      "task": "T1",
+      "arm": "native-opus-calibration",
+      "rep": 1
+    },
+    {
+      "ordinal": 2,
+      "task": "T1",
+      "arm": "lite-opus-calibration",
+      "rep": 1
+    },
+    {
+      "ordinal": 3,
+      "task": "T2c",
+      "arm": "lite-opus-calibration",
+      "rep": 1
+    },
+    {
+      "ordinal": 4,
+      "task": "T2c",
+      "arm": "native-opus-calibration",
+      "rep": 1
+    }
+  ],
+  "max_attempts": 4,
+  "checkpoint_budget_usd": 10,
+  "budget_type": "actual cumulative between-run checkpoint; not hard cap",
+  "single_run_timeout_seconds": 3600,
+  "no_retries": true,
+  "no_paid_health": true,
+  "old_samples_not_reclassified": true,
+  "authorization_record": ".scratch/lite-t2c-preparation-20260927/execution/plan.json"
+}

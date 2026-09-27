@@ -1,0 +1,82 @@
+{
+  "campaign": "opus-t2c-pair-20260927",
+  "status": "authorized-preflight",
+  "authorization": {
+    "paid_execution": true,
+    "external_data_authorized": true,
+    "user_message": "允许",
+    "in_reply_to": "Explicit request to send task-relevant source/tests/tool outputs to http://117.176.220.47:1989 and execute the two T2c comparisons",
+    "at": "2026-09-27T02:38:09.874079+00:00"
+  },
+  "root_model": "tcuni-claude/claude-opus-5-5",
+  "root_thinking": "high",
+  "plugin_ref": "ad51067da379edf5735cb9b03d70f17bda331675",
+  "strict": 0,
+  "handoff": "off",
+  "tasks": [
+    "T2c"
+  ],
+  "arms": [
+    "native-opus-calibration",
+    "lite-opus-calibration"
+  ],
+  "seed": 8682094810793768254,
+  "order_rule": "SHA256 campaign first16 hex; shuffle tasks then arms; reverse arms for second task",
+  "order": [
+    {
+      "ordinal": 1,
+      "original_ordinal": 3,
+      "task": "T2c",
+      "arm": "lite-opus-calibration",
+      "rep": 1
+    },
+    {
+      "ordinal": 2,
+      "original_ordinal": 4,
+      "task": "T2c",
+      "arm": "native-opus-calibration",
+      "rep": 1
+    }
+  ],
+  "max_attempts": 2,
+  "parallel": 1,
+  "checkpoint_budget_usd": 10,
+  "budget_basis": "frozen actual model prices; all attempted runs including failures",
+  "live_hard_budget": false,
+  "timeout_seconds": 3600,
+  "automatic_retry": false,
+  "resume": false,
+  "paid_health_requests": false,
+  "old_spend_included": false,
+  "keep_clone": true,
+  "runtime_preflight_required": true,
+  "paid_attempts_started": 0,
+  "source_manifest": "../freeze/source.sha256.json",
+  "execution_decision": "Only two T2c calls. Omit T1lite; no retries. Firstmust pass quality/terminal/wiring and cumulativebudget beforesecond. OriginalT1neverreclassified.",
+  "offline_validation": "PASS",
+  "independent_review": "see acceptance.json",
+  "validation_evidence": "validation.ClpWPYWF",
+  "preparation_plan_sha256": "88a2b03664d815e85925afe1b68198be4acea14d7ace97b3af136ecc716ea112",
+  "original_campaign": "opus-cross-task-t1-t2c-20260927",
+  "allowed_ordinals": [
+    1,
+    2
+  ],
+  "prior_attempts": 1,
+  "prior_actual_total": 1.29824603,
+  "prior_opus_total": 1.29824603,
+  "prior_run_eligible_for_pairing": false,
+  "remaining_max_attempts": 2,
+  "short_temp_parent": "/project/tmp/pt-668156d8",
+  "root_acceptance_required": true,
+  "offline_diagnosis": "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-short-temp-20260927/summary.md",
+  "max_total_attempts": 3,
+  "gateway": "http://117.176.220.47:1989",
+  "provider_ids": [
+    "tcuni-claude",
+    "tcuni",
+    "tcuni-ds"
+  ],
+  "proposal_sha256": "4a493cebbc2c31d53534b874f9933caf026b332eb5725f321ffdf611df57a2b4",
+  "prior_readiness_acceptance": "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-short-temp-20260927/acceptance.json"
+}

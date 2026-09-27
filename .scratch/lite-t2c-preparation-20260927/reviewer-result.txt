@@ -1,0 +1,7 @@
+PASS (final)
+
+No actionable findings in the assigned offline scope. I verified the snapshot hash and all 82 file hashes; the separate raw 10 and history 96 hashes also match. The corrected gold changes one guard line, preserves the original 10 tests byte for byte, and adds 44 independent schema checks. The retained logs show old gold at 14 failures, corrected gold at 54 passes, parent masked at 2652 passes, and corrected gold masked at 2652 passes. Host validation records 35 passing tests and a successful `test:release`.
+
+The bundle verifies as complete. The retained candidate has no remotes or refs, cannot resolve either gold commit by full or checked short hash, and has the same tree as the reconstructed candidate. T1’s prior results were reconciled against immutable test refs, without claiming a rerun. The four-run order and no-paid-authorization status match the proposal.
+
+Limits: this was a read-only review of retained execution evidence. It did not rerun suites, perform a real BLAST run, or authorize paid execution. The documented isolation check establishes Git object separation, not filesystem denial.

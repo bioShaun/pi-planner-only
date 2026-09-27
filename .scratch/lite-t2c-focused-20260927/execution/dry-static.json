@@ -1,0 +1,20 @@
+{
+  "phase": "dry",
+  "checks": {
+    "informed_data_authorization": true,
+    "authorized_gateway": true,
+    "only_T2c_pair": true,
+    "remaining_scope": true,
+    "path_map": true,
+    "plan_authorized": true,
+    "frozen_sources": true,
+    "historical_sources": true,
+    "root_settings": true,
+    "child_settings": true,
+    "host_package": true,
+    "subagents_package": true,
+    "plugin_cache": true,
+    "campaign_untouched": true
+  },
+  "plugin_cache_present": true
+}

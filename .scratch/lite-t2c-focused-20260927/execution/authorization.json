@@ -1,0 +1,39 @@
+{
+  "scope": [
+    {
+      "ordinal": 1,
+      "original_ordinal": 3,
+      "task": "T2c",
+      "arm": "lite-opus-calibration",
+      "rep": 1
+    },
+    {
+      "ordinal": 2,
+      "original_ordinal": 4,
+      "task": "T2c",
+      "arm": "native-opus-calibration",
+      "rep": 1
+    }
+  ],
+  "allowed_ordinals": [
+    1,
+    2
+  ],
+  "max_new_attempts": 2,
+  "max_total_attempts": 3,
+  "checkpoint_budget_usd": 10,
+  "prior_actual_total": 1.29824603,
+  "external_data_authorized": true,
+  "user_message": "允许",
+  "gateway": "http://117.176.220.47:1989",
+  "payload": "task prompts, task-related source/tests and tool outputs including paths/logs",
+  "providers": [
+    "tcuni-claude/claude-opus-5-5",
+    "tcuni/gpt-6-luna",
+    "tcuni-ds/deepseek/deepseek-v4.1-flash (only frozen auxiliary role if selected)"
+  ],
+  "at": "2026-09-27T02:38:09.874079+00:00",
+  "no_paid_health": true,
+  "no_retry": true,
+  "source": "Explicit user reply to informed destination/payload/two-call approval request"
+}
