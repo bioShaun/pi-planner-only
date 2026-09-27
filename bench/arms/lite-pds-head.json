@@ -1,0 +1,1 @@
+{"name": "lite-pds-head", "mode": "lite", "rootModel": "cline/cline-pass/deepseek-v4.1-flash", "pluginRef": "WORKTREE", "promptPrefix": "实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。", "env": {"PI_PLANNER_ONLY_HANDOFF": "off", "PI_PLANNER_ONLY_STRICT": "0"}}

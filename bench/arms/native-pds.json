@@ -1,0 +1,1 @@
+{"name": "native-pds", "mode": "native", "rootModel": "cline/cline-pass/deepseek-v4.1-flash", "pluginRef": "", "promptPrefix": "实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。"}

@@ -1,0 +1,1 @@
+{"name":"native-opus-calibration","mode":"native","rootModel":"tcuni-claude/claude-opus-5-5","pluginRef":"ad51067da379edf5735cb9b03d70f17bda331675","promptPrefix":"实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。"}
