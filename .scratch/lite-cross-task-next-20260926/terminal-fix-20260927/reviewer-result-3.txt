@@ -1,0 +1,5 @@
+PASS (final)
+
+All 48 frozen files match the assigned snapshot. The prior findings are closed: read-only probes rejected a changed parent agent and metadata agent, and an unknown model suffix. Independent replay bound two distinct child runs to their terminal evidence and reproduced $1.80496475 Root cost plus $0.08401762 child cost, totaling $1.88898237. The original raw files and STOP match their hashes; the historical invalid run remains excluded from eligible comparisons.
+
+The T2b boundary check reproduced all 12 recorded cases. Supplied logs show 35 native tests and the release checks passing. I did not rerun write-capable tests; the boundary check covers the extracted fold function, not an end-to-end stage or BLAST run.

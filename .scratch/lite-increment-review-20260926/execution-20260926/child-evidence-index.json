@@ -1,0 +1,54 @@
+[
+  {
+    "run": "T3-native-opus-calibration-1",
+    "child": "1f9e7498-94b5-480d-9fac-c5ba98bf3aae",
+    "agent": "worker",
+    "model": "tcuni/gpt-6-luna:medium",
+    "exit": 0,
+    "cost": 0.023213920000000002,
+    "reported_cost": 0.02321392,
+    "duration_ms": 244765,
+    "transcript_sha256": "aa7823ee4298bd150cc0df1fc980c736ef577d182967709afce0a360c0bfeec8",
+    "diff_records": 1,
+    "nested_tools": []
+  },
+  {
+    "run": "T3-native-opus-calibration-1",
+    "child": "5a616a43-a722-46b7-816a-583e5787aa2c",
+    "agent": "worker",
+    "model": "tcuni/gpt-6-luna:medium",
+    "exit": 0,
+    "cost": 0.0080283,
+    "reported_cost": 0.0080283,
+    "duration_ms": 182122,
+    "transcript_sha256": "dbd5cba1559bb94a14a22ef4abb58d3c62e0a5b6e655ae78fdbb9f05dcdf29b6",
+    "diff_records": 2,
+    "nested_tools": []
+  },
+  {
+    "run": "T3-lite-opus-calibration-1",
+    "child": "86d68344-3d3e-4743-9e7e-d8ee5b8dce6d",
+    "agent": "worker",
+    "model": "tcuni/gpt-6-luna:medium",
+    "exit": 0,
+    "cost": 0.01821542,
+    "reported_cost": 0.01821542,
+    "duration_ms": 187403,
+    "transcript_sha256": "d679210b3ceba182b88cca56190d40892d93af18f2e5db09b2e18bd50429b1e0",
+    "diff_records": 0,
+    "nested_tools": []
+  },
+  {
+    "run": "T3-lite-opus-calibration-1",
+    "child": "e660e006-1be8-43bb-afe4-f333fead2677",
+    "agent": "oracle",
+    "model": "tcuni/gpt-6-luna:low",
+    "exit": 0,
+    "cost": 0.0033753200000000002,
+    "reported_cost": 0.0033753200000000002,
+    "duration_ms": 102775,
+    "transcript_sha256": "741e70c1ce055aec979dbc78acf9d339457ec4d60a4ef03334182d35f3174501",
+    "diff_records": 0,
+    "nested_tools": []
+  }
+]

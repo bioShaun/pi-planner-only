@@ -1,0 +1,10 @@
+{
+  "ready": true,
+  "time": "2026-09-26T15:54:12.464323+00:00",
+  "four_guarded_dry_runs": "PASS",
+  "root_child_config": "unchanged",
+  "source78_history96": "unchanged",
+  "cached_plugin_matches_pinned_commit": true,
+  "offline_gold_and_release": "same frozen source PASS",
+  "generated_model_requests": 0
+}

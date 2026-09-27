@@ -1,0 +1,70 @@
+{
+  "task": {
+    "id": "T3",
+    "repo": "/public/scripts/tc-probe-design-v2",
+    "target": "e9270779747d2b14a531d5bbf856f3287d15f4f7",
+    "parent": "712e9ff772033f39fa14eceaf4f1fc3fa4aa0ce6",
+    "tests": [
+      "tests/contracts/test_bed_region_fail_closed.py",
+      "tests/contracts/test_pyranges_annotation_contract.py",
+      "tests/unit/test_annotate_region.py"
+    ],
+    "prompt": "T3.md",
+    "python": "/public/scripts/tc-probe-design-v2/.venv/bin/python",
+    "baseline": "../baselines/T3.failures.txt"
+  },
+  "arm": {
+    "name": "lite-pds-head",
+    "mode": "lite",
+    "rootModel": "cline/cline-pass/deepseek-v4.1-flash",
+    "pluginRef": "ad51067da379edf5735cb9b03d70f17bda331675",
+    "promptPrefix": "\u5b9e\u73b0\u548c\u8dd1\u6d4b\u8bd5\u4ea4\u7ed9\u5b50\u4ee3\u7406\uff0c\u81ea\u5df1\u8d1f\u8d23\u62c6\u5206\u3001\u68c0\u67e5 git diff \u4e0e\u6d4b\u8bd5\u7ed3\u679c\u3002",
+    "env": {
+      "PI_PLANNER_ONLY_HANDOFF": "off",
+      "PI_PLANNER_ONLY_STRICT": "0"
+    }
+  },
+  "rep": "1",
+  "pluginSha": "ad51067da379edf5735cb9b03d70f17bda331675",
+  "dirty": false,
+  "piVersion": "0.87.1",
+  "piSubagentsVersion": "0.71.0",
+  "childOverrides": {
+    "planner": {
+      "model": "tcuni-ds/deepseek/deepseek-v4.1-flash",
+      "thinking": "high"
+    },
+    "oracle": {
+      "model": "tcuni/gpt-6-luna",
+      "thinking": "low"
+    },
+    "reviewer": {
+      "model": "tcuni/gpt-6-luna",
+      "thinking": "high"
+    },
+    "worker": {
+      "model": "tcuni/gpt-6-luna",
+      "thinking": "medium"
+    },
+    "researcher": {
+      "model": "tcuni/gpt-6-luna",
+      "thinking": "medium"
+    },
+    "scout": {
+      "model": "tcuni/gpt-6-luna",
+      "thinking": "low"
+    },
+    "planner-scout": {
+      "model": "tcuni/gpt-6-luna",
+      "thinking": "low"
+    }
+  },
+  "start": "2026-09-26T21:28:19+08:00",
+  "hostname": "tcuni-claw",
+  "tempResource": {
+    "backend": "landlock",
+    "abi": 7,
+    "policy": "deny /tmp writes; allow safe root directories",
+    "tmpdir": "/project/tmp/ppo-bench/temp-guard-verify-20260926"
+  }
+}

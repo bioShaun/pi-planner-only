@@ -1,0 +1,68 @@
+{
+  "id": "T2b-native-opus-calibration-1",
+  "ordinal": 1,
+  "checks": {
+    "runner_exit0": false,
+    "pi_exit0": true,
+    "quality": true,
+    "baseline_no_new": true,
+    "no_stop": false,
+    "attempt_count": true,
+    "source_unchanged": true,
+    "previous_pilot_unchanged": true,
+    "runtime_metadata": true,
+    "temp_resource": true,
+    "plugin_ref": true,
+    "actual_complete": false,
+    "opus_complete": false,
+    "no_pending_tool": true,
+    "no_root_api_error": true
+  },
+  "checks_passed": false,
+  "evaluation": {
+    "task": "T2b",
+    "arm": "native-opus-calibration",
+    "id": "T2b-native-opus-calibration-1",
+    "pass": true,
+    "target_failed": [],
+    "new_failures": [],
+    "files_changed": 14,
+    "non_target_tests_changed": [
+      "tests/contracts/test_annotate_allele_pair_lifecycle_contract.py",
+      "tests/contracts/test_annotate_config_contract.py"
+    ],
+    "target_test_exit": 0,
+    "suite_exit": 0,
+    "eval_semantics": "masked-suite (baseline and eval both --ignore target tests)",
+    "valid": false,
+    "invalid_reasons": [
+      "native subagent x1: failed child result",
+      "native subagent x1: nonterminal child result"
+    ]
+  },
+  "removed_baseline_failures": [],
+  "non_target_tests_require_review": [
+    "tests/contracts/test_annotate_allele_pair_lifecycle_contract.py",
+    "tests/contracts/test_annotate_config_contract.py"
+  ],
+  "totals": {
+    "actual": null,
+    "opus": null
+  },
+  "record": null,
+  "first_delegate_start_turn": 11,
+  "root_tool_calls": {
+    "bash": 13,
+    "read": 1,
+    "subagents_enable": 1,
+    "subagent": 3,
+    "write": 2,
+    "subagent_supervisor": 1,
+    "bg_wait": 1
+  },
+  "delegate_roles": {},
+  "delegate_states": {},
+  "pending": {},
+  "stderr_bytes": 0,
+  "git_diff_results": 3
+}

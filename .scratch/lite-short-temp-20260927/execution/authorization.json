@@ -1,0 +1,42 @@
+{
+  "scope": [
+    {
+      "ordinal": 1,
+      "task": "T1",
+      "arm": "native-opus-calibration",
+      "rep": 1
+    },
+    {
+      "ordinal": 2,
+      "task": "T1",
+      "arm": "lite-opus-calibration",
+      "rep": 1
+    },
+    {
+      "ordinal": 3,
+      "task": "T2c",
+      "arm": "lite-opus-calibration",
+      "rep": 1
+    },
+    {
+      "ordinal": 4,
+      "task": "T2c",
+      "arm": "native-opus-calibration",
+      "rep": 1
+    }
+  ],
+  "allowed_ordinals": [
+    2,
+    3,
+    4
+  ],
+  "user_message": "继续推进，直到确实需要我来确定",
+  "max_total_attempts": 4,
+  "max_new_attempts": 3,
+  "checkpoint_budget_usd": 10,
+  "prior_actual_total": 1.29824603,
+  "no_retries": true,
+  "no_paid_health": true,
+  "old_stop_immutable": true,
+  "at": "2026-09-27T01:56:15.293057+00:00"
+}

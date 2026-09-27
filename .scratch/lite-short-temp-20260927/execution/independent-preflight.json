@@ -1,0 +1,115 @@
+{
+  "status": "PASS",
+  "at": "2026-09-27T10:03:58.145306+08:00",
+  "scope": "independent no-paid short-temp preflight; no paid run or subsequent attempt authorized for this validator",
+  "commands": [
+    {
+      "command": "bash .scratch/lite-short-temp-20260927/execution/preflight.sh dry",
+      "exit": 0,
+      "evidence": ".scratch/lite-short-temp-20260927/execution/dry-preflight.log"
+    },
+    {
+      "command": "bash .scratch/lite-short-temp-20260927/execution/dry-run.sh",
+      "exit": 0,
+      "evidence": ".scratch/lite-short-temp-20260927/execution/dry-run-verified.log"
+    },
+    {
+      "command": "TMPDIR=/project/tmp/ls-72927a PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest bench.test_native.NativeBenchTest.test_public_guard_rejects_long_runtime_socket_path_before_body",
+      "exit": 0,
+      "evidence": ".scratch/lite-short-temp-20260927/execution/independent-guard-test.log"
+    },
+    {
+      "command": "bash .scratch/lite-short-temp-20260927/execution/run-one.sh 1",
+      "exit": 2,
+      "evidence": ".scratch/lite-short-temp-20260927/execution/independent-ordinal1-block.log",
+      "purpose": "forbidden ordinal guard only, no paid launch"
+    }
+  ],
+  "checks": {
+    "static": true,
+    "no_resource_conflict": true,
+    "three_dry_exit0": true,
+    "health_skipped_three": true,
+    "landlock_three": true,
+    "model_json_mode_three": true,
+    "dry_metadata": true,
+    "lite_plugin_sha_pinned": true,
+    "path_map_distinct_short_fresh": true,
+    "no_new_paid_campaign": true,
+    "original_STOP_unchanged": true,
+    "targeted_guard_one_pass": true,
+    "ordinal1_case_rejects_exit2": true,
+    "hashes_unchanged": true
+  },
+  "hashes": {
+    "entry": {
+      "count": 11,
+      "manifest_sha256": "3f5f404ae373658942451b1f651590ef7265faddeca68d35db93ca4064bc2455",
+      "mismatches": []
+    },
+    "source": {
+      "count": 82,
+      "manifest_sha256": "9b3c7812b82546c4c74ac3f9505e40aa7d10f916e52aabc443f77f4d6bba1839",
+      "mismatches": []
+    },
+    "history": {
+      "count": 161,
+      "manifest_sha256": "8519cc9fea95a54c3ce7b3e14cfc77f130d12bd92977cc7300881d51695916a2",
+      "mismatches": []
+    }
+  },
+  "dry_runs": [
+    {
+      "id": "T1-lite-opus-calibration-1",
+      "mode": "lite",
+      "root_model": "tcuni-claude/claude-opus-5-5",
+      "pi_version": "0.87.1",
+      "subagents_version": "0.71.0",
+      "plugin_ref": "ad51067da379edf5735cb9b03d70f17bda331675",
+      "plugin_sha": "ad51067da379edf5735cb9b03d70f17bda331675",
+      "child_overrides_frozen": true,
+      "temp_resource": {
+        "backend": "landlock",
+        "abi": 7,
+        "policy": "deny /tmp writes; allow safe root directories",
+        "tmpdir": "/project/tmp/ps-3d74eb12"
+      },
+      "model_task_events": 0
+    },
+    {
+      "id": "T2c-lite-opus-calibration-1",
+      "mode": "lite",
+      "root_model": "tcuni-claude/claude-opus-5-5",
+      "pi_version": "0.87.1",
+      "subagents_version": "0.71.0",
+      "plugin_ref": "ad51067da379edf5735cb9b03d70f17bda331675",
+      "plugin_sha": "ad51067da379edf5735cb9b03d70f17bda331675",
+      "child_overrides_frozen": true,
+      "temp_resource": {
+        "backend": "landlock",
+        "abi": 7,
+        "policy": "deny /tmp writes; allow safe root directories",
+        "tmpdir": "/project/tmp/ps-3d74eb12"
+      },
+      "model_task_events": 0
+    },
+    {
+      "id": "T2c-native-opus-calibration-1",
+      "mode": "native",
+      "root_model": "tcuni-claude/claude-opus-5-5",
+      "pi_version": "0.87.1",
+      "subagents_version": "0.71.0",
+      "plugin_ref": "ad51067da379edf5735cb9b03d70f17bda331675",
+      "plugin_sha": null,
+      "child_overrides_frozen": true,
+      "temp_resource": {
+        "backend": "landlock",
+        "abi": 7,
+        "policy": "deny /tmp writes; allow safe root directories",
+        "tmpdir": "/project/tmp/ps-3d74eb12"
+      },
+      "model_task_events": 0
+    }
+  ],
+  "uncovered": "No paid task executed; successful dry-run checks executable mode and configured interpreter/socket guard, not model response or production quality."
+}

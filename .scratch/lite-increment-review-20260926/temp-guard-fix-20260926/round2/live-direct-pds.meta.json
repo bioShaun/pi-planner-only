@@ -1,0 +1,66 @@
+{
+  "task": {
+    "id": "T3",
+    "repo": "/public/scripts/tc-probe-design-v2",
+    "target": "e9270779747d2b14a531d5bbf856f3287d15f4f7",
+    "parent": "712e9ff772033f39fa14eceaf4f1fc3fa4aa0ce6",
+    "tests": [
+      "tests/contracts/test_bed_region_fail_closed.py",
+      "tests/contracts/test_pyranges_annotation_contract.py",
+      "tests/unit/test_annotate_region.py"
+    ],
+    "prompt": "T3.md",
+    "python": "/public/scripts/tc-probe-design-v2/.venv/bin/python",
+    "baseline": "../baselines/T3.failures.txt"
+  },
+  "arm": {
+    "name": "direct-pds",
+    "mode": "direct",
+    "rootModel": "cline/cline-pass/deepseek-v4.1-flash",
+    "pluginRef": "ad51067da379edf5735cb9b03d70f17bda331675",
+    "promptPrefix": ""
+  },
+  "rep": "1",
+  "pluginSha": null,
+  "dirty": false,
+  "piVersion": "0.87.1",
+  "piSubagentsVersion": "0.71.0",
+  "childOverrides": {
+    "planner": {
+      "model": "tcuni-ds/deepseek/deepseek-v4.1-flash",
+      "thinking": "high"
+    },
+    "oracle": {
+      "model": "tcuni/gpt-6-luna",
+      "thinking": "low"
+    },
+    "reviewer": {
+      "model": "tcuni/gpt-6-luna",
+      "thinking": "high"
+    },
+    "worker": {
+      "model": "tcuni/gpt-6-luna",
+      "thinking": "medium"
+    },
+    "researcher": {
+      "model": "tcuni/gpt-6-luna",
+      "thinking": "medium"
+    },
+    "scout": {
+      "model": "tcuni/gpt-6-luna",
+      "thinking": "low"
+    },
+    "planner-scout": {
+      "model": "tcuni/gpt-6-luna",
+      "thinking": "low"
+    }
+  },
+  "start": "2026-09-26T21:10:26+08:00",
+  "hostname": "tcuni-claw",
+  "tempResource": {
+    "backend": "landlock",
+    "abi": 7,
+    "policy": "deny /tmp writes; allow safe root directories",
+    "tmpdir": "/project/tmp/ppo-bench/temp-guard-verify-20260926"
+  }
+}

@@ -1,0 +1,5 @@
+REQUEST_CHANGES (final)
+
+The assigned snapshot matches all 41 frozen file hashes. The new device checks reject a selected temp directory, temp root, or existing auto-temp parent on /tmp’s device before temp creation. I also verified the repo-local temp check, the 22-test and release logs, three Pi dry-run records, and all 72 historical raw-file hashes. I ran no tests or model calls.
+
+**Conditional unsafe STOP write:** [temp_guard.py](/home/tcuni-claw/pi/pi-planner-only/bench/temp_guard.py:185) checks BENCH_OUT by resolved path, but not filesystem device. If /project/tmp is bind-mounted from /tmp and BENCH_OUT lies beneath it, select_temp() correctly blocks the run; record_block() can then create the output directory and STOP on the forbidden filesystem before Landlock is installed (lines 191–203). Apply the same /tmp device check to the STOP destination before creating or opening it, including a check of the opened directory. This layout was not exercised on the reviewed host, whose devices differ.

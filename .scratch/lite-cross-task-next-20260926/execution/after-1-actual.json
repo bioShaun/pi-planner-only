@@ -1,0 +1,27 @@
+{
+  "runs": [],
+  "incomplete": [],
+  "invalid": [
+    {
+      "id": "T2b-native-opus-calibration-1",
+      "reasons": [
+        "native subagent x1: failed child result",
+        "native subagent x1: nonterminal child result"
+      ]
+    }
+  ],
+  "attempt_spend": [
+    {
+      "id": "T2b-native-opus-calibration-1",
+      "cost": null,
+      "known_cost_lower_bound": 1.80496475,
+      "valid": false
+    }
+  ],
+  "attempt_spend_total": null,
+  "attempt_spend_scope": "current runs directory only; archived void attempts excluded",
+  "aggregates": {},
+  "task_aggregates": {},
+  "comparisons": {},
+  "mixed_plugin": {}
+}

@@ -1,0 +1,16 @@
+{
+  "timestamp": "2026-09-26T10:56:41.470819+00:00",
+  "user_reply": "下一步",
+  "in_reply_to": "是否启动该校准：同一 T3，每臂一次，最多三次，使用新的 $10 累计费用检查点预算？",
+  "scope": "target-root-t3-opus-calibration-20260926",
+  "max_attempts": 3,
+  "checkpoint_budget_usd": 10,
+  "budget_basis": "actual-price usage",
+  "order": [
+    "direct-opus-calibration",
+    "native-opus-calibration",
+    "lite-opus-calibration"
+  ],
+  "no_retries": true,
+  "health_calls": false
+}

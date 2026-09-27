@@ -1,0 +1,11 @@
+PASS — attempt 3 direct, independently validated read-only by astra_validator_complex.
+
+The three attempts ran serially; independently repriced cumulative spend is $3.80569241, below the $10 running-between-attempts checkpoint. The three-attempt limit has been reached.
+
+Raw direct events record 31 Opus assistant completions, no children, matched tool starts/ends and terminal settlement. Usage reprices to $1.89051350. Target log has 30 passes; masked suite has exactly the 14 baseline failure IDs. Earlier raw commands retain a 26-failure intermediate suite; later evaluation is corrected evidence.
+
+Landlock metadata names the authorized /project/tmp directory, slot audit/status passed, and command evidence contains no bare /tmp output path. Independent SHA-256 checks match all 72 historical files and all 24 frozen source files. Attempt3 ran 23:00:31–23:07:38 +08:00 after attempt2 finished.
+
+Evidence limit: clone auto-cleaned before a full final patch was captured. Command/change records show one test-file edit command replacing regions.bed with transcript.bed and final status lists the benchmark file, but there is no full final test diff to prove assertion text byte for byte. Both benchmark tests were skipped because --benchmark-skip remained active. This is not benchmark-execution evidence. Validator made no mutations or test runs.
+
+This file records independent evidence validation, not a formal review-contract gate. Original response remains in the parent session agent message.

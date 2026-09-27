@@ -1,0 +1,3 @@
+T1: external subprocess timeout and caller wiring, 3 production files +92/-22; 4 target test files, 30 cases. T1 uses later testRefs commit cee4c0f for two caller mocks.
+T2: REF/ALT data fold and pipeline/CLI flag wiring, 6 production files +270; 10 target cases. Tests do not cover complete pipeline/CLI wiring; mandatory wiring review required.
+Source: independent astra_explorer cross_task_candidates; no tests/writes performed by explorer.

@@ -1,0 +1,52 @@
+{
+  "CODEMAP.md": {
+    "expected": "470e37cd293494db496b504afde2668b6deb13b1161e2a999bea178fc7db7127",
+    "actual": "470e37cd293494db496b504afde2668b6deb13b1161e2a999bea178fc7db7127",
+    "match": true
+  },
+  "docs/PATTERNS.md": {
+    "expected": "8bcd4a976e987b1ee8ba5a0446ef92b77dc60cf0dbc127c54dbe6f062a22ae50",
+    "actual": "8bcd4a976e987b1ee8ba5a0446ef92b77dc60cf0dbc127c54dbe6f062a22ae50",
+    "match": true
+  },
+  "docs/runtime-safety-scientific-correctness-stabilization-spec-2026-07-10.md": {
+    "expected": "d957fdaf514ede51e873676e70c223a3f789f11ffbe61b38d19a71319f6ba792",
+    "actual": "d957fdaf514ede51e873676e70c223a3f789f11ffbe61b38d19a71319f6ba792",
+    "match": true
+  },
+  "src/tc_probe_design/exceptions.py": {
+    "expected": "872dc201fa52408b69a66d8b012f1605f5590a1589db5735c1335830a8524eab",
+    "actual": "872dc201fa52408b69a66d8b012f1605f5590a1589db5735c1335830a8524eab",
+    "match": true
+  },
+  "src/tc_probe_design/external_tools.py": {
+    "expected": "1fe8ca6c837ca0ff2d631d0789cce5e863ab8215341cc1cc5597d65ca137f4a9",
+    "actual": "1fe8ca6c837ca0ff2d631d0789cce5e863ab8215341cc1cc5597d65ca137f4a9",
+    "match": true
+  },
+  "src/tc_probe_design/workflows/replace_primaries.py": {
+    "expected": "f130b1f400ca64f4e1e6eeba3c9028f38b87a8aee2b9a57801a104000f72ce82",
+    "actual": "f130b1f400ca64f4e1e6eeba3c9028f38b87a8aee2b9a57801a104000f72ce82",
+    "match": true
+  },
+  "tests/contracts/test_external_tool_timeout.py": {
+    "expected": "caf5e21dcd5d87e7d5a6929c38a0f6442e39c31848fb385cff098ad8b0c1f1d6",
+    "actual": "caf5e21dcd5d87e7d5a6929c38a0f6442e39c31848fb385cff098ad8b0c1f1d6",
+    "match": true
+  },
+  "tests/contracts/test_prefilter_calibration_profile.py": {
+    "expected": "b710ee8e049b7f57de8f966fe83fa33c293ea639157f262e79900b7e4a0fa657",
+    "actual": "b710ee8e049b7f57de8f966fe83fa33c293ea639157f262e79900b7e4a0fa657",
+    "match": true
+  },
+  "tests/contracts/test_replace_primaries_cli_wiring.py": {
+    "expected": "f89c6bb383cf7c8916177cc994661b2e69f1a786a16f99b5ce15725eaf9e9663",
+    "actual": "f89c6bb383cf7c8916177cc994661b2e69f1a786a16f99b5ce15725eaf9e9663",
+    "match": true
+  },
+  "tests/unit/test_external_tool_version_reporting.py": {
+    "expected": "c41dffab32176e9c91bf5799c68f36bc3b1e712fb728eaab6d1686c37bc8fc52",
+    "actual": "c41dffab32176e9c91bf5799c68f36bc3b1e712fb728eaab6d1686c37bc8fc52",
+    "match": true
+  }
+}

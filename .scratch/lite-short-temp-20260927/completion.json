@@ -1,0 +1,12 @@
+{
+  "repair": "complete",
+  "diagnosis": "confirmed by2x2 matrix",
+  "tests": 36,
+  "release": "PASS",
+  "independent_final_review": "PASS",
+  "execution": "blocked by automatic approval review pending explicit payload/destination approval",
+  "new_model_attempts": 0,
+  "previous_spend_usd": 1.29824603,
+  "report": "report.md",
+  "approval_detail": "execution/approval-block.json"
+}

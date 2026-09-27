@@ -1,0 +1,26 @@
+{
+  "status": "blocked-pending-informed-user-approval",
+  "action": "bash .scratch/lite-short-temp-20260927/execution/run-one.sh 2",
+  "source": "automatic approval review as reported by execution validator",
+  "reason": "Run could transmit repository-derived task context to external paid model; trusted user authorization did not specify payload and destination. Explicit informed approval required; no indirect execution/workaround permitted.",
+  "destination": "http://117.176.220.47:1989",
+  "providers": [
+    "tcuni-claude/claude-opus-5-5",
+    "tcuni/gpt-6-luna",
+    "tcuni-ds/deepseek/deepseek-v4.1-flash"
+  ],
+  "payload": "Task prompts, task-relevant repository/source/test content and tool outputs including paths/logs read during the benchmark",
+  "remaining_ordinals": [
+    2,
+    3,
+    4
+  ],
+  "max_total_attempts": 4,
+  "checkpoint_budget_usd": 10,
+  "previous_spend_usd": 1.29824603,
+  "new_paid_attempts": 0,
+  "new_paid_cost_usd": 0,
+  "offline_fix_and_review": "PASS",
+  "ordinal2_resource_preflight": "PASS",
+  "time": "2026-09-27T02:15:35.059121+00:00"
+}

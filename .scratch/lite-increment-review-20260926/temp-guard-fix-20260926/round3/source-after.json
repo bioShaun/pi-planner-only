@@ -1,0 +1,7 @@
+{
+  "bench/run.sh": "178a83ee37cfce468acb6ed64be8e7547b8bfae7142afca632ce6b0060cc3c20",
+  "bench/run-body.sh": "2573c57f273ea759b7c155ff32524a9cb59145935c9b19aa840a81788d9f4b4c",
+  "bench/temp_guard.py": "453b2c66c40b86fd74300e0b783cbbc6afd79964c35c3da84f000fbc9f941ec0",
+  "bench/test_native.py": "46bd02f0724af273254017dab5f5b44be28fa6f444c1372521105a442e8adc21",
+  "bench/README.md": "3b2aa0784f3bf144839723f37b7f7bd8ee970113616dba119797d6af3cd173d2"
+}

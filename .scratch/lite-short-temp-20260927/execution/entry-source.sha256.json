@@ -1,0 +1,13 @@
+{
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-short-temp-20260927/execution/audit.py": "acbab71ad3035238ed5f97e910e629a22cd6c69322bca3a0554280e0592b6637",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-short-temp-20260927/execution/authorization.json": "cbd1c4ca548c5befcd16b1730cde9bafb066c61e03145b79653693ed16f0de58",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-short-temp-20260927/execution/capture-children.py": "440d327602823f86e61a70c3154ed9fd34a956b18207dc11498c5490d37f45d4",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-short-temp-20260927/execution/capture-clone.py": "e7ac5f755aa1ba7e7f61a0ccd6e97101d8070588cc278d80e9911acb3409934e",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-short-temp-20260927/execution/dry-run.sh": "0732ff011958bdad99259281c0af217ae8d40ee1329c2474ce79cc2f764e43f1",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-short-temp-20260927/execution/observe.py": "289f981f86e1ff5765365e3247ab230e860057085bd9402012d6ff5f141b4964",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-short-temp-20260927/execution/paths.json": "3f58b6c8c3cc73bf1dabef0415ed9c75a8859a38e29834c4c14f199240d47172",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-short-temp-20260927/execution/plan.json": "e19c2a18e68dc706aea906eec9a4fe2df132a9584f05d8913f8b7c50a63a19d6",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-short-temp-20260927/execution/preflight.sh": "21563ea0598cd5d0cd472691c670b0e7f1f31b4574e3672c3fbfa3cba001a084",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-short-temp-20260927/execution/run-one.sh": "9b89106d33a92369dc36b952123f9e12a53da10104ca981005f353b55e1c0f50",
+  "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-short-temp-20260927/execution/static-check.py": "58d25a2d5316bdca7dcf26b40362978f77dcdbd32d8a3fc21f90d8a04f682a4b"
+}

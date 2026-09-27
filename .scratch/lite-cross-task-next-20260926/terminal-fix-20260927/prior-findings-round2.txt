@@ -1,0 +1,12 @@
+REQUEST_CHANGES (final)
+
+- **High — Missing child identity bypasses evidence collection.** In [native_results.py](/home/tcuni-claw/pi/pi-planner-only/bench/native_results.py:68), `_references` skips a child result without `runId`; `collect_bundle` then returns without a bundle. [run-body.sh](/home/tcuni-claw/pi/pi-planner-only/bench/run-body.sh:178) proceeds to `runcheck`, whose `children` parser accepts that result from its reported model and usage. A read-only in-memory probe produced `_references == {}` and one accepted child with no problems. A native run can therefore be marked valid without a bound terminal transcript. Reject launched child results lacking a usable runId and required artifact references before validity is recorded; add a fault-injection case.
+
+- **Medium — Unknown model suffix can pass the validity gate.** [runcheck.py](/home/tcuni-claw/pi/pi-planner-only/bench/runcheck.py:83) checks only the part before `:`, while [summarize.py](/home/tcuni-claw/pi/pi-planner-only/bench/summarize.py:18) prices only recognized suffixes. The in-memory probe showed `tcuni/gpt-6-luna:bogus` passes the former check but has no pricing key. The runner can record `eval.valid=true` for an unpriceable child. Use the same model-key validation in both paths and test an unknown suffix.
+
+I verified all 42 frozen file hashes and matched all 14 patch hunks to current files. Read-only replay of the frozen bundle validated two distinct children and independently reproduced the reported $1.88898237 total. The original evaluation remains `valid=false`, and offline output excludes it from eligible runs. The supplied logs report 33 native tests and release checks passing; I did not rerun write-capable tests. The T2b boundary evidence is an extracted fold-function matrix, not an end-to-end stage or BLAST run.
+
+Correction evidence mapping (implementer claims for fresh verification):
+High identity: native_results._references and test_collector_rejects_unbound_child_identity_and_artifacts, child-only identity regression; red-round2/green-round2-expanded logs.
+Medium suffix: native_results.model_key shared with runcheck/summarize; test_model_key_gate_and_pricing_agree_on_suffix.
+Final validation: native-suite-round2.log35 and release-round2.log; replay-round2.log amount unchanged. Earlier implementation.patch is broad navigation (tar omitted preexisting untracked files), not exact task-only attribution.

@@ -1,0 +1,26 @@
+{
+  "runs": [],
+  "incomplete": [],
+  "invalid": [
+    {
+      "id": "T2b-native-opus-calibration-1",
+      "reasons": [
+        "historical eval.valid=false (not retroactively eligible)"
+      ]
+    }
+  ],
+  "attempt_spend": [
+    {
+      "id": "T2b-native-opus-calibration-1",
+      "cost": 1.88898237,
+      "known_cost_lower_bound": 1.88898237,
+      "valid": false
+    }
+  ],
+  "attempt_spend_total": 1.88898237,
+  "attempt_spend_scope": "current runs directory only; archived void attempts excluded",
+  "aggregates": {},
+  "task_aggregates": {},
+  "comparisons": {},
+  "mixed_plugin": {}
+}

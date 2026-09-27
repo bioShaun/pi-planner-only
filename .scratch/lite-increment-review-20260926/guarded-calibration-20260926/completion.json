@@ -1,0 +1,24 @@
+{
+  "campaign": "target-root-t3-opus-guarded-20260926",
+  "status": "completed",
+  "attempts": 3,
+  "valid": 3,
+  "quality_pass": 3,
+  "actual_total": 3.80569241,
+  "opus_total": 3.80569241,
+  "budget_type": "$10 checkpoint between attempts, not live hard cap",
+  "automatic_retries": 0,
+  "paid_health_calls": 0,
+  "independent_evidence_validation": "PASS",
+  "historical_raw_files_unchanged": 72,
+  "frozen_source_files_unchanged": 24,
+  "new_raw_files_hashed": 24,
+  "further_model_calls": false,
+  "limits": [
+    "Single T3 sample per arm; no savings percentage.",
+    "Direct final test diff not separately captured; assertion claim rests on commands/stat, not byte-for-byte patch.",
+    "Direct benchmarks skipped.",
+    "Landlock evidence applies to local descendants."
+  ],
+  "finished_at": "2026-09-26T15:12:26.620932+00:00"
+}

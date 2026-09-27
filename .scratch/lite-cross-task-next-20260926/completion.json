@@ -1,0 +1,25 @@
+{
+  "scope": "offline cross-task preparation",
+  "status": "complete",
+  "tasks": [
+    "T1",
+    "T2b"
+  ],
+  "offline_validation": "PASS",
+  "independent_validation": "PASS",
+  "release": "PASS",
+  "reproduced_bench_files": 70,
+  "execution_source_hashes": 78,
+  "historical_raw_files_unchanged": 96,
+  "paid_model_calls": 0,
+  "paid_authorization": false,
+  "proposed_new_attempts": 4,
+  "proposed_new_checkpoint_usd": 10,
+  "future_dynamic_preflight_required": true,
+  "evidence": [
+    "readiness.md",
+    "independent-validation.txt",
+    "plan.json",
+    "preparation-validation.json"
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "id": "T3-direct-opus-calibration-1",
+  "ordinal": 3,
+  "checks": {
+    "runner_exit0": true,
+    "pi_exit0": true,
+    "quality": true,
+    "baseline_exact": true,
+    "no_stop": true,
+    "attempt_count": true,
+    "source_unchanged": true,
+    "previous_pilot_unchanged": true,
+    "runtime_metadata": true,
+    "previous_opus_unchanged": true,
+    "temp_resource": true,
+    "plugin_ref": true,
+    "actual_complete": true,
+    "opus_complete": true,
+    "no_pending_tool": true,
+    "no_root_api_error": true
+  },
+  "checks_passed": true,
+  "evaluation": {
+    "task": "T3",
+    "arm": "direct-opus-calibration",
+    "id": "T3-direct-opus-calibration-1",
+    "pass": true,
+    "target_failed": [],
+    "new_failures": [],
+    "files_changed": 10,
+    "non_target_tests_changed": [
+      "tests/benchmarks/test_benchmark_region.py"
+    ],
+    "target_test_exit": 0,
+    "suite_exit": 1,
+    "eval_semantics": "masked-suite (baseline and eval both --ignore target tests)",
+    "valid": true,
+    "invalid_reasons": []
+  },
+  "non_target_tests_require_review": [
+    "tests/benchmarks/test_benchmark_region.py"
+  ],
+  "totals": {
+    "actual": 3.8056924100000002,
+    "opus": 3.8056924100000002
+  },
+  "record": {
+    "id": "T3-direct-opus-calibration-1",
+    "task": "T3",
+    "arm": "direct-opus-calibration",
+    "rep": 1,
+    "mode": "direct",
+    "exit": 0,
+    "passed": true,
+    "wall": 391,
+    "root_turns": 31,
+    "delegates": 0,
+    "children": 0,
+    "root": {
+      "input": 64,
+      "output": 20894,
+      "cacheRead": 1755312,
+      "cacheWrite": 78430
+    },
+    "child_cost": 0,
+    "root_cost": 1.8905135,
+    "total_cost": 1.8905135,
+    "refused": 0,
+    "detached": 0,
+    "truncated": 0,
+    "root_reads": 0,
+    "root_bash": 28,
+    "root_cache_read": 1755312,
+    "extra_tools": 0,
+    "turns_per_delegate": null,
+    "known_cost_lower_bound": 1.8905135
+  },
+  "first_delegate_start_turn": null,
+  "root_tool_calls": {
+    "bash": 28,
+    "edit": 4
+  },
+  "delegate_roles": {},
+  "delegate_states": {},
+  "pending": {},
+  "stderr_bytes": 0,
+  "git_diff_results": 5
+}

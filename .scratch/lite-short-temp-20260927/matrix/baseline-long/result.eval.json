@@ -1,0 +1,34 @@
+{
+  "task": "T1",
+  "arm": "gold",
+  "id": "result",
+  "pass": false,
+  "target_failed": [
+    "tests/contracts/test_external_tool_timeout.py"
+  ],
+  "new_failures": [
+    "tests/contracts/test_design_round_contract.py::test_design_round_runs_successfully_and_writes_output",
+    "tests/contracts/test_sequence_metrics_serial_fallback.py::test_serial_and_parallel_metric_outputs_match",
+    "tests/unit/test_compute_stages.py::test_alignment_annotation_stage_adds_alignment_columns",
+    "tests/unit/test_compute_stages.py::test_alignment_stage_auto_small_panel_uses_full",
+    "tests/unit/test_compute_stages.py::test_alignment_stage_auto_without_index_uses_full",
+    "tests/unit/test_compute_stages.py::test_alignment_stage_dispatches_two_stage",
+    "tests/unit/test_compute_stages.py::test_sequence_extraction_stage_snp_produces_extraction_schema",
+    "tests/unit/test_extraction.py::TestExtractIndelCandidates::test_left_anchor_at_pos_minus_one",
+    "tests/unit/test_extraction.py::TestExtractIndelCandidates::test_produces_left_and_right_sides",
+    "tests/unit/test_extraction.py::TestExtractIndelCandidates::test_right_anchor_uses_ref_length",
+    "tests/unit/test_extraction.py::TestExtractSnpCandidates::test_boundary_auto_adjustment_near_chromosome_end",
+    "tests/unit/test_extraction.py::TestExtractSnpCandidates::test_center_probe_type_produces_center_offsets",
+    "tests/unit/test_extraction.py::TestExtractSnpCandidates::test_output_has_expected_columns",
+    "tests/unit/test_extraction.py::TestExtractSnpCandidates::test_sequence_length_matches_probe_length",
+    "tests/unit/test_probe_pipeline_decomposition.py::test_compute_persist_inplace_matches_historical_layout",
+    "tests/unit/test_probe_pipeline_decomposition.py::test_compute_single_design_records_separate_sequence_metric_timing",
+    "tests/unit/test_probe_pipeline_decomposition.py::test_compute_single_design_uses_workspace_not_out_dir",
+    "tests/unit/test_probe_pipeline_decomposition.py::test_persist_design_copies_intermediate_and_writes_tables"
+  ],
+  "files_changed": 0,
+  "non_target_tests_changed": [],
+  "target_test_exit": 2,
+  "suite_exit": 1,
+  "eval_semantics": "masked-suite (baseline and eval both --ignore target tests)"
+}

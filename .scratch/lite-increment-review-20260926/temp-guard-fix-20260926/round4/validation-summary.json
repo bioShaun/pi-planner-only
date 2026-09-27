@@ -1,0 +1,20 @@
+{
+  "native_tests": 29,
+  "native_exit": 0,
+  "runtime_exit": 0,
+  "release_exit": 0,
+  "release_suites": [
+    "typecheck",
+    "contract",
+    "git",
+    "delegate",
+    "host",
+    "index"
+  ],
+  "live_pi_dry_runs": 3,
+  "guard_bypass_red_control_detected": true,
+  "original_14_assertions_preserved": true,
+  "old_72_raw_hashes_unchanged": true,
+  "source_unchanged_during_checks": true,
+  "paid_model_calls": 0
+}

@@ -1,0 +1,14 @@
+F
+======================================================================
+FAIL: test_failed_guard_blocks_before_pi_and_records_stop_not_retry (guard_red_control.NativeBenchTest.test_failed_guard_blocks_before_pi_and_records_stop_not_retry)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py", line 543, in test_failed_guard_blocks_before_pi_and_records_stop_not_retry
+    self.assertEqual(result.returncode, 3, result.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 3 : 
+
+----------------------------------------------------------------------
+Ran 1 test in 0.005s
+
+FAILED (failures=1)

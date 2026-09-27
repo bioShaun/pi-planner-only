@@ -1,0 +1,10 @@
+{
+  "scope": "offline cross-task preparation",
+  "paid_model_calls": false,
+  "candidate_tasks": [
+    "T1",
+    "T2"
+  ],
+  "parent_campaign": "target-root-t3-opus-guarded-20260926",
+  "started_at": "2026-09-26T15:31:43.850856+00:00"
+}

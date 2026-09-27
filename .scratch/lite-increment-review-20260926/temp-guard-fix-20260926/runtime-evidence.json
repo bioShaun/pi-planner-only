@@ -1,0 +1,40 @@
+{
+  "real_pi_dry_runs": [
+    {
+      "arm": "direct-pds",
+      "exit": 0,
+      "resource": {
+        "backend": "landlock",
+        "abi": 7,
+        "policy": "deny /tmp writes; allow safe root directories",
+        "tmpdir": "/project/tmp/ppo-bench/temp-guard-verify-20260926"
+      },
+      "model_generations": 0
+    },
+    {
+      "arm": "native-pds",
+      "exit": 0,
+      "resource": {
+        "backend": "landlock",
+        "abi": 7,
+        "policy": "deny /tmp writes; allow safe root directories",
+        "tmpdir": "/project/tmp/ppo-bench/temp-guard-verify-20260926"
+      },
+      "model_generations": 0
+    },
+    {
+      "arm": "lite-pds-head",
+      "exit": 0,
+      "resource": {
+        "backend": "landlock",
+        "abi": 7,
+        "policy": "deny /tmp writes; allow safe root directories",
+        "tmpdir": "/project/tmp/ppo-bench/temp-guard-verify-20260926"
+      },
+      "model_generations": 0
+    }
+  ],
+  "guard_bypass_red_control_detected": true,
+  "prior_raw_files_unchanged": 72,
+  "paid_model_calls": 0
+}

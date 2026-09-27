@@ -1,0 +1,13 @@
+{
+  "new_raw_files": 24,
+  "prior_raw_files_unchanged": 48,
+  "prepared_source_hashes_unchanged": true,
+  "child_artifacts": 4,
+  "child_costs_recomputed_from_usage": true,
+  "nested_child_calls_observed": 0,
+  "extra_attempts": 0,
+  "void_directories": [],
+  "stop_present": false,
+  "paid_health_calls": 0,
+  "retries": 0
+}

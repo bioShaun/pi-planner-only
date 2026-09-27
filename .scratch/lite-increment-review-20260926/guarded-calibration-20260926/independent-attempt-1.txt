@@ -1,0 +1,11 @@
+PASS — attempt 1, lite arm only, validated read-only by astra_validator_complex.
+
+The protected run started September 26 at 22:41:00 +08:00 and finished at 22:48:16; attempt 2 started at 22:49:29, so the recorded execution windows do not overlap.
+
+Raw run events show 12 Opus assistant completions and two completed Luna children. Six assistant message_end events precede the first delegation tool_execution_start. Target log shows 30 passes; suite log has exactly the 14 baseline failure IDs.
+
+Raw root and child usage, actual models, terminal events, and matched tool starts/ends corroborate the audit and child evidence. Recalculation with bench/prices.json gives $0.80976564. The recorded Landlock guard and command evidence use the authorized /project/tmp resource path; child commands set TMPDIR there. All 24 frozen source hashes checked still match.
+
+Validator made no changes and ran no tests. Sole non-target test change replaces regions.bed with cds.bed twice, with assertions untouched. Child transcripts retain failed exploratory commands, including an initial edit failure, formatting failure, mypy errors, and a 1-failed/323-passed run; later target and baseline-matched evaluation is the passing evidence. Validator did not independently rehash the separately claimed 72 historical files.
+
+This file records the independent evidence-validation result, not a formal review-contract gate. Original response remains in the parent session agent message.

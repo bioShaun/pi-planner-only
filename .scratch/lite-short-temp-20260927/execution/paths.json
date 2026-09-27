@@ -1,0 +1,17 @@
+{
+  "T1-lite-opus-calibration-1": {
+    "ordinal": 2,
+    "tmpdir": "/project/tmp/ps-3d74eb12/r2",
+    "clone": "/project/tmp/ppo-bench/clones/opus-cross-task-t1-t2c-short-20260927-T1-lite-opus-calibration-1"
+  },
+  "T2c-lite-opus-calibration-1": {
+    "ordinal": 3,
+    "tmpdir": "/project/tmp/ps-3d74eb12/r3",
+    "clone": "/project/tmp/ppo-bench/clones/opus-cross-task-t1-t2c-short-20260927-T2c-lite-opus-calibration-1"
+  },
+  "T2c-native-opus-calibration-1": {
+    "ordinal": 4,
+    "tmpdir": "/project/tmp/ps-3d74eb12/r4",
+    "clone": "/project/tmp/ppo-bench/clones/opus-cross-task-t1-t2c-short-20260927-T2c-native-opus-calibration-1"
+  }
+}

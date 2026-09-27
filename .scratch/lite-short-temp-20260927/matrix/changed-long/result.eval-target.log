@@ -1,0 +1,42 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-9.0.2, pluggy-1.6.0 -- /public/scripts/tc-probe-design-v2/.venv/bin/python
+cachedir: .pytest_cache
+hypothesis profile 'dev' -> max_examples=200, deadline=timedelta(milliseconds=2000)
+benchmark: 5.2.3 (defaults: timer=time.perf_counter disable_gc=False min_rounds=5 min_time=0.000005 max_time=1.0 calibration_precision=10 warmup=False warmup_iterations=100000)
+rootdir: /home/tcuni-claw/pi/pi-planner-only/.scratch/lite-short-temp-20260927/matrix/changed-long/clone
+configfile: pyproject.toml
+plugins: testmon-2.2.0, cov-7.0.0, hypothesis-6.155.1, benchmark-5.2.3
+collecting ... collected 30 items
+
+tests/contracts/test_external_tool_timeout.py::test_hanging_external_tool_raises_project_timeout PASSED [  3%]
+tests/contracts/test_external_tool_timeout.py::test_version_probe_uses_positive_timeout PASSED [  6%]
+tests/contracts/test_external_tool_timeout.py::test_run_rejects_non_positive_timeout PASSED [ 10%]
+tests/contracts/test_prefilter_calibration_profile.py::test_main_chooses_zero_fp_threshold_and_defaults_to_sidecar_path PASSED [ 13%]
+tests/contracts/test_prefilter_calibration_profile.py::test_main_rejects_validation_only_false_positive PASSED [ 16%]
+tests/contracts/test_prefilter_calibration_profile.py::test_main_stratified_sampling_covers_buckets PASSED [ 20%]
+tests/contracts/test_prefilter_calibration_profile.py::test_main_counts_merged_loci_once PASSED [ 23%]
+tests/contracts/test_prefilter_calibration_profile.py::test_main_rejects_invalid_arguments[argv0---validation-fraction must be in (0, 1)] PASSED [ 26%]
+tests/contracts/test_prefilter_calibration_profile.py::test_main_rejects_invalid_arguments[argv1---min-per-bucket must be positive] PASSED [ 30%]
+tests/contracts/test_prefilter_calibration_profile.py::test_main_emits_calibration_table_if_requested PASSED [ 33%]
+tests/contracts/test_prefilter_calibration_profile.py::test_main_emits_calibration_table_before_threshold_selection_failure PASSED [ 36%]
+tests/contracts/test_prefilter_calibration_profile.py::test_main_derives_max_blast_hits_from_protected_max_probe_level PASSED [ 40%]
+tests/contracts/test_prefilter_calibration_profile.py::test_main_gatekeeping_disables_two_stage_when_threshold_exceeds_max PASSED [ 43%]
+tests/contracts/test_prefilter_calibration_profile.py::test_deprecated_max_blast_hits_level_derivation PASSED [ 46%]
+tests/contracts/test_prefilter_calibration_profile.py::test_deprecated_max_blast_hits_below_l1_rejected PASSED [ 50%]
+tests/contracts/test_prefilter_calibration_profile.py::test_deprecated_max_blast_hits_3_end_to_end_derives_level_1 PASSED [ 53%]
+tests/contracts/test_prefilter_calibration_profile.py::test_deprecated_max_blast_hits_10_end_to_end_derives_level_2 PASSED [ 56%]
+tests/unit/test_external_tool_version_reporting.py::TestExternalToolVersion::test_get_version_blastn PASSED [ 60%]
+tests/unit/test_external_tool_version_reporting.py::TestExternalToolVersion::test_get_version_custom_blast_name PASSED [ 63%]
+tests/unit/test_external_tool_version_reporting.py::TestExternalToolVersion::test_get_version_plink_caching PASSED [ 66%]
+tests/unit/test_external_tool_version_reporting.py::TestExternalToolVersion::test_get_version_not_found_raises_app_not_found PASSED [ 70%]
+tests/unit/test_external_tool_version_reporting.py::TestExternalToolVersion::test_missing_blast_error_includes_install_hint PASSED [ 73%]
+tests/contracts/test_replace_primaries_cli_wiring.py::test_replace_primaries_help_shows_defaults PASSED [ 76%]
+tests/contracts/test_replace_primaries_cli_wiring.py::test_config_replace_primaries_defaults PASSED [ 80%]
+tests/contracts/test_replace_primaries_cli_wiring.py::test_old_select_proxy_replacements_command_unchanged PASSED [ 83%]
+tests/contracts/test_replace_primaries_cli_wiring.py::test_old_find_proxy_command_unchanged PASSED [ 86%]
+tests/contracts/test_replace_primaries_cli_wiring.py::test_replace_primaries_selection_config_keeps_valid_window_tiers PASSED [ 90%]
+tests/contracts/test_replace_primaries_cli_wiring.py::test_replace_primaries_requires_annotate_command_before_select PASSED [ 93%]
+tests/contracts/test_replace_primaries_cli_wiring.py::test_run_annotate_consumes_declared_artifact_not_stale_glob PASSED [ 96%]
+tests/contracts/test_replace_primaries_cli_wiring.py::test_run_annotate_exit_zero_without_declared_artifact_fails PASSED [100%]
+
+============================== 30 passed in 1.58s ==============================

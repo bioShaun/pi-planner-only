@@ -1,0 +1,37 @@
+{
+  "main_sha256": "542c4ea51b620fa73ce2ad83855e25900fa1550abf15a46fa1b4f266a98bb0e4",
+  "children": [
+    {
+      "runId": "5037c020-815d-420c-9012-a0fe17be7478",
+      "index": 0,
+      "files": {
+        "meta": {
+          "name": "5037c020-815d-420c-9012-a0fe17be7478_worker_0_meta.json",
+          "sha256": "30d4df11948e585a490be5cdb2e76a53e7afdb7f18aa26b29c82f0414466d682",
+          "declared": "/project/tmp/ppo-bench/opus-cross-task-t1-t2b-20260926/T2b-native-opus-calibration-1/pi-subagents-uid-1000/artifacts/5037c020-815d-420c-9012-a0fe17be7478_worker_0_meta.json"
+        },
+        "transcript": {
+          "name": "5037c020-815d-420c-9012-a0fe17be7478_worker_0_transcript.jsonl",
+          "sha256": "fc18f20f337230b40295b236d3fed36eb2ef1bb35322074a851eb0a7e3e4e829",
+          "declared": "/project/tmp/ppo-bench/opus-cross-task-t1-t2b-20260926/T2b-native-opus-calibration-1/pi-subagents-uid-1000/artifacts/5037c020-815d-420c-9012-a0fe17be7478_worker_0_transcript.jsonl"
+        }
+      }
+    },
+    {
+      "runId": "0669d2da-e632-4d48-9554-d35145bfd1da",
+      "index": 0,
+      "files": {
+        "meta": {
+          "name": "0669d2da-e632-4d48-9554-d35145bfd1da_worker_0_meta.json",
+          "sha256": "0da585b2675a87966c07bc153660fd3e24e71c1c13522c4c7685aeb6bed8bd10",
+          "declared": "/project/tmp/ppo-bench/opus-cross-task-t1-t2b-20260926/T2b-native-opus-calibration-1/pi-subagents-uid-1000/artifacts/0669d2da-e632-4d48-9554-d35145bfd1da_worker_0_meta.json"
+        },
+        "transcript": {
+          "name": "0669d2da-e632-4d48-9554-d35145bfd1da_worker_0_transcript.jsonl",
+          "sha256": "b3ec67aa672c18745a6e251578d2acb95cab469b20a246a3ddea0cbb81070e20",
+          "declared": "/project/tmp/ppo-bench/opus-cross-task-t1-t2b-20260926/T2b-native-opus-calibration-1/pi-subagents-uid-1000/artifacts/0669d2da-e632-4d48-9554-d35145bfd1da_worker_0_transcript.jsonl"
+        }
+      }
+    }
+  ]
+}

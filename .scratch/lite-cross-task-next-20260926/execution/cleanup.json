@@ -1,0 +1,7 @@
+{
+  "clone": "/project/tmp/ppo-bench/clones/opus-cross-task-t1-t2b-20260926-T2b-native-opus-calibration-1",
+  "archive_verified": true,
+  "independent_check_complete": true,
+  "removed": true,
+  "child_artifacts_and_raw_runs_retained": true
+}

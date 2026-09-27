@@ -1,0 +1,56 @@
+{
+  "status": "prepared-pending-informed-data-authorization",
+  "scope": "T2c matched pair only; original unpaired T1 lite omitted",
+  "user_preference": "效果优先，但考虑预算",
+  "root_model": "tcuni-claude/claude-opus-5-5",
+  "root_thinking": "high",
+  "child_configuration": "../freeze/child-config.json",
+  "primary_child_model": "tcuni/gpt-6-luna",
+  "plugin_ref": "ad51067da379edf5735cb9b03d70f17bda331675",
+  "task_definition": "bench/tasks/T2c.json (unchanged)",
+  "order": [
+    {
+      "ordinal": 1,
+      "original_ordinal": 3,
+      "task": "T2c",
+      "arm": "lite-opus-calibration",
+      "rep": 1
+    },
+    {
+      "ordinal": 2,
+      "original_ordinal": 4,
+      "task": "T2c",
+      "arm": "native-opus-calibration",
+      "rep": 1
+    }
+  ],
+  "max_new_paid_attempts": 2,
+  "previous_paid_attempts": 1,
+  "max_total_paid_attempts": 3,
+  "prior_actual_total_usd": 1.29824603,
+  "cumulative_checkpoint_budget_usd": 10,
+  "nominal_remaining_to_checkpoint_usd": 8.70175397,
+  "live_hard_limit": false,
+  "parallel": 1,
+  "automatic_retry": false,
+  "resume_failed_model": false,
+  "paid_health_requests": false,
+  "timeout_seconds": 3600,
+  "stop_on_quality_or_accounting_or_resource_failure": true,
+  "first_run_review_required_before_second": true,
+  "no_new_model_or_task_matrix": true,
+  "source_files_verified": 82,
+  "short_temp_policy": "physical unique perrun dirs, bound full runId; configured task Python AF_UNIX probe + Landlock",
+  "original_T1_eligible_for_pairing": false,
+  "quality_gate": "canonical54 target pass; maskedzero new failures+exit0; mandatoryCLI/config/stage wiring review retained",
+  "external_data_authorized": false,
+  "gateway": "http://117.176.220.47:1989",
+  "providers": [
+    "tcuni-claude/claude-opus-5-5",
+    "tcuni/gpt-6-luna",
+    "tcuni-ds/deepseek/deepseek-v4.1-flash (only frozen auxiliary role if selected)"
+  ],
+  "payload": "task prompts, task-related source/tests and tool outputs including paths/logs",
+  "approval_block": "../execution/approval-block.json",
+  "created_at": "2026-09-27T02:28:23.513930+00:00"
+}

@@ -1,0 +1,25 @@
+{
+  "campaign": "opus-cross-task-t1-t2b-20260926",
+  "status": "stopped",
+  "attempts_started": 1,
+  "attempts_completed": 1,
+  "remaining_unstarted": 3,
+  "quality_tests": "PASS",
+  "wiring_review": "PASS with preexisting no-ALT wording ambiguity disclosed",
+  "frozen_validity": "FAIL",
+  "frozen_actual_total": null,
+  "artifact_reconciled_total": 1.88898237,
+  "independent_validation": "FAIL for campaign accounting; supplemental cost and stop evidence confirmed",
+  "further_model_calls": false,
+  "raw_files": 10,
+  "historical_files_unchanged": 96,
+  "source_files_unchanged": 78,
+  "finished_at": "2026-09-26T16:27:19.905306+00:00",
+  "evidence": [
+    "report.md",
+    "independent-validation.txt",
+    "artifact-cost-reconciliation.json",
+    "all-raw.sha256.json"
+  ],
+  "clone_cleanup": "verified and complete; raw and child artifacts retained"
+}

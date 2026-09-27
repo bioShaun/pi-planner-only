@@ -1,0 +1,16 @@
+......BLOCKED temp guard: malformed mountinfo record
+BLOCKED temp guard: malformed mountinfo mountpoint escape
+BLOCKED temp guard: empty mountinfo
+..BLOCKED temp guard: /tmp filesystem exposed outside /tmp: /outside-alias
+.....BLOCKED temp guard: unavailable backend
+BLOCKED temp guard: unavailable backend
+BLOCKED temp guard: unavailable backend
+BLOCKED temp guard: unavailable backend
+BLOCKED temp guard: unavailable backend
+.BLOCKED temp guard: unavailable backend
+.BLOCKED temp guard: simulated unavailable backend
+.....................
+----------------------------------------------------------------------
+Ran 36 tests in 7.938s
+
+OK

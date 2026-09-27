@@ -1,0 +1,9 @@
+FAIL — billing and task quality PASS; execution-protocol conformance FAIL.
+
+The independent validator checked exactly three serial attempts (direct/native/lite), all runner and Pi exits 0, 30 target tests per run, the same 14 baseline failures, empty invalid/incomplete lists, and no extra attempts. Direct has 1117 masked passes because of its added unit regression; native/lite have 1116. Recomputed actual costs: $1.87451425, $1.13578547, $0.72524549; total $3.73554521. Four terminal children match usage-based costs. All 22 frozen-source, 48 previous-pilot, and 24 current raw-run hashes matched. First actual native/lite dispatch: Root turn 10/6, excluding list/capabilities.
+
+The direct test edit is additive: green tests, implementation stashed for injected red, then restored and final suite passed. It was not test-first TDD. Role validator maps to installed oracle as expected.
+
+Operational addendum verified read-only: all three arms wrote prohibited /tmp paths. Direct Root wrote region_patch.py and before/after files; native worker created a baseline worktree; lite oracle created a baseline directory and logs. Seven task-owned files were verified, archived with identical SHA256/size, and removed. Neither the seven paths nor the two task directories remains. Known residue cleaned. Cleanup does not retroactively make protocol compliance PASS.
+
+The validator ran no tests, model requests, or mutations. An initial arithmetic probe used an incorrect price key (input instead of in); corrected read-only recomputation passed. This is ordinary evidence validation, not a strict sandbox proof or formal code-review gate. One sample per arm supports neither stable savings nor causal attribution.

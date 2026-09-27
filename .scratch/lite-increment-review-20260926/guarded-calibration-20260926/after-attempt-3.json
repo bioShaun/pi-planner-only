@@ -1,0 +1,11 @@
+{
+  "attempts": 3,
+  "actual_total": 3.8056924100000002,
+  "continue": false,
+  "reason": "Three-attempt cap reached. All quality/accounting/resource evidence checks and independent validation passed within documented evidence limits; no more model calls.",
+  "root_runtime_models": [
+    "tcuni-claude/claude-opus-5-5"
+  ],
+  "non_target_test_review": "Recorded sole test-writing command replaces regions.bed with transcript.bed in benchmark fixture; diff stat four lines, no assertion editing commands. Full final test diff unavailable after automatic clone cleanup. Benchmarks themselves reported skipped, not passed.",
+  "decision_at": "2026-09-26T15:09:39.915761+00:00"
+}

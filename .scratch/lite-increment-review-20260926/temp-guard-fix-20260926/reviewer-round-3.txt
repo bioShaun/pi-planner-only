@@ -1,0 +1,5 @@
+REQUEST_CHANGES (final)
+
+**Unsafe root bind alias:** [temp_guard.py](/home/tcuni-claw/pi/pi-planner-only/bench/temp_guard.py:100) grants every root-level directory except `/tmp`, its resolved descendants, and aliases of `/tmp` itself. If `/alias` is a bind mount of `/tmp/subdir`, it passes those checks and receives write rights. The verification at line 155 probes `/tmp` directly, so it would not detect writes through `/alias`. Reject root grants on `/tmp`’s filesystem device before installing the rule, and add a fault-injection case for a bind alias of a `/tmp` subdirectory. This layout was not present in the supplied runtime evidence.
+
+I independently matched all 42 frozen hashes and all 72 historical raw-file hashes. The round-three evidence shows 25 native tests and the release suites passing, plus three guarded Pi dry runs with no model generation. The selected-temp and STOP device checks address the earlier findings. I ran no project tests or model calls.

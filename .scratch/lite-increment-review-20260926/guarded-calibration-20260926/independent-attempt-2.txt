@@ -1,0 +1,9 @@
+PASS — attempt 2, native arm only, validated read-only by astra_validator_complex.
+
+Raw target log has 30 passes; suite's 14 failure IDs exactly match baseline. Of three subagent calls, the first lists capabilities; first worker starts after 11 assistant message_end events. Second worker is rework.
+
+Raw usage confirms 16 Opus root completions and two terminal Luna worker runs, with matched tool starts/ends and no nested delegation. Repricing against bench/prices.json gives $1.07887825 root + $0.02653502 children = $1.10541327. Child transcript hashes match child evidence.
+
+Validator made no changes, ran no tests, and did not inspect attempt3. Recorded clone diff changes four source/documentation files and no tests. Metadata records Landlock and authorized /project/tmp directory; commands show no bare /tmp output path. Commands without explicit TMPDIR export rely on inherited environment and guard. Child transcripts retain initial RED failures, a 1-failed/323-passed fast-suite attempt, and tool errors; later target and baseline comparisons are corrected evidence. Execution window 22:49:29–22:59:33 +08:00 on 2026-09-26.
+
+This file records independent evidence validation, not a formal review-contract gate. Original response remains in the parent session agent message.

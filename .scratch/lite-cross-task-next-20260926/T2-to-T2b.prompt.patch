@@ -1,0 +1,11 @@
+--- bench/tasks/T2.md	2026-09-24 23:22:49.064414380 +0800
++++ bench/tasks/T2b.md	2026-09-26 23:34:58.138089599 +0800
+@@ -12,7 +12,7 @@
+ - probe_id 追加 _ALT 后缀，REF 的 id 原样不动。
+ - 位点属性列（gene_id / genome_region / site_type / snpEff 效应）随行复制。
+ 
+-插入点在 post_processor.run 之前、且必须在这三步之前，否则各有一种坏法：
++插入点在 post_processor.run 之前、且必须在这三步之后，否则各有一种坏法：
+ - off_target_facts 按 probe_id 合并：ALT 要么继承 REF 的脱靶事实（错），
+   要么 join 不上被 fillna(0)，凭空得到一个「零脱靶」的结论；
+ - SpecificityEvidenceContract.from_annotation：ALT 会进入按 REF 标定的契约，

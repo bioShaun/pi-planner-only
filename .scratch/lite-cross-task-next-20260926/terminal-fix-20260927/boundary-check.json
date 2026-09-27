@@ -1,0 +1,66 @@
+{
+  "target": "46d408a34211bf39558430342abc97bc71e655f8",
+  "cases": [
+    {
+      "source": "gold",
+      "case": "no_alt_zero_columns",
+      "result": "REF"
+    },
+    {
+      "source": "gold",
+      "case": "alt_zero_columns",
+      "result": "REF"
+    },
+    {
+      "source": "gold",
+      "case": "alt_full_zero_rows",
+      "result": "REF"
+    },
+    {
+      "source": "gold",
+      "case": "alt_missing_tm_zero_rows",
+      "result": "REF"
+    },
+    {
+      "source": "gold",
+      "case": "alt_missing_tm_nonempty",
+      "result": "ValidationError"
+    },
+    {
+      "source": "gold",
+      "case": "no_alt_missing_tm_nonempty",
+      "result": "ValidationError"
+    },
+    {
+      "source": "calibrated",
+      "case": "no_alt_zero_columns",
+      "result": "REF"
+    },
+    {
+      "source": "calibrated",
+      "case": "alt_zero_columns",
+      "result": "ValidationError"
+    },
+    {
+      "source": "calibrated",
+      "case": "alt_full_zero_rows",
+      "result": "REF"
+    },
+    {
+      "source": "calibrated",
+      "case": "alt_missing_tm_zero_rows",
+      "result": "ValidationError"
+    },
+    {
+      "source": "calibrated",
+      "case": "alt_missing_tm_nonempty",
+      "result": "ValidationError"
+    },
+    {
+      "source": "calibrated",
+      "case": "no_alt_missing_tm_nonempty",
+      "result": "ValidationError"
+    }
+  ],
+  "scope": "AST-extracted fold with real pandas/dependencies; not full stage or BLAST"
+}

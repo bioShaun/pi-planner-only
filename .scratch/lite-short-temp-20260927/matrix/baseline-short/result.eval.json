@@ -1,0 +1,15 @@
+{
+  "task": "T1",
+  "arm": "gold",
+  "id": "result",
+  "pass": false,
+  "target_failed": [
+    "tests/contracts/test_external_tool_timeout.py"
+  ],
+  "new_failures": [],
+  "files_changed": 0,
+  "non_target_tests_changed": [],
+  "target_test_exit": 2,
+  "suite_exit": 1,
+  "eval_semantics": "masked-suite (baseline and eval both --ignore target tests)"
+}

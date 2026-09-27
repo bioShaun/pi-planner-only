@@ -1,0 +1,21 @@
+{
+  "native_suite": {
+    "command": "PYTHONDONTWRITEBYTECODE=1 TMPDIR=/project/tmp/ppo-terminal-fix-20260927 python3 -m unittest bench.test_native",
+    "exit": 0,
+    "tests": 33,
+    "log": "native-suite-complete.log",
+    "source_note": "Worker confirms executable sources unchanged afterward; README-only edit."
+  },
+  "release": {
+    "command": "TMPDIR=/project/tmp/ppo-terminal-fix-20260927 slot cpu -- npm run test:release",
+    "exit": 0,
+    "log": "release-final.log"
+  },
+  "boundary": {
+    "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/public/scripts/tc-probe-design-v2/src /public/scripts/tc-probe-design-v2/.venv/bin/python -B .scratch/lite-cross-task-next-20260926/terminal-fix-20260927/boundary-check.py",
+    "exit": 0,
+    "calls": 12,
+    "log": "boundary-check.json"
+  },
+  "attribution": "Native/release are implementer self-checks, boundary command independently rerun by Root. Reviewer separate."
+}

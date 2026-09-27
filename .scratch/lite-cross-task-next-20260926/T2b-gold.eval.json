@@ -1,0 +1,13 @@
+{
+  "task": "T2b",
+  "arm": "gold",
+  "id": "cross-task-T2b",
+  "pass": true,
+  "target_failed": [],
+  "new_failures": [],
+  "files_changed": 6,
+  "non_target_tests_changed": [],
+  "target_test_exit": 0,
+  "suite_exit": 0,
+  "eval_semantics": "masked-suite (baseline and eval both --ignore target tests)"
+}

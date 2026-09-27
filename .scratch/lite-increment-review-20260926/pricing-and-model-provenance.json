@@ -1,0 +1,58 @@
+{
+  "checked_at": "2026-09-26T10:06:49.105374+00:00",
+  "root_model": "tcuni-claude/claude-opus-5-5",
+  "source": "local operator models.json, selected cost fields only; not supplier invoice",
+  "price_per_million": {
+    "in": 5,
+    "out": 25,
+    "cacheRead": 0.5,
+    "cacheWrite": 6.25
+  },
+  "current_models_list_evidence": ".scratch/bench-plugin-fixes/trialrun-cont-20260926/execution-20260926/model-list-escalated.log",
+  "api_health_request_performed": false,
+  "child_config": {
+    "defaultModel": "tcuni/gpt-6-luna",
+    "agentOverrides": {
+      "planner": {
+        "model": "tcuni-ds/deepseek/deepseek-v4.1-flash",
+        "thinking": "high"
+      },
+      "oracle": {
+        "model": "tcuni/gpt-6-luna",
+        "thinking": "low"
+      },
+      "reviewer": {
+        "model": "tcuni/gpt-6-luna",
+        "thinking": "high"
+      },
+      "worker": {
+        "model": "tcuni/gpt-6-luna",
+        "thinking": "medium"
+      },
+      "researcher": {
+        "model": "tcuni/gpt-6-luna",
+        "thinking": "medium"
+      },
+      "scout": {
+        "model": "tcuni/gpt-6-luna",
+        "thinking": "low"
+      },
+      "planner-scout": {
+        "model": "tcuni/gpt-6-luna",
+        "thinking": "low"
+      }
+    }
+  },
+  "plugin_ref": "ad51067da379edf5735cb9b03d70f17bda331675",
+  "task": "T3",
+  "proposed_new_attempt_cap": 3,
+  "proposed_new_checkpoint_usd": 10,
+  "budget_basis": "actual-price usage with locally configured frozen table",
+  "order": [
+    "direct-opus-calibration",
+    "native-opus-calibration",
+    "lite-opus-calibration"
+  ],
+  "order_rule": "deterministically shuffled once from campaign name; preserved in order.json",
+  "status": "proposal; no paid requests authorized or started"
+}

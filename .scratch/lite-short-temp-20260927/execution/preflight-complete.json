@@ -1,0 +1,14 @@
+{
+  "ready": true,
+  "time": "2026-09-27T02:11:13.512045+00:00",
+  "independent_preflight": "PASS",
+  "independent_final_review": "PASS",
+  "allowed_ordinals": [
+    2,
+    3,
+    4
+  ],
+  "prior_actual_total": 1.29824603,
+  "checkpoint_budget_usd": 10,
+  "scope": "remaining3 only, no retry of ordinal1; originalSTOP intact"
+}

@@ -1,0 +1,14 @@
+{
+  "campaign": "target-root-t3-opus-calibration-20260926",
+  "rep": 1,
+  "task": "T3",
+  "seed": 6038643450711456843,
+  "order": [
+    "direct-opus-calibration",
+    "native-opus-calibration",
+    "lite-opus-calibration"
+  ],
+  "parallel": 1,
+  "max_attempts_per_cell": 1,
+  "status": "proposed"
+}

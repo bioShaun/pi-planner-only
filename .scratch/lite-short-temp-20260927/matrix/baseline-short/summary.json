@@ -1,0 +1,11 @@
+{
+  "target": "=============================== 1 error in 0.30s ===============================",
+  "suite": "======================= 13 failed, 1110 passed in 28.33s =======================",
+  "target_exit": 2,
+  "suite_exit": 1,
+  "target_failures": [
+    "tests/contracts/test_external_tool_timeout.py"
+  ],
+  "new_failures": [],
+  "pass": false
+}

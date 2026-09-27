@@ -1,0 +1,83 @@
+{
+  "campaign": "opus-cross-task-t1-t2c-short-20260927",
+  "status": "authorized-continuation-preflight",
+  "authorization": {
+    "paid_execution": true,
+    "user_message": "继续推进，直到确实需要我来确定",
+    "basis": "Continue remaining original ordinals2-4 after offline environment repair; no extra attempt or budget increase."
+  },
+  "root_model": "tcuni-claude/claude-opus-5-5",
+  "root_thinking": "high",
+  "plugin_ref": "ad51067da379edf5735cb9b03d70f17bda331675",
+  "strict": 0,
+  "handoff": "off",
+  "tasks": [
+    "T1",
+    "T2c"
+  ],
+  "arms": [
+    "native-opus-calibration",
+    "lite-opus-calibration"
+  ],
+  "seed": 8682094810793768254,
+  "order_rule": "SHA256 campaign first16 hex; shuffle tasks then arms; reverse arms for second task",
+  "order": [
+    {
+      "ordinal": 1,
+      "task": "T1",
+      "arm": "native-opus-calibration",
+      "rep": 1
+    },
+    {
+      "ordinal": 2,
+      "task": "T1",
+      "arm": "lite-opus-calibration",
+      "rep": 1
+    },
+    {
+      "ordinal": 3,
+      "task": "T2c",
+      "arm": "lite-opus-calibration",
+      "rep": 1
+    },
+    {
+      "ordinal": 4,
+      "task": "T2c",
+      "arm": "native-opus-calibration",
+      "rep": 1
+    }
+  ],
+  "max_attempts": 4,
+  "parallel": 1,
+  "checkpoint_budget_usd": 10,
+  "budget_basis": "frozen actual model prices; all attempted runs including failures",
+  "live_hard_budget": false,
+  "timeout_seconds": 3600,
+  "automatic_retry": false,
+  "resume": false,
+  "paid_health_requests": false,
+  "old_spend_included": false,
+  "keep_clone": true,
+  "runtime_preflight_required": true,
+  "paid_attempts_started": 1,
+  "source_manifest": "../freeze/source.sha256.json",
+  "execution_decision": "Preserve originalSTOP/raw; refrozen environment segment for remaining3, cumulative ceiling10 includes original1.29824603; no model retry",
+  "offline_validation": "PASS",
+  "independent_review": "see acceptance.json",
+  "validation_evidence": "validation.ClpWPYWF",
+  "preparation_plan_sha256": "88a2b03664d815e85925afe1b68198be4acea14d7ace97b3af136ecc716ea112",
+  "original_campaign": "opus-cross-task-t1-t2c-20260927",
+  "allowed_ordinals": [
+    2,
+    3,
+    4
+  ],
+  "prior_attempts": 1,
+  "prior_actual_total": 1.29824603,
+  "prior_opus_total": 1.29824603,
+  "prior_run_eligible_for_pairing": false,
+  "remaining_max_attempts": 3,
+  "short_temp_parent": "/project/tmp/ps-3d74eb12",
+  "root_acceptance_required": true,
+  "offline_diagnosis": "../summary.md"
+}

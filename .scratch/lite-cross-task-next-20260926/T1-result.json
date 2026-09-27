@@ -1,0 +1,75 @@
+{
+  "task": "T1",
+  "status": "PASS",
+  "validation_method": "read-only reconciliation of retained executed tests; no test rerun",
+  "guard": {
+    "backend": "landlock",
+    "abi": 7,
+    "tmpdir": "/project/tmp/ppo-bench/cross-task-preflight-20260926/T1"
+  },
+  "clone_base": "a78b19a5df54428e0c5f8ee4fb1e8386be0d25ad",
+  "answer_refs_unreachable": {
+    "978392faf6d19ca137f682df2a77ca6dfca0a316": 128,
+    "978392f": 128,
+    "cee4c0f074bd43efebc76942d2682f152caeb074": 128,
+    "cee4c0f": 128
+  },
+  "no_refs": true,
+  "no_remotes": true,
+  "tests": {
+    "tests/contracts/test_external_tool_timeout.py": {
+      "ref": "978392faf6d19ca137f682df2a77ca6dfca0a316",
+      "sha256": "caf5e21dcd5d87e7d5a6929c38a0f6442e39c31848fb385cff098ad8b0c1f1d6"
+    },
+    "tests/contracts/test_prefilter_calibration_profile.py": {
+      "ref": "978392faf6d19ca137f682df2a77ca6dfca0a316",
+      "sha256": "b710ee8e049b7f57de8f966fe83fa33c293ea639157f262e79900b7e4a0fa657"
+    },
+    "tests/unit/test_external_tool_version_reporting.py": {
+      "ref": "978392faf6d19ca137f682df2a77ca6dfca0a316",
+      "sha256": "c41dffab32176e9c91bf5799c68f36bc3b1e712fb728eaab6d1686c37bc8fc52"
+    },
+    "tests/contracts/test_replace_primaries_cli_wiring.py": {
+      "ref": "cee4c0f074bd43efebc76942d2682f152caeb074",
+      "sha256": "f89c6bb383cf7c8916177cc994661b2e69f1a786a16f99b5ce15725eaf9e9663"
+    }
+  },
+  "base_target_exit": 2,
+  "base_suite_exit": 1,
+  "baseline_failures": [
+    "tests/contracts/test_annotate_pipeline_validation_contract.py::TestAnnotatePipelineValidation::test_analysis_log_can_be_disabled",
+    "tests/contracts/test_annotate_pipeline_validation_contract.py::TestAnnotatePipelineValidation::test_analysis_log_records_validation_error",
+    "tests/contracts/test_annotate_pipeline_validation_contract.py::TestAnnotatePipelineValidation::test_default_analysis_log_is_written",
+    "tests/contracts/test_annotate_pipeline_validation_contract.py::TestAnnotatePipelineValidation::test_out_of_range_site_aborts_before_design",
+    "tests/contracts/test_annotate_pipeline_validation_contract.py::TestAnnotatePipelineValidation::test_unknown_chrom_aborts_before_design",
+    "tests/contracts/test_documentation_contract.py::test_archive_index_local_links_resolve[index_path0]",
+    "tests/contracts/test_exception_policy_contract.py::test_production_code_does_not_catch_blanket_exception",
+    "tests/contracts/test_json_summary_contract.py::test_annotate_one_json_summary_param_exists",
+    "tests/contracts/test_json_summary_contract.py::test_annotate_one_json_summary_write_failure_is_fatal",
+    "tests/contracts/test_json_summary_contract.py::test_annotate_one_json_summary_written_when_final_tsv_is_skipped",
+    "tests/contracts/test_provenance_contract.py::test_provenance_json_schema_and_generation",
+    "tests/unit/test_io_and_cli.py::TestExternalCommandFailureHandling::test_run_command_timeout_raises_alignment_error",
+    "tests/unit/test_probe_pipeline_decomposition.py::test_compute_single_design_calculates_sequence_metrics_once"
+  ],
+  "gold_fixed_baseline_failures": [
+    "tests/unit/test_io_and_cli.py::TestExternalCommandFailureHandling::test_run_command_timeout_raises_alignment_error"
+  ],
+  "gold_evaluation": {
+    "task": "T1",
+    "arm": "gold",
+    "id": "cross-task-T1",
+    "pass": true,
+    "target_failed": [],
+    "new_failures": [],
+    "files_changed": 5,
+    "non_target_tests_changed": [],
+    "target_test_exit": 0,
+    "suite_exit": 1,
+    "eval_semantics": "masked-suite (baseline and eval both --ignore target tests)"
+  },
+  "gold_patch_sha256": "16935f94b1a178ebd0bb320c592f995e09075fd1505b00c1c10edf4d5005b754",
+  "first_harness_exit": 1,
+  "harness_issue": "Exact unchanged failure-set requirement was inappropriate for T1; gold fixes an existing timeout failure. Frozen baseline and all original test assertions retained.",
+  "paid_model_calls": 0,
+  "finished": "2026-09-26T15:37:08.495870+00:00"
+}

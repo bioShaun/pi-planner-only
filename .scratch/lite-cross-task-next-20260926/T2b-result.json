@@ -1,0 +1,43 @@
+{
+  "task": "T2b",
+  "status": "PASS",
+  "started": "2026-09-26T15:35:53.414716+00:00",
+  "finished": "2026-09-26T15:40:47.286349+00:00",
+  "guard": {
+    "backend": "landlock",
+    "abi": 7,
+    "tmpdir": "/project/tmp/ppo-bench/cross-task-preflight-20260926/T2b"
+  },
+  "clone_base": "45cfeef9cd2302bf2e3e64af087883d94620aa9e",
+  "answer_refs_unreachable": {
+    "46d408a34211bf39558430342abc97bc71e655f8": 128,
+    "46d408a": 128
+  },
+  "no_refs": true,
+  "no_remotes": true,
+  "tests": {
+    "tests/contracts/test_ref_alt_stage_fold_to_long.py": {
+      "ref": "46d408a34211bf39558430342abc97bc71e655f8",
+      "sha256": "d0038f743a1150fc09d5e19b015dc7cfdc2f304cb11488363374bf56d1464cd1"
+    }
+  },
+  "base_target_exit": 2,
+  "base_suite_exit": 0,
+  "baseline_failures": [],
+  "gold_fixed_baseline_failures": [],
+  "gold_evaluation": {
+    "task": "T2b",
+    "arm": "gold",
+    "id": "cross-task-T2b",
+    "pass": true,
+    "target_failed": [],
+    "new_failures": [],
+    "files_changed": 6,
+    "non_target_tests_changed": [],
+    "target_test_exit": 0,
+    "suite_exit": 0,
+    "eval_semantics": "masked-suite (baseline and eval both --ignore target tests)"
+  },
+  "gold_patch_sha256": "00ce3a7ad782de3dc3cf5c40b91ab1e79c7800663f28a7d6287bd13fd7ec926c",
+  "paid_model_calls": 0
+}

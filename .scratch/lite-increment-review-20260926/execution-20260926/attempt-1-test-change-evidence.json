@@ -1,0 +1,103 @@
+[
+  {
+    "tool": "bash",
+    "args": {
+      "command": "cd /project/tmp/ppo-bench/clones/target-root-t3-opus-calibration-20260926-T3-direct-opus-calibration-1 && sed -n 1,60p tests/unit/test_compute_stages.py && sed -n 190,240p tests/unit/test_compute_stages.py"
+    },
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "\"\"\"三阶段 Stage 类的独立行为测试。\n\nPublic API:\n- None (Test suite)\n\nRelated:\n- orchestration/_sequence_extraction.py（SequenceExtractionStage）\n- orchestration/_alignment_annotation.py（AlignmentAnnotationStage）\n- orchestration/_classification.py（ClassificationStage）\n- tests/unit/test_probe_pipeline_decomposition.py（端到端 compute 契约）\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom dataclasses import replace\nfrom pathlib import Path\n\nimport pandas as pd\n\nfrom tc_probe_design.config.annotate import (\n    AlignmentConfig,\n    AnnotateConfig,\n    OutputConfig,\n    ProbeParams,\n)\nfrom tc_probe_design.config.enums import AlignTool, DataType, InputType, ProbeType\nfrom tc_probe_design.domain.probe_column import (\n    PipelineStage,\n    ProbeColumn,\n    assert_schema,\n)\nfrom tc_probe_design.orchestration._alignment_annotation import AlignmentAnnotationStage\nfrom tc_probe_design.orchestration._classification import ClassificationStage\nfrom tc_probe_design.orchestration._sequence_extraction import SequenceExtractionStage\nfrom tc_probe_design.orchestration.alignment_workspace import AlignmentWorkspace\nfrom tc_probe_design.orchestration.performance_log import NoopPerformanceRecorder\n\nE2E_DIR = Path(__file__).parent.parent / \"data\" / \"e2e\"\nGENOME_FA = E2E_DIR / \"test_genome.fa\"\n\n\ndef _no_op_aligner(\n    *,\n    query_fasta: Path,\n    database: Path,  # noqa: ARG001\n    output_file: Path,\n    config: AlignmentConfig,  # noqa: ARG001\n) -> Path:\n    assert query_fasta.exists()\n    lines = []\n    for line in query_fasta.read_text().splitlines():\n        if line.startswith(\">\"):\n            query_id = line[1:]\n            chrom, start, end = query_id.rsplit(\"_\", 2)\n            length = int(end) - int(start)\n            lines.append(\n                f\"{query_id}\\t{chrom}\\t100\\t{length}\\t0\\t0\\t1\\t{length}\\t\"\n                f\"{int(start) + 1}\\t{end}\\t0\\t100\"\n            )\n    output_file.write_text(\"\\n\".join(lines) + \"\\n\")\n            seq_df=seq_df,\n            reference=GENOME_FA,\n            config=cfg,\n            workspace=workspace,\n            label=\"candidate\",\n            suffix=\"\",\n            aligner_fn=_no_op_aligner,\n            recorder=recorder,\n        )\n        assert fasta_path.exists()\n        assert paf_path.exists()\n        assert fasta_path.parent == workspace.path\n\n    assert_schema(merged_df, PipelineStage.AFTER_ALIGNMENT)\n\n\ndef test_classification_stage_assigns_probe_metadata(tmp_path: Path) -> None:\n    \"\"\"无 BED 目录时仍完成分级并注入 probe_type / data_type。\"\"\"\n    cfg = _make_config(tmp_path)\n    recorder = NoopPerformanceRecorder()\n    aligned = pd.DataFrame(\n        {\n            ProbeColumn.PROBE_ID: [\"chr1_61_100\"],\n            ProbeColumn.SEQUENCE: [\"A\" * 40],\n            ProbeColumn.GENOME_HITS: [0],\n        }\n    )\n    assert_schema(aligned, PipelineStage.AFTER_ALIGNMENT)\n\n    classified = ClassificationStage().run(\n        seq_df=aligned,\n        config=cfg,\n        probe_type=ProbeType.CENTER,\n        data_type=DataType.SNP,\n        recorder=recorder,\n    )\n\n    assert_schema(classified, PipelineStage.AFTER_CLASSIFY)\n    assert classified.iloc[0][ProbeColumn.PROBE_TYPE] == ProbeType.CENTER\n    assert classified.iloc[0][ProbeColumn.DATA_TYPE] == DataType.SNP\n    assert ProbeColumn.PROBE_LEVEL in classified.columns\n\n\ndef test_alignment_stage_dispatches_two_stage(tmp_path: Path) -> None:\n    \"\"\"TWO_STAGE 模式走 Bowtie2 预过滤 + BLAST 精炼路径。\"\"\"\n    from unittest.mock import patch\n\n    from tc_probe_design.config.enums import AlignmentMode\n\n    cfg = _make_config(tmp_path)\n    cfg = AnnotateConfig(\n"
+        }
+      ]
+    },
+    "isError": false
+  },
+  {
+    "tool": "bash",
+    "args": {
+      "command": "cd /project/tmp/ppo-bench/clones/target-root-t3-opus-calibration-20260926-T3-direct-opus-calibration-1 && grep -n \"def _make_config\" -A25 tests/unit/test_compute_stages.py"
+    },
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "64:def _make_config(tmp_path: Path) -> AnnotateConfig:\n65-    return AnnotateConfig(\n66-        candidate=tmp_path / \"fake_candidates.tsv\",\n67-        reference=GENOME_FA,\n68-        out_dir=tmp_path / \"out\",\n69-        input_type=InputType.HEADER_TABLE,\n70-        probe=ProbeParams(\n71-            length=40,\n72-            gc_low=0.0,\n73-            gc_high=1.0,\n74-            center_max_offset=0,\n75-            side_max_offset=0,\n76-            flank_overlap=0,\n77-            max_n_count=40,\n78-        ),\n79-        alignment=AlignmentConfig(\n80-            aligner=AlignTool.BLAST,\n81-            blastn_path=\"blastn\",\n82-            blast_db=None,\n83-            threads=1,\n84-        ),\n85-        label=\"candidate\",\n86-        output=OutputConfig(),\n87-    )\n88-\n89-\n"
+        }
+      ]
+    },
+    "isError": false
+  },
+  {
+    "tool": "edit",
+    "args": {
+      "path": "tests/unit/test_compute_stages.py",
+      "edits": [
+        {
+          "oldText": "def test_alignment_stage_dispatches_two_stage(tmp_path: Path) -> None:",
+          "newText": "def test_classification_stage_explicit_missing_bed_dir_fails_before_grading(\n    tmp_path: Path,\n) -> None:\n    \"\"\"显式配置但不存在的 bed_dir 必须在 Probe Level 分级前失败，不得静默跳过注释。\"\"\"\n    from tc_probe_design.exceptions import ProbeFileNotFoundError\n\n    cfg = replace(_make_config(tmp_path), bed_dir=tmp_path / \"missing_bed\")\n    aligned = pd.DataFrame(\n        {\n            ProbeColumn.PROBE_ID: [\"chr1_61_100\"],\n            ProbeColumn.SEQUENCE: [\"A\" * 40],\n            ProbeColumn.GENOME_HITS: [0],\n            \"chrom\": [\"chr1\"],\n            \"pos\": [80],\n        }\n    )\n\n    with pytest.raises(ProbeFileNotFoundError):\n        ClassificationStage().run(\n            seq_df=aligned,\n            config=cfg,\n            probe_type=ProbeType.CENTER,\n            data_type=DataType.SNP,\n            recorder=NoopPerformanceRecorder(),\n        )\n\n\ndef test_alignment_stage_dispatches_two_stage(tmp_path: Path) -> None:"
+        },
+        {
+          "oldText": "import pandas as pd\n\nfrom tc_probe_design.config.annotate import (",
+          "newText": "import pandas as pd\nimport pytest\n\nfrom tc_probe_design.config.annotate import ("
+        }
+      ]
+    },
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Successfully replaced 2 block(s) in tests/unit/test_compute_stages.py."
+        }
+      ],
+      "details": {
+        "diff": "     ...\n  15 from dataclasses import replace\n  16 from pathlib import Path\n  17 \n  18 import pandas as pd\n+ 19 import pytest\n  19 \n  20 from tc_probe_design.config.annotate import (\n  21     AlignmentConfig,\n  22     AnnotateConfig,\n     ...\n 229     assert classified.iloc[0][ProbeColumn.DATA_TYPE] == DataType.SNP\n 230     assert ProbeColumn.PROBE_LEVEL in classified.columns\n 231 \n 232 \n+234 def test_classification_stage_explicit_missing_bed_dir_fails_before_grading(\n+235     tmp_path: Path,\n+236 ) -> None:\n+237     \"\"\"显式配置但不存在的 bed_dir 必须在 Probe Level 分级前失败，不得静默跳过注释。\"\"\"\n+238     from tc_probe_design.exceptions import ProbeFileNotFoundError\n+239 \n+240     cfg = replace(_make_config(tmp_path), bed_dir=tmp_path / \"missing_bed\")\n+241     aligned = pd.DataFrame(\n+242         {\n+243             ProbeColumn.PROBE_ID: [\"chr1_61_100\"],\n+244             ProbeColumn.SEQUENCE: [\"A\" * 40],\n+245             ProbeColumn.GENOME_HITS: [0],\n+246             \"chrom\": [\"chr1\"],\n+247             \"pos\": [80],\n+248         }\n+249     )\n+250 \n+251     with pytest.raises(ProbeFileNotFoundError):\n+252         ClassificationStage().run(\n+253             seq_df=aligned,\n+254             config=cfg,\n+255             probe_type=ProbeType.CENTER,\n+256             data_type=DataType.SNP,\n+257             recorder=NoopPerformanceRecorder(),\n+258         )\n+259 \n+260 \n 233 def test_alignment_stage_dispatches_two_stage(tmp_path: Path) -> None:\n 234     \"\"\"TWO_STAGE 模式走 Bowtie2 预过滤 + BLAST 精炼路径。\"\"\"\n 235     from unittest.mock import patch\n 236 \n     ...",
+        "patch": "--- tests/unit/test_compute_stages.py\n+++ tests/unit/test_compute_stages.py\n@@ -15,8 +15,9 @@\n from dataclasses import replace\n from pathlib import Path\n \n import pandas as pd\n+import pytest\n \n from tc_probe_design.config.annotate import (\n     AlignmentConfig,\n     AnnotateConfig,\n@@ -229,8 +230,35 @@\n     assert classified.iloc[0][ProbeColumn.DATA_TYPE] == DataType.SNP\n     assert ProbeColumn.PROBE_LEVEL in classified.columns\n \n \n+def test_classification_stage_explicit_missing_bed_dir_fails_before_grading(\n+    tmp_path: Path,\n+) -> None:\n+    \"\"\"显式配置但不存在的 bed_dir 必须在 Probe Level 分级前失败，不得静默跳过注释。\"\"\"\n+    from tc_probe_design.exceptions import ProbeFileNotFoundError\n+\n+    cfg = replace(_make_config(tmp_path), bed_dir=tmp_path / \"missing_bed\")\n+    aligned = pd.DataFrame(\n+        {\n+            ProbeColumn.PROBE_ID: [\"chr1_61_100\"],\n+            ProbeColumn.SEQUENCE: [\"A\" * 40],\n+            ProbeColumn.GENOME_HITS: [0],\n+            \"chrom\": [\"chr1\"],\n+            \"pos\": [80],\n+        }\n+    )\n+\n+    with pytest.raises(ProbeFileNotFoundError):\n+        ClassificationStage().run(\n+            seq_df=aligned,\n+            config=cfg,\n+            probe_type=ProbeType.CENTER,\n+            data_type=DataType.SNP,\n+            recorder=NoopPerformanceRecorder(),\n+        )\n+\n+\n def test_alignment_stage_dispatches_two_stage(tmp_path: Path) -> None:\n     \"\"\"TWO_STAGE 模式走 Bowtie2 预过滤 + BLAST 精炼路径。\"\"\"\n     from unittest.mock import patch\n \n",
+        "firstChangedLine": 19
+      }
+    },
+    "isError": false
+  },
+  {
+    "tool": "bash",
+    "args": {
+      "command": "cd /project/tmp/ppo-bench/clones/target-root-t3-opus-calibration-20260926-T3-direct-opus-calibration-1 && PY=/public/scripts/tc-probe-design-v2/.venv/bin/python; PYTHONPATH=src $PY -m pytest tests/unit/test_compute_stages.py -q 2>&1 | tail -3; git stash push src/tc_probe_design/orchestration/_classification.py -q && PYTHONPATH=src $PY -m pytest tests/unit/test_compute_stages.py -q -k missing_bed 2>&1 | tail -2; git stash pop -q && git status --short"
+    },
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "tests/unit/test_compute_stages.py .........                              [100%]\n\n============================== 9 passed in 1.20s ===============================\nFAILED tests/unit/test_compute_stages.py::test_classification_stage_explicit_missing_bed_dir_fails_before_grading\n======================= 1 failed, 8 deselected in 0.14s ========================\n M src/tc_probe_design/annotation/_bed_ranges.py\n M src/tc_probe_design/annotation/region.py\n M src/tc_probe_design/orchestration/_classification.py\n M tests/unit/test_compute_stages.py\n"
+        }
+      ]
+    },
+    "isError": false
+  },
+  {
+    "tool": "edit",
+    "args": {
+      "path": "docs/runtime-safety-scientific-correctness-stabilization-spec-2026-07-10.md",
+      "edits": [
+        {
+          "oldText": "| Gate | STAB-13+ | Not started |",
+          "newText": "| 13 | STAB-15 / BED fail-closed | Implemented (uncommitted) | `annotate_probe_regions` rejects missing / non-dir / zero-valid `bed_dir` and empty / malformed present BEDs (no swallow); `ClassificationStage` calls it whenever `bed_dir is not None`; loaded region set recorded in `result.attrs[REGION_ANNOTATION_ATTR]`; `tests/contracts/test_bed_region_fail_closed.py`, `tests/unit/test_compute_stages.py`. Open: reports/provenance do not yet surface \"not requested\" vs \"queried, no overlaps\" |\n| Gate | STAB-13+ | Not started |"
+        }
+      ]
+    },
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Successfully replaced 1 block(s) in docs/runtime-safety-scientific-correctness-stabilization-spec-2026-07-10.md."
+        }
+      ],
+      "details": {
+        "diff": "     ...\n  20 | 8 | STAB-08 / tile public boundary validation | Committed | `cf20e0f`; `require_positive_tile_scalars` in `config/tile.py`; generator rejects non-positive chrom length; `tests/contracts/test_tile_boundary_validation.py` |\n  21 | 10 | STAB-10 / report isolation + HTML escaping | Committed | `ae7e25b`; standard/mini × CN/EN escaping; discover_plots + DeliveryStage share project-scoped plot set; summary serializes typed `plot_paths`; dead `merge_annotation` removed |\n  22 | 11 | STAB-11 / real serial metric fallback | Committed | `d91f2d0`; `_ensure_pandarallel` returns capability; `use_parallel=False` never calls `parallel_apply`; ImportError/RuntimeError/OSError covered |\n  23 | 12 | STAB-12 / external-tool timeout | Committed | `978392f`; `ExternalToolTimeoutError`; run/version positive timeouts; replace-primaries via ExternalTool; `rg` finds one production `subprocess.run` |\n+ 24 | 13 | STAB-15 / BED fail-closed | Implemented (uncommitted) | `annotate_probe_regions` rejects missing / non-dir / zero-valid `bed_dir` and empty / malformed present BEDs (no swallow); `ClassificationStage` calls it whenever `bed_dir is not None`; loaded region set recorded in `result.attrs[REGION_ANNOTATION_ATTR]`; `tests/contracts/test_bed_region_fail_closed.py`, `tests/unit/test_compute_stages.py`. Open: reports/provenance do not yet surface \"not requested\" vs \"queried, no overlaps\" |\n  24 | Gate | STAB-13+ | Not started | wheel BLAST / golden schema / nightly / `make ci` |\n  25 \n  26 Verification recorded 2026-07-11 (slices 1–4, inline):\n  27 \n     ...",
+        "patch": "--- docs/runtime-safety-scientific-correctness-stabilization-spec-2026-07-10.md\n+++ docs/runtime-safety-scientific-correctness-stabilization-spec-2026-07-10.md\n@@ -20,8 +20,9 @@\n | 8 | STAB-08 / tile public boundary validation | Committed | `cf20e0f`; `require_positive_tile_scalars` in `config/tile.py`; generator rejects non-positive chrom length; `tests/contracts/test_tile_boundary_validation.py` |\n | 10 | STAB-10 / report isolation + HTML escaping | Committed | `ae7e25b`; standard/mini × CN/EN escaping; discover_plots + DeliveryStage share project-scoped plot set; summary serializes typed `plot_paths`; dead `merge_annotation` removed |\n | 11 | STAB-11 / real serial metric fallback | Committed | `d91f2d0`; `_ensure_pandarallel` returns capability; `use_parallel=False` never calls `parallel_apply`; ImportError/RuntimeError/OSError covered |\n | 12 | STAB-12 / external-tool timeout | Committed | `978392f`; `ExternalToolTimeoutError`; run/version positive timeouts; replace-primaries via ExternalTool; `rg` finds one production `subprocess.run` |\n+| 13 | STAB-15 / BED fail-closed | Implemented (uncommitted) | `annotate_probe_regions` rejects missing / non-dir / zero-valid `bed_dir` and empty / malformed present BEDs (no swallow); `ClassificationStage` calls it whenever `bed_dir is not None`; loaded region set recorded in `result.attrs[REGION_ANNOTATION_ATTR]`; `tests/contracts/test_bed_region_fail_closed.py`, `tests/unit/test_compute_stages.py`. Open: reports/provenance do not yet surface \"not requested\" vs \"queried, no overlaps\" |\n | Gate | STAB-13+ | Not started | wheel BLAST / golden schema / nightly / `make ci` |\n \n Verification recorded 2026-07-11 (slices 1–4, inline):\n \n",
+        "firstChangedLine": 24
+      }
+    },
+    "isError": false
+  }
+]

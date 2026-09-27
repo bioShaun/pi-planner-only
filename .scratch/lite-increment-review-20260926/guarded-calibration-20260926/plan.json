@@ -1,0 +1,39 @@
+{
+  "campaign": "target-root-t3-opus-guarded-20260926",
+  "root_model": "tcuni-claude/claude-opus-5-5",
+  "task": "T3",
+  "rep": 1,
+  "order": [
+    "lite-opus-calibration",
+    "native-opus-calibration",
+    "direct-opus-calibration"
+  ],
+  "seed": 7204467311751214925,
+  "max_attempts": 3,
+  "checkpoint_budget_usd": 10,
+  "budget_basis": "actual frozen model prices",
+  "timeout_seconds": 3600,
+  "parallel": 1,
+  "automatic_retry": false,
+  "paid_health_requests": false,
+  "old_spend_included": false,
+  "authorization_basis": "用户在共同保护修复完成后要求“下一步”；本轮沿用最近明确确认的三次/$10参数，作为新的独立范围。",
+  "scope_not_shared_with": "target-root-t3-opus-calibration-20260926",
+  "created_at": "2026-09-26T14:11:21.241595+00:00",
+  "status": "completed",
+  "attempts_started": 3,
+  "approval_block": {
+    "action": "sandbox-external preflight.sh gold: external temp-directory creation and slot audit/status",
+    "reason": "当前审批策略为 never，禁止批准需要提权执行的命令。",
+    "workaround_attempted": false,
+    "resolved": true
+  },
+  "authorization_confirmed": "用户明确允许这次限定范围的沙箱外执行",
+  "authorization_confirmed_at": "2026-09-26T14:39:41.574186+00:00",
+  "attempts_accepted": 3,
+  "actual_total_completed": 3.8056924100000002,
+  "attempts_completed": 3,
+  "independent_evidence_validation": "PASS",
+  "completed_at": "2026-09-26T15:12:26.620306+00:00",
+  "further_model_calls": false
+}

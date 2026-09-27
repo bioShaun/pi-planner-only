@@ -1,0 +1,9 @@
+{
+  "syntax": "PASS",
+  "source_hashes": "PASS",
+  "bench_reproduction_files": 16,
+  "new_paid_attempts": 0,
+  "external_preflight": "BLOCKED by automatic approval policy never",
+  "goldcheck": "NOT_RUN",
+  "execution_preflight_complete": false
+}

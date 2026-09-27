@@ -1,0 +1,17 @@
+{
+  "input-runs.sha256.json": {
+    "files": 48,
+    "unchanged": true
+  },
+  "previous-opus-runs.sha256.json": {
+    "files": 24,
+    "unchanged": true
+  },
+  "source.sha256.json": {
+    "files": 24,
+    "unchanged": true
+  },
+  "new_raw_files": 24,
+  "no_STOP": true,
+  "original_clones_removed": true
+}

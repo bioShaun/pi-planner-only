@@ -1,0 +1,216 @@
+{
+  "runId": "5037c020-815d-420c-9012-a0fe17be7478",
+  "agent": "worker",
+  "task": "[prompt redacted]",
+  "exitCode": 0,
+  "usage": {
+    "input": 150087,
+    "output": 18481,
+    "cacheRead": 4003840,
+    "cacheWrite": 0,
+    "cost": 0.06428760000000001,
+    "turns": 47
+  },
+  "model": "tcuni/gpt-6-luna:medium",
+  "requestedModel": "tcuni/gpt-6-luna",
+  "durationMs": 701177,
+  "toolCount": 72,
+  "launchContractDigest": "399e22d7cb6af57736cfd2d16ffe5d84fdb2699fda5bee741da4cee28ee51476",
+  "launchResolvedExtensions": {
+    "version": 1,
+    "source": "launch-resolved",
+    "disableAmbientExtensions": true,
+    "runtime": [
+      "sha256:d6d3f3845a63e189"
+    ],
+    "configured": [],
+    "required": [],
+    "effective": [
+      "sha256:d6d3f3845a63e189"
+    ],
+    "omitted": {
+      "runtime": 0,
+      "configured": 0,
+      "required": 0,
+      "effective": 0
+    }
+  },
+  "acceptance": {
+    "status": "checked",
+    "evidenceStatus": "checked",
+    "explicit": false,
+    "effectiveAcceptance": {
+      "level": "checked",
+      "explicit": false,
+      "inferredReason": [
+        "declared writer acceptance role"
+      ],
+      "criteria": [
+        {
+          "id": "criterion-1",
+          "must": "Implement the requested change without widening scope",
+          "evidence": [
+            "changed-files",
+            "tests-added",
+            "commands-run",
+            "residual-risks",
+            "no-staged-files"
+          ],
+          "severity": "required"
+        }
+      ],
+      "evidence": [
+        "changed-files",
+        "tests-added",
+        "commands-run",
+        "residual-risks",
+        "no-staged-files"
+      ],
+      "verify": [],
+      "stopRules": []
+    },
+    "inferredReason": [
+      "declared writer acceptance role"
+    ],
+    "criteria": [
+      {
+        "id": "criterion-1",
+        "must": "Implement the requested change without widening scope",
+        "evidence": [
+          "changed-files",
+          "tests-added",
+          "commands-run",
+          "residual-risks",
+          "no-staged-files"
+        ],
+        "severity": "required"
+      }
+    ],
+    "runtimeChecks": [
+      {
+        "id": "criterion:criterion-1",
+        "status": "passed",
+        "message": "Required criterion 'criterion-1' satisfied."
+      },
+      {
+        "id": "evidence:changed-files",
+        "status": "passed",
+        "message": "changed-files evidence present."
+      },
+      {
+        "id": "evidence:tests-added",
+        "status": "passed",
+        "message": "tests-added evidence present."
+      },
+      {
+        "id": "evidence:commands-run",
+        "status": "passed",
+        "message": "commands-run evidence present."
+      },
+      {
+        "id": "evidence:residual-risks",
+        "status": "passed",
+        "message": "residual-risks evidence present."
+      },
+      {
+        "id": "evidence:no-staged-files",
+        "status": "passed",
+        "message": "no-staged-files evidence present."
+      },
+      {
+        "id": "no-staged-files",
+        "status": "passed",
+        "message": "No staged files detected."
+      }
+    ],
+    "verifyRuns": [],
+    "childReport": {
+      "criteriaSatisfied": [
+        {
+          "id": "criterion-1",
+          "status": "satisfied",
+          "evidence": "按任务范围实现 REF/ALT stage、配置与 CLI 开关、流水线接线、测试和文档；未修改指定目标测试，未提交。"
+        }
+      ],
+      "changedFiles": [
+        "CODEMAP.md",
+        "src/tc_probe_design/cli/AGENTS.md",
+        "src/tc_probe_design/cli/annotate_overrides.py",
+        "src/tc_probe_design/cli/commands/_annotate_options.py",
+        "src/tc_probe_design/cli/commands/annotate.py",
+        "src/tc_probe_design/config/__init__.py",
+        "src/tc_probe_design/config/annotate.py",
+        "src/tc_probe_design/config/enums.py",
+        "src/tc_probe_design/orchestration/AGENTS.md",
+        "src/tc_probe_design/orchestration/_allele_pair_stage.py",
+        "src/tc_probe_design/orchestration/performance_log/_types.py",
+        "src/tc_probe_design/pipelines/annotate.py",
+        "tests/contracts/test_annotate_allele_pair_lifecycle_contract.py",
+        "tests/contracts/test_annotate_config_contract.py"
+      ],
+      "testsAddedOrUpdated": [
+        "tests/contracts/test_annotate_config_contract.py",
+        "tests/contracts/test_annotate_allele_pair_lifecycle_contract.py"
+      ],
+      "commandsRun": [
+        {
+          "command": "PYTHONPATH=src python -m pytest tests/contracts/test_ref_alt_stage_fold_to_long.py tests/contracts/test_annotate_config_contract.py tests/contracts/test_annotate_allele_pair_lifecycle_contract.py -p no:cacheprovider --basetemp=$TMPDIR/pytest",
+          "result": "passed",
+          "summary": "25 passed"
+        },
+        {
+          "command": "PYTHONPATH=src python -m pytest -p no:cacheprovider --basetemp=$TMPDIR/pytest",
+          "result": "passed",
+          "summary": "默认快速套件 2663 passed"
+        },
+        {
+          "command": "ruff check <modified source and test files>",
+          "result": "passed",
+          "summary": "All checks passed"
+        },
+        {
+          "command": "ruff format --check <modified source and test files>",
+          "result": "passed",
+          "summary": "所有改动文件格式检查通过"
+        },
+        {
+          "command": "mypy <modified source files and new lifecycle contract test>",
+          "result": "passed",
+          "summary": "10 source/test files 无类型问题"
+        },
+        {
+          "command": "mypy <modified source files plus tests/contracts/test_annotate_config_contract.py>",
+          "result": "failed",
+          "summary": "该既有测试文件第 217 行 label=\"parity\" 的 SafeOutputName 类型告警；该代码行未由本次修改引入或更改"
+        },
+        {
+          "command": "lint-imports",
+          "result": "passed",
+          "summary": "分析 414 个文件、1950 个依赖，7 项架构契约通过"
+        },
+        {
+          "command": "git diff --check && git diff --cached --quiet",
+          "result": "passed",
+          "summary": "差异无空白错误，且无暂存文件"
+        }
+      ],
+      "validationOutput": [
+        "annotate-one --help 展示 --allele-pair/--no-allele-pair，默认 no-allele-pair，并说明需要 --blast-db。",
+        "快速套件失败数为 0；无需基线 stash 对比。"
+      ],
+      "residualRisks": [
+        "目标测试的 both_sides_ref 场景传入的是无列 0 行宽表，并要求成功；实现据此允许 needs_alt 全为 false 时绕过 ALT 来源列校验。需要 ALT 的路径仍会校验全部 13 个来源列。",
+        "annotate provenance 和特异性契约不包含 ALT，报告章节尚未接入，已在 CODEMAP 中披露。",
+        "对包含既有类型告警的 test_annotate_config_contract.py 执行 mypy 仍会失败；改动源文件及新增 stage 测试的 mypy 检查通过。"
+      ],
+      "noStagedFiles": true,
+      "diffSummary": "新增配对长表 stage 与性能事件；增加 AnnotateConfig 和 CLI 开关；在 annotate 特异性与 self-hit 审计之后、后处理之前接线；补充 CLI 与 stage mock 契约测试和文档。",
+      "reviewFindings": [
+        "无阻塞项"
+      ],
+      "manualNotes": "未 commit。临时目录使用任务指定路径。"
+    }
+  },
+  "transcriptPath": "/project/tmp/ppo-bench/opus-cross-task-t1-t2b-20260926/T2b-native-opus-calibration-1/pi-subagents-uid-1000/artifacts/5037c020-815d-420c-9012-a0fe17be7478_worker_0_transcript.jsonl",
+  "timestamp": 1790438895339
+}

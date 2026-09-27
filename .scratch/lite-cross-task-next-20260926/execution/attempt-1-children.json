@@ -1,0 +1,91 @@
+{
+  "id": "T2b-native-opus-calibration-1",
+  "checks": {
+    "child_count": true,
+    "child_cost": false,
+    "all_children": true,
+    "all_priced": true
+  },
+  "children": [
+    {
+      "id": "0669d2da-e632-4d48-9554-d35145bfd1da",
+      "agent": "worker",
+      "model": "tcuni/gpt-6-luna:medium",
+      "usage": {
+        "input": 73375,
+        "output": 6906,
+        "cacheRead": 893952,
+        "cacheWrite": 0
+      },
+      "cost": 0.01973002,
+      "checks": {
+        "exit0": true,
+        "tokens_match": true,
+        "model_matches": true,
+        "reported_cost_matches": true,
+        "no_nested": true,
+        "no_api_errors": true,
+        "no_pending": true
+      },
+      "transcript": "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-cross-task-next-20260926/execution/child-evidence/T2b-native-opus-calibration-1/0669d2da-e632-4d48-9554-d35145bfd1da_worker_0_transcript.jsonl",
+      "sha256": "b3ec67aa672c18745a6e251578d2acb95cab469b20a246a3ddea0cbb81070e20"
+    },
+    {
+      "id": "5037c020-815d-420c-9012-a0fe17be7478",
+      "agent": "worker",
+      "model": "tcuni/gpt-6-luna:medium",
+      "usage": {
+        "input": 150087,
+        "output": 18481,
+        "cacheRead": 4003840,
+        "cacheWrite": 0
+      },
+      "cost": 0.0642876,
+      "checks": {
+        "exit0": true,
+        "tokens_match": true,
+        "model_matches": true,
+        "reported_cost_matches": true,
+        "no_nested": true,
+        "no_api_errors": true,
+        "no_pending": true
+      },
+      "transcript": "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-cross-task-next-20260926/execution/child-evidence/T2b-native-opus-calibration-1/5037c020-815d-420c-9012-a0fe17be7478_worker_0_transcript.jsonl",
+      "sha256": "fc18f20f337230b40295b236d3fed36eb2ef1bb35322074a851eb0a7e3e4e829"
+    }
+  ],
+  "tmp_references_requiring_review": [
+    {
+      "owner": "root",
+      "tool": "write",
+      "args": {
+        "path": "/project/tmp/ppo-bench/opus-cross-task-t1-t2b-20260926/T2b-native-opus-calibration-1/task-impl.md",
+        "content": "# 任务：REF/ALT 配对接入 annotate 主流水线（--allele-pair，默认关）\n\n仓库：/project/tmp/ppo-bench/clones/opus-cross-task-t1-t2b-20260926-T2b-native-opus-calibration-1\n临时目录（唯一允许写临时文件的位置，/tmp 被内核策略禁写）：\n/project/tmp/ppo-bench/opus-cross-task-t1-t2b-20260926/T2b-native-opus-calibration-1\n所有命令都先 `export TMPDIR=<上述临时目录>`，pytest 加 `-p no:cacheprovider --basetemp=<临时目录>/pytest`。\n\n开工前必读：AGENTS.md、CODEMAP.md、src/tc_probe_design/orchestration/AGENTS.md、src/tc_probe_design/cli/AGENTS.md、src/tc_probe_design/config/AGENTS.md。\n\n## 目标测试（不得修改）\ntests/contracts/test_ref_alt_stage_fold_to_long.py —— 先完整读它，它定义了公共 API：\n`ALT_OVERRIDE_COLUMNS`、`OFF_TARGET_COLUMNS_FOR_ALT_NA`、`AllelePairStage(cfg).run(result, work_dir=...)`、\n`fold_allele_pairs_to_long_table(policy_df, aligned_wide)`，以及 `AnnotateConfig(allele_pair=...)` 新字段。\n\n测试命令：\nPYTHONPATH=src /public/scripts/tc-probe-design-v2/.venv/bin/python -m pytest tests/contracts/test_ref_alt_stage_fold_to_long.py -p no:cacheprovider --basetemp=$TMPDIR/pytest\n快速套件：同一命令不带测试路径参数（跑完整个默认套件，报告通过/失败数；若有失败，用 `git stash` 对比基线判断是否本次引入——注意 stash 后要 pop 回来）。\n\n## 需要实现\n\n1. 新文件 `src/tc_probe_design/orchestration/_allele_pair_stage.py`（遵守 AGENTS.md §7 文件头 docstring；中文注释；<300 行为宜）：\n   - `ALT_OVERRIDE_COLUMNS: dict[str, str]`（或 Mapping）：13 列 目标列 -> 宽表字面来源列，键用 ProbeColumn 值：\n     sequence<-alt_sequence, GC<-alt_GC, tm<-alt_tm, N_count<-alt_N_count, seq_complexity<-alt_seq_complexity,\n     max_homopolymer<-alt_max_homopolymer, tandem_repeat<-alt_tandem_repeat,\n     max_tandem_repeat_count<-alt_max_tandem_repeat_count, hairpin_stem<-alt_hairpin_stem,\n     genome_hits<-alt_genome_hits, specificity_status<-alt_specificity_status,\n     probe_level<-alt_probe_level, probe_level_reason<-alt_probe_level_reason。\n     先核对 workflows/allele_pair.py / allele_pair_align.py 实际产出的列名与 ProbeColumn 定义一致，不要发明列。\n   - `OFF_TARGET_COLUMNS_FOR_ALT_NA`：off_target_count / median_gap_log10 / off_target_evidence_status（用 ProbeColumn 枚举）。\n   - `fold_allele_pairs_to_long_table(policy_df, aligned_wide) -> DataFrame`：\n     * policy_df 为 decide_pair_policy 输出（含 pair_policy / needs_alt / policy_keep），aligned_wide 为 align_allele_pairs 输出宽表。\n     * 空 policy_df 返回空表。\n     * 非空时，若 aligned_wide 缺少 13 个 alt_* 来源列中任意一个 → 抛 `ValidationError`，消息含「缺少必需的 ALT 来源列」（即使宽表 0 行也要列齐——测试 both_sides_ref 用空但列齐的宽表）。\n     * 只保留 policy_keep 为真的行作为 REF 行，allele_type=\"REF\"；对 needs_alt 且宽表中 pair_status==paired 的行（按 target_id+probe_id 关联）生成 ALT 行：复制 REF 行（位点属性列 gene_id/genome_region/site_type/snpEff 效应等随行复制），13 列逐列用 alt_* 覆盖，off-target 三列置 NA，probe_id 加 `_ALT` 后缀，allele_type=\"ALT\"。\n     * pair_level 列：来自宽表（REF 与 ALT 行同值）；无配对的行为 NA。也可带上 allele_ref/allele_alt/variant_offset_in_probe/pair_status 等配对元数据列（从宽表按键合并，不要默认/发明值）。\n     * 行序：保持 policy_df 原始行序，每个 REF 行后紧跟其 ALT 行。\n     * \"REF\"/\"ALT\" 不要作为魔法字符串散落：在 config/enums.py 新增 `AlleleType(StrEnum)`（REF/ALT），先 rg 确认没有已有同义枚举。\n   - `AllelePairStage(cfg: AnnotateConfig)` 带 `run(result: AnnotateResult, work_dir: Path) -> AnnotateResult`：\n     * `cfg.allele_pair` 为 False → 原样返回同一对象；final_df 为空 → 原样返回同一对象；\n     * 启用但 `cfg.alignment.blast_db is None` → 抛 `ConfigError`，消息含 `--blast-db`；\n     * 否则 decide_pair_policy → pair_allele_probes（仅对 needs_alt 行）→ align_allele_pairs（blast_db、blastn_path/threads/probe_length/aligner 等从 cfg 读取，work_dir 传入 work_dir 下子目录，禁止落 /tmp）→ fold → 替换 result.final_df 并返回。看清 decide_pair_policy/pair_allele_probes/align_allele_pairs 的签名、必需列和 no_probe 分支；不要复制它们的逻辑（单一权威）。\n     * 耗时包在 timed_event(recorder, PerformanceEvent.XXX) 内（orchestration/AGENTS.md §5）——若 stage 构造签名只接受 cfg（测试是 `AllelePairStage(cfg)`），可让 recorder 作为可选关键字参数；若需要新 PerformanceEvent 值，同步 performance_log 子包。\n\n2. `AnnotateConfig` 新增 `allele_pair: bool = False`（config/annotate.py，更新 Attributes docstring）。\n\n3. CLI：annotate 命令加 `--allele-pair/--no-allele-pair`（默认关），参照 cli/commands/_annotate_options.py 的现有 Option 声明方式；遵守「dataclass 默认与 typer 默认不要重复声明」约束（看已有字段怎么做的）；help text 写清需要 --blast-db、输出变为长表（REF/ALT 各一行）。CLI 函数体不得超过 50 行。加一个 CLI 测试（放 tests/contracts/ 下合适的已有文件或新建按行为命名的文件）验证开关传到 AnnotateConfig。\n\n4. 接线 `pipelines/annotate.py`：在 off_target_facts 合并、SpecificityEvidenceContract.from_annotation、count_self_hit_invariant_mismatches **全部之后**、`post_processor.run(` **之前** 调用 `result = AllelePairStage(cfg, ...).run(result, work_dir)`。加注释说明为什么必须在这三步之后（ALT 否则会继承 REF 脱靶事实或被 fillna(0) 成零脱靶；会进入按 REF 标定的特异性契约；自比对 1-mismatch 刷满假告警）。注意 orchestration/AGENTS.md 强约束 1 与 test_annotate_lifecycle_postprocessing.py 的 leanness 测试。\n\n5. 文档同步：CODEMAP.md（allele-pair 行 / 相关概念）、orchestration/AGENTS.md 文件分类表、docs/PATTERNS.md 如有相关条目、cli 文档若列出 annotate 选项。在文档里写明已知代价：本轮 provenance 与特异性契约不含 ALT，报告章节未接。\n\n## 约束\n- 不 commit。不改目标测试文件。不做无关重构/格式化。\n- 用 ValidationError/ConfigError（tc_probe_design.exceptions），不裸 raise ValueError。\n- 禁止跨模块 import 私有名 `_foo`。\n- 跑 `uv run`/venv 下的 ruff check + ruff format --check（仅改动文件）、mypy（改动文件）、lint-imports（如可用）：\n  /public/scripts/tc-probe-design-v2/.venv/bin/ruff, .../mypy, .../lint-imports（存在则用）。\n- 最后报告：改动文件列表、目标测试结果、快速套件结果（通过/失败数，失败是否基线已有）、lint/mypy 结果、任何未解决问题。\n"
+      }
+    },
+    {
+      "owner": "root",
+      "tool": "subagent",
+      "args": {
+        "agent": "worker",
+        "task": "完整阅读并执行任务说明文件 /project/tmp/ppo-bench/opus-cross-task-t1-t2b-20260926/T2b-native-opus-calibration-1/task-impl.md 。工作目录：/project/tmp/ppo-bench/clones/opus-cross-task-t1-t2b-20260926-T2b-native-opus-calibration-1 。临时文件只能写 /project/tmp/ppo-bench/opus-cross-task-t1-t2b-20260926/T2b-native-opus-calibration-1（/tmp 禁写，export TMPDIR 到该目录）。不要 commit。完成后按说明末尾格式汇报。",
+        "cwd": "/project/tmp/ppo-bench/clones/opus-cross-task-t1-t2b-20260926-T2b-native-opus-calibration-1",
+        "async": false,
+        "timeoutMs": 3600000
+      }
+    },
+    {
+      "owner": "root",
+      "tool": "subagent",
+      "args": {
+        "agent": "worker",
+        "task": "完整阅读并执行 /project/tmp/ppo-bench/opus-cross-task-t1-t2b-20260926/T2b-native-opus-calibration-1/task-fix1.md （背景任务说明在同目录 task-impl.md）。工作目录：/project/tmp/ppo-bench/clones/opus-cross-task-t1-t2b-20260926-T2b-native-opus-calibration-1 。临时文件只写 /project/tmp/ppo-bench/opus-cross-task-t1-t2b-20260926/T2b-native-opus-calibration-1（/tmp 禁写，export TMPDIR）。不要 commit。按说明末尾要求逐项汇报实际命令输出摘要。",
+        "cwd": "/project/tmp/ppo-bench/clones/opus-cross-task-t1-t2b-20260926-T2b-native-opus-calibration-1",
+        "async": false,
+        "timeoutMs": 3600000
+      }
+    }
+  ],
+  "command_count": 126,
+  "limitations": "Command references require manual interpretation; Landlock evidence covers local descendants, not arbitrary external services."
+}

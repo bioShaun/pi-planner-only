@@ -1,0 +1,16 @@
+{
+  "status": "completed",
+  "final_acceptance": "PASS",
+  "issues": {
+    "03-native-intercom-terminal-evidence": "resolved: collection, regression, offline repricing and independent review complete",
+    "04-t2-no-alt-contract-wording": "resolved: boundary clarified; next task version/gold preparation is separate"
+  },
+  "scope": "terminal accounting fix and offline boundary clarification only",
+  "campaign": "stopped",
+  "paid_runs_started": 0,
+  "historical_sample_valid": false,
+  "recomputed_attempt_spend_usd": 1.88898237,
+  "next_decision": "Do not resume old three-run list; prepare/refreeze T2c boundary tests and gold before designing new native/lite execution list; T1 definition can remain.",
+  "report": "report.md",
+  "review_snapshot": "sha256:c6c2715a4be8c328e7b02a8787d55cef2f77cc1bbfabbbd11a0365dd4aa331df"
+}

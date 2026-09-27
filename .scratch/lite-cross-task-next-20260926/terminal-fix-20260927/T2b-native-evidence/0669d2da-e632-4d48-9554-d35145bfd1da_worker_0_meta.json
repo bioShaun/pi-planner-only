@@ -1,0 +1,214 @@
+{
+  "runId": "0669d2da-e632-4d48-9554-d35145bfd1da",
+  "agent": "worker",
+  "task": "[prompt redacted]",
+  "exitCode": 0,
+  "usage": {
+    "input": 73375,
+    "output": 6906,
+    "cacheRead": 893952,
+    "cacheWrite": 0,
+    "cost": 0.01973002,
+    "turns": 21
+  },
+  "model": "tcuni/gpt-6-luna:medium",
+  "requestedModel": "tcuni/gpt-6-luna",
+  "durationMs": 349822,
+  "toolCount": 32,
+  "launchContractDigest": "2d82612f6b6ec91a9df2c2f7994b9de64f0a8c30f0d2d3dcaac17bef2fb19fbb",
+  "launchResolvedExtensions": {
+    "version": 1,
+    "source": "launch-resolved",
+    "disableAmbientExtensions": true,
+    "runtime": [
+      "sha256:d6d3f3845a63e189"
+    ],
+    "configured": [],
+    "required": [],
+    "effective": [
+      "sha256:d6d3f3845a63e189"
+    ],
+    "omitted": {
+      "runtime": 0,
+      "configured": 0,
+      "required": 0,
+      "effective": 0
+    }
+  },
+  "acceptance": {
+    "status": "checked",
+    "evidenceStatus": "checked",
+    "explicit": false,
+    "effectiveAcceptance": {
+      "level": "checked",
+      "explicit": false,
+      "inferredReason": [
+        "declared writer acceptance role"
+      ],
+      "criteria": [
+        {
+          "id": "criterion-1",
+          "must": "Implement the requested change without widening scope",
+          "evidence": [
+            "changed-files",
+            "tests-added",
+            "commands-run",
+            "residual-risks",
+            "no-staged-files"
+          ],
+          "severity": "required"
+        }
+      ],
+      "evidence": [
+        "changed-files",
+        "tests-added",
+        "commands-run",
+        "residual-risks",
+        "no-staged-files"
+      ],
+      "verify": [],
+      "stopRules": []
+    },
+    "inferredReason": [
+      "declared writer acceptance role"
+    ],
+    "criteria": [
+      {
+        "id": "criterion-1",
+        "must": "Implement the requested change without widening scope",
+        "evidence": [
+          "changed-files",
+          "tests-added",
+          "commands-run",
+          "residual-risks",
+          "no-staged-files"
+        ],
+        "severity": "required"
+      }
+    ],
+    "runtimeChecks": [
+      {
+        "id": "criterion:criterion-1",
+        "status": "passed",
+        "message": "Required criterion 'criterion-1' satisfied."
+      },
+      {
+        "id": "evidence:changed-files",
+        "status": "passed",
+        "message": "changed-files evidence present."
+      },
+      {
+        "id": "evidence:tests-added",
+        "status": "passed",
+        "message": "tests-added evidence present."
+      },
+      {
+        "id": "evidence:commands-run",
+        "status": "passed",
+        "message": "commands-run evidence present."
+      },
+      {
+        "id": "evidence:residual-risks",
+        "status": "passed",
+        "message": "residual-risks evidence present."
+      },
+      {
+        "id": "evidence:no-staged-files",
+        "status": "passed",
+        "message": "no-staged-files evidence present."
+      },
+      {
+        "id": "no-staged-files",
+        "status": "passed",
+        "message": "No staged files detected."
+      }
+    ],
+    "verifyRuns": [],
+    "childReport": {
+      "criteriaSatisfied": [
+        {
+          "id": "criterion-1",
+          "status": "satisfied",
+          "evidence": "修复范围限于 fix1 列出的断言、行重排、workflow 导入、CLI 默认/help 与 CODEMAP 表格问题；CODEMAP 的 git diff 仅新增 REF/ALT 行，原 Pipeline 行内容未变。"
+        }
+      ],
+      "changedFiles": [
+        "CODEMAP.md",
+        "src/tc_probe_design/cli/AGENTS.md",
+        "src/tc_probe_design/cli/annotate_overrides.py",
+        "src/tc_probe_design/cli/commands/_annotate_options.py",
+        "src/tc_probe_design/cli/commands/annotate.py",
+        "src/tc_probe_design/config/__init__.py",
+        "src/tc_probe_design/config/annotate.py",
+        "src/tc_probe_design/config/enums.py",
+        "src/tc_probe_design/orchestration/AGENTS.md",
+        "src/tc_probe_design/orchestration/_allele_pair_stage.py",
+        "src/tc_probe_design/orchestration/performance_log/_types.py",
+        "src/tc_probe_design/pipelines/annotate.py",
+        "tests/contracts/test_annotate_allele_pair_lifecycle_contract.py",
+        "tests/contracts/test_annotate_config_contract.py"
+      ],
+      "testsAddedOrUpdated": [
+        "tests/contracts/test_annotate_allele_pair_lifecycle_contract.py",
+        "tests/contracts/test_annotate_config_contract.py"
+      ],
+      "commandsRun": [
+        {
+          "command": "export TMPDIR=/project/tmp/ppo-bench/opus-cross-task-t1-t2b-20260926/T2b-native-opus-calibration-1; PYTHONPATH=src /public/scripts/tc-probe-design-v2/.venv/bin/python -m pytest tests/contracts/test_ref_alt_stage_fold_to_long.py -p no:cacheprovider --basetemp=$TMPDIR/pytest -q",
+          "result": "passed",
+          "summary": "10 passed。"
+        },
+        {
+          "command": "export TMPDIR=/project/tmp/ppo-bench/opus-cross-task-t1-t2b-20260926/T2b-native-opus-calibration-1; PYTHONPATH=src /public/scripts/tc-probe-design-v2/.venv/bin/python -m pytest tests/contracts/test_annotate_allele_pair_lifecycle_contract.py tests/contracts/test_annotate_config_contract.py tests/contracts/test_annotate_lifecycle_postprocessing.py -p no:cacheprovider --basetemp=$TMPDIR/pytest -q",
+          "result": "passed",
+          "summary": "32 passed。"
+        },
+        {
+          "command": "export TMPDIR=/project/tmp/ppo-bench/opus-cross-task-t1-t2b-20260926/T2b-native-opus-calibration-1; PYTHONPATH=src /public/scripts/tc-probe-design-v2/.venv/bin/python -m pytest -p no:cacheprovider --basetemp=$TMPDIR/pytest -q",
+          "result": "passed",
+          "summary": "快速套件 2664 passed，0 failed。"
+        },
+        {
+          "command": "/public/scripts/tc-probe-design-v2/.venv/bin/ruff check <改动的 Python 文件>",
+          "result": "passed",
+          "summary": "All checks passed。"
+        },
+        {
+          "command": "/public/scripts/tc-probe-design-v2/.venv/bin/ruff format --check <改动的 Python 文件>",
+          "result": "passed",
+          "summary": "5 files already formatted。"
+        },
+        {
+          "command": "/public/scripts/tc-probe-design-v2/.venv/bin/mypy <改动的 src 文件>",
+          "result": "passed",
+          "summary": "6 source files checked; no issues found。"
+        },
+        {
+          "command": "/public/scripts/tc-probe-design-v2/.venv/bin/lint-imports",
+          "result": "passed",
+          "summary": "分析 415 个文件、1971 个依赖；7 项 contracts kept，0 broken。"
+        },
+        {
+          "command": "git diff --stat; git status --short; git diff --cached --stat; git diff -- CODEMAP.md",
+          "result": "passed",
+          "summary": "CODEMAP diff 仅新增 1 行；git status 显示 12 个已修改文件和 2 个未跟踪文件；git diff --cached --stat 无输出。"
+        }
+      ],
+      "validationOutput": [
+        "目标测试：10 passed。",
+        "指定 lifecycle/config/postprocessing 测试：32 passed。",
+        "快速套件：2664 passed，0 failed。",
+        "ruff check、ruff format --check、mypy、lint-imports 均通过。"
+      ],
+      "residualRisks": [],
+      "noStagedFiles": true,
+      "diffSummary": "修复长表来源列断言边界、直接交错输出 REF/ALT、改用模块级 workflow 导入；调整 CLI 默认值与帮助文本，并拆分 CODEMAP 表格行。保留任务已有的配置、pipeline、性能事件和文档改动。",
+      "reviewFindings": [
+        "no blockers"
+      ],
+      "manualNotes": "无提交。此前测试曾因目标测试的空宽表没有任何列而失败；按监督裁定将例外严格限定为 needs_alt 全假且宽表为空，之后目标测试全通过。"
+    }
+  },
+  "transcriptPath": "/project/tmp/ppo-bench/opus-cross-task-t1-t2b-20260926/T2b-native-opus-calibration-1/pi-subagents-uid-1000/artifacts/0669d2da-e632-4d48-9554-d35145bfd1da_worker_0_transcript.jsonl",
+  "timestamp": 1790439305495
+}

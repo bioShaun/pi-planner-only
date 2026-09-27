@@ -1,0 +1,4 @@
+PASS (final)
+Verified all 116 frozen files against the assigned snapshot, including every required file. The long-path Manager failure reproduces; the same 18 new failures disappear in both short-path cases. The guard uses the task’s configured Python to probe AF_UNIX after Landlock verification, and the regression evidence shows long-path rejection before the body and a working short-path Manager with `/tmp` writes denied. All 35 existing tests remain; the 36-test run and release suite passed.
+
+The continuation is limited to ordinals 2–4, with distinct short physical paths and the original $1.29824603 included in the $10 checkpoint. I independently checked the 82 source, 11 entry, and 161 historical hashes. No new paid campaign or attempt marker exists. This is readiness for the bounded continuation; model quality and costs of those three runs remain unverified.

@@ -1,0 +1,51 @@
+[
+  {
+    "path": "/tmp/region_patch.py",
+    "sha256": "b5b1bd5f06d89067fdcf8065ddcf98a37f79ce1f69132da49c9bf4fb5997350e",
+    "inode": 4180701,
+    "mtime_ns": 1790420492635141625,
+    "bytes": 4639
+  },
+  {
+    "path": "/tmp/after.txt",
+    "sha256": "19e2e4d71123c16aa707ed884584c73542ff17e0ad86c5314bb50df8286cc232",
+    "inode": 4112009,
+    "mtime_ns": 1790420665575169644,
+    "bytes": 1786
+  },
+  {
+    "path": "/tmp/before.txt",
+    "sha256": "d508c2f0d98a93ce8c3e2da0fb29952b599306f1363e189b86d27317b38005e3",
+    "inode": 4180726,
+    "mtime_ns": 1790420697396726810,
+    "bytes": 3023
+  },
+  {
+    "path": "/tmp/stab15_after.log",
+    "sha256": "abc35adba74a59e1f97c20cfeabc994158e373b53524da23f2e824e887b13aa8",
+    "inode": 4181875,
+    "mtime_ns": 1790421807428162425,
+    "bytes": 25475
+  },
+  {
+    "path": "/tmp/stab15_after.txt",
+    "sha256": "d918059e95bb65f2fbbacb92ea1486d6fb9b766ee4d5c3c94568f763d928ecdc",
+    "inode": 4181874,
+    "mtime_ns": 1790421807718167503,
+    "bytes": 1705
+  },
+  {
+    "path": "/tmp/stab15_before.log",
+    "sha256": "0b534b23ea3b7977da5c2270b7b5b5ed755b437e704f24030b8a080c273982b7",
+    "inode": 4182663,
+    "mtime_ns": 1790421844722815420,
+    "bytes": 47954
+  },
+  {
+    "path": "/tmp/stab15_before.txt",
+    "sha256": "325c784d3d0165768ff336dadd7452113e68db0c3a4421862af247005872766e",
+    "inode": 4182664,
+    "mtime_ns": 1790421845074821583,
+    "bytes": 2942
+  }
+]

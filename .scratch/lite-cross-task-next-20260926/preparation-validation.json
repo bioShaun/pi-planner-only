@@ -1,0 +1,13 @@
+{
+  "task_variant_only_id_prompt": true,
+  "prompt_single_order_correction": true,
+  "source.sha256.json": true,
+  "execution-source.sha256.json": true,
+  "history.sha256.json": true,
+  "release_exit0": true,
+  "offline_task_results": true,
+  "no_paid_authorization": true,
+  "no_paid_campaign_directory": true,
+  "original_tests_untouched": true,
+  "previous_guarded_source_24_unchanged": true
+}

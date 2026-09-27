@@ -1,0 +1,17 @@
+{
+  "phase": "dry",
+  "checks": {
+    "remaining_scope": true,
+    "path_map": true,
+    "plan_authorized": true,
+    "frozen_sources": true,
+    "historical_sources": true,
+    "root_settings": true,
+    "child_settings": true,
+    "host_package": true,
+    "subagents_package": true,
+    "plugin_cache": true,
+    "campaign_untouched": true
+  },
+  "plugin_cache_present": true
+}

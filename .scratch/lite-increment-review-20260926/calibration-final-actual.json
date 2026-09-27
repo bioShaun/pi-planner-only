@@ -1,0 +1,227 @@
+{
+  "runs": [
+    {
+      "id": "T3-direct-opus-calibration-1",
+      "task": "T3",
+      "arm": "direct-opus-calibration",
+      "rep": 1,
+      "mode": "direct",
+      "exit": 0,
+      "passed": true,
+      "wall": 303,
+      "root_turns": 29,
+      "delegates": 0,
+      "children": 0,
+      "root": {
+        "input": 60,
+        "output": 19342,
+        "cacheRead": 1742591,
+        "cacheWrite": 83099
+      },
+      "child_cost": 0,
+      "root_cost": 1.87451425,
+      "total_cost": 1.87451425,
+      "refused": 0,
+      "detached": 0,
+      "truncated": 0,
+      "root_reads": 1,
+      "root_bash": 27,
+      "root_cache_read": 1742591,
+      "extra_tools": 0,
+      "turns_per_delegate": null,
+      "known_cost_lower_bound": 1.87451425
+    },
+    {
+      "id": "T3-lite-opus-calibration-1",
+      "task": "T3",
+      "arm": "lite-opus-calibration",
+      "rep": 1,
+      "mode": "lite",
+      "exit": 0,
+      "passed": true,
+      "wall": 379,
+      "root_turns": 11,
+      "delegates": 2,
+      "children": 0,
+      "root": {
+        "input": 24,
+        "output": 7507,
+        "cacheRead": 376732,
+        "cacheWrite": 52399
+      },
+      "child_cost": 0.02159074,
+      "root_cost": 0.70365475,
+      "total_cost": 0.72524549,
+      "refused": 0,
+      "detached": 0,
+      "truncated": 0,
+      "root_reads": 2,
+      "root_bash": 6,
+      "root_cache_read": 376732,
+      "extra_tools": 0,
+      "turns_per_delegate": 5.5,
+      "known_cost_lower_bound": 0.72524549
+    },
+    {
+      "id": "T3-native-opus-calibration-1",
+      "task": "T3",
+      "arm": "native-opus-calibration",
+      "rep": 1,
+      "mode": "native",
+      "exit": 0,
+      "passed": true,
+      "wall": 548,
+      "root_turns": 14,
+      "delegates": 2,
+      "children": 2,
+      "root": {
+        "input": 30,
+        "output": 9817,
+        "cacheRead": 462674,
+        "cacheWrite": 100421
+      },
+      "child_cost": 0.03124222,
+      "root_cost": 1.10454325,
+      "total_cost": 1.13578547,
+      "refused": null,
+      "detached": null,
+      "truncated": null,
+      "root_reads": 3,
+      "root_bash": 8,
+      "root_cache_read": 462674,
+      "extra_tools": 0,
+      "turns_per_delegate": 7.0,
+      "rejected_duplicates": 0,
+      "known_cost_lower_bound": 1.13578547
+    }
+  ],
+  "incomplete": [],
+  "invalid": [],
+  "attempt_spend": [
+    {
+      "id": "T3-direct-opus-calibration-1",
+      "cost": 1.87451425,
+      "known_cost_lower_bound": 1.87451425,
+      "valid": true
+    },
+    {
+      "id": "T3-lite-opus-calibration-1",
+      "cost": 0.72524549,
+      "known_cost_lower_bound": 0.72524549,
+      "valid": true
+    },
+    {
+      "id": "T3-native-opus-calibration-1",
+      "cost": 1.13578547,
+      "known_cost_lower_bound": 1.13578547,
+      "valid": true
+    }
+  ],
+  "attempt_spend_total": 3.73554521,
+  "attempt_spend_scope": "current runs directory only; archived void attempts excluded",
+  "aggregates": {
+    "direct-opus-calibration": {
+      "runs": 1,
+      "pass": 1,
+      "pass_rate": 1.0,
+      "median_cost": 1.87451425,
+      "mean_cost": 1.87451425,
+      "median_root_turns": 29,
+      "median_wall": 303,
+      "root_tokens": {
+        "input": 60,
+        "output": 19342,
+        "cacheRead": 1742591,
+        "cacheWrite": 83099
+      },
+      "mechanism": {
+        "refused": 0,
+        "detached": 0,
+        "truncated": 0,
+        "rejected_duplicates": null,
+        "root_reads_med": 1,
+        "root_bash_med": 27,
+        "cache_read_med": 1742591,
+        "turns_per_delegate_med": null,
+        "extra_tools": 0
+      }
+    },
+    "lite-opus-calibration": {
+      "runs": 1,
+      "pass": 1,
+      "pass_rate": 1.0,
+      "median_cost": 0.72524549,
+      "mean_cost": 0.72524549,
+      "median_root_turns": 11,
+      "median_wall": 379,
+      "root_tokens": {
+        "input": 24,
+        "output": 7507,
+        "cacheRead": 376732,
+        "cacheWrite": 52399
+      },
+      "mechanism": {
+        "refused": 0,
+        "detached": 0,
+        "truncated": 0,
+        "rejected_duplicates": null,
+        "root_reads_med": 2,
+        "root_bash_med": 6,
+        "cache_read_med": 376732,
+        "turns_per_delegate_med": 5.5,
+        "extra_tools": 0
+      }
+    },
+    "native-opus-calibration": {
+      "runs": 1,
+      "pass": 1,
+      "pass_rate": 1.0,
+      "median_cost": 1.13578547,
+      "mean_cost": 1.13578547,
+      "median_root_turns": 14,
+      "median_wall": 548,
+      "root_tokens": {
+        "input": 30,
+        "output": 9817,
+        "cacheRead": 462674,
+        "cacheWrite": 100421
+      },
+      "mechanism": {
+        "refused": null,
+        "detached": null,
+        "truncated": null,
+        "rejected_duplicates": 0,
+        "root_reads_med": 3,
+        "root_bash_med": 8,
+        "cache_read_med": 462674,
+        "turns_per_delegate_med": 7.0,
+        "extra_tools": 0
+      }
+    }
+  },
+  "task_aggregates": {
+    "T3|direct-opus-calibration": {
+      "n": 1,
+      "pass": 1,
+      "median_cost": 1.87451425,
+      "min_cost": 1.87451425,
+      "max_cost": 1.87451425
+    },
+    "T3|lite-opus-calibration": {
+      "n": 1,
+      "pass": 1,
+      "median_cost": 0.72524549,
+      "min_cost": 0.72524549,
+      "max_cost": 0.72524549
+    },
+    "T3|native-opus-calibration": {
+      "n": 1,
+      "pass": 1,
+      "median_cost": 1.13578547,
+      "min_cost": 1.13578547,
+      "max_cost": 1.13578547
+    }
+  },
+  "comparisons": {},
+  "mixed_plugin": {}
+}

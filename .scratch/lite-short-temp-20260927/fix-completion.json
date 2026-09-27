@@ -1,0 +1,11 @@
+{
+  "status": "complete",
+  "cause": "task Python3.12 multiprocessing AF_UNIX generated path exceeds socket limit when TMPDIR83bytes",
+  "repair": "probe configured interpreter listener beforePi; shortphysical perrunmapping27bytes",
+  "matrix_cases": 4,
+  "bench_tests_passed": 36,
+  "release": "PASS",
+  "review": "PASS(final)",
+  "paid_original_not_reclassified": true,
+  "next_phase": "execute original remainingordinals2-4 within cumulative10 checkpoint"
+}

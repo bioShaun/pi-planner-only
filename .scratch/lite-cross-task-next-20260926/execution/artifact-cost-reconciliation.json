@@ -1,0 +1,73 @@
+{
+  "kind": "artifact-assisted offline reconciliation; does not override frozen run validity",
+  "run": "T2b-native-opus-calibration-1",
+  "frozen_summary_total": null,
+  "frozen_valid": false,
+  "root_cost": 1.80496475,
+  "child_final_cost": 0.08401762,
+  "artifact_reconciled_total": 1.88898237,
+  "children": [
+    {
+      "id": "0669d2da-e632-4d48-9554-d35145bfd1da",
+      "model": "tcuni/gpt-6-luna:medium",
+      "usage": {
+        "input": 73375,
+        "output": 6906,
+        "cacheRead": 893952,
+        "cacheWrite": 0
+      },
+      "cost": 0.01973002,
+      "sha256": "b3ec67aa672c18745a6e251578d2acb95cab469b20a246a3ddea0cbb81070e20"
+    },
+    {
+      "id": "5037c020-815d-420c-9012-a0fe17be7478",
+      "model": "tcuni/gpt-6-luna:medium",
+      "usage": {
+        "input": 150087,
+        "output": 18481,
+        "cacheRead": 4003840,
+        "cacheWrite": 0
+      },
+      "cost": 0.0642876,
+      "sha256": "fc18f20f337230b40295b236d3fed36eb2ef1bb35322074a851eb0a7e3e4e829"
+    }
+  ],
+  "root_record": {
+    "id": "T2b-native-opus-calibration-1",
+    "task": "T2b",
+    "arm": "native-opus-calibration",
+    "rep": 1,
+    "mode": "native",
+    "exit": 0,
+    "passed": true,
+    "wall": 1384,
+    "root_turns": 22,
+    "delegates": 2,
+    "children": 2,
+    "root": {
+      "input": 50,
+      "output": 15927,
+      "cacheRead": 1180367,
+      "cacheWrite": 130617
+    },
+    "child_cost": null,
+    "root_cost": 1.80496475,
+    "total_cost": null,
+    "refused": null,
+    "detached": null,
+    "truncated": null,
+    "root_reads": 1,
+    "root_bash": 13,
+    "root_cache_read": 1180367,
+    "extra_tools": 2,
+    "turns_per_delegate": 11.0,
+    "rejected_duplicates": 0,
+    "known_cost_lower_bound": 1.80496475
+  },
+  "root_models": [
+    "tcuni-claude/claude-opus-5-5"
+  ],
+  "partial_receipt_not_added": true,
+  "checks": "Root transcript plus both terminal child transcripts and metadata usage match; pending independent validation.",
+  "time": "2026-09-26T16:21:11.784625+00:00"
+}

@@ -1,0 +1,15 @@
+{
+  "defaultThinkingLevel": "high",
+  "defaultProvider": "kimi-coding",
+  "defaultModel": "kimi-for-coding",
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 16384,
+    "keepRecentTokens": 20000,
+    "modelOverrides": {
+      "tcuni-claude/claude-opus-5-5": {
+        "reserveTokens": 200000
+      }
+    }
+  }
+}

@@ -1,0 +1,7 @@
+REQUEST_CHANGES (final)
+
+The 39 frozen files match the assigned snapshot. I verified the 20 native tests, release checks, three Pi dry runs, preserved assertions from the original 14 tests, and hashes of all 72 historical raw files. I did not run tests or invoke model generation.
+
+**Unsafe bind-mounted temp alias:** [temp_guard.py](/home/tcuni-claw/pi/pi-planner-only/bench/temp_guard.py:48) uses `Path.resolve()` to reject `/tmp` aliases, which catches symlinks but does not identify a bind mount. If `/project/tmp` or a requested `TMPDIR` beneath it is bind-mounted from `/tmp`, `select_temp()` accepts a directory backed by the forbidden location. [grant_directories()](/home/tcuni-claw/pi/pi-planner-only/bench/temp_guard.py:76) checks bind identity only for entries immediately under `/`, so it does not reject this layout either. That conflicts with the required rejection of unsafe temp aliases. Check the selected temp directory’s filesystem identity against `/tmp` before installing the rules, and add a focused alias-layout case.
+
+This is a conditional layout finding; the reviewed host’s `/project/tmp` and `/tmp` have different filesystem identities. The passing evidence establishes behavior on that host, not on the bind-alias layout.

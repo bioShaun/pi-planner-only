@@ -1,0 +1,11 @@
+PASS — offline preparation only, independently validated read-only by astra_validator_complex.
+
+No tests, model calls, writes or network access by validator. Retained T1 first harness assertion failure (exit1) is explained by one correctly repaired timeout failure: parent collection RED, masked13 failed/1110 passed; gold target30 passed, masked12 failed/1111 passed, no new failures. Read-only reconciliation and original failure evidence remain.
+
+T2b: collection RED, parent masked2652 passed, gold target10 passed, gold masked2652 passed; validation exit0. Release records typecheck and all five required suites passing, exit0.
+
+Independent comparisons verify T2b metadata differs from T2 only in id/prompt; prompt changes one order line (之前 -> 之后). Standard-answer source puts stage after off-target facts, specificity contract and self-hit checks, before post_processor.run. Hash checks: zero mismatches in 70 reproduced bench files, 78 execution-source files and 96 historical files. Recorded isolation checks cover answer commits and test sources; validator did not recreate cleaned clones.
+
+Spec requires extra T2b wiring review on both arms; existing ten tests do not cover full CLI/BLAST path. Four counterbalanced runs, clone/full-diff retention, new $10 actual running-between-attempts checkpoint, not a live hard cap. Paid execution unauthorized; dynamic models/runtime prerequisites still require checks before starting.
+
+This records independent evidence validation, not a formal review-contract gate. Original result is retained in the parent session agent message.

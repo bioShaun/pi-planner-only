@@ -1,0 +1,165 @@
+[
+  {
+    "id": "T3-native-pds-1",
+    "mode": "native",
+    "root_turns": 39,
+    "root_cost": 2.227005,
+    "child_cost": 0.03190532,
+    "first_delegate_tool_start_turn": 24,
+    "root_cost_through_first_dispatch_inclusive": 1.28099,
+    "root_direct_edit_write_calls": 0,
+    "root_edit_errors": 0,
+    "root_tool_starts": {
+      "bash": 42,
+      "read": 10,
+      "subagents_enable": 1,
+      "subagent": 6
+    },
+    "delegate_roles": {},
+    "terminal_result_text_chars": {
+      "bash": 59765,
+      "read": 57752,
+      "subagents_enable": 120,
+      "subagent": 9662
+    },
+    "benchmark_edit_start_turn": null,
+    "root_cost_from_benchmark_edit_through_end": null
+  },
+  {
+    "id": "T3-direct-pds-1",
+    "mode": "direct",
+    "root_turns": 24,
+    "root_cost": 1.127921,
+    "child_cost": 0,
+    "first_delegate_tool_start_turn": null,
+    "root_cost_through_first_dispatch_inclusive": null,
+    "root_direct_edit_write_calls": 3,
+    "root_edit_errors": 0,
+    "root_tool_starts": {
+      "bash": 21,
+      "read": 8,
+      "edit": 3
+    },
+    "delegate_roles": {},
+    "terminal_result_text_chars": {
+      "read": 53367,
+      "bash": 52307,
+      "edit": 464
+    },
+    "benchmark_edit_start_turn": null,
+    "root_cost_from_benchmark_edit_through_end": null
+  },
+  {
+    "id": "T3-direct-pds-2",
+    "mode": "direct",
+    "root_turns": 25,
+    "root_cost": 1.040025,
+    "child_cost": 0,
+    "first_delegate_tool_start_turn": null,
+    "root_cost_through_first_dispatch_inclusive": null,
+    "root_direct_edit_write_calls": 3,
+    "root_edit_errors": 0,
+    "root_tool_starts": {
+      "bash": 22,
+      "read": 7,
+      "edit": 3
+    },
+    "delegate_roles": {},
+    "terminal_result_text_chars": {
+      "read": 46919,
+      "bash": 55252,
+      "edit": 469
+    },
+    "benchmark_edit_start_turn": null,
+    "root_cost_from_benchmark_edit_through_end": null
+  },
+  {
+    "id": "T3-lite-pds-head-1",
+    "mode": "lite",
+    "root_turns": 47,
+    "root_cost": 2.324219,
+    "child_cost": 0.0207121,
+    "first_delegate_tool_start_turn": 16,
+    "root_cost_through_first_dispatch_inclusive": 0.70902,
+    "root_direct_edit_write_calls": 7,
+    "root_edit_errors": 1,
+    "root_tool_starts": {
+      "bash": 51,
+      "read": 5,
+      "delegate": 4,
+      "git_audit": 1,
+      "edit": 7
+    },
+    "delegate_roles": {
+      "worker": 1,
+      "validator": 2,
+      "reviewer": 1
+    },
+    "terminal_result_text_chars": {
+      "bash": 98886,
+      "read": 22679,
+      "delegate": 11612,
+      "git_audit": 3998,
+      "edit": 1191
+    },
+    "benchmark_edit_start_turn": 41,
+    "root_cost_from_benchmark_edit_through_end": 0.386277
+  },
+  {
+    "id": "T3-lite-pds-head-2",
+    "mode": "lite",
+    "root_turns": 19,
+    "root_cost": 1.058234,
+    "child_cost": 0.01008888,
+    "first_delegate_tool_start_turn": 15,
+    "root_cost_through_first_dispatch_inclusive": 0.844325,
+    "root_direct_edit_write_calls": 0,
+    "root_edit_errors": 0,
+    "root_tool_starts": {
+      "bash": 22,
+      "read": 2,
+      "delegate": 2,
+      "git_audit": 1
+    },
+    "delegate_roles": {
+      "worker": 1,
+      "validator": 1
+    },
+    "terminal_result_text_chars": {
+      "bash": 85695,
+      "read": 9254,
+      "delegate": 3459,
+      "git_audit": 4683
+    },
+    "benchmark_edit_start_turn": null,
+    "root_cost_from_benchmark_edit_through_end": null
+  },
+  {
+    "id": "T3-native-pds-2",
+    "mode": "native",
+    "root_turns": 27,
+    "root_cost": 1.4215,
+    "child_cost": 0.011626220000000001,
+    "first_delegate_tool_start_turn": 17,
+    "root_cost_through_first_dispatch_inclusive": 0.958029,
+    "root_direct_edit_write_calls": 2,
+    "root_edit_errors": 0,
+    "root_tool_starts": {
+      "bash": 31,
+      "read": 4,
+      "subagents_enable": 1,
+      "subagent": 2,
+      "edit": 2
+    },
+    "delegate_roles": {},
+    "terminal_result_text_chars": {
+      "bash": 95647,
+      "read": 6505,
+      "subagents_enable": 120,
+      "subagent": 4876,
+      "edit": 311
+    },
+    "benchmark_edit_start_turn": null,
+    "root_cost_from_benchmark_edit_through_end": null
+  }
+]

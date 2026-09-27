@@ -1,0 +1,9 @@
+{
+  "target": "============================== 30 passed in 1.58s ==============================",
+  "suite": "======================= 12 failed, 1111 passed in 29.44s =======================",
+  "target_exit": 0,
+  "suite_exit": 1,
+  "target_failures": [],
+  "new_failures": [],
+  "pass": true
+}

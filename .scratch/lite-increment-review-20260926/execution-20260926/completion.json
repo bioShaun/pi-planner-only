@@ -1,0 +1,20 @@
+{
+  "finished_at": "2026-09-26T11:42:50.503060+00:00",
+  "attempts": 3,
+  "task_quality": "PASS",
+  "billing_evidence": "PASS",
+  "execution_protocol": "FAIL",
+  "overall_accepted": false,
+  "actual_total": 3.73554521,
+  "opus_total": 3.73554521,
+  "new_paid_calls_after_violation_discovery": 0,
+  "max_attempts_used": true,
+  "checkpoint_budget_usd": 10,
+  "known_tmp_residue_cleaned": true,
+  "archived_then_removed_files": 7,
+  "old_raw_files_preserved": 48,
+  "new_raw_files_hashed": 24,
+  "next_action": "fix common runtime temp-path constraints offline before any new paid sample",
+  "followup": "issues/02-runtime-temp-boundary.md",
+  "handoff": "deferred"
+}

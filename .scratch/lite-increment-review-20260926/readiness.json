@@ -1,0 +1,17 @@
+{
+  "checked_at": "2026-09-26T10:13:24.768763+00:00",
+  "analysis": "complete",
+  "mechanism_exploration": "complete; read-only source evidence",
+  "config_arithmetic_check": "PASS",
+  "native_regression_tests": 14,
+  "native_exit": 0,
+  "release_exit": 0,
+  "old_raw_run_hashes_unchanged": 48,
+  "old_price_entries_unchanged": true,
+  "new_root_price_model": "tcuni-claude/claude-opus-5-5",
+  "new_arms": 3,
+  "new_paid_attempts": 0,
+  "budget_status": "new 3-attempt / $10 actual-price checkpoint proposal awaits confirmation",
+  "implementation_scope": "three arm JSONs + one pricing entry; no plugin changes",
+  "new_campaign": "target-root-t3-opus-calibration-20260926"
+}
