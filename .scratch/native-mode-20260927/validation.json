@@ -1,0 +1,28 @@
+{
+  "release": {
+    "command": "external TMPDIR + slot cpu -- npm run test:release",
+    "exit": 0,
+    "log": "impl-release-rework.log"
+  },
+  "actual_host": {
+    "command": "env TMPDIR=/project/tmp/nm-check-0927 TMP=/project/tmp/nm-check-0927 TEMP=/project/tmp/nm-check-0927 node --experimental-strip-types .scratch/native-mode-20260927/host-check.mjs --busy",
+    "exit": 0,
+    "log": "host-busy-green-1.log",
+    "scope": "Pi0.87.1 real new/reload/resume with native-toolfixture; bothorders andliveLitebefore-switch cancellation"
+  },
+  "actual_upstream": {
+    "command": "env TMPDIR=/project/tmp/nm-check-0927 TMP=/project/tmp/nm-check-0927 TEMP=/project/tmp/nm-check-0927 node --experimental-strip-types .scratch/native-mode-20260927/upstream-check.mjs",
+    "exit": 0,
+    "log": "upstream-check-3.log",
+    "scope": "realpi-subagents0.71 viaofficialloader, subagents_enable then subagent actionlist inNative bothorders;0network/0model"
+  },
+  "known_reds": [
+    "host-busy-red.log (realnew discardedliveLite instance, correctedpre-switch)",
+    "upstream-check-1.log (plainNode lackedhostpeer alias; harness usesofficialloader)"
+  ],
+  "limitations": [
+    "Active/reload notglobalcross-instance lockguarantee",
+    "No livepaidmodeltrial",
+    "Prompt injection placement differs fromhistoricalbenchmarkuserprefix"
+  ]
+}

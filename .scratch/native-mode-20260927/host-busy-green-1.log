@@ -1,0 +1,25 @@
+{
+  "status": "PASS",
+  "results": [
+    {
+      "order": "upstream-first",
+      "new_reload_resume": "PASS",
+      "prompt_and_tools": "PASS",
+      "direct_lite_tools_refused": "PASS",
+      "legacy_on_off": "PASS",
+      "inflight_boundary": "PASS"
+    },
+    {
+      "order": "planner-first",
+      "new_reload_resume": "PASS",
+      "prompt_and_tools": "PASS",
+      "direct_lite_tools_refused": "PASS",
+      "legacy_on_off": "PASS",
+      "inflight_boundary": "PASS"
+    }
+  ],
+  "networkCalls": 0,
+  "modelTurns": 0,
+  "work": "/project/tmp/nm-check-0927/host-iTii9n",
+  "note": "Real installed Pi lifecycle with native-tool fixture; no live backend inference."
+}

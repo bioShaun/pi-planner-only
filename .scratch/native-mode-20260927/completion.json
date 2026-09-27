@@ -1,0 +1,17 @@
+{
+  "status": "completed",
+  "feature": "off/native/lite modes",
+  "default": "lite",
+  "legacy_on_off": "preserved with active-delegation guard",
+  "native_instruction": "实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。",
+  "release": "PASS",
+  "actual_host": "PASS",
+  "actual_upstream": "PASS management only",
+  "independent_final_review": "PASS",
+  "source_snapshot_intact": 47,
+  "new_paid_model_tests": 0,
+  "user_global_preferences_modified": false,
+  "published": false,
+  "report": "report.md",
+  "at": "2026-09-27T15:34:57.339435+00:00"
+}

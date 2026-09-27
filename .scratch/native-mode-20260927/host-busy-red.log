@@ -1,0 +1,7 @@
+AssertionError [ERR_ASSERTION]: real /new must not discard a live Lite delegation before mode switch
+
+false !== true
+
+    at scenario (file:///home/tcuni-claw/pi/pi-planner-only/.scratch/native-mode-20260927/host-check.mjs:135:14)
+    at async file:///home/tcuni-claw/pi/pi-planner-only/.scratch/native-mode-20260927/host-check.mjs:147:3
+{"status":"FAIL","results":[{"order":"upstream-first","new_reload_resume":"PASS","prompt_and_tools":"PASS","direct_lite_tools_refused":"PASS","legacy_on_off":"PASS"}],"networkCalls":0,"work":"/project/tmp/nm-check-0927/host-imoL70"}
