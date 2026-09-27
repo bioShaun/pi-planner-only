@@ -1,0 +1,7 @@
+PASS — Independent, read-only validation supports the six-run T3 campaign. The two run directories contain exactly six unique attempts, two per arm, with process exit 0. Each target run passed 30 tests; each masked suite has exactly the same 14 baseline failures. Both current summaries have empty invalid and incomplete lists.
+
+Compared JSON summaries and attempt audits with raw run files, recalculated Root costs from usage and weights, and checked seven indexed continuation-child transcripts and costs. Opus total $9.27323652 (direct $2.167946; lite $3.41325398; native $3.69203654). Actual total $0.390404648 (direct $0.073878792; lite $0.139299976; native $0.17722588). Child costs remain actual in both summaries. All 24 frozen source hashes and eight historical run hashes match; no extra attempts. No files changed.
+
+Limitations: old native1 eval.valid=false and STOP remain historical; read-only recovery reports valid. Attempt2 automatic audit checks_passed=false reflects the benchmark fixture change, whose two filename replacements weaken no assertions and are outside configured target/masked test paths. Six samples support no stable savings-rate claim.
+
+Attribution correction from the validator follow-up: Root made the two benchmark fixture filename edits, not a lite child. Top-level edit events in T3-lite-pds-head-1.jsonl at lines 25522–25523 show the failed first edit; lines 26168–26169 show the successful edit. The earlier child attribution was wrong; evaluation finding unchanged.

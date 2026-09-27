@@ -1,0 +1,7 @@
+REQUEST_CHANGES (code)
+
+Verified all 22 frozen file hashes and reviewed the assigned code, plan, supplied validation logs, and installed pi-subagents result schema. The two round-2 findings are addressed. One completion gap remains:
+
+- **High — missing exit evidence can produce a complete cost.** [runcheck.py](/home/tcuni-claw/pi/pi-planner-only/bench/runcheck.py:89) checks `.exit` only when it exists, while [summarize.py](/home/tcuni-claw/pi/pi-planner-only/bench/summarize.py:107) accepts `exit=None` for `total_cost`. If an attempt stops before writing `.exit` but leaves valid JSONL and an eval file, it can enter the comparison with a numeric cost despite an unknown remainder. Require an explicit zero exit for a complete attempt; retain observed spend as `known_cost_lower_bound` when exit evidence is absent, and add a missing-exit fault case.
+
+Root’s log reports 11 offline tests passing; I did not run tests or paid requests. Full release validation remains blocked by `/project/tmp` EROFS. This code verdict does not establish experimental acceptance.

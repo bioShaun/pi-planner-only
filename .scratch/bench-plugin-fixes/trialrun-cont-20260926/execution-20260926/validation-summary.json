@@ -1,0 +1,19 @@
+{
+  "timestamp": "2026-09-26T09:03:18.467480+00:00",
+  "native_tests": 14,
+  "native_exit": 0,
+  "release_exit": 0,
+  "release_suites": [
+    "typecheck",
+    "contract",
+    "git",
+    "delegate",
+    "host",
+    "index"
+  ],
+  "frozen_source_hashes_unchanged": 24,
+  "original_run_hashes_unchanged": 8,
+  "recomputed_opus": 2.25891032,
+  "recomputed_actual": 0.11108864,
+  "new_paid_runs": 0
+}

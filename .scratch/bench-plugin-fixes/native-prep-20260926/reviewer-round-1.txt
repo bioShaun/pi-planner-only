@@ -1,0 +1,9 @@
+REQUEST_CHANGES (code)
+
+Verified all 19 frozen file hashes. Reviewed the arm routing, accounting and validity checks, staged plan, six offline tests, and the installed pi-subagents result schema. Two cost-accounting issues remain:
+
+- **High — nested child spend is omitted.** [native_results.py](/home/tcuni-claw/pi/pi-planner-only/bench/native_results.py:38) collects only top-level `details.results`; [summarize.py](/home/tcuni-claw/pi/pi-planner-only/bench/summarize.py:75) prices only those rows and can report a complete total. Installed pi-subagents permits nesting by default (`DEFAULT_SUBAGENT_MAX_DEPTH = 2`) and includes nested costs in `sumResultsCost`. A child that delegates again therefore produces an understated, apparently complete benchmark cost. Account for nested usage without duplication, or mark such runs unpriced.
+
+- **Medium — resumed sessions are mistaken for duplicate results.** [native_results.py](/home/tcuni-claw/pi/pi-planner-only/bench/native_results.py:43) prioritizes `sessionFile` as the deduplication key. Pi-subagents’ `action="resume"` reuses the persisted session but starts a new run; distinct usage then triggers “conflicting duplicate child result” and excludes a legitimate run. Key results by run ID and child index, using the session path only when run identity is unavailable; add a resume fault test.
+
+The supplied log shows six offline tests passed. I did not execute tests or paid runs. Release validation remains blocked by `EROFS` at `/project/tmp`; this code review does not establish experimental acceptance.

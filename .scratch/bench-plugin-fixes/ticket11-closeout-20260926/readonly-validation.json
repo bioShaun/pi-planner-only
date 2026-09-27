@@ -1,0 +1,9 @@
+{
+  "timestamp": "2026-09-26T16:37:57.650662+08:00",
+  "run_files_unchanged": 8,
+  "opus": 2.25891032,
+  "actual": 0.11108864,
+  "offline_suite": "BLOCKED: required external TMPDIR is read-only",
+  "release": "BLOCKED: required external TMPDIR is read-only",
+  "paid_attempts_started": 0
+}

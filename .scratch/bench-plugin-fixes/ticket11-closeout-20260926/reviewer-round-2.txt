@@ -1,0 +1,7 @@
+REQUEST_CHANGES (code)
+
+1. [native_results.py](/home/tcuni-claw/pi/pi-planner-only/bench/native_results.py:77) still accepts `details={"results":[]}` with no `mode` when event-level `isError` is absent or false. The rejection exception correctly declines the event, but the empty-results check also skips it. With otherwise healthy Root evidence, `runcheck` can mark an unaccounted subagent result valid. Treat this empty array as an accounting gap regardless of `mode`, and add the case to [test_native.py](/home/tcuni-claw/pi/pi-planner-only/bench/test_native.py:198).
+
+2. [native_results.py](/home/tcuni-claw/pi/pi-planner-only/bench/native_results.py:66) calls `.get()` on a nonempty, non-dictionary `details` value. For example, `details=["invalid"]` raises `AttributeError` instead of recording the required accounting gap. Check the type before reading fields and cover a nonempty malformed value.
+
+The round-one case, `results=[]` with event-level `isError=true` and no `mode`, is fixed. All 27 manifest hashes matched; the permitted focused test passed. Supplied recomputation shows unchanged eight-run hashes, four delegates, one rejected duplicate, and actual/opus totals of $0.11108864/$2.25891032. The complete native and release suites remain unverified because the external TMPDIR is read-only.

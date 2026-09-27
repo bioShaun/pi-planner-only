@@ -1,0 +1,5 @@
+{
+  "path": "/project/tmp/ppo-bench/ticket11-closeout-20260926",
+  "writable": false,
+  "error": "[Errno 30] Read-only file system: '/project/tmp/ppo-bench/ticket11-closeout-20260926'"
+}

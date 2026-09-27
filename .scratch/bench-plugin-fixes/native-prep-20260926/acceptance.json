@@ -1,0 +1,17 @@
+{
+  "code_review": "PASS",
+  "contract_error": null,
+  "evidence_refs": [
+    ".scratch/bench-plugin-fixes/native-prep-20260926/release.log",
+    ".scratch/bench-plugin-fixes/trialrun-20260926/conditions.md",
+    ".scratch/bench-plugin-fixes/trialrun-20260926/runs-log.md",
+    ".scratch/bench-plugin-fixes/trialrun-20260926/report.md"
+  ],
+  "final_acceptance": "NOT_REQUESTED",
+  "isolation_requirement": "ordinary",
+  "review_kind": "code",
+  "review_verdict": "PASS",
+  "scope_id": "native-bench-prep-20260926",
+  "snapshot_id": "sha256:ff61e596128e601d2e197dbc49d5881c48152384e6352a113acb6c173efebc69",
+  "validation": "BLOCKED_TRIAL_STOPPED_BILLING_GAP"
+}

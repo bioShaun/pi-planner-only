@@ -1,0 +1,31 @@
+COMMAND: ['npm', 'run', 'test:release']
+TMPDIR: /project/tmp
+EXIT: 1
+
+> pi-planner-only@0.9.0-lite.0 test:release
+> npm run typecheck && npm test
+
+
+> pi-planner-only@0.9.0-lite.0 typecheck
+> tsc --noEmit
+
+
+> pi-planner-only@0.9.0-lite.0 test
+> node --experimental-strip-types contract.test.mjs && node --experimental-strip-types git.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types host.test.mjs && node --experimental-strip-types index.test.mjs
+
+contract.test: ok
+node:fs:3038
+  return binding.mkdtemp(prefix, options.encoding);
+                 ^
+
+Error: EROFS: read-only file system, mkdtemp '/project/tmp/ppo-git-XXXXXX'
+    at mkdtempSync (node:fs:3038:18)
+    at tempDir (file:///home/tcuni-claw/pi/pi-planner-only/test-helpers.mjs:36:9)
+    at file:///home/tcuni-claw/pi/pi-planner-only/git.test.mjs:190:13 {
+  errno: -30,
+  code: 'EROFS',
+  syscall: 'mkdtemp',
+  path: '/project/tmp/ppo-git-XXXXXX'
+}
+
+Node.js v24.14.0

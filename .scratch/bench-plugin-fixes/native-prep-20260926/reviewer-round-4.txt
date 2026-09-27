@@ -1,0 +1,5 @@
+PASS (code)
+
+Verified all 23 frozen file hashes and the snapshot ID. Reviewed the bounded diff, arm routing, native result schema, cost and validity guards, offline fault tests, and staged measurement plan. The prior missing-exit finding is closed: an absent or nonzero Pi exit makes the run invalid and leaves total cost unknown while retaining the observed lower bound. No actionable findings remain.
+
+Root’s logs show 12 offline tests passing; I did not run tests or paid requests. Full release testing and the pilot remain blocked by `/project/tmp` being read-only. This code verdict does not establish experimental acceptance.

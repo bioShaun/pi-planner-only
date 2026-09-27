@@ -1,0 +1,83 @@
+{
+  "runs": [
+    {
+      "id": "T3-lite-pds-strict-head-1",
+      "task": "T3",
+      "arm": "lite-pds-strict-head",
+      "rep": 1,
+      "mode": "lite",
+      "exit": 0,
+      "passed": true,
+      "wall": 625,
+      "root_turns": 15,
+      "delegates": 6,
+      "children": 0,
+      "root": {
+        "input": 41064,
+        "output": 17233,
+        "cacheRead": 491776,
+        "cacheWrite": 0
+      },
+      "child_cost": 0.04272774000000001,
+      "root_cost": 0.882033,
+      "total_cost": 0.92476074,
+      "refused": 0,
+      "detached": 0,
+      "truncated": 1,
+      "root_reads": 12,
+      "root_bash": 0,
+      "root_cache_read": 491776,
+      "extra_tools": 0,
+      "turns_per_delegate": 2.5
+    }
+  ],
+  "incomplete": [],
+  "invalid": [],
+  "attempt_spend": [
+    {
+      "id": "T3-lite-pds-strict-head-1",
+      "cost": 0.92476074,
+      "valid": true
+    }
+  ],
+  "attempt_spend_total": 0.92476074,
+  "attempt_spend_scope": "current runs directory only; archived void attempts excluded",
+  "aggregates": {
+    "lite-pds-strict-head": {
+      "runs": 1,
+      "pass": 1,
+      "pass_rate": 1.0,
+      "median_cost": 0.92476074,
+      "mean_cost": 0.92476074,
+      "median_root_turns": 15,
+      "median_wall": 625,
+      "root_tokens": {
+        "input": 41064,
+        "output": 17233,
+        "cacheRead": 491776,
+        "cacheWrite": 0
+      },
+      "mechanism": {
+        "refused": 0,
+        "detached": 0,
+        "truncated": 1,
+        "root_reads_med": 12,
+        "root_bash_med": 0,
+        "cache_read_med": 491776,
+        "turns_per_delegate_med": 2.5,
+        "extra_tools": 0
+      }
+    }
+  },
+  "task_aggregates": {
+    "T3|lite-pds-strict-head": {
+      "n": 1,
+      "pass": 1,
+      "median_cost": 0.92476074,
+      "min_cost": 0.92476074,
+      "max_cost": 0.92476074
+    }
+  },
+  "comparisons": {},
+  "mixed_plugin": {}
+}

@@ -1,0 +1,85 @@
+[
+  {
+    "run": "T3-lite-pds-head-1",
+    "child": "4867109f-bde6-458c-870f-36774d0e8e0a",
+    "role": "oracle",
+    "exit": 0,
+    "model": "tcuni/gpt-6-luna:low",
+    "cost": 0.0025802200000000003,
+    "transcript_sha256": "1d28108733d369a604eceec81e043a70adfc2047a4232b2e4db5bcc6b493aee5",
+    "diff_records": 0,
+    "edit_calls": 0,
+    "gold_refs": 0
+  },
+  {
+    "run": "T3-lite-pds-head-1",
+    "child": "5cb0ec13-86cd-41b8-97eb-496e464347dc",
+    "role": "worker",
+    "exit": 0,
+    "model": "tcuni/gpt-6-luna:medium",
+    "cost": 0.007279519999999999,
+    "transcript_sha256": "d0ca3adba6a3d4dc493eded3d08295139f4a5dcce1a220199cf74634e266db56",
+    "diff_records": 1,
+    "edit_calls": 6,
+    "gold_refs": 0
+  },
+  {
+    "run": "T3-lite-pds-head-2",
+    "child": "79cadb16-5b2f-4b7e-9ae0-fad751ca08d1",
+    "role": "oracle",
+    "exit": 0,
+    "model": "tcuni/gpt-6-luna:low",
+    "cost": 0.0018062400000000002,
+    "transcript_sha256": "17af6685dfa84948ecd4abb990b7cd5ab54c04b9f533715b53dda3ce420dca4d",
+    "diff_records": 0,
+    "edit_calls": 0,
+    "gold_refs": 0
+  },
+  {
+    "run": "T3-lite-pds-head-2",
+    "child": "b14f3497-9116-4384-88f1-8221db24c469",
+    "role": "worker",
+    "exit": 0,
+    "model": "tcuni/gpt-6-luna:medium",
+    "cost": 0.00828264,
+    "transcript_sha256": "4c9cd95d9329a38578785600e4cd06c506254eb1030ca73a71711fac2a9b08a1",
+    "diff_records": 1,
+    "edit_calls": 7,
+    "gold_refs": 0
+  },
+  {
+    "run": "T3-lite-pds-head-1",
+    "child": "baadb4c5-642d-4689-a041-b30bce15f35c",
+    "role": "reviewer",
+    "exit": 0,
+    "model": "tcuni/gpt-6-luna:high",
+    "cost": 0.007745480000000001,
+    "transcript_sha256": "6529402c7e0166106fa374442f527ffa58cdf616c0777f9de82ce23cb82d43a5",
+    "diff_records": 1,
+    "edit_calls": 0,
+    "gold_refs": 0
+  },
+  {
+    "run": "T3-lite-pds-head-1",
+    "child": "c0d6cc2a-e402-484b-8b36-a11edc2fea81",
+    "role": "oracle",
+    "exit": 0,
+    "model": "tcuni/gpt-6-luna:low",
+    "cost": 0.0031068800000000002,
+    "transcript_sha256": "56499f34ed158363baa2e8a84bf3b6c39d210accf09d28846ecf64fc623f0dba",
+    "diff_records": 0,
+    "edit_calls": 0,
+    "gold_refs": 0
+  },
+  {
+    "run": "T3-native-pds-2",
+    "child": "a4faa3f9-df8d-475f-8755-b0afe6432cdc",
+    "role": "worker",
+    "exit": 0,
+    "model": "tcuni/gpt-6-luna:medium",
+    "cost": 0.011626220000000001,
+    "transcript_sha256": "9beaa23b64df621011baa5e5f15057d17d91551686c21188f0e199370f954c4a",
+    "diff_records": 1,
+    "gold_refs": 0
+  }
+]

@@ -1,0 +1,13 @@
+{
+  "source_inputs_unchanged": 24,
+  "raw_run_files_hashed": 48,
+  "runs": 6,
+  "completed_child_artifacts_archived": 7,
+  "child_costs_match_summaries": true,
+  "new_campaign_stop": false,
+  "original_stop_preserved": true,
+  "unexpected_void_dirs": [],
+  "frozen_order_preserved": true,
+  "paid_health_calls": 0,
+  "task_retries": 0
+}

@@ -1,0 +1,19 @@
+{
+  "completed_at": "2026-09-26T09:51:35.465679+00:00",
+  "scope": "T3 direct/native/lite x2, six-attempt pilot only",
+  "attempts": 6,
+  "valid_after_readonly_recovery": 6,
+  "quality_passed": 6,
+  "opus_total": 9.27323652,
+  "actual_total": 0.390404648,
+  "checkpoint_budget": 10,
+  "continue": false,
+  "reason": "six-attempt cap reached",
+  "independent_evidence_validation": "PASS",
+  "ticket11": "done",
+  "ticket09": "done (pilot scope)",
+  "stages_1_to_4": "complete",
+  "handoff": "deferred: natural checkpoint absent and isolation recovery unverified",
+  "next_decision": "reassess plugin incremental value; no automatic expansion",
+  "savings_ratio_published": false
+}

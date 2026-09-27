@@ -1,0 +1,87 @@
+{
+  "runs": [
+    {
+      "id": "T3-native-pds-1",
+      "task": "T3",
+      "arm": "native-pds",
+      "rep": 1,
+      "mode": "native",
+      "exit": 0,
+      "passed": true,
+      "wall": 1063,
+      "root_turns": 39,
+      "delegates": 4,
+      "children": 4,
+      "root": {
+        "input": 106054,
+        "output": 30007,
+        "cacheRead": 1893120,
+        "cacheWrite": 0
+      },
+      "child_cost": 0.03190532,
+      "root_cost": 0.07918331999999999,
+      "total_cost": 0.11108863999999999,
+      "refused": null,
+      "detached": null,
+      "truncated": null,
+      "root_reads": 10,
+      "root_bash": 42,
+      "root_cache_read": 1893120,
+      "extra_tools": 0,
+      "turns_per_delegate": 9.75,
+      "rejected_duplicates": 1,
+      "known_cost_lower_bound": 0.11108863999999999
+    }
+  ],
+  "incomplete": [],
+  "invalid": [],
+  "attempt_spend": [
+    {
+      "id": "T3-native-pds-1",
+      "cost": 0.11108863999999999,
+      "known_cost_lower_bound": 0.11108863999999999,
+      "valid": true
+    }
+  ],
+  "attempt_spend_total": 0.11108863999999999,
+  "attempt_spend_scope": "current runs directory only; archived void attempts excluded",
+  "aggregates": {
+    "native-pds": {
+      "runs": 1,
+      "pass": 1,
+      "pass_rate": 1.0,
+      "median_cost": 0.11108863999999999,
+      "mean_cost": 0.11108863999999999,
+      "median_root_turns": 39,
+      "median_wall": 1063,
+      "root_tokens": {
+        "input": 106054,
+        "output": 30007,
+        "cacheRead": 1893120,
+        "cacheWrite": 0
+      },
+      "mechanism": {
+        "refused": null,
+        "detached": null,
+        "truncated": null,
+        "rejected_duplicates": 1,
+        "root_reads_med": 10,
+        "root_bash_med": 42,
+        "cache_read_med": 1893120,
+        "turns_per_delegate_med": 9.75,
+        "extra_tools": 0
+      }
+    }
+  },
+  "task_aggregates": {
+    "T3|native-pds": {
+      "n": 1,
+      "pass": 1,
+      "median_cost": 0.11108863999999999,
+      "min_cost": 0.11108863999999999,
+      "max_cost": 0.11108863999999999
+    }
+  },
+  "comparisons": {},
+  "mixed_plugin": {}
+}

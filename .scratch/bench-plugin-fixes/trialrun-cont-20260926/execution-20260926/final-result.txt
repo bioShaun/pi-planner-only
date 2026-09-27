@@ -1,0 +1,7 @@
+PASS (final)
+
+All 25 frozen files match the assigned snapshot. The five benchmark source files also match the earlier passing code-review manifest. Source inspection confirms that only a rejection with event-level `isError: true`, the marker text, and dictionary details lacking `runId`, `results`, and `asyncId` is exempted; empty or malformed results remain accounting gaps, while a healthy management result remains valid.
+
+The recorded external-TMPDIR validation passed: 14 native tests and `test:release` typecheck plus all five suites. The eight historical run hashes match before and after read-only recomputation. Attempt 1 records four priced children, one rejected duplicate, and totals of $2.25891032 opus and $0.11108864 actual.
+
+Scope is ticket 11 only. I inspected the frozen source and executable evidence; I did not rerun tests or make model requests.

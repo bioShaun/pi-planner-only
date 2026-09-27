@@ -1,0 +1,5 @@
+PASS (code)
+
+The round-one and round-two findings are closed in the frozen snapshot. Empty `results` without explicit healthy management mode records an accounting gap regardless of `isError`; non-dictionary `details` records a gap without crashing. The rejection exception requires event-level `isError: true`, the marker, and dictionary details with none of the three launch-evidence keys. Existing assertions remain intact. The focused regression test passed.
+
+All 34 manifest hashes matched. Supplied read-only recomputation records four real children, one rejected duplicate, and unchanged totals of $0.11108864 actual and $2.25891032 opus; the before/after hashes for eight historical run files match. The full native and release suites remain unverified because the external TMPDIR is read-only. This is code review only, not final acceptance.

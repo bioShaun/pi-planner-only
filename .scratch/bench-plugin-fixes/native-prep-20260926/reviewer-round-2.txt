@@ -1,0 +1,9 @@
+REQUEST_CHANGES (code)
+
+Verified all 21 frozen file hashes and reviewed the assigned code, plan, validation logs, and installed pi-subagents result schema. The earlier nested-cost and resumed-session findings are addressed. Two accounting gaps remain:
+
+- **High — missing metadata can silently erase native child spend.** [runcheck.py](/home/tcuni-claw/pi/pi-planner-only/bench/runcheck.py:18) treats an absent or unreadable `.meta.json` as non-native. [summarize.py](/home/tcuni-claw/pi/pi-planner-only/bench/summarize.py:27) does likewise, leaves child cost at zero, and can produce a numeric `total_cost` with `--weight opus` from Root usage alone. A native transcript whose metadata is lost can therefore enter the comparison with apparently complete, understated cost. Require valid arm metadata before accepting or pricing an attempt; add a missing-metadata fault case.
+
+- **Medium — truncated Root transcripts can yield apparently complete attempt spend.** [runcheck.py](/home/tcuni-claw/pi/pi-planner-only/bench/runcheck.py:32) silently skips malformed JSONL lines, while [summarize.py](/home/tcuni-claw/pi/pi-planner-only/bench/summarize.py:94) prices Root usage whenever at least one intact assistant turn remains. If a later Root usage event is truncated, the earlier turns can be reported as the complete cost. A nonzero `.exit` also does not prevent this numeric attempt total. Mark incomplete transcript or nonzero-exit spend as a known lower bound with an unknown remainder, and fault-test that case.
+
+Nine offline tests passed in Root’s supplied log; I did not run tests or paid requests. Full release validation remains blocked by `/project/tmp` EROFS.
