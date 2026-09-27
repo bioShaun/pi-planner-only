@@ -1,43 +1,51 @@
-# 交接：bench 与插件修复（截至 2026-09-25，HEAD c0262ed 之后）
+# 交接：bench 与插件修复（更新于 2026-09-27，本地 HEAD 32c4a86 + 本文件所在提交）
 
 新 session 先读本文件，再读 `spec.md` 和 `issues/` 下对应的票。仓库：`/home/tcuni-claw/pi/pi-planner-only`。
 
 ## 背景
 
-我们复盘了 control campaign 的全部 run（结果在 `/project/tmp/ppo-bench/results/*/runs`，分析脚本在 `.scratch/bench-review/metrics.py` 和 `timeline.py`），在 bench 和插件两边都找到了问题，整理进 `spec.md`，并拆成 01–09 共九张票。
+我们复盘了 control campaign 的全部 run（结果在 `/project/tmp/ppo-bench/results/*/runs`，分析脚本在
+`.scratch/bench-review/metrics.py` 和 `timeline.py`），在 bench 和插件两边都找到了问题，整理进 `spec.md`，
+并拆成 01–12 共十二张票。
 
 ## 状态
 
 | 票 | 状态 | 提交 | 要点 |
 |---|---|---|---|
-| 01 克隆不带未来提交，runcheck 检查答案泄漏 | done | f8b0a6f | `bench/prepare-clone.sh`；历史上泄漏过的 run 现在会被判为 INVALID（cpass-ds 组 27 条里有 10 条） |
-| 02 标准答案检查，修 T1 | done | 00aef64 | `bench/goldcheck.sh`、`bench/evaluate.sh`；T1 现在有 4 个目标测试（字段 `testRefs`），和旧的 T1 结果不能直接比 |
-| 03 WORKTREE 冻结成提交号 | done | 2c63db4 | 冻结后的值记在 campaign.json 的 `worktreeSha` |
-| 04 机制指标 | done | 23036a7 | summarize 输出 `MECH` 行；新增 `--metric` 参数 |
-| 05 关闭 intercom 桥 | done | a3d26d7 | 请求里带 `intercomBridge:{mode:"off"}` |
-| 06 报告长度要求与截断 | done | fdf21f2 | 要求 3000 字以内；截断上限 6000，保留前 60% |
-| 07 validator 称不能运行命令 | done | aed02cf | validator 结尾说明写明"有 bash，必须实际运行"；`/tmp` 的问题插件侧不处理 |
-| 08 新任务与 direct arm | ready-for-agent | a59588e、c0262ed | arm `direct-pds` 和 `lite-pds-strict-head` 已加；决定接入 nf-pangenome-design `a04c1d7` 作为 T4，接入步骤见票 |
-| 09 A/B 测量 | 已暂停，等维护者说开始 | e0ffaae | 冒烟测试通过（`smoke-head-t3`），完整命令见票 |
-| 10 本 session 暴露的插件问题 | needs-triage | — | 见 `issues/10-session-findings.md` |
+| 01–07 克隆隔离 / goldcheck / 冻结 / 机制指标 / intercom / 报告预算 / validator 提示 | done | f8b0a6f…aed02cf | 细节见各票；01 的父提交克隆与答案泄漏检查、02 的 `testRefs` 都改变了旧结果的可比性 |
+| 08 新任务与 direct arm | done（T4 接入未做，见"历史安排"） | a59588e、c0262ed | `direct-pds`、`lite-pds-strict-head` 已加 |
+| 09 direct/native/lite 三臂测量 | done | e0ffaae… | 六次完成，有效 6/6、质量 6/6；opus $9.27323652 / actual $0.390404648，独立核验 PASS |
+| 10 session 暴露的插件问题 | done | c6a1496、15cbbbd | count-only 无关脏路径、explorer 输出文件收口、campaign slot 预检 |
+| 11 native"拒绝重复调用"被误判为费用缺口 | done | 0a6ec3e（修复）、21990d1（票面） | `details={}` 的拒绝回执不再算缺口，有效性恢复 |
+| 12 native 回放用例依赖本机归档 | done | 32c4a86 | 改成仓库内 gz fixture，缺失即失败不再跳过 |
+| 01（lite-t2c-focused）T2c 任务定义入库 | ready-for-human | — | `bench/tasks/T2c.json` 的 `repo` 指向仓库内克隆，且 target `c3dd016` 不在 canonical 仓；先推 commit，再删 `.gitignore` 里的两行排除 |
 
 ## 下一步
 
-- **"continue with 08"**：按票 08 最后一条 Comment 的步骤接入 T4：
-  - 在 `/project/tmp/ppo-bench/envs/nf-pangenome-design/` 建 venv；
-  - 写 `bench/tasks/T4.json` 和 `T4.md`，Markdown 部分参照 T1.md 的格式（commit message 加一行要求）；
-  - 生成 masked-suite 基线，放到 `bench/baselines/T4.failures.txt`；
-  - 确认目标测试在 BASE 上失败，并且 `bench/goldcheck.sh T4` 输出 PASS；
-  - 再用 `bench/campaign.sh t4-calib 2 T4 lite-pds-strict-head --parallel 2` 校准难度。这一步要花模型额度，先问维护者。
-- **"start 09"**：`bench/campaign.sh ab-head-vs-297 6 T1,T2,T3 lite-pds-strict,lite-pds-strict-head,direct-pds --parallel 3`，共 54 条 run，大约 4–5 小时，消耗 ClinePass 额度。T4 接入后可以加进任务列表。
-  跑完后汇总：
-  - `python3 bench/summarize.py /project/tmp/ppo-bench/results/ab-head-vs-297/runs --baseline lite-pds-strict --metric <cost|root_cache_read|root_reads|truncated|refused|detached>`
-  - 重点检查：05 之后 detached 是否为 0；06 之后 truncated 和 root_reads 是否下降；validator 说"不能运行"的比例；refused 次数，看 `2f934a8` 的措辞改动有没有效果。
-  - 冒烟时 explorer 报告仍有约 6000 字，3000 字的要求可能没管住。
+- **付费矩阵停止**（2026-09-27 决定）：不扩样本、不因一次正向信号加角色、强化 strict 或启用 handoff；
+  下一阶段只记录真实开发任务里自然出现的效果与失败，出现具体缺口才做针对性修复。
+- **handoff 继续延后**：等自然长会话（自然达到 `PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS` 且仍有实质工作）
+  与同检查点隔离恢复证据；默认 off 不变。见 `docs/lite-handoff-measurement-protocol.md#current-plan`。
+- **T2c 任务定义入库**：先完成上表最后一行票面（把 `c3dd016` 推进 `/public/scripts/tc-probe-design-v2`），
+  再把 `T2c.json` 的 `repo` 改成 canonical 路径、删掉 `.gitignore` 里 `bench/tasks/T2c.{json,md}` 两行。
+- **推送**：本地有 13 个提交未推送（`origin/main` 停在 `c0262ed`，远端 ref 自 09-25 未 fetch）。
+  维护者本轮选择先不推送；要落地先 `git fetch` 看上游是否前进，再决定直接推 main 还是开分支 PR。
+- **历史安排（已作废，不要再执行）**：票 08 的 T4 接入步骤、`ab-head-vs-297` 的 54 条 campaign。
+  需要新的付费运行时必须先取得维护者确认。
 
 ## 约束
 
-- 本仓库遵循 planner-only 流程：Root 负责规划和验收，大块工作交给 delegate；接受改动前自己看 diff；提交用 git_commit。
-- 插件改动：`TMPDIR=/project/tmp/ppo-review npm run test:release` 必须全绿；`git diff | grep '^-.*assert'` 必须没有输出；新加的守卫都要配故障注入测试。
-- 重任务（跑测试套件、campaign）先执行 `slot audit` 和 `slot status` 并写入日志，再用 `slot` 提交；campaign.sh 会自己做这一步。不要往 `/tmp` 写任何东西；克隆、临时文件和环境都放在 `/project/tmp/ppo-bench`。不要改 `/public/scripts`。
+- 本仓库遵循 planner-only 流程：Root 负责规划和验收，大块工作交给 delegate；接受改动前自己看 diff；
+  提交用 `git_commit`。
+- 插件改动：`TMPDIR=/project/tmp/ppo-review npm run test:release` 必须全绿；`git diff | grep '^-.*assert'`
+  必须没有输出；新加的守卫都要配故障注入测试。
+- bench 改动：`TMPDIR=<仓库外可写> python3 -B bench/test_native.py`（36 项）与 `npm run test:release` 都要全绿。
+  本机 `/project/tmp` 只读时会有 8 项 guard/Landlock 用例失败，那是环境限制，必须换可写环境复跑后才能声明通过。
+- 重任务（测试套件、campaign）先执行 `slot audit` 和 `slot status` 并把输出写入日志，再用 `slot` 提交；
+  `campaign.sh` 会自己做这一步。不要往 `/tmp` 写任何东西；克隆、临时文件和环境都放在 `/project/tmp/ppo-bench`。
+  不要改 `/public/scripts`。
+- 证据落库位置：`.scratch/bench-plugin-fixes/verify-commit-20260927/`（`f2dc9e3..21990d1` 的提交后验收）与
+  `.scratch/bench-plugin-fixes/ticket12-fixture-20260927/`（fixture 哈希与验证日志）。
+- `.gitignore` 已排除 bench 运行克隆、原始转录、freeze 打包与本机工具目录；新增证据前先确认不会被忽略规则吃掉
+  （`git check-ignore -v <path>` 应无输出）。
 - 维护者关心 token 消耗：任何会花模型额度的 campaign 都要先确认。
