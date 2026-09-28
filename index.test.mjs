@@ -72,7 +72,7 @@ try {
 	assert.deepEqual(h.active(), ["read", "bash", "edit", "write", "delegate", "git_audit", "git_commit", "handoff"]);
 	const injected = await h.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, h.ctx);
 	assert.ok(injected.systemPrompt.startsWith("BASE\n\n[PLANNER-ONLY]"));
-	for (const strict of [false, true]) assert.ok(plannerPrompt(strict).length < 1_300, "prompt should stay ~300 tokens");
+	for (const strict of [false, true]) assert.ok(plannerPrompt(strict).length < 1_700, "prompt should stay short (candidate cap 1,700 chars)");
 	assert.match(plannerPrompt(true), /Strict mode/);
 	const { loadLimits } = await import("./delegate.ts");
 	assert.match(plannerPrompt(false), /A child has 10 minutes\. Do not delegate work that needs longer/);
@@ -83,8 +83,17 @@ try {
 	assert.match(plannerPrompt(false), /commit with git_commit: pass paths when the work tree has unrelated changes/);
 	assert.match(plannerPrompt(false), /explorer.*reading-heavy.*logs\/transcripts.*only its findings enter your context/);
 	assert.match(plannerPrompt(false), /reviewer.*no shell.*uncommitted changes only.*before git_commit/);
-	assert.match(plannerPrompt(false), /fails or times out.*narrower task.*report\/last tool results before doing the work yourself/);
+	assert.match(plannerPrompt(false), /fails or times out.*delegate a corrected task.*report\/last tool results before doing the work yourself/);
+	assert.match(plannerPrompt(false), /cannot see this conversation or ask you mid-run/);
+	assert.match(plannerPrompt(false), /Decide public interfaces, cross-module choices, and data flow yourself before delegating; if key facts are unknown, send an explorer first/);
+	assert.match(plannerPrompt(false), /One delegation = one deliverable that can be checked on its own; fold setup into it; merge repeated edits that share one check/);
+	assert.match(plannerPrompt(false), /reports BLOCKED, first decide why \(missing context, too big, undecided interface, too hard for its model\)/);
+	assert.match(plannerPrompt(false), /add context, settle the interface, split only if too big/);
+	assert.match(plannerPrompt(true), /Decide public interfaces, cross-module choices/);
+	assert.match(plannerPrompt(true), /reports BLOCKED, first decide why/);
+	assert.match(plannerPrompt(true), /add context, settle the interface, split only if too big/);
 	assert.match(h.tools.get("delegate").parameters.properties.role.description, /logs, or transcripts and return findings/);
+	assert.match(h.tools.get("delegate").parameters.properties.task.description, /goal as an observable result.*what must not change.*decisions already made \(public interfaces, implementation approach, existing code to reuse; pseudocode only where a key algorithm is still ambiguous\).*acceptance with key edge cases.*exact check command and expected result/);
 	assert.match(h.tools.get("delegate").parameters.properties.role.description, /no shell, sees files and uncommitted changes \(review before committing\)/);
 	assert.match(h.tools.get("delegate").description, /Worth it for multi-file work or long reading; outside strict mode, do small tasks \(about ≤2 files\) yourself\./);
 	assert.match(h.tools.get("delegate").description, /worker, explorer, and validator run one at a time per repository \(a second one is refused\); a reviewer or another repository can run alongside\./);

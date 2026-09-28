@@ -32,10 +32,27 @@ A role "holds the cwd" when its agent has bash or write: a second such child in
 the same directory is refused until the first ends. If a stop cannot be
 confirmed, the directory stays held until the late terminal arrives.
 
-Root also gets a short prompt (about 300 tokens): do small things yourself,
-delegate larger work, judge results by the diff and check output rather than
-the child's claims, and re-delegate with the previous report plus specific
-fixes when rework is needed.
+Root also gets a short prompt (roughly 400 tokens; estimate): do small things yourself,
+delegate larger work, decide public interfaces and cross-module choices before
+delegating (explore first when facts are missing), assign one independently
+checkable deliverable per delegation, judge results by the diff and check output
+rather than the child's claims, and re-delegate a corrected task (add context,
+settle the interface, or split only if too big) with the previous report when
+rework is needed.
+
+A worker first checks supplied references and existing code patterns, then stops
+and reports `BLOCKED:` only if a required public-interface or cross-module decision
+is still unresolved, the task conflicts with the code, or changes are out of scope;
+this is a text convention, not parsed by the plugin. Example task package (illustrative):
+
+```text
+Goal: expired cache entries return a miss on read; unexpired ones return their value.
+Scope: src/cache.ts and test/cache.test.ts only; do not change the storage interface or eviction policy.
+Decided: keep get(key) and the injected clock.now(); an entry is expired when now >= expiresAt.
+Approach: in get(), compare clock.now() with entry.expiresAt before returning; follow the existing has() check.
+Acceptance: tests for a valid entry, one exactly at expiresAt, and one past it.
+Check: npm test -- cache.test.ts, exit code 0; report the diff.
+```
 
 The status line shows Root and child tokens and cost for the session, and Root's share of each, for example `root 4.17M $3.854 · children(3, 1 failed) 2.82M $0.103 · root share 60% tok · 97% $`. Token counts include cache reads.
 

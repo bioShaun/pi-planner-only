@@ -25,7 +25,18 @@
 
 agent 有 bash 或 write 权限就会占用 cwd：同一目录里第二个这样的子代理会被拒绝，直到第一个结束。停止请求得不到确认时，目录一直保持占用，直到迟到的终态到达。
 
-Root 还会收到一段约 300 token 的提示：小事自己做，大活委派；按 diff 和检查输出判断结果，不信子代理自述；返工时带上上次报告和具体修改意见重新委派。
+Root 还会收到一段简短提示（约 400 token，估算）：小事自己做，大活委派；委派前自行决定公共接口和跨模块选择（事实不明时先派 explorer）；每次委派只交付一个可独立检查的成果；按 diff 和检查输出判断结果，不信子代理自述；返工时带上上次报告重新委派修正后的任务（补充上下文、确定接口，或仅在任务过大时拆分）。
+
+Worker 先检查提供的参考资料和现有代码模式；仅当必需的公共接口或跨模块决策仍未解决、任务与代码冲突，或需要修改范围外内容时停止并报告 `BLOCKED:`；这是文本约定，插件不会解析。任务包示例（仅供说明）：
+
+```text
+Goal: expired cache entries return a miss on read; unexpired ones return their value.
+Scope: src/cache.ts and test/cache.test.ts only; do not change the storage interface or eviction policy.
+Decided: keep get(key) and the injected clock.now(); an entry is expired when now >= expiresAt.
+Approach: in get(), compare clock.now() with entry.expiresAt before returning; follow the existing has() check.
+Acceptance: tests for a valid entry, one exactly at expiresAt, and one past it.
+Check: npm test -- cache.test.ts, exit code 0; report the diff.
+```
 
 状态栏显示本会话 Root 与子代理的 token 和费用，以及 Root 在两者中各自的占比，例如 `root 4.17M $3.854 · children(3, 1 failed) 2.82M $0.103 · root share 60% tok · 97% $`。token 计数包含缓存读取。
 

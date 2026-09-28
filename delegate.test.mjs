@@ -61,6 +61,10 @@ const respond = (bus, req, over = {}) =>
 	assert.match(ROLE_AGENTS.explorer.closing, /Root receives that file instead of your final message: write it once, at the end/);
 	assert.match(ROLE_AGENTS.explorer.closing, /If you did not finish, begin the report with INCOMPLETE/);
 	assert.match(ROLE_AGENTS.worker.closing, /Change only what the task asks; leave unrelated lines as they are\./);
+	assert.match(ROLE_AGENTS.worker.closing, /Make ordinary local choices yourself/);
+	assert.match(ROLE_AGENTS.worker.closing, /required public-interface or cross-module decision is still unresolved after checking the supplied references and existing code patterns/);
+	assert.match(ROLE_AGENTS.worker.closing, /do not guess and do not revert your edits/);
+	assert.match(ROLE_AGENTS.worker.closing, /begin the report with BLOCKED: what is done, what is missing, and the evidence/);
 	// Bench: 7/250 oracle validators answered "no execution tool" without trying bash (ticket 07).
 	assert.match(ROLE_AGENTS.validator.closing, /You have a `bash` tool: run the requested checks yourself/);
 	await runDelegation(deps(bus), { role: "validator", task: "check", cwd: "/w" });

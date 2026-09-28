@@ -70,11 +70,12 @@ export function plannerPrompt(strict: boolean, limits: DelegationLimits = DEFAUL
 			? "- Strict mode: you cannot edit, write, or run bash yourself. Delegate implementation to role \"worker\" and check runs to \"validator\"."
 			: "- Do small things yourself (about ≤2 files or ≤10 minutes of work). Delegate larger implementation to role \"worker\".",
 		"- Other roles: \"explorer\" for broad code searches and reading-heavy work (logs/transcripts); only its findings enter your context. \"validator\" runs checks; \"reviewer\" is read-only, has no shell, and sees files plus uncommitted changes only, so run it before git_commit.",
-		"- Children cannot see this conversation; give `task` the goal, paths, constraints, and verification.",
+		"- Children cannot see this conversation or ask you mid-run, so `task` must stand alone. Decide public interfaces, cross-module choices, and data flow yourself before delegating; if key facts are unknown, send an explorer first.",
+		"- One delegation = one deliverable that can be checked on its own; fold setup into it; merge repeated edits that share one check.",
 		`- A child has ${timeoutMinutes(limits)} minutes. Do not delegate work that needs longer; split it.`,
 		"- For another repository, pass `cwd` to delegate, git_audit, and git_commit.",
 		"- Check the diff and command output yourself before accepting; do not rely on child claims.",
-		"- If a child fails or times out, delegate again with a narrower task and its report/last tool results before doing the work yourself.",
+		"- If a child fails or times out, or reports BLOCKED, first decide why (missing context, too big, undecided interface, too hard for its model), then delegate a corrected task (add context, settle the interface, split only if too big) with its report/last tool results before doing the work yourself.",
 		"- A timed-out child's result includes its last tool results; reuse them.",
 		"- Before reverting or reporting a child's change, check it against your task: yours or its own?",
 		"- After accepting changes, commit with git_commit: pass paths when the work tree has unrelated changes.",
@@ -561,7 +562,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 			}),
 			task: Type.String({
 				minLength: 1,
-				description: "Self-contained instructions: goal, relevant paths, constraints, and how to verify. The child does not see this conversation.",
+				description: "Self-contained task: goal as an observable result; scope (files/functions, what must not change); decisions already made (public interfaces, implementation approach, existing code to reuse; pseudocode only where a key algorithm is still ambiguous); acceptance with key edge cases; the exact check command and expected result. The child does not see this conversation.",
 			}),
 			cwd: Type.Optional(Type.String({
 				description: "The repository or directory the child works in. Set it when the target is not the session cwd; the diff summary uses it, and the lock covers its whole repository.",
