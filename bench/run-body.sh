@@ -10,6 +10,9 @@ REP=${3:?}
 # only the last attempt writes STOP. Default 1 attempt keeps the old fail-fast behaviour.
 ATTEMPT=${BENCH_ATTEMPT:-1} MAX_ATTEMPTS=${BENCH_MAX_ATTEMPTS:-1}
 [[ $ATTEMPT =~ ^[1-9][0-9]*$ && $MAX_ATTEMPTS =~ ^[1-9][0-9]*$ ]] || { echo "BENCH_ATTEMPT/BENCH_MAX_ATTEMPTS must be positive integers" >&2; exit 2; }
+# Wall-clock cap for one pi run, in seconds.
+RUN_TIMEOUT=${BENCH_RUN_TIMEOUT:-3600}
+[[ $RUN_TIMEOUT =~ ^[1-9][0-9]*$ ]] || { echo "BENCH_RUN_TIMEOUT must be a positive integer" >&2; exit 2; }
 # Record a failure: RETRY + exit 5 while attempts remain, else STOP + the given exit code.
 fail_run() {
   local code=$1 msg=$2
@@ -140,12 +143,12 @@ if [[ $MODE == lite ]]; then PI_ARGS=(-ne -e "$SUBAGENTS" -e "$PLUGIN" --model "
 if [[ $MODE == native ]]; then PI_ARGS=(-ne -e "$SUBAGENTS" --model "$ROOT_MODEL" --no-session --mode json -p "$PROMPT"); fi
 if [[ ${BENCH_DRY_RUN:-0} == 1 ]]; then
   (( ${#ARM_ENV[@]} )) && echo "arm env: ${ARM_ENV[*]}"
-  python3 - "${PI_ARGS[@]}" "$PROMPT" <<'PY'
+  python3 - "$RUN_TIMEOUT" "${PI_ARGS[@]}" "$PROMPT" <<'PY'
 import sys
-args=sys.argv[1:-1]; prompt=sys.argv[-1]
+timeout=sys.argv[1]; args=sys.argv[2:-1]; prompt=sys.argv[-1]
 for i,a in enumerate(args):
  if a==prompt: args[i]=f'<prompt {len(prompt)} chars>'
-print('timeout 3600 pi '+' '.join(__import__('shlex').quote(x) for x in args))
+print('timeout '+timeout+' pi '+' '.join(__import__('shlex').quote(x) for x in args))
 PY
   exit 0
 fi
@@ -159,7 +162,7 @@ cd "$CLONE" || exit 2
 BASE=${BASE_LINE#BASE=}
 echo "base=$BASE clone=$CLONE"
 T_START=$(date +%s)
-if [[ $MODE == lite ]]; then env -u PI_PLANNER_ONLY_HANDOFF -u PI_PLANNER_ONLY_STRICT "${ARM_ENV[@]}" PI_PLANNER_ONLY=1 timeout 3600 pi "${PI_ARGS[@]}" </dev/null >"$RUNS/$ID.jsonl" 2>"$RUNS/$ID.stderr"; else env -u PI_PLANNER_ONLY -u PI_PLANNER_ONLY_HANDOFF -u PI_PLANNER_ONLY_STRICT "${ARM_ENV[@]}" timeout 3600 pi "${PI_ARGS[@]}" </dev/null >"$RUNS/$ID.jsonl" 2>"$RUNS/$ID.stderr"; fi
+if [[ $MODE == lite ]]; then env -u PI_PLANNER_ONLY_HANDOFF -u PI_PLANNER_ONLY_STRICT "${ARM_ENV[@]}" PI_PLANNER_ONLY=1 timeout "$RUN_TIMEOUT" pi "${PI_ARGS[@]}" </dev/null >"$RUNS/$ID.jsonl" 2>"$RUNS/$ID.stderr"; else env -u PI_PLANNER_ONLY -u PI_PLANNER_ONLY_HANDOFF -u PI_PLANNER_ONLY_STRICT "${ARM_ENV[@]}" timeout "$RUN_TIMEOUT" pi "${PI_ARGS[@]}" </dev/null >"$RUNS/$ID.jsonl" 2>"$RUNS/$ID.stderr"; fi
 PI_EXIT=$?
 echo $(($(date +%s)-T_START)) >"$RUNS/$ID.wall"
 echo "$PI_EXIT" >"$RUNS/$ID.exit"
