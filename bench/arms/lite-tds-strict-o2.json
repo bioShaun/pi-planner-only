@@ -1,0 +1,1 @@
+{"name": "lite-tds-strict-o2", "mode": "lite", "rootModel": "tcuni-ds/deepseek/deepseek-v4.1-flash", "pluginRef": "12f13e63bae387830530517a965dd71e908db61f", "promptPrefix": "你是规划与审核者：实现和跑测试交给 delegate，自己负责拆分、检查 git diff 与测试结果。", "env": {"PI_PLANNER_ONLY_STRICT": "1", "PI_PLANNER_ONLY_HANDOFF": "off"}}
