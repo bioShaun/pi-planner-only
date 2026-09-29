@@ -43,7 +43,7 @@ export const ROLE_AGENTS: Record<Role, { agent: string; exclusive: boolean; clos
 	worker: {
 		agent: "worker",
 		exclusive: true,
-		closing: "Change only what the task asks; leave unrelated lines as they are. Make ordinary local choices yourself (names, following existing patterns in the code). Stop only if the task conflicts with the code, a required public-interface or cross-module decision is still unresolved after checking the supplied references and existing code patterns, or the work needs changes outside its scope: then do not guess and do not revert your edits; begin the report with BLOCKED: what is done, what is missing, and the evidence. When you finish, end with a short report (3-10 lines): what you changed, how you verified it (commands and results), and anything left undone.",
+		closing: "Work in few turns: send independent reads, searches, and inspection commands together in one turn (at most 4); read a small file whole and a large file's relevant range once, not in repeated slices; combine nearby edits into one edit or patch call. Change only what the task asks; leave unrelated lines as they are. Make ordinary local choices yourself (names, following existing patterns in the code). Stop only if the task conflicts with the code, a required public-interface or cross-module decision is still unresolved after checking the supplied references and existing code patterns, or the work needs changes outside its scope: then do not guess and do not revert your edits; begin the report with BLOCKED: what is done, what is missing, and the evidence. When you finish, end with a short report (3-10 lines): what you changed, how you verified it (commands and results), and anything left undone.",
 	},
 	explorer: {
 		agent: "scout",

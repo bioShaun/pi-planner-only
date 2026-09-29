@@ -73,8 +73,8 @@ Root 已能把任务派出去，但 worker 模型慢。目标是缩短从提需�
 
 ## 7. 实施顺序
 
-1. **O2**（第 10.3 节）：一段 worker 指令。O1 已完成。
-2. **O3、O4**：写进 Root 的 prompt 和做法；O4 需要先定下后台作业怎么提交、结果怎么取回、最终由谁验收。
+1. **O2**（第 10.3 节）：一段 worker 指令。O1 已完成。（已实施，见 10.5）
+2. **O3、O4**：写进 Root 的 prompt 和做法；O4 需要先定下后台作业怎么提交、结果怎么取回、最终由谁验收。（已实施最小版本，见 10.5）
 3. **固定任务对照实验**：用同一组 bench 任务，分别测 O2 前后、O5（worker 用 luna low）前后的轮数、总耗时和质量。
 4. **Native 并发试验**：选一个能拆成 3 个独立部分的真实需求，按第 5 节 D 执行。计时从 Root 开始拆任务，一直到合并后整体验收完成，包括启动、合并和返工。与串行做一次对比。
 5. **explorer 解锁**：按第 6 节列出的问题单独评估。
@@ -129,3 +129,11 @@ Root 已能把任务派出去，但 worker 模型慢。目标是缩短从提需�
 - 样本来自日常使用，任务类型混杂，没有对照组；上面的预期都是推测，需要用固定任务的对照实验验证。
 - 模型时间无法拆成排队、首 token 等待和生成。要判断短输出轮次的 6 秒来自哪里，需要单独测：同一个模型走不同路由，发极短的请求，比较延迟。
 - `worker_phases.py` 只识别 `edit`、`write`、`apply_patch`，没识别 bash 写文件。
+
+### 10.5 实施状态
+
+- **O1**：无需改动（见 10.3）。
+- **O2**：已实施。`ROLE_AGENTS.worker.closing` 开头加入：“Work in few turns: send independent reads, searches, and inspection commands together in one turn (at most 4); read a small file whole and a large file's relevant range once, not in repeated slices; combine nearby edits into one edit or patch call.”考虑到并非所有环境都配了 `apply_patch`，措辞用“edit or patch call”。
+- **O3**：大部分已在 `3f58416` 中实施：`delegate` 的 `task` 参数说明已要求写明范围（文件、函数）、已定决策（公共接口等）、验收条件和确切的检查命令。没有再加文字。Root 系统提示词有 1,700 字符的测试上限，当前已用 1,662/1,678。
+- **O4**：已做最小版本。`task` 参数说明加入：“Ask only for checks that finish well within the child's time limit; keep long jobs (full pipelines, large data processing) out of the task and run them outside delegation (yourself, or hand them to the user).”子 agent 一侧原有的时限提示不变。后台作业怎么提交、怎么取回结果不写进插件：这属于机器规则（`slot -b`、`slot tail`，见全局 AGENTS.md）。strict 模式下 Root 不能跑 bash，只能交给用户。
+- **O5**、O2 效果对照：待 bench 试验。

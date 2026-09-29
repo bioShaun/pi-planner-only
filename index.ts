@@ -562,7 +562,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 			}),
 			task: Type.String({
 				minLength: 1,
-				description: "Self-contained task: goal as an observable result; scope (files/functions, what must not change); decisions already made (public interfaces, implementation approach, existing code to reuse; pseudocode only where a key algorithm is still ambiguous); acceptance with key edge cases; the exact check command and expected result. The child does not see this conversation.",
+				description: "Self-contained task: goal as an observable result; scope (files/functions, what must not change); decisions already made (public interfaces, implementation approach, existing code to reuse; pseudocode only where a key algorithm is still ambiguous); acceptance with key edge cases; the exact check command and expected result. Ask only for checks that finish well within the child's time limit; keep long jobs (full pipelines, large data processing) out of the task and run them outside delegation (yourself, or hand them to the user). The child does not see this conversation.",
 			}),
 			cwd: Type.Optional(Type.String({
 				description: "The repository or directory the child works in. Set it when the target is not the session cwd; the diff summary uses it, and the lock covers its whole repository.",

@@ -94,6 +94,7 @@ try {
 	assert.match(plannerPrompt(true), /add context, settle the interface, split only if too big/);
 	assert.match(h.tools.get("delegate").parameters.properties.role.description, /logs, or transcripts and return findings/);
 	assert.match(h.tools.get("delegate").parameters.properties.task.description, /goal as an observable result.*what must not change.*decisions already made \(public interfaces, implementation approach, existing code to reuse; pseudocode only where a key algorithm is still ambiguous\).*acceptance with key edge cases.*exact check command and expected result/);
+	assert.match(h.tools.get("delegate").parameters.properties.task.description, /Ask only for checks that finish well within the child's time limit; keep long jobs \(full pipelines, large data processing\) out of the task and run them outside delegation/);
 	assert.match(h.tools.get("delegate").parameters.properties.role.description, /no shell, sees files and uncommitted changes \(review before committing\)/);
 	assert.match(h.tools.get("delegate").description, /Worth it for multi-file work or long reading; outside strict mode, do small tasks \(about ≤2 files\) yourself\./);
 	assert.match(h.tools.get("delegate").description, /worker, explorer, and validator run one at a time per repository \(a second one is refused\); a reviewer or another repository can run alongside\./);
