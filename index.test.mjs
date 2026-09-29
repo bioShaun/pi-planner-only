@@ -73,6 +73,8 @@ try {
 	const injected = await h.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, h.ctx);
 	assert.ok(injected.systemPrompt.startsWith("BASE\n\n[PLANNER-ONLY]"));
 	for (const strict of [false, true]) assert.ok(plannerPrompt(strict).length < 1_700, "prompt should stay short (candidate cap 1,700 chars)");
+	assert.match(plannerPrompt(false), /"validator" runs checks and writes nothing/);
+	assert.match(plannerPrompt(true), /"validator" runs checks and writes nothing/);
 	assert.match(plannerPrompt(true), /Strict mode/);
 	const { loadLimits } = await import("./delegate.ts");
 	assert.match(plannerPrompt(false), /A child has 10 minutes\. Do not delegate work that needs longer/);
@@ -98,6 +100,13 @@ try {
 	assert.match(h.tools.get("delegate").parameters.properties.role.description, /no shell, sees files and uncommitted changes \(review before committing\)/);
 	assert.match(h.tools.get("delegate").description, /Worth it for multi-file work or long reading; outside strict mode, do small tasks \(about ≤2 files\) yourself\./);
 	assert.match(h.tools.get("delegate").description, /worker, explorer, and validator run one at a time per repository \(a second one is refused\); a reviewer or another repository can run alongside\./);
+	assert.match(h.tools.get("delegate").description, /Deliverables that require writing files \(scripts, reports, output files\) go to worker/);
+	assert.match(h.tools.get("delegate").description, /start the run as a background job that returns immediately with the job id, output path, and completion condition/);
+	assert.match(h.tools.get("delegate").description, /after the run finishes, delegate acceptance separately/);
+	assert.match(h.tools.get("delegate").description, /one bounded status check per job at a time; do not repeat identical wait commands/);
+	assert.match(h.tools.get("delegate").description, /"completed" result only means the child run ended; in your reply distinguish implementation done, checks passed, and real run passed/);
+	assert.match(h.tools.get("delegate").parameters.properties.role.description, /validator: run existing checks only, writes no files/);
+	assert.match(h.tools.get("delegate").parameters.properties.role.description, /state the baseline commit in the task/);
 	assert.match(h.tools.get("delegate").parameters.properties.cwd.description, /the diff summary uses it, and the lock covers its whole repository\./);
 	assert.match(plannerPrompt(false), /Do small things yourself \(about ≤2 files/);
 	process.env.PI_PLANNER_ONLY_TIMEOUT_MS = "300000";

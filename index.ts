@@ -69,7 +69,7 @@ export function plannerPrompt(strict: boolean, limits: DelegationLimits = DEFAUL
 		strict
 			? "- Strict mode: you cannot edit, write, or run bash yourself. Delegate implementation to role \"worker\" and check runs to \"validator\"."
 			: "- Do small things yourself (about ≤2 files or ≤10 minutes of work). Delegate larger implementation to role \"worker\".",
-		"- Other roles: \"explorer\" for broad code searches and reading-heavy work (logs/transcripts); only its findings enter your context. \"validator\" runs checks; \"reviewer\" is read-only, has no shell, and sees files plus uncommitted changes only, so run it before git_commit.",
+		"- Other roles: \"explorer\" for broad code searches and reading-heavy work (logs/transcripts); only its findings enter your context. \"validator\" runs checks and writes nothing; \"reviewer\" is read-only, has no shell, and sees files plus uncommitted changes only, so run it before git_commit.",
 		"- Children cannot see this conversation or ask you mid-run, so `task` must stand alone. Decide public interfaces, cross-module choices, and data flow yourself before delegating; if key facts are unknown, send an explorer first.",
 		"- One delegation = one deliverable that can be checked on its own; fold setup into it; merge repeated edits that share one check.",
 		`- A child has ${timeoutMinutes(limits)} minutes. Do not delegate work that needs longer; split it.`,
@@ -554,11 +554,11 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 	pi.registerTool({
 		name: "delegate",
 		label: "Delegate",
-		description: "Run one child agent on a self-contained task and wait for it. Returns the child's report, host status and usage, and a git summary of what changed. Worth it for multi-file work or long reading; outside strict mode, do small tasks (about ≤2 files) yourself. worker, explorer, and validator run one at a time per repository (a second one is refused); a reviewer or another repository can run alongside.",
+		description: "Run one child agent on a self-contained task and wait for it. Returns the child's report, host status and usage, and a git summary of what changed. Worth it for multi-file work or long reading; outside strict mode, do small tasks (about ≤2 files) yourself. worker, explorer, and validator run one at a time per repository (a second one is refused); a reviewer or another repository can run alongside. Deliverables that require writing files (scripts, reports, output files) go to worker, not validator or reviewer. Runs that outlast the child time limit take two delegations: first implement the change and start the run as a background job that returns immediately with the job id, output path, and completion condition (an output file, exit code, or log marker); after the run finishes, delegate acceptance separately. While a background job runs, send only one bounded status check per job at a time; do not repeat identical wait commands in one turn. A \"completed\" result only means the child run ended; in your reply distinguish implementation done, checks passed, and real run passed.",
 		promptSnippet: "delegate: hand a self-contained task to a cheaper child agent (worker, explorer, validator, reviewer)",
 		parameters: Type.Object({
 			role: Type.Union(ROLES.map((r) => Type.Literal(r)), {
-				description: "worker: implement; explorer: search/read code, logs, or transcripts and return findings; validator: run tests/checks; reviewer: independent read-only review; no shell, sees files and uncommitted changes (review before committing).",
+				description: "worker: implement, including any deliverable that is a written file; explorer: search/read code, logs, or transcripts and return findings; validator: run existing checks only, writes no files; reviewer: independent read-only review; no shell, sees files and uncommitted changes (review before committing); if the changes are already committed, state the baseline commit in the task.",
 			}),
 			task: Type.String({
 				minLength: 1,
