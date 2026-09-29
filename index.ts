@@ -136,6 +136,7 @@ export interface PendingHandoff {
 	brief: string;
 	cwd: string;
 	sessionFile?: string;
+	selection?: { provider: string; id: string; thinkingLevel?: string };
 	/** Set after a failed or cancelled dispatch: only `/planner-only handoff` retries it. */
 	manualOnly?: boolean;
 }
@@ -275,6 +276,8 @@ interface PlannerRuntime {
 	host: HostAdapter;
 	session: PlannerSession;
 }
+
+const hostBridge: { pi?: ExtensionAPI; session?: PlannerSession } = {};
 
 function modeOf({ session }: PlannerRuntime): PlannerMode {
 	// Preserve the old live PI_PLANNER_ONLY flag behavior; explicit MODE selects new sessions.
@@ -450,24 +453,59 @@ function handoffPrompt(handoff: PendingHandoff, facts: string): string {
 
 /** Starts the new Root session from the pending brief; on failure or cancel the brief stays for a manual retry. */
 async function dispatchHandoff({ git, session }: PlannerRuntime, handoff: PendingHandoff, ctx: ExtensionCommandContext): Promise<void> {
+	if (!handoff.selection) {
+		const model = ctx.model;
+		if (!model) {
+			session.deferHandoff(handoff);
+			ctx.ui.notify("handoff refused: the current model cannot be identified; run /planner-only handoff to retry, or /planner-only handoff drop to discard it", "warning");
+			return;
+		}
+		handoff.selection = { provider: model.provider, id: model.id, ...(ctx.thinkingLevel === undefined ? {} : { thinkingLevel: String(ctx.thinkingLevel) }) };
+		session.pendingHandoff = handoff;
+	}
 	const prompt = handoffPrompt(handoff, await gatherGitFacts(git, handoff.cwd));
 	const mode = handoffMode();
 	try {
 		const result = await ctx.newSession({ parentSession: handoff.sessionFile, withSession: async (rctx) => {
 			rctx.ui.notify("planner-only: handoff from previous session", "info");
-			if (mode === "confirm") {
-				rctx.ui.setEditorText(prompt);
-				rctx.ui.notify("Handoff ready. Submit when ready.", "info");
-			} else await rctx.sendUserMessage(prompt);
+			try {
+				const selection = handoff.selection;
+				if (!selection) throw new Error("source model selection is missing");
+				const pi = hostBridge.pi;
+				if (!pi) throw new Error("live host model bridge is unavailable");
+				const model = (rctx.modelRegistry as typeof rctx.modelRegistry & { getModel(provider: string, id: string): NonNullable<typeof rctx.model> | undefined }).getModel(selection.provider, selection.id);
+				if (!model) throw new Error(`model ${selection.provider}/${selection.id} is unavailable in the new session`);
+				if (!await pi.setModel(model)) throw new Error(`host refused model ${selection.provider}/${selection.id}`);
+				if (selection.thinkingLevel !== undefined) (pi.setThinkingLevel as (level: string) => void)(selection.thinkingLevel);
+				const current = rctx.model;
+				if (!current || current.provider !== selection.provider || current.id !== selection.id) throw new Error(`active model did not match ${selection.provider}/${selection.id}`);
+				if (selection.thinkingLevel !== undefined && rctx.thinkingLevel !== selection.thinkingLevel) throw new Error(`thinking level did not match ${selection.thinkingLevel}`);
+				if (mode === "confirm") {
+					rctx.ui.setEditorText(prompt);
+					rctx.ui.notify(`Handoff ready. Submit when ready.${selection.thinkingLevel === undefined ? " Thinking level was not carried over." : ""}`, "info");
+				} else {
+					await rctx.sendUserMessage(prompt);
+					if (selection.thinkingLevel === undefined) rctx.ui.notify("Thinking level was not carried over.", "info");
+				}
+			} catch (error) {
+				const reason = error instanceof Error ? error.message : String(error);
+				hostBridge.session?.deferHandoff({ ...handoff, selection: handoff.selection });
+				rctx.ui.notify(`handoff settings could not be restored (${reason}); brief was not sent. Run /planner-only handoff to retry, or /planner-only handoff drop to discard it`, "warning");
+			}
 		} });
 		if (result?.cancelled) {
 			session.deferHandoff(handoff);
 			ctx.ui.notify("handoff cancelled; run /planner-only handoff to retry, or /planner-only handoff drop to discard it", "warning");
 		} else session.clearPendingHandoff();
 	} catch (error) {
-		session.deferHandoff(handoff);
+		const liveSession = hostBridge.session && hostBridge.session !== session ? hostBridge.session : session;
+		liveSession.deferHandoff(handoff);
 		const reason = error instanceof Error ? error.message : String(error);
-		ctx.ui.notify(`handoff failed (${reason}); run /planner-only handoff to retry, or /planner-only handoff drop to discard it`, "warning");
+		try {
+			ctx.ui.notify(`handoff failed (${reason}); run /planner-only handoff to retry, or /planner-only handoff drop to discard it`, "warning");
+		} catch {
+			// Session replacement invalidates the old command context.
+		}
 	}
 }
 
@@ -584,6 +622,7 @@ function onMessageEnd(runtime: PlannerRuntime, message: Parameters<typeof rootUs
 }
 
 export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter): void {
+	hostBridge.pi = pi;
 	if (process.env.PI_SUBAGENT_CHILD === "1") return;
 
 	const git: GitRunner = async (args, cwd) => {
@@ -592,6 +631,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 	};
 	const runtime: PlannerRuntime = { pi, git, host: hostAdapter ?? createHostAdapter(pi), session: new PlannerSession() };
 	const { session } = runtime;
+	hostBridge.session = session;
 
 	pi.registerTool({
 		name: "delegate",

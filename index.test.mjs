@@ -11,7 +11,7 @@ delete process.env.PI_PLANNER_ONLY_STRICT;
 delete process.env.PI_SUBAGENT_CHILD;
 const { default: plannerOnly, MAX_COMMIT_MESSAGE_CHARS, OFF_MARKER, MODE_PREFERENCE, HANDOFF_PREFERENCE, NATIVE_PROMPT, PlannerSession, formatTotals, plannerPrompt, rootUsageOf, initialMode, handoffMode } = await import("./index.ts");
 
-function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async () => ({ stdout: "", stderr: "not a repo", code: 128 })) {
+function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async () => ({ stdout: "", stderr: "not a repo", code: 128 }), options = {}) {
 	const tools = new Map();
 	const handlers = new Map();
 	const commands = new Map();
@@ -19,36 +19,53 @@ function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async 
 	let active = initialActive;
 	let branch = [];
 	let sessionId = "session-1";
+	let activeModel = options.sourceModel === undefined ? { provider: "provider-a", id: "model-a" } : options.sourceModel;
+	let activeThinking = options.unknownSourceThinking ? undefined : options.sourceThinking === undefined ? "high" : options.sourceThinking;
+	let pi;
+	const actionInstances = [];
+	let setModelThrown = false;
 	const appended = [];
-	const pi = {
-		registerTool: (t) => tools.set(t.name, t),
-		registerCommand: (name, c) => commands.set(name, c),
-		on: (event, h) => handlers.set(event, h),
-		getActiveTools: () => active,
-		setActiveTools: (next) => (active = next),
-		appendEntry: (customType, data) => { const entry = { type: "custom", customType, data }; appended.push(entry); branch.push(entry); },
-		exec,
-		events,
-	};
-	plannerOnly(pi);
+	let staleContext = false;
 	const notes = [];
 	const statuses = [];
 	const statusColors = [];
 	const sentMessages = [];
 	const sentUserMessages = [];
 	const sessionCalls = [];
-	const replaced = { sent: [], editor: [], notes: [], ui: { notify: (m) => replaced.notes.push(m), setEditorText: (m) => replaced.editor.push(m) }, sendUserMessage: async (m) => replaced.sent.push(m) };
+	const registry = options.registry ?? [{ provider: "provider-a", id: "model-a" }, { provider: "provider-b", id: "model-b" }];
+	const replaced = { sent: [], editor: [], notes: [], modelRegistry: { getModel: (provider, id) => registry.some((m) => m.provider === provider && m.id === id) ? { provider, id } : undefined }, get model() { return activeModel; }, get thinkingLevel() { return activeThinking; }, ui: { notify: (m) => replaced.notes.push(m), setEditorText: (m) => replaced.editor.push(m) }, sendUserMessage: async (m) => replaced.sent.push(m) };
+	const registrations = {
+		events,
+		registerTool: (t) => tools.set(t.name, t),
+		registerCommand: (n, c) => commands.set(n, c),
+		on: (event, h) => handlers.set(event, h),
+		getActiveTools: () => active,
+		setActiveTools: (next) => (active = next),
+		appendEntry: (customType, data) => { const entry = { type: "custom", customType, data }; appended.push(entry); branch.push(entry); },
+		get model() { return activeModel; },
+		get thinkingLevel() { return activeThinking; },
+	};
+	function makePi() {
+		const actions = { stale: false, modelCalls: 0, lastSetModel: undefined,
+			setModel: async (model) => { if (actions.stale) throw new Error("This extension ctx is stale"); actions.lastSetModel = model; actions.modelCalls++; if (options.setModelThrowOnce && !setModelThrown) { setModelThrown = true; throw new Error("setModel boom"); } if (options.setModelResult === false) return false; if (!options.setModelLies) activeModel = model; return true; },
+			setThinkingLevel: (level) => { if (actions.stale) throw new Error("This extension ctx is stale"); if (!options.setThinkingLies) activeThinking = level; },
+			exec, sendMessage: (...args) => sentMessages.push(args), sendUserMessage: (...args) => sentUserMessages.push(args) };
+		actionInstances.push(actions);
+		return Object.assign(Object.create(registrations), actions);
+	}
+	pi = makePi();
+	plannerOnly(pi);
 	const ctx = {
 		cwd: "/w",
 		hasUI: true,
 		isIdle: () => true,
 		sessionManager: { getSessionId: () => sessionId, getSessionFile: () => "/sessions/previous.jsonl", getBranch: () => branch },
-		newSession: async (opts) => { sessionCalls.push(opts); await opts.withSession(replaced); return {}; },
-		ui: { setStatus: (k, v) => statuses.push(v), notify: (m) => notes.push(m), theme: { fg: (c, s) => { statusColors.push(c); return s; } } },
+		newSession: async (opts) => { sessionCalls.push(opts); activeModel = options.replacementModel ?? { provider: "provider-b", id: "model-b" }; activeThinking = options.replacementThinking ?? "medium"; actionInstances.at(-1).stale = true; staleContext = Boolean(options.throwAfterReplacement); pi = makePi(); plannerOnly(pi); await opts.withSession(replaced); if (options.throwAfterReplacement) throw new Error("post-replacement boom"); return {}; },
+		get model() { return activeModel; },
+		get thinkingLevel() { return activeThinking; },
+		ui: { setStatus: (k, v) => statuses.push(v), notify: (m) => { if (staleContext) { staleContext = false; throw new Error("This extension ctx is stale"); } notes.push(m); }, theme: { fg: (c, s) => { statusColors.push(c); return s; } } },
 	};
-	pi.sendMessage = (...args) => sentMessages.push(args);
-	pi.sendUserMessage = (...args) => sentUserMessages.push(args);
-	return { pi, tools, handlers, commands, events, ctx, notes, statuses, statusColors, sentMessages, sentUserMessages, sessionCalls, replaced, active: () => active, appended, branch: (entries) => { branch = entries; }, sessionId: (id) => { sessionId = id; } };
+	return { get pi() { return pi; }, tools, handlers, commands, events, ctx, notes, statuses, statusColors, sentMessages, sentUserMessages, sessionCalls, replaced, active: () => active, appended, activeModel: () => activeModel, activeThinking: () => activeThinking, lastSetModel: () => actionInstances.at(-1).lastSetModel, oldModelCalls: () => actionInstances[0].modelCalls, setSource: (model, thinking = activeThinking) => { activeModel = model; activeThinking = thinking; }, branch: (entries) => { branch = entries; }, sessionId: (id) => { sessionId = id; } };
 }
 
 try {
@@ -198,6 +215,8 @@ try {
 	assert.match(h.replaced.sent.at(-1), /Facts from the previous session/);
 	assert.match(h.replaced.sent.at(-1), /Not inside a git work tree/);
 	assert.match(h.replaced.sent.at(-1), /Continue the parser migration/);
+	assert.deepEqual(h.ctx.model, { provider: "provider-a", id: "model-a" }, "replacement brief must use the source model, not its configured default");
+	assert.equal(h.oldModelCalls(), 0, "restoration must use the fresh Pi instance");
 	const gitFacts = fakePi(undefined, async (_cmd, args) => {
 		if (args[0] === "--version") return { stdout: "git version 2.43.0", stderr: "", code: 0 };
 		if (args.includes("--is-inside-work-tree")) return { stdout: "true", stderr: "", code: 0 };
@@ -262,6 +281,15 @@ try {
 	assert.match(thrown.notes.at(-1), /handoff failed/);
 	await thrown.handlers.get("agent_settled")({}, thrown.ctx);
 	assert.equal(thrown.sentUserMessages.length, 1);
+	const postReplacementThrow = fakePi(undefined, undefined, { throwAfterReplacement: true });
+	await postReplacementThrow.commands.get("planner-only").handler("handoff", postReplacementThrow.ctx);
+	await postReplacementThrow.tools.get("handoff").execute("post-replacement", { brief }, undefined, undefined, postReplacementThrow.ctx);
+	await postReplacementThrow.commands.get("planner-only").handler("handoff", postReplacementThrow.ctx);
+	const afterPostThrow = postReplacementThrow.sessionCalls.length;
+	await postReplacementThrow.handlers.get("agent_settled")({}, postReplacementThrow.ctx);
+	assert.equal(postReplacementThrow.sessionCalls.length, afterPostThrow, "recovered replacement handoff is manual-only");
+	await postReplacementThrow.commands.get("planner-only").handler("handoff", postReplacementThrow.ctx);
+	assert.match(postReplacementThrow.replaced.sent.at(-1), /Continue the parser migration/);
 	const gitFailure = fakePi(undefined, async () => { throw new Error("git unavailable"); });
 	await gitFailure.commands.get("planner-only").handler("handoff", gitFailure.ctx);
 	await gitFailure.tools.get("handoff").execute("git-failure", { brief }, undefined, undefined, gitFailure.ctx);
@@ -283,6 +311,88 @@ try {
 	delete process.env.PI_PLANNER_ONLY_HANDOFF;
 	assert.equal(confirm.replaced.editor.length, 1);
 	assert.equal(confirm.replaced.sent.length, 0);
+	assert.deepEqual(confirm.activeModel(), { provider: "provider-a", id: "model-a" });
+	const providerCollision = fakePi(undefined, undefined, { sourceModel: { provider: "provider-b", id: "model-a" }, registry: [{ provider: "provider-a", id: "model-a" }, { provider: "provider-b", id: "model-a" }] });
+	await providerCollision.commands.get("planner-only").handler("handoff", providerCollision.ctx);
+	await providerCollision.tools.get("handoff").execute("collision", { brief }, undefined, undefined, providerCollision.ctx);
+	await providerCollision.commands.get("planner-only").handler("handoff", providerCollision.ctx);
+	assert.deepEqual(providerCollision.replaced.sent.length, 1);
+	assert.deepEqual(providerCollision.activeModel(), { provider: "provider-b", id: "model-a" });
+	const unknownAuto = fakePi(undefined, undefined, { unknownSourceThinking: true });
+	await unknownAuto.commands.get("planner-only").handler("handoff", unknownAuto.ctx);
+	await unknownAuto.tools.get("handoff").execute("unknown-auto", { brief }, undefined, undefined, unknownAuto.ctx);
+	await unknownAuto.commands.get("planner-only").handler("handoff", unknownAuto.ctx);
+	assert.equal(unknownAuto.replaced.sent.length, 1);
+	assert.equal(unknownAuto.pi.setThinkingLevel ? unknownAuto.activeThinking() : "", "medium");
+	assert.ok(unknownAuto.replaced.notes.some((n) => /thinking level was not carried over/i.test(n)));
+	const unknownConfirm = fakePi(undefined, undefined, { unknownSourceThinking: true });
+	await unknownConfirm.commands.get("planner-only").handler("handoff", unknownConfirm.ctx);
+	await unknownConfirm.tools.get("handoff").execute("unknown-confirm", { brief }, undefined, undefined, unknownConfirm.ctx);
+	process.env.PI_PLANNER_ONLY_HANDOFF = "confirm";
+	await unknownConfirm.commands.get("planner-only").handler("handoff", unknownConfirm.ctx);
+	delete process.env.PI_PLANNER_ONLY_HANDOFF;
+	assert.equal(unknownConfirm.replaced.sent.length, 0);
+	assert.equal(unknownConfirm.replaced.editor.length, 1);
+	assert.ok(unknownConfirm.replaced.notes.some((n) => /thinking level was not carried over/i.test(n)));
+	for (const [name, options, reason] of [
+		["absent", { registry: [{ provider: "provider-b", id: "model-b" }] }, /unavailable/],
+		["false", { setModelResult: false }, /refused/],
+		["throw", { setModelThrowOnce: true }, /setModel boom/],
+		["lying-model", { setModelLies: true }, /active model did not match/],
+		["thinking-mismatch", { setThinkingLies: true }, /thinking level did not match/],
+	]) {
+		const failed = fakePi(undefined, undefined, options);
+		await failed.commands.get("planner-only").handler("handoff", failed.ctx);
+		await failed.tools.get("handoff").execute(name, { brief }, undefined, undefined, failed.ctx);
+		await failed.commands.get("planner-only").handler("handoff", failed.ctx);
+		assert.equal(failed.replaced.sent.length, 0, name);
+		assert.equal(failed.replaced.editor.length, 0, name);
+		assert.ok(failed.replaced.notes.some((n) => reason.test(n)), name);
+		assert.ok(failed.replaced.notes.some((n) => /\/planner-only handoff.*retry.*\/planner-only handoff drop.*discard/i.test(n)), `${name} should explain retry/drop`);
+	}
+	const retrySelection = fakePi(undefined, undefined, { setModelThrowOnce: true, registry: [{ provider: "provider-a", id: "model-a" }, { provider: "provider-b", id: "model-b" }, { provider: "provider-c", id: "model-c" }] });
+	await retrySelection.commands.get("planner-only").handler("handoff", retrySelection.ctx);
+	await retrySelection.tools.get("handoff").execute("retry-selection", { brief }, undefined, undefined, retrySelection.ctx);
+	await retrySelection.commands.get("planner-only").handler("handoff", retrySelection.ctx);
+	assert.ok(retrySelection.replaced.notes.some((n) => /settings could not be restored.*retry.*drop/i.test(n)));
+	const failedCalls = retrySelection.sessionCalls.length;
+	await retrySelection.handlers.get("agent_settled")({}, retrySelection.ctx);
+	assert.equal(retrySelection.sessionCalls.length, failedCalls, "failed handoff must be manual-only in the replacement instance");
+	retrySelection.setSource({ provider: "provider-c", id: "model-c" });
+	await retrySelection.commands.get("planner-only").handler("handoff", retrySelection.ctx);
+	assert.equal(retrySelection.replaced.sent.length, 1);
+	assert.deepEqual(retrySelection.lastSetModel(), { provider: "provider-a", id: "model-a" });
+	const dropSelection = fakePi(undefined, undefined, { setModelThrowOnce: true, registry: [{ provider: "provider-a", id: "model-a" }, { provider: "provider-b", id: "model-b" }, { provider: "provider-c", id: "model-c" }] });
+	await dropSelection.commands.get("planner-only").handler("handoff", dropSelection.ctx);
+	await dropSelection.tools.get("handoff").execute("drop-selection", { brief }, undefined, undefined, dropSelection.ctx);
+	await dropSelection.commands.get("planner-only").handler("handoff", dropSelection.ctx);
+	await dropSelection.commands.get("planner-only").handler("handoff drop", dropSelection.ctx);
+	const droppedCalls = dropSelection.sessionCalls.length;
+	await dropSelection.commands.get("planner-only").handler("handoff", dropSelection.ctx);
+	assert.equal(dropSelection.sessionCalls.length, droppedCalls);
+	assert.ok(dropSelection.sentUserMessages.some(([m]) => /Call the handoff tool/.test(m)));
+	dropSelection.setSource({ provider: "provider-c", id: "model-c" });
+	await dropSelection.commands.get("planner-only").handler("handoff", dropSelection.ctx);
+	await dropSelection.tools.get("handoff").execute("fresh-after-drop", { brief }, undefined, undefined, dropSelection.ctx);
+	await dropSelection.commands.get("planner-only").handler("handoff", dropSelection.ctx);
+	assert.deepEqual(dropSelection.lastSetModel(), { provider: "provider-c", id: "model-c" });
+	const consecutive = fakePi(undefined, undefined, { registry: [{ provider: "provider-a", id: "model-a" }, { provider: "provider-b", id: "model-b" }, { provider: "provider-c", id: "model-c" }] });
+	await consecutive.commands.get("planner-only").handler("handoff", consecutive.ctx);
+	await consecutive.tools.get("handoff").execute("first-consecutive", { brief }, undefined, undefined, consecutive.ctx);
+	await consecutive.commands.get("planner-only").handler("handoff", consecutive.ctx);
+	assert.deepEqual(consecutive.lastSetModel(), { provider: "provider-a", id: "model-a" });
+	consecutive.setSource({ provider: "provider-c", id: "model-c" });
+	await consecutive.commands.get("planner-only").handler("handoff", consecutive.ctx);
+	await consecutive.tools.get("handoff").execute("second-consecutive", { brief }, undefined, undefined, consecutive.ctx);
+	await consecutive.commands.get("planner-only").handler("handoff", consecutive.ctx);
+	assert.deepEqual(consecutive.lastSetModel(), { provider: "provider-c", id: "model-c" });
+	const unidentified = fakePi(undefined, undefined, { sourceModel: null });
+	await unidentified.commands.get("planner-only").handler("handoff", unidentified.ctx);
+	await unidentified.tools.get("handoff").execute("unknown-model", { brief }, undefined, undefined, unidentified.ctx);
+	const beforeUnidentified = unidentified.sessionCalls.length;
+	await unidentified.commands.get("planner-only").handler("handoff", unidentified.ctx);
+	assert.equal(unidentified.sessionCalls.length, beforeUnidentified);
+	assert.ok(unidentified.notes.some((n) => /current model cannot be identified/.test(n)));
 	const manual = fakePi();
 	await manual.commands.get("planner-only").handler("handoff-mode auto", manual.ctx);
 	assert.equal(manual.sentUserMessages.length, 0, "setting handoff mode does not schedule a handoff");
