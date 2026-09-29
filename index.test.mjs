@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { SUBAGENT_DELEGATION_REQUEST_EVENT, SUBAGENT_DELEGATION_RESPONSE_EVENT, SUBAGENT_DELEGATION_STARTED_EVENT } from "./subagent-delegation-contract.ts";
 import { fakeBus, tempDir, usage } from "./test-helpers.mjs";
 
@@ -9,7 +9,7 @@ delete process.env.PI_PLANNER_ONLY;
 delete process.env.PI_PLANNER_ONLY_MODE;
 delete process.env.PI_PLANNER_ONLY_STRICT;
 delete process.env.PI_SUBAGENT_CHILD;
-const { default: plannerOnly, MAX_COMMIT_MESSAGE_CHARS, OFF_MARKER, MODE_PREFERENCE, NATIVE_PROMPT, PlannerSession, formatTotals, plannerPrompt, rootUsageOf, initialMode } = await import("./index.ts");
+const { default: plannerOnly, MAX_COMMIT_MESSAGE_CHARS, OFF_MARKER, MODE_PREFERENCE, HANDOFF_PREFERENCE, NATIVE_PROMPT, PlannerSession, formatTotals, plannerPrompt, rootUsageOf, initialMode, handoffMode } = await import("./index.ts");
 
 function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async () => ({ stdout: "", stderr: "not a repo", code: 128 })) {
 	const tools = new Map();
@@ -66,6 +66,29 @@ try {
 	assert.equal(MAX_COMMIT_MESSAGE_CHARS, 2_000);
 	assert.equal(h.tools.get("git_commit").parameters.properties.message.maxLength, MAX_COMMIT_MESSAGE_CHARS);
 	assert.ok(h.commands.has("planner-only"));
+	delete process.env.PI_PLANNER_ONLY_HANDOFF;
+	rmSync(HANDOFF_PREFERENCE, { force: true, recursive: true });
+	assert.equal(handoffMode(), "off");
+	await h.commands.get("planner-only").handler("handoff-mode auto", h.ctx);
+	assert.equal(readFileSync(HANDOFF_PREFERENCE, "utf8"), "auto\n");
+	assert.equal(handoffMode(), "auto");
+	process.env.PI_PLANNER_ONLY_HANDOFF = "confirm";
+	assert.equal(handoffMode(), "confirm");
+	process.env.PI_PLANNER_ONLY_HANDOFF = "off";
+	assert.equal(handoffMode(), "off");
+	delete process.env.PI_PLANNER_ONLY_HANDOFF;
+	await h.commands.get("planner-only").handler("handoff-mode invalid", h.ctx);
+	assert.equal(readFileSync(HANDOFF_PREFERENCE, "utf8"), "auto\n");
+	assert.match(h.notes.at(-1), /Usage: \/planner-only handoff-mode/);
+	await h.commands.get("planner-only").handler("handoff-mode", h.ctx);
+	assert.match(h.notes.at(-1), /handoff mode: auto \(source: persisted\)/);
+	await h.commands.get("planner-only").handler("status", h.ctx);
+	assert.match(h.notes.at(-1), /handoff: auto \(source: persisted\)/);
+	rmSync(HANDOFF_PREFERENCE, { force: true });
+	mkdirSync(HANDOFF_PREFERENCE, { recursive: true });
+	assert.doesNotThrow(() => handoffMode());
+	assert.equal(handoffMode(), "off");
+	rmSync(HANDOFF_PREFERENCE, { force: true, recursive: true });
 
 	// Prompt: appended when enabled, short, strict variant differs.
 	await h.handlers.get("session_start")({}, h.ctx);
@@ -261,6 +284,9 @@ try {
 	assert.equal(confirm.replaced.editor.length, 1);
 	assert.equal(confirm.replaced.sent.length, 0);
 	const manual = fakePi();
+	await manual.commands.get("planner-only").handler("handoff-mode auto", manual.ctx);
+	assert.equal(manual.sentUserMessages.length, 0, "setting handoff mode does not schedule a handoff");
+	rmSync(HANDOFF_PREFERENCE, { force: true });
 	await manual.commands.get("planner-only").handler("handoff next goal", manual.ctx);
 	assert.match(manual.sentUserMessages[0][0], /Call the handoff tool/);
 	assert.match(manual.sentUserMessages[0][0], /next goal/);

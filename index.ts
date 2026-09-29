@@ -9,7 +9,7 @@ import { dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_LIMITS, loadConfig } from "./config.ts";
-import type { DelegationLimits, PlannerMode } from "./config.ts";
+import type { DelegationLimits, HandoffMode, PlannerMode } from "./config.ts";
 import { ROLES, createCwdLocks, runDelegation, timeoutMinutes } from "./delegate.ts";
 import type { DelegationParams } from "./delegate.ts";
 import { formatTokens } from "./format.ts";
@@ -25,6 +25,7 @@ const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
 	: join(homedir(), ".pi", "agent");
 export const OFF_MARKER = join(AGENT_DIR, "planner-only.off");
 export const MODE_PREFERENCE = join(AGENT_DIR, "planner-only.mode");
+export const HANDOFF_PREFERENCE = join(AGENT_DIR, "planner-only.handoff");
 const MODE_ENTRY = "planner-only-mode";
 export const NATIVE_PROMPT = "实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。";
 const STATUS_KEY = "planner-only";
@@ -49,6 +50,26 @@ function preference(): PlannerMode | undefined {
 		const value = readFileSync(MODE_PREFERENCE, "utf8").trim();
 		return value === "off" || value === "native" || value === "lite" ? value : undefined;
 	} catch { return undefined; }
+}
+
+function handoffPreference(): HandoffMode | undefined {
+	try {
+		const value = readFileSync(HANDOFF_PREFERENCE, "utf8").trim();
+		return value === "off" || value === "confirm" || value === "auto" ? value : undefined;
+	} catch { return undefined; }
+}
+
+function handoffModeSetting(env: NodeJS.ProcessEnv): { mode: HandoffMode; source: "env" | "persisted" | "default" } {
+	if (env.PI_PLANNER_ONLY_HANDOFF?.trim()) {
+		const value = env.PI_PLANNER_ONLY_HANDOFF.trim();
+		return { mode: value === "confirm" || value === "auto" ? value : "off", source: "env" };
+	}
+	const saved = handoffPreference();
+	return saved ? { mode: saved, source: "persisted" } : { mode: "off", source: "default" };
+}
+
+export function handoffMode(env: NodeJS.ProcessEnv = process.env): HandoffMode {
+	return handoffModeSetting(env).mode;
 }
 
 /** Explicit mode, legacy flag, persisted preference, legacy marker, default. */
@@ -214,8 +235,8 @@ export class PlannerSession {
 		if (this.delegationsInFlight > 0) return "a delegated child is still running.";
 		if (this.pendingHandoff) return "one is already pending.";
 		const threshold = contextWarnThreshold();
-		if (!this.handoffRequested && loadConfig().handoffMode === "off") {
-			return "the user did not request a handoff and self-initiated handoff is off (PI_PLANNER_ONLY_HANDOFF=off). Continue in this session, or suggest the user run /planner-only handoff at a task boundary.";
+		if (!this.handoffRequested && handoffMode() === "off") {
+			return "the user did not request a handoff and self-initiated handoff is off (enable it with /planner-only handoff-mode confirm|auto, or PI_PLANNER_ONLY_HANDOFF). Continue in this session, or suggest the user run /planner-only handoff at a task boundary.";
 		}
 		if (!this.handoffRequested && (this.rootContext ?? 0) <= threshold) {
 			return `your context is about ${formatTokens(this.rootContext ?? 0)} tokens, below the ${formatTokens(threshold)} threshold, and the user did not request a handoff. Continue the work in this session.`;
@@ -335,7 +356,7 @@ function syncTools(runtime: PlannerRuntime): void {
 }
 
 function sendContextWarning(host: HostAdapter, tokens: number): void {
-	const advice = loadConfig().handoffMode === "off"
+	const advice = handoffMode() === "off"
 		? "At the next task boundary, if the next step is a new task, suggest the user run /planner-only handoff for a fresh session from a brief; if still mid-task and the context is mostly stale exploration, ask the user to run /compact with what to keep."
 		: "At the next task boundary: if the next step is a new task, call the handoff tool with a complete brief (it starts a fresh session automatically); if still mid-task and the context is mostly stale exploration, ask the user to run /compact with what to keep.";
 	host.sendMessage({
@@ -424,13 +445,13 @@ async function gatherGitFacts(git: GitRunner, cwd: string): Promise<string> {
 }
 
 function handoffPrompt(handoff: PendingHandoff, facts: string): string {
-	return `[planner-only handoff] You are the new Root session. The previous session handed this work to you because its context was large. "This session"/"the next session" in the brief below both mean YOU: do the next step now. ${loadConfig().handoffMode === "off" ? "Do not call the handoff tool unless the user asks for one." : "Do not call the handoff tool unless your own context grows past the warning threshold."}\n\n## Brief\n${handoff.brief}\n\n## Facts from the previous session\nPrevious session file: ${handoff.sessionFile ?? "unknown"}\nRepository (git facts below): ${handoff.cwd}\n${facts}\n\nContinue as Root under planner-only; the brief is authoritative.`;
+	return `[planner-only handoff] You are the new Root session. The previous session handed this work to you because its context was large. "This session"/"the next session" in the brief below both mean YOU: do the next step now. ${handoffMode() === "off" ? "Do not call the handoff tool unless the user asks for one." : "Do not call the handoff tool unless your own context grows past the warning threshold."}\n\n## Brief\n${handoff.brief}\n\n## Facts from the previous session\nPrevious session file: ${handoff.sessionFile ?? "unknown"}\nRepository (git facts below): ${handoff.cwd}\n${facts}\n\nContinue as Root under planner-only; the brief is authoritative.`;
 }
 
 /** Starts the new Root session from the pending brief; on failure or cancel the brief stays for a manual retry. */
 async function dispatchHandoff({ git, session }: PlannerRuntime, handoff: PendingHandoff, ctx: ExtensionCommandContext): Promise<void> {
 	const prompt = handoffPrompt(handoff, await gatherGitFacts(git, handoff.cwd));
-	const mode = loadConfig().handoffMode;
+	const mode = handoffMode();
 	try {
 		const result = await ctx.newSession({ parentSession: handoff.sessionFile, withSession: async (rctx) => {
 			rctx.ui.notify("planner-only: handoff from previous session", "info");
@@ -484,15 +505,36 @@ function setEnabled(runtime: PlannerRuntime, enabled: boolean): void {
 function notifyStatus(runtime: PlannerRuntime, ctx: ExtensionContext): void {
 	const { session } = runtime;
 	const mode = modeOf(runtime);
+	const handoff = handoffModeSetting(process.env);
 	updateStatus(session, ctx, mode);
 	const env = process.env.PI_PLANNER_ONLY_MODE?.trim() ? ` (PI_PLANNER_ONLY_MODE=${process.env.PI_PLANNER_ONLY_MODE} selects new sessions)`
 		: process.env.PI_PLANNER_ONLY ? ` (PI_PLANNER_ONLY=${process.env.PI_PLANNER_ONLY} overrides the marker)` : "";
-	ctx.ui.notify(`planner-only ${mode === "lite" ? "on" : mode}${mode === "lite" && isStrict() ? ", strict" : ""}${env}; next fresh session: ${initialMode()}${preference() ? ` (preference: ${preference()})` : ""}${mode !== "lite" ? "" : `\n${statusTotals(session)}`}`, "info");
+	ctx.ui.notify(`planner-only ${mode === "lite" ? "on" : mode}${mode === "lite" && isStrict() ? ", strict" : ""}${env}; next fresh session: ${initialMode()}${preference() ? ` (preference: ${preference()})` : ""}; handoff: ${handoff.mode} (source: ${handoff.source})${mode !== "lite" ? "" : `\n${statusTotals(session)}`}`, "info");
+}
+
+function notifyHandoffMode(ctx: ExtensionCommandContext): void {
+	const setting = handoffModeSetting(process.env);
+	ctx.ui.notify(`handoff mode: ${setting.mode} (source: ${setting.source})`, "info");
 }
 
 async function plannerCommand(runtime: PlannerRuntime, args: string, ctx: ExtensionCommandContext): Promise<void> {
 	const raw = args.trim();
 	const cmd = raw.toLowerCase();
+	if (cmd === "handoff-mode") {
+		notifyHandoffMode(ctx);
+		return;
+	}
+	if (cmd.startsWith("handoff-mode ")) {
+		const value = cmd.slice("handoff-mode ".length).trim();
+		if (value !== "off" && value !== "confirm" && value !== "auto") {
+			ctx.ui.notify("Usage: /planner-only handoff-mode [off|confirm|auto]", "warning");
+			return;
+		}
+		mkdirSync(dirname(HANDOFF_PREFERENCE), { recursive: true });
+		writeFileSync(HANDOFF_PREFERENCE, `${value}\n`);
+		notifyHandoffMode(ctx);
+		return;
+	}
 	if (cmd === "handoff drop") {
 		runtime.session.dropHandoff();
 		ctx.ui.notify("handoff dropped", "info");
@@ -613,7 +655,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 	});
 
 	pi.registerCommand("planner-only", {
-		description: "planner-only on | off | native | lite | status | handoff [goal]",
+		description: "planner-only on | off | native | lite | status | handoff-mode [off|confirm|auto] | handoff [goal]",
 		handler: (args, ctx) => plannerCommand(runtime, args, ctx),
 	});
 

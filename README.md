@@ -117,13 +117,14 @@ extension and does not reproduce an older benchmark's user-message prefix byte f
 | `/planner-only status` | Show effective mode, next fresh-session mode, saved preference, and Lite session totals when applicable. |
 | `PI_PLANNER_ONLY_MODE=off|native|lite` | Choose the mode for new sessions (highest fresh-session priority). |
 | `/planner-only handoff [goal]` | Ask Root to write a brief and continue in a fresh session (`handoff drop` discards a failed one). Root self-initiation above the context threshold is allowed only with `PI_PLANNER_ONLY_HANDOFF=confirm` or `auto`. |
+| `/planner-only handoff-mode [off|confirm|auto]` | Show or save the handoff mode. Resolution order: nonempty `PI_PLANNER_ONLY_HANDOFF` > `~/.pi/agent/planner-only.handoff` > default `off`; status shows the effective value and source. |
 | `PI_PLANNER_ONLY=1` / `0` | Legacy live Lite/off override when `MODE` is unset; overrides saved preference and marker for new sessions. |
 | `PI_PLANNER_ONLY_STRICT=1` | Block Root's own `edit`, `write`, and `bash` by name. It does not block write capabilities provided by other plugins, so it is not a security boundary. Off by default, because small tasks are cheaper done directly. |
 | `PI_PLANNER_ONLY_TIMEOUT_MS` | Child wall-clock limit passed to the host (default 600000). |
 | `PI_PLANNER_ONLY_MAX_TOKENS` | Cancel a child whose reported tokens exceed this (default 1500000). The count is the child's cumulative input+output tokens from its progress events, excluding cache reads. |
 | `PI_PLANNER_ONLY_START_TIMEOUT_MS` | Give up if the child has not started (default 30000). |
 | `PI_PLANNER_ONLY_CANCEL_GRACE_MS` | Wait for a cancel to be confirmed (default 5000). |
-| `PI_PLANNER_ONLY_HANDOFF` | `off` (default) allows only user-requested handoffs; `confirm` also allows Root self-initiation above the threshold and puts the brief in the editor; `auto` does the same but submits automatically (experimental; savings not measured, smoke tests only show the flow runs). |
+| `PI_PLANNER_ONLY_HANDOFF` | Overrides the persisted `/planner-only handoff-mode` preference when nonempty. Resolution order is env > persisted preference > default `off`. `confirm` allows Root self-initiation above the threshold and puts the brief in the editor; `auto` does the same but submits automatically (experimental; savings not measured, smoke tests only show the flow runs). |
 | `PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS` | Root context size that turns the status red and sends Root one message suggesting delegation, a new session, or `/compact` (default 150000). |
 
 In off and native, the extension's four Lite tools are inactive even if called

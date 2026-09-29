@@ -96,13 +96,14 @@ pi install /path/to/pi-planner-only                          # 本地 checkout
 | `/planner-only status` | 显示当前生效模式、新会话模式、保存的偏好，以及适用时的 Lite 费用合计。 |
 | `PI_PLANNER_ONLY_MODE=off|native|lite` | 新会话模式，优先级最高。 |
 | `/planner-only handoff [目标]` | 让 Root 写简报并在新会话里继续（`handoff drop` 丢弃失败的交接）。只有 `PI_PLANNER_ONLY_HANDOFF=confirm` 或 `auto` 时，Root 才能在上下文超过阈值后自行发起。 |
+| `/planner-only handoff-mode [off|confirm|auto]` | 查看或保存 handoff 模式。优先级：非空 `PI_PLANNER_ONLY_HANDOFF` > `~/.pi/agent/planner-only.handoff` > 默认 `off`；状态会显示生效值和来源。 |
 | `PI_PLANNER_ONLY=1` / `0` | 未设置 MODE 时，旧版即时强制 Lite/关闭；新会话优先于保存的偏好和标记。 |
 | `PI_PLANNER_ONLY_STRICT=1` | 按名字禁止 Root 自己用 `edit`、`write`、`bash`。不拦截其他插件提供的写能力，不是安全边界。默认关闭，因为小任务直接做更省。 |
 | `PI_PLANNER_ONLY_TIMEOUT_MS` | 传给宿主的子代理时限（默认 600000）。 |
 | `PI_PLANNER_ONLY_MAX_TOKENS` | 子代理上报的 token 超过此值就取消（默认 1500000）。计数取子代理进度事件里的累计 input+output token，不含缓存读取。 |
 | `PI_PLANNER_ONLY_START_TIMEOUT_MS` | 子代理迟迟不启动时放弃（默认 30000）。 |
 | `PI_PLANNER_ONLY_CANCEL_GRACE_MS` | 等待取消被确认的时间（默认 5000）。 |
-| `PI_PLANNER_ONLY_HANDOFF` | `off`（默认）仅允许用户请求交接；`confirm` 也允许 Root 超过阈值后自行发起，并把简报放入编辑框；`auto` 同样允许自行发起并自动提交（实验性：节省效果尚未测量，冒烟测试仅确认流程可运行）。 |
+| `PI_PLANNER_ONLY_HANDOFF` | 非空时覆盖 `/planner-only handoff-mode` 保存的偏好。优先级为 env > 持久偏好 > 默认 `off`。`confirm` 允许 Root 超过阈值后自行发起，并把简报放入编辑框；`auto` 同样允许自行发起并自动提交（实验性：节省效果尚未测量，冒烟测试仅确认流程可运行）。 |
 | `PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS` | Root 上下文超过此值时状态栏变红，并给 Root 发一条提示：委派、开新会话或 `/compact`（默认 150000）。 |
 
 关闭或 Native 模式下，本扩展的四个 Lite 工具即使被直接调用也会拒绝执行。
