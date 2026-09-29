@@ -80,6 +80,9 @@ __pycache__/
 # CommandCode local taste profile (machine-local, like .codex/)
 .commandcode/
 
+# OMO agent runtime state (locks, receipts, mailbox; machine-local)
+.omo/
+
 # 2026-09-24 ad-hoc om09 measurement leftovers: raw sessions and transcripts
 .scratch/om09-run/
 .scratch/om09-run2/
