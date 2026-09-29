@@ -136,4 +136,16 @@ Root 已能把任务派出去，但 worker 模型慢。目标是缩短从提需�
 - **O2**：已实施。`ROLE_AGENTS.worker.closing` 开头加入：“Work in few turns: send independent reads, searches, and inspection commands together in one turn (at most 4); read a small file whole and a large file's relevant range once, not in repeated slices; combine nearby edits into one edit or patch call.”考虑到并非所有环境都配了 `apply_patch`，措辞用“edit or patch call”。
 - **O3**：大部分已在 `3f58416` 中实施：`delegate` 的 `task` 参数说明已要求写明范围（文件、函数）、已定决策（公共接口等）、验收条件和确切的检查命令。没有再加文字。Root 系统提示词有 1,700 字符的测试上限，当前已用 1,662/1,678。
 - **O4**：已做最小版本。`task` 参数说明加入：“Ask only for checks that finish well within the child's time limit; keep long jobs (full pipelines, large data processing) out of the task and run them outside delegation (yourself, or hand them to the user).”子 agent 一侧原有的时限提示不变。后台作业怎么提交、怎么取回结果不写进插件：这属于机器规则（`slot -b`、`slot tail`，见全局 AGENTS.md）。strict 模式下 Root 不能跑 bash，只能交给用户。
-- **O5**、O2 效果对照：待 bench 试验。
+- **O2 效果对照（T2，arm `lite-tds-strict-o2`，pluginRef `12f13e6`）**：计划 3 次，第 3 次因模型服务商返回 “insufficient credits”（400）在约 208 秒后中止，判为无效（`valid=false`），未重跑；有效样本 n=2，全部通过。对照组为 O2 之前的 `treat-3f58416`（n=3，全部有效通过）。
+
+  | 指标 | 对照 n=3（9 次 worker 委派） | O2 n=2（8 次 worker 委派） |
+  |---|---|---|
+  | worker 每次委派 turns 中位 | 5 | 6 |
+  | worker 每次委派 tool calls 中位 | 12 | 12 |
+  | calls/turn（worker） | 1.87 | 1.91 |
+  | 单次委派时长中位 | 57 秒 | 85 秒 |
+  | 每个 run 的 worker 总轮数 | 26 / 19 / 16 | 35 / 23 |
+  | wall | 1994 / 1155 / 1381 秒 | 1715 / 1455 秒 |
+
+  结论：**没有观察到 O2 减少轮数或提高 calls/turn**（1.87 → 1.91，在噪声内），worker 轮数反而略高。样本很小，不能说 O2 有害，但也没有证据说它有效。模型看到“每轮最多 4 个并行”的提示后，行为基本没变；worker 每轮约 2 个调用，可能由任务本身的依赖结构决定（先读后改、改后验证）。T2 上 worker 只占子 agent 总时间约四分之一，即使 O2 生效，绝对收益也有限。措辞保留（无害、已过测试），但不再把它当作有效的优化手段。
+- **O5**：未做。bench 的 child 模型读全局 `~/.pi/agent/settings.json`，改它会影响所有会话，需用户决定。
