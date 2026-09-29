@@ -1,0 +1,1 @@
+{"id":"G1","repo":"/project/tmp/ppo-bench/fixture-repos/root-guidance","target":"2e28f6a09bafb3d278040e84022d4f3fcae299ed","parent":"c40ec92605656726cae93aaa3e03baf4043b0d93","tests":["tests/test_audit_script.py"],"prompt":"G1.md","python":"/project/software/miniforge3/bin/python3","baseline":"../baselines/G1.failures.txt"}

@@ -1,6 +1,6 @@
 # 02：bench 场景任务与离线指标
 
-Status: ready-for-agent
+Status: done
 Type: task
 Blocked by: 01（只有 treat arm 的 `pluginRef` 依赖 01 的 commit sha，其余部分可以先做）
 
@@ -73,3 +73,9 @@ bench/campaign.sh rdg-dry 1 G1,G2 lite-tds-guid-base,lite-tds-guid-treat --dry-r
 `goldcheck` 会运行 G2 的伪流水线，约 7 分钟，按规则用 `slot cpu` 提交。
 
 ## Comments
+
+- 2026-09-30 完成。fixture 仓库三 commit：c0 `c40ec92605656726cae93aaa3e03baf4043b0d93`（G1 parent）、c1 `2e28f6a09bafb3d278040e84022d4f3fcae299ed`（G1 target / G2 parent）、c2 `1e69318b2a5d38f601bb6b48da6a1e753661bc26`（G2 target）。bundle 在 `bench/fixtures/root-guidance/root-guidance.bundle`，`expand.sh` 展开到 `/project/tmp/ppo-bench/fixture-repos/root-guidance`（已展开）。
+- goldcheck：G1 PASS（Root 复跑确认），G2 PASS（slot cpu 作业 2589，流水线实跑约 7 分钟；preflight `slot audit`/`slot status` 已记入 `../slot.log`）。
+- arms：`bench/arms/lite-tds-guid-base.json`（pluginRef `c2fcc8bb5f3dd15cc130eaa07ad6a6932f4c4cf4`）与 `lite-tds-guid-treat.json`（pluginRef `d186304e2de209a38cb1dfbde5f869e2158142c8`，票 01 的 commit）；非 strict，env 设 `PI_PLANNER_ONLY_HANDOFF=off`、`PI_PLANNER_ONLY_TIMEOUT_MS=300000`，promptPrefix 两 arm 相同且不涉及角色/等待/验收。
+- `bench/guidance_metrics.py` + `bench/test_guidance_metrics.py`：合成 fixture 测试全过；在 rdt-r5s 真实 runs 上 sanity 正常。campaign dry-run 正常展示 4 个 lane（G1/G2 × base/treat）。
+- 注意：eval 的 `non_target_tests_changed` 会列出 pytest 生成的 `tests/__pycache__/*.pyc`，是 evaluate.sh 的既有计数行为，不影响 pass 判定。

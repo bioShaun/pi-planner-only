@@ -1,6 +1,6 @@
 # 01：Root 委派指导文本与单测
 
-Status: ready-for-agent
+Status: done
 Type: task
 
 Source: `../spec.md`（Solution 1–4、Implementation Decisions、Testing Decisions）。
@@ -41,3 +41,6 @@ node --experimental-strip-types bench/overhead.mjs static --ref HEAD            
 报告需包含：两种模式的 `plannerPrompt` 长度、overhead 字符增量、故障注入自检的结果。完成后用一次提交，提交信息以 `feat(prompt):` 开头，并把 commit sha 写进本文件的 Comments，票 02 的 treat arm 要用它。
 
 ## Comments
+
+- 2026-09-30 完成，commit `d186304`（`feat(prompt): Root delegation guidance for role routing, long runs, acceptance`）。票 02 treat arm 的 `pluginRef` 用完整 sha `d186304e2de209a38cb1dfbde5f869e2158142c8`。
+- 实现摘要：`plannerPrompt` 非 strict 1,681 字符、strict 1,697 字符（上限 1,700，未用 fallback）；overhead vs 前一 HEAD：提示 +19 字符、工具定义 +842 字符（delegate description +690、参数 +152，约 +211 token）；README 两版无矛盾未改；CHANGELOG 记一条。故障注入自检：临时删掉 "completed" 句，index 测试对应断言（第 107 行）失败，恢复后全绿。`npm run test:release` 全绿；无删除/放宽已有断言。

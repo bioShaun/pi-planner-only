@@ -1,0 +1,1 @@
+{"name": "lite-tds-guid-treat", "mode": "lite", "rootModel": "tcuni-ds/deepseek/deepseek-v4.1-flash", "pluginRef": "d186304e2de209a38cb1dfbde5f869e2158142c8", "promptPrefix": "你是规划与审核者：实现和跑测试交给 delegate，自己负责拆分、检查 git diff 与测试结果。", "env": {"PI_PLANNER_ONLY_HANDOFF": "off", "PI_PLANNER_ONLY_TIMEOUT_MS": "300000"}}
