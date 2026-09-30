@@ -1,0 +1,5 @@
+snapshot/
+local-snapshot/
+*.tar.gz
+analysis.json
+local-analysis.json

@@ -1,0 +1,201 @@
+{
+  "groups": {
+    "Opus": {
+      "sessions": 12,
+      "delegate_sessions": 6,
+      "active_s": 36858.812999248505,
+      "parts": {
+        "unattributed": 17.354999780654907,
+        "assistant_ok": 6020.571000099182,
+        "root_tool": 24681.003998994827,
+        "assistant_error": 6.89900016784668,
+        "delegate": 6132.984000205994
+      },
+      "episodes": 69,
+      "unfinished_episodes": 0,
+      "assistant_messages": 666,
+      "root_errors": {
+        "This operation was aborted": 6,
+        "Operation aborted": 2,
+        "502 {\"error\":{\"message\":\"Upstream service temporarily unavailable\",\"type\":\"upstream_error\"},\"type\":\"error\"}": 1,
+        "Connection error.": 3
+      },
+      "tools": {
+        "bash": 488,
+        "read": 52,
+        "delegate": 25,
+        "write": 26,
+        "edit": 39,
+        "handoff": 4,
+        "web_enable": 2,
+        "web_search": 3,
+        "fetch_content": 4,
+        "get_search_content": 9,
+        "git_commit": 17,
+        "git_audit": 3
+      },
+      "delegations": 25,
+      "delegate_status": {
+        "completed": 23,
+        "timed_out": 2
+      },
+      "delegate_roles": {
+        "worker": 19,
+        "validator": 1,
+        "explorer": 4,
+        "reviewer": 1
+      },
+      "child_models": {
+        "tcuni/gpt-6-luna:medium": 19,
+        "tcuni/gpt-6-luna:low": 5,
+        "tcuni/gpt-6-luna:high": 1
+      },
+      "child_duration_s": 6128.865,
+      "child_tool_union_s": 1669.0390017032623,
+      "root_response_ok": {
+        "n": 654,
+        "sum": 6020.571000099182,
+        "median": 6.3734999895095825,
+        "p90": 17.98900008201599
+      },
+      "root_response_error": {
+        "n": 12,
+        "sum": 6.89900016784668,
+        "median": 0.007500052452087402,
+        "p90": 1.0130000114440918
+      },
+      "return_to_assistant": {
+        "n": 24,
+        "sum": 163.6010000705719,
+        "median": 5.444999933242798,
+        "p90": 13.070000171661377
+      }
+    },
+    "Sonnet": {
+      "sessions": 14,
+      "delegate_sessions": 5,
+      "active_s": 6378.604999303818,
+      "parts": {
+        "unattributed": 0.5390002727508545,
+        "assistant_ok": 2016.510998249054,
+        "root_tool": 1585.4370005130768,
+        "delegate": 2561.5310003757477,
+        "assistant_error": 83.34999990463257,
+        "mixed_tool": 131.2369999885559
+      },
+      "episodes": 44,
+      "unfinished_episodes": 0,
+      "assistant_messages": 266,
+      "root_errors": {
+        "This operation was aborted": 1,
+        "{\"error\":{\"message\":\"upstream stream disconnected: unexpected EOF\",\"type\":\"stream_read_error\"},\"type\":\"error\"}": 1,
+        "Operation aborted": 1
+      },
+      "tools": {
+        "read": 21,
+        "bash": 192,
+        "git_commit": 9,
+        "delegate": 10,
+        "write": 6,
+        "bg_wait": 1,
+        "edit": 9,
+        "git_audit": 5
+      },
+      "delegations": 10,
+      "delegate_status": {
+        "completed": 9,
+        "timed_out": 1
+      },
+      "delegate_roles": {
+        "worker": 8,
+        "explorer": 2
+      },
+      "child_models": {
+        "tcuni/gpt-6-luna:medium": 8,
+        "tcuni/gpt-6-luna:low": 2
+      },
+      "child_duration_s": 2690.438,
+      "child_tool_union_s": 89.14699935913086,
+      "root_response_ok": {
+        "n": 263,
+        "sum": 2016.510998249054,
+        "median": 6.452000141143799,
+        "p90": 13.736999988555908
+      },
+      "root_response_error": {
+        "n": 3,
+        "sum": 83.34999990463257,
+        "median": 7.450000047683716,
+        "p90": 75.8989999294281
+      },
+      "return_to_assistant": {
+        "n": 9,
+        "sum": 69.26500010490417,
+        "median": 5.4670000076293945,
+        "p90": 19.312999963760376
+      }
+    },
+    "Astra": {
+      "sessions": 2,
+      "delegate_sessions": 2,
+      "active_s": 690.4939997196198,
+      "parts": {
+        "unattributed": 0.03999900817871094,
+        "assistant_ok": 355.499000787735,
+        "root_tool": 13.059000015258789,
+        "delegate": 310.1159999370575,
+        "assistant_error": 11.77999997138977
+      },
+      "episodes": 4,
+      "unfinished_episodes": 0,
+      "assistant_messages": 21,
+      "root_errors": {
+        "Operation aborted": 1
+      },
+      "tools": {
+        "bash": 10,
+        "delegate": 3,
+        "read": 8,
+        "edit": 1,
+        "git_commit": 1
+      },
+      "delegations": 2,
+      "delegate_status": {
+        "completed": 2
+      },
+      "delegate_roles": {
+        "explorer": 2
+      },
+      "child_models": {
+        "tcuni/gpt-6-luna:low": 2
+      },
+      "child_duration_s": 309.66499999999996,
+      "child_tool_union_s": 123.14099955558777,
+      "root_response_ok": {
+        "n": 20,
+        "sum": 355.499000787735,
+        "median": 9.37500011920929,
+        "p90": 25.233999967575073
+      },
+      "root_response_error": {
+        "n": 1,
+        "sum": 11.77999997138977,
+        "median": 11.77999997138977,
+        "p90": 11.77999997138977
+      },
+      "return_to_assistant": {
+        "n": 2,
+        "sum": 24.918999910354614,
+        "median": 12.459499955177307,
+        "p90": 17.68499994277954
+      }
+    }
+  },
+  "quality": {
+    "files": 32,
+    "meta_files": 50,
+    "matched_meta": 50,
+    "unmatched_delegations": 0,
+    "unmatched_root_tools": 2
+  }
+}

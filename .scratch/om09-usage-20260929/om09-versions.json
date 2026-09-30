@@ -1,0 +1,18 @@
+{
+  "observed_utc": "2026-09-29T15:49:06.945512+00:00",
+  "commit": {
+    "stdout": "9373f838c26935535fb9b59dedd63e16fd67c371\n",
+    "stderr": "",
+    "exit_code": 0
+  },
+  "status": {
+    "stdout": " M package-lock.json\n",
+    "stderr": "",
+    "exit_code": 0
+  },
+  "reflog": {
+    "stdout": "9373f83 HEAD@{2026-09-29 10:12:33 +0800}: reset: moving to @{upstream}^{commit}\nccfedcd HEAD@{2026-09-28 10:18:12 +0800}: reset: moving to @{upstream}^{commit}\nd845501 HEAD@{2026-09-24 23:14:06 +0800}: reset: moving to @{upstream}^{commit}\n792ab78 HEAD@{2026-09-24 22:46:15 +0800}: reset: moving to @{upstream}^{commit}\n9435940 HEAD@{2026-09-24 20:44:07 +0800}: reset: moving to @{upstream}^{commit}\n5379e69 HEAD@{2026-09-24 17:59:47 +0800}: reset: moving to @{upstream}^{commit}\nbdd485f HEAD@{2026-09-24 15:17:01 +0800}: reset: moving to @{upstream}^{commit}\n60a535a HEAD@{2026-09-24 10:07:43 +0800}: reset: moving to @{upstream}^{commit}\n9b96580 HEAD@{2026-09-21 16:12:45 +0800}: clone: from https://github.com/bioShaun/pi-planner-only\n",
+    "stderr": "",
+    "exit_code": 0
+  }
+}

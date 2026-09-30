@@ -1,0 +1,681 @@
+{
+  "groups": {
+    "all/Opus": {
+      "sessions": 17,
+      "delegate_sessions": 9,
+      "episodes": 68,
+      "unfinished_episodes": 0,
+      "active_s": 28207.041999578476,
+      "parts_s": {
+        "unattributed": 7.814005613327026,
+        "assistant_ok": 9327.354994535446,
+        "root_tool": 10079.983998775482,
+        "assistant_error": 4.661999940872192,
+        "delegate": 8787.227000713348
+      },
+      "parts_pct": {
+        "unattributed": 0.02770232204228929,
+        "assistant_ok": 33.067469444952195,
+        "root_tool": 35.735700322373816,
+        "assistant_error": 0.016527787426068502,
+        "delegate": 31.15260012320563
+      },
+      "delegate_requests": 36,
+      "delegate_results": 36,
+      "delegate_status": {
+        "completed": 34,
+        "timed_out": 2
+      },
+      "delegate_roles": {
+        "worker": 29,
+        "explorer": 4,
+        "reviewer": 2,
+        "validator": 1
+      },
+      "root_tool_calls_excluding_delegate": 913,
+      "root_edit_write_calls": 73,
+      "root_tool_counts": {
+        "bash": 651,
+        "read": 151,
+        "edit": 56,
+        "write": 17,
+        "web_enable": 1,
+        "fetch_content": 2,
+        "delegate": 36,
+        "git_audit": 13,
+        "git_commit": 18,
+        "handoff": 4
+      },
+      "root_error_messages": {
+        "This operation was aborted": 5,
+        "Operation aborted": 1
+      },
+      "root_response_ok_s": {
+        "n": 887,
+        "median": 6.645999908447266,
+        "p90": 23.335999965667725,
+        "sum": 9327.354994535446
+      },
+      "return_to_next_assistant_s": {
+        "n": 34,
+        "median": 5.611999988555908,
+        "p90": 27.670000076293945,
+        "sum": 359.22899985313416
+      },
+      "delegate_envelope_minus_child_s": {
+        "n": 36,
+        "median": 0.22200003910064936,
+        "p90": 0.49400020408629075,
+        "sum": 11.429000713348408
+      },
+      "child_reported_duration_s": 8775.798,
+      "child_tool_union_s": 1870.6489984989166,
+      "child_unclosed_tools": 0
+    },
+    "all/Sonnet": {
+      "sessions": 21,
+      "delegate_sessions": 11,
+      "episodes": 51,
+      "unfinished_episodes": 1,
+      "active_s": 37043.941999197006,
+      "parts_s": {
+        "unattributed": 86.49000000953674,
+        "assistant_ok": 8409.356001377106,
+        "root_tool": 15528.704998254776,
+        "delegate": 12594.762999773026,
+        "assistant_error": 227.17799997329712,
+        "mixed_tool": 197.44999980926514
+      },
+      "parts_pct": {
+        "unattributed": 0.23347947151901807,
+        "assistant_ok": 22.701028960577126,
+        "root_tool": 41.91968824103922,
+        "delegate": 33.9995214333454,
+        "assistant_error": 0.6132662662581148,
+        "mixed_tool": 0.5330156272611193
+      },
+      "delegate_requests": 56,
+      "delegate_results": 56,
+      "delegate_status": {
+        "completed": 53,
+        "failed": 2,
+        "timed_out": 1
+      },
+      "delegate_roles": {
+        "worker": 51,
+        "reviewer": 5
+      },
+      "root_tool_calls_excluding_delegate": 760,
+      "root_edit_write_calls": 48,
+      "root_tool_counts": {
+        "bash": 561,
+        "edit": 43,
+        "delegate": 56,
+        "git_audit": 21,
+        "git_commit": 37,
+        "read": 85,
+        "web_enable": 1,
+        "web_search": 1,
+        "fetch_content": 1,
+        "get_search_content": 2,
+        "handoff": 2,
+        "write": 5,
+        "read_00": 1
+      },
+      "root_error_messages": {
+        "503 {\"error\":{\"message\":\"No available accounts: no available accounts\",\"type\":\"api_error\"},\"type\":\"error\"}": 13,
+        "502 {\"error\":{\"message\":\"Upstream service temporarily unavailable\",\"type\":\"upstream_error\"},\"type\":\"error\"}": 14,
+        "{\"error\":{\"message\":\"upstream stream disconnected: unexpected EOF\",\"type\":\"stream_read_error\"},\"type\":\"error\"}": 1,
+        "Operation aborted": 1
+      },
+      "root_response_ok_s": {
+        "n": 736,
+        "median": 7.148499965667725,
+        "p90": 19.5,
+        "sum": 8409.356001377106
+      },
+      "return_to_next_assistant_s": {
+        "n": 52,
+        "median": 8.069000005722046,
+        "p90": 14.444000005722046,
+        "sum": 567.4830009937286
+      },
+      "delegate_envelope_minus_child_s": {
+        "n": 56,
+        "median": 0.35849997329711414,
+        "p90": 0.4570000133514327,
+        "sum": 20.733999582290437
+      },
+      "child_reported_duration_s": 12771.479,
+      "child_tool_union_s": 2724.448995113373,
+      "child_unclosed_tools": 0
+    },
+    "all/Astra": {
+      "sessions": 6,
+      "delegate_sessions": 5,
+      "episodes": 10,
+      "unfinished_episodes": 0,
+      "active_s": 3566.881999731064,
+      "parts_s": {
+        "unattributed": 0.40799832344055176,
+        "assistant_ok": 1602.4530007839203,
+        "root_tool": 49.70300054550171,
+        "delegate": 1776.848000049591,
+        "mixed_tool": 125.69000005722046,
+        "assistant_error": 11.77999997138977
+      },
+      "parts_pct": {
+        "unattributed": 0.011438514744006504,
+        "assistant_ok": 44.925876463105375,
+        "root_tool": 1.3934579430788352,
+        "delegate": 49.81516069731384,
+        "mixed_tool": 3.523805947791299,
+        "assistant_error": 0.3302604339666398
+      },
+      "delegate_requests": 12,
+      "delegate_results": 11,
+      "delegate_status": {
+        "completed": 10,
+        "timed_out": 1
+      },
+      "delegate_roles": {
+        "explorer": 6,
+        "validator": 2,
+        "worker": 3
+      },
+      "root_tool_calls_excluding_delegate": 93,
+      "root_edit_write_calls": 6,
+      "root_tool_counts": {
+        "bash": 40,
+        "delegate": 12,
+        "read": 40,
+        "write": 1,
+        "git_commit": 3,
+        "git_audit": 4,
+        "edit": 5
+      },
+      "root_error_messages": {
+        "Operation aborted": 1
+      },
+      "root_response_ok_s": {
+        "n": 77,
+        "median": 11.82099986076355,
+        "p90": 42.24799990653992,
+        "sum": 1602.4530007839203
+      },
+      "return_to_next_assistant_s": {
+        "n": 9,
+        "median": 16.759999990463257,
+        "p90": 73.68700003623962,
+        "sum": 188.1619999408722
+      },
+      "delegate_envelope_minus_child_s": {
+        "n": 11,
+        "median": 0.2660000572204524,
+        "p90": 0.6180000438690172,
+        "sum": 3.6270001068114937
+      },
+      "child_reported_duration_s": 1898.911,
+      "child_tool_union_s": 536.0939998626709,
+      "child_unclosed_tools": 0
+    },
+    "om09/Opus": {
+      "sessions": 10,
+      "delegate_sessions": 5,
+      "episodes": 30,
+      "unfinished_episodes": 0,
+      "active_s": 14410.001999616623,
+      "parts_s": {
+        "unattributed": 7.021003484725952,
+        "assistant_ok": 5632.1049954891205,
+        "root_tool": 5496.421999931335,
+        "assistant_error": 0.004000186920166016,
+        "delegate": 3274.450000524521
+      },
+      "parts_pct": {
+        "unattributed": 0.04872312637370033,
+        "assistant_ok": 39.0846926713748,
+        "root_tool": 38.14310365867796,
+        "assistant_error": 2.7759794344736665e-05,
+        "delegate": 22.723452783779194
+      },
+      "delegate_requests": 15,
+      "delegate_results": 15,
+      "delegate_status": {
+        "completed": 15
+      },
+      "delegate_roles": {
+        "worker": 12,
+        "explorer": 2,
+        "reviewer": 1
+      },
+      "root_tool_calls_excluding_delegate": 523,
+      "root_edit_write_calls": 33,
+      "root_tool_counts": {
+        "bash": 350,
+        "read": 111,
+        "edit": 30,
+        "write": 3,
+        "web_enable": 1,
+        "fetch_content": 2,
+        "delegate": 15,
+        "git_audit": 11,
+        "git_commit": 14,
+        "handoff": 1
+      },
+      "root_error_messages": {
+        "This operation was aborted": 2
+      },
+      "root_response_ok_s": {
+        "n": 484,
+        "median": 6.778499960899353,
+        "p90": 29.126999855041504,
+        "sum": 5632.1049954891205
+      },
+      "return_to_next_assistant_s": {
+        "n": 13,
+        "median": 6.755000114440918,
+        "p90": 58.93599987030029,
+        "sum": 219.3529999256134
+      },
+      "delegate_envelope_minus_child_s": {
+        "n": 15,
+        "median": 0.4060000534057622,
+        "p90": 0.5190002040862964,
+        "sum": 8.236000524520861
+      },
+      "child_reported_duration_s": 3266.214,
+      "child_tool_union_s": 209.3769965171814,
+      "child_unclosed_tools": 0
+    },
+    "om09/Sonnet": {
+      "sessions": 15,
+      "delegate_sessions": 9,
+      "episodes": 36,
+      "unfinished_episodes": 1,
+      "active_s": 34188.98099946976,
+      "parts_s": {
+        "unattributed": 86.20100021362305,
+        "assistant_ok": 7423.181001663208,
+        "root_tool": 14914.390997886658,
+        "delegate": 11423.928999900818,
+        "assistant_error": 143.8289999961853,
+        "mixed_tool": 197.44999980926514
+      },
+      "parts_pct": {
+        "unattributed": 0.2521309430513883,
+        "assistant_ok": 21.71220312702018,
+        "root_tool": 43.62338555254971,
+        "delegate": 33.41406694770456,
+        "assistant_error": 0.42068817435189415,
+        "mixed_tool": 0.5775252553222555
+      },
+      "delegate_requests": 52,
+      "delegate_results": 52,
+      "delegate_status": {
+        "completed": 50,
+        "failed": 2
+      },
+      "delegate_roles": {
+        "worker": 47,
+        "reviewer": 5
+      },
+      "root_tool_calls_excluding_delegate": 635,
+      "root_edit_write_calls": 40,
+      "root_tool_counts": {
+        "bash": 464,
+        "edit": 37,
+        "delegate": 52,
+        "git_audit": 16,
+        "git_commit": 32,
+        "read": 75,
+        "web_enable": 1,
+        "web_search": 1,
+        "fetch_content": 1,
+        "get_search_content": 2,
+        "handoff": 2,
+        "write": 3,
+        "read_00": 1
+      },
+      "root_error_messages": {
+        "503 {\"error\":{\"message\":\"No available accounts: no available accounts\",\"type\":\"api_error\"},\"type\":\"error\"}": 13,
+        "502 {\"error\":{\"message\":\"Upstream service temporarily unavailable\",\"type\":\"upstream_error\"},\"type\":\"error\"}": 14
+      },
+      "root_response_ok_s": {
+        "n": 612,
+        "median": 7.218000054359436,
+        "p90": 21.769999980926514,
+        "sum": 7423.181001663208
+      },
+      "return_to_next_assistant_s": {
+        "n": 48,
+        "median": 8.489500045776367,
+        "p90": 16.598000049591064,
+        "sum": 549.202000617981
+      },
+      "delegate_envelope_minus_child_s": {
+        "n": 52,
+        "median": 0.3634998235702369,
+        "p90": 0.4420001106262248,
+        "sum": 19.616999710082837
+      },
+      "child_reported_duration_s": 11601.762,
+      "child_tool_union_s": 2647.275995492935,
+      "child_unclosed_tools": 0
+    },
+    "om09/Astra": {
+      "sessions": 4,
+      "delegate_sessions": 3,
+      "episodes": 6,
+      "unfinished_episodes": 0,
+      "active_s": 2876.388000011444,
+      "parts_s": {
+        "unattributed": 0.3679993152618408,
+        "assistant_ok": 1246.9539999961853,
+        "root_tool": 36.64400053024292,
+        "delegate": 1466.7320001125336,
+        "mixed_tool": 125.69000005722046
+      },
+      "parts_pct": {
+        "unattributed": 0.012793799559043379,
+        "assistant_ok": 43.35138374903609,
+        "root_tool": 1.2739588862871465,
+        "delegate": 50.99214709930295,
+        "mixed_tool": 4.369716465814778
+      },
+      "delegate_requests": 9,
+      "delegate_results": 9,
+      "delegate_status": {
+        "completed": 8,
+        "timed_out": 1
+      },
+      "delegate_roles": {
+        "explorer": 4,
+        "validator": 2,
+        "worker": 3
+      },
+      "root_tool_calls_excluding_delegate": 73,
+      "root_edit_write_calls": 5,
+      "root_tool_counts": {
+        "bash": 30,
+        "delegate": 9,
+        "read": 32,
+        "write": 1,
+        "git_commit": 2,
+        "git_audit": 4,
+        "edit": 4
+      },
+      "root_error_messages": {},
+      "root_response_ok_s": {
+        "n": 57,
+        "median": 13.944999933242798,
+        "p90": 42.24799990653992,
+        "sum": 1246.9539999961853
+      },
+      "return_to_next_assistant_s": {
+        "n": 7,
+        "median": 16.759999990463257,
+        "p90": 73.68700003623962,
+        "sum": 163.24300003051758
+      },
+      "delegate_envelope_minus_child_s": {
+        "n": 9,
+        "median": 0.2740000896453836,
+        "p90": 0.6409998722076296,
+        "sum": 3.1760001697539906
+      },
+      "child_reported_duration_s": 1589.246,
+      "child_tool_union_s": 412.95300030708313,
+      "child_unclosed_tools": 0
+    },
+    "tcuni-claw/Opus": {
+      "sessions": 7,
+      "delegate_sessions": 4,
+      "episodes": 38,
+      "unfinished_episodes": 0,
+      "active_s": 13797.039999961853,
+      "parts_s": {
+        "unattributed": 0.7930021286010742,
+        "assistant_ok": 3695.2499990463257,
+        "root_tool": 4583.561998844147,
+        "assistant_error": 4.657999753952026,
+        "delegate": 5512.7770001888275
+      },
+      "parts_pct": {
+        "unattributed": 0.005747625060181508,
+        "assistant_ok": 26.782918648177745,
+        "root_tool": 33.221343120385384,
+        "assistant_error": 0.033760862865983614,
+        "delegate": 39.956229743510704
+      },
+      "delegate_requests": 21,
+      "delegate_results": 21,
+      "delegate_status": {
+        "completed": 19,
+        "timed_out": 2
+      },
+      "delegate_roles": {
+        "worker": 17,
+        "validator": 1,
+        "explorer": 2,
+        "reviewer": 1
+      },
+      "root_tool_calls_excluding_delegate": 390,
+      "root_edit_write_calls": 40,
+      "root_tool_counts": {
+        "bash": 301,
+        "read": 40,
+        "delegate": 21,
+        "write": 14,
+        "edit": 26,
+        "handoff": 3,
+        "git_commit": 4,
+        "git_audit": 2
+      },
+      "root_error_messages": {
+        "This operation was aborted": 3,
+        "Operation aborted": 1
+      },
+      "root_response_ok_s": {
+        "n": 403,
+        "median": 6.06499981880188,
+        "p90": 17.98900008201599,
+        "sum": 3695.2499990463257
+      },
+      "return_to_next_assistant_s": {
+        "n": 21,
+        "median": 5.164999961853027,
+        "p90": 7.745999813079834,
+        "sum": 139.87599992752075
+      },
+      "delegate_envelope_minus_child_s": {
+        "n": 21,
+        "median": 0.09500008583069075,
+        "p90": 0.262000015258792,
+        "sum": 3.193000188827547
+      },
+      "child_reported_duration_s": 5509.584,
+      "child_tool_union_s": 1661.2720019817352,
+      "child_unclosed_tools": 0
+    },
+    "tcuni-claw/Sonnet": {
+      "sessions": 6,
+      "delegate_sessions": 2,
+      "episodes": 15,
+      "unfinished_episodes": 0,
+      "active_s": 2854.960999727249,
+      "parts_s": {
+        "unattributed": 0.2889997959136963,
+        "assistant_ok": 986.1749997138977,
+        "root_tool": 614.3140003681183,
+        "assistant_error": 83.34899997711182,
+        "delegate": 1170.8339998722076
+      },
+      "parts_pct": {
+        "unattributed": 0.01012272307542226,
+        "assistant_ok": 34.54250337598702,
+        "root_tool": 21.517421794091312,
+        "assistant_error": 2.9194444332190397,
+        "delegate": 41.01050767362721
+      },
+      "delegate_requests": 4,
+      "delegate_results": 4,
+      "delegate_status": {
+        "completed": 3,
+        "timed_out": 1
+      },
+      "delegate_roles": {
+        "worker": 4
+      },
+      "root_tool_calls_excluding_delegate": 125,
+      "root_edit_write_calls": 8,
+      "root_tool_counts": {
+        "read": 10,
+        "bash": 97,
+        "write": 2,
+        "git_audit": 5,
+        "delegate": 4,
+        "edit": 6,
+        "git_commit": 5
+      },
+      "root_error_messages": {
+        "{\"error\":{\"message\":\"upstream stream disconnected: unexpected EOF\",\"type\":\"stream_read_error\"},\"type\":\"error\"}": 1,
+        "Operation aborted": 1
+      },
+      "root_response_ok_s": {
+        "n": 124,
+        "median": 6.709500074386597,
+        "p90": 12.067999839782715,
+        "sum": 986.1749997138977
+      },
+      "return_to_next_assistant_s": {
+        "n": 4,
+        "median": 4.474500060081482,
+        "p90": 6.015000104904175,
+        "sum": 18.28100037574768
+      },
+      "delegate_envelope_minus_child_s": {
+        "n": 4,
+        "median": 0.19049990653991244,
+        "p90": 0.5799999351501128,
+        "sum": 1.1169998722076002
+      },
+      "child_reported_duration_s": 1169.717,
+      "child_tool_union_s": 77.17299962043762,
+      "child_unclosed_tools": 0
+    },
+    "tcuni-claw/Astra": {
+      "sessions": 2,
+      "delegate_sessions": 2,
+      "episodes": 4,
+      "unfinished_episodes": 0,
+      "active_s": 690.4939997196198,
+      "parts_s": {
+        "unattributed": 0.03999900817871094,
+        "assistant_ok": 355.499000787735,
+        "root_tool": 13.059000015258789,
+        "delegate": 310.1159999370575,
+        "assistant_error": 11.77999997138977
+      },
+      "parts_pct": {
+        "unattributed": 0.00579281039298717,
+        "assistant_ok": 51.48473425288098,
+        "root_tool": 1.891254669926385,
+        "delegate": 44.91219330841143,
+        "assistant_error": 1.7060249583882159
+      },
+      "delegate_requests": 3,
+      "delegate_results": 2,
+      "delegate_status": {
+        "completed": 2
+      },
+      "delegate_roles": {
+        "explorer": 2
+      },
+      "root_tool_calls_excluding_delegate": 20,
+      "root_edit_write_calls": 1,
+      "root_tool_counts": {
+        "bash": 10,
+        "delegate": 3,
+        "read": 8,
+        "edit": 1,
+        "git_commit": 1
+      },
+      "root_error_messages": {
+        "Operation aborted": 1
+      },
+      "root_response_ok_s": {
+        "n": 20,
+        "median": 9.37500011920929,
+        "p90": 25.233999967575073,
+        "sum": 355.499000787735
+      },
+      "return_to_next_assistant_s": {
+        "n": 2,
+        "median": 12.459499955177307,
+        "p90": 17.68499994277954,
+        "sum": 24.918999910354614
+      },
+      "delegate_envelope_minus_child_s": {
+        "n": 2,
+        "median": 0.22549996852875154,
+        "p90": 0.2310000171661386,
+        "sum": 0.4509999370575031
+      },
+      "child_reported_duration_s": 309.66499999999996,
+      "child_tool_union_s": 123.14099955558777,
+      "child_unclosed_tools": 0
+    }
+  },
+  "totals": {
+    "business_sessions": 44,
+    "delegate_results": 103,
+    "delegate_requests": 104
+  },
+  "timed_out": [
+    {
+      "host": "om09",
+      "group": "Astra",
+      "source": "snapshot/sessions/--home-scripts-nf-rnaseq-v2--/2026-09-29T05-23-35-251Z_01a0eb9e-4cd2-73ce-b291-4d40eaa335d4.jsonl",
+      "call_line": 21,
+      "result_line": 22,
+      "run_id": "eb7a140b-01fb-4e23-9488-04a51c2c4df6",
+      "duration_s": 600.043,
+      "child_tool_union_s": 326.6630001068115,
+      "child_unclosed_tools": 0
+    },
+    {
+      "host": "tcuni-claw",
+      "group": "Opus",
+      "source": "local-snapshot/sessions/--data_0-panel_design-projects-TC-Uni-Maize-PanExome-20260409--/2026-09-28T06-08-21-413Z_01a0e6a0-eda4-7767-af57-e3c9d8486655.jsonl",
+      "call_line": 61,
+      "result_line": 64,
+      "run_id": "2903d8ec-c0af-4166-ba5a-d5eba3bdd540",
+      "duration_s": 600.013,
+      "child_tool_union_s": 533.0529997348785,
+      "child_unclosed_tools": 0
+    },
+    {
+      "host": "tcuni-claw",
+      "group": "Opus",
+      "source": "local-snapshot/sessions/--data_0-panel_design-projects-TC-Uni-Maize-PanExome-20260409--/2026-09-28T07-36-43-804Z_01a0e6f1-d61c-7767-af57-e3cdea0fe719.jsonl",
+      "call_line": 90,
+      "result_line": 93,
+      "run_id": "52bf2b7b-75eb-45ad-9f02-91567e2eb5ba",
+      "duration_s": 600.116,
+      "child_tool_union_s": 351.9500000476837,
+      "child_unclosed_tools": 0
+    },
+    {
+      "host": "tcuni-claw",
+      "group": "Sonnet",
+      "source": "local-snapshot/sessions/--public-scripts-tc-probe-design-v2--/2026-09-29T07-34-04-588Z_01a0ec15-c42c-71ce-80b0-53ba1a9f8af3.jsonl",
+      "call_line": 25,
+      "result_line": 28,
+      "run_id": "08a83dbb-3607-435a-94b5-766d458276c3",
+      "duration_s": 600.013,
+      "child_tool_union_s": 33.2380006313324,
+      "child_unclosed_tools": 0
+    }
+  ]
+}
