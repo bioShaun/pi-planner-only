@@ -32,3 +32,7 @@ Source: `../spec.md`（User Stories 22–24、Further Notes）。
 - 反向指标明显变差（例如过度拆分、总成本上升）：向用户报告，由用户决定是否回退。
 
 ## Comments
+
+- 2026-09-30 pilot（用户批准试跑一轮）：第一次 `rdg-r1-pilot`（tds 路由）在健康检查被熔断，`tcuni-ds` 余额不足（400 insufficient credits），零有效 run、零费用。改用同模型 ClinePass 路由新建 `lite-pds-guid-base/treat` 两个 arm（commit `27fb745`），跑 `rdg-r1-pilot-pds` 4 次全过、全部 valid，实际花费约 $0.08（opus 权重口径约 $1.87）。
+- **pilot 结论：flash 上 base 没有重现任何故障模式**。G1：base/treat 都把产物任务直接派给 worker（各 1 次委派，completed，无 validator 误派）。G2：base 1 次 worker 委派 completed，treat 0 次委派 Root 自己做；两臂均无超时、无补派、无 sleep 等待命令（`bash_sleep_cmds=0`、`dup_wait_cmds=0`）、无同轮重复调用。按用户既定规则：base 干净则 flash 对比测不出效果，不补跑 flash 的 n=3，转为由用户决定是否加一对 Sonnet arm（需先补 prices.json 的 Sonnet 条目）。
+- 结果目录：`/project/tmp/ppo-bench/results/rdg-r1-pilot-pds/`（含 `guidance-metrics.json`）。
