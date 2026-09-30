@@ -1,0 +1,1 @@
+{"name": "lite-sol-guid-base", "mode": "lite", "rootModel": "tcuni/gpt-6-sol", "pluginRef": "c2fcc8bb5f3dd15cc130eaa07ad6a6932f4c4cf4", "promptPrefix": "你是规划与审核者：实现和跑测试交给 delegate，自己负责拆分、检查 git diff 与测试结果。", "env": {"PI_PLANNER_ONLY_HANDOFF": "off", "PI_PLANNER_ONLY_TIMEOUT_MS": "300000"}}

@@ -10,6 +10,7 @@
 - `campaign.sh`: 配对、交错地提交多任务 campaign。
 - `summarize.py` / `prices.json`: 汇总 token、成本和评测结果。
 - `fixtures/`: 测试用归档证据。`native-detached-replay/` 是 T2b native 那次 detached child 的真实主 JSONL 与两条 child 转录（`.gz`，运行时解压到 TMPDIR），`bench/test_native.py` 的终端回放用例读它，不再依赖机器本地的 campaign 归档。
+`root-guidance/` 是 root-delegation-guidance 场景的 fixture 仓库 bundle，用其中的 `expand.sh` 展开到 `/project/tmp/ppo-bench/fixture-repos/root-guidance` 后任务 G1/G2 才可用。
 
 新增任务时添加同名 JSON 和 Markdown prompt，并提供 masked-suite baseline。新增 arm 时添加 JSON，字段沿用现有配置。`pluginRef` 可设为 `WORKTREE` 使用当前工作树，或用 git ref 固定插件快照；campaign 会把干净工作树的 WORKTREE arm 固定到 campaign 创建时的 HEAD。
 
