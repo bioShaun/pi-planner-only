@@ -1,6 +1,6 @@
 # Root 委派指导：派任务、等待与验收
 
-Status: ready-for-agent
+Status: done（票 01–03 完成；场景回放未能重现故障，效果未验证，见 `campaign-report.md`；场景重设计转票 04）
 
 来源：`.scratch/om09-usage-20260929/findings.md`（2026-09-28 至 09-29，两台机器，44 个业务会话，104 次委派请求）。
 
