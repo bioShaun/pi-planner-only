@@ -165,6 +165,22 @@ assert.deepEqual(parseStatusZ("x"), []);
 	assert.match(out.text, /abc1234 m\n a\.ts \| 1 \+/);
 }
 
+// git_commit failure after a successful add says the changes stay staged.
+{
+	const run = async (args) => {
+		if (args[0] === "--version") return { stdout: "git version 2.43.0\n", code: 0 };
+		const a = args.slice(args.indexOf("core.fsmonitor=false") + 1);
+		if (a[0] === "rev-parse") return { stdout: "true\n", code: 0 };
+		if (a[0] === "add") return { stdout: "", code: 0 };
+		if (a[0] === "commit") return { stdout: "", stderr: "Author identity unknown", code: 128 };
+		return { stdout: "", code: 0 };
+	};
+	const out = await gitCommit(run, "/w", "m", ["a.ts"]);
+	assert.equal(out.ok, false);
+	assert.match(out.text, /^git commit failed: Author identity unknown/);
+	assert.match(out.text, /still staged/);
+}
+
 // git_commit caps the displayed paths at MAX_COMMIT_FILES while retaining the count and header.
 {
 	const paths = Array.from({ length: 105 }, (_, i) => `path${i + 1}.ts`).join("\0") + "\0";

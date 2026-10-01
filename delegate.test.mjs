@@ -587,6 +587,7 @@ const respond = (bus, req, over = {}) =>
 		const subRefused = await runDelegation(repoDeps, { role: "worker", task: "t", cwd: sub });
 		assert.equal(subRefused.details.status, "refused");
 		assert.match(subRefused.text, new RegExp(`still running in repository ${realpathSync(repo).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+		assert.match(subRefused.text, /pass that repository as cwd/);
 		const linkRefused = await runDelegation(repoDeps, { role: "explorer", task: "t", cwd: link });
 		assert.equal(linkRefused.details.status, "refused");
 		held();

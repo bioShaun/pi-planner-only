@@ -301,7 +301,12 @@ export async function gitCommit(run: GitRunner, cwd: string, message: string, pa
 	const add = await git(run, paths?.length ? ["add", "--", ...paths] : ["add", "-A"], cwd);
 	if (add.code !== 0) return { ok: false, text: `git add failed: ${(add.stderr || add.stdout).trim()}` };
 	const commit = await git(run, ["commit", "-m", message], cwd);
-	if (commit.code !== 0) return { ok: false, text: `git commit failed: ${(commit.stderr || commit.stdout).trim()}` };
+	if (commit.code !== 0) {
+		return {
+			ok: false,
+			text: `git commit failed: ${(commit.stderr || commit.stdout).trim()}\nThe changes staged by git_commit are still staged; fix the cause and call git_commit again.`,
+		};
+	}
 	const files = await committedFiles(run, cwd);
 	const show = await git(run, ["show", "--stat", "--oneline", ...DIFF_SAFE, "HEAD"], cwd);
 	const stat = show.code === 0 ? show.stdout.trimEnd() : commit.stdout.trimEnd();

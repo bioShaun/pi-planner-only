@@ -475,7 +475,7 @@ export async function runDelegation(
 	const lockKey = profile.exclusive ? await resolveLockKey(deps.git, cwd).catch(() => cwd) : cwd;
 	const release = profile.exclusive ? deps.locks.tryAcquire(lockKey) : () => {};
 	if (!release) {
-		return refusal(details, `another worker/explorer/validator child is still running in repository ${lockKey}. Wait for it to finish, or use role "reviewer" (read-only).`);
+		return refusal(details, `another worker/explorer/validator child is still running in repository ${lockKey}. Wait for it to finish, or use role "reviewer" (read-only). If this task targets another repository (e.g. one nested inside), pass that repository as cwd.`);
 	}
 
 	const base = await captureBase(deps.git, cwd).catch(() => ({ dirtyBefore: 0 }));

@@ -2,6 +2,8 @@
 
 ## 0.9.0-lite.0 - unreleased
 
+- Field fixes from om36 logs (`.scratch/om36-usage-20261001/`): the `delegate` repository-lock refusal tells Root to pass the nested repository as `cwd` (two explorers on sibling nested repos without `cwd` collided on the outer repo); a failed `git_commit` says the changes it staged are still staged (seen with a missing git identity).
+
 - Root delegation guidance (`.scratch/root-delegation-guidance/`): written-file deliverables go to workers; long runs start as background jobs and are accepted separately; status polling is bounded and non-repetitive; distinguish implementation, checks, and real-run completion. Reviewers must receive the baseline commit when changes are already committed.
 
 - Worker/task prompt (O2, O4; `docs/worker-concurrency-options-2026-09-29.md` §10): the `delegate` task parameter says to keep long jobs out of the child task (O4, 12f13e6; kept). O2 (worker closing text asking for few turns) was added in 12f13e6 and then reverted: no effect on worker turns was observed (T2, n=2 vs n=3; see §10.5), and the text was longer. It can return with new evidence.
