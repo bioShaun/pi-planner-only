@@ -32,7 +32,7 @@ A role "holds the cwd" when its agent has bash or write: a second such child in
 the same directory is refused until the first ends. If a stop cannot be
 confirmed, the directory stays held until the late terminal arrives.
 
-Root also gets a short prompt (roughly 400 tokens; estimate): do small things yourself,
+Root also gets a short prompt (under 1,500 characters, roughly 375 tokens): do small things yourself,
 delegate larger work, decide public interfaces and cross-module choices before
 delegating (explore first when facts are missing), assign one independently
 checkable deliverable per delegation, judge results by the diff and check output

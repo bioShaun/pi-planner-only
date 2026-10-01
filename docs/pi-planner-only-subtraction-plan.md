@@ -48,7 +48,7 @@
 | 现有 | 行数 | lite 目标 | 保留什么 |
 |---|---|---|---|
 | `delegate.ts` | 3,120 | ~300 | 发出 request、等待 response、处理 cancel；读取 `response.usage/model/status` |
-| `index.ts` | 2,362 | ~250 | 注册工具、一个 strict 开关、一段 ≤300 token 的指引注入、`message_end` 记录 Root usage |
+| `index.ts` | 2,362 | ~250 | 注册工具、一个 strict 开关、一段 <1,500 字符的指引注入、`message_end` 记录 Root usage |
 | `usage.ts` | 1,718 | ~200 | Root 用量取自 `message_end`，子代理用量直接取自 `response.usage`；按 pricing.json 算钱，一行状态栏显示 |
 | `types.ts` | 1,085 | ~100 | 只保留上述几类的类型 |
 | `role-models.ts` + `delegation-model.ts` | 453 | ~80 | 一张配置表：role → agent、model、thinking、tools；响应里 `model` 与请求不一致时在结果中标一行 |
@@ -72,7 +72,7 @@
 2. `git_audit({ op, args })`：只读 Git，沿用加固过的 argv。
 3. `git_commit({ message })`：保留，strict 模式下 Root 没有 bash 时用得上。
 
-**注入给 Root 的指引**（一次性。初稿目标 ≤300 token；2026-09-30 实测 `plannerPrompt` 非 strict 1,681 字符、strict 1,697 字符，约 400–500 token（估算），测试上限已放宽到 1,700 字符，该放宽未经收益验证。下面三条是初稿，现行文本以 `index.ts` 的 `plannerPrompt` 为准）：
+**注入给 Root 的指引**（一次性。初稿目标 ≤300 token；3f58416 曾把上限放宽到 1,700 字符且未经收益验证（issue #25）；2026-10-01 压缩回非 strict 1,481 字符、strict 1,496 字符（约 375 token），测试上限 1,500 字符，有实测收益才放宽。下面三条是初稿，现行文本以 `index.ts` 的 `plannerPrompt` 为准）：
 
 - 预计 ≤2 个文件、≤10 分钟的小事自己做；更大的任务委派给 worker。
 - 验收要看 diff 和测试输出，不要只看 worker 的自述；需要跑测试时委派给 validator。

@@ -5,7 +5,7 @@
 - Root delegation guidance (`.scratch/root-delegation-guidance/`): written-file deliverables go to workers; long runs start as background jobs and are accepted separately; status polling is bounded and non-repetitive; distinguish implementation, checks, and real-run completion. Reviewers must receive the baseline commit when changes are already committed.
 
 - Worker/task prompt (O2, O4; `docs/worker-concurrency-options-2026-09-29.md` §10): the `delegate` task parameter says to keep long jobs out of the child task (O4, 12f13e6; kept). O2 (worker closing text asking for few turns) was added in 12f13e6 and then reverted: no effect on worker turns was observed (T2, n=2 vs n=3; see §10.5), and the text was longer. It can return with new evidence.
-- Root prompt: `plannerPrompt` grew with the delegation guidance (d186304); it is now 1,681 chars (1,697 strict) and the test cap was raised to 1,700 chars. No benefit evidence yet (`.scratch/root-delegation-guidance/` did not reproduce the target failure modes).
+- Root prompt: `plannerPrompt` grew from 1,240 to 1,681 chars with the decomposition/BLOCKED guidance (3f58416) and d186304, and the test cap was raised from 1,300 to 1,700 chars without benefit evidence (issue #25; `.scratch/root-decomp-trial-20260928/` and `.scratch/root-delegation-guidance/` showed none). The prompt is now compressed to 1,481 chars (1,496 strict, ~375 tokens) and the cap is 1,500: the BLOCKED cause list (it mirrors the fix list) and redundant words were removed; every rule is kept. Raise the cap only with measured benefit.
 
 Lite rewrite (`docs/pi-planner-only-subtraction-plan.md`). The 0.8.0 code is at tag `legacy-full-audit`.
 

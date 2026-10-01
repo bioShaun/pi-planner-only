@@ -128,7 +128,7 @@ try {
 	assert.deepEqual(h.active(), ["read", "bash", "edit", "write", "delegate", "git_audit", "git_commit", "handoff"]);
 	const injected = await h.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, h.ctx);
 	assert.ok(injected.systemPrompt.startsWith("BASE\n\n[PLANNER-ONLY]"));
-	for (const strict of [false, true]) assert.ok(plannerPrompt(strict).length < 1_700, "prompt should stay short (candidate cap 1,700 chars)");
+	for (const strict of [false, true]) assert.ok(plannerPrompt(strict).length < 1_500, "prompt should stay short (cap 1,500 chars; raise only with measured benefit, issue #25)");
 	assert.match(plannerPrompt(false), /"validator" runs checks and writes nothing/);
 	assert.match(plannerPrompt(true), /"validator" runs checks and writes nothing/);
 	assert.match(plannerPrompt(true), /Strict mode/);
@@ -136,16 +136,16 @@ try {
 	assert.match(plannerPrompt(false), /A child has 10 minutes\. Do not delegate work that needs longer/);
 	assert.match(plannerPrompt(false, loadLimits({ PI_PLANNER_ONLY_TIMEOUT_MS: "300000" })), /A child has 5 minutes\./);
 	assert.match(plannerPrompt(false), /pass `cwd` to delegate, git_audit, and git_commit/);
-	assert.match(plannerPrompt(false), /timed-out child's result includes its last tool results; reuse them/);
+	assert.match(plannerPrompt(false), /report or last tool results \(a timed-out child returns them\)/);
 	assert.match(plannerPrompt(false), /Before reverting or reporting a child's change, check it against your task/);
 	assert.match(plannerPrompt(false), /commit with git_commit: pass paths when the work tree has unrelated changes/);
 	assert.match(plannerPrompt(false), /explorer.*reading-heavy.*logs\/transcripts.*only its findings enter your context/);
 	assert.match(plannerPrompt(false), /reviewer.*no shell.*uncommitted changes only.*before git_commit/);
-	assert.match(plannerPrompt(false), /fails or times out.*delegate a corrected task.*report\/last tool results before doing the work yourself/);
+	assert.match(plannerPrompt(false), /fails, times out, or reports BLOCKED.*delegate a corrected task.*last tool results.*before doing the work yourself/);
 	assert.match(plannerPrompt(false), /cannot see this conversation or ask you mid-run/);
 	assert.match(plannerPrompt(false), /Decide public interfaces, cross-module choices, and data flow yourself before delegating; if key facts are unknown, send an explorer first/);
 	assert.match(plannerPrompt(false), /One delegation = one deliverable that can be checked on its own; fold setup into it; merge repeated edits that share one check/);
-	assert.match(plannerPrompt(false), /reports BLOCKED, first decide why \(missing context, too big, undecided interface, too hard for its model\)/);
+	assert.match(plannerPrompt(false), /reports BLOCKED, first decide why, then delegate a corrected task/);
 	assert.match(plannerPrompt(false), /add context, settle the interface, split only if too big/);
 	assert.match(plannerPrompt(true), /Decide public interfaces, cross-module choices/);
 	assert.match(plannerPrompt(true), /reports BLOCKED, first decide why/);
