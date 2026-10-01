@@ -33,7 +33,7 @@ function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async 
 	const sentUserMessages = [];
 	const sessionCalls = [];
 	const registry = options.registry ?? [{ provider: "provider-a", id: "model-a" }, { provider: "provider-b", id: "model-b" }];
-	const replaced = { sent: [], editor: [], notes: [], modelRegistry: { getModel: (provider, id) => registry.some((m) => m.provider === provider && m.id === id) ? { provider, id } : undefined }, get model() { return activeModel; }, get thinkingLevel() { return activeThinking; }, ui: { notify: (m) => replaced.notes.push(m), setEditorText: (m) => replaced.editor.push(m) }, sendUserMessage: async (m) => replaced.sent.push(m) };
+	const replaced = { sent: [], editor: [], notes: [], modelRegistry: { find: (provider, id) => registry.some((m) => m.provider === provider && m.id === id) ? { provider, id } : undefined }, get model() { return activeModel; }, get thinkingLevel() { return activeThinking; }, ui: { notify: (m) => replaced.notes.push(m), setEditorText: (m) => replaced.editor.push(m) }, sendUserMessage: async (m) => replaced.sent.push(m) };
 	const registrations = {
 		events,
 		registerTool: (t) => tools.set(t.name, t),

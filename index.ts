@@ -471,7 +471,7 @@ async function dispatchHandoff({ git, session }: PlannerRuntime, handoff: Pendin
 				if (!selection) throw new Error("source model selection is missing");
 				const pi = hostBridge.pi;
 				if (!pi) throw new Error("live host model bridge is unavailable");
-				const model = (rctx.modelRegistry as typeof rctx.modelRegistry & { getModel(provider: string, id: string): NonNullable<typeof rctx.model> | undefined }).getModel(selection.provider, selection.id);
+				const model = rctx.modelRegistry.find(selection.provider, selection.id);
 				if (!model) throw new Error(`model ${selection.provider}/${selection.id} is unavailable in the new session`);
 				if (!await pi.setModel(model)) throw new Error(`host refused model ${selection.provider}/${selection.id}`);
 				if (selection.thinkingLevel !== undefined) (pi.setThinkingLevel as (level: string) => void)(selection.thinkingLevel);
