@@ -84,10 +84,10 @@
 
 | # | 做法 | 参照 | 预期作用 | 改动量 |
 |---|---|---|---|---|
-| 1 | explorer/reviewer 之间并行（读写锁，与 worker 仍互斥），scout 去掉 `write`、`apply_patch` | Codex “read-heavy 先并行”；Claude Explore 只读 | explorer 占 22%，可直接缩短 | 小：`delegate.ts` 锁 + 配置 |
+| 1 | **（已实施 f2fe050，scout 仅去掉 `apply_patch`）** explorer/reviewer 之间并行（读写锁，与 worker 仍互斥），scout 去掉 `write`、`apply_patch` | Codex “read-heavy 先并行”；Claude Explore 只读 | explorer 占 22%，可直接缩短 | 小：`delegate.ts` 锁 + 配置 |
 | 2 | reviewer 按维度并行（正确性 / 测试缺口 / 规范） | Codex PR review 示例、agent teams 并行审查 | 审查更全面；用时取最慢的一路 | 依赖 #1 |
-| 3 | 机械性检查用宿主 `gate` 跑，不派 validator | pi-subagents `gate` | validator 占 20%，其中纯“跑命令报退出码”的部分可去掉 LLM | 需先确认 `delegate` 走的结构化请求能否带 `gate` |
-| 4 | 超时的 child 用 `resume` 续跑，而不是新派一次 | Claude `maxTurns` partial + resume；pi-subagents `resume` | 减少超时后的重新探索 | 需确认 `delegate` 通道能否拿到 runId 并复活 |
+| 3 | 机械性检查用宿主 `gate` 跑，不派 validator | pi-subagents `gate` | validator 占 20%，其中纯“跑命令报退出码”的部分可去掉 LLM | **已确认不可行**：结构化请求不接受 `gate`/`acceptance`（`delegation-request.js:4-20`） |
+| 4 | 超时的 child 用 `resume` 续跑，而不是新派一次 | Claude `maxTurns` partial + resume；pi-subagents `resume` | 减少超时后的重新探索 | **已确认通道不能复活**：有 runId 但请求无 resume 字段，见 ADR 0011 |
 | 5 | 并行写走 worktree：Native + `workflowScript` + `worktree: true` 先试；需要时再考虑惰性隔离 | 所有工具 | 墙钟时间；成本上升 | 已有方案 D（`worker-concurrency-options` 第 5 节） |
 | 6 | Root 与 child 的推理档位分开调（Root high → medium/low 对照） | Codex/Claude 都允许分角色设 effort | Root 33% 的主要来源 | 只改配置 + bench |
 | 7 | 大批量同质任务（全库审计、迁移）用脚本编排 | Claude dynamic workflows | 减少 Root 轮数和上下文 | 已有 pi-subagents `workflowScript`，Lite 未开放 |

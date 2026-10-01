@@ -13,7 +13,7 @@ Root 已能把任务派出去，但 worker 模型慢。目标是缩短从提需�
 ## 2. 现状
 
 - **pi 本身支持并行工具调用。** 同一条 assistant 消息里的多个 tool call 会同时执行（pi `docs/extensions.md`）。
-- **Lite 的锁。** worker、explorer、validator 按仓库根加锁，第二个直接 refused（`delegate.ts:475-478`）；reviewer 不加锁；不同仓库之间可以并行。
+- **Lite 的锁。** worker、validator 按仓库根独占，第二个直接 refused；explorer 之间共享（2026-10-01 起，f2fe050，此前为独占，`delegate.ts` 的 `createCwdLocks`）；reviewer 不加锁；不同仓库之间可以并行。
 - **explorer 不是工具层面的只读角色。** explorer 对应 scout 这个 agent，当前配置（`~/.pi/agent/settings.json` 的 `subagents.agentOverrides.scout`）给了它 `bash`、`write`、`apply_patch`，只靠指令约束它不改文件。
 - **Lite 隐藏了 pi-subagents 的 `subagent` 工具。** `index.ts:36` 的 `HIDDEN_HOST_TOOLS` 包含 `subagent`，`index.ts:658-661` 在 Lite 下拦截对它的调用。Lite 只保留 `delegate` 一个派发入口，由它统一负责锁、token 上限、时限和 git 摘要验收。
 - **`delegate` 的通道不支持 worktree。** `delegate` 走 pi-subagents 的结构化委派请求（`delegate.ts` 的 `buildRequest`，只有 `cwd`）。pi-subagents 这一侧，请求里带 `tasks` 或 `worktree` 字段会被判为无效（`src/slash/delegation-adapters.js:6`）。
@@ -66,7 +66,7 @@ Root 已能把任务派出去，但 worker 模型慢。目标是缩短从提需�
 
 - 第 10 节的低成本优化（O1–O4）已实施，但 O2 的对照没有看到收益（见 10.5），其余项也没有单独验证；不能再说它们“对每个 worker 都有效”。下一步先用已有记录找出整条委派流程的主要耗时来源（explorer、validator、reviewer 的重复读取、重复检查、交接不清导致的反复委派），再决定优化对象。
 - D 作为并发试验路线，在低成本优化之后做一次完整试验，再决定是否常用。
-- **explorer 解锁不与上述优化捆绑，单独评估。** 原因见第 2 节：explorer 实际带有写能力。简单地把 `exclusive` 改成 `false`，不仅允许 explorer 之间并行，也会允许 explorer 与 worker 同时运行，读到修改中的代码，并在 git 摘要里混入别人的改动。评估时需先回答：
+- **explorer 解锁不与上述优化捆绑，单独评估。**（已完成：f2fe050 实现读写锁，explorer 之间共享、与 worker/validator 互斥；scout 去掉了 `apply_patch`，保留 `write` 和 `bash`。以下为当时的评估记录。）原因见第 2 节：explorer 实际带有写能力。简单地把 `exclusive` 改成 `false`，不仅允许 explorer 之间并行，也会允许 explorer 与 worker 同时运行，读到修改中的代码，并在 git 摘要里混入别人的改动。评估时需先回答：
   - 是只允许 explorer 之间并行，还是也允许与 writer 并行？（建议：仍与 writer 互斥，即读写锁。）
   - explorer 写的报告或草稿文件放在哪里，如何避免互相覆盖、避免混进 git 摘要？
   - 是否需要从 scout 的配置里去掉 `write`、`apply_patch`，从工具层面把它变成只读？

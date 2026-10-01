@@ -160,7 +160,7 @@ export function contextWarnThreshold(env: NodeJS.ProcessEnv = process.env): numb
  * that do too.
  */
 export class PlannerSession {
-	/** Exclusive per-cwd child locks (owned by the delegation engine). */
+	/** Per-cwd child locks: worker/validator exclusive, explorers shared (owned by the delegation engine). */
 	readonly locks = createCwdLocks();
 	delegationsInFlight = 0;
 	/** Whether we hid pi-subagents' loader tool and must restore it on `off`. */
