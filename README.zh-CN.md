@@ -95,7 +95,7 @@ pi install /path/to/pi-planner-only                          # 本地 checkout
 | `/planner-only on` / `off` | 旧版即时切换 Lite/关闭，同时修改标记和新会话偏好；Lite 子代理运行中或 cwd 仍被占用时拒绝切换。 |
 | `/planner-only status` | 显示当前生效模式、新会话模式、保存的偏好，以及适用时的 Lite 费用合计。 |
 | `PI_PLANNER_ONLY_MODE=off|native|lite` | 新会话模式，优先级最高。 |
-| `/planner-only handoff [目标]` | 让 Root 写简报并在新会话里继续（`handoff drop` 丢弃失败的交接）。只有 `PI_PLANNER_ONLY_HANDOFF=confirm` 或 `auto` 时，Root 才能在上下文超过阈值后自行发起。 |
+| `/planner-only handoff [目标]` | 让 Root 写简报并在新会话里继续（`handoff drop` 丢弃失败的交接）。Root 在上下文超过阈值后自行发起取决于生效 handoff 模式（`confirm` 或 `auto`）。优先级：非空 `PI_PLANNER_ONLY_HANDOFF` > `~/.pi/agent/planner-only.handoff` > 默认 `off`。 |
 | `/planner-only handoff-mode [off|confirm|auto]` | 查看或保存 handoff 模式。优先级：非空 `PI_PLANNER_ONLY_HANDOFF` > `~/.pi/agent/planner-only.handoff` > 默认 `off`；状态会显示生效值和来源。 |
 | `PI_PLANNER_ONLY=1` / `0` | 未设置 MODE 时，旧版即时强制 Lite/关闭；新会话优先于保存的偏好和标记。 |
 | `PI_PLANNER_ONLY_STRICT=1` | 按名字禁止 Root 自己用 `edit`、`write`、`bash`。不拦截其他插件提供的写能力，不是安全边界。默认关闭，因为小任务直接做更省。 |

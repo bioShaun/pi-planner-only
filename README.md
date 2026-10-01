@@ -116,7 +116,7 @@ extension and does not reproduce an older benchmark's user-message prefix byte f
 | `/planner-only on` / `off` | Legacy immediate Lite/off switch; update the marker and next-session preference. Refused while a Lite child is in flight or its cwd is held. |
 | `/planner-only status` | Show effective mode, next fresh-session mode, saved preference, and Lite session totals when applicable. |
 | `PI_PLANNER_ONLY_MODE=off|native|lite` | Choose the mode for new sessions (highest fresh-session priority). |
-| `/planner-only handoff [goal]` | Ask Root to write a brief and continue in a fresh session (`handoff drop` discards a failed one). Root self-initiation above the context threshold is allowed only with `PI_PLANNER_ONLY_HANDOFF=confirm` or `auto`. |
+| `/planner-only handoff [goal]` | Ask Root to write a brief and continue in a fresh session (`handoff drop` discards a failed one). Root self-initiation above the context threshold follows the effective handoff mode (`confirm` or `auto`). Resolution order: nonempty `PI_PLANNER_ONLY_HANDOFF` > `~/.pi/agent/planner-only.handoff` > default `off`. |
 | `/planner-only handoff-mode [off|confirm|auto]` | Show or save the handoff mode. Resolution order: nonempty `PI_PLANNER_ONLY_HANDOFF` > `~/.pi/agent/planner-only.handoff` > default `off`; status shows the effective value and source. |
 | `PI_PLANNER_ONLY=1` / `0` | Legacy live Lite/off override when `MODE` is unset; overrides saved preference and marker for new sessions. |
 | `PI_PLANNER_ONLY_STRICT=1` | Block Root's own `edit`, `write`, and `bash` by name. It does not block write capabilities provided by other plugins, so it is not a security boundary. Off by default, because small tasks are cheaper done directly. |

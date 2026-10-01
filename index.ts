@@ -61,7 +61,7 @@ function handoffPreference(): HandoffMode | undefined {
 
 function handoffModeSetting(env: NodeJS.ProcessEnv): { mode: HandoffMode; source: "env" | "persisted" | "default" } {
 	if (env.PI_PLANNER_ONLY_HANDOFF?.trim()) {
-		const value = env.PI_PLANNER_ONLY_HANDOFF.trim();
+		const value = env.PI_PLANNER_ONLY_HANDOFF.trim().toLowerCase();
 		return { mode: value === "confirm" || value === "auto" ? value : "off", source: "env" };
 	}
 	const saved = handoffPreference();
