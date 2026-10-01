@@ -46,3 +46,7 @@ Findings:
 - The high probe-v2 cost is mostly the kimi-for-coding price, not the timeouts: completed kimi worker runs in the same session cost $0.268 (line 46) and $0.158 (line 103), against about $0.01-0.02 for comparable gpt-6-luna runs.
 
 Decision: wontfix in this repo. The long-check pattern is already covered by the prompt, the remaining cases are ordinary task sizing that the existing "split work that needs longer" rule addresses, and the Root prompt has no room for more wording (ADR 0011). Choosing kimi-for-coding as the probe-v2 worker model is a user setting outside this repo.
+
+### 2026-10-01 User decision
+
+Keep kimi-for-coding as the probe-v2 worker model: the quota expires soon, so its per-run price is not a reason to switch now. Revisit the model choice after the quota expires.
