@@ -1,6 +1,6 @@
 # Handoff 保留当前 Root 的模型与推理档位
 
-Status: ready-for-agent
+Status: done
 Created: 2026-09-28
 Execution order: 等用户当前正在处理的问题完成后，再实施本 spec；本次仅登记，不启动修复。
 Prerequisite: 当前问题的完成状态需在领取本 spec 时核实；对话没有给出对应票号，不猜测关联工单。
@@ -120,3 +120,4 @@ Concrete design (binding decisions for the implementer):
 - The repository and installed plugin had identical handoff dispatch function bodies when compared. They were not asserted to be identical packages. The reproduction imports the repository extension and installed Pi 0.87.1 replacement/resolver code; it sends no real model request.
 - Implementation entry points at diagnosis: [handoff lifecycle](../../index.ts), [existing extension tests](../../index.test.mjs), and [host adapter](../../host.ts). These links are navigation aids, not a requirement to split the implementation across all three modules.
 - Final acceptance requires the first-message regression to pass, unchanged existing handoff behavior, complete release checks, and lifecycle evidence adequate to distinguish applied runtime settings from metadata alone. Keep any unresolved host limitation explicit rather than treating a passing mock as completion.
+- 2026-09-30: 状态由 ready-for-agent 改为 done（实现提交 75ac9ce，验收记录见上条）。

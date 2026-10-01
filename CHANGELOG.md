@@ -4,6 +4,9 @@
 
 - Root delegation guidance (`.scratch/root-delegation-guidance/`): written-file deliverables go to workers; long runs start as background jobs and are accepted separately; status polling is bounded and non-repetitive; distinguish implementation, checks, and real-run completion. Reviewers must receive the baseline commit when changes are already committed.
 
+- Worker/task prompt (O2, O4; `docs/worker-concurrency-options-2026-09-29.md` §10): the worker closing text now asks for few turns (independent reads/searches in one turn, at most 4; no repeated file slices; combine nearby edits) (12f13e6), and the `delegate` task parameter says to keep long jobs out of the child task (12f13e6). Measured effect of O2 on worker turns: none observed (T2, n=2 vs n=3; see §10.5), while the default text got longer. Keep-or-revert is undecided.
+- Root prompt: `plannerPrompt` grew with the delegation guidance (d186304); it is now 1,681 chars (1,697 strict) and the test cap was raised to 1,700 chars. No benefit evidence yet (`.scratch/root-delegation-guidance/` did not reproduce the target failure modes).
+
 Lite rewrite (`docs/pi-planner-only-subtraction-plan.md`). The 0.8.0 code is at tag `legacy-full-audit`.
 
 - Handoff (direction review 2026-09-25): `PI_PLANNER_ONLY_HANDOFF` now accepts `off` (default), `confirm`, and `auto`; unknown values mean `off` (previously `off` fell through to `auto`). With `off`, only a user-requested `/planner-only handoff` is accepted and the context warning suggests it to the user instead of telling Root to call the tool. `confirm` and `auto` keep Root self-initiation above the threshold; `auto` is experimental (its savings are not measured).

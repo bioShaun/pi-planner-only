@@ -72,7 +72,7 @@
 2. `git_audit({ op, args })`：只读 Git，沿用加固过的 argv。
 3. `git_commit({ message })`：保留，strict 模式下 Root 没有 bash 时用得上。
 
-**注入给 Root 的指引**（一次性，≤300 token）：
+**注入给 Root 的指引**（一次性。初稿目标 ≤300 token；2026-09-30 实测 `plannerPrompt` 非 strict 1,681 字符、strict 1,697 字符，约 400–500 token（估算），测试上限已放宽到 1,700 字符，该放宽未经收益验证。下面三条是初稿，现行文本以 `index.ts` 的 `plannerPrompt` 为准）：
 
 - 预计 ≤2 个文件、≤10 分钟的小事自己做；更大的任务委派给 worker。
 - 验收要看 diff 和测试输出，不要只看 worker 的自述；需要跑测试时委派给 validator。

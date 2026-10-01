@@ -1,6 +1,6 @@
 # Handoff 模式持久化与 `/planner-only handoff-mode` 子命令
 
-Status: ready-for-agent
+Status: done
 Created: 2026-09-29
 
 ## Problem Statement
@@ -57,3 +57,4 @@ Created: 2026-09-29
 - Changing `config.ts`'s env-parsing contract or the default (`off`).
 - Deprecating or repurposing `PI_PLANNER_ONLY_HANDOFF`.
 - Any change to handoff dispatch, confirm/auto semantics, thresholds, or the brief content.
+- 2026-09-30: 状态由 ready-for-agent 改为 done（实现提交 ac4af05，验收记录见上条）。

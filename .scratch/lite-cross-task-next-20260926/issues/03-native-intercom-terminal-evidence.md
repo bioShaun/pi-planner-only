@@ -1,6 +1,6 @@
 # 03：native intercom 路径缺少可结算的终态回执
 
-Status: ready-for-agent
+Status: done — 由 bench-plugin-fixes 票 05（a3d26d7）与票 12（32c4a86）覆盖
 Type: bug
 Execution: 已定位并保留真实证据；尚未修改冻结计费代码。
 
@@ -27,3 +27,7 @@ Execution: 已定位并保留真实证据；尚未修改冻结计费代码。
 - 增加真实 detached → supervisor → bg_wait 空管理结果 → 终态产物路径的故障注入；覆盖缺产物、runId 不匹配、最终失败、未知模型、错误用量、未结束、重复终态、嵌套委派。现有断言不删不弱化。
 - 完成适当离线回归、外部 TMPDIR 的 test:release、独立审查；旧 runs 和 STOP 只读不变。修复后只读重算另写结果，不回写旧 eval。
 - 此票不包含追加付费试跑。票 02 停止状态与剩余三条如何重订需另行决定。
+
+## Comments
+
+- 2026-09-30: 状态改为 done，按下列证据收尾（未重跑付费试跑）。bench-plugin-fixes 票 12（32c4a86）把本用例的 detached → bg_wait 空管理结果 → 终态产物回放固件入库（`bench/fixtures/native-detached-replay/`），断言总额 $1.88898237，与本票辅助核算一致；票 05（a3d26d7）让子代理启动时关闭 intercom bridge，不再产生该中间回执。旧 runs 与 STOP 保持只读不变。
