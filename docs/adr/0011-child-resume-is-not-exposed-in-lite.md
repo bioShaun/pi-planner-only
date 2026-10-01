@@ -22,3 +22,14 @@ A timed-out child currently costs a full re-exploration when Root dispatches a f
 - Root's handoff for a timed-out child must include the child's report or last progress and an explicit "what is left" list. Make this a short rule in the Root prompt if timeouts recur; do not build tooling yet.
 - Success measure for revisiting: share of delegations that time out and the tokens spent on the repeat run, taken from real sessions. Without that data, option 3 is not worth an upstream PR.
 - Stopped (manually aborted) runs are never resumable under any option.
+
+## Measured data (2026-10-01)
+
+Source: 118 child `*_meta.json` under `~/.pi/agent/sessions/*/subagent-artifacts/` (14 project dirs, from 2026-09-24). `task` is redacted in these files, so a timeout cannot be paired with its repeat; the "next run in the same cwd" below is only a proxy.
+
+- Runs that ended with `exitCode 1`: 10 of 118. Eight were `Subagent timed out` (7 workers at 600 s, 1 oracle at 120 s); one was `upstream_stream_read_error`; one was a manual abort (`Request aborted`).
+- Worker timeout rate: 7 of 75 worker runs (9.3%).
+- The eight timed-out runs cost $0.73 of $3.20 total (23%), 5.5M tokens, mostly cache reads. Two probe-design workers account for $0.66 of that; the other six are under $0.02 each.
+- In 7 of 8 cases the next run in the same cwd was a worker or reviewer that finished (`exitCode 0`) within about 5 to 25 minutes. This does not show how much of the earlier work the repeat re-did.
+
+Reading: timeouts are not rare, but the figure above is the cost of the timed-out run itself, not of the repeat. Resume would only save the repeat's re-exploration, and that is unmeasured. The data does not justify an upstream PR yet, so option 1 stands. If it is revisited, record the first-run and repeat token counts together (for example in the Root handoff) so the repeat share can be computed.
