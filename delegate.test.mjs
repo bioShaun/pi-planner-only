@@ -62,9 +62,8 @@ const respond = (bus, req, over = {}) =>
 	assert.match(ROLE_AGENTS.explorer.closing, /If you did not finish, begin the report with INCOMPLETE/);
 	assert.match(ROLE_AGENTS.worker.closing, /Change only what the task asks; leave unrelated lines as they are\./);
 	assert.match(ROLE_AGENTS.worker.closing, /Make ordinary local choices yourself/);
-	assert.match(ROLE_AGENTS.worker.closing, /send independent reads, searches, and inspection commands together in one turn \(at most 4\)/);
-	assert.match(ROLE_AGENTS.worker.closing, /read a small file whole and a large file's relevant range once, not in repeated slices/);
-	assert.match(ROLE_AGENTS.worker.closing, /combine nearby edits into one edit or patch call/);
+	// O2 (few-turns text) reverted: no measured benefit (docs/worker-concurrency-options-2026-09-29.md §10.5).
+	assert.match(ROLE_AGENTS.worker.closing, /^Change only what the task asks/);
 	assert.match(ROLE_AGENTS.worker.closing, /required public-interface or cross-module decision is still unresolved after checking the supplied references and existing code patterns/);
 	assert.match(ROLE_AGENTS.worker.closing, /do not guess and do not revert your edits/);
 	assert.match(ROLE_AGENTS.worker.closing, /begin the report with BLOCKED: what is done, what is missing, and the evidence/);

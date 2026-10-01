@@ -133,7 +133,7 @@ Root 已能把任务派出去，但 worker 模型慢。目标是缩短从提需�
 ### 10.5 实施状态
 
 - **O1**：无需改动（见 10.3）。
-- **O2**：已实施。`ROLE_AGENTS.worker.closing` 开头加入：“Work in few turns: send independent reads, searches, and inspection commands together in one turn (at most 4); read a small file whole and a large file's relevant range once, not in repeated slices; combine nearby edits into one edit or patch call.”考虑到并非所有环境都配了 `apply_patch`，措辞用“edit or patch call”。
+- **O2**：已回退（2026-10-01）。理由：下方对照未观察到收益，文案变长；lite 以减法为准。有新证据可再加回。原实施内容：`ROLE_AGENTS.worker.closing` 开头加入：“Work in few turns: send independent reads, searches, and inspection commands together in one turn (at most 4); read a small file whole and a large file's relevant range once, not in repeated slices; combine nearby edits into one edit or patch call.”考虑到并非所有环境都配了 `apply_patch`，措辞用“edit or patch call”。
 - **O3**：大部分已在 `3f58416` 中实施：`delegate` 的 `task` 参数说明已要求写明范围（文件、函数）、已定决策（公共接口等）、验收条件和确切的检查命令。没有再加文字。Root 系统提示词有 1,700 字符的测试上限，当前已用 1,662/1,678。
 - **O4**：已做最小版本。`task` 参数说明加入：“Ask only for checks that finish well within the child's time limit; keep long jobs (full pipelines, large data processing) out of the task and run them outside delegation (yourself, or hand them to the user).”子 agent 一侧原有的时限提示不变。后台作业怎么提交、怎么取回结果不写进插件：这属于机器规则（`slot -b`、`slot tail`，见全局 AGENTS.md）。strict 模式下 Root 不能跑 bash，只能交给用户。
 - **O2 效果对照（T2，arm `lite-tds-strict-o2`，pluginRef `12f13e6`）**：计划 3 次，第 3 次因模型服务商返回 “insufficient credits”（400）在约 208 秒后中止，判为无效（`valid=false`），未重跑；有效样本 n=2，全部通过。对照组为 O2 之前的 `treat-3f58416`（n=3，全部有效通过）。
