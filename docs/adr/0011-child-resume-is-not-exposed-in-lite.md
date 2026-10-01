@@ -19,7 +19,7 @@ A timed-out child currently costs a full re-exploration when Root dispatches a f
 
 ## Consequences
 
-- Root's handoff for a timed-out child must include the child's report or last progress and an explicit "what is left" list. Make this a short rule in the Root prompt if timeouts recur; do not build tooling yet.
+- Root's handoff for a timed-out child must include the child's report or last progress and an explicit "what is left" list. The Root prompt already carries this rule (`index.ts:99`: re-delegate with the child's report or last tool results, add context); it has 4 characters of headroom under the 1,500-character cap in `index.test.mjs:131`, so "say what is left to do" is not added there. Do not build tooling yet.
 - Success measure for revisiting: share of delegations that time out and the tokens spent on the repeat run, taken from real sessions. Without that data, option 3 is not worth an upstream PR.
 - Stopped (manually aborted) runs are never resumable under any option.
 
