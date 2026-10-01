@@ -373,6 +373,42 @@ const respond = (bus, req, over = {}) =>
 	assert.deepEqual(locks.held(), ["/w"]);
 }
 
+// Lock modes via runDelegation: a running explorer lets a second explorer in but refuses a worker (naming the explorers); a running worker refuses an explorer.
+{
+	const bus = fakeBus();
+	const pendingReqs = [];
+	bus.on(REQUEST, (r) => {
+		pendingReqs.push(r);
+		bus.emit(STARTED, { requestId: r.requestId, nodeId: r.nodeId });
+	});
+	const locks = createCwdLocks();
+	const d = deps(bus, locks);
+	const first = runDelegation(d, { role: "explorer", task: "t", cwd: "/w" });
+	await tick(5);
+	assert.deepEqual(locks.held(), ["/w"]);
+	const second = runDelegation(d, { role: "explorer", task: "t", cwd: "/w" });
+	await tick(5);
+	assert.equal(sent(bus, REQUEST).length, 2, "second explorer runs alongside the first");
+	const blocked = await runDelegation(d, { role: "worker", task: "t", cwd: "/w" });
+	assert.equal(blocked.details.status, "refused");
+	assert.match(blocked.text, /2 explorer child\(ren\) still running in repository \/w/);
+	assert.match(blocked.text, /pass that repository as cwd/);
+	respond(bus, pendingReqs[0]);
+	respond(bus, pendingReqs[1]);
+	assert.equal((await first).ok, true);
+	assert.equal((await second).ok, true);
+	assert.equal(locks.size, 0);
+	const third = runDelegation(d, { role: "worker", task: "t", cwd: "/w" });
+	await tick(5);
+	const explorerBlocked = await runDelegation(d, { role: "explorer", task: "t", cwd: "/w" });
+	assert.equal(explorerBlocked.details.status, "refused");
+	assert.match(explorerBlocked.text, /another worker\/validator child is still running in repository \/w/);
+	respond(bus, pendingReqs[2]);
+	assert.equal((await third).ok, true);
+	assert.equal(locks.size, 0);
+	assert.equal(bus.listeners(RESPONSE), 0);
+}
+
 // Token cap: an update over maxTokens emits cancel; the host's cancelled terminal is reported.
 {
 	const bus = fakeBus();
@@ -477,6 +513,43 @@ const respond = (bus, req, over = {}) =>
 	release();
 	assert.equal(locks.isHeld("/a"), false);
 	assert.equal(locks.size, 1);
+}
+
+// CwdLocks modes: shared holders coexist, exclusive waits for all shared to release, releases are per-holder.
+{
+	const locks = createCwdLocks();
+	const s1 = locks.tryAcquire("/a", "shared");
+	const s2 = locks.tryAcquire("/a", "shared");
+	assert.equal(typeof s1, "function");
+	assert.equal(typeof s2, "function");
+	assert.deepEqual(locks.holders("/a"), { exclusive: false, shared: 2 });
+	assert.deepEqual(locks.holders("/free"), { exclusive: false, shared: 0 });
+	assert.equal(locks.tryAcquire("/a"), null, "exclusive refused while shared held");
+	assert.equal(locks.tryAcquire("/a", "exclusive"), null);
+	s1();
+	s1();
+	assert.deepEqual(locks.holders("/a"), { exclusive: false, shared: 1 }, "double release frees only that holder");
+	assert.equal(locks.tryAcquire("/a"), null, "second shared holder still blocks exclusive");
+	s2();
+	assert.equal(locks.isHeld("/a"), false);
+	const ex = locks.tryAcquire("/a");
+	assert.equal(typeof ex, "function", "exclusive succeeds after all shared released");
+	assert.deepEqual(locks.holders("/a"), { exclusive: true, shared: 0 });
+	assert.equal(locks.tryAcquire("/a", "shared"), null, "shared refused while exclusive held");
+	assert.equal(locks.tryAcquire("/a"), null);
+	ex();
+	assert.equal(locks.size, 0);
+	// size/held count distinct cwds once, no matter how many shared holders.
+	const x = locks.tryAcquire("/x", "shared");
+	const x2 = locks.tryAcquire("/x", "shared");
+	const y = locks.tryAcquire("/y", "shared");
+	assert.equal(locks.size, 2);
+	assert.deepEqual(locks.held(), ["/x", "/y"]);
+	x();
+	x2();
+	y();
+	assert.equal(locks.size, 0);
+	assert.deepEqual(locks.held(), []);
 }
 
 // Run identity: ownerRunId passed through, requestId a full uuid, nodeId `<role>-<8 chars>`; events match by requestId (+ nodeId when sent).

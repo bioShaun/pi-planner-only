@@ -155,7 +155,7 @@ try {
 	assert.match(h.tools.get("delegate").parameters.properties.task.description, /Ask only for checks that finish well within the child's time limit; keep long jobs \(full pipelines, large data processing\) out of the task and run them outside delegation/);
 	assert.match(h.tools.get("delegate").parameters.properties.role.description, /no shell, sees files and uncommitted changes \(review before committing\)/);
 	assert.match(h.tools.get("delegate").description, /Worth it for multi-file work or long reading; outside strict mode, do small tasks \(about ≤2 files\) yourself\./);
-	assert.match(h.tools.get("delegate").description, /worker, explorer, and validator run one at a time per repository \(a second one is refused\); a reviewer or another repository can run alongside\./);
+	assert.match(h.tools.get("delegate").description, /worker and validator run alone per repository; explorers can run together but not alongside a worker or validator; a reviewer or another repository can run alongside\./);
 	assert.match(h.tools.get("delegate").description, /Deliverables that require writing files \(scripts, reports, output files\) go to worker/);
 	assert.match(h.tools.get("delegate").description, /start the run as a background job that returns immediately with the job id, output path, and completion condition/);
 	assert.match(h.tools.get("delegate").description, /after the run finishes, delegate acceptance separately/);

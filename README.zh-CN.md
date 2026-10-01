@@ -16,14 +16,14 @@
 
 角色对应 pi-subagents 内置 agent：
 
-| 角色 | Agent | 占用 cwd |
+| 角色 | Agent | cwd 锁 |
 |---|---|---|
-| `worker` | `worker` | 是 |
-| `explorer` | `scout` | 是 |
-| `validator` | `oracle` | 是 |
-| `reviewer` | `reviewer` | 否（只读） |
+| `worker` | `worker` | 独占（单独运行） |
+| `explorer` | `scout` | 共享（可与其他 explorer 并行） |
+| `validator` | `oracle` | 独占（单独运行） |
+| `reviewer` | `reviewer` | 无（只读） |
 
-agent 有 bash 或 write 权限就会占用 cwd：同一目录里第二个这样的子代理会被拒绝，直到第一个结束。停止请求得不到确认时，目录一直保持占用，直到迟到的终态到达。
+worker 和 validator 每个仓库独占运行；explorer 可以多个并行，但不能与 worker 或 validator 同跑；reviewer 或其他仓库可以并行。停止请求得不到确认时，目录一直保持占用，直到迟到的终态到达。
 
 Root 还会收到一段简短提示（不超过 1,500 字符，约 375 token）：小事自己做，大活委派；委派前自行决定公共接口和跨模块选择（事实不明时先派 explorer）；每次委派只交付一个可独立检查的成果；按 diff 和检查输出判断结果，不信子代理自述；返工时带上上次报告重新委派修正后的任务（补充上下文、确定接口，或仅在任务过大时拆分）。
 

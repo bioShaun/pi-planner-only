@@ -230,7 +230,7 @@ export class PlannerSession {
 
 	/** Why a handoff cannot be scheduled right now, or undefined when it can. */
 	handoffRefusal(brief: string): string | undefined {
-		if (this.locks.size > 0) return "an exclusive child is still running.";
+		if (this.locks.size > 0) return "a child is still running.";
 		if (this.delegationsInFlight > 0) return "a delegated child is still running.";
 		if (this.pendingHandoff) return "one is already pending.";
 		const threshold = contextWarnThreshold();
@@ -634,7 +634,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 	pi.registerTool({
 		name: "delegate",
 		label: "Delegate",
-		description: "Run one child agent on a self-contained task and wait for it. Returns the child's report, host status and usage, and a git summary of what changed. Worth it for multi-file work or long reading; outside strict mode, do small tasks (about ≤2 files) yourself. worker, explorer, and validator run one at a time per repository (a second one is refused); a reviewer or another repository can run alongside. Deliverables that require writing files (scripts, reports, output files) go to worker, not validator or reviewer. Runs that outlast the child time limit take two delegations: first implement the change and start the run as a background job that returns immediately with the job id, output path, and completion condition (an output file, exit code, or log marker); after the run finishes, delegate acceptance separately. While a background job runs, send only one bounded status check per job at a time; do not repeat identical wait commands in one turn. A \"completed\" result only means the child run ended; in your reply distinguish implementation done, checks passed, and real run passed.",
+		description: "Run one child agent on a self-contained task and wait for it. Returns the child's report, host status and usage, and a git summary of what changed. Worth it for multi-file work or long reading; outside strict mode, do small tasks (about ≤2 files) yourself. worker and validator run alone per repository; explorers can run together but not alongside a worker or validator; a reviewer or another repository can run alongside. Deliverables that require writing files (scripts, reports, output files) go to worker, not validator or reviewer. Runs that outlast the child time limit take two delegations: first implement the change and start the run as a background job that returns immediately with the job id, output path, and completion condition (an output file, exit code, or log marker); after the run finishes, delegate acceptance separately. While a background job runs, send only one bounded status check per job at a time; do not repeat identical wait commands in one turn. A \"completed\" result only means the child run ended; in your reply distinguish implementation done, checks passed, and real run passed.",
 		promptSnippet: "delegate: hand a self-contained task to a cheaper child agent (worker, explorer, validator, reviewer)",
 		parameters: Type.Object({
 			role: Type.Union(ROLES.map((r) => Type.Literal(r)), {

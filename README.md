@@ -21,16 +21,17 @@ was removed.
 
 Roles map to pi-subagents builtin agents:
 
-| Role | Agent | Holds the cwd |
+| Role | Agent | cwd lock |
 |---|---|---|
-| `worker` | `worker` | yes |
-| `explorer` | `scout` | yes |
-| `validator` | `oracle` | yes |
-| `reviewer` | `reviewer` | no (read-only) |
+| `worker` | `worker` | exclusive (alone) |
+| `explorer` | `scout` | shared (other explorers) |
+| `validator` | `oracle` | exclusive (alone) |
+| `reviewer` | `reviewer` | none (read-only) |
 
-A role "holds the cwd" when its agent has bash or write: a second such child in
-the same directory is refused until the first ends. If a stop cannot be
-confirmed, the directory stays held until the late terminal arrives.
+worker and validator run alone per repository; explorers can run together but
+not alongside a worker or validator; a reviewer or another repository can run
+alongside. If a stop cannot be confirmed, the directory stays held until the
+late terminal arrives.
 
 Root also gets a short prompt (under 1,500 characters, roughly 375 tokens): do small things yourself,
 delegate larger work, decide public interfaces and cross-module choices before

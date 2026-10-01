@@ -37,29 +37,33 @@ export type Role = (typeof ROLES)[number];
 /**
  * Builtin pi-subagents agents. Models come from the operator's
  * `subagents.agentOverrides` in pi settings, not from this plugin.
- * Every agent except reviewer has bash or write, so it holds the cwd.
+ * `lock` is the cwd hold: worker and validator run alone per repository
+ * ("exclusive"); explorers only read project files, so they share a
+ * repository ("shared") — each run's report file is written under
+ * pi-subagents' artifact dir `outputs/<runId>/`, so explorers don't collide
+ * with each other; reviewer never holds ("none").
  */
-export const ROLE_AGENTS: Record<Role, { agent: string; exclusive: boolean; closing: string }> = {
+export const ROLE_AGENTS: Record<Role, { agent: string; lock: "exclusive" | "shared" | "none"; closing: string }> = {
 	worker: {
 		agent: "worker",
-		exclusive: true,
+		lock: "exclusive",
 		closing: "Change only what the task asks; leave unrelated lines as they are. Make ordinary local choices yourself (names, following existing patterns in the code). Stop only if the task conflicts with the code, a required public-interface or cross-module decision is still unresolved after checking the supplied references and existing code patterns, or the work needs changes outside its scope: then do not guess and do not revert your edits; begin the report with BLOCKED: what is done, what is missing, and the evidence. When you finish, end with a short report (3-10 lines): what you changed, how you verified it (commands and results), and anything left undone.",
 	},
 	explorer: {
 		agent: "scout",
-		exclusive: true,
+		lock: "shared",
 		// Ticket 10: scout's `output: context.md` file replaces its final message, so an early
 		// placeholder file reached Root as a "completed" report while the "could not finish" reply was lost.
 		closing: "Do not modify project files; writing the report/output file the runtime names is allowed. If the runtime names an output file, Root receives that file instead of your final message: write it once, at the end, with the full findings. Answer the questions asked; use the code-context headings only where they fit. If you did not finish, begin the report with INCOMPLETE and list what is done, what is missing, and why. Keep findings compact (paths, line numbers, short excerpts).",
 	},
 	validator: {
 		agent: "oracle",
-		exclusive: true,
+		lock: "exclusive",
 		closing: "Do not modify any files. You have a `bash` tool: run the requested checks yourself (never answer without running them) and report each command with its exit code and the relevant failure lines.",
 	},
 	reviewer: {
 		agent: "reviewer",
-		exclusive: false,
+		lock: "none",
 		closing: "Do not modify any files. End with `VERDICT: PASS` or `VERDICT: CHANGES REQUESTED` followed by the concrete reasons.",
 	},
 };
@@ -73,15 +77,21 @@ export interface EventBus {
 }
 
 /**
- * Per-cwd exclusivity for children that may write. One owner: created once
- * by the extension, shared by every delegation and by the handoff guard.
+ * Per-cwd locking for children. An exclusive hold (worker, validator) allows
+ * nothing else in that cwd; a shared hold (explorer) allows any number of
+ * shared holders but never an exclusive one. Created once by the extension,
+ * shared by every delegation and by the handoff guard.
  */
+export type LockMode = "exclusive" | "shared";
+
 export interface CwdLocks {
-	/** Hold `cwd`; null when another exclusive child already holds it. The returned release is idempotent. */
-	tryAcquire(cwd: string): (() => void) | null;
+	/** Hold `cwd` in `mode`; null when the cwd is held incompatibly. The returned release is idempotent. */
+	tryAcquire(cwd: string, mode?: LockMode): (() => void) | null;
 	isHeld(cwd: string): boolean;
-	/** cwds currently held, in acquisition order. */
+	/** cwds currently held, in first-acquisition order. */
 	held(): string[];
+	/** Holders of `cwd`: none, one exclusive child, or N shared holders. */
+	holders(cwd: string): { exclusive: boolean; shared: number };
 	readonly size: number;
 }
 
@@ -105,20 +115,34 @@ export async function resolveLockKey(git: GitRunner, cwd: string): Promise<strin
 }
 
 export function createCwdLocks(): CwdLocks {
-	const held = new Set<string>();
+	const held = new Map<string, { exclusive: boolean; count: number }>();
 	return {
-		tryAcquire(cwd) {
-			if (held.has(cwd)) return null;
-			held.add(cwd);
+		tryAcquire(cwd, mode = "exclusive") {
+			const h = held.get(cwd);
+			if (mode === "exclusive") {
+				if (h) return null;
+				held.set(cwd, { exclusive: true, count: 1 });
+			} else {
+				if (h?.exclusive) return null;
+				if (h) h.count += 1;
+				else held.set(cwd, { exclusive: false, count: 1 });
+			}
 			let released = false;
 			return () => {
 				if (released) return;
 				released = true;
-				held.delete(cwd);
+				const cur = held.get(cwd);
+				if (!cur) return;
+				if (cur.count > 1) cur.count -= 1;
+				else held.delete(cwd);
 			};
 		},
 		isHeld: (cwd) => held.has(cwd),
-		held: () => [...held],
+		held: () => [...held.keys()],
+		holders: (cwd) => {
+			const h = held.get(cwd);
+			return h ? { exclusive: h.exclusive, shared: h.exclusive ? 0 : h.count } : { exclusive: false, shared: 0 };
+		},
 		get size() {
 			return held.size;
 		},
@@ -165,7 +189,7 @@ export interface DelegationDeps {
 	git: GitRunner;
 	ownerRunId: string;
 	limits: DelegationLimits;
-	/** cwds held by a running exclusive child; shared across calls. */
+	/** cwds held by a running child; shared across calls. */
 	locks: CwdLocks;
 	/** Root's session file; locates pi-subagents artifacts after a failed run. */
 	sessionFile?: string;
@@ -472,10 +496,14 @@ export async function runDelegation(
 	const cwd = resolve(params.cwd || process.cwd());
 	const details = { role, agent: profile.agent };
 	if (!params.task?.trim()) return refusal(details, "task is empty");
-	const lockKey = profile.exclusive ? await resolveLockKey(deps.git, cwd).catch(() => cwd) : cwd;
-	const release = profile.exclusive ? deps.locks.tryAcquire(lockKey) : () => {};
+	const lockKey = profile.lock === "none" ? cwd : await resolveLockKey(deps.git, cwd).catch(() => cwd);
+	const release = profile.lock === "none" ? () => {} : deps.locks.tryAcquire(lockKey, profile.lock);
 	if (!release) {
-		return refusal(details, `another worker/explorer/validator child is still running in repository ${lockKey}. Wait for it to finish, or use role "reviewer" (read-only). If this task targets another repository (e.g. one nested inside), pass that repository as cwd.`);
+		const holders = deps.locks.holders(lockKey);
+		const busy = holders.exclusive
+			? `another worker/validator child is still running in repository ${lockKey}.`
+			: `${holders.shared} explorer child(ren) still running in repository ${lockKey}.`;
+		return refusal(details, `${busy} Wait for it to finish, or use role "reviewer" (read-only). If this task targets another repository (e.g. one nested inside), pass that repository as cwd.`);
 	}
 
 	const base = await captureBase(deps.git, cwd).catch(() => ({ dirtyBefore: 0 }));

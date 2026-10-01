@@ -22,13 +22,21 @@ for (const name of ["REQUEST", "STARTED", "UPDATE", "RESPONSE", "CANCEL"]) {
 	assert.equal(local[key], installed[key], `${key} differs from installed pi-subagents`);
 }
 
-// Every mapped builtin agent exists, and only agents that can change files hold the cwd lock.
-for (const [role, { agent, exclusive }] of Object.entries(ROLE_AGENTS)) {
+// Lock mode matches the role: writers (worker, validator) hold exclusively, the
+// read-only reviewer holds nothing, and explorers share a repository. Explorers are
+// prompt-constrained, not tool-constrained, to read project files (scout keeps bash and
+// write for its report, which goes to pi-subagents' per-run artifact dir); a new edit tool
+// on scout would make sharing unsafe, so it fails here.
+const EXPECTED_LOCK = { worker: "exclusive", explorer: "shared", validator: "exclusive", reviewer: "none" };
+for (const [role, { agent, lock }] of Object.entries(ROLE_AGENTS)) {
 	const file = join(root, "agents", `${agent}.md`);
 	assert.ok(existsSync(file), `${role} maps to missing builtin agent ${agent}`);
 	const tools = readFileSync(file, "utf8").match(/^tools:(.*)$/m)?.[1].split(",").map((t) => t.trim()) ?? [];
 	const canChange = tools.some((t) => ["bash", "edit", "write"].includes(t));
-	assert.equal(exclusive, canChange, `${role}/${agent}: exclusive=${exclusive} but tools are ${tools.join(", ")}`);
+	assert.equal(lock, EXPECTED_LOCK[role], `${role}/${agent}: lock=${lock}`);
+	if (role === "reviewer") assert.equal(canChange, false, `${role}/${agent}: reviewer must be read-only, tools are ${tools.join(", ")}`);
+	else assert.equal(canChange, true, `${role}/${agent}: lock=${lock} but tools are ${tools.join(", ")}`);
+	if (lock === "shared") assert.ok(!tools.includes("edit"), `${role}/${agent}: shared lock but has edit, tools are ${tools.join(", ")}`);
 }
 
 // The exact request runDelegation emits must pass the installed parser.

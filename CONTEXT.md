@@ -37,7 +37,7 @@ _Avoid_: task, execution (legacy ledger terms)
 ## Decisions
 
 - In Lite, children return plain text; there is no structured report contract (legacy ADR-0001–0007, 0009 and 0010 are superseded; 0008 keeps only its ten-minute default).
-- A child with bash or write holds its cwd until it ends; an unconfirmed stop keeps the hold until the late terminal.
+- worker and validator hold their repository exclusively until they end; explorers share a repository (any number of them) but never run alongside a worker or validator; an unconfirmed stop keeps the hold until the late terminal.
 - The host enforces the wall-clock limit (`timeoutMs`); the plugin cancels on the reported token cap. Neither is a hard budget.
 - Child models are operator configuration (`subagents.agentOverrides`), never tool parameters.
 - Children run with the intercom bridge off and cannot ask Root mid-run, so each task must be self-contained.
