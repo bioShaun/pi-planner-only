@@ -2,6 +2,8 @@
 
 ## 0.9.0-lite.0 - unreleased
 
+- Repository lock (f2fe050): worker and validator hold a repository exclusively; explorers share it (any number) and never run beside an exclusive holder; reviewer holds none. A refusal names the blocking holder.
+- Handoff model lookup (6caccf2d): the new session resolves the source model with `ModelRegistry.find(provider, id)`. pi's registry has `find`, not `getModel`; the previous call failed with "getModel is not a function".
 - Field fixes from om36 logs (`.scratch/om36-usage-20261001/`): the `delegate` repository-lock refusal tells Root to pass the nested repository as `cwd` (two explorers on sibling nested repos without `cwd` collided on the outer repo); a failed `git_commit` says the changes it staged are still staged (seen with a missing git identity).
 
 - Root delegation guidance (`.scratch/root-delegation-guidance/`): written-file deliverables go to workers; long runs start as background jobs and are accepted separately; status polling is bounded and non-repetitive; distinguish implementation, checks, and real-run completion. Reviewers must receive the baseline commit when changes are already committed.

@@ -14,7 +14,7 @@ Root 已能把任务派出去，但 worker 模型慢。目标是缩短从提需�
 
 - **pi 本身支持并行工具调用。** 同一条 assistant 消息里的多个 tool call 会同时执行（pi `docs/extensions.md`）。
 - **Lite 的锁。** worker、validator 按仓库根独占，第二个直接 refused；explorer 之间共享（2026-10-01 起，f2fe050，此前为独占，`delegate.ts` 的 `createCwdLocks`）；reviewer 不加锁；不同仓库之间可以并行。
-- **explorer 不是工具层面的只读角色。** explorer 对应 scout 这个 agent，当前配置（`~/.pi/agent/settings.json` 的 `subagents.agentOverrides.scout`）给了它 `bash`、`write`、`apply_patch`，只靠指令约束它不改文件。
+- **explorer 的工具不由本插件声明。** `delegate.ts` 的 `ROLE_AGENTS.explorer` 只设置 `agent: "scout"`、`lock: "shared"`，以及结尾指令：不要修改项目文件；运行时点名的报告/输出文件可以写。工具名单在已安装的 pi-subagents `agents/scout.md` 的 `tools:` 行，由 `contract.test.mjs` 读取。该测试的注释写明：explorer 靠提示约束、不靠工具表变成只读；scout 保留 `bash` 和 `write`（报告写到每次 run 的 artifact 目录）。断言本身是：非 reviewer 的工具里要有 `bash`、`edit`、`write` 之一，共享锁不能有 `edit`。`apply_patch` 不在 `ROLE_AGENTS` 里，本仓库也没有提交去掉它。2026-09-29 的记录把 operator 的 `~/.pi/agent/settings.json`（`subagents.agentOverrides.scout`）写成带 `bash`、`write`、`apply_patch`；若后来 operator/settings 去掉了 `apply_patch`，那是本仓库之外的配置，不是 `f2fe050`。
 - **Lite 隐藏了 pi-subagents 的 `subagent` 工具。** `index.ts:36` 的 `HIDDEN_HOST_TOOLS` 包含 `subagent`，`index.ts:658-661` 在 Lite 下拦截对它的调用。Lite 只保留 `delegate` 一个派发入口，由它统一负责锁、token 上限、时限和 git 摘要验收。
 - **`delegate` 的通道不支持 worktree。** `delegate` 走 pi-subagents 的结构化委派请求（`delegate.ts` 的 `buildRequest`，只有 `cwd`）。pi-subagents 这一侧，请求里带 `tasks` 或 `worktree` 字段会被判为无效（`src/slash/delegation-adapters.js:6`）。
 - **模式切换只对下一次新会话生效。** `/planner-only native` 或 `lite` 只保存“下一次新会话”的偏好，不切换当前会话（`README.md:115`）。
@@ -66,7 +66,7 @@ Root 已能把任务派出去，但 worker 模型慢。目标是缩短从提需�
 
 - 第 10 节的低成本优化（O1–O4）已实施，但 O2 的对照没有看到收益（见 10.5），其余项也没有单独验证；不能再说它们“对每个 worker 都有效”。下一步先用已有记录找出整条委派流程的主要耗时来源（explorer、validator、reviewer 的重复读取、重复检查、交接不清导致的反复委派），再决定优化对象。
 - D 作为并发试验路线，在低成本优化之后做一次完整试验，再决定是否常用。
-- **explorer 解锁不与上述优化捆绑，单独评估。**（已完成：f2fe050 实现读写锁，explorer 之间共享、与 worker/validator 互斥；scout 去掉了 `apply_patch`，保留 `write` 和 `bash`。以下为当时的评估记录。）原因见第 2 节：explorer 实际带有写能力。简单地把 `exclusive` 改成 `false`，不仅允许 explorer 之间并行，也会允许 explorer 与 worker 同时运行，读到修改中的代码，并在 git 摘要里混入别人的改动。评估时需先回答：
+- **explorer 解锁不与上述优化捆绑，单独评估。**（锁已在 f2fe050 落地：explorer 之间共享，与 worker/validator 互斥。本插件没有改 scout 的工具；`apply_patch` 不在本仓库的工具表里，若 operator/settings 去掉了它，也不要记成插件删的。以下为当时的评估记录。）原因见第 2 节：explorer 实际带有写能力（提示约束，不是本插件的工具白名单）。简单地把 `exclusive` 改成 `false`，不仅允许 explorer 之间并行，也会允许 explorer 与 worker 同时运行，读到修改中的代码，并在 git 摘要里混入别人的改动。评估时需先回答：
   - 是只允许 explorer 之间并行，还是也允许与 writer 并行？（建议：仍与 writer 互斥，即读写锁。）
   - explorer 写的报告或草稿文件放在哪里，如何避免互相覆盖、避免混进 git 摘要？
   - 是否需要从 scout 的配置里去掉 `write`、`apply_patch`，从工具层面把它变成只读？
@@ -77,7 +77,7 @@ Root 已能把任务派出去，但 worker 模型慢。目标是缩短从提需�
 2. **O3、O4**：写进 Root 的 prompt 和做法；O4 需要先定下后台作业怎么提交、结果怎么取回、最终由谁验收。（已实施最小版本，见 10.5）
 3. **固定任务对照实验**：用同一组 bench 任务，分别测 O2 前后、O5（worker 用 luna low）前后的轮数、总耗时和质量。
 4. **Native 并发试验**：选一个能拆成 3 个独立部分的真实需求，按第 5 节 D 执行。计时从 Root 开始拆任务，一直到合并后整体验收完成，包括启动、合并和返工。与串行做一次对比。
-5. **explorer 解锁**：按第 6 节列出的问题单独评估。
+5. **explorer 解锁**：按第 6 节列出的问题单独评估。（锁已在 f2fe050 落地，见第 6 节；去掉 `write` 或 `apply_patch` 没有落在本仓库。）
 
 ## 8. 风险与注意
 
@@ -134,7 +134,7 @@ Root 已能把任务派出去，但 worker 模型慢。目标是缩短从提需�
 
 - **O1**：无需改动（见 10.3）。
 - **O2**：已回退（2026-10-01）。理由：下方对照未观察到收益，文案变长；lite 以减法为准。有新证据可再加回。原实施内容：`ROLE_AGENTS.worker.closing` 开头加入：“Work in few turns: send independent reads, searches, and inspection commands together in one turn (at most 4); read a small file whole and a large file's relevant range once, not in repeated slices; combine nearby edits into one edit or patch call.”考虑到并非所有环境都配了 `apply_patch`，措辞用“edit or patch call”。
-- **O3**：大部分已在 `3f58416` 中实施：`delegate` 的 `task` 参数说明已要求写明范围（文件、函数）、已定决策（公共接口等）、验收条件和确切的检查命令。没有再加文字。Root 系统提示词有 1,700 字符的测试上限，当前已用 1,662/1,678。
+- **O3**：大部分已在 `3f58416` 中实施：`delegate` 的 `task` 参数说明已要求写明范围（文件、函数）、已定决策（公共接口等）、验收条件和确切的检查命令。没有再加文字。Root 系统提示词的测试上限是 1,500 字符（`index.test.mjs`：`plannerPrompt(strict).length < 1_500`；`635f4a92` 从 1,700 压回，issue #25）。同一函数自那次提交起未改；按源码里的字符串拼接复测（默认时限 10 分钟，与 `plannerPrompt(false|true).length` 相同）：非 strict 1,481，strict 1,496。与 CHANGELOG 0.9.0-lite.0 的记录一致。
 - **O4**：已做最小版本。`task` 参数说明加入：“Ask only for checks that finish well within the child's time limit; keep long jobs (full pipelines, large data processing) out of the task and run them outside delegation (yourself, or hand them to the user).”子 agent 一侧原有的时限提示不变。后台作业怎么提交、怎么取回结果不写进插件：这属于机器规则（`slot -b`、`slot tail`，见全局 AGENTS.md）。strict 模式下 Root 不能跑 bash，只能交给用户。
 - **O2 效果对照（T2，arm `lite-tds-strict-o2`，pluginRef `12f13e6`）**：计划 3 次，第 3 次因模型服务商返回 “insufficient credits”（400）在约 208 秒后中止，判为无效（`valid=false`），未重跑；有效样本 n=2，全部通过。对照组为 O2 之前的 `treat-3f58416`（n=3，全部有效通过）。
 

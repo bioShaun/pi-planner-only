@@ -78,13 +78,13 @@
 8. **成本**：所有官方文档都提示并行/团队会显著增加 token；agent teams 建议 3–5 个。
 9. **人的审查仍是瓶颈**：B 类工具的核心卖点都是更快地审 diff、合并、开 PR，而不是让 agent 更快。
 
-## 4. 对本插件的启发（建议，未实施）
+## 4. 对本插件的启发
 
 结合本仓库测量（T2 bench：Root 自身 33%、explorer 22%、validator 20%、worker 19%；见 `.scratch/worker-time-20260929/`）：
 
 | # | 做法 | 参照 | 预期作用 | 改动量 |
 |---|---|---|---|---|
-| 1 | **（已实施 f2fe050，scout 仅去掉 `apply_patch`）** explorer/reviewer 之间并行（读写锁，与 worker 仍互斥），scout 去掉 `write`、`apply_patch` | Codex “read-heavy 先并行”；Claude Explore 只读 | explorer 占 22%，可直接缩短 | 小：`delegate.ts` 锁 + 配置 |
+| 1 | **（f2fe050 已实施锁；本仓库未改 scout 工具）** explorer 共享仓库锁，与 worker/validator 互斥；reviewer 的 `lock` 为 `none`。`ROLE_AGENTS.explorer` 只映射到 builtin `scout`，并用结尾指令禁止改项目文件（运行时点名的报告文件除外）。已安装 scout 的工具以 `agents/scout.md` 为准。`contract.test.mjs` 的注释写明 scout 保留 `bash` 和 `write`；断言是共享锁不能有 `edit`。去掉 `write` 或 `apply_patch` 没有落在本仓库；`apply_patch` 若从 operator/settings 去掉，也不是本插件删的 | Codex “read-heavy 先并行”；Claude Explore 只读 | explorer 占 22%，可直接缩短 | 锁已在 `delegate.ts`；工具名单不在本仓库 |
 | 2 | reviewer 按维度并行（正确性 / 测试缺口 / 规范） | Codex PR review 示例、agent teams 并行审查 | 审查更全面；用时取最慢的一路 | 依赖 #1 |
 | 3 | 机械性检查用宿主 `gate` 跑，不派 validator | pi-subagents `gate` | validator 占 20%，其中纯“跑命令报退出码”的部分可去掉 LLM | **已确认不可行**：结构化请求不接受 `gate`/`acceptance`（`delegation-request.js:4-20`） |
 | 4 | 超时的 child 用 `resume` 续跑，而不是新派一次 | Claude `maxTurns` partial + resume；pi-subagents `resume` | 减少超时后的重新探索 | **已确认通道不能复活**：有 runId 但请求无 resume 字段，见 ADR 0011 |
@@ -99,4 +99,4 @@
 - 只读了各工具的官方文档，没有实测；默认值随版本变化。
 - GitHub Copilot / Agent HQ 只看了官方博客摘要。
 - 未覆盖通用 agent 框架（LangGraph、OpenAI Agents SDK、CrewAI 等）：它们面向自建应用，不直接解决编码 agent 的隔离与验收问题。
-- 第 4 节 #3、#4 依赖 pi-subagents 结构化委派通道是否支持 `gate`、`resume`，尚未核实。
+- 第 4 节 #3、#4 已核对（ADR 0011，`e25b1315`）：结构化请求不接受 `gate`/`acceptance`，也没有 `resume` 字段。超时后重新 `delegate`，把上次报告和剩余工作写进 task。
