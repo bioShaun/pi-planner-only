@@ -4,28 +4,25 @@
  * preferences and session selection persist; delegated tasks have no ledger.
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_LIMITS, loadConfig } from "./config.ts";
-import type { DelegationLimits, HandoffMode, PlannerMode } from "./config.ts";
+import { AGENT_DIR, DEFAULT_LIMITS, loadConfig } from "./config.ts";
+import type { DelegationLimits, PlannerMode } from "./config.ts";
 import { ROLES, createCwdLocks, runDelegation, timeoutMinutes } from "./delegate.ts";
 import type { DelegationParams } from "./delegate.ts";
 import { formatTokens } from "./format.ts";
 import { createHostAdapter, rootUsageOf } from "./host.ts";
 import type { HostAdapter } from "./host.ts";
 export { rootUsageOf } from "./host.ts";
-import { GIT_AUDIT_OPERATIONS, gitCommit, gitSafePrefix, isWorkTree, runGitAudit } from "./git.ts";
+import { GIT_AUDIT_OPERATIONS, gitCommit, runGitAudit } from "./git.ts";
 import type { GitAuditRequest, GitRunner } from "./git.ts";
 import { loadArtifactDir } from "./subagent-artifacts.ts";
+import { RootHandoff, handoffMode, handoffModeSetting } from "./handoff.ts";
+export { HANDOFF_PREFERENCE, handoffMode, formatStatusLines } from "./handoff.ts";
 
-const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
-	? resolve(process.env.PI_CODING_AGENT_DIR)
-	: join(homedir(), ".pi", "agent");
 export const OFF_MARKER = join(AGENT_DIR, "planner-only.off");
 export const MODE_PREFERENCE = join(AGENT_DIR, "planner-only.mode");
-export const HANDOFF_PREFERENCE = join(AGENT_DIR, "planner-only.handoff");
 const MODE_ENTRY = "planner-only-mode";
 export const NATIVE_PROMPT = "实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。";
 const STATUS_KEY = "planner-only";
@@ -50,26 +47,6 @@ function preference(): PlannerMode | undefined {
 		const value = readFileSync(MODE_PREFERENCE, "utf8").trim();
 		return value === "off" || value === "native" || value === "lite" ? value : undefined;
 	} catch { return undefined; }
-}
-
-function handoffPreference(): HandoffMode | undefined {
-	try {
-		const value = readFileSync(HANDOFF_PREFERENCE, "utf8").trim();
-		return value === "off" || value === "confirm" || value === "auto" ? value : undefined;
-	} catch { return undefined; }
-}
-
-function handoffModeSetting(env: NodeJS.ProcessEnv): { mode: HandoffMode; source: "env" | "persisted" | "default" } {
-	if (env.PI_PLANNER_ONLY_HANDOFF?.trim()) {
-		const value = env.PI_PLANNER_ONLY_HANDOFF.trim().toLowerCase();
-		return { mode: value === "confirm" || value === "auto" ? value : "off", source: "env" };
-	}
-	const saved = handoffPreference();
-	return saved ? { mode: saved, source: "persisted" } : { mode: "off", source: "default" };
-}
-
-export function handoffMode(env: NodeJS.ProcessEnv = process.env): HandoffMode {
-	return handoffModeSetting(env).mode;
 }
 
 /** Explicit mode, legacy flag, persisted preference, legacy marker, default. */
@@ -130,15 +107,6 @@ export function formatTotals(t: CostTotals): string {
 	return `root ${formatTokens(t.rootTokens)} $${t.rootCost.toFixed(3)} · ${kids} ${formatTokens(t.childTokens)} $${t.childCost.toFixed(3)}${share}`;
 }
 
-export interface PendingHandoff {
-	brief: string;
-	cwd: string;
-	sessionFile?: string;
-	selection?: { provider: string; id: string; thinkingLevel?: string };
-	/** Set after a failed or cancelled dispatch: only `/planner-only handoff` retries it. */
-	manualOnly?: boolean;
-}
-
 export type ChildRunStatus = "completed" | "refused" | (string & {});
 
 export interface ChildRunUsage {
@@ -154,7 +122,7 @@ export function contextWarnThreshold(env: NodeJS.ProcessEnv = process.env): numb
 }
 
 /**
- * All mutable plugin state. Conversation-scoped fields are cleared by `reset()`
+ * Root accounting, Mode and Delegation state. Conversation-scoped fields are cleared by `reset()`
  * on session start; the process-scoped ones (`locks`, `delegationsInFlight`,
  * `hidLoader`) outlive a session because they track children and host tools
  * that do too.
@@ -173,15 +141,11 @@ export class PlannerSession {
 	totals: CostTotals = emptyTotals();
 	rootContext: number | undefined;
 	contextWarned = false;
-	handoffRequested = false;
-	pendingHandoff: PendingHandoff | undefined;
 
 	reset(): void {
 		this.totals = emptyTotals();
 		this.rootContext = undefined;
 		this.contextWarned = false;
-		this.handoffRequested = false;
-		this.pendingHandoff = undefined;
 	}
 
 	async trackDelegation<T>(run: () => Promise<T>): Promise<T> {
@@ -227,45 +191,6 @@ export class PlannerSession {
 	get highContext(): boolean {
 		return this.rootContext !== undefined && this.rootContext > contextWarnThreshold();
 	}
-
-	/** Why a handoff cannot be scheduled right now, or undefined when it can. */
-	handoffRefusal(brief: string): string | undefined {
-		if (this.locks.size > 0) return "a child is still running.";
-		if (this.delegationsInFlight > 0) return "a delegated child is still running.";
-		if (this.pendingHandoff) return "one is already pending.";
-		const threshold = contextWarnThreshold();
-		if (!this.handoffRequested && handoffMode() === "off") {
-			return "the user did not request a handoff and self-initiated handoff is off (enable it with /planner-only handoff-mode confirm|auto, or PI_PLANNER_ONLY_HANDOFF). Continue in this session, or suggest the user run /planner-only handoff at a task boundary.";
-		}
-		if (!this.handoffRequested && (this.rootContext ?? 0) <= threshold) {
-			return `your context is about ${formatTokens(this.rootContext ?? 0)} tokens, below the ${formatTokens(threshold)} threshold, and the user did not request a handoff. Continue the work in this session.`;
-		}
-		if (brief.length < 200) return "brief must be at least 200 characters.";
-		return undefined;
-	}
-
-	scheduleHandoff(handoff: PendingHandoff): void {
-		this.handoffRequested = false;
-		this.pendingHandoff = handoff;
-	}
-
-	requestHandoff(): void {
-		this.handoffRequested = true;
-	}
-
-	/** Dispatch failed or was cancelled: keep the brief, but stop auto-dispatching it. */
-	deferHandoff(handoff: PendingHandoff): void {
-		this.pendingHandoff = { ...handoff, manualOnly: true };
-	}
-
-	dropHandoff(): void {
-		this.pendingHandoff = undefined;
-		this.handoffRequested = false;
-	}
-
-	clearPendingHandoff(): void {
-		this.pendingHandoff = undefined;
-	}
 }
 
 interface PlannerRuntime {
@@ -273,11 +198,10 @@ interface PlannerRuntime {
 	git: GitRunner;
 	host: HostAdapter;
 	session: PlannerSession;
+	handoff: RootHandoff;
 }
 
-const hostBridge: { pi?: ExtensionAPI; session?: PlannerSession } = {};
-
-function modeOf({ session }: PlannerRuntime): PlannerMode {
+function modeOf({ session }: Pick<PlannerRuntime, "session">): PlannerMode {
 	// Preserve the old live PI_PLANNER_ONLY flag behavior; explicit MODE selects new sessions.
 	const enabled = loadConfig().enabled;
 	return loadConfig().mode === undefined && enabled !== undefined ? enabled ? "lite" : "off" : session.mode;
@@ -412,121 +336,11 @@ async function executeGitCommit(runtime: PlannerRuntime, params: { message: stri
 	return textResult(outcome.text, { ok: outcome.ok });
 }
 
-function executeHandoff(runtime: PlannerRuntime, params: { brief: string; cwd?: string }, ctx: ExtensionContext) {
-	if (modeOf(runtime) !== "lite") return refusal("Handoff unavailable: planner-only Lite mode is inactive.");
-	const { session, host } = runtime;
-	if (!ctx.hasUI) return refusal("Handoff refused: a UI session is required.");
-	const reason = session.handoffRefusal(params.brief);
-	if (reason) return refusal(`Handoff refused: ${reason}`);
-	session.scheduleHandoff({ brief: params.brief, cwd: resolveCwd(ctx, params.cwd), sessionFile: host.sessionFile(ctx) });
-	return textResult("Handoff scheduled: a new session will start with this brief after this turn ends. Stop working now; end your turn with a one-line note to the user.", { ok: true });
-}
-
-export function formatStatusLines(stdout: string, max = 30): string {
-	const body = stdout.endsWith("\n") ? stdout.slice(0, -1) : stdout;
-	if (!body) return "(clean)";
-	const lines = body.split("\n");
-	if (lines.length <= max) return body;
-	return [...lines.slice(0, max), `… ${lines.length - max} more`].join("\n");
-}
-
-async function gatherGitFacts(git: GitRunner, cwd: string): Promise<string> {
-	try {
-		const prefix = await gitSafePrefix(git, cwd);
-		if (!(await isWorkTree(git, cwd))) return "Not inside a git work tree.";
-		const [status, log] = await Promise.all([
-			git([...prefix, "status", "--porcelain"], cwd),
-			git([...prefix, "log", "--oneline", "-n5"], cwd),
-		]);
-		const statusText = status.code === 0 ? formatStatusLines(status.stdout) : (status.stderr || status.stdout).trim();
-		return `git status (porcelain):\n${statusText}\n\ngit log --oneline -n5:\n${log.code === 0 ? log.stdout.trim() || "(no commits)" : (log.stderr || log.stdout).trim()}`;
-	} catch (error) {
-		return `git facts unavailable: ${error instanceof Error ? error.message : String(error)}`;
-	}
-}
-
-function handoffPrompt(handoff: PendingHandoff, facts: string): string {
-	return `[planner-only handoff] You are the new Root session. The previous session handed this work to you because its context was large. "This session"/"the next session" in the brief below both mean YOU: do the next step now. ${handoffMode() === "off" ? "Do not call the handoff tool unless the user asks for one." : "Do not call the handoff tool unless your own context grows past the warning threshold."}\n\n## Brief\n${handoff.brief}\n\n## Facts from the previous session\nPrevious session file: ${handoff.sessionFile ?? "unknown"}\nRepository (git facts below): ${handoff.cwd}\n${facts}\n\nContinue as Root under planner-only; the brief is authoritative.`;
-}
-
-/** Starts the new Root session from the pending brief; on failure or cancel the brief stays for a manual retry. */
-async function dispatchHandoff({ git, session }: PlannerRuntime, handoff: PendingHandoff, ctx: ExtensionCommandContext): Promise<void> {
-	if (!handoff.selection) {
-		const model = ctx.model;
-		if (!model) {
-			session.deferHandoff(handoff);
-			ctx.ui.notify("handoff refused: the current model cannot be identified; run /planner-only handoff to retry, or /planner-only handoff drop to discard it", "warning");
-			return;
-		}
-		handoff.selection = { provider: model.provider, id: model.id, ...(ctx.thinkingLevel === undefined ? {} : { thinkingLevel: String(ctx.thinkingLevel) }) };
-		session.pendingHandoff = handoff;
-	}
-	const prompt = handoffPrompt(handoff, await gatherGitFacts(git, handoff.cwd));
-	const mode = handoffMode();
-	try {
-		const result = await ctx.newSession({ parentSession: handoff.sessionFile, withSession: async (rctx) => {
-			rctx.ui.notify("planner-only: handoff from previous session", "info");
-			try {
-				const selection = handoff.selection;
-				if (!selection) throw new Error("source model selection is missing");
-				const pi = hostBridge.pi;
-				if (!pi) throw new Error("live host model bridge is unavailable");
-				const model = rctx.modelRegistry.find(selection.provider, selection.id);
-				if (!model) throw new Error(`model ${selection.provider}/${selection.id} is unavailable in the new session`);
-				if (!await pi.setModel(model)) throw new Error(`host refused model ${selection.provider}/${selection.id}`);
-				if (selection.thinkingLevel !== undefined) (pi.setThinkingLevel as (level: string) => void)(selection.thinkingLevel);
-				const current = rctx.model;
-				if (!current || current.provider !== selection.provider || current.id !== selection.id) throw new Error(`active model did not match ${selection.provider}/${selection.id}`);
-				if (selection.thinkingLevel !== undefined && rctx.thinkingLevel !== selection.thinkingLevel) throw new Error(`thinking level did not match ${selection.thinkingLevel}`);
-				if (mode === "confirm") {
-					rctx.ui.setEditorText(prompt);
-					rctx.ui.notify(`Handoff ready. Submit when ready.${selection.thinkingLevel === undefined ? " Thinking level was not carried over." : ""}`, "info");
-				} else {
-					await rctx.sendUserMessage(prompt);
-					if (selection.thinkingLevel === undefined) rctx.ui.notify("Thinking level was not carried over.", "info");
-				}
-			} catch (error) {
-				const reason = error instanceof Error ? error.message : String(error);
-				hostBridge.session?.deferHandoff({ ...handoff, selection: handoff.selection });
-				rctx.ui.notify(`handoff settings could not be restored (${reason}); brief was not sent. Run /planner-only handoff to retry, or /planner-only handoff drop to discard it`, "warning");
-			}
-		} });
-		if (result?.cancelled) {
-			session.deferHandoff(handoff);
-			ctx.ui.notify("handoff cancelled; run /planner-only handoff to retry, or /planner-only handoff drop to discard it", "warning");
-		} else session.clearPendingHandoff();
-	} catch (error) {
-		const liveSession = hostBridge.session && hostBridge.session !== session ? hostBridge.session : session;
-		liveSession.deferHandoff(handoff);
-		const reason = error instanceof Error ? error.message : String(error);
-		try {
-			ctx.ui.notify(`handoff failed (${reason}); run /planner-only handoff to retry, or /planner-only handoff drop to discard it`, "warning");
-		} catch {
-			// Session replacement invalidates the old command context.
-		}
-	}
-}
-
-/** `/planner-only handoff [goal]`: asks Root for a brief, or dispatches the one already scheduled. */
-async function commandHandoff(runtime: PlannerRuntime, goal: string, ctx: ExtensionCommandContext): Promise<void> {
-	if (modeOf(runtime) !== "lite") {
-		ctx.ui.notify("handoff requires planner-only Lite mode", "warning");
-		return;
-	}
-	const { pi, session } = runtime;
-	if (!session.pendingHandoff) {
-		session.requestHandoff();
-		pi.sendUserMessage(`[planner-only] The user asked for a handoff${goal ? ` (next goal: ${goal})` : ""}. Call the handoff tool now with a complete brief.`, ctx.isIdle?.() ? undefined : { deliverAs: "followUp" });
-		return;
-	}
-	await dispatchHandoff(runtime, session.pendingHandoff, ctx);
-}
-
 function setEnabled(runtime: PlannerRuntime, enabled: boolean): void {
 	if (busy(runtime.session) && modeOf(runtime) !== (enabled ? "lite" : "off")) return;
 	if (enabled) rmSync(OFF_MARKER, { force: true });
 	else {
-		runtime.session.clearPendingHandoff();
+		runtime.handoff.deactivate();
 		mkdirSync(dirname(OFF_MARKER), { recursive: true });
 		writeFileSync(OFF_MARKER, "");
 	}
@@ -548,38 +362,10 @@ function notifyStatus(runtime: PlannerRuntime, ctx: ExtensionContext): void {
 	ctx.ui.notify(`planner-only ${mode === "lite" ? "on" : mode}${mode === "lite" && isStrict() ? ", strict" : ""}${env}; next fresh session: ${initialMode()}${preference() ? ` (preference: ${preference()})` : ""}; handoff: ${handoff.mode} (source: ${handoff.source})${mode !== "lite" ? "" : `\n${statusTotals(session)}`}`, "info");
 }
 
-function notifyHandoffMode(ctx: ExtensionCommandContext): void {
-	const setting = handoffModeSetting(process.env);
-	ctx.ui.notify(`handoff mode: ${setting.mode} (source: ${setting.source})`, "info");
-}
-
 async function plannerCommand(runtime: PlannerRuntime, args: string, ctx: ExtensionCommandContext): Promise<void> {
 	const raw = args.trim();
 	const cmd = raw.toLowerCase();
-	if (cmd === "handoff-mode") {
-		notifyHandoffMode(ctx);
-		return;
-	}
-	if (cmd.startsWith("handoff-mode ")) {
-		const value = cmd.slice("handoff-mode ".length).trim();
-		if (value !== "off" && value !== "confirm" && value !== "auto") {
-			ctx.ui.notify("Usage: /planner-only handoff-mode [off|confirm|auto]", "warning");
-			return;
-		}
-		mkdirSync(dirname(HANDOFF_PREFERENCE), { recursive: true });
-		writeFileSync(HANDOFF_PREFERENCE, `${value}\n`);
-		notifyHandoffMode(ctx);
-		return;
-	}
-	if (cmd === "handoff drop") {
-		runtime.session.dropHandoff();
-		ctx.ui.notify("handoff dropped", "info");
-		return;
-	}
-	if (cmd === "handoff" || cmd.startsWith("handoff ")) {
-		await commandHandoff(runtime, raw.slice("handoff".length).trim(), ctx);
-		return;
-	}
+	if (await runtime.handoff.command(raw, ctx)) return;
 	if (cmd === "native" || cmd === "lite") {
 		mkdirSync(dirname(MODE_PREFERENCE), { recursive: true });
 		writeFileSync(MODE_PREFERENCE, `${cmd}\n`);
@@ -591,21 +377,6 @@ async function plannerCommand(runtime: PlannerRuntime, args: string, ctx: Extens
 		setEnabled(runtime, cmd === "on");
 	}
 	notifyStatus(runtime, ctx);
-}
-
-/** After Root's turn: kick off a scheduled handoff through the command so it runs outside the tool call. */
-function onAgentSettled(runtime: PlannerRuntime): void {
-	const { pi, session, host } = runtime;
-	if (modeOf(runtime) !== "lite") {
-		session.clearPendingHandoff();
-		return;
-	}
-	if (!session.pendingHandoff || session.pendingHandoff.manualOnly) return;
-	try { pi.sendUserMessage("/planner-only handoff", { expandPromptTemplates: true }); }
-	catch {
-		session.clearPendingHandoff();
-		host.sendMessage({ customType: "planner-only-handoff", content: "[planner-only] Handoff dispatch failed; run /planner-only handoff manually.", display: true });
-	}
 }
 
 function onMessageEnd(runtime: PlannerRuntime, message: Parameters<typeof rootUsageOf>[0], ctx: ExtensionContext): void {
@@ -620,16 +391,16 @@ function onMessageEnd(runtime: PlannerRuntime, message: Parameters<typeof rootUs
 }
 
 export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter): void {
-	hostBridge.pi = pi;
 	if (process.env.PI_SUBAGENT_CHILD === "1") return;
 
 	const git: GitRunner = async (args, cwd) => {
 		const result = await pi.exec("git", [...args], { cwd, timeout: GIT_TIMEOUT_MS });
 		return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", code: result.code };
 	};
-	const runtime: PlannerRuntime = { pi, git, host: hostAdapter ?? createHostAdapter(pi), session: new PlannerSession() };
-	const { session } = runtime;
-	hostBridge.session = session;
+	const session = new PlannerSession();
+	const host = hostAdapter ?? createHostAdapter(pi);
+	const handoff = new RootHandoff({ pi, git, host, activity: session, mode: () => modeOf({ session }) });
+	const runtime: PlannerRuntime = { pi, git, host, session, handoff };
 
 	pi.registerTool({
 		name: "delegate",
@@ -689,7 +460,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 			brief: Type.String({ minLength: 200, description: "Self-contained brief for the next Root session: goal, decisions made, constraints, relevant files/specs, what is done, open items, and the exact next step." }),
 			cwd: Type.Optional(Type.String({ description: REPO_CWD_DESCRIPTION })),
 		}),
-		execute: async (_toolCallId, params: { brief: string; cwd?: string }, _signal, _onUpdate, ctx) => executeHandoff(runtime, params, ctx),
+		execute: async (_toolCallId, params: { brief: string; cwd?: string }, _signal, _onUpdate, ctx) => handoff.schedule(params, ctx),
 	});
 
 	pi.registerCommand("planner-only", {
@@ -703,6 +474,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 			return;
 		}
 		session.reset();
+		handoff.reset();
 		syncTools(runtime);
 		updateStatus(session, ctx, modeOf(runtime));
 	});
@@ -714,7 +486,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 		updateStatus(session, ctx, modeOf(runtime));
 	});
 
-	pi.on("agent_settled", async () => onAgentSettled(runtime));
+	pi.on("agent_settled", async () => handoff.settled());
 
 	pi.on("before_agent_start", async (event) => {
 		if (modeOf(runtime) === "lite") {

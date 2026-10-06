@@ -3,6 +3,13 @@
  * the parsing helpers, the defaults, and the typed config they produce.
  */
 
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
+
+export const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
+	? resolve(process.env.PI_CODING_AGENT_DIR)
+	: join(homedir(), ".pi", "agent");
+
 export interface DelegationLimits {
 	timeoutMs: number;
 	maxTokens: number;

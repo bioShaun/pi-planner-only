@@ -719,15 +719,8 @@ try {
 	assert.equal(s.recordChildRun("refused", undefined), false);
 	assert.equal(s.recordChildRun("timed_out", usage()), true);
 	assert.deepEqual([s.totals.children, s.totals.failed, s.totals.childTokens], [1, 1, 3_500]);
-	assert.match(s.handoffRefusal("x".repeat(200)), /self-initiated handoff is off/);
-	s.requestHandoff();
-	assert.match(s.handoffRefusal("short"), /at least 200 characters/);
-	assert.equal(s.handoffRefusal("x".repeat(200)), undefined);
-	s.scheduleHandoff({ brief: "b", cwd: "/w" });
-	assert.equal(s.handoffRequested, false);
-	assert.match(s.handoffRefusal("x".repeat(200)), /already pending/);
-	s.deferHandoff(s.pendingHandoff);
-	assert.equal(s.pendingHandoff.manualOnly, true);
+	// Handoff admission, request consumption, manual retry and reset invariants
+	// now run through RootHandoff in handoff.test.mjs, without plugin hooks.
 	s.recordRootTurn({ tokens: 10, cost: 0.1 }, 200_000);
 	assert.equal(s.claimContextWarning(), true);
 	assert.equal(s.claimContextWarning(), false);
@@ -739,7 +732,7 @@ try {
 	s.delegationsInFlight = 1;
 	s.hidLoader = true;
 	s.reset();
-	assert.deepEqual([s.totals.rootTokens, s.pendingHandoff, s.handoffRequested], [0, undefined, false]);
+	assert.equal(s.totals.rootTokens, 0); // Root handoff reset is covered in handoff.test.mjs.
 	assert.deepEqual([s.delegationsInFlight, s.hidLoader], [1, true], "process-scoped fields survive session_start");
 	let inFlight;
 	await s.trackDelegation(async () => { inFlight = s.delegationsInFlight; });

@@ -20,6 +20,9 @@ The extension's guided delegation interface, change summaries, optional strict b
 The parent session. It plans, delegates, inspects the actual changes, and commits. It may do small tasks itself unless strict mode is on.
 _Avoid_: orchestrator, planner service
 
+**Root handoff**:
+The transfer of unfinished work to a fresh Root session through a self-contained brief. The source model and known thinking level are preserved; failed or cancelled delivery retains the brief for manual retry or discard.
+
 **Worker**:
 A child that implements a task and ends with a short text report. Runs as the builtin `worker` agent.
 _Avoid_: subagent (the launch mechanism, not the role)
