@@ -1,0 +1,5 @@
+Implemented `S4Quality` in [scenes_a.py](/project/tmp/worker-tiers-replay/R2-luna-2/scenes_a.py:519): scanning gate and checklist, three graded probes with a failure mark, then a seeded 8×5 grade matrix and legend. Adjusted the matrix and kept the failure mark visible through the 4级 badge after reviewing frames.
+
+Validation: `./env/bin/manim -ql --disable_caching scenes_a.py S4Quality` and `./env/bin/manim -qh --disable_caching scenes_a.py S4Quality` both passed. Final 1080p duration: 20.27s. Review frames: [sheet](/project/tmp/worker-tiers-replay/R2-luna-2/review/w5_s4_sheet.png), [scan](/project/tmp/worker-tiers-replay/R2-luna-2/review/w5_s4_scan.png), [fail](/project/tmp/worker-tiers-replay/R2-luna-2/review/w5_s4_fail.png), [grid](/project/tmp/worker-tiers-replay/R2-luna-2/review/w5_s4_grid.png).
+
+Remaining gap: the fail frame is a sampled static frame and does not capture the brief simultaneous ✗ and 4级 badge moment.

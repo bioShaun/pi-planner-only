@@ -1,0 +1,117 @@
+{
+  "verified_remote_files": 11,
+  "root_session_lines": 130,
+  "worker_source_evidence": {
+    "run_id": "a5a59126-481a-47fe-9da1-cdd90e5076dc",
+    "source_line": 40,
+    "sha256": "32635b497b8079d42212a4f29abbcf90af4046f6d30a2fe0d9ac174f8ec16cfb"
+  },
+  "genotype_function_unchanged": true,
+  "synthetic_function_observation": {
+    "worker-variant.py": {
+      "0/1": 0.5,
+      "1/2": 1.0
+    },
+    "committed-variant.py": {
+      "0/1": 0.5,
+      "1/2": 1.0
+    }
+  },
+  "root_post_review_costs_usd": {
+    "124": "0.085044",
+    "126": "0.0938455",
+    "128": "0.07323149999999999",
+    "130": "0.10279600000000001"
+  },
+  "root_read_and_edit_cost_usd": "0.1788895",
+  "root_commit_and_final_cost_usd": "0.17602750000000000",
+  "root_all_post_review_cost_usd": "0.35491700000000000",
+  "review_return_to_final_seconds": 44.872,
+  "cost_caveat": "Observed historical usage, not an estimate of avoidable AF rework cost; includes performance optimization and routine closeout.",
+  "child_identities": [
+    {
+      "run_id": "0c1fe37a-bd40-4168-a665-53f0db2df7e8",
+      "models": [
+        {
+          "provider": "tcuni-luna",
+          "model": "gpt-6-luna"
+        }
+      ],
+      "thinking": [
+        "low"
+      ],
+      "assistant_messages": 23,
+      "recorded_cost_usd": "0.0283696600000000014"
+    },
+    {
+      "run_id": "1ceb6423-da64-4b6d-b274-911f77237b42",
+      "models": [
+        {
+          "provider": "tcuni-luna",
+          "model": "gpt-6-luna"
+        }
+      ],
+      "thinking": [
+        "medium"
+      ],
+      "assistant_messages": 14,
+      "recorded_cost_usd": "0.01044560000000000053"
+    },
+    {
+      "run_id": "4c40768b-9760-42da-a57f-f7072de3b391",
+      "models": [
+        {
+          "provider": "tcuni-luna",
+          "model": "gpt-6-luna"
+        }
+      ],
+      "thinking": [
+        "high"
+      ],
+      "assistant_messages": 10,
+      "recorded_cost_usd": "0.0107375000000000003"
+    },
+    {
+      "run_id": "6d6e54a5-f8d5-4f68-9d49-df7a35568de4",
+      "models": [
+        {
+          "provider": "tcuni-luna",
+          "model": "gpt-6-luna"
+        }
+      ],
+      "thinking": [
+        "medium"
+      ],
+      "assistant_messages": 10,
+      "recorded_cost_usd": "0.0081860799999999996"
+    },
+    {
+      "run_id": "a5a59126-481a-47fe-9da1-cdd90e5076dc",
+      "models": [
+        {
+          "provider": "tcuni-luna",
+          "model": "gpt-6-luna"
+        }
+      ],
+      "thinking": [
+        "medium"
+      ],
+      "assistant_messages": 12,
+      "recorded_cost_usd": "0.00795417999999999994"
+    },
+    {
+      "run_id": "da75e30f-d7b6-4096-9485-ae9c4c2f945d",
+      "models": [
+        {
+          "provider": "tcuni-luna",
+          "model": "gpt-6-luna"
+        }
+      ],
+      "thinking": [
+        "medium"
+      ],
+      "assistant_messages": 44,
+      "recorded_cost_usd": "0.0371674000000000008"
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "source": "/home/tcuni-claw/.codex/sessions/2026/09/29/rollout-2026-09-29T23-34-07-01a0edcd-41d7-7ba3-9b56-7066c55c194d.jsonl",
+  "source_sha256": "e9e19f053088fe5a31812f7487f0b6bdc5003f84caa69eee9214fd1d1f4fcd4a",
+  "recovered_at": "2026-10-07",
+  "kind": "historical analysis tool-output excerpts, not original Root JSONL",
+  "records": [
+    {
+      "source_line": 141,
+      "call_id": "call_StAfujbEVxTFroi7uTbebJ2W",
+      "characters": 8437,
+      "raw_payload_sha256": "6f4f8efda28d4fdcf3edf86f69764bbbcaeb024190781b3f9e31a0a63f98c38b",
+      "text_sha256": "3d940465149289953581ae2764c6224bf3ea0656ac7f59e0644d5ab070201d8b",
+      "output_file": "retained-output-141.txt"
+    },
+    {
+      "source_line": 212,
+      "call_id": "call_PnaYaKIye7Ub71HVO1emZogK",
+      "characters": 8822,
+      "raw_payload_sha256": "1326810f9854b9ad0ea0b8e14bd611aa2c135d52032dfe8161e9e4a970452108",
+      "text_sha256": "d4f6de3c7c4632d93ed735376ab101bbae36b4d4fd364f944923a11b4bad2a02",
+      "output_file": "retained-output-212.txt"
+    },
+    {
+      "source_line": 286,
+      "call_id": "call_y5izZ9Mk4O1vGEeZ4N5Boflj",
+      "characters": 18242,
+      "raw_payload_sha256": "003a81a5241192e5acedcb9644d986007a604cfe871dbffefdbfae48052f2ca6",
+      "text_sha256": "0306cd6d123bd3307f6a7c19590325e6a3f143742efc7ebac5f9ffa9eee43b07",
+      "output_file": "retained-output-286.txt"
+    }
+  ],
+  "extraction_method_source_line": 283,
+  "limits": {
+    "task_prefix_characters": 350,
+    "report_prefix_characters": 1200,
+    "historical_output_truncated": true
+  },
+  "remote_connection": {
+    "user_authorized": true,
+    "connected": true,
+    "recovered_at": "2026-10-07",
+    "manifest": "remote-manifest.json"
+  },
+  "remote_connection_history": [
+    {
+      "user_authorized": true,
+      "connected": false,
+      "exit_code": 255,
+      "error": "socket: Operation not permitted"
+    }
+  ]
+}

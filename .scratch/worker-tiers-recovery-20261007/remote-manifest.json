@@ -1,0 +1,113 @@
+{
+  "host": "om09",
+  "recovered_at": "2026-10-07",
+  "files": [
+    {
+      "name": "root-session.jsonl",
+      "source": "/home/glx/.pi/agent/sessions/--home-scripts-nf-rnaseq-v2--/2026-09-28T04-32-33-676Z_01a0e649-398b-7713-8774-fded5d70bdac.jsonl",
+      "bytes": 658077,
+      "sha256": "0c1dca6478e4067ac615f91e3dc9cbea2df2841e840ffa7d6404426d451e0219",
+      "stable": true
+    },
+    {
+      "name": "commit-stat.txt",
+      "source": "/home/scripts/nf-rnaseq-v2 git show --format=fuller --stat 1d89adb",
+      "bytes": 1930,
+      "sha256": "2d79167275bf1aab8af03ea570770ea315be2704bc1b63d2d58e651b4dccefde",
+      "exit_code": 0,
+      "stderr": ""
+    },
+    {
+      "name": "commit-variant.diff",
+      "source": "/home/scripts/nf-rnaseq-v2 git show --format=fuller 1d89adb -- script/variant/deg_variant_assoc.py",
+      "bytes": 15466,
+      "sha256": "403f4b77056ced1e9e32e4a5932fbe76540d82bb51ae0ac24ecb14ec1a2df98c",
+      "exit_code": 0,
+      "stderr": ""
+    },
+    {
+      "name": "commit-log.txt",
+      "source": "/home/scripts/nf-rnaseq-v2 git log -5 --format=%H %aI %s 1d89adb",
+      "bytes": 685,
+      "sha256": "fa7550d8a474dd04580f44dfffe4ffa1265bfdc3e661789b63895d965116b32f",
+      "exit_code": 0,
+      "stderr": ""
+    },
+    {
+      "name": "committed-variant.py",
+      "source": "/home/scripts/nf-rnaseq-v2 git show 1d89adb:script/variant/deg_variant_assoc.py",
+      "bytes": 14089,
+      "sha256": "e5a4284e9ed5d03fb2d7f140fcd3e62c10b591eda07759eccf533400c25accea",
+      "exit_code": 0,
+      "stderr": ""
+    },
+    {
+      "name": "children/0c1fe37a-bd40-4168-a665-53f0db2df7e8/run-0/session.jsonl",
+      "source": "/home/glx/.pi/agent/sessions/--home-scripts-nf-rnaseq-v2--/2026-09-28T04-32-33-676Z_01a0e649-398b-7713-8774-fded5d70bdac/0c1fe37a-bd40-4168-a665-53f0db2df7e8/run-0/session.jsonl",
+      "bytes": 362003,
+      "sha256": "67e9033ac0107b491d1f80f59ded0c64aedad11a67290e68a402f4c8f4c6a9c0",
+      "stable": true
+    },
+    {
+      "name": "children/1ceb6423-da64-4b6d-b274-911f77237b42/run-0/session.jsonl",
+      "source": "/home/glx/.pi/agent/sessions/--home-scripts-nf-rnaseq-v2--/2026-09-28T04-32-33-676Z_01a0e649-398b-7713-8774-fded5d70bdac/1ceb6423-da64-4b6d-b274-911f77237b42/run-0/session.jsonl",
+      "bytes": 314206,
+      "sha256": "36e764f360aa58b530d4f766f45aba34e095126695b7b247186f56fcf39da69a",
+      "stable": true
+    },
+    {
+      "name": "children/6d6e54a5-f8d5-4f68-9d49-df7a35568de4/run-0/session.jsonl",
+      "source": "/home/glx/.pi/agent/sessions/--home-scripts-nf-rnaseq-v2--/2026-09-28T04-32-33-676Z_01a0e649-398b-7713-8774-fded5d70bdac/6d6e54a5-f8d5-4f68-9d49-df7a35568de4/run-0/session.jsonl",
+      "bytes": 482614,
+      "sha256": "ee3fb6a0a50670248f31f5c4abacf6a049a372158ad0d2bc884d01639968b167",
+      "stable": true
+    },
+    {
+      "name": "children/a5a59126-481a-47fe-9da1-cdd90e5076dc/run-0/session.jsonl",
+      "source": "/home/glx/.pi/agent/sessions/--home-scripts-nf-rnaseq-v2--/2026-09-28T04-32-33-676Z_01a0e649-398b-7713-8774-fded5d70bdac/a5a59126-481a-47fe-9da1-cdd90e5076dc/run-0/session.jsonl",
+      "bytes": 155827,
+      "sha256": "db2994e40deaf042904a7992b637e74993b23969968a3826b3d0556d8359c39f",
+      "stable": true
+    },
+    {
+      "name": "children/da75e30f-d7b6-4096-9485-ae9c4c2f945d/run-0/session.jsonl",
+      "source": "/home/glx/.pi/agent/sessions/--home-scripts-nf-rnaseq-v2--/2026-09-28T04-32-33-676Z_01a0e649-398b-7713-8774-fded5d70bdac/da75e30f-d7b6-4096-9485-ae9c4c2f945d/run-0/session.jsonl",
+      "bytes": 752802,
+      "sha256": "9cf11840dbddc74eaa7e3cc2d817a7bb0db8cae28cfc87096bf253e517cf4593",
+      "stable": true
+    },
+    {
+      "name": "children/4c40768b-9760-42da-a57f-f7072de3b391/run-0/session.jsonl",
+      "source": "/home/glx/.pi/agent/sessions/--home-scripts-nf-rnaseq-v2--/2026-09-28T04-32-33-676Z_01a0e649-398b-7713-8774-fded5d70bdac/4c40768b-9760-42da-a57f-f7072de3b391/run-0/session.jsonl",
+      "bytes": 222113,
+      "sha256": "2aa219f70163cfa0416ae8d8a34f86eed81c41664977536812b5b3b4298bab90",
+      "stable": true
+    }
+  ],
+  "child_inventory": [
+    {
+      "path": "/home/glx/.pi/agent/sessions/--home-scripts-nf-rnaseq-v2--/2026-09-28T04-32-33-676Z_01a0e649-398b-7713-8774-fded5d70bdac/0c1fe37a-bd40-4168-a665-53f0db2df7e8/run-0/session.jsonl",
+      "bytes": 362003
+    },
+    {
+      "path": "/home/glx/.pi/agent/sessions/--home-scripts-nf-rnaseq-v2--/2026-09-28T04-32-33-676Z_01a0e649-398b-7713-8774-fded5d70bdac/1ceb6423-da64-4b6d-b274-911f77237b42/run-0/session.jsonl",
+      "bytes": 314206
+    },
+    {
+      "path": "/home/glx/.pi/agent/sessions/--home-scripts-nf-rnaseq-v2--/2026-09-28T04-32-33-676Z_01a0e649-398b-7713-8774-fded5d70bdac/6d6e54a5-f8d5-4f68-9d49-df7a35568de4/run-0/session.jsonl",
+      "bytes": 482614
+    },
+    {
+      "path": "/home/glx/.pi/agent/sessions/--home-scripts-nf-rnaseq-v2--/2026-09-28T04-32-33-676Z_01a0e649-398b-7713-8774-fded5d70bdac/a5a59126-481a-47fe-9da1-cdd90e5076dc/run-0/session.jsonl",
+      "bytes": 155827
+    },
+    {
+      "path": "/home/glx/.pi/agent/sessions/--home-scripts-nf-rnaseq-v2--/2026-09-28T04-32-33-676Z_01a0e649-398b-7713-8774-fded5d70bdac/da75e30f-d7b6-4096-9485-ae9c4c2f945d/run-0/session.jsonl",
+      "bytes": 752802
+    },
+    {
+      "path": "/home/glx/.pi/agent/sessions/--home-scripts-nf-rnaseq-v2--/2026-09-28T04-32-33-676Z_01a0e649-398b-7713-8774-fded5d70bdac/4c40768b-9760-42da-a57f-f7072de3b391/run-0/session.jsonl",
+      "bytes": 222113
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+--- worker-final/deg_variant_assoc.py
++++ 1d89adb/deg_variant_assoc.py
+@@ -50,10 +50,12 @@
+     if not table:
+         return None
+     deg_path = os.path.join(os.path.dirname(table), name + ".ALL.edgeR.DE_results.diffgenes.txt")
+-    if not os.path.isfile(deg_path):
+-        return None
+-    with open(deg_path, encoding="utf-8") as handle:
+-        ids = {line.strip() for line in handle if line.strip() and not line.startswith("#")}
++    ids = set()
++    # edgeR writes no diffgenes file when a contrast has zero DEGs; keep the
++    # contrast (0 DEGs) so it still appears in the summary table.
++    if os.path.isfile(deg_path):
++        with open(deg_path, encoding="utf-8") as handle:
++            ids = {line.strip() for line in handle if line.strip() and not line.startswith("#")}
+     records = {}
+     with open(table, encoding="utf-8", newline="") as handle:
+         reader = csv.DictReader(handle, delimiter="\t")
+@@ -141,8 +143,6 @@
+                 continue
+             fmt = fields[8].split(":") if len(fields) > 8 else []
+             sample_fields = fields[9:] if len(fields) > 9 else []
+-            calls = {s: parse_genotype(sample_fields[i], fmt, min_dp) if i < len(sample_fields) else (None, None)
+-                     for i, s in enumerate(sample_indexes or [])}
+             var_type = "SNP" if all(len(fields[3]) == 1 and len(a) == 1 for a in alts) else "INDEL"
+             per_gene = {}
+             for entry in ann.split(","):
+@@ -160,11 +160,19 @@
+                 record = {"CHROM": fields[0], "POS": fields[1], "REF": fields[3],
+                           "ALT": allele if allele in alts else alts[0], "Type": var_type,
+                           "Effect": effect, "Impact": impact or "MODIFIER",
+-                          "HGVS_c": part[9], "HGVS_p": part[10], "calls": calls}
++                          "HGVS_c": part[9], "HGVS_p": part[10]}
+                 old = per_gene.get(gene)
+                 if old is None or SEVERITY.get(record["Impact"], 4) < SEVERITY.get(old["Impact"], 4):
+                     per_gene[gene] = record
++            if not per_gene:
++                continue
++            # Genotypes are parsed only for records hitting a target gene (most
++            # records in a large cohort VCF do not). Dosage is site-level: the
++            # fraction of non-reference alleles, whichever ALT they carry.
++            calls = {s: parse_genotype(sample_fields[i], fmt, min_dp) if i < len(sample_fields) else (None, None)
++                     for i, s in enumerate(sample_indexes or [])}
+             for gene, record in per_gene.items():
++                record["calls"] = calls
+                 variants[gene].append(record)
+     return variants, trimmed
+ 

@@ -1,0 +1,850 @@
+{
+ "R1-luna-1": {
+  "run": "R1-luna-1",
+  "blind_code": "R1-E",
+  "mp4": "/project/tmp/worker-tiers-replay/R1-luna-1/media/videos/style_demo/1080p60/StyleDemo.mp4",
+  "ffprobe_duration": 8.516667,
+  "checks": {
+   "review_images": {
+    "status": "pass",
+    "note": "all present"
+   },
+   "style_import": {
+    "status": "pass",
+    "note": ""
+   },
+   "names_exist": {
+    "status": "pass",
+    "note": ""
+   },
+   "brandscene_methods": {
+    "status": "pass",
+    "note": ""
+   },
+   "signatures": {
+    "status": "pass",
+    "note": "all match",
+    "notes": [
+     "zh: **kw"
+    ],
+    "actual": {
+     "zh": "(s, size=36, color='#EAF2F8', weight='NORMAL', **kw)",
+     "zh_hl": "(s, hl=(), size=34, color='#EAF2F8', hl_color='#EE7385')",
+     "glow": "(mob, color=None, layers=4)",
+     "card": "(w, h, color='#2B6399')",
+     "padlock": "(h=0.4, color='#EE7385')",
+     "probe_strand": "(n=10, color='#52A9D8', biotin=True)",
+     "dna_fragment": "(n=10, color='#8AA0B4', double=True)",
+     "bead": "(r=0.35)",
+     "magnet": "(h=1.6)",
+     "db_icon": "(h=1.2)",
+     "sequencer_icon": "(h=1.3)",
+     "doc_icon": "(h=1.2)",
+     "check_mark": "(size, color='#2BB673')",
+     "cross_mark": "(size, color='#FF5A5F')",
+     "grade_badge": "(g, r=0.3)",
+     "stamp": "(text, color)",
+     "logo_full": "(height)",
+     "logo_mark": "(height)",
+     "BrandScene.show_rail": "(self, step, animate=True)",
+     "BrandScene.cap": "(self, text, hl=(), hl_color='#EE7385')",
+     "BrandScene.chapter": "(self, n)",
+     "BrandScene.clear_stage": "(self, run_time=0.5)"
+    }
+   },
+   "grade": {
+    "status": "pass",
+    "note": "{1: '#2BB673', 2: '#52A9D8', 3: '#F2C94C', 4: '#FF5A5F'}"
+   },
+   "steps": {
+    "status": "pass",
+    "note": ""
+   },
+   "colors": {
+    "status": "pass",
+    "note": "BEAD(gradient in spec #C9A27E) actual=#C9A27E"
+   },
+   "assets": {
+    "status": "pass",
+    "note": "bg.png: ok (1920, 1080) RGB; logo_light.png: ok (899, 520) RGBA; logo_mark.png: ok (173, 520) RGBA"
+   },
+   "make_assets_exists": {
+    "status": "pass",
+    "note": ""
+   },
+   "style_demo_exists": {
+    "status": "pass",
+    "note": ""
+   },
+   "duration_le_15s": {
+    "status": "pass",
+    "note": "8.52s"
+   },
+   "baseline_untouched": {
+    "status": "pass",
+    "note": "all 6 identical"
+   }
+  }
+ },
+ "R1-luna-2": {
+  "run": "R1-luna-2",
+  "blind_code": "R1-C",
+  "mp4": "/project/tmp/worker-tiers-replay/R1-luna-2/media/videos/style_demo/1080p60/StyleDemo.mp4",
+  "ffprobe_duration": 9.316667,
+  "checks": {
+   "review_images": {
+    "status": "pass",
+    "note": "all present"
+   },
+   "style_import": {
+    "status": "pass",
+    "note": ""
+   },
+   "names_exist": {
+    "status": "pass",
+    "note": ""
+   },
+   "brandscene_methods": {
+    "status": "pass",
+    "note": ""
+   },
+   "signatures": {
+    "status": "pass",
+    "note": "all match",
+    "notes": [
+     "zh: **kw"
+    ],
+    "actual": {
+     "zh": "(s, size=36, color='#EAF2F8', weight='NORMAL', **kw)",
+     "zh_hl": "(s, hl=(), size=34, color='#EAF2F8', hl_color='#EE7385')",
+     "glow": "(mob, color=None, layers=4)",
+     "card": "(w, h, color='#2B6399')",
+     "padlock": "(h=0.4, color='#EE7385')",
+     "probe_strand": "(n=10, color='#52A9D8', biotin=True)",
+     "dna_fragment": "(n=10, color='#8AA0B4', double=True)",
+     "bead": "(r=0.35)",
+     "magnet": "(h=1.6)",
+     "db_icon": "(h=1.2)",
+     "sequencer_icon": "(h=1.3)",
+     "doc_icon": "(h=1.2)",
+     "check_mark": "(size, color='#2BB673')",
+     "cross_mark": "(size, color='#FF5A5F')",
+     "grade_badge": "(g, r=0.3)",
+     "stamp": "(text, color)",
+     "logo_full": "(height)",
+     "logo_mark": "(height)",
+     "BrandScene.show_rail": "(self, step, animate=True)",
+     "BrandScene.cap": "(self, text, hl=(), hl_color='#EE7385')",
+     "BrandScene.chapter": "(self, n)",
+     "BrandScene.clear_stage": "(self, run_time=0.5)"
+    }
+   },
+   "grade": {
+    "status": "pass",
+    "note": "{1: '#2BB673', 2: '#52A9D8', 3: '#F2C94C', 4: '#FF5A5F'}"
+   },
+   "steps": {
+    "status": "pass",
+    "note": ""
+   },
+   "colors": {
+    "status": "pass",
+    "note": "BEAD(gradient in spec #C9A27E) actual=#C9A27E"
+   },
+   "assets": {
+    "status": "pass",
+    "note": "bg.png: ok (1920, 1080) RGB; logo_light.png: ok (899, 520) RGBA; logo_mark.png: ok (247, 520) RGBA"
+   },
+   "make_assets_exists": {
+    "status": "pass",
+    "note": ""
+   },
+   "style_demo_exists": {
+    "status": "pass",
+    "note": ""
+   },
+   "duration_le_15s": {
+    "status": "pass",
+    "note": "9.32s"
+   },
+   "baseline_untouched": {
+    "status": "pass",
+    "note": "all 6 identical"
+   }
+  }
+ },
+ "R1-luna-3": {
+  "run": "R1-luna-3",
+  "blind_code": "R1-D",
+  "mp4": "/project/tmp/worker-tiers-replay/R1-luna-3/media/videos/style_demo/1080p60/StyleDemo.mp4",
+  "ffprobe_duration": 10.116667,
+  "checks": {
+   "review_images": {
+    "status": "pass",
+    "note": "all present"
+   },
+   "style_import": {
+    "status": "pass",
+    "note": ""
+   },
+   "names_exist": {
+    "status": "pass",
+    "note": ""
+   },
+   "brandscene_methods": {
+    "status": "pass",
+    "note": ""
+   },
+   "signatures": {
+    "status": "pass",
+    "note": "all match",
+    "notes": [
+     "zh: **kw"
+    ],
+    "actual": {
+     "zh": "(s, size=36, color='#EAF2F8', weight='NORMAL', **kw)",
+     "zh_hl": "(s, hl=(), size=34, color='#EAF2F8', hl_color='#EE7385')",
+     "glow": "(mob, color=None, layers=4)",
+     "card": "(w, h, color='#2B6399')",
+     "padlock": "(h=0.4, color='#EE7385')",
+     "probe_strand": "(n=10, color='#52A9D8', biotin=True)",
+     "dna_fragment": "(n=10, color='#8AA0B4', double=True)",
+     "bead": "(r=0.35)",
+     "magnet": "(h=1.6)",
+     "db_icon": "(h=1.2)",
+     "sequencer_icon": "(h=1.3)",
+     "doc_icon": "(h=1.2)",
+     "check_mark": "(size, color='#2BB673')",
+     "cross_mark": "(size, color='#FF5A5F')",
+     "grade_badge": "(g, r=0.3)",
+     "stamp": "(text, color)",
+     "logo_full": "(height)",
+     "logo_mark": "(height)",
+     "BrandScene.show_rail": "(self, step, animate=True)",
+     "BrandScene.cap": "(self, text, hl=(), hl_color='#EE7385')",
+     "BrandScene.chapter": "(self, n)",
+     "BrandScene.clear_stage": "(self, run_time=0.5)"
+    }
+   },
+   "grade": {
+    "status": "pass",
+    "note": "{1: '#2BB673', 2: '#52A9D8', 3: '#F2C94C', 4: '#FF5A5F'}"
+   },
+   "steps": {
+    "status": "pass",
+    "note": ""
+   },
+   "colors": {
+    "status": "pass",
+    "note": "BEAD(gradient in spec #C9A27E) actual=#C9A27E"
+   },
+   "assets": {
+    "status": "pass",
+    "note": "bg.png: ok (1920, 1080) RGB; logo_light.png: ok (899, 520) RGBA; logo_mark.png: ok (173, 520) RGBA"
+   },
+   "make_assets_exists": {
+    "status": "pass",
+    "note": ""
+   },
+   "style_demo_exists": {
+    "status": "pass",
+    "note": ""
+   },
+   "duration_le_15s": {
+    "status": "pass",
+    "note": "10.12s"
+   },
+   "baseline_untouched": {
+    "status": "pass",
+    "note": "all 6 identical"
+   }
+  }
+ },
+ "R1-sonnet-1": {
+  "run": "R1-sonnet-1",
+  "blind_code": "R1-F",
+  "mp4": "/project/tmp/worker-tiers-replay/R1-sonnet-1/media/videos/style_demo/1080p60/StyleDemo.mp4",
+  "ffprobe_duration": 9.133333,
+  "checks": {
+   "review_images": {
+    "status": "pass",
+    "note": "all present"
+   },
+   "style_import": {
+    "status": "pass",
+    "note": ""
+   },
+   "names_exist": {
+    "status": "pass",
+    "note": ""
+   },
+   "brandscene_methods": {
+    "status": "pass",
+    "note": ""
+   },
+   "signatures": {
+    "status": "pass",
+    "note": "all match",
+    "notes": [
+     "zh: **kw",
+     "db_icon: extra param color",
+     "sequencer_icon: extra param color",
+     "doc_icon: extra param color",
+     "check_mark: size has default 0.4 (spec none)",
+     "cross_mark: size has default 0.4 (spec none)",
+     "stamp: color has default '#2BB673' (spec none)",
+     "logo_full: height has default 1.0 (spec none)",
+     "logo_mark: height has default 0.6 (spec none)"
+    ],
+    "actual": {
+     "zh": "(s, size=36, color='#EAF2F8', weight='NORMAL', **kw)",
+     "zh_hl": "(s, hl=(), size=34, color='#EAF2F8', hl_color='#EE7385')",
+     "glow": "(mob, color=None, layers=4)",
+     "card": "(w, h, color='#2B6399')",
+     "padlock": "(h=0.4, color='#EE7385')",
+     "probe_strand": "(n=10, color='#52A9D8', biotin=True)",
+     "dna_fragment": "(n=10, color='#8AA0B4', double=True)",
+     "bead": "(r=0.35)",
+     "magnet": "(h=1.6)",
+     "db_icon": "(h=1.2, color='#2493B5')",
+     "sequencer_icon": "(h=1.3, color='#52A9D8')",
+     "doc_icon": "(h=1.2, color='#52A9D8')",
+     "check_mark": "(size=0.4, color='#2BB673')",
+     "cross_mark": "(size=0.4, color='#FF5A5F')",
+     "grade_badge": "(g, r=0.3)",
+     "stamp": "(text, color='#2BB673')",
+     "logo_full": "(height=1.0)",
+     "logo_mark": "(height=0.6)",
+     "BrandScene.show_rail": "(self, step, animate=True)",
+     "BrandScene.cap": "(self, text, hl=(), hl_color='#EE7385')",
+     "BrandScene.chapter": "(self, n)",
+     "BrandScene.clear_stage": "(self, run_time=0.5)"
+    }
+   },
+   "grade": {
+    "status": "pass",
+    "note": "{1: '#2BB673', 2: '#52A9D8', 3: '#F2C94C', 4: '#FF5A5F'}"
+   },
+   "steps": {
+    "status": "pass",
+    "note": ""
+   },
+   "colors": {
+    "status": "pass",
+    "note": "BEAD(gradient in spec #C9A27E) actual=#C9A27E"
+   },
+   "assets": {
+    "status": "pass",
+    "note": "bg.png: ok (1920, 1080) RGB; logo_light.png: ok (899, 519) RGBA; logo_mark.png: ok (173, 519) RGBA"
+   },
+   "make_assets_exists": {
+    "status": "pass",
+    "note": ""
+   },
+   "style_demo_exists": {
+    "status": "pass",
+    "note": ""
+   },
+   "duration_le_15s": {
+    "status": "pass",
+    "note": "9.13s"
+   },
+   "baseline_untouched": {
+    "status": "pass",
+    "note": "all 6 identical"
+   }
+  }
+ },
+ "R1-sonnet-2": {
+  "run": "R1-sonnet-2",
+  "blind_code": "R1-B",
+  "mp4": "/project/tmp/worker-tiers-replay/R1-sonnet-2/media/videos/style_demo/1080p60/StyleDemo.mp4",
+  "ffprobe_duration": 9.15,
+  "checks": {
+   "review_images": {
+    "status": "pass",
+    "note": "all present"
+   },
+   "style_import": {
+    "status": "pass",
+    "note": ""
+   },
+   "names_exist": {
+    "status": "pass",
+    "note": ""
+   },
+   "brandscene_methods": {
+    "status": "pass",
+    "note": ""
+   },
+   "signatures": {
+    "status": "pass",
+    "note": "all match",
+    "notes": [
+     "zh: **kw",
+     "check_mark: size has default 0.5 (spec none)",
+     "cross_mark: size has default 0.5 (spec none)",
+     "stamp: color has default '#2BB673' (spec none)",
+     "stamp: extra param size",
+     "logo_full: height has default 1.0 (spec none)",
+     "logo_mark: height has default 0.6 (spec none)"
+    ],
+    "actual": {
+     "zh": "(s, size=36, color='#EAF2F8', weight='NORMAL', **kw)",
+     "zh_hl": "(s, hl=(), size=34, color='#EAF2F8', hl_color='#EE7385')",
+     "glow": "(mob, color=None, layers=4)",
+     "card": "(w, h, color='#2B6399')",
+     "padlock": "(h=0.4, color='#EE7385')",
+     "probe_strand": "(n=10, color='#52A9D8', biotin=True)",
+     "dna_fragment": "(n=10, color='#8AA0B4', double=True)",
+     "bead": "(r=0.35)",
+     "magnet": "(h=1.6)",
+     "db_icon": "(h=1.2)",
+     "sequencer_icon": "(h=1.3)",
+     "doc_icon": "(h=1.2)",
+     "check_mark": "(size=0.5, color='#2BB673')",
+     "cross_mark": "(size=0.5, color='#FF5A5F')",
+     "grade_badge": "(g, r=0.3)",
+     "stamp": "(text, color='#2BB673', size=30)",
+     "logo_full": "(height=1.0)",
+     "logo_mark": "(height=0.6)",
+     "BrandScene.show_rail": "(self, step, animate=True)",
+     "BrandScene.cap": "(self, text, hl=(), hl_color='#EE7385')",
+     "BrandScene.chapter": "(self, n)",
+     "BrandScene.clear_stage": "(self, run_time=0.5)"
+    }
+   },
+   "grade": {
+    "status": "pass",
+    "note": "{1: '#2BB673', 2: '#52A9D8', 3: '#F2C94C', 4: '#FF5A5F'}"
+   },
+   "steps": {
+    "status": "pass",
+    "note": ""
+   },
+   "colors": {
+    "status": "pass",
+    "note": "BEAD(gradient in spec #C9A27E) actual=#C9A27E"
+   },
+   "assets": {
+    "status": "pass",
+    "note": "bg.png: ok (1920, 1080) RGB; logo_light.png: ok (899, 519) RGBA; logo_mark.png: ok (173, 519) RGBA"
+   },
+   "make_assets_exists": {
+    "status": "pass",
+    "note": ""
+   },
+   "style_demo_exists": {
+    "status": "pass",
+    "note": ""
+   },
+   "duration_le_15s": {
+    "status": "pass",
+    "note": "9.15s"
+   },
+   "baseline_untouched": {
+    "status": "pass",
+    "note": "all 6 identical"
+   }
+  }
+ },
+ "R1-sonnet-3": {
+  "run": "R1-sonnet-3",
+  "blind_code": "R1-A",
+  "mp4": "/project/tmp/worker-tiers-replay/R1-sonnet-3/media/videos/style_demo/1080p60/StyleDemo.mp4",
+  "ffprobe_duration": 8.65,
+  "checks": {
+   "review_images": {
+    "status": "pass",
+    "note": "all present"
+   },
+   "style_import": {
+    "status": "pass",
+    "note": ""
+   },
+   "names_exist": {
+    "status": "pass",
+    "note": ""
+   },
+   "brandscene_methods": {
+    "status": "pass",
+    "note": ""
+   },
+   "signatures": {
+    "status": "pass",
+    "note": "all match",
+    "notes": [
+     "zh: **kw",
+     "check_mark: size has default 0.5 (spec none)",
+     "cross_mark: size has default 0.5 (spec none)",
+     "stamp: color has default '#2BB673' (spec none)",
+     "stamp: extra param size",
+     "logo_full: height has default 0.8 (spec none)",
+     "logo_mark: height has default 0.6 (spec none)"
+    ],
+    "actual": {
+     "zh": "(s, size=36, color='#EAF2F8', weight='NORMAL', **kw)",
+     "zh_hl": "(s, hl=(), size=34, color='#EAF2F8', hl_color='#EE7385')",
+     "glow": "(mob, color=None, layers=4)",
+     "card": "(w, h, color='#2B6399')",
+     "padlock": "(h=0.4, color='#EE7385')",
+     "probe_strand": "(n=10, color='#52A9D8', biotin=True)",
+     "dna_fragment": "(n=10, color='#8AA0B4', double=True)",
+     "bead": "(r=0.35)",
+     "magnet": "(h=1.6)",
+     "db_icon": "(h=1.2)",
+     "sequencer_icon": "(h=1.3)",
+     "doc_icon": "(h=1.2)",
+     "check_mark": "(size=0.5, color='#2BB673')",
+     "cross_mark": "(size=0.5, color='#FF5A5F')",
+     "grade_badge": "(g, r=0.3)",
+     "stamp": "(text, color='#2BB673', size=30)",
+     "logo_full": "(height=0.8)",
+     "logo_mark": "(height=0.6)",
+     "BrandScene.show_rail": "(self, step, animate=True)",
+     "BrandScene.cap": "(self, text, hl=(), hl_color='#EE7385')",
+     "BrandScene.chapter": "(self, n)",
+     "BrandScene.clear_stage": "(self, run_time=0.5)"
+    }
+   },
+   "grade": {
+    "status": "pass",
+    "note": "{1: '#2BB673', 2: '#52A9D8', 3: '#F2C94C', 4: '#FF5A5F'}"
+   },
+   "steps": {
+    "status": "pass",
+    "note": ""
+   },
+   "colors": {
+    "status": "pass",
+    "note": "BEAD(gradient in spec #C9A27E) actual=#C9A27E"
+   },
+   "assets": {
+    "status": "pass",
+    "note": "bg.png: ok (1920, 1080) RGB; logo_light.png: ok (899, 519) RGBA; logo_mark.png: ok (173, 519) RGBA"
+   },
+   "make_assets_exists": {
+    "status": "pass",
+    "note": ""
+   },
+   "style_demo_exists": {
+    "status": "pass",
+    "note": ""
+   },
+   "duration_le_15s": {
+    "status": "pass",
+    "note": "8.65s"
+   },
+   "baseline_untouched": {
+    "status": "pass",
+    "note": "all 6 identical"
+   }
+  }
+ },
+ "R2-luna-1": {
+  "run": "R2-luna-1",
+  "blind_code": "R2-D",
+  "mp4": "/project/tmp/worker-tiers-replay/R2-luna-1/media/videos/scenes_a/1080p60/S4Quality.mp4",
+  "ffprobe_duration": 22.032357,
+  "checks": {
+   "review_images": {
+    "status": "pass",
+    "note": "all present"
+   },
+   "scenes_a_outside_s4": {
+    "status": "pass",
+    "note": "identical outside S4 range"
+   },
+   "scenes_b_untouched": {
+    "status": "pass",
+    "note": ""
+   },
+   "style_py": {
+    "status": "pass",
+    "note": "unchanged"
+   },
+   "s4_duration_15_20s": {
+    "status": "fail",
+    "note": "22.03s"
+   },
+   "s4_chapter2": {
+    "status": "pass",
+    "note": ""
+   },
+   "s4_finish": {
+    "status": "pass",
+    "note": ""
+   },
+   "s4_captions": {
+    "status": "pass",
+    "note": "match ignoring whitespace only; whitespace differs in: 综合评为1–4级：级别越低，捕获表现越稳定",
+    "found": [
+     "每条候选探针，都要先做一次体检",
+     "综合评为1–4级：级别越低，捕获表现越稳定",
+     "设计时，优先选用评级好的探针",
+     "查 GC 含量、熔解温度、序列复杂度、重复序列和发夹结构"
+    ]
+   },
+   "s4_digit_leak": {
+    "status": "pass",
+    "note": "no stray digits",
+    "literals": []
+   }
+  }
+ },
+ "R2-luna-2": {
+  "run": "R2-luna-2",
+  "blind_code": "R2-E",
+  "mp4": "/project/tmp/worker-tiers-replay/R2-luna-2/media/videos/scenes_a/1080p60/S4Quality.mp4",
+  "ffprobe_duration": 20.266667,
+  "checks": {
+   "review_images": {
+    "status": "pass",
+    "note": "all present"
+   },
+   "scenes_a_outside_s4": {
+    "status": "pass",
+    "note": "identical outside S4 range"
+   },
+   "scenes_b_untouched": {
+    "status": "pass",
+    "note": ""
+   },
+   "style_py": {
+    "status": "pass",
+    "note": "unchanged"
+   },
+   "s4_duration_15_20s": {
+    "status": "fail",
+    "note": "20.27s"
+   },
+   "s4_chapter2": {
+    "status": "pass",
+    "note": ""
+   },
+   "s4_finish": {
+    "status": "pass",
+    "note": ""
+   },
+   "s4_captions": {
+    "status": "pass",
+    "note": "match ignoring whitespace only; whitespace differs in: 综合评为1–4级：级别越低，捕获表现越稳定",
+    "found": [
+     "每条候选探针，都要先做一次体检",
+     "综合评为1–4级：级别越低，捕获表现越稳定",
+     "设计时，优先选用评级好的探针",
+     "查 GC 含量、熔解温度、序列复杂度、重复序列和发夹结构"
+    ]
+   },
+   "s4_digit_leak": {
+    "status": "pass",
+    "note": "no stray digits",
+    "literals": []
+   }
+  }
+ },
+ "R2-luna-3": {
+  "run": "R2-luna-3",
+  "blind_code": "R2-B",
+  "mp4": "/project/tmp/worker-tiers-replay/R2-luna-3/media/videos/scenes_a/1080p60/S4Quality.mp4",
+  "ffprobe_duration": 23.566667,
+  "checks": {
+   "review_images": {
+    "status": "pass",
+    "note": "all present"
+   },
+   "scenes_a_outside_s4": {
+    "status": "pass",
+    "note": "identical outside S4 range"
+   },
+   "scenes_b_untouched": {
+    "status": "pass",
+    "note": ""
+   },
+   "style_py": {
+    "status": "pass",
+    "note": "unchanged"
+   },
+   "s4_duration_15_20s": {
+    "status": "fail",
+    "note": "23.57s"
+   },
+   "s4_chapter2": {
+    "status": "pass",
+    "note": ""
+   },
+   "s4_finish": {
+    "status": "pass",
+    "note": ""
+   },
+   "s4_captions": {
+    "status": "pass",
+    "note": "4/4 match",
+    "found": [
+     "每条候选探针，都要先做一次体检",
+     "综合评为1–4 级：级别越低，捕获表现越稳定",
+     "设计时，优先选用评级好的探针",
+     "查 GC 含量、熔解温度、序列复杂度、重复序列和发夹结构"
+    ]
+   },
+   "s4_digit_leak": {
+    "status": "pass",
+    "note": "no stray digits",
+    "literals": []
+   }
+  }
+ },
+ "R2-sonnet-1": {
+  "run": "R2-sonnet-1",
+  "blind_code": "R2-C",
+  "mp4": "/project/tmp/worker-tiers-replay/R2-sonnet-1/media/videos/scenes_a/1080p60/S4Quality.mp4",
+  "ffprobe_duration": 21.483333,
+  "checks": {
+   "review_images": {
+    "status": "pass",
+    "note": "all present"
+   },
+   "scenes_a_outside_s4": {
+    "status": "pass",
+    "note": "identical outside S4 range"
+   },
+   "scenes_b_untouched": {
+    "status": "pass",
+    "note": ""
+   },
+   "style_py": {
+    "status": "pass",
+    "note": "unchanged"
+   },
+   "s4_duration_15_20s": {
+    "status": "fail",
+    "note": "21.48s"
+   },
+   "s4_chapter2": {
+    "status": "pass",
+    "note": ""
+   },
+   "s4_finish": {
+    "status": "pass",
+    "note": ""
+   },
+   "s4_captions": {
+    "status": "pass",
+    "note": "4/4 match",
+    "found": [
+     "每条候选探针，都要先做一次体检",
+     "查 GC 含量、熔解温度、序列复杂度、重复序列和发夹结构",
+     "综合评为1–4 级：级别越低，捕获表现越稳定",
+     "设计时，优先选用评级好的探针"
+    ]
+   },
+   "s4_digit_leak": {
+    "status": "pass",
+    "note": "no stray digits",
+    "literals": []
+   }
+  }
+ },
+ "R2-sonnet-2": {
+  "run": "R2-sonnet-2",
+  "blind_code": "R2-F",
+  "mp4": "/project/tmp/worker-tiers-replay/R2-sonnet-2/media/videos/scenes_a/1080p60/S4Quality.mp4",
+  "ffprobe_duration": 20.849349,
+  "checks": {
+   "review_images": {
+    "status": "pass",
+    "note": "all present"
+   },
+   "scenes_a_outside_s4": {
+    "status": "pass",
+    "note": "identical outside S4 range"
+   },
+   "scenes_b_untouched": {
+    "status": "pass",
+    "note": ""
+   },
+   "style_py": {
+    "status": "pass",
+    "note": "unchanged"
+   },
+   "s4_duration_15_20s": {
+    "status": "fail",
+    "note": "20.85s"
+   },
+   "s4_chapter2": {
+    "status": "pass",
+    "note": ""
+   },
+   "s4_finish": {
+    "status": "pass",
+    "note": ""
+   },
+   "s4_captions": {
+    "status": "pass",
+    "note": "4/4 match",
+    "found": [
+     "每条候选探针，都要先做一次体检",
+     "查 GC 含量、熔解温度、序列复杂度、重复序列和发夹结构",
+     "综合评为1–4 级：级别越低，捕获表现越稳定",
+     "设计时，优先选用评级好的探针"
+    ]
+   },
+   "s4_digit_leak": {
+    "status": "pass",
+    "note": "no stray digits",
+    "literals": []
+   }
+  }
+ },
+ "R2-sonnet-3": {
+  "run": "R2-sonnet-3",
+  "blind_code": "R2-A",
+  "mp4": "/project/tmp/worker-tiers-replay/R2-sonnet-3/media/videos/scenes_a/1080p60/S4Quality.mp4",
+  "ffprobe_duration": 22.383333,
+  "checks": {
+   "review_images": {
+    "status": "pass",
+    "note": "all present"
+   },
+   "scenes_a_outside_s4": {
+    "status": "pass",
+    "note": "identical outside S4 range"
+   },
+   "scenes_b_untouched": {
+    "status": "pass",
+    "note": ""
+   },
+   "style_py": {
+    "status": "pass",
+    "note": "unchanged"
+   },
+   "s4_duration_15_20s": {
+    "status": "fail",
+    "note": "22.38s"
+   },
+   "s4_chapter2": {
+    "status": "pass",
+    "note": ""
+   },
+   "s4_finish": {
+    "status": "pass",
+    "note": ""
+   },
+   "s4_captions": {
+    "status": "pass",
+    "note": "4/4 match",
+    "found": [
+     "每条候选探针，都要先做一次体检",
+     "查 GC 含量、熔解温度、序列复杂度、重复序列和发夹结构",
+     "综合评为1–4 级：级别越低，捕获表现越稳定",
+     "设计时，优先选用评级好的探针"
+    ]
+   },
+   "s4_digit_leak": {
+    "status": "pass",
+    "note": "no stray digits",
+    "literals": []
+   }
+  }
+ }
+}

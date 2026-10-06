@@ -1,0 +1,9 @@
+已实现视觉系统、素材生成器和演示场景。修改文件：[style.py](/project/tmp/worker-tiers-replay/R1-luna-2/style.py)、[assets/make_assets.py](/project/tmp/worker-tiers-replay/R1-luna-2/assets/make_assets.py)、[style_demo.py](/project/tmp/worker-tiers-replay/R1-luna-2/style_demo.py)。
+
+验证通过：`./env/bin/python assets/make_assets.py`；`./env/bin/manim -qh --disable_caching style_demo.py StyleDemo`，视频时长 **9.32 秒**。逐张检查了章节卡、字幕高亮、部件画面和联系表；高亮“体检”“目标片段”均正确，文字未见重叠或越界。首次渲染发现并修复了 `ImageMobject` 与 `VGroup` 不兼容，以及舞台清理时 `VGroup` 不接受通用 `Mobject` 的问题。
+
+输出图片：[assets/bg.png](/project/tmp/worker-tiers-replay/R1-luna-2/assets/bg.png)、[assets/logo_light.png](/project/tmp/worker-tiers-replay/R1-luna-2/assets/logo_light.png)、[assets/logo_mark.png](/project/tmp/worker-tiers-replay/R1-luna-2/assets/logo_mark.png)；[review/w1_sheet_1.png](/project/tmp/worker-tiers-replay/R1-luna-2/review/w1_sheet_1.png)、[review/w1_chapter.png](/project/tmp/worker-tiers-replay/R1-luna-2/review/w1_chapter.png)、[review/w1_caption.png](/project/tmp/worker-tiers-replay/R1-luna-2/review/w1_caption.png)、[review/w1_widgets.png](/project/tmp/worker-tiers-replay/R1-luna-2/review/w1_widgets.png)。
+
+公开 API：`zh(s, size=36, color=TEXT_C, weight=NORMAL, **kw)`；`zh_hl(s, hl=(), size=34, color=TEXT_C, hl_color=BRAND_PINK)`；`glow(mob, color=None, layers=4)`；`card(w, h, color=BRAND_BLUE)`；`padlock(h=0.4, color=BRAND_PINK)`；`probe_strand(n=10, color=BRAND_SKY, biotin=True)`；`dna_fragment(n=10, color=MUTED, double=True)`；`bead(r=0.35)`；`magnet(h=1.6)`；`db_icon(h=1.2)`；`sequencer_icon(h=1.3)`；`doc_icon(h=1.2)`；`check_mark(size, color=PASS)`；`cross_mark(size, color=FAIL)`；`grade_badge(g, r=0.3)`；`stamp(text, color)`；`logo_full(height)`；`logo_mark(height)`；`BrandScene.setup()`；`BrandScene.show_rail(step, animate=True)`；`BrandScene.cap(text, hl=(), hl_color=BRAND_PINK)`；`BrandScene.chapter(n)`；`BrandScene.clear_stage(run_time=0.5)`；`BrandScene.finish()`。
+
+未改场景文件及指定脚本。部件演示中的锁与磁铁为简洁矢量造型，后续场景集成后仍需结合实际构图检查。
