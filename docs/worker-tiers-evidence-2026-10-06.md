@@ -157,7 +157,7 @@ Sonnet 也没有一次通过：有超时、有按 7 条问题的返工，Root �
 
 ### 6.5 执行与结果
 
-归档：[.scratch/worker-tiers-replay-20261007/](../.scratch/worker-tiers-replay-20261007/)，包括运行记录、task 原文、12 份 child 报告、程序检查、盲评表、编号映射和模型盲评报告。工作副本与联系表位于 `/project/tmp/worker-tiers-replay/`（不入库）。
+归档：[.scratch/worker-tiers-replay-20261007/](../.scratch/worker-tiers-replay-20261007/)，包括运行记录、task 原文、12 份 child 报告、程序检查、盲评表、编号映射和模型盲评报告。工作副本与联系表位于 `/project/tmp/worker-tiers-replay/`（不入库）。完整运行目录、基线源码和可换模型重跑的工具包（`tools/setup_replay.sh`、`tools/make_eval.py`）已归档到 `/data_0/project/glx/pi-planner-om09-usage-20260929/worker-tiers-replay-20261007/`，用法见该目录 README。
 
 **执行**：12 次全部 completed，没有超时；每次 child 报告的 provider/model/thinking 都与请求一致（`tcuni/gpt-6-luna:medium`、`tcuni-claude/claude-sonnet-5-5:medium`）。逐一检查了 12 个 child 的工具调用，均未读取原工程或其他重放目录。跑完后 worker 配置已恢复原样（Sonnet）。
 
