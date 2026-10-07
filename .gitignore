@@ -121,3 +121,4 @@ __pycache__/
 # Prerequisite: .scratch/lite-t2c-focused-20260927/issues/01-publish-t2c-target-commit.md
 bench/tasks/T2c.json
 bench/tasks/T2c.md
+.scratch/worker-tiers-real-share-20261007/raw/
