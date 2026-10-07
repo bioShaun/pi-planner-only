@@ -56,7 +56,12 @@ for m in $MODEL $CHILD_MODELS; do
   if (( DRY )); then
     printf 'health command (not run): timeout 120 pi -ne --no-session --mode json --model %q -p %q </dev/null >%s\n' "$m" 'reply OK' "$OUT/$ID.health.$hn.jsonl"
   else
-    timeout 120 pi -ne --no-session --mode json --model "$m" -p "reply OK" </dev/null >"$OUT/$ID.health.$hn.jsonl" 2>/dev/null; h_rc=$?
+    # One retry after 30s: a single provider stall (seen once on luna, 2026-10-08) is not a run failure.
+    for try in 1 2; do
+      timeout 120 pi -ne --no-session --mode json --model "$m" -p "reply OK" </dev/null >"$OUT/$ID.health.$hn.jsonl" 2>/dev/null; h_rc=$?
+      (( h_rc == 0 )) && break
+      (( try == 1 )) && { mv "$OUT/$ID.health.$hn.jsonl" "$OUT/$ID.health.$hn.try1.jsonl"; sleep 30; }
+    done
     HEALTH_FILES+=("$OUT/$ID.health.$hn.jsonl")
     if (( h_rc != 0 )); then
       python3 "$HERE/metrics.py" --health-merge "$OUT/$ID.health.json" "${HEALTH_FILES[@]}" 2>/dev/null

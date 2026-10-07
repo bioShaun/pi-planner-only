@@ -41,18 +41,31 @@ def text_of(content):
     return "".join(x.get("text", "") for x in content or [] if isinstance(x, dict) and x.get("type") == "text")
 
 
+# Paths are flagged only where a tool could read them (read/bash/grep/find/ls ...). A delegate
+# task is instructions to a child: forwarding "do not read X" or naming the project
+# ("pi-planner-only Lite extension") is not a read, so only answer/hidden markers count there.
+READ_TOOLS_SKIP = {"delegate"}
+LEAK_MARKERS = ("plugin-b44aa00", "r1/hidden", "check_r1", "f2fe050")
+MAIN_PATH_RE = re.compile(r"/home/tcuni-claw/pi/pi-planner-only(?![\w-])|\.pi/agent/git/github\.com/bioShaun/pi-planner-only|bioShaun/pi-planner-only")
+
+
 def isolation_flags(name, args, run_id):
     flags = []
     s = json.dumps(args, ensure_ascii=False)
-    for pat in ("pi-planner-only", "plugin-b44aa00", "r1/hidden", "check_r1", "f2fe050"):
+    for pat in LEAK_MARKERS:
         if pat in s:
             flags.append((pat, name, s[:120]))
-    if re.search(r"node_modules/\.\.", s):
-        flags.append(("node_modules/..", name, s[:120]))
-    for m in re.finditer(r"/project/tmp/root-model-compare[^\s\"'\\]*", s):
-        ok = re.match(r"/project/tmp/root-model-compare/r1/(runs|tmp)/" + re.escape(run_id) + r"(-dryrun)?(/|$)", m.group(0)) or re.match(r"/project/tmp/root-model-compare/deps(/|$)", m.group(0))
-        if not ok:
-            flags.append(("other-experiment-path", name, m.group(0)))
+    if name not in READ_TOOLS_SKIP:
+        m = MAIN_PATH_RE.search(s)
+        if m:
+            flags.append(("pi-planner-only", name, s[max(0, m.start() - 40):m.end() + 60]))
+        if re.search(r"node_modules/\.\.", s):
+            flags.append(("node_modules/..", name, s[:120]))
+        for m in re.finditer(r"/project/tmp/root-model-compare(/[\w.-]+)*", s):
+            path = m.group(0)
+            ok = re.match(r"/project/tmp/root-model-compare/r1/(runs|tmp)/" + re.escape(run_id) + r"(-dryrun)?(/|$)", path) or re.match(r"/project/tmp/root-model-compare/deps(/|$)", path)
+            if not ok:
+                flags.append(("other-experiment-path", name, path))
     home_pi = r"(?:~|\$HOME|/home/tcuni-claw)/\.pi\b"
     if name in ("write", "edit", "apply_patch") and re.search(home_pi, s):
         flags.append(("write-to-~/.pi", name, s[:120]))
@@ -174,8 +187,11 @@ def analyse(path, run_id, children_dir=None):
         role = (calls.get(cid, (None, {}))[1] or {}).get("role") or d.get("role") or "unknown"
         by_role[role] = by_role.get(role, 0) + 1
         if role == "worker":
-            worker_models.append(d.get("model"))
-            worker_thinking.append(d.get("thinking") or d.get("thinkingLevel"))
+            wm = d.get("model"); wt = d.get("thinking") or d.get("thinkingLevel")
+            if isinstance(wm, str) and ":" in wm and wt is None:
+                wm, wt = wm.rsplit(":", 1)
+            worker_models.append(wm)
+            worker_thinking.append(wt)
         key = model_key(d.get("model"))
         if key and valid_usage(d.get("usage")):
             child_cost += price(d["usage"], PRICES[key])

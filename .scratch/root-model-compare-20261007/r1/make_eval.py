@@ -61,8 +61,15 @@ def main():
                   known_cost_lower_bound=metrics.get("known_cost_lower_bound"), worker_identity=metrics.get("worker_identity"))
     if not isinstance(meta, dict):
         reasons.append("meta unavailable")
-    elif meta.get("settingsChanged"):
-        reasons.append("settings.json changed during run")
+    else:
+        # Only the child-role config matters: other keys (e.g. enabledModels) are edited by
+        # unrelated interactive sessions. Compare the overrides recorded at start with now.
+        try:
+            now = json.load(open(Path.home() / ".pi/agent/settings.json")).get("subagents", {}).get("agentOverrides", {})
+        except (OSError, ValueError):
+            now = None
+        if now != meta.get("childOverrides"):
+            reasons.append("settings.json subagents.agentOverrides changed during run")
     # hidden acceptance: only a broken checker invalidates; a failing verdict does not
     chk = load(f("check.json"))
     try:
