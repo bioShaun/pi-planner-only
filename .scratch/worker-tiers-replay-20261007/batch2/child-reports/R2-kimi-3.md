@@ -1,0 +1,2 @@
+<!-- session b6c1fcd3-3bf4-43a6-b691-9ef22e17d505/run-0/session.jsonl; model kimi-for-coding; last assistant text (timed-out runs: partial) -->
+Matrix + legend look great. Duration 22.0s — trim to ≤20s by converting the cap1 dead-pad into a second idle sweep and tightening run_times:
