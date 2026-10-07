@@ -1,0 +1,19 @@
+S1-dsflash-1 | cline/cline-pass/deepseek-v4.1-flash | medium | True | 44 | [] | [] | 9c59392a-a5ca-41d8-a736-42c8a566d16d
+S1-dsflash-2 | cline/cline-pass/deepseek-v4.1-flash | medium | True | 27 | [] | [] | 704ae398-d4b3-4a04-87bd-b4c363d3aa49
+S1-dsflash-3 | cline/cline-pass/deepseek-v4.1-flash | medium | True | 39 | [] | [] | 22d44222-223d-47f8-9b8c-118a9a124c4f
+S1-luna-1 | tcuni/gpt-6-luna | medium | True | 23 | [] | [] | 571059ca-9f49-471f-beff-708ab687d3a3
+S1-luna-2 | tcuni/gpt-6-luna | medium | True | 24 | [] | [] | 829cc3f8-507f-433f-9398-7bcc2abddae2
+S1-luna-3 | tcuni/gpt-6-luna | medium | True | 26 | [] | [] | b6fbe495-b0ee-46c9-938b-71057d9c81a2
+S1-sonnet-1 | tcuni-claude/claude-sonnet-5-5 | medium | True | 5 | [] | [] | 993f4f47-343c-445b-8cd6-ea44ff38ff68
+S1-sonnet-2 | tcuni-claude/claude-sonnet-5-5 | medium | True | 9 | [] | [] | 9805b601-8a82-431b-98ff-90490752f6ae
+S1-sonnet-3 | tcuni-claude/claude-sonnet-5-5 | medium | True | 7 | [] | [] | 5949f477-ebea-48e8-812f-ad2347bcfe82
+S2-dsflash-1 | cline/cline-pass/deepseek-v4.1-flash | medium | True | 35 | [] | [] | 7e1b15be-4048-49a4-91a9-7dbfbcbb262a
+S2-dsflash-2 | cline/cline-pass/deepseek-v4.1-flash | medium | True | 30 | [] | [] | 2d36c0b0-6d31-440e-afa3-65b18eba3a05
+S2-dsflash-3 | cline/cline-pass/deepseek-v4.1-flash | medium | True | 44 | [] | [] | c6420d0b-4837-4191-930f-bafeaf4d6085
+S2-luna-1 | tcuni/gpt-6-luna | medium | True | 28 | [] | [] | 5476940b-3d1b-4c08-8970-d1930f5b1896
+S2-luna-2 | tcuni/gpt-6-luna | medium | True | 19 | [] | [] | 5f82459a-8308-463a-a8bb-f9ebb3e0868b
+S2-luna-3 | tcuni/gpt-6-luna | medium | True | 33 | [] | [] | 6fb3fdfc-27a1-49fc-9989-408f96374277
+S2-sonnet-1 | tcuni-claude/claude-sonnet-5-5 | medium | True | 10 | [] | [] | 49c978a8-a6fb-414f-999c-644c379bcf9a
+S2-sonnet-2 | tcuni-claude/claude-sonnet-5-5 | medium | True | 17 | [] | [] | 73f9ba3c-d5ab-4e8d-b980-cff9c8837c8b
+S2-sonnet-3 | tcuni-claude/claude-sonnet-5-5 | medium | True | 15 | [] | [] | 7fd95b1f-3869-4a3e-8bd0-26fa1fec2183
+n = 18
