@@ -132,6 +132,14 @@ sonnet-3 的 metrics 是 lane 用中间版代码算的，已用最终版重算�
 > - 用户已同意：规则 (a) 补上「审查意见要么修掉，要么在汇报里说明不修的理由」，已写进全局 AGENTS.md。
 > - 不再追加同规模的对照；后续在真实使用中观察 Sonnet Root 的委派情况和费用。本轮对照到此结束。
 >
+> **2026-10-08 之后，用户改了决定：日常 Root 改回 Opus，进入观望期**
+> - 用户希望由 Opus 负责规划和整体方向，同时不想手动切换模型。为此调研了 opusplan、advisor tool、omo、Cline、Aider、opencode、Roo 以及 pi 自带的能力，结论见 `docs/research-root-model-routing-2026-10-08.md`。
+> - 推荐方案是方案 A：用 pi 的 virtual model 按阶段路由。用户发言后，到本轮第一次 `delegate`、`edit` 或 `write` 之前用 Opus，之后用 Sonnet。估计每个任务的 Root 费用约 $1.0–1.4。
+> - 本代理不支持 Anthropic advisor tool，实测返回 HTTP 400。
+> - 用户决定先观望：`~/.pi/agent/settings.json` 的 `defaultModel` 已改为 `claude-opus-5-5`，方案 A 暂不实施。
+> - 观望期间记录两件事，作为以后重新评估的依据：典型任务的 Root 费用（用 `/session` 看），以及哪些时候 Opus 的方向判断明显起了作用。
+> - 重新启动时，先做研究文档 §5 里的技术验证，再决定三个待定项：是否把失败或 reviewer 意见交回 Opus、短确认消息是否跳过 Opus、实现放在哪里。
+>
 > 2026-10-08 10:xx：下面第 1–5 步已全部完成，结论见 `findings-phase2.md`。剩余待办：
 > - 用户确认是否把日常 Root 换成 Sonnet；
 > - 用户确认是否做 R2。R2 要选一个更大的任务，提示词不能有歧义，隐藏检查不要绑定答案特有的接口或文案。
