@@ -1,6 +1,6 @@
 # Root 模型对照 R2 设计稿
 
-日期：2026-10-08。状态：**草稿，等用户确认；确认前不启动任何运行（包括冒烟）**。
+日期：2026-10-08。状态：**用户已确认（2026-10-08）：候选 A；按日常配置测（加载含规则 (a)(b) 的全局 AGENTS.md）；$15 含准备；S1、O1 后设检查点。**
 上游：`design.md`（第一阶段设计）、`findings-phase2.md`（R1 结论）、`docs/root-model-compare-progress-2026-10-08.md` §4「用户决定」。
 
 ## 1. 要回答的问题
@@ -85,15 +85,15 @@ A 的不足：规模只是「中等」。Sonnet 仍可能自己做，但这正�
 | B1 | 持久化 | 在场景 1 中执行 `handoff-mode auto`；在新进程中不设 env，执行 `handoff-mode`，输出里要有 `auto` 和 `persisted` |
 | B2 | env 优先 | 已保存 auto 时，env=confirm 显示 confirm/env；env=off 显示 off/env |
 | B3 | 默认值 | 没有文件、没有 env 时，显示 off/default |
-| B4 | 坏文件 | 文件名由 Root 自定，所以先执行 `handoff-mode auto`，把 agent 目录里新增的那个路径认作偏好文件，再把它分别换成 3 种坏内容：任意文本、二进制、同名目录。在新进程里，会话启动和执行 `handoff-mode` 都不抛错，结果为 off/default |
+| B4 | 坏文件 | 文件名由 Root 自定。同一个 agent 目录里，在 `session_start` 之后、`handoff-mode auto` 前后各做一次「相对路径→内容 sha」快照，候选 = 新增或内容改变的文件；候选为 0 则不过。对每个候选分别做 3 种损坏（任意文本、二进制、同名目录），各在新进程里测试：全部候选都不得报错，且至少有一个候选在三种损坏后都显示 off/default（损坏后仍显示 auto/persisted 的候选不是偏好文件）才算过 |
 | B5 | 无效参数 | `handoff-mode maybe`：agent 目录快照不变，生效模式不变，并有一条通知（不检查文案） |
 | B6 | 不发起交接 | `handoff-mode auto` 后，`sendUserMessage`、`newSession`、编辑框都没有被调用 |
 | B6b | `handoff 目标` 不变 | 对同一输入，基线 index.ts 与 Root 版本产生的宿主调用序列一致（做差分，并把路径归一化） |
 | B7 | status | 设成 confirm 后，`/planner-only status` 的通知里含 `confirm` |
 | B8 | 等效性（差分） | 对 X ∈ {off, confirm, auto} 和 4 个场景分别比较「env=X、无文件」与「无 env、保存 X」的观察轨迹，要求完全一致。4 个场景：Root 在阈值以上调用 handoff 工具、上下文提醒、交接后新会话的提示、confirm/auto 的分发方式。准备阶段要在基线上用 env 证明每个场景对 X 敏感（off 与 auto 的轨迹不同），否则这个场景不计分 |
 | B9 | 测试通过 | 在运行目录跑 `npm run test:release`，上限 300 秒 |
-| B10 | 测试有效 | 把 Root 改过的非测试文件还原成基线版本，再跑 Root 的测试，应当失败。这一项证明新测试确实覆盖了新行为，不依赖实现细节 |
-| B11 | 不写真实 ~/.pi | 跑 B9 前后，对真实 `~/.pi/agent` 的文件清单和 mtime 各做一次快照，两者相同 |
+| B10 | 测试有效 | 还原规则：(a) 两边都存在、内容不同的非测试文件，还原为基线内容，`package.json` 视为测试入口，不还原；(b) 基线存在、在被检查树里被删除的非测试文件，恢复为基线内容；(c) 被检查树新增的文件保留。再跑 Root 的测试，应当失败。这一项证明新测试确实覆盖了新行为，不依赖实现细节。detail 写出 restored / recreated 列表 |
+| B11 | 不写真实 ~/.pi | B9 那次运行使用 check-tmp 下的假 HOME（`PI_SUBAGENTS_DIR` 指向真实安装），运行后假 HOME 下不得出现 `.pi` 内的任何文件。理由：测试若未隔离 agent 目录，在开发机上就会写进真实 ~/.pi；不对真实 ~/.pi 做快照，因为其他 pi 会话会并发写它 |
 | B12 | 双语 README | 两份 README 都出现 `handoff-mode` |
 
 **人工项（不进冻结分，逐条给理由）**
@@ -144,10 +144,11 @@ R2 另外新增两项：
 - 运行估计：Opus 每次 $3–6，Sonnet 每次 $1–2.5（都含 child），4 次合计 $8–17。
 - `ledger.py`：
   - `BUDGET` = 15 − 准备阶段的实际花费；
-  - 预留值：opus $8、sonnet $4；
+  - 预留值：该臂已观测 Root 运行的最大单次总费用 ×1.2，无观测时 opus $6 / sonnet $3；健康检查失败的 attempt 只计入累计，不作样本；
   - 每次启动前，如果「累计 + 本次预留 > BUDGET」，就写 `STOP`。累计包含无效运行和健康检查；费用不完整时，按「已知下界 + 预留值」计。
 - **中途检查点**：S1 和 O1 跑完后，lane 暂停（自动写 `STOP`），由我汇报。如果按实际单价推算 4 次会超过上限，就停在 n=1 并报告，由用户决定是否追加预算。
 - 同一臂连续 2 次因环境原因无效，写 `STOP` 排查，不计入结果。
+- 任何一次无效 attempt 后 lane 停止，待 Root 排查。
 - 冒烟运行也计入费用账本。
 
 ## 8. 冒烟测试计划
