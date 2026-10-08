@@ -104,9 +104,21 @@
 
 注意：sonnet-2 和 sonnet-3 的 child 费用都是 $0，Root 一次委派也没有，全部自己完成；只有 sonnet-1 委派了。判读时要单独讨论，这不符合 planner-only 的用法。
 
+8. **09:59 campaign 完成**（lane_done）：9 次全部有效，账本累计 $14.93。
+   - opus-3：冻结分 8/18，$4.35。
+   - dsflash-3：16/18，$0.66。
+   - 人工项、P1 核对和判读已完成，结论见 `.scratch/root-model-compare-20261007/findings-phase2.md`。要点：
+     - opus-3 的低分是隐藏 driver 不应答 pi-subagents 运行时注册事件造成的，变体为 `r1/supplementary/driver_reg.mjs`；
+     - handoff_guard 只检查拒绝文案；
+     - 冻结提示词「explorer 和 reviewer …和 worker 仍互斥」有歧义，dsflash-2/3 照字面给 reviewer 加了锁。
+
 sonnet-3 的 metrics 是 lane 用中间版代码算的，已用最终版重算，结果仍为有效（旧文件为 `.v2.json`）。opus3 和 dsflash3 会直接用最终版。
 
 ## 4. 接手步骤
+
+> 2026-10-08 10:xx：下面第 1–5 步已全部完成，结论见 `findings-phase2.md`。剩余待办：
+> - 用户确认是否把日常 Root 换成 Sonnet；
+> - 用户确认是否做 R2。R2 要选一个更大的任务，提示词不能有歧义，隐藏检查不要绑定答案特有的接口或文案。
 
 1. **查状态**：
    ```bash
