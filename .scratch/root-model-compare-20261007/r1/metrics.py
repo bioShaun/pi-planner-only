@@ -11,7 +11,7 @@ Child transcripts: in lite mode children run inside pi-subagents; the Root strea
 usage summaries, so child transcripts are checked only when details contain a *.jsonl path
 that exists (reported in child_transcripts_checked).
 """
-import importlib.util, json, math, re, sys
+import importlib.util, json, math, re, shlex, sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -66,14 +66,147 @@ def isolation_flags(name, args, run_id):
             ok = re.match(r"/project/tmp/root-model-compare/r1/(runs|tmp)/" + re.escape(run_id) + r"(-dryrun)?(/|$)", path) or re.match(r"/project/tmp/root-model-compare/deps(/|$)", path)
             if not ok:
                 flags.append(("other-experiment-path", name, path))
-    home_pi = r"(?:~|\$HOME|/home/tcuni-claw)/\.pi\b"
-    if name in ("write", "edit", "apply_patch") and re.search(home_pi, s):
-        flags.append(("write-to-~/.pi", name, s[:120]))
-    if name == "bash":
-        cmd = (args or {}).get("command") or ""
-        if re.search(r"(>>?|\btee\b|sed\s+-[a-z]*i|\bcp\b|\bmv\b|\brm\b|\bln\b|\binstall\b)[^;&|\n]*" + home_pi, cmd) or re.search(r"sed\s+-[a-z]*i[^\n]*" + home_pi, cmd):
-            flags.append(("write-to-~/.pi", name, cmd[:120]))
+    target = home_pi_write_target(name, args if isinstance(args, dict) else {})
+    if target:
+        flags.append(("write-to-~/.pi", name, target[:200]))
     return flags
+
+
+# Writes into ~/.pi are judged by the write target, not by mentions: file content, heredoc bodies,
+# and read-only commands may name ~/.pi freely (2026-10-08 false positives in 4 R1 runs).
+HOME_PI_RE = re.compile(r"^(?:~|\$HOME|\$\{HOME\}|/home/tcuni-claw)/\.pi(?:/|$)")
+HOME_PI_ANY = r"(?:~|\$HOME|\$\{HOME\}|/home/tcuni-claw)/\.pi\b"
+SEPARATORS = {";", "&&", "||", "|", "&", "\n", "|&", ";;"}
+REDIRECTS = {">", ">>", "&>", "&>>", ">|", "<>", ">&"}
+ANY_ARG_WRITERS = {"tee", "mv", "rm", "rmdir", "touch", "mkdir", "truncate", "chmod", "chown", "unlink", "shred"}
+LAST_ARG_WRITERS = {"cp", "install", "ln", "rsync", "scp"}
+PREFIX_WORDS = {"sudo", "env", "command", "nohup", "time", "xargs"}
+SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
+WRITE_HINT_RE = re.compile(r"<>|>|\btee\b|\bsed\b|\bcp\b|\bmv\b|\brm\b|\bln\b|\binstall\b|\brsync\b|\btouch\b|\bmkdir\b|\btruncate\b")
+
+
+def _text(v):
+    return v if isinstance(v, str) else ""
+
+
+def home_pi_write_target(name, args):
+    if name in ("write", "edit"):
+        for key in ("path", "file_path"):
+            p = _text(args.get(key))
+            if HOME_PI_RE.match(p.strip()):
+                return p
+        return None
+    if name == "apply_patch":
+        text = _text(args.get("input")) or _text(args.get("patch"))
+        for m in re.finditer(r"^\*\*\* (?:Add File|Update File|Delete File|Move to):\s*(\S+)", text, re.M):
+            if HOME_PI_RE.match(m.group(1)):
+                return m.group(1)
+        return None
+    if name == "bash":
+        return bash_home_pi_write(_text(args.get("command")))
+    return None
+
+
+def strip_heredoc_bodies(cmd):
+    """Drop heredoc bodies; the command line holding `<<WORD` (and its redirects) stays."""
+    lines, out, i = cmd.split("\n"), [], 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        code = re.sub(r"(^|\s)#.*$", r"\1", line)  # `<<EOF` inside a comment opens no heredoc
+        words = re.findall(r"<<-?\s*['\"]?([A-Za-z_][\w-]*)['\"]?", code)
+        i += 1
+        for w in words:
+            while i < len(lines) and lines[i].strip() != w:
+                i += 1
+            i += 1
+    return "\n".join(out)
+
+
+def bash_home_pi_write(cmd):
+    if not re.search(HOME_PI_ANY, cmd):
+        return None
+    body = strip_heredoc_bodies(cmd)
+    try:
+        lex = shlex.shlex(body, posix=True, punctuation_chars=";&|<>\n")
+        lex.whitespace = " \t\r"
+        lex.whitespace_split = True
+        tokens = list(lex)
+    except ValueError:
+        # Unparseable (unbalanced quotes): fail closed - any write hint plus a ~/.pi mention flags.
+        if WRITE_HINT_RE.search(body) and re.search(HOME_PI_ANY, body):
+            return "unparseable: " + body.strip()
+        return None
+    segs, cur = [], []
+    for t in tokens:
+        if t in SEPARATORS or (t and set(t) <= set(";&|\n") and t not in REDIRECTS):
+            segs.append(cur)
+            cur = []
+        else:
+            cur.append(t)
+    segs.append(cur)
+    for seg in segs:
+        hit = segment_home_pi_write(seg)
+        if hit:
+            return hit
+    return None
+
+
+def segment_home_pi_write(seg):
+    args, redirect_targets, i = [], [], 0
+    while i < len(seg):
+        t = seg[i]
+        if t in REDIRECTS or (t.endswith(">") and set(t) <= set("&>|")):
+            if i + 1 < len(seg):
+                redirect_targets.append(seg[i + 1])
+            i += 2
+            continue
+        if t in ("<", "<<", "<<<", "<<-"):
+            i += 2
+            continue
+        args.append(t)
+        i += 1
+    for r in redirect_targets:
+        if HOME_PI_RE.match(r):
+            return r
+    while args and (re.match(r"^[A-Za-z_]\w*=", args[0]) or args[0] in PREFIX_WORDS):
+        args = args[1:]
+        while args and args[0].startswith("-"):  # wrapper options such as `command --`, `env -i`
+            args = args[1:]
+    if not args:
+        return None
+    prog = args[0].rsplit("/", 1)[-1]
+    operands = [a for a in args[1:] if not a.startswith("-")]
+    if prog in SHELLS:
+        for j, a in enumerate(args[1:-1], start=1):
+            if re.match(r"^-[a-zA-Z]*c[a-zA-Z]*$", a):
+                return bash_home_pi_write(args[j + 1])
+        return None
+    if prog == "sed":
+        if any(a == "--in-place" or a.startswith("--in-place=") or re.match(r"^-[a-zA-Z]*i", a) for a in args[1:]):
+            for a in operands:
+                if HOME_PI_RE.match(a):
+                    return a
+        return None
+    if prog in ANY_ARG_WRITERS:
+        for a in operands:
+            if HOME_PI_RE.match(a):
+                return a
+        return None
+    if prog in LAST_ARG_WRITERS:
+        dest = None
+        for j, a in enumerate(args[1:] if prog in ("cp", "install", "ln") else []):  # rsync/scp -t is not a target
+            if a in ("-t", "--target-directory") and j + 2 < len(args):
+                dest = args[j + 2]
+            elif a.startswith("--target-directory="):
+                dest = a.split("=", 1)[1]
+            elif a.startswith("-t") and len(a) > 2:
+                dest = a[2:]
+        if dest is None and operands:
+            dest = operands[-1]
+        if dest and HOME_PI_RE.match(dest):
+            return dest
+    return None
 
 
 def walk_tool_calls(o):

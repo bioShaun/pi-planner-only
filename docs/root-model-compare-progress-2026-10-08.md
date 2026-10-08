@@ -31,6 +31,7 @@
 | `run_one.sh <arm> <rep>` | 单次运行：健康检查（失败时 30 秒后重试一次）→ 构造目录 → `pi --mode json -p`（`timeout -k 60 3600`）→ metrics → runcheck → 隐藏验收 → `make_eval.py` |
 | `campaign.sh` | 交错串行跑 9 次，用 `slot cpu -b` 提交一个 lane；启动前把 slot audit/status 写入日志 |
 | `ledger.py` | 费用账本和停止规则：每次启动前检查「累计 + 本次预留 > $28」就停（预留额：opus $8、sonnet $5、dsflash $1.5）；同一臂连续 2 次无效就停 |
+| `test_metrics_isolation.py` | 「写入 ~/.pi」隔离检查的单测：真实误判形态不报，故障注入的真写入必须报（`python3 -m unittest test_metrics_isolation`，在 r1/ 下运行） |
 | `metrics.py` | 统计 Root 的轮数、费用、上下文最大值、自己读文件和跑命令的次数及结果字符数，以及 child 的费用和按角色的委派次数，并做隔离检查（Root 和 child 的转录都查） |
 | `make_eval.py` | 判定一次运行是否有效：runcheck、隔离、模型身份、agentOverrides 是否变动、验收脚本是否完整运行 |
 | `hidden/check_r1.py`、`driver.mjs`、`CHECKS.md` | 隐藏验收：18 条自动、2 条人工。答案 f2fe050 得 18/18，基线 7/18 |
@@ -57,12 +58,60 @@
    修复后 a3 重新判为有效，旧判定保存为 `.eval.v1.json`。旧的 STOP 改名为 `STOP.20261008T0750-false-invalid`。
 3. **2026-10-08 07:51 重新提交 campaign，slot 任务号 2824**。顺序是 dsflash1（已有有效结果，跳过）、sonnet1、opus1、dsflash2、sonnet2、opus2、sonnet3、opus3、dsflash3。写这份记录时 sonnet1-a1 正在运行。
 4. **费用**：准备阶段约 $2；冒烟 3 次合计 $1.03。正在运行的尝试按预留额计入账本，所以 `ledger.py total` 显示 $6.06。
+5. **slot 2824 在 08:38 停止**：sonnet1、opus1、dsflash2、opus2 四次都被判为 `isolation: write-to-~/.pi`，opus 臂连续 2 次无效，于是触发 STOP。逐条核对后确认全是误判：
+   - write/edit 只要内容里提到 `~/.pi` 就报警；
+   - bash 规则会把同一行里 `sed -i` 改仓库文件之后的 `grep`/`ls ~/.pi` 算成写入；
+   - heredoc 正文里的 `<runId>` 含有 `>`，被当成了重定向。
+
+   运行期间 `~/.pi` 只有 pi 自身的 missions 状态有变动；settings.json 在 09:19 才被修改，晚于 campaign 结束。
+6. **修复（09:2x）**：`metrics.py` 改为按「写入目标」判断：
+   - write/edit 看 `path`/`file_path`；
+   - apply_patch 看 `*** ... File:` 目标；
+   - bash 先去掉 heredoc 正文，再用 shlex 按 `; && || | &` 分段；在每段里看重定向目标、`tee/mv/rm/touch/mkdir/...` 的参数、`sed -i` 的文件参数，以及 `cp/install/ln/rsync` 的目标（最后一个参数或 `-t`）；
+   - 无法解析时退回旧的启发式规则，按段判断（宁可多报）。
+
+   新增 `test_metrics_isolation.py`：先跑出 5 条误判用例的红灯，修复后 19/19 通过。
+
+   之后做了一轮 reviewer 审查（gpt-6.1-sol），按审查意见补齐：
+   - 注释里的 `<<EOF` 不再被当成 heredoc 起点；
+   - 识别 `cp -t/path` 这种紧贴写法的 `-t`；
+   - `command --` 等包装命令会跳过其选项；
+   - `bash/sh -c` 会递归检查内层命令；
+   - 增加 `<>`、`>&` 两种重定向；
+   - 无法解析时，只要同时出现写操作痕迹和 `~/.pi` 就报警；
+   - 参数不是 dict 或字符串时不再崩溃。
+
+   测试先红后绿，现在 26/26 通过。已知未修的问题（审查定为 P2，属于可能多报的方向）：
+   - 数字形式的 heredoc 定界符；
+   - 引号里的 `'>'` 会被当成重定向。
+
+   `python -c`/`node -e` 在代码里写文件的情况不在检测范围内（旧版本同样不查）。
+
+   已有的 6 次全部重评为有效，除 isolation_flags 外其他指标与旧值一致；旧文件保存为 `*.metrics.v2.json`/`*.eval.v2.json`。STOP 改名为 `STOP.20261008T0838-false-invalid`。
+7. **09:27 重新提交 campaign，slot 任务号 2832**。已有有效结果的 6 次自动跳过，只补跑 sonnet3、opus3、dsflash3。提交时账本累计 $9.15。
+
+当前已有结果（自动项共 18 条，另有 2 条人工项未评）：
+
+| 尝试 | 自动项 | 总费用 | Root 费用 | Root 轮数 | 未过项 |
+|---|---|---|---|---|---|
+| dsflash-1-a3 | 15/18 | $0.84 | $0.10 | 43 | handoff_guard、assertions_kept、scout_write_tools |
+| sonnet-1-a1 | 18/18 | $1.44 | $0.91 | 24 | — |
+| opus-1-a1 | 18/18 | $2.24 | $1.73 | 31 | — |
+| dsflash-2-a1 | 16/18 | $0.72 | $0.10 | 55 | reviewer_unaffected、assertions_kept |
+| sonnet-2-a1 | 17/18 | $0.62 | $0.62 | 20 | scout_write_tools |
+| opus-2-a1 | 18/18 | $2.93 | $2.34 | 37 | — |
+| sonnet-3-a1 | 17/18 | $0.72 | $0.72 | 20 | scout_write_tools |
+
+注意：sonnet-2 和 sonnet-3 的 child 费用都是 $0，Root 一次委派也没有，全部自己完成；只有 sonnet-1 委派了。判读时要单独讨论，这不符合 planner-only 的用法。
+
+sonnet-3 的 metrics 是 lane 用中间版代码算的，已用最终版重算，结果仍为有效（旧文件为 `.v2.json`）。opus3 和 dsflash3 会直接用最终版。
 
 ## 4. 接手步骤
 
 1. **查状态**：
    ```bash
-   slot status | grep '^2824 '
+   ps -ef | grep -E 'lane.sh|run_one.sh' | grep -v grep   # slot 任务 2832；slot status 里未必按任务号显示
+   tail /project/tmp/root-model-compare/r1/campaign.log
    ls /project/tmp/root-model-compare/r1/STOP
    python3 .scratch/root-model-compare-20261007/r1/ledger.py total /project/tmp/root-model-compare/r1/out
    ```
