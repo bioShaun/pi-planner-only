@@ -26,7 +26,7 @@ plan=json.loads((logs/'plan.json').read_text());authorization=json.loads((logs/'
 assert plan['authorization']['paid_execution'] is True and plan['max_attempts']==2 and plan['parallel']==1 and plan['automatic_retry'] is False
 assert plan['checkpoint_budget_usd']==10 and plan['timeout_seconds']==3600 and authorization['scope']==plan['order']
 assert authorization.get('external_data_authorized') is True and plan['authorization'].get('external_data_authorized') is True
-assert authorization['gateway']==plan['gateway']=='http://117.176.220.47:1989'
+assert authorization['gateway']==plan['gateway']=='http://<tcuni-claude-proxy>'
 assert n in plan['allowed_ordinals']==authorization['allowed_ordinals']==[1,2]
 assert plan['prior_attempts']==1 and plan['prior_actual_total']==1.29824603
 assert json.loads((p/'acceptance.json').read_text())['final_acceptance']=='PASS'

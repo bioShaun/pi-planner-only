@@ -5,7 +5,7 @@
     "paid_execution": true,
     "external_data_authorized": true,
     "user_message": "允许",
-    "in_reply_to": "Explicit request to send task-relevant source/tests/tool outputs to http://117.176.220.47:1989 and execute the two T2c comparisons",
+    "in_reply_to": "Explicit request to send task-relevant source/tests/tool outputs to http://<tcuni-claude-proxy> and execute the two T2c comparisons",
     "at": "2026-09-27T02:38:09.874079+00:00"
   },
   "root_model": "tcuni-claude/claude-opus-5-5",
@@ -71,7 +71,7 @@
   "root_acceptance_required": true,
   "offline_diagnosis": "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-short-temp-20260927/summary.md",
   "max_total_attempts": 3,
-  "gateway": "http://117.176.220.47:1989",
+  "gateway": "http://<tcuni-claude-proxy>",
   "provider_ids": [
     "tcuni-claude",
     "tcuni",

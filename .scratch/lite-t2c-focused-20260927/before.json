@@ -1,6 +1,6 @@
 {
   "scope": "explicitly authorized2T2c comparisons; oldscope3remaining abandoned without execution",
-  "gateway": "http://117.176.220.47:1989",
+  "gateway": "http://<tcuni-claude-proxy>",
   "source_snapshot": "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-t2c-focused-20260927/freeze/source.sha256.json",
   "entry_template": "/home/tcuni-claw/pi/pi-planner-only/.scratch/lite-short-temp-20260927/execution",
   "no_existing_campaign": true

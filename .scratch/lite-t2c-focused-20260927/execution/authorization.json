@@ -25,7 +25,7 @@
   "prior_actual_total": 1.29824603,
   "external_data_authorized": true,
   "user_message": "允许",
-  "gateway": "http://117.176.220.47:1989",
+  "gateway": "http://<tcuni-claude-proxy>",
   "payload": "task prompts, task-related source/tests and tool outputs including paths/logs",
   "providers": [
     "tcuni-claude/claude-opus-5-5",

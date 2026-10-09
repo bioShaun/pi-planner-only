@@ -44,7 +44,7 @@
   "original_T1_eligible_for_pairing": false,
   "quality_gate": "canonical54 target pass; maskedzero new failures+exit0; mandatoryCLI/config/stage wiring review retained",
   "external_data_authorized": false,
-  "gateway": "http://117.176.220.47:1989",
+  "gateway": "http://<tcuni-claude-proxy>",
   "providers": [
     "tcuni-claude/claude-opus-5-5",
     "tcuni/gpt-6-luna",
