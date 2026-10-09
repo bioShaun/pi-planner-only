@@ -18,7 +18,7 @@ hashes = json.loads((freeze / 'source.sha256.json').read_text())
 history = json.loads((logs / 'history.sha256.json').read_text())
 checks = {}
 providers=json.loads((Path.home()/'.pi/agent/models.json').read_text()).get('providers',{})
-checks['informed_data_authorization']=authorization.get('external_data_authorized') is True and plan['authorization'].get('external_data_authorized') is True and authorization['gateway']==plan['gateway']=='http://117.176.220.47:1989'
+checks['informed_data_authorization']=authorization.get('external_data_authorized') is True and plan['authorization'].get('external_data_authorized') is True and authorization['gateway']==plan['gateway']=='http://<tcuni-claude-proxy>'
 checks['authorized_gateway']=all(providers.get(name,{}).get('baseUrl')==plan['gateway'] for name in plan['provider_ids'])
 checks['only_T2c_pair']=plan['order']==[{'ordinal':1,'original_ordinal':3,'task':'T2c','arm':'lite-opus-calibration','rep':1},{'ordinal':2,'original_ordinal':4,'task':'T2c','arm':'native-opus-calibration','rep':1}]
 paths=json.loads((logs/'paths.json').read_text())

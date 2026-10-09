@@ -3,7 +3,7 @@
   "action": "bash .scratch/lite-short-temp-20260927/execution/run-one.sh 2",
   "source": "automatic approval review as reported by execution validator",
   "reason": "Run could transmit repository-derived task context to external paid model; trusted user authorization did not specify payload and destination. Explicit informed approval required; no indirect execution/workaround permitted.",
-  "destination": "http://117.176.220.47:1989",
+  "destination": "http://<tcuni-claude-proxy>",
   "providers": [
     "tcuni-claude/claude-opus-5-5",
     "tcuni/gpt-6-luna",

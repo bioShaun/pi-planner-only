@@ -33,7 +33,7 @@
   - 不加提示词时，Sonnet 5.5 和 Haiku 5.5 在 198 题里一次都没调用 Opus 5.5 顾问，而工具定义本身让 Sonnet 每题的费用增加 25%。
   - 官方结论：执行模型越接近顾问模型，收益越小。
 - **本环境不可用（实测）**：
-  - `tcuni-claude` 代理（`http://117.176.220.47:1989`）对 `advisor_20260301` 返回 HTTP 400，报错为 tag 不在允许列表内。
+  - `tcuni-claude` 代理（`http://<tcuni-claude-proxy>`）对 `advisor_20260301` 返回 HTTP 400，报错为 tag 不在允许列表内。
   - pi-ai 的 `anthropic-messages.js` 在 `content_block_start` 只处理 text、thinking、redacted_thinking、tool_use 四种块，`server_tool_use` 和 `advisor_tool_result` 会被丢掉，多轮对话无法原样回传。
 
 ### 1.3 oh-my-opencode / oh-my-openagent（omo）

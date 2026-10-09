@@ -32,6 +32,6 @@
   "new_paid_calls": 0,
   "source_hash_reuse": "82 unchanged vs accepted short-runtime repair;36 and release not rerun because unchanged",
   "legacy_cost": 1.29824603,
-  "gateway": "http://117.176.220.47:1989",
+  "gateway": "http://<tcuni-claude-proxy>",
   "user_informed_reply": "\u5141\u8bb8"
 }

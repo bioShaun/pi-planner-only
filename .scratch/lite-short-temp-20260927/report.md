@@ -27,6 +27,6 @@ Status: offline-complete / execution-blocked，2026-09-27。
 
 自动审批拒绝执行 `bash .scratch/lite-short-temp-20260927/execution/run-one.sh 2`，要求明确授权发送的上下文及外部接收端，且禁止间接执行或绕过。命令未执行，无started标记、新campaign或新增模型费用。
 
-配置接收端为 `http://117.176.220.47:1989`，对应Opus Root、Luna子模型以及冻结角色配置中的DeepSeek。可能发送的任务上下文包括任务提示词、执行期间读取的仓库源码/测试内容和工具输出（含路径、日志）。未读取或展示密钥。
+配置接收端为 `http://<tcuni-claude-proxy>`，对应Opus Root、Luna子模型以及冻结角色配置中的DeepSeek。可能发送的任务上下文包括任务提示词、执行期间读取的仓库源码/测试内容和工具输出（含路径、日志）。未读取或展示密钥。
 
 需要用户明确允许上述数据发往该接收端，才能按原四次／$10累计检查点继续剩余三条；不需要扩大预算或更改任务。详情见[自动审批阻塞记录](execution/approval-block.json)。获准后还须刷新资源/冻结输入核对，再启动第2条，不重跑第1条。
