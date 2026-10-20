@@ -749,6 +749,7 @@ try {
 	assert.equal(timeoutProp.type, "integer");
 	assert.equal(timeoutProp.minimum, 1);
 	assert.equal(timeoutProp.maximum, 86400);
+	assert.match(timeoutProp.description, /PI_PLANNER_ONLY_TIMEOUT_MS value in milliseconds \(default 600000 = 10 minutes\)/);
 }
 
 // PlannerSession per-role lightweight in-memory statistics, reset, and executeDelegate recording
@@ -853,12 +854,17 @@ try {
 	reply = { status: "completed", result: { kind: "text", text: "looked good" }, usage: { ...usage(), durationMs: 0 } };
 	await h.tools.get("delegate").execute("r1", { role: "reviewer", task: "review 1" }, undefined, undefined, h.ctx);
 
+	// 6. Worker failed: non-completed statuses other than timed_out and refused count as incomplete
+	reply = { status: "failed", error: "boom" };
+	await h.tools.get("delegate").execute("w3", { role: "worker", task: "work 3" }, undefined, undefined, h.ctx);
+
 	// Status command output includes role stats for roles with calls > 0
 	await h.commands.get("planner-only").handler("status", h.ctx);
 	const statusMsg = h.notes.at(-1);
-	assert.match(statusMsg, /worker: 2 calls/);
+	assert.match(statusMsg, /worker: 3 calls/);
 	assert.match(statusMsg, /1 completed/);
 	assert.match(statusMsg, /1 timed_out/);
+	assert.match(statusMsg, /1 incomplete/);
 	assert.match(statusMsg, /cumulative duration 1m00s/);
 	assert.match(statusMsg, /explorer: 1 call/);
 	assert.match(statusMsg, /cumulative duration missing \(1\)/);

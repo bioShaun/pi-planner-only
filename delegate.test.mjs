@@ -35,7 +35,7 @@ const respond = (bus, req, over = {}) =>
 	assert.equal(req.timeoutMs, 60_000);
 	assert.equal(req.intercomBridge.mode, "off");
 	assert.deepEqual(req.result, { kind: "text" });
-	assert.ok(req.task.startsWith(`implement X\n\n---\nWorking directory: /w\nHome directory: ${homedir()} (\`~\` in paths means this directory)\nTime limit: 1 minutes wall clock`));
+	assert.ok(req.task.startsWith(`implement X\n\n---\nWorking directory: /w\nHome directory: ${homedir()} (\`~\` in paths means this directory)\nTime limit: 1 minute wall clock`));
 	assert.ok(req.task.endsWith(ROLE_AGENTS.worker.closing));
 	assert.equal(out.ok, true);
 	assert.equal(out.details.status, "completed");
@@ -333,11 +333,13 @@ const respond = (bus, req, over = {}) =>
 {
 	assert.match(buildTaskText("worker", "t", "/w", loadLimits({}).timeoutMs), /\nTime limit: 10 minutes wall clock, then you are stopped/);
 	assert.match(buildTaskText("worker", "t", "/w", loadLimits({ PI_PLANNER_ONLY_TIMEOUT_MS: "300000" }).timeoutMs), /\nTime limit: 5 minutes wall clock/);
-	assert.match(buildTaskText("worker", "t", "/w", 60_000), /Time limit: 1 minutes/);
+	assert.match(buildTaskText("worker", "t", "/w", 60_000), /Time limit: 1 minute wall clock/);
 	assert.match(buildTaskText("worker", "t", "/w", 30_000), /Time limit: 30 seconds/);
 	assert.match(buildTaskText("worker", "t", "/w", 90_000), /Time limit: 90 seconds/);
 	assert.match(buildTaskText("worker", "t", "/w", 1234), /Time limit: 1\.234 seconds/);
 	assert.equal(formatTimeoutLimit(1234), "1.234 seconds");
+	assert.equal(formatTimeoutLimit(1000), "1 second");
+	assert.equal(formatTimeoutLimit(60_000), "1 minute");
 	// Pacing (om09 run4: required checks passed, then `find /` ate the budget before the report).
 	const pacing = buildTaskText("worker", "t", "/w");
 	assert.match(pacing, /Write your report as soon as the required checks pass/);
@@ -350,7 +352,7 @@ const respond = (bus, req, over = {}) =>
 {
 	assert.ok(buildTaskText("reviewer", "t", "/w").includes(`\nHome directory: ${homedir()} (\`~\` in paths means this directory)\n`));
 	const text = buildTaskText("reviewer", "read ~/.pi/x", "/w", 60_000, "/home/alice");
-	assert.match(text, /\nWorking directory: \/w\nHome directory: \/home\/alice \(`~` in paths means this directory\)\nTime limit: 1 minutes/);
+	assert.match(text, /\nWorking directory: \/w\nHome directory: \/home\/alice \(`~` in paths means this directory\)\nTime limit: 1 minute wall clock/);
 }
 
 // Token units: k/M/B, ~3 significant digits, no trailing zeros, no "1000k".
@@ -730,7 +732,7 @@ const respond = (bus, req, over = {}) =>
 	// Default (omitted) inherits limits.timeoutMs (60_000) and preserves whole-minute wording
 	const outDef = await runDelegation(deps(bus), { role: "worker", task: "implement def", cwd: "/w" });
 	assert.equal(seenReq.timeoutMs, 60_000);
-	assert.ok(seenReq.task.includes("Time limit: 1 minutes wall clock"));
+	assert.ok(seenReq.task.includes("Time limit: 1 minute wall clock"));
 	assert.equal(outDef.details.timeoutMs, 60_000);
 
 	// Other limits remain unchanged
