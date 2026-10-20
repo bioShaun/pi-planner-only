@@ -203,6 +203,7 @@ export interface DelegationParams {
 	role: Role;
 	task: string;
 	cwd?: string;
+	timeoutSeconds?: number;
 }
 
 export interface DelegationOutcome {
@@ -215,6 +216,7 @@ export interface DelegationOutcome {
 		model?: string;
 		usage?: SubagentDelegationUsage;
 		stopReason?: string;
+		timeoutMs?: number;
 	};
 }
 
@@ -227,12 +229,20 @@ export function timeoutMinutes(limits: Pick<DelegationLimits, "timeoutMs">): num
 	return Math.max(1, Math.floor(limits.timeoutMs / 60_000));
 }
 
+/** Formats timeout limit: whole minutes as "X minutes", non-whole-minute as "X seconds". */
+export function formatTimeoutLimit(timeoutMs: number): string {
+	if (timeoutMs % 60_000 === 0) {
+		return `${timeoutMs / 60_000} minutes`;
+	}
+	return `${timeoutMs / 1000} seconds`;
+}
+
 /**
  * `home` is stated because a child without a shell (reviewer) cannot look it
  * up and guesses `/root` or other users' homes for `~` paths in the task.
  */
 export function buildTaskText(role: Role, task: string, cwd: string, timeoutMs = DEFAULT_LIMITS.timeoutMs, home = homedir()): string {
-	const budget = `Time limit: ${timeoutMinutes({ timeoutMs })} minutes wall clock, then you are stopped and unsaved work is lost. Make edits early and in small steps. Do not start commands that cannot finish within the limit (full pipelines, long test suites); list them in your report instead.`;
+	const budget = `Time limit: ${formatTimeoutLimit(timeoutMs)} wall clock, then you are stopped and unsaved work is lost. Make edits early and in small steps. Do not start commands that cannot finish within the limit (full pipelines, long test suites); list them in your report instead.`;
 	const pacing = "Write your report as soon as the required checks pass; do optional checks only after that. Never search the whole filesystem (e.g. `find /`); wrap commands that may be slow in `timeout 60`.";
 	const reportBudget = `Keep the final report under ${CHILD_REPORT_TARGET_CHARS.toLocaleString("en-US")} characters: conclusions and file:line first; quote only the key lines of long command output.`;
 	return `${task.trim()}\n\n---\nWorking directory: ${cwd}\nHome directory: ${home} (\`~\` in paths means this directory)\n${budget}\n${pacing}\n${reportBudget}\n${ROLE_AGENTS[role].closing}`;
@@ -479,7 +489,7 @@ function outcome(
 	text: string,
 	details: OutcomeDetails,
 	status: DelegationOutcome["details"]["status"],
-	extra: Pick<DelegationOutcome["details"], "model" | "usage" | "stopReason"> = {},
+	extra: Pick<DelegationOutcome["details"], "model" | "usage" | "stopReason" | "timeoutMs"> = {},
 ): DelegationOutcome {
 	return { ok, text, details: { ...details, status, ...extra } };
 }
@@ -496,6 +506,15 @@ export async function runDelegation(
 	const cwd = resolve(params.cwd || process.cwd());
 	const details = { role, agent: profile.agent };
 	if (!params.task?.trim()) return refusal(details, "task is empty");
+
+	if (params.timeoutSeconds !== undefined) {
+		const t = params.timeoutSeconds;
+		if (typeof t !== "number" || !Number.isInteger(t) || t < 1 || t > 86400) {
+			return refusal(details, `timeoutSeconds must be an integer between 1 and 86400, got ${String(t)}`);
+		}
+	}
+	const effectiveTimeoutMs = params.timeoutSeconds !== undefined ? params.timeoutSeconds * 1000 : deps.limits.timeoutMs;
+
 	const lockKey = profile.lock === "none" ? cwd : await resolveLockKey(deps.git, cwd).catch(() => cwd);
 	const release = profile.lock === "none" ? () => {} : deps.locks.tryAcquire(lockKey, profile.lock);
 	if (!release) {
@@ -509,24 +528,24 @@ export async function runDelegation(
 	const base = await captureBase(deps.git, cwd).catch(() => ({ dirtyBefore: 0 }));
 	let terminal: Terminal;
 	try {
-		terminal = await launch(deps, buildRequest(deps, role, profile, params.task, cwd), signal, onProgress, release);
+		terminal = await launch(deps, buildRequest(deps, role, profile, params.task, cwd, effectiveTimeoutMs), signal, onProgress, release);
 	} catch (error) {
 		release();
 		throw error;
 	}
 	return terminal.response
-		? renderOutcome(deps, role, profile, cwd, base, terminal, terminal.response)
-		: renderNoTerminal(deps, role, profile, cwd, terminal);
+		? renderOutcome(deps, role, profile, cwd, base, terminal, terminal.response, effectiveTimeoutMs)
+		: renderNoTerminal(deps, role, profile, cwd, terminal, effectiveTimeoutMs);
 }
 
-function buildRequest(deps: DelegationDeps, role: Role, profile: RoleProfile, task: string, cwd: string): SubagentDelegationRequest {
+function buildRequest(deps: DelegationDeps, role: Role, profile: RoleProfile, task: string, cwd: string, timeoutMs: number): SubagentDelegationRequest {
 	return {
 		...newRunIdentity(role, deps.ownerRunId),
 		agent: profile.agent,
-		task: buildTaskText(role, task, cwd, deps.limits.timeoutMs),
+		task: buildTaskText(role, task, cwd, timeoutMs),
 		context: "fresh",
 		cwd,
-		timeoutMs: deps.limits.timeoutMs,
+		timeoutMs,
 		intercomBridge: { mode: "off" },
 		result: { kind: "text" },
 	};
@@ -536,14 +555,14 @@ function buildRequest(deps: DelegationDeps, role: Role, profile: RoleProfile, ta
  * No terminal: the child may still be running, so the cwd stays held until a
  * late terminal arrives (launch keeps listening for it).
  */
-function renderNoTerminal(deps: DelegationDeps, role: Role, profile: RoleProfile, cwd: string, terminal: Terminal): DelegationOutcome {
+function renderNoTerminal(deps: DelegationDeps, role: Role, profile: RoleProfile, cwd: string, terminal: Terminal, timeoutMs: number): DelegationOutcome {
 	const status = terminal.started ? "stop_unconfirmed" : "not_started";
 	const why = terminal.started
 		? `Stop was requested (${terminal.stopReason}) but the child has not confirmed it. It may still be writing in ${cwd}; this cwd stays locked until it ends.`
 		: terminal.stopReason === "child did not start"
 			? `pi-subagents did not start the child within ${Math.round(deps.limits.startTimeoutMs / 1000)}s. Check that pi-subagents is installed and loaded.`
 			: `Not started: ${terminal.stopReason ?? "unknown reason"}.`;
-	return outcome(false, `[${role}/${profile.agent}] ${status}\n${why}`, { role, agent: profile.agent }, status, { stopReason: terminal.stopReason });
+	return outcome(false, `[${role}/${profile.agent}] ${status}\n${why}`, { role, agent: profile.agent }, status, { stopReason: terminal.stopReason, timeoutMs });
 }
 
 /** Header, recovery lines, child report, transcript tail, workspace summary. */
@@ -555,6 +574,7 @@ async function renderOutcome(
 	base: Awaited<ReturnType<typeof captureBase>>,
 	terminal: Terminal,
 	response: SubagentDelegationResponse,
+	timeoutMs: number,
 ): Promise<DelegationOutcome> {
 	const header = [`[${role}/${response.agent ?? profile.agent}] ${response.status}`, response.model, formatUsage(response.usage)]
 		.filter(Boolean).join(" · ");
@@ -578,6 +598,7 @@ async function renderOutcome(
 		model: response.model,
 		usage: response.usage,
 		stopReason: terminal.stopReason,
+		timeoutMs,
 	});
 }
 

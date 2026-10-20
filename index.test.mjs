@@ -135,6 +135,7 @@ try {
 	const { loadLimits } = await import("./delegate.ts");
 	assert.match(plannerPrompt(false), /A child has 10 minutes\. Do not delegate work that needs longer/);
 	assert.match(plannerPrompt(false, loadLimits({ PI_PLANNER_ONLY_TIMEOUT_MS: "300000" })), /A child has 5 minutes\./);
+	assert.match(plannerPrompt(false, loadLimits({ PI_PLANNER_ONLY_TIMEOUT_MS: "1234" })), /A child has 1\.234 seconds\./);
 	assert.match(plannerPrompt(false), /pass `cwd` to delegate, git_audit, and git_commit/);
 	assert.match(plannerPrompt(false), /report or last tool results \(a timed-out child returns them\)/);
 	assert.match(plannerPrompt(false), /Before reverting or reporting a child's change, check it against your task/);
@@ -737,6 +738,137 @@ try {
 	let inFlight;
 	await s.trackDelegation(async () => { inFlight = s.delegationsInFlight; });
 	assert.deepEqual([inFlight, s.delegationsInFlight], [2, 1]);
+}
+
+// timeoutSeconds tool schema registration
+{
+	const h = fakePi();
+	const delegateTool = h.tools.get("delegate");
+	const timeoutProp = delegateTool.parameters.properties.timeoutSeconds;
+	assert.ok(timeoutProp, "timeoutSeconds parameter should be registered on delegate tool");
+	assert.equal(timeoutProp.type, "integer");
+	assert.equal(timeoutProp.minimum, 1);
+	assert.equal(timeoutProp.maximum, 86400);
+}
+
+// PlannerSession per-role lightweight in-memory statistics, reset, and executeDelegate recording
+{
+	const s = new PlannerSession();
+	assert.ok(s.roleStats, "session should have roleStats");
+	for (const role of ["worker", "explorer", "validator", "reviewer"]) {
+		assert.deepEqual(s.roleStats[role], {
+			calls: 0,
+			completed: 0,
+			timed_out: 0,
+			otherFailed: 0,
+			refused: 0,
+			durationMs: 0,
+			durationMissing: 0,
+		});
+	}
+
+	// Direct recording onto PlannerSession
+	s.recordRoleDelegation("worker", "completed", 12_000);
+	s.recordRoleDelegation("worker", "timed_out", 60_000);
+	s.recordRoleDelegation("explorer", "completed", undefined); // missing duration
+	s.recordRoleDelegation("validator", "refused", 5_000); // refused: duration ignored
+	s.recordRoleDelegation("reviewer", "failed", 8_000); // otherFailed
+
+	assert.deepEqual(s.roleStats.worker, {
+		calls: 2,
+		completed: 1,
+		timed_out: 1,
+		otherFailed: 0,
+		refused: 0,
+		durationMs: 72_000,
+		durationMissing: 0,
+	});
+	assert.deepEqual(s.roleStats.explorer, {
+		calls: 1,
+		completed: 1,
+		timed_out: 0,
+		otherFailed: 0,
+		refused: 0,
+		durationMs: 0,
+		durationMissing: 1,
+	});
+	assert.deepEqual(s.roleStats.validator, {
+		calls: 1,
+		completed: 0,
+		timed_out: 0,
+		otherFailed: 0,
+		refused: 1,
+		durationMs: 0,
+		durationMissing: 0,
+	});
+	assert.deepEqual(s.roleStats.reviewer, {
+		calls: 1,
+		completed: 0,
+		timed_out: 0,
+		otherFailed: 1,
+		refused: 0,
+		durationMs: 8_000,
+		durationMissing: 0,
+	});
+
+	// Reset clears all role statistics
+	s.reset();
+	for (const role of ["worker", "explorer", "validator", "reviewer"]) {
+		assert.deepEqual(s.roleStats[role], {
+			calls: 0,
+			completed: 0,
+			timed_out: 0,
+			otherFailed: 0,
+			refused: 0,
+			durationMs: 0,
+			durationMissing: 0,
+		});
+	}
+
+	// Integration via fakePi and executeDelegate:
+	const h = fakePi();
+	await h.handlers.get("session_start")({}, h.ctx);
+
+	let reply = { status: "completed", result: { kind: "text", text: "ok" }, usage: { ...usage(), durationMs: 15_000 } };
+	h.events.on(SUBAGENT_DELEGATION_REQUEST_EVENT, (req) => {
+		h.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, { requestId: req.requestId, nodeId: req.nodeId, agent: req.agent, ...reply });
+	});
+
+	// 1. Worker completed with known duration
+	await h.tools.get("delegate").execute("w1", { role: "worker", task: "work 1", timeoutSeconds: 120 }, undefined, undefined, h.ctx);
+
+	// 2. Worker timed out with known duration
+	reply = { status: "timed_out", error: "timeout", usage: { ...usage(), durationMs: 45_000 } };
+	await h.tools.get("delegate").execute("w2", { role: "worker", task: "work 2" }, undefined, undefined, h.ctx);
+
+	// 3. Explorer completed with missing duration
+	reply = { status: "completed", result: { kind: "text", text: "scouted" }, usage: undefined };
+	await h.tools.get("delegate").execute("e1", { role: "explorer", task: "explore 1" }, undefined, undefined, h.ctx);
+
+	// 4. Validator refused (illegal timeout)
+	const refResult = await h.tools.get("delegate").execute("v1", { role: "validator", task: "val 1", timeoutSeconds: 0 }, undefined, undefined, h.ctx);
+	assert.equal(refResult.details.status, "refused");
+
+	// 5. Reviewer completed with known duration = 0
+	reply = { status: "completed", result: { kind: "text", text: "looked good" }, usage: { ...usage(), durationMs: 0 } };
+	await h.tools.get("delegate").execute("r1", { role: "reviewer", task: "review 1" }, undefined, undefined, h.ctx);
+
+	// Status command output includes role stats for roles with calls > 0
+	await h.commands.get("planner-only").handler("status", h.ctx);
+	const statusMsg = h.notes.at(-1);
+	assert.match(statusMsg, /worker: 2 calls/);
+	assert.match(statusMsg, /1 completed/);
+	assert.match(statusMsg, /1 timed_out/);
+	assert.match(statusMsg, /cumulative duration 1m00s/);
+	assert.match(statusMsg, /explorer: 1 call/);
+	assert.match(statusMsg, /cumulative duration missing \(1\)/);
+	assert.match(statusMsg, /validator: 1 call.*1 refused/);
+	assert.match(statusMsg, /reviewer: 1 call.*cumulative duration 0s/);
+	assert.match(statusMsg, /concurrent/);
+
+	// Status bar text does NOT contain role breakdown (existing fee/tokens text intact)
+	const statusBar = h.statuses.at(-1);
+	assert.doesNotMatch(statusBar, /Role stats|calls|runs/);
 }
 
 console.log("index.test: ok");

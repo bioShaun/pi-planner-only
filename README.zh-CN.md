@@ -10,7 +10,7 @@
 
 | 工具 | 作用 |
 |---|---|
-| `delegate({role, task, cwd?})` | 启动一个子代理并等它结束。返回子代理的文字报告、宿主状态、实际模型和用量，以及 Git 变更摘要（新提交、diff stat、未跟踪文件）。 |
+| `delegate({role, task, cwd?, timeoutSeconds?})` | 启动一个子代理并等它结束。返回子代理的文字报告、宿主状态、实际模型和用量，以及 Git 变更摘要（新提交、diff stat、未跟踪文件）。 |
 | `git_audit({operation, base?, path?, maxEntries?})` | 只读的 `status` / `diff-stat` / `diff` / `log`，argv 固定。 |
 | `git_commit({message, paths?})` | 暂存并提交验收通过的改动。从不 push。 |
 
@@ -24,6 +24,8 @@
 | `reviewer` | `reviewer` | 无（只读） |
 
 worker 和 validator 每个仓库独占运行；explorer 可以多个并行，但不能与 worker 或 validator 同跑；reviewer 或其他仓库可以并行。停止请求得不到确认时，目录一直保持占用，直到迟到的终态到达。
+
+可选参数 `timeoutSeconds`（整数 1..86400，例如短任务 `120`，较长复杂实现 `900` 即 15 分钟）为该次委派单次设定子代理墙钟时限。未指定时默认使用环境变量 `PI_PLANNER_ONLY_TIMEOUT_MS`（默认 600s / 10 分钟）。单次覆盖不会改变全局默认或后续委派，其他限额（`PI_PLANNER_ONLY_MAX_TOKENS`、启动等待、取消宽限）保持不变。
 
 Root 还会收到一段简短提示（不超过 1,500 字符，约 375 token）：小事自己做，大活委派；委派前自行决定公共接口和跨模块选择（事实不明时先派 explorer）；每次委派只交付一个可独立检查的成果；按 diff 和检查输出判断结果，不信子代理自述；返工时带上上次报告重新委派修正后的任务（补充上下文、确定接口，或仅在任务过大时拆分）。
 
@@ -93,7 +95,7 @@ pi install /path/to/pi-planner-only                          # 本地 checkout
 |---|---|
 | `/planner-only native` / `lite` | 保存**下一个新会话**的模式偏好，不切换当前会话。 |
 | `/planner-only on` / `off` | 旧版即时切换 Lite/关闭，同时修改标记和新会话偏好；Lite 子代理运行中或 cwd 仍被占用时拒绝切换。 |
-| `/planner-only status` | 显示当前生效模式、新会话模式、保存的偏好，以及适用时的 Lite 费用合计。 |
+| `/planner-only status` | 显示当前生效模式、新会话模式、保存的偏好、适用时的 Lite 费用合计，以及当前加载会话的角色统计（`calls`、完成终态、timed_out、其他失败、refused、包含并发重叠的累计用时）。角色统计为当前会话的内存诊断，新会话时 reset，且在 `/reload` 后不保留。 |
 | `PI_PLANNER_ONLY_MODE=off|native|lite` | 新会话模式，优先级最高。 |
 | `/planner-only handoff [目标]` | 让 Root 写简报并在新会话里继续（`handoff drop` 丢弃失败的交接）。Root 在上下文超过阈值后自行发起取决于生效 handoff 模式（`confirm` 或 `auto`）。优先级：非空 `PI_PLANNER_ONLY_HANDOFF` > `~/.pi/agent/planner-only.handoff` > 默认 `off`。 |
 | `/planner-only handoff-mode [off|confirm|auto]` | 查看或保存 handoff 模式。优先级：非空 `PI_PLANNER_ONLY_HANDOFF` > `~/.pi/agent/planner-only.handoff` > 默认 `off`；状态会显示生效值和来源。 |

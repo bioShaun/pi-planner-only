@@ -9,7 +9,7 @@ import {
 	SUBAGENT_DELEGATION_STARTED_EVENT as STARTED,
 	SUBAGENT_DELEGATION_UPDATE_EVENT as UPDATE,
 } from "./subagent-delegation-contract.ts";
-import { CHILD_REPORT_TARGET_CHARS, MAX_CHILD_TEXT_CHARS, ROLE_AGENTS, buildTaskText, clipChildText, createCwdLocks, loadLimits, matchesIdentity, newRunIdentity, resolveLockKey, runDelegation, summarizeTranscript } from "./delegate.ts";
+import { CHILD_REPORT_TARGET_CHARS, MAX_CHILD_TEXT_CHARS, ROLE_AGENTS, buildTaskText, clipChildText, createCwdLocks, formatTimeoutLimit, loadLimits, matchesIdentity, newRunIdentity, resolveLockKey, runDelegation, summarizeTranscript } from "./delegate.ts";
 import { formatTokens } from "./format.ts";
 import { DEFAULT_CONFIG, loadConfig } from "./config.ts";
 import { artifactsDir, loadArtifactDir, resolveArtifacts, tempArtifactsDir } from "./subagent-artifacts.ts";
@@ -333,7 +333,11 @@ const respond = (bus, req, over = {}) =>
 {
 	assert.match(buildTaskText("worker", "t", "/w", loadLimits({}).timeoutMs), /\nTime limit: 10 minutes wall clock, then you are stopped/);
 	assert.match(buildTaskText("worker", "t", "/w", loadLimits({ PI_PLANNER_ONLY_TIMEOUT_MS: "300000" }).timeoutMs), /\nTime limit: 5 minutes wall clock/);
-	assert.match(buildTaskText("worker", "t", "/w", 1_000), /Time limit: 1 minutes/);
+	assert.match(buildTaskText("worker", "t", "/w", 60_000), /Time limit: 1 minutes/);
+	assert.match(buildTaskText("worker", "t", "/w", 30_000), /Time limit: 30 seconds/);
+	assert.match(buildTaskText("worker", "t", "/w", 90_000), /Time limit: 90 seconds/);
+	assert.match(buildTaskText("worker", "t", "/w", 1234), /Time limit: 1\.234 seconds/);
+	assert.equal(formatTimeoutLimit(1234), "1.234 seconds");
 	// Pacing (om09 run4: required checks passed, then `find /` ate the budget before the report).
 	const pacing = buildTaskText("worker", "t", "/w");
 	assert.match(pacing, /Write your report as soon as the required checks pass/);
@@ -694,6 +698,125 @@ const respond = (bus, req, over = {}) =>
 		rmSync(other, { recursive: true, force: true });
 		rmSync(dirname(link), { recursive: true, force: true });
 	}
+}
+
+// timeoutSeconds override, precision formatting, validation, and details.timeoutMs
+{
+	const bus = fakeBus();
+	let seenReq;
+	bus.on(REQUEST, (req) => {
+		seenReq = req;
+		respond(bus, req);
+	});
+
+	// Shorter timeout (30s): non-whole-minute formatted precisely, effective timeoutMs passed to host request
+	const out30 = await runDelegation(deps(bus), { role: "worker", task: "implement 30", cwd: "/w", timeoutSeconds: 30 });
+	assert.equal(seenReq.timeoutMs, 30_000);
+	assert.ok(seenReq.task.includes("Time limit: 30 seconds wall clock, then you are stopped"));
+	assert.equal(out30.details.timeoutMs, 30_000);
+
+	// Non-whole-minute timeout (90s): formatted as 90 seconds, not clamped to minutes
+	const out90 = await runDelegation(deps(bus), { role: "worker", task: "implement 90", cwd: "/w", timeoutSeconds: 90 });
+	assert.equal(seenReq.timeoutMs, 90_000);
+	assert.ok(seenReq.task.includes("Time limit: 90 seconds wall clock, then you are stopped"));
+	assert.equal(out90.details.timeoutMs, 90_000);
+
+	// Longer whole-minute timeout (900s = 15m)
+	const out900 = await runDelegation(deps(bus), { role: "worker", task: "implement 900", cwd: "/w", timeoutSeconds: 900 });
+	assert.equal(seenReq.timeoutMs, 900_000);
+	assert.ok(seenReq.task.includes("Time limit: 15 minutes wall clock, then you are stopped"));
+	assert.equal(out900.details.timeoutMs, 900_000);
+
+	// Default (omitted) inherits limits.timeoutMs (60_000) and preserves whole-minute wording
+	const outDef = await runDelegation(deps(bus), { role: "worker", task: "implement def", cwd: "/w" });
+	assert.equal(seenReq.timeoutMs, 60_000);
+	assert.ok(seenReq.task.includes("Time limit: 1 minutes wall clock"));
+	assert.equal(outDef.details.timeoutMs, 60_000);
+
+	// Other limits remain unchanged
+	assert.equal(deps(bus).limits.maxTokens, 1_000);
+	assert.equal(deps(bus).limits.startTimeoutMs, 40);
+	assert.equal(deps(bus).limits.cancelGraceMs, 40);
+
+	// Override and default sharing the same deps/limits object demonstrates no pollution
+	{
+		const busShared = fakeBus();
+		const sharedLimits = { ...limits };
+		const sharedDeps = deps(busShared, undefined, { limits: sharedLimits });
+		let capturedTimeout;
+		busShared.on(REQUEST, (req) => {
+			capturedTimeout = req.timeoutMs;
+			respond(busShared, req);
+		});
+
+		const outOver = await runDelegation(sharedDeps, { role: "worker", task: "override", cwd: "/w", timeoutSeconds: 30 });
+		assert.equal(capturedTimeout, 30_000);
+		assert.equal(outOver.details.timeoutMs, 30_000);
+		assert.equal(sharedLimits.timeoutMs, 60_000);
+		assert.equal(sharedDeps.limits.timeoutMs, 60_000);
+
+		const outDefAgain = await runDelegation(sharedDeps, { role: "worker", task: "default", cwd: "/w" });
+		assert.equal(capturedTimeout, 60_000);
+		assert.equal(outDefAgain.details.timeoutMs, 60_000);
+		assert.equal(sharedLimits.timeoutMs, 60_000);
+		assert.equal(sharedDeps.limits.timeoutMs, 60_000);
+	}
+
+	// Direct call validation: illegal values refused BEFORE lock acquisition, git read, or host dispatch
+	const invalidValues = [
+		0,
+		-1,
+		-60,
+		86401,
+		100000,
+		1.5,
+		NaN,
+		Infinity,
+		-Infinity,
+		"60",
+		null,
+	];
+	for (const val of invalidValues) {
+		const busInv = fakeBus();
+		const locksInv = createCwdLocks();
+		let tryAcquireCalls = 0;
+		const origTryAcquire = locksInv.tryAcquire.bind(locksInv);
+		locksInv.tryAcquire = (...args) => {
+			tryAcquireCalls++;
+			return origTryAcquire(...args);
+		};
+		let gitCalls = 0;
+		const spyGit = async (...args) => {
+			gitCalls++;
+			return { stdout: "", stderr: "", code: 0 };
+		};
+		let requestEmitted = false;
+		busInv.on(REQUEST, () => { requestEmitted = true; });
+		const outInv = await runDelegation(deps(busInv, locksInv, { git: spyGit }), { role: "worker", task: "invalid", cwd: "/w", timeoutSeconds: val });
+		assert.equal(outInv.ok, false);
+		assert.equal(outInv.details.status, "refused");
+		assert.match(outInv.text, /delegate refused: timeoutSeconds must be an integer between 1 and 86400/);
+		assert.equal(requestEmitted, false, `REQUEST should not be emitted for ${String(val)}`);
+		assert.equal(locksInv.size, 0, `Lock should not be held for ${String(val)}`);
+		assert.equal(tryAcquireCalls, 0, `tryAcquire should not be called for ${String(val)}`);
+		assert.equal(gitCalls, 0, `git runner should not be called for ${String(val)}`);
+	}
+
+	// details.timeoutMs on not_started and stop_unconfirmed
+	const busNoStart = fakeBus();
+	const outNoStart = await runDelegation(deps(busNoStart, undefined, { limits: { ...limits, startTimeoutMs: 10 } }), { role: "worker", task: "no start", cwd: "/w", timeoutSeconds: 45 });
+	assert.equal(outNoStart.details.status, "not_started");
+	assert.equal(outNoStart.details.timeoutMs, 45_000);
+
+	const busUnconf = fakeBus();
+	const controller = new AbortController();
+	busUnconf.on(REQUEST, (req) => {
+		busUnconf.emit(STARTED, { requestId: req.requestId, nodeId: req.nodeId, runId: "child-r1" });
+		controller.abort();
+	});
+	const outUnconf = await runDelegation(deps(busUnconf, undefined, { limits: { ...limits, cancelGraceMs: 10 } }), { role: "worker", task: "unconf", cwd: "/w", timeoutSeconds: 75 }, controller.signal);
+	assert.equal(outUnconf.details.status, "stop_unconfirmed");
+	assert.equal(outUnconf.details.timeoutMs, 75_000);
 }
 
 console.log("delegate.test: ok");
