@@ -39,7 +39,9 @@ _Avoid_: task, execution (legacy ledger terms)
 
 ## Decisions
 
-- In Lite, children return plain text; there is no structured report contract (legacy ADR-0001–0007, 0009 and 0010 are superseded; 0008 keeps only its ten-minute default).
+- In Lite, children return plain text; there is no structured report contract (legacy ADR-0001–0007, 0009 and 0010 are superseded; 0008 keeps only its ten-minute default; the legacy heavy-worker envelope is not revived).
+- The default wall-clock limit is ten minutes (`PI_PLANNER_ONLY_TIMEOUT_MS`), but individual delegations can supply an optional `timeoutSeconds` (1..86400, e.g. 120s for short tasks, 900s for complex implementations) overriding `timeoutMs` for that single run without changing the global default or subsequent calls; other token and cancel limits remain intact; the host enforces `timeoutMs`, while the plugin cancels on the token cap.
+- Per-role in-memory diagnostics in `PlannerSession` track delegation calls, completed runtime terminals, timed_out runs, other incomplete runs, refused calls, and known cumulative `durationMs` (including concurrent overlapping child time, not total wall time) for the current session only; reset on new sessions and not persisted across reload.
 - worker and validator hold their repository exclusively until they end; explorers share a repository (any number of them) but never run alongside a worker or validator; an unconfirmed stop keeps the hold until the late terminal.
 - The host enforces the wall-clock limit (`timeoutMs`); the plugin cancels on the reported token cap. Neither is a hard budget.
 - Child models are operator configuration (`subagents.agentOverrides`), never tool parameters.

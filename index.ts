@@ -9,9 +9,9 @@ import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { AGENT_DIR, DEFAULT_LIMITS, loadConfig } from "./config.ts";
 import type { DelegationLimits, PlannerMode } from "./config.ts";
-import { ROLES, createCwdLocks, runDelegation, timeoutMinutes } from "./delegate.ts";
-import type { DelegationParams } from "./delegate.ts";
-import { formatTokens } from "./format.ts";
+import { ROLES, createCwdLocks, formatTimeoutLimit, runDelegation, timeoutMinutes } from "./delegate.ts";
+import type { DelegationParams, Role } from "./delegate.ts";
+import { formatSeconds, formatTokens } from "./format.ts";
 import { createHostAdapter, rootUsageOf } from "./host.ts";
 import type { HostAdapter } from "./host.ts";
 export { rootUsageOf } from "./host.ts";
@@ -63,20 +63,37 @@ export function isStrict(env: NodeJS.ProcessEnv = process.env): boolean {
 export function plannerPrompt(strict: boolean, limits: DelegationLimits = DEFAULT_LIMITS): string {
 	return [
 		"[PLANNER-ONLY]",
-		"You plan and review; child agents do the bulk of the work through `delegate`.",
+		"You plan and review; children do most work via `delegate`.",
 		strict
 			? "- Strict mode: you cannot edit, write, or run bash. Delegate implementation to \"worker\" and check runs to \"validator\"."
 			: "- Do small things yourself (about ≤2 files or ≤10 minutes). Delegate larger implementation to \"worker\".",
-		"- Other roles: \"explorer\" for broad searches and reading-heavy work (logs/transcripts); only its findings enter your context. \"validator\" runs checks and writes nothing; \"reviewer\" has no shell and sees files plus uncommitted changes only: run it before git_commit.",
+		"- Roles: \"explorer\" handles reading-heavy work (logs/transcripts); only its findings enter your context. \"validator\" runs checks and writes nothing; \"reviewer\" has no shell, sees files and uncommitted changes only: use before git_commit.",
 		"- Children cannot see this conversation or ask you mid-run; `task` must stand alone. Decide public interfaces, cross-module choices, and data flow yourself before delegating; if key facts are unknown, send an explorer first.",
 		"- One delegation = one deliverable that can be checked on its own; fold setup into it; merge repeated edits that share one check.",
-		`- A child has ${timeoutMinutes(limits)} minutes. Do not delegate work that needs longer; split it.`,
+		`- A child has ${formatTimeoutLimit(limits.timeoutMs)}. Do not delegate work that needs longer; split it (or optional timeoutSeconds; long compute in background).`,
 		"- For another repository, pass `cwd` to delegate, git_audit, and git_commit.",
-		"- Check diffs and command output yourself before accepting. Before reverting or reporting a child's change, check it against your task: yours or its own?",
+		"- Check diffs and output before accepting. Before reverting or reporting a child's change, check it against your task: yours or its own?",
 		"- If a child fails, times out, or reports BLOCKED, first decide why, then delegate a corrected task (add context, settle the interface, split only if too big) with its report or last tool results (a timed-out child returns them) before doing the work yourself.",
 		"- After accepting, commit with git_commit: pass paths when the work tree has unrelated changes.",
 	].join("\n");
 }
+
+export interface RoleStats {
+	calls: number;
+	completed: number;
+	timed_out: number;
+	otherFailed: number;
+	refused: number;
+	durationMs: number;
+	durationMissing: number;
+}
+
+export const emptyRoleStats = (): Record<Role, RoleStats> => ({
+	worker: { calls: 0, completed: 0, timed_out: 0, otherFailed: 0, refused: 0, durationMs: 0, durationMissing: 0 },
+	explorer: { calls: 0, completed: 0, timed_out: 0, otherFailed: 0, refused: 0, durationMs: 0, durationMissing: 0 },
+	validator: { calls: 0, completed: 0, timed_out: 0, otherFailed: 0, refused: 0, durationMs: 0, durationMissing: 0 },
+	reviewer: { calls: 0, completed: 0, timed_out: 0, otherFailed: 0, refused: 0, durationMs: 0, durationMissing: 0 },
+});
 
 interface CostTotals {
 	rootTokens: number;
@@ -139,11 +156,13 @@ export class PlannerSession {
 	modeBound = false;
 	modeSessionId: string | undefined;
 	totals: CostTotals = emptyTotals();
+	roleStats: Record<Role, RoleStats> = emptyRoleStats();
 	rootContext: number | undefined;
 	contextWarned = false;
 
 	reset(): void {
 		this.totals = emptyTotals();
+		this.roleStats = emptyRoleStats();
 		this.rootContext = undefined;
 		this.contextWarned = false;
 	}
@@ -154,6 +173,28 @@ export class PlannerSession {
 			return await run();
 		} finally {
 			this.delegationsInFlight -= 1;
+		}
+	}
+
+	recordRoleDelegation(role: Role, status: string, durationMs?: number): void {
+		const stats = this.roleStats[role];
+		if (!stats) return;
+		stats.calls += 1;
+		if (status === "refused") {
+			stats.refused += 1;
+			return;
+		}
+		if (status === "completed") {
+			stats.completed += 1;
+		} else if (status === "timed_out") {
+			stats.timed_out += 1;
+		} else {
+			stats.otherFailed += 1;
+		}
+		if (typeof durationMs === "number" && Number.isFinite(durationMs) && durationMs >= 0) {
+			stats.durationMs += durationMs;
+		} else {
+			stats.durationMissing += 1;
 		}
 	}
 
@@ -314,7 +355,8 @@ async function executeDelegate(
 		signal,
 		(text) => onUpdate?.(text),
 	));
-	const { usage, status } = outcome.details;
+	const { usage, status, role } = outcome.details;
+	session.recordRoleDelegation(role, status, usage?.durationMs);
 	if (session.recordChildRun(status, usage)) updateStatus(session, ctx);
 	return textResult(outcome.text, outcome.details);
 }
@@ -352,6 +394,26 @@ function setEnabled(runtime: PlannerRuntime, enabled: boolean): void {
 	syncTools(runtime);
 }
 
+function formatRoleSummary(stats: RoleStats): string {
+	const parts = [
+		`${stats.completed} completed`,
+		stats.timed_out ? `${stats.timed_out} timed_out` : "",
+		stats.otherFailed ? `${stats.otherFailed} other` : "",
+		stats.refused ? `${stats.refused} refused` : "",
+	].filter(Boolean).join(", ");
+	const counts = parts ? `(${parts})` : "(0 completed)";
+	const knownRuns = (stats.completed + stats.timed_out + stats.otherFailed) - stats.durationMissing;
+	let dur = "";
+	if (knownRuns > 0 && stats.durationMissing > 0) {
+		dur = ` · cumulative duration ${formatSeconds(stats.durationMs)} (+${stats.durationMissing} missing)`;
+	} else if (knownRuns > 0) {
+		dur = ` · cumulative duration ${formatSeconds(stats.durationMs)}`;
+	} else if (stats.durationMissing > 0) {
+		dur = ` · cumulative duration missing (${stats.durationMissing})`;
+	}
+	return `${stats.calls} call${stats.calls === 1 ? "" : "s"} ${counts}${dur}`;
+}
+
 function notifyStatus(runtime: PlannerRuntime, ctx: ExtensionContext): void {
 	const { session } = runtime;
 	const mode = modeOf(runtime);
@@ -359,7 +421,11 @@ function notifyStatus(runtime: PlannerRuntime, ctx: ExtensionContext): void {
 	updateStatus(session, ctx, mode);
 	const env = process.env.PI_PLANNER_ONLY_MODE?.trim() ? ` (PI_PLANNER_ONLY_MODE=${process.env.PI_PLANNER_ONLY_MODE} selects new sessions)`
 		: process.env.PI_PLANNER_ONLY ? ` (PI_PLANNER_ONLY=${process.env.PI_PLANNER_ONLY} overrides the marker)` : "";
-	ctx.ui.notify(`planner-only ${mode === "lite" ? "on" : mode}${mode === "lite" && isStrict() ? ", strict" : ""}${env}; next fresh session: ${initialMode()}${preference() ? ` (preference: ${preference()})` : ""}; handoff: ${handoff.mode} (source: ${handoff.source})${mode !== "lite" ? "" : `\n${statusTotals(session)}`}`, "info");
+	const roleLines = (ROLES as readonly Role[])
+		.filter((r) => session.roleStats[r]?.calls > 0)
+		.map((r) => `  ${r}: ${formatRoleSummary(session.roleStats[r])}`);
+	const roleBlock = roleLines.length ? `\nRole stats (current session; completed = runtime terminal; cumulative duration includes concurrent child time, not total wall time):\n${roleLines.join("\n")}` : "";
+	ctx.ui.notify(`planner-only ${mode === "lite" ? "on" : mode}${mode === "lite" && isStrict() ? ", strict" : ""}${env}; next fresh session: ${initialMode()}${preference() ? ` (preference: ${preference()})` : ""}; handoff: ${handoff.mode} (source: ${handoff.source})${mode !== "lite" ? "" : `\n${statusTotals(session)}${roleBlock}`}`, "info");
 }
 
 async function plannerCommand(runtime: PlannerRuntime, args: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -417,6 +483,11 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 			}),
 			cwd: Type.Optional(Type.String({
 				description: "The repository or directory the child works in. Set it when the target is not the session cwd; the diff summary uses it, and the lock covers its whole repository.",
+			})),
+			timeoutSeconds: Type.Optional(Type.Integer({
+				minimum: 1,
+				maximum: 86400,
+				description: "Per-delegation wall-clock timeout in seconds (1..86400). Defaults to PI_PLANNER_ONLY_TIMEOUT_MS (600s). Overrides only this run.",
 			})),
 		}),
 		execute: (_toolCallId, params: DelegationParams, signal, onUpdate, ctx) =>
