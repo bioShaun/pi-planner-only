@@ -9,7 +9,7 @@ import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { AGENT_DIR, DEFAULT_LIMITS, loadConfig } from "./config.ts";
 import type { DelegationLimits, PlannerMode } from "./config.ts";
-import { ROLES, createCwdLocks, formatTimeoutLimit, runDelegation, timeoutMinutes } from "./delegate.ts";
+import { ROLES, createCwdLocks, formatTimeoutLimit, runDelegation } from "./delegate.ts";
 import type { DelegationParams, Role } from "./delegate.ts";
 import { formatSeconds, formatTokens } from "./format.ts";
 import { createHostAdapter, rootUsageOf } from "./host.ts";
@@ -398,7 +398,7 @@ function formatRoleSummary(stats: RoleStats): string {
 	const parts = [
 		`${stats.completed} completed`,
 		stats.timed_out ? `${stats.timed_out} timed_out` : "",
-		stats.otherFailed ? `${stats.otherFailed} other` : "",
+		stats.otherFailed ? `${stats.otherFailed} incomplete` : "",
 		stats.refused ? `${stats.refused} refused` : "",
 	].filter(Boolean).join(", ");
 	const counts = parts ? `(${parts})` : "(0 completed)";
@@ -487,7 +487,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 			timeoutSeconds: Type.Optional(Type.Integer({
 				minimum: 1,
 				maximum: 86400,
-				description: "Per-delegation wall-clock timeout in seconds (1..86400). Defaults to PI_PLANNER_ONLY_TIMEOUT_MS (600s). Overrides only this run.",
+				description: "Per-delegation wall-clock timeout in seconds (1..86400). Defaults to the PI_PLANNER_ONLY_TIMEOUT_MS value in milliseconds (default 600000 = 10 minutes). Overrides only this run.",
 			})),
 		}),
 		execute: (_toolCallId, params: DelegationParams, signal, onUpdate, ctx) =>

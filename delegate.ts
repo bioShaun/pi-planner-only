@@ -224,17 +224,14 @@ export interface DelegationOutcome {
 export const CHILD_REPORT_TARGET_CHARS = 3_000;
 export const MAX_CHILD_TEXT_CHARS = 6_000;
 
-/** Whole minutes a child gets, at least 1. */
-export function timeoutMinutes(limits: Pick<DelegationLimits, "timeoutMs">): number {
-	return Math.max(1, Math.floor(limits.timeoutMs / 60_000));
-}
-
-/** Formats timeout limit: whole minutes as "X minutes", non-whole-minute as "X seconds". */
+/** Wall-clock limit text: whole minutes as "N minutes", otherwise "N seconds"; singular for one ("1 minute", "1 second"). */
 export function formatTimeoutLimit(timeoutMs: number): string {
 	if (timeoutMs % 60_000 === 0) {
-		return `${timeoutMs / 60_000} minutes`;
+		const minutes = timeoutMs / 60_000;
+		return `${minutes} minute${minutes === 1 ? "" : "s"}`;
 	}
-	return `${timeoutMs / 1000} seconds`;
+	const seconds = timeoutMs / 1000;
+	return `${seconds} second${seconds === 1 ? "" : "s"}`;
 }
 
 /**

@@ -33,7 +33,7 @@ not alongside a worker or validator; a reviewer or another repository can run
 alongside. If a stop cannot be confirmed, the directory stays held until the
 late terminal arrives.
 
-The optional `timeoutSeconds` parameter (integer 1..86400, e.g. `120` for quick tasks, `900` for 15-minute heavier implementations) sets the child's wall-clock limit for that single delegation only. When omitted, it defaults to the environment value `PI_PLANNER_ONLY_TIMEOUT_MS` (600s / 10m). It does not change the global default or subsequent calls, and other limits (`PI_PLANNER_ONLY_MAX_TOKENS`, start timeout, cancel grace) remain unchanged.
+The optional `timeoutSeconds` parameter (integer 1..86400, e.g. `120` for quick tasks, `900` for 15-minute heavier implementations) sets the child's wall-clock limit for that single delegation only. When omitted, it defaults to the environment value `PI_PLANNER_ONLY_TIMEOUT_MS` (in milliseconds; default 600000 = 10 minutes). It does not change the global default or subsequent calls, and other limits (`PI_PLANNER_ONLY_MAX_TOKENS`, start timeout, cancel grace) remain unchanged.
 
 Root also gets a short prompt (under 1,500 characters, roughly 375 tokens): do small things yourself,
 delegate larger work, decide public interfaces and cross-module choices before
@@ -117,7 +117,7 @@ extension and does not reproduce an older benchmark's user-message prefix byte f
 |---|---|
 | `/planner-only native` / `lite` | Save a preference for the **next fresh session**; do not switch the current session. |
 | `/planner-only on` / `off` | Legacy immediate Lite/off switch; update the marker and next-session preference. Refused while a Lite child is in flight or its cwd is held. |
-| `/planner-only status` | Show effective mode, next fresh-session mode, saved preference, Lite session totals, and current loaded session per-role diagnostics (`calls`, completed runtime terminals, timed_out, other failed, refused, cumulative duration including concurrent overlap). Role statistics are in-memory diagnostics for the active session only; they reset on `/new` and are not restored across `/reload`. |
+| `/planner-only status` | Show effective mode, next fresh-session mode, saved preference, Lite session totals, and current loaded session per-role diagnostics (`calls`, completed runtime terminals, timed_out, incomplete, refused, cumulative duration including concurrent overlap). Role statistics are in-memory diagnostics for the active session only; they reset on `/new` and are not restored across `/reload`. |
 | `PI_PLANNER_ONLY_MODE=off|native|lite` | Choose the mode for new sessions (highest fresh-session priority). |
 | `/planner-only handoff [goal]` | Ask Root to write a brief and continue in a fresh session (`handoff drop` discards a failed one). Root self-initiation above the context threshold follows the effective handoff mode (`confirm` or `auto`). Resolution order: nonempty `PI_PLANNER_ONLY_HANDOFF` > `~/.pi/agent/planner-only.handoff` > default `off`. |
 | `/planner-only handoff-mode [off|confirm|auto]` | Show or save the handoff mode. Resolution order: nonempty `PI_PLANNER_ONLY_HANDOFF` > `~/.pi/agent/planner-only.handoff` > default `off`; status shows the effective value and source. |
