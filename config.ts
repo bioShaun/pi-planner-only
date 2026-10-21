@@ -22,7 +22,7 @@ export type PlannerMode = "off" | "native" | "lite";
 
 export interface PlannerConfig {
 	limits: DelegationLimits;
-	/** Root context size (tokens) that turns the status red and triggers the delegation warning. */
+	/** Root context size (tokens) at which the status reaches red and the delegation warning fires; below it the status heats up from the theme accent through the warning color. */
 	contextWarnTokens: number;
 	/** PI_PLANNER_ONLY=1 forces on, =0 forces off; undefined leaves the decision to the off marker. */
 	enabled: boolean | undefined;

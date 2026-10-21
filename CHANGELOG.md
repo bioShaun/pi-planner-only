@@ -2,6 +2,8 @@
 
 ## 0.9.0-lite.0 - unreleased
 
+- Status heat: the status color follows Root's context instead of switching yellow → red at the threshold — the theme accent at an empty context, the warning color at half `PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS`, and the error color at it (clamped beyond). `status-color.ts` interpolates the theme's own accent/warning/error in OKLCH along a downward hue path (blue → cyan → green → yellow → red) and mirrors pi-tui's color math without importing it; hosts before pi 0.99 have no theme `style`/`colors` and keep the plain warning/error tokens.
+
 - Repository lock (f2fe050): worker and validator hold a repository exclusively; explorers share it (any number) and never run beside an exclusive holder; reviewer holds none. A refusal names the blocking holder.
 - Handoff model lookup (6caccf2d): the new session resolves the source model with `ModelRegistry.find(provider, id)`. pi's registry has `find`, not `getModel`; the previous call failed with "getModel is not a function".
 - Field fixes from om36 logs (`.scratch/om36-usage-20261001/`): the `delegate` repository-lock refusal tells Root to pass the nested repository as `cwd` (two explorers on sibling nested repos without `cwd` collided on the outer repo); a failed `git_commit` says the changes it staged are still staged (seen with a missing git identity).
