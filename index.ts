@@ -323,13 +323,15 @@ function syncTools(runtime: PlannerRuntime): void {
 
 function sendContextWarning(host: HostAdapter, tokens: number): void {
 	const advice = handoffMode() === "off"
-		? "At the next task boundary, if the next step is a new task, suggest the user run /planner-only handoff for a fresh session from a brief; if still mid-task and the context is mostly stale exploration, ask the user to run /compact with what to keep."
-		: "At the next task boundary: if the next step is a new task, call the handoff tool with a complete brief (it starts a fresh session automatically); if still mid-task and the context is mostly stale exploration, ask the user to run /compact with what to keep.";
+		? "At a task boundary, suggest the user run /planner-only handoff for a fresh session from a brief, or use /compact with what to keep if the context is mostly stale exploration. This is advisory; do not initiate a handoff."
+		: handoffMode() === "confirm"
+			? "Finish the current bounded operation, then prepare a complete handoff brief with the handoff tool, even when continuing the same large task; the fresh session opens with the brief in the editor for the user to submit. Do not fabricate a brief or force a session replacement."
+			: "Finish the current bounded operation, then prepare a complete handoff brief with the handoff tool, even when continuing the same large task; auto mode submits it in a fresh session automatically. Do not fabricate a brief or force a session replacement.";
 	host.sendMessage({
 		customType: "planner-only-context",
 		content: `[planner-only] Root context is about ${formatTokens(tokens)} tokens (warning threshold ${formatTokens(contextWarnThreshold())}); every turn re-reads it. From now on delegate reading-heavy and multi-file work. ${advice}`,
 		display: true,
-	}, { deliverAs: "nextTurn" });
+	}, { deliverAs: "steer" });
 }
 
 async function executeDelegate(

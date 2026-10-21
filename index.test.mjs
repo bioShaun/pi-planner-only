@@ -31,6 +31,9 @@ function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async 
 	const statusColors = [];
 	const sentMessages = [];
 	const sentUserMessages = [];
+	const queuedSteers = [];
+	const queuedNextTurn = [];
+	const modelRequests = [];
 	const sessionCalls = [];
 	const registry = options.registry ?? [{ provider: "provider-a", id: "model-a" }, { provider: "provider-b", id: "model-b" }];
 	const replaced = { sent: [], editor: [], notes: [], modelRegistry: { find: (provider, id) => registry.some((m) => m.provider === provider && m.id === id) ? { provider, id } : undefined }, get model() { return activeModel; }, get thinkingLevel() { return activeThinking; }, ui: { notify: (m) => replaced.notes.push(m), setEditorText: (m) => replaced.editor.push(m) }, sendUserMessage: async (m) => replaced.sent.push(m) };
@@ -49,7 +52,7 @@ function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async 
 		const actions = { stale: false, modelCalls: 0, lastSetModel: undefined,
 			setModel: async (model) => { if (actions.stale) throw new Error("This extension ctx is stale"); actions.lastSetModel = model; actions.modelCalls++; if (options.setModelThrowOnce && !setModelThrown) { setModelThrown = true; throw new Error("setModel boom"); } if (options.setModelResult === false) return false; if (!options.setModelLies) activeModel = model; return true; },
 			setThinkingLevel: (level) => { if (actions.stale) throw new Error("This extension ctx is stale"); if (!options.setThinkingLies) activeThinking = level; },
-			exec, sendMessage: (...args) => sentMessages.push(args), sendUserMessage: (...args) => sentUserMessages.push(args) };
+			exec, sendMessage: (...args) => { sentMessages.push(args); (args[1]?.deliverAs === "nextTurn" ? queuedNextTurn : queuedSteers).push(args[0]); }, sendUserMessage: (...args) => sentUserMessages.push(args) };
 		actionInstances.push(actions);
 		return Object.assign(Object.create(registrations), actions);
 	}
@@ -65,7 +68,7 @@ function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async 
 		get thinkingLevel() { return activeThinking; },
 		ui: { setStatus: (k, v) => statuses.push(v), notify: (m) => { if (staleContext) { staleContext = false; throw new Error("This extension ctx is stale"); } notes.push(m); }, theme: { fg: (c, s) => { statusColors.push(c); return s; } } },
 	};
-	return { get pi() { return pi; }, tools, handlers, commands, events, ctx, notes, statuses, statusColors, sentMessages, sentUserMessages, sessionCalls, replaced, active: () => active, appended, activeModel: () => activeModel, activeThinking: () => activeThinking, lastSetModel: () => actionInstances.at(-1).lastSetModel, oldModelCalls: () => actionInstances[0].modelCalls, setSource: (model, thinking = activeThinking) => { activeModel = model; activeThinking = thinking; }, branch: (entries) => { branch = entries; }, sessionId: (id) => { sessionId = id; } };
+	return { get pi() { return pi; }, tools, handlers, commands, events, ctx, notes, statuses, statusColors, sentMessages, sentUserMessages, sessionCalls, replaced, queuedSteers, queuedNextTurn, modelRequests, toolBoundary: () => { modelRequests.push(...queuedSteers.splice(0)); }, userRun: () => { modelRequests.push(...queuedNextTurn.splice(0)); }, active: () => active, appended, activeModel: () => activeModel, activeThinking: () => activeThinking, lastSetModel: () => actionInstances.at(-1).lastSetModel, oldModelCalls: () => actionInstances[0].modelCalls, setSource: (model, thinking = activeThinking) => { activeModel = model; activeThinking = thinking; }, branch: (entries) => { branch = entries; }, sessionId: (id) => { sessionId = id; } };
 }
 
 try {
@@ -222,7 +225,7 @@ try {
 	await high.handlers.get("session_start")({}, high.ctx);
 	await high.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200_000, output: 0, cacheRead: 0, cacheWrite: 0 } } }, high.ctx);
 	assert.equal((await high.tools.get("handoff").execute("high-context", { brief }, undefined, undefined, high.ctx)).details.ok, true);
-	assert.match(high.sentMessages[0][0].content, /call the handoff tool with a complete brief/);
+	assert.match(high.sentMessages[0][0].content, /prepare a complete handoff brief with the handoff tool/);
 	delete process.env.PI_PLANNER_ONLY_HANDOFF;
 	const handoffTool = h.tools.get("handoff");
 	assert.equal((await handoffTool.execute("short", { brief: "too short" }, undefined, undefined, h.ctx)).details.ok, false);
@@ -456,11 +459,53 @@ try {
 	await hc.handlers.get("message_end")(largeContext, hc.ctx);
 	assert.equal(hc.sentMessages.length, 1);
 	assert.equal(hc.sentMessages[0][0].customType, "planner-only-context");
-	assert.equal(hc.sentMessages[0][1].deliverAs, "nextTurn");
+	assert.equal(hc.sentMessages[0][1].deliverAs, "steer");
 	assert.match(hc.sentMessages[0][0].content, /about 200k tokens/);
 	assert.match(hc.sentMessages[0][0].content, /\/compact/);
 	assert.match(hc.sentMessages[0][0].content, /suggest the user run \/planner-only handoff/);
 	assert.doesNotMatch(hc.sentMessages[0][0].content, /call the handoff tool/);
+	hc.toolBoundary();
+	assert.equal(hc.modelRequests.length, 1, "steer reaches the next model request in the same run");
+	assert.equal(hc.queuedNextTurn.length, 0);
+	assert.equal(hc.modelRequests[0].content, hc.sentMessages[0][0].content);
+	assert.equal(hc.sentUserMessages.length, 0, "warning does not start another run while idle");
+	assert.equal(hc.modelRequests.length, 1, "a warning does not continue the model by itself");
+	const { AgentSession } = await import("@earendil-works/pi-coding-agent");
+	const makeHostSession = (isStreaming) => {
+		const host = Object.create(AgentSession.prototype);
+		let starts = 0, appends = 0, steers = 0, followUps = 0;
+		Object.defineProperty(host, "isStreaming", { value: isStreaming });
+		host._pendingNextTurnMessages = [];
+		host.agent = { steer: () => { steers++; }, followUp: () => { followUps++; } };
+		host._appendCustomMessage = () => { appends++; };
+		host._startRun = () => { starts++; };
+		host._runAgentPrompt = () => { starts++; };
+		return { host, counts: () => ({ starts, appends, steers, followUps }) };
+	};
+	const idleHost = makeHostSession(false);
+	await AgentSession.prototype.sendCustomMessage.call(idleHost.host, ...hc.sentMessages[0]);
+	assert.deepEqual(idleHost.counts(), { starts: 0, appends: 1, steers: 0, followUps: 0 });
+	const startControl = makeHostSession(false);
+	await AgentSession.prototype.sendCustomMessage.call(startControl.host, hc.sentMessages[0][0], { ...hc.sentMessages[0][1], triggerTurn: true });
+	assert.equal(startControl.counts().starts, 1, "triggerTurn control proves the run spy catches a started run");
+	const streamingHost = makeHostSession(true);
+	await AgentSession.prototype.sendCustomMessage.call(streamingHost.host, hc.sentMessages[0][0], { deliverAs: "nextTurn" });
+	assert.equal(streamingHost.host._pendingNextTurnMessages.length, 1, "old delivery waits for a new run");
+	assert.deepEqual(streamingHost.counts(), { starts: 0, appends: 0, steers: 0, followUps: 0 });
+	await AgentSession.prototype.sendCustomMessage.call(streamingHost.host, ...hc.sentMessages[0]);
+	assert.deepEqual(streamingHost.counts(), { starts: 0, appends: 0, steers: 1, followUps: 0 });
+	const enabledWarning = fakePi();
+	await enabledWarning.commands.get("planner-only").handler("handoff-mode auto", enabledWarning.ctx);
+	await enabledWarning.handlers.get("session_start")({}, enabledWarning.ctx);
+	await enabledWarning.handlers.get("message_end")(largeContext, enabledWarning.ctx);
+	assert.match(enabledWarning.sentMessages[0][0].content, /finish the current bounded operation.*auto mode submits it.*automatically/i);
+	assert.match(enabledWarning.sentMessages[0][0].content, /handoff tool/);
+	assert.doesNotMatch(enabledWarning.sentMessages[0][0].content, /ask the user to \/compact/i);
+	const confirmWarning = fakePi();
+	await confirmWarning.commands.get("planner-only").handler("handoff-mode confirm", confirmWarning.ctx);
+	await confirmWarning.handlers.get("session_start")({}, confirmWarning.ctx);
+	await confirmWarning.handlers.get("message_end")(largeContext, confirmWarning.ctx);
+	assert.match(confirmWarning.sentMessages[0][0].content, /finish the current bounded operation.*brief in the editor for the user to submit/i);
 	await hc.handlers.get("message_end")(largeContext, hc.ctx);
 	assert.equal(hc.sentMessages.length, 1);
 	await hc.commands.get("planner-only").handler("status", hc.ctx);
