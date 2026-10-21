@@ -45,6 +45,8 @@ Root 已能把任务派出去，但 worker 模型慢。目标是缩短从提需�
 
 ### B. 同一个 checkout 里按路径划分范围并发（不推荐）
 
+2026-10-10 的一次 Cursor CLI 实录走的就是这条路，并且那次 UI 接线跑通了。记录和它没消掉的风险见 `docs/research-cursor-cli-parallel-subagents-2026-10-10.md`。本条仍然不推荐，直到锁和 git 摘要的范围一起改。
+
 - 并发的 worker 跑测试时会看到彼此写了一半的代码。
 - lockfile、构建产物是共用的。
 - 每次委派的 git 摘要会混进其他任务的改动，破坏“Root 按 git 摘要验收”这条约定（`CONTEXT.md`）；越界修改只能事后发现。

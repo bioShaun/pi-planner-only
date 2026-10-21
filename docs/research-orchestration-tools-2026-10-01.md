@@ -49,6 +49,7 @@
 - `.cursor/worktrees.json` 定义 worktree 建好后的 setup 命令（装依赖、迁移数据库等）。
 - `/best-of-n`：同一任务给多个模型各开一个 worktree，人挑最好的；**不自动合并**。
 - 默认每台机器最多保留 25 个 worktree，超了自动清理旧的。
+- CLI 会话内还有另一条路径：一条助手消息里多次 `Task`，多个写手共用一个 checkout，分工只在简报的允许路径里。见 `docs/research-cursor-cli-parallel-subagents-2026-10-10.md`。
 
 ### 2.4 会话级管理器（人做编排）
 
