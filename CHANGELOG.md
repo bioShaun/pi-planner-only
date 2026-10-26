@@ -2,6 +2,10 @@
 
 ## 0.9.0-lite.0 - unreleased
 
+- Per-delegation timeout (0ea2671, #32; d1ee6b3, #33): `delegate` takes an optional `timeoutSeconds` (integer 1..86400) that sets `timeoutMs` for that one run; omitted, it uses `PI_PLANNER_ONLY_TIMEOUT_MS` (default ten minutes). Invalid values are refused before Git access, locking, or dispatch. The child's task text states the effective limit ("N minutes" for whole minutes, otherwise "N seconds"; singular for one), and result details carry `timeoutMs`.
+- `/planner-only status` (0ea2671, #32): adds per-role diagnostics for the current session: calls, completed runtime terminals, timed_out, incomplete, refused, and cumulative child duration (concurrent runs overlap, so it is not wall time). They are in memory only, reset on a new session, and are not restored after `/reload`.
+- Context warning (187f687): delivered as `deliverAs: "steer"` instead of `"nextTurn"`, so it reaches the next model request in the same run. The advice is now per handoff mode: `off` suggests `/planner-only handoff` or `/compact` to the user and says not to initiate a handoff; `confirm` and `auto` tell Root to finish the current bounded operation and then prepare a handoff brief with the `handoff` tool, even when continuing the same large task.
+
 - Status heat: the status color follows Root's context instead of switching yellow → red at the threshold — the theme accent at an empty context, the warning color at half `PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS`, and the error color at it (clamped beyond). `status-color.ts` interpolates the theme's own accent/warning/error in OKLCH along a downward hue path (blue → cyan → green → yellow → red) and mirrors pi-tui's color math without importing it; hosts before pi 0.99 have no theme `style`/`colors` and keep the plain warning/error tokens.
 
 - Repository lock (f2fe050): worker and validator hold a repository exclusively; explorers share it (any number) and never run beside an exclusive holder; reviewer holds none. A refusal names the blocking holder.
