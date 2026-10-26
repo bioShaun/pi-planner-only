@@ -11,6 +11,12 @@ delete process.env.PI_PLANNER_ONLY_STRICT;
 delete process.env.PI_SUBAGENT_CHILD;
 const { default: plannerOnly, MAX_COMMIT_MESSAGE_CHARS, OFF_MARKER, MODE_PREFERENCE, HANDOFF_PREFERENCE, NATIVE_PROMPT, PlannerSession, formatTotals, plannerPrompt, rootUsageOf, initialMode, handoffMode } = await import("./index.ts");
 
+// The heat stops the fake theme serves (grok-open colors); the expectations below are fixed points of the ramp.
+const HEAT_COOL = { kind: "rgb", r: 122, g: 162, b: 247 };
+const HEAT_MID = { kind: "rgb", r: 224, g: 175, b: 104 };
+const HEAT_HOT = { kind: "rgb", r: 247, g: 118, b: 142 };
+const statusRgb = (color) => `${color.r},${color.g},${color.b}`;
+
 function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async () => ({ stdout: "", stderr: "not a repo", code: 128 }), options = {}) {
 	const tools = new Map();
 	const handlers = new Map();
@@ -66,7 +72,7 @@ function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async 
 		newSession: async (opts) => { sessionCalls.push(opts); activeModel = options.replacementModel ?? { provider: "provider-b", id: "model-b" }; activeThinking = options.replacementThinking ?? "medium"; actionInstances.at(-1).stale = true; staleContext = Boolean(options.throwAfterReplacement); pi = makePi(); plannerOnly(pi); await opts.withSession(replaced); if (options.throwAfterReplacement) throw new Error("post-replacement boom"); return {}; },
 		get model() { return activeModel; },
 		get thinkingLevel() { return activeThinking; },
-		ui: { setStatus: (k, v) => statuses.push(v), notify: (m) => { if (staleContext) { staleContext = false; throw new Error("This extension ctx is stale"); } notes.push(m); }, theme: { fg: (c, s) => { statusColors.push(c); return s; } } },
+		ui: { setStatus: (k, v) => statuses.push(v), notify: (m) => { if (staleContext) { staleContext = false; throw new Error("This extension ctx is stale"); } notes.push(m); }, theme: options.legacyTheme ? { fg: (c, s) => { statusColors.push(c); return s; } } : { fg: (c, s) => { statusColors.push(c); return s; }, style: (s, opts) => { statusColors.push(opts.fg); return s; }, colors: { accent: HEAT_COOL, warning: HEAT_MID, error: HEAT_HOT } } },
 	};
 	return { get pi() { return pi; }, tools, handlers, commands, events, ctx, notes, statuses, statusColors, sentMessages, sentUserMessages, sessionCalls, replaced, queuedSteers, queuedNextTurn, modelRequests, toolBoundary: () => { modelRequests.push(...queuedSteers.splice(0)); }, userRun: () => { modelRequests.push(...queuedNextTurn.splice(0)); }, active: () => active, appended, activeModel: () => activeModel, activeThinking: () => activeThinking, lastSetModel: () => actionInstances.at(-1).lastSetModel, oldModelCalls: () => actionInstances[0].modelCalls, setSource: (model, thinking = activeThinking) => { activeModel = model; activeThinking = thinking; }, branch: (entries) => { branch = entries; }, sessionId: (id) => { sessionId = id; } };
 }
@@ -510,12 +516,30 @@ try {
 	assert.equal(hc.sentMessages.length, 1);
 	await hc.commands.get("planner-only").handler("status", hc.ctx);
 	assert.match(hc.notes.at(-1), /ctx 200k/);
-	assert.equal(hc.statusColors.at(-1), "error");
+	assert.equal(statusRgb(hc.statusColors.at(-1)), "247,118,142", "above the threshold the status is the theme's error color");
 	assert.doesNotMatch((await hc.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, hc.ctx)).systemPrompt, /Root context is about/);
 	await hc.handlers.get("session_compact")({}, hc.ctx);
 	await hc.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 10_000, output: 0, cacheRead: 0, cacheWrite: 0 } } }, hc.ctx);
 	await hc.handlers.get("message_end")(largeContext, hc.ctx);
 	assert.equal(hc.sentMessages.length, 2);
+	// Status heat: cool at an empty context, the warning color at half the threshold, red at it.
+	const heat = fakePi();
+	await heat.handlers.get("session_start")({}, heat.ctx);
+	assert.equal(statusRgb(heat.statusColors.at(-1)), "122,162,247", "an empty context shows the cool accent");
+	await heat.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 0, output: 0, cacheRead: 20_000, cacheWrite: 0 } } }, heat.ctx);
+	assert.equal(statusRgb(heat.statusColors.at(-1)), "29,189,217", "20k of the 150k threshold is still cool");
+	await heat.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 0, output: 0, cacheRead: 75_000, cacheWrite: 0 } } }, heat.ctx);
+	assert.equal(statusRgb(heat.statusColors.at(-1)), "224,175,104", "half the threshold shows the warning color");
+	assert.equal(heat.sentMessages.length, 0, "no warning below the threshold");
+	await heat.handlers.get("message_end")(largeContext, heat.ctx);
+	assert.equal(statusRgb(heat.statusColors.at(-1)), "247,118,142", "the threshold turns the status red");
+	assert.equal(heat.sentMessages.length, 1);
+	// Hosts before pi 0.99 have no theme.style/colors: the status keeps the plain warning/error tokens.
+	const legacy = fakePi(undefined, undefined, { legacyTheme: true });
+	await legacy.handlers.get("session_start")({}, legacy.ctx);
+	assert.equal(legacy.statusColors.at(-1), "warning");
+	await legacy.handlers.get("message_end")(largeContext, legacy.ctx);
+	assert.equal(legacy.statusColors.at(-1), "error");
 	const preferred = fakePi();
 	await preferred.handlers.get("session_start")({}, preferred.ctx);
 	preferred.ctx.getContextUsage = () => ({ tokens: 180_000 });

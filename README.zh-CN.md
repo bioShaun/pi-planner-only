@@ -106,7 +106,7 @@ pi install /path/to/pi-planner-only                          # 本地 checkout
 | `PI_PLANNER_ONLY_START_TIMEOUT_MS` | 子代理迟迟不启动时放弃（默认 30000）。 |
 | `PI_PLANNER_ONLY_CANCEL_GRACE_MS` | 等待取消被确认的时间（默认 5000）。 |
 | `PI_PLANNER_ONLY_HANDOFF` | 非空时覆盖 `/planner-only handoff-mode` 保存的偏好。优先级为 env > 持久偏好 > 默认 `off`。`confirm` 允许 Root 超过阈值后自行发起，并把简报放入编辑框；`auto` 同样允许自行发起并自动提交（实验性：节省效果尚未测量，冒烟测试仅确认流程可运行）。 |
-| `PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS` | Root 上下文超过此值时状态栏变红，并给 Root 发一条提示：委派、开新会话或 `/compact`（默认 150000）。 |
+| `PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS` | Root 上下文达到此值时状态栏变红，并给 Root 发一条提示：委派、开新会话或 `/compact`（默认 150000）。状态栏颜色随上下文升温：空上下文用主题强调色，阈值一半用警告色，到阈值即红色。 |
 
 关闭或 Native 模式下，本扩展的四个 Lite 工具即使被直接调用也会拒绝执行。
 Native 仅恢复先前被 Lite 隐藏的 pi-subagents 工具，不会强行启用上游未注册或未启用的工具。

@@ -128,7 +128,7 @@ extension and does not reproduce an older benchmark's user-message prefix byte f
 | `PI_PLANNER_ONLY_START_TIMEOUT_MS` | Give up if the child has not started (default 30000). |
 | `PI_PLANNER_ONLY_CANCEL_GRACE_MS` | Wait for a cancel to be confirmed (default 5000). |
 | `PI_PLANNER_ONLY_HANDOFF` | Overrides the persisted `/planner-only handoff-mode` preference when nonempty. Resolution order is env > persisted preference > default `off`. `confirm` allows Root self-initiation above the threshold and puts the brief in the editor; `auto` does the same but submits automatically (experimental; savings not measured, smoke tests only show the flow runs). |
-| `PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS` | Root context size that turns the status red and sends Root one message suggesting delegation, a new session, or `/compact` (default 150000). |
+| `PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS` | Root context size at which the status reaches red and Root gets one message suggesting delegation, a new session, or `/compact` (default 150000). The status heats up with the context: the theme accent when empty, the warning color at half the threshold, red at the threshold. |
 
 In off and native, the extension's four Lite tools are inactive even if called
 directly. Native restores only pi-subagents tools that Lite had hidden; it does

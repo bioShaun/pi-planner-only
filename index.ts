@@ -14,6 +14,8 @@ import type { DelegationParams, Role } from "./delegate.ts";
 import { formatSeconds, formatTokens } from "./format.ts";
 import { createHostAdapter, rootUsageOf } from "./host.ts";
 import type { HostAdapter } from "./host.ts";
+import { heatColor } from "./status-color.ts";
+import type { HostColor } from "./status-color.ts";
 export { rootUsageOf } from "./host.ts";
 import { GIT_AUDIT_OPERATIONS, gitCommit, runGitAudit } from "./git.ts";
 import type { GitAuditRequest, GitRunner } from "./git.ts";
@@ -294,10 +296,40 @@ function statusTotals(session: PlannerSession): string {
 	return `${formatTotals(session.totals)}${ctx}`;
 }
 
+/** The theme surface the status line needs; `style` and `colors` exist only on pi >= 0.99. */
+interface StatusTheme {
+	fg: ExtensionContext["ui"]["theme"]["fg"];
+	style?: unknown;
+	colors?: unknown;
+}
+
+/** 0 at an empty context, 0.5 at half the warning threshold, 1 at the threshold and beyond. */
+function contextHeat(session: PlannerSession): number {
+	const threshold = contextWarnThreshold();
+	if (!session.rootContext || session.rootContext <= 0 || threshold <= 0) return 0;
+	return Math.min(session.rootContext / threshold, 1);
+}
+
+/**
+ * Cool-to-hot status text: the theme accent at an empty context, the warning
+ * color at half the threshold, the error color at the threshold. Hosts before
+ * pi 0.99 have no theme `style`/`colors` and keep the plain warning/error tokens.
+ */
+function statusText(theme: StatusTheme, session: PlannerSession, mode: PlannerMode, label: string): string {
+	if (mode !== "lite") return theme.fg("muted", label);
+	const colors = theme.colors as Partial<Record<"accent" | "warning" | "error", HostColor>> | undefined;
+	const style = theme.style;
+	if (typeof style === "function" && colors?.accent && colors.warning && colors.error) {
+		const fg = heatColor(contextHeat(session), colors.accent, colors.warning, colors.error);
+		return (style as (text: string, options: { fg: HostColor }) => string).call(theme, label, { fg });
+	}
+	return theme.fg(session.highContext ? "error" : "warning", label);
+}
+
 function updateStatus(session: PlannerSession, ctx: ExtensionContext, mode: PlannerMode = session.mode): void {
 	if (!ctx.hasUI) return;
 	const label = mode === "lite" ? `planner-only${isStrict() ? " (strict)" : ""} · ${statusTotals(session)}` : `planner-only: ${mode}`;
-	ctx.ui.setStatus(STATUS_KEY, ctx.ui.theme.fg(mode !== "lite" ? "muted" : session.highContext ? "error" : "warning", label));
+	ctx.ui.setStatus(STATUS_KEY, statusText(ctx.ui.theme, session, mode, label));
 }
 
 /** Adds our tools and hides pi-subagents' loader while enabled; restores both when off. */
