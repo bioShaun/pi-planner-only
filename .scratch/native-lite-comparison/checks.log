@@ -1,0 +1,752 @@
+Later read-only rechecks; not a reproduction of fetch stdout. Paths in this log identify this machine; results can be inspected without it.
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: git show -s --format='%H%n%P' f818cc91c98d6129a152fb28161e00d2f601e494
+f818cc91c98d6129a152fb28161e00d2f601e494
+3db1846aedb23a6b5552f69ffb70b552cdb94c7a 8168e126bed60d5a7f485718f17d7114d1322bfa
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: git merge-base --is-ancestor 3db1846aedb23a6b5552f69ffb70b552cdb94c7a f818cc91c98d6129a152fb28161e00d2f601e494
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: git merge-base --is-ancestor 8168e126bed60d5a7f485718f17d7114d1322bfa f818cc91c98d6129a152fb28161e00d2f601e494
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: git diff --no-ext-diff 3db1846aedb23a6b5552f69ffb70b552cdb94c7a f818cc91c98d6129a152fb28161e00d2f601e494
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 666cc95..4880737 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,10 @@
+ 
+ ## 0.9.0-lite.0 - unreleased
+ 
++- Per-delegation timeout (0ea2671, #32; d1ee6b3, #33): `delegate` takes an optional `timeoutSeconds` (integer 1..86400) that sets `timeoutMs` for that one run; omitted, it uses `PI_PLANNER_ONLY_TIMEOUT_MS` (default ten minutes). Invalid values are refused before Git access, locking, or dispatch. The child's task text states the effective limit ("N minutes" for whole minutes, otherwise "N seconds"; singular for one), and result details carry `timeoutMs`.
++- `/planner-only status` (0ea2671, #32): adds per-role diagnostics for the current session: calls, completed runtime terminals, timed_out, incomplete, refused, and cumulative child duration (concurrent runs overlap, so it is not wall time). They are in memory only, reset on a new session, and are not restored after `/reload`.
++- Context warning (187f687): delivered as `deliverAs: "steer"` instead of `"nextTurn"`, so it reaches the next model request in the same run. The advice is now per handoff mode: `off` suggests `/planner-only handoff` or `/compact` to the user and says not to initiate a handoff; `confirm` and `auto` tell Root to finish the current bounded operation and then prepare a handoff brief with the `handoff` tool, even when continuing the same large task.
++
+ - Status heat: the status color follows Root's context instead of switching yellow → red at the threshold — the theme accent at an empty context, the warning color at half `PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS`, and the error color at it (clamped beyond). `status-color.ts` interpolates the theme's own accent/warning/error in OKLCH along a downward hue path (blue → cyan → green → yellow → red) and mirrors pi-tui's color math without importing it; hosts before pi 0.99 have no theme `style`/`colors` and keep the plain warning/error tokens.
+ 
+ - Repository lock (f2fe050): worker and validator hold a repository exclusively; explorers share it (any number) and never run beside an exclusive holder; reviewer holds none. A refusal names the blocking holder.
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: sha256sum -c .scratch/reviewer-range-integration-20261027/combined-source-manifest.sha256
+.gitignore: OK
+AGENTS.md: OK
+CHANGELOG.md: OK
+CONTEXT.md: OK
+LICENSE: OK
+README.md: OK
+README.zh-CN.md: OK
+bench/README.md: OK
+bench/arms/direct-opus-calibration.json: OK
+bench/arms/direct-pds.json: OK
+bench/arms/direct-sol.json: OK
+bench/arms/lite-astra-guid-base.json: OK
+bench/arms/lite-ccmimo-strict-aa.json: OK
+bench/arms/lite-ccmimo-strict-readall.json: OK
+bench/arms/lite-ccmimo-strict.json: OK
+bench/arms/lite-ccmuse-strict-aa.json: OK
+bench/arms/lite-ccmuse-strict-readall.json: OK
+bench/arms/lite-ccmuse-strict.json: OK
+bench/arms/lite-cds-strict-aa.json: OK
+bench/arms/lite-cds-strict-readall.json: OK
+bench/arms/lite-cds-strict.json: OK
+bench/arms/lite-cmimo-strict-aa.json: OK
+bench/arms/lite-cmimo-strict-readall.json: OK
+bench/arms/lite-cmimo-strict.json: OK
+bench/arms/lite-cmuse-strict-aa.json: OK
+bench/arms/lite-cmuse-strict-readall.json: OK
+bench/arms/lite-cmuse-strict.json: OK
+bench/arms/lite-ds-strict-aa.json: OK
+bench/arms/lite-ds-strict-readall.json: OK
+bench/arms/lite-ds-strict.json: OK
+bench/arms/lite-gemini-strict-aa.json: OK
+bench/arms/lite-gemini-strict-readall.json: OK
+bench/arms/lite-gemini-strict.json: OK
+bench/arms/lite-gemini.json: OK
+bench/arms/lite-kimi-strict-aa.json: OK
+bench/arms/lite-kimi-strict-readall.json: OK
+bench/arms/lite-kimi-strict.json: OK
+bench/arms/lite-kimi.json: OK
+bench/arms/lite-mimo-strict-aa.json: OK
+bench/arms/lite-mimo-strict-readall.json: OK
+bench/arms/lite-mimo-strict.json: OK
+bench/arms/lite-opus-calibration.json: OK
+bench/arms/lite-opus.json: OK
+bench/arms/lite-pds-guid-base.json: OK
+bench/arms/lite-pds-guid-treat.json: OK
+bench/arms/lite-pds-head.json: OK
+bench/arms/lite-pds-strict-aa.json: OK
+bench/arms/lite-pds-strict-head.json: OK
+bench/arms/lite-pds-strict-readall.json: OK
+bench/arms/lite-pds-strict.json: OK
+bench/arms/lite-pglm-strict-aa.json: OK
+bench/arms/lite-pglm-strict-readall.json: OK
+bench/arms/lite-pglm-strict.json: OK
+bench/arms/lite-sol-guid-base.json: OK
+bench/arms/lite-sol-guid-treat.json: OK
+bench/arms/lite-sol.json: OK
+bench/arms/lite-sonnet-guid-base.json: OK
+bench/arms/lite-tds-guid-base.json: OK
+bench/arms/lite-tds-guid-treat.json: OK
+bench/arms/lite-tds-strict-base.json: OK
+bench/arms/lite-tds-strict-o2.json: OK
+bench/arms/lite-tds-strict-treat.json: OK
+bench/arms/native-opus-calibration.json: OK
+bench/arms/native-pds.json: OK
+bench/baselines/G1.failures.txt: OK
+bench/baselines/G2.failures.txt: OK
+bench/baselines/T1.failures.txt: OK
+bench/baselines/T2.failures.txt: OK
+bench/baselines/T3.failures.txt: OK
+bench/campaign.sh: OK
+bench/evaluate.sh: OK
+bench/fixtures/native-detached-replay/README.md: OK
+bench/fixtures/native-detached-replay/child-evidence/0669d2da-e632-4d48-9554-d35145bfd1da_worker_0_meta.json: OK
+bench/fixtures/native-detached-replay/child-evidence/0669d2da-e632-4d48-9554-d35145bfd1da_worker_0_transcript.jsonl.gz: OK
+bench/fixtures/native-detached-replay/child-evidence/5037c020-815d-420c-9012-a0fe17be7478_worker_0_meta.json: OK
+bench/fixtures/native-detached-replay/child-evidence/5037c020-815d-420c-9012-a0fe17be7478_worker_0_transcript.jsonl.gz: OK
+bench/fixtures/native-detached-replay/runs/T2b-native-opus-calibration-1.eval.json: OK
+bench/fixtures/native-detached-replay/runs/T2b-native-opus-calibration-1.exit: OK
+bench/fixtures/native-detached-replay/runs/T2b-native-opus-calibration-1.jsonl.gz: OK
+bench/fixtures/native-detached-replay/runs/T2b-native-opus-calibration-1.meta.json: OK
+bench/fixtures/native-detached-replay/runs/T2b-native-opus-calibration-1.wall: OK
+bench/fixtures/root-guidance/expand.sh: OK
+bench/fixtures/root-guidance/root-guidance.bundle: OK
+bench/goldcheck.sh: OK
+bench/guidance_metrics.py: OK
+bench/native_results.py: OK
+bench/overhead.mjs: OK
+bench/prepare-clone.sh: OK
+bench/prices.json: OK
+bench/run-body.sh: OK
+bench/run.sh: OK
+bench/runcheck.py: OK
+bench/summarize.py: OK
+bench/tasks/G1.json: OK
+bench/tasks/G1.md: OK
+bench/tasks/G2.json: OK
+bench/tasks/G2.md: OK
+bench/tasks/T1.json: OK
+bench/tasks/T1.md: OK
+bench/tasks/T2.json: OK
+bench/tasks/T2.md: OK
+bench/tasks/T2b.json: OK
+bench/tasks/T2b.md: OK
+bench/tasks/T3.json: OK
+bench/tasks/T3.md: OK
+bench/temp_guard.py: OK
+bench/test_guidance_metrics.py: OK
+bench/test_native.py: OK
+config.ts: OK
+contract.test.mjs: OK
+delegate.test.mjs: OK
+delegate.ts: OK
+docs/adr/0001-typed-delegation-contract.md: OK
+docs/adr/0002-split-delegation-creation-from-rebinding.md: OK
+docs/adr/0003-abort-is-its-own-tool-surface.md: OK
+docs/adr/0004-run-identity-is-root-stamped.md: OK
+docs/adr/0005-durable-request-admission.md: OK
+docs/adr/0006-stored-spec-rebinding.md: OK
+docs/adr/0007-verify-delegation-model-identity.md: OK
+docs/adr/0008-default-execution-wall-clock-ten-minutes.md: OK
+docs/adr/0009-report-only-submission-capability.md: OK
+docs/adr/0010-request-remaining-execution-envelope.md: OK
+docs/adr/0011-child-resume-is-not-exposed-in-lite.md: OK
+docs/agents/domain.md: OK
+docs/agents/issue-tracker.md: OK
+docs/agents/triage-labels.md: OK
+docs/archive/closeout-validation.md: OK
+docs/archive/default-safe-concurrency-2026-09-11-spec.md: OK
+docs/archive/pi-planner-only-cost-comparison-protocol.md: OK
+docs/archive/pi-planner-only-evidence-authority-spec.md: OK
+docs/archive/pi-planner-only-hardening-spec.md: OK
+docs/archive/pi-planner-only-maturity-review.md: OK
+docs/archive/pi-planner-only-p0-p1-hardening-spec.md: OK
+docs/archive/pi-planner-only-pending-delegation-blocker.md: OK
+docs/archive/pi-planner-only-stability-and-delegation-plan.md: OK
+docs/archive/pi-planner-only-v0.2-spec.md: OK
+docs/archive/pi-planner-only-v0.2.4-runtime-fixes-spec.md: OK
+docs/archive/pi-planner-only-v0.3-verdict-and-usage-spec.md: OK
+docs/archive/pi-planner-only-v0.3.1-spec.md: OK
+docs/archive/pi-planner-only-v0.3.2-spec.md: OK
+docs/archive/runtime-audit-2026-09-11.md: OK
+docs/archive/runtime-batch-a-2026-09-11-acceptance.md: OK
+docs/archive/runtime-identity-and-spec-repair-2026-09-11-spec.md: OK
+docs/archive/runtime-optimization-audit-2026-09-11.md: OK
+docs/archive/runtime-reliability-2026-09-11-progress.md: OK
+docs/archive/runtime-reliability-2026-09-11-spec.md: OK
+docs/archive/runtime-rt01-06-implementation-audit-2026-09-12.md: OK
+docs/archive/runtime-session-013147-2026-09-12-evidence.md: OK
+docs/archive/runtime-session-013147-2026-09-12-followup-split.md: OK
+docs/archive/runtime-session-013147-2026-09-12-optimization-spec.md: OK
+docs/archive/runtime-session-122554-2026-09-11-optimization-spec.md: OK
+docs/archive/runtime-session-143619-2026-09-11-optimization-spec.md: OK
+docs/lite-direction-review-2026-09-25.md: OK
+docs/lite-handoff-measurement-protocol.md: OK
+docs/lite-measurement-2026-09-24.md: OK
+docs/pi-planner-only-subtraction-plan.md: OK
+docs/planner-offline-baseline-2026-10-26.md: OK
+docs/planner-optimization-plan-2026-10-26.md: OK
+docs/research-cursor-cli-parallel-subagents-2026-10-10.md: OK
+docs/research-orchestration-frameworks-2026-10-26.md: OK
+docs/research-orchestration-tools-2026-10-01.md: OK
+docs/research-planner-optimizations-2026-10-26.md: OK
+docs/research-root-model-routing-2026-10-08.md: OK
+docs/research-root-task-decomposition-2026-09-28.md: OK
+docs/root-model-compare-progress-2026-10-08.md: OK
+docs/worker-concurrency-options-2026-09-29.md: OK
+docs/worker-tiers-evidence-2026-10-06.md: OK
+docs/worker-tiers-proposal-2026-10-06.md: OK
+fixtures/isolated-release/package-lock.json: OK
+fixtures/isolated-release/package.json: OK
+format.ts: OK
+git.test.mjs: OK
+git.ts: OK
+handoff.test.mjs: OK
+handoff.ts: OK
+host-runtime.test.mjs: OK
+host.test.mjs: OK
+host.ts: OK
+index.test.mjs: OK
+index.ts: OK
+isolated-release.test.mjs: OK
+package-lock.json: OK
+package.json: OK
+reviewer-range.test.mjs: OK
+scripts/test-release-isolated.mjs: OK
+skills-lock.json: OK
+status-color.test.mjs: OK
+status-color.ts: OK
+subagent-artifacts.ts: OK
+subagent-delegation-contract.ts: OK
+test-helpers.mjs: OK
+tsconfig.json: OK
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/project/tmp/pi-native-lite-20261027/worktree
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: sha256sum -c /home/tcuni-claw/pi/pi-planner-only/.scratch/reviewer-range-integration-20261027/combined-source-manifest.sha256
+.gitignore: OK
+AGENTS.md: OK
+CHANGELOG.md: FAILED
+CONTEXT.md: OK
+LICENSE: OK
+README.md: OK
+README.zh-CN.md: OK
+bench/README.md: OK
+bench/arms/direct-opus-calibration.json: OK
+bench/arms/direct-pds.json: OK
+bench/arms/direct-sol.json: OK
+bench/arms/lite-astra-guid-base.json: OK
+bench/arms/lite-ccmimo-strict-aa.json: OK
+bench/arms/lite-ccmimo-strict-readall.json: OK
+bench/arms/lite-ccmimo-strict.json: OK
+bench/arms/lite-ccmuse-strict-aa.json: OK
+bench/arms/lite-ccmuse-strict-readall.json: OK
+bench/arms/lite-ccmuse-strict.json: OK
+bench/arms/lite-cds-strict-aa.json: OK
+bench/arms/lite-cds-strict-readall.json: OK
+bench/arms/lite-cds-strict.json: OK
+bench/arms/lite-cmimo-strict-aa.json: OK
+bench/arms/lite-cmimo-strict-readall.json: OK
+bench/arms/lite-cmimo-strict.json: OK
+bench/arms/lite-cmuse-strict-aa.json: OK
+bench/arms/lite-cmuse-strict-readall.json: OK
+bench/arms/lite-cmuse-strict.json: OK
+bench/arms/lite-ds-strict-aa.json: OK
+bench/arms/lite-ds-strict-readall.json: OK
+bench/arms/lite-ds-strict.json: OK
+bench/arms/lite-gemini-strict-aa.json: OK
+bench/arms/lite-gemini-strict-readall.json: OK
+bench/arms/lite-gemini-strict.json: OK
+bench/arms/lite-gemini.json: OK
+bench/arms/lite-kimi-strict-aa.json: OK
+bench/arms/lite-kimi-strict-readall.json: OK
+bench/arms/lite-kimi-strict.json: OK
+bench/arms/lite-kimi.json: OK
+bench/arms/lite-mimo-strict-aa.json: OK
+bench/arms/lite-mimo-strict-readall.json: OK
+bench/arms/lite-mimo-strict.json: OK
+bench/arms/lite-opus-calibration.json: OK
+bench/arms/lite-opus.json: OK
+bench/arms/lite-pds-guid-base.json: OK
+bench/arms/lite-pds-guid-treat.json: OK
+bench/arms/lite-pds-head.json: OK
+bench/arms/lite-pds-strict-aa.json: OK
+bench/arms/lite-pds-strict-head.json: OK
+bench/arms/lite-pds-strict-readall.json: OK
+bench/arms/lite-pds-strict.json: OK
+bench/arms/lite-pglm-strict-aa.json: OK
+bench/arms/lite-pglm-strict-readall.json: OK
+bench/arms/lite-pglm-strict.json: OK
+bench/arms/lite-sol-guid-base.json: OK
+bench/arms/lite-sol-guid-treat.json: OK
+bench/arms/lite-sol.json: OK
+bench/arms/lite-sonnet-guid-base.json: OK
+bench/arms/lite-tds-guid-base.json: OK
+bench/arms/lite-tds-guid-treat.json: OK
+bench/arms/lite-tds-strict-base.json: OK
+bench/arms/lite-tds-strict-o2.json: OK
+bench/arms/lite-tds-strict-treat.json: OK
+bench/arms/native-opus-calibration.json: OK
+bench/arms/native-pds.json: OK
+bench/baselines/G1.failures.txt: OK
+bench/baselines/G2.failures.txt: OK
+bench/baselines/T1.failures.txt: OK
+bench/baselines/T2.failures.txt: OK
+bench/baselines/T3.failures.txt: OK
+bench/campaign.sh: OK
+bench/evaluate.sh: OK
+bench/fixtures/native-detached-replay/README.md: OK
+bench/fixtures/native-detached-replay/child-evidence/0669d2da-e632-4d48-9554-d35145bfd1da_worker_0_meta.json: OK
+bench/fixtures/native-detached-replay/child-evidence/0669d2da-e632-4d48-9554-d35145bfd1da_worker_0_transcript.jsonl.gz: OK
+bench/fixtures/native-detached-replay/child-evidence/5037c020-815d-420c-9012-a0fe17be7478_worker_0_meta.json: OK
+bench/fixtures/native-detached-replay/child-evidence/5037c020-815d-420c-9012-a0fe17be7478_worker_0_transcript.jsonl.gz: OK
+bench/fixtures/native-detached-replay/runs/T2b-native-opus-calibration-1.eval.json: OK
+bench/fixtures/native-detached-replay/runs/T2b-native-opus-calibration-1.exit: OK
+bench/fixtures/native-detached-replay/runs/T2b-native-opus-calibration-1.jsonl.gz: OK
+bench/fixtures/native-detached-replay/runs/T2b-native-opus-calibration-1.meta.json: OK
+bench/fixtures/native-detached-replay/runs/T2b-native-opus-calibration-1.wall: OK
+bench/fixtures/root-guidance/expand.sh: OK
+bench/fixtures/root-guidance/root-guidance.bundle: OK
+bench/goldcheck.sh: OK
+bench/guidance_metrics.py: OK
+bench/native_results.py: OK
+bench/overhead.mjs: OK
+bench/prepare-clone.sh: OK
+bench/prices.json: OK
+bench/run-body.sh: OK
+bench/run.sh: OK
+bench/runcheck.py: OK
+bench/summarize.py: OK
+bench/tasks/G1.json: OK
+bench/tasks/G1.md: OK
+bench/tasks/G2.json: OK
+bench/tasks/G2.md: OK
+bench/tasks/T1.json: OK
+bench/tasks/T1.md: OK
+bench/tasks/T2.json: OK
+bench/tasks/T2.md: OK
+bench/tasks/T2b.json: OK
+bench/tasks/T2b.md: OK
+bench/tasks/T3.json: OK
+bench/tasks/T3.md: OK
+bench/temp_guard.py: OK
+bench/test_guidance_metrics.py: OK
+bench/test_native.py: OK
+config.ts: OK
+contract.test.mjs: OK
+delegate.test.mjs: OK
+delegate.ts: OK
+docs/adr/0001-typed-delegation-contract.md: OK
+docs/adr/0002-split-delegation-creation-from-rebinding.md: OK
+docs/adr/0003-abort-is-its-own-tool-surface.md: OK
+docs/adr/0004-run-identity-is-root-stamped.md: OK
+docs/adr/0005-durable-request-admission.md: OK
+docs/adr/0006-stored-spec-rebinding.md: OK
+docs/adr/0007-verify-delegation-model-identity.md: OK
+docs/adr/0008-default-execution-wall-clock-ten-minutes.md: OK
+docs/adr/0009-report-only-submission-capability.md: OK
+docs/adr/0010-request-remaining-execution-envelope.md: OK
+docs/adr/0011-child-resume-is-not-exposed-in-lite.md: OK
+docs/agents/domain.md: OK
+docs/agents/issue-tracker.md: OK
+docs/agents/triage-labels.md: OK
+docs/archive/closeout-validation.md: OK
+docs/archive/default-safe-concurrency-2026-09-11-spec.md: OK
+docs/archive/pi-planner-only-cost-comparison-protocol.md: OK
+docs/archive/pi-planner-only-evidence-authority-spec.md: OK
+docs/archive/pi-planner-only-hardening-spec.md: OK
+docs/archive/pi-planner-only-maturity-review.md: OK
+docs/archive/pi-planner-only-p0-p1-hardening-spec.md: OK
+docs/archive/pi-planner-only-pending-delegation-blocker.md: OK
+docs/archive/pi-planner-only-stability-and-delegation-plan.md: OK
+docs/archive/pi-planner-only-v0.2-spec.md: OK
+docs/archive/pi-planner-only-v0.2.4-runtime-fixes-spec.md: OK
+docs/archive/pi-planner-only-v0.3-verdict-and-usage-spec.md: OK
+docs/archive/pi-planner-only-v0.3.1-spec.md: OK
+docs/archive/pi-planner-only-v0.3.2-spec.md: OK
+docs/archive/runtime-audit-2026-09-11.md: OK
+docs/archive/runtime-batch-a-2026-09-11-acceptance.md: OK
+docs/archive/runtime-identity-and-spec-repair-2026-09-11-spec.md: OK
+docs/archive/runtime-optimization-audit-2026-09-11.md: OK
+docs/archive/runtime-reliability-2026-09-11-progress.md: OK
+docs/archive/runtime-reliability-2026-09-11-spec.md: OK
+docs/archive/runtime-rt01-06-implementation-audit-2026-09-12.md: OK
+docs/archive/runtime-session-013147-2026-09-12-evidence.md: OK
+docs/archive/runtime-session-013147-2026-09-12-followup-split.md: OK
+docs/archive/runtime-session-013147-2026-09-12-optimization-spec.md: OK
+docs/archive/runtime-session-122554-2026-09-11-optimization-spec.md: OK
+docs/archive/runtime-session-143619-2026-09-11-optimization-spec.md: OK
+docs/lite-direction-review-2026-09-25.md: OK
+docs/lite-handoff-measurement-protocol.md: OK
+docs/lite-measurement-2026-09-24.md: OK
+docs/pi-planner-only-subtraction-plan.md: OK
+docs/planner-offline-baseline-2026-10-26.md: OK
+docs/planner-optimization-plan-2026-10-26.md: OK
+docs/research-cursor-cli-parallel-subagents-2026-10-10.md: OK
+docs/research-orchestration-frameworks-2026-10-26.md: OK
+docs/research-orchestration-tools-2026-10-01.md: OK
+docs/research-planner-optimizations-2026-10-26.md: OK
+docs/research-root-model-routing-2026-10-08.md: OK
+docs/research-root-task-decomposition-2026-09-28.md: OK
+docs/root-model-compare-progress-2026-10-08.md: OK
+docs/worker-concurrency-options-2026-09-29.md: OK
+docs/worker-tiers-evidence-2026-10-06.md: OK
+docs/worker-tiers-proposal-2026-10-06.md: OK
+fixtures/isolated-release/package-lock.json: OK
+fixtures/isolated-release/package.json: OK
+format.ts: OK
+git.test.mjs: OK
+git.ts: OK
+handoff.test.mjs: OK
+handoff.ts: OK
+host-runtime.test.mjs: OK
+host.test.mjs: OK
+host.ts: OK
+index.test.mjs: OK
+index.ts: OK
+isolated-release.test.mjs: OK
+package-lock.json: OK
+package.json: OK
+reviewer-range.test.mjs: OK
+scripts/test-release-isolated.mjs: OK
+skills-lock.json: OK
+status-color.test.mjs: OK
+status-color.ts: OK
+subagent-artifacts.ts: OK
+subagent-delegation-contract.ts: OK
+test-helpers.mjs: OK
+tsconfig.json: OK
+sha256sum: WARNING: 1 computed checksum did NOT match
+actual_exit=1
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: sha256sum 'docs/diagnosis-supervisor-declaration.md' '.scratch/native-lite-comparison/archive/diagnosis-supervisor-declaration.md'
+76b61967c2812134b39ffc761be9e66053bbb24b0d141f87c46ae29df7890958  docs/diagnosis-supervisor-declaration.md
+76b61967c2812134b39ffc761be9e66053bbb24b0d141f87c46ae29df7890958  .scratch/native-lite-comparison/archive/diagnosis-supervisor-declaration.md
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: cmp -s 'docs/diagnosis-supervisor-declaration.md' '.scratch/native-lite-comparison/archive/diagnosis-supervisor-declaration.md'
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: sha256sum 'docs/native-lite-execution-plan-2026-10-27.md' '.scratch/native-lite-comparison/archive/native-lite-execution-plan-2026-10-27.md'
+499be5aeb26363f9e93e09d71af404d948567f5f94e38cce5b9c248d521bafbc  docs/native-lite-execution-plan-2026-10-27.md
+499be5aeb26363f9e93e09d71af404d948567f5f94e38cce5b9c248d521bafbc  .scratch/native-lite-comparison/archive/native-lite-execution-plan-2026-10-27.md
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: cmp -s 'docs/native-lite-execution-plan-2026-10-27.md' '.scratch/native-lite-comparison/archive/native-lite-execution-plan-2026-10-27.md'
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: sha256sum 'docs/research-native-workflow-concurrency-2026-10-27.md' '.scratch/native-lite-comparison/archive/research-native-workflow-concurrency-2026-10-27.md'
+c34bbf376281613365aa466cb4a6943861f18bbe013003a05975d826e5f476bb  docs/research-native-workflow-concurrency-2026-10-27.md
+c34bbf376281613365aa466cb4a6943861f18bbe013003a05975d826e5f476bb  .scratch/native-lite-comparison/archive/research-native-workflow-concurrency-2026-10-27.md
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: cmp -s 'docs/research-native-workflow-concurrency-2026-10-27.md' '.scratch/native-lite-comparison/archive/research-native-workflow-concurrency-2026-10-27.md'
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: sha256sum 'docs/research-pi-subagents-supervisor.md' '.scratch/native-lite-comparison/archive/research-pi-subagents-supervisor.md'
+748dcd0a98fa7f7c94b94ab6519166536cf43fb27e5d5ea3540daf1dc994c65f  docs/research-pi-subagents-supervisor.md
+748dcd0a98fa7f7c94b94ab6519166536cf43fb27e5d5ea3540daf1dc994c65f  .scratch/native-lite-comparison/archive/research-pi-subagents-supervisor.md
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: cmp -s 'docs/research-pi-subagents-supervisor.md' '.scratch/native-lite-comparison/archive/research-pi-subagents-supervisor.md'
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: sha256sum 'docs/research-pi-subagents-supervisor-upstream.md' '.scratch/native-lite-comparison/archive/research-pi-subagents-supervisor-upstream.md'
+4ac2c9a32fdc45627ad82341db2a43acf1727ebc2bab9359d3c2485abc6b6d77  docs/research-pi-subagents-supervisor-upstream.md
+4ac2c9a32fdc45627ad82341db2a43acf1727ebc2bab9359d3c2485abc6b6d77  .scratch/native-lite-comparison/archive/research-pi-subagents-supervisor-upstream.md
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: cmp -s 'docs/research-pi-subagents-supervisor-upstream.md' '.scratch/native-lite-comparison/archive/research-pi-subagents-supervisor-upstream.md'
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: sha256sum '/project/tmp/native-status-acceptance-20261027/acceptance.md' '.scratch/native-lite-comparison/archive/native-status-acceptance.md'
+f81e96cfdb70047a2395f9fad4890b2e7f820ffb2e56278012e82b1aa8f3878e  /project/tmp/native-status-acceptance-20261027/acceptance.md
+f81e96cfdb70047a2395f9fad4890b2e7f820ffb2e56278012e82b1aa8f3878e  .scratch/native-lite-comparison/archive/native-status-acceptance.md
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: cmp -s '/project/tmp/native-status-acceptance-20261027/acceptance.md' '.scratch/native-lite-comparison/archive/native-status-acceptance.md'
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: sha256sum /home/tcuni-claw/.pi/agent/sessions/--home-tcuni-claw-pi-pi-planner-only--/subagent-artifacts/outputs/2214029c-2ab9-471f-8e5b-e778cc863edf/native-lite/review.md .scratch/native-lite-comparison/review-initial.md
+ab789a96fcb35b70fd81272f3b0fbfb118058aa72fd8f632ada0a7076902bb72  /home/tcuni-claw/.pi/agent/sessions/--home-tcuni-claw-pi-pi-planner-only--/subagent-artifacts/outputs/2214029c-2ab9-471f-8e5b-e778cc863edf/native-lite/review.md
+ab789a96fcb35b70fd81272f3b0fbfb118058aa72fd8f632ada0a7076902bb72  .scratch/native-lite-comparison/review-initial.md
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: cmp -s /home/tcuni-claw/.pi/agent/sessions/--home-tcuni-claw-pi-pi-planner-only--/subagent-artifacts/outputs/2214029c-2ab9-471f-8e5b-e778cc863edf/native-lite/review.md .scratch/native-lite-comparison/review-initial.md
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: git rev-parse HEAD
+3db1846aedb23a6b5552f69ffb70b552cdb94c7a
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: git write-tree
+e5f77163dc3beed920e9a5661c6e0931e9830d2e
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: git status --porcelain=v1 --untracked-files=no
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: git diff --exit-code
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: git diff --cached --exit-code
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: sha256sum --quiet --status -c /project/tmp/pi-native-lite-20261027/untracked.sha256
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: git -C /home/tcuni-claw/.pi/agent/git/github.com/bioShaun/pi-planner-only rev-parse HEAD
+8168e126bed60d5a7f485718f17d7114d1322bfa
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: git -C /home/tcuni-claw/.pi/agent/git/github.com/bioShaun/pi-planner-only status --porcelain=v1 --untracked-files=no
+ M index.ts
+ M package-lock.json
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: node -p "require(process.env.HOME+\"/.pi/agent/git/github.com/bioShaun/pi-planner-only/package.json\").version"
+0.9.0-lite.0
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: node -p "require(process.env.HOME+\"/.pi/agent/npm/node_modules/pi-subagents/package.json\").version"
+0.83.0
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: node -e 'const s=require(process.env.HOME+"/.pi/agent/settings.json"); console.log(JSON.stringify((s.packages||[]).filter(x=>typeof x==="string" && x.includes("pi-planner-only"))))'
+["https://github.com/bioShaun/pi-planner-only"]
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: node -p "require(\"./package.json\").version"
+0.9.0-lite.0
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: command -v pi
+/home/tcuni-claw/.pi/agent/bin/pi
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: readlink -f "$(command -v pi)"
+/home/tcuni-claw/.pi/agent/bin/pi
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: sha256sum package.json index.ts package-lock.json /home/tcuni-claw/.pi/agent/git/github.com/bioShaun/pi-planner-only/package.json /home/tcuni-claw/.pi/agent/git/github.com/bioShaun/pi-planner-only/index.ts /home/tcuni-claw/.pi/agent/git/github.com/bioShaun/pi-planner-only/package-lock.json /home/tcuni-claw/.pi/agent/npm/node_modules/pi-subagents/package.json
+4d002868d0ba3096f046a3f54699c453ce98e0bdcf2a7febebe4249c6ddfee48  package.json
+0a8b277e12d92ead7151fe9850dcaebfea2c10207f1134667cbe22a23f5887a1  index.ts
+105da12bbe51f12dfe2862e0cbf8641c0cd2bf6f7f1f1e266309ef5a828a6fd4  package-lock.json
+69ff47cfcbd655682610169921b3bf92a739136c7c49d68ca7dd206e04df8cb7  /home/tcuni-claw/.pi/agent/git/github.com/bioShaun/pi-planner-only/package.json
+832d783eb50d95838c8cb73229810c55050cff779f91ffe694639ee10b9aac04  /home/tcuni-claw/.pi/agent/git/github.com/bioShaun/pi-planner-only/index.ts
+ca55fb0cc65d536940141b670cfb59bcd724129d8a368027078009ce8212870a  /home/tcuni-claw/.pi/agent/git/github.com/bioShaun/pi-planner-only/package-lock.json
+753e66504724d74e12dd02ba324744dbe3a9a5073dc5ffdf22c0154ebf36b7e8  /home/tcuni-claw/.pi/agent/npm/node_modules/pi-subagents/package.json
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: git diff --no-index --stat /project/tmp/pi-native-lite-20261027/worktree/index.ts /home/tcuni-claw/.pi/agent/git/github.com/bioShaun/pi-planner-only/index.ts
+ .../git/github.com/bioShaun/pi-planner-only}/index.ts  | 18 ++++++++----------
+ 1 file changed, 8 insertions(+), 10 deletions(-)
+actual_exit=1
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: for f in .scratch/supervisor-declaration/{live-tools.jsonl,slim-tools.before.ts,slim-red.log,slim-green.log,slim-integration-green.log,check.log,probe-red.log,probe-green.log} .scratch/reviewer-range-integration-20261027/acceptance.md docs/planner-optimization-plan-2026-10-26.md docs/planner-offline-baseline-2026-10-26.md; do if test -f "$f"; then printf "present %s\n" "$f"; else printf "missing %s\n" "$f"; fi; done
+present .scratch/supervisor-declaration/live-tools.jsonl
+present .scratch/supervisor-declaration/slim-tools.before.ts
+present .scratch/supervisor-declaration/slim-red.log
+present .scratch/supervisor-declaration/slim-green.log
+present .scratch/supervisor-declaration/slim-integration-green.log
+present .scratch/supervisor-declaration/check.log
+present .scratch/supervisor-declaration/probe-red.log
+present .scratch/supervisor-declaration/probe-green.log
+present .scratch/reviewer-range-integration-20261027/acceptance.md
+present docs/planner-optimization-plan-2026-10-26.md
+present docs/planner-offline-baseline-2026-10-26.md
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: git diff --check
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: git diff --cached --check
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: git diff --no-index --check /dev/null .scratch/native-lite-comparison/sync.md
+actual_exit=1
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: git diff --no-index --check /dev/null .scratch/native-lite-comparison/evidence-index.md
+actual_exit=1
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: git diff --no-index --check /dev/null .scratch/native-lite-comparison/native-runtime.md
+actual_exit=1
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: git diff --no-index --check /dev/null .scratch/native-lite-comparison/link-check.md
+actual_exit=1
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: cat /project/tmp/pi-native-lite-20261027/check-links.cjs
+const fs = require('fs');
+const path = require('path');
+const root = '.scratch/native-lite-comparison';
+const files = fs.readdirSync(root).filter(f => f.endsWith('.md') && f !== 'root-brief.md').map(f => path.join(root, f));
+const archive = fs.readdirSync(path.join(root, 'archive')).filter(f => f.endsWith('.md')).map(f => path.join(root, 'archive', f));
+let missing = 0, total = 0;
+for (const file of [...files, ...archive]) {
+  const text = fs.readFileSync(file, 'utf8');
+  for (const match of text.matchAll(/\]\(([^)]+)\)/g)) {
+    let target = match[1].trim().split(/\s+/)[0].replace(/^<|>$/g, '');
+    if (/^(?:[a-z]+:|#|\/\/)/i.test(target)) continue;
+    target = decodeURI(target.split('#')[0]);
+    if (path.isAbsolute(target) && file.endsWith('/review-initial.md')) target = target.replace(/:\d+$/, '');
+    if (!target) continue;
+    total++;
+    const exists = fs.existsSync(path.resolve(path.dirname(file), target));
+    if (!exists) { missing++; console.log(`MISSING ${file} -> ${target}`); }
+  }
+}
+console.log(`checked=${total} missing=${missing}`);
+process.exitCode = missing ? 1 : 0;
+actual_exit=0
+
+### 2026-10-27T10:11:49Z
+cwd=/home/tcuni-claw/pi/pi-planner-only
+TMPDIR=/project/tmp/pi-native-lite-20261027
+command: node /project/tmp/pi-native-lite-20261027/check-links.cjs
+MISSING .scratch/native-lite-comparison/observations.md -> recommendation.md
+MISSING .scratch/native-lite-comparison/archive/diagnosis-supervisor-declaration.md -> ../.scratch/supervisor-declaration/live-tools.jsonl
+MISSING .scratch/native-lite-comparison/archive/diagnosis-supervisor-declaration.md -> ../.scratch/supervisor-declaration/slim-tools.before.ts
+MISSING .scratch/native-lite-comparison/archive/diagnosis-supervisor-declaration.md -> ../.scratch/supervisor-declaration/slim-red.log
+MISSING .scratch/native-lite-comparison/archive/diagnosis-supervisor-declaration.md -> ../.scratch/supervisor-declaration/slim-green.log
+MISSING .scratch/native-lite-comparison/archive/diagnosis-supervisor-declaration.md -> ../.scratch/supervisor-declaration/slim-integration-green.log
+MISSING .scratch/native-lite-comparison/archive/diagnosis-supervisor-declaration.md -> ../.scratch/supervisor-declaration/check.log
+MISSING .scratch/native-lite-comparison/archive/diagnosis-supervisor-declaration.md -> ../.scratch/supervisor-declaration/probe-red.log
+MISSING .scratch/native-lite-comparison/archive/diagnosis-supervisor-declaration.md -> ../.scratch/supervisor-declaration/probe-green.log
+MISSING .scratch/native-lite-comparison/archive/native-lite-execution-plan-2026-10-27.md -> ../.scratch/reviewer-range-integration-20261027/acceptance.md
+MISSING .scratch/native-lite-comparison/archive/native-lite-execution-plan-2026-10-27.md -> planner-optimization-plan-2026-10-26.md
+MISSING .scratch/native-lite-comparison/archive/native-lite-execution-plan-2026-10-27.md -> planner-offline-baseline-2026-10-26.md
+checked=60 missing=12
+actual_exit=1

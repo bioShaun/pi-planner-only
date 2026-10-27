@@ -1,0 +1,8 @@
+# Native runtime inventory
+
+- Source candidate `f818cc91c98d6129a152fb28161e00d2f601e494`; package version `0.9.0-lite.0`. Source `index.ts` SHA-256 `0a8b277e12d92ead7151fe9850dcaebfea2c10207f1134667cbe22a23f5887a1`, lock `105da12bbe51f12dfe2862e0cbf8641c0cd2bf6f7f1f1e266309ef5a828a6fd4`.
+- Configured repository URL points to pi-planner-only. Local package checkout `/home/tcuni-claw/.pi/agent/git/github.com/bioShaun/pi-planner-only` reports version `0.9.0-lite.0`, HEAD `8168e126bed60d5a7f485718f17d7114d1322bfa`, dirty `index.ts` and `package-lock.json`. Their SHA-256 values are `832d783eb50d95838c8cb73229810c55050cff779f91ffe694639ee10b9aac04` and `ca55fb0cc65d536940141b670cfb59bcd724129d8a368027078009ce8212870a`. `git diff --no-index --stat` versus candidate index exits 1, 8 additions and 10 deletions in installed file. This does not establish all installed source or dependencies match.
+- Installed pi-subagents path `/home/tcuni-claw/.pi/agent/npm/node_modules/pi-subagents`, version `0.83.0`, package.json SHA-256 `753e66504724d74e12dd02ba324744dbe3a9a5073dc5ffdf22c0154ebf36b7e8`. Current pi executable resolves to `/home/tcuni-claw/.pi/agent/bin/pi`.
+- These are filesystem/configuration observations, not proof of what an existing Pi session loaded. Active Pi mode and loaded version: unknown; this worker sees file/command tools and supervisor contact, not a Pi session's live tool inventory. Historical Native acceptance records a visible skill and a successful supervisor list, not this session's active state. No genuine pending supervisor request occurred here; end-to-end reply is unverified. No reload or installation was performed.
+
+The exact inventory commands, output and exits from the later recheck are in [checks log](checks.log).

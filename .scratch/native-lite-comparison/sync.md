@@ -1,0 +1,13 @@
+# Synchronization evidence
+
+Preparation scope: external integration only; the worker did not update, stage or commit main. Root's later acceptance and fast-forward are recorded below.
+
+- Initial HEAD `3db1846aedb23a6b5552f69ffb70b552cdb94c7a`; original and fetched origin/main `8168e126bed60d5a7f485718f17d7114d1322bfa`; merge base `6e2c95a091fd0eb17e0ec3b8915affcebc3c29ab`; initial index tree `e5f77163dc3beed920e9a5661c6e0931e9830d2e`. Initial tracked and staged diffs were empty.
+- `git fetch origin` exit 0. `git log --oneline HEAD..origin/main` exit 0: 8168e12, 460b710, d765909. `git diff HEAD...origin/main` exit 0: only CHANGELOG.md, four added lines. No unexpected product change.
+- `git worktree add -b native-lite-integration-20261027 /project/tmp/pi-native-lite-20261027/worktree HEAD` and `git -C /project/tmp/pi-native-lite-20261027/worktree -c core.hooksPath=/dev/null merge --no-ff --no-edit origin/main` exit 0. Merge `f818cc91c98d6129a152fb28161e00d2f601e494`, parents `3db1846aedb23a6b5552f69ffb70b552cdb94c7a` and `8168e126bed60d5a7f485718f17d7114d1322bfa`. Net diff from first parent: CHANGELOG.md four additions. `git diff --check 3db1846 HEAD` in worktree exit 0.
+- `sha256sum -c .scratch/reviewer-range-integration-20261027/combined-source-manifest.sha256` in main exit 0, 192/192. Same check in candidate exit 1: 191/192, only CHANGELOG.md differs as expected. Source, tests and locks in the 192 entries match. Historical release is relevant to unchanged product files but complete dependency/environment identity is not established; do not claim complete release reuse. Pure documentation merge: no new product release run.
+- Initial status, index, tracked diff and original untracked fingerprints are saved as supplementary machine-local `/project/tmp/pi-native-lite-20261027/initial.txt` and `untracked.sha256`. All untracked files enumerated by Git are fingerprinted except `node-compile-cache/`, excluded as potentially large generated cache; that exclusion is not permission to overwrite it. Ignored files are outside the fingerprint inventory and also remain protected.
+
+The preparation above kept main unchanged. After inspecting the actual merge diff, parents and repaired evidence, Root accepted the candidate and ran `git merge --ff-only f818cc91c98d6129a152fb28161e00d2f601e494` on main (exit 0): `Updating 3db1846..f818cc9`, `Fast-forward`, `CHANGELOG.md | 4 ++++`. This later, explicit acceptance preserves both histories. Evidence-only commit follows separately. See [Root acceptance](recommendation.md) and [evidence index](evidence-index.md).
+
+For fixed-SHA rechecks, full output, commands and exits, see [checks log](checks.log). These are later rechecks, not the original fetch output.
