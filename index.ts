@@ -5,6 +5,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { AGENT_DIR, DEFAULT_LIMITS, loadConfig } from "./config.ts";
@@ -162,12 +163,16 @@ export class PlannerSession {
 	roleStats: Record<Role, RoleStats> = emptyRoleStats();
 	rootContext: number | undefined;
 	contextWarned = false;
+	nativeChild: { tokens: number; cost: number } | undefined;
+	nativeGeneration = 0;
 
 	reset(): void {
 		this.totals = emptyTotals();
 		this.roleStats = emptyRoleStats();
 		this.rootContext = undefined;
 		this.contextWarned = false;
+		this.nativeChild = undefined;
+		this.nativeGeneration++;
 	}
 
 	async trackDelegation<T>(run: () => Promise<T>): Promise<T> {
@@ -297,6 +302,12 @@ function statusTotals(session: PlannerSession): string {
 	return `${formatTotals(session.totals)}${ctx}`;
 }
 
+function nativeTotals(session: PlannerSession): string {
+	const child = session.nativeChild;
+	const context = session.rootContext ? ` · ctx ${formatTokens(session.rootContext)}` : "";
+	return `root ${formatTokens(session.totals.rootTokens)} $${session.totals.rootCost.toFixed(3)} · child ${child ? `≥${formatTokens(child.tokens)} ≥$${child.cost.toFixed(3)}` : "unavailable"}${context}`;
+}
+
 /** The theme surface the status line needs; `style` and `colors` exist only on pi >= 0.99. */
 interface StatusTheme {
 	fg: ExtensionContext["ui"]["theme"]["fg"];
@@ -317,7 +328,7 @@ function contextHeat(session: PlannerSession): number {
  * pi 0.99 have no theme `style`/`colors` and keep the plain warning/error tokens.
  */
 function statusText(theme: StatusTheme, session: PlannerSession, mode: PlannerMode, label: string): string {
-	if (mode !== "lite") return theme.fg("muted", label);
+	if (mode === "off") return theme.fg("muted", label);
 	const colors = theme.colors as Partial<Record<"accent" | "warning" | "error", HostColor>> | undefined;
 	const style = theme.style;
 	if (typeof style === "function" && colors?.accent && colors.warning && colors.error) {
@@ -329,7 +340,7 @@ function statusText(theme: StatusTheme, session: PlannerSession, mode: PlannerMo
 
 function updateStatus(session: PlannerSession, ctx: ExtensionContext, mode: PlannerMode = session.mode): void {
 	if (!ctx.hasUI) return;
-	const label = mode === "lite" ? `planner-only${isStrict() ? " (strict)" : ""} · ${statusTotals(session)}` : `planner-only: ${mode}`;
+	const label = mode === "lite" ? `planner-only${isStrict() ? " (strict)" : ""} · ${statusTotals(session)}` : mode === "native" ? `planner-only: native · ${nativeTotals(session)}` : `planner-only: ${mode}`;
 	ctx.ui.setStatus(STATUS_KEY, statusText(ctx.ui.theme, session, mode, label));
 }
 
@@ -460,7 +471,7 @@ function notifyStatus(runtime: PlannerRuntime, ctx: ExtensionContext): void {
 		.filter((r) => session.roleStats[r]?.calls > 0)
 		.map((r) => `  ${r}: ${formatRoleSummary(session.roleStats[r])}`);
 	const roleBlock = roleLines.length ? `\nRole stats (current session; completed = runtime terminal; cumulative duration includes concurrent child time, not total wall time):\n${roleLines.join("\n")}` : "";
-	ctx.ui.notify(`planner-only ${mode === "lite" ? "on" : mode}${mode === "lite" && isStrict() ? ", strict" : ""}${env}; next fresh session: ${initialMode()}${preference() ? ` (preference: ${preference()})` : ""}; handoff: ${handoff.mode} (source: ${handoff.source})${mode !== "lite" ? "" : `\n${statusTotals(session)}${roleBlock}`}`, "info");
+	ctx.ui.notify(`planner-only ${mode === "lite" ? "on" : mode}${mode === "lite" && isStrict() ? ", strict" : ""}${env}; next fresh session: ${initialMode()}${preference() ? ` (preference: ${preference()})` : ""}; handoff: ${handoff.mode} (source: ${handoff.source})${mode === "native" ? `\n${nativeTotals(session)}\nChild usage is a recorded lower bound; missing or incomplete workflow receipts may omit usage.` : mode === "lite" ? `\n${statusTotals(session)}${roleBlock}` : ""}`, "info");
 }
 
 async function plannerCommand(runtime: PlannerRuntime, args: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -481,13 +492,13 @@ async function plannerCommand(runtime: PlannerRuntime, args: string, ctx: Extens
 }
 
 function onMessageEnd(runtime: PlannerRuntime, message: Parameters<typeof rootUsageOf>[0], ctx: ExtensionContext): void {
-	if (modeOf(runtime) !== "lite") return;
+	if (modeOf(runtime) === "off") return;
 	const { host, session } = runtime;
 	const usage = rootUsageOf(message);
 	if (!usage) return;
 	const context = host.contextTokens(ctx) ?? usage.context;
 	session.recordRootTurn(usage, context);
-	if (session.claimContextWarning()) sendContextWarning(host, context);
+	if (modeOf(runtime) === "lite" && session.claimContextWarning()) sendContextWarning(host, context);
 	updateStatus(session, ctx);
 }
 
@@ -502,6 +513,44 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 	const host = hostAdapter ?? createHostAdapter(pi);
 	const handoff = new RootHandoff({ pi, git, host, activity: session, mode: () => modeOf({ session }) });
 	const runtime: PlannerRuntime = { pi, git, host, session, handoff };
+	let nativeContext: ExtensionContext | undefined;
+	let cancelNativeRequest: (() => void) | undefined;
+	const refreshNativeCost = (ctx: ExtensionContext): void => {
+		if (modeOf(runtime) !== "native") return;
+		const sessionId = ctx.sessionManager.getSessionId();
+		if (!sessionId) return;
+		cancelNativeRequest?.();
+		const generation = ++session.nativeGeneration;
+		const requestId = randomUUID();
+		const replyEvent = `subagents:rpc:v1:reply:${requestId}`;
+		const current = () => modeOf(runtime) === "native" && session.nativeGeneration === generation && ctx.sessionManager.getSessionId() === sessionId;
+		const timer = setTimeout(() => {
+			if (cancelNativeRequest === cancel) cancel();
+			if (current()) { session.nativeChild = undefined; updateStatus(session, ctx); }
+		}, 5000);
+		timer.unref();
+		const unsubscribe = host.events.on(replyEvent, (raw: unknown) => {
+			if (cancelNativeRequest === cancel) cancel();
+			if (!current()) return;
+			const reply = raw as { version?: unknown; requestId?: unknown; success?: unknown; data?: { version?: unknown; childTotal?: Record<string, unknown> } } | undefined;
+			const u = reply?.data?.childTotal;
+			const values = [u?.input, u?.output, u?.cacheRead, u?.cacheWrite, u?.cost];
+			if (reply?.version !== 1 || reply.requestId !== requestId || reply.success !== true || reply.data?.version !== 1 || !values.every((v) => typeof v === "number" && Number.isFinite(v) && v >= 0)) {
+				session.nativeChild = undefined;
+			} else {
+				const [input, output, cacheRead, cacheWrite, cost] = values as number[];
+				session.nativeChild = { tokens: input + output + cacheRead + cacheWrite, cost };
+			}
+			updateStatus(session, ctx);
+		});
+		const cancel = () => { clearTimeout(timer); unsubscribe(); cancelNativeRequest = undefined; };
+		cancelNativeRequest = cancel;
+		host.events.emit("subagents:rpc:v1:request", { version: 1, requestId, method: "cost" });
+	};
+	const unsubscribeNativeComplete = host.events.on("subagent:async-complete", (raw: unknown) => {
+		const event = raw as { sessionId?: unknown } | undefined;
+		if (nativeContext && event?.sessionId === nativeContext.sessionManager.getSessionId()) refreshNativeCost(nativeContext);
+	});
 
 	pi.registerTool({
 		name: "delegate",
@@ -580,7 +629,9 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 			ctx.ui.notify(BUSY_MODE_MESSAGE, "warning");
 			return;
 		}
+		cancelNativeRequest?.();
 		session.reset();
+		nativeContext = ctx;
 		handoff.reset();
 		syncTools(runtime);
 		updateStatus(session, ctx, modeOf(runtime));
@@ -589,11 +640,17 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 	pi.on("session_before_fork", async (_event, ctx) => guardSessionBoundary(runtime, ctx));
 	pi.on("session_before_tree", async (_event, ctx) => guardSessionBoundary(runtime, ctx));
 	pi.on("session_tree", async (_event, ctx) => {
+		cancelNativeRequest?.();
 		if (bindMode(runtime, "resume", ctx)) syncTools(runtime);
+		nativeContext = ctx;
+		session.nativeChild = undefined;
+		session.nativeGeneration++;
 		updateStatus(session, ctx, modeOf(runtime));
+		refreshNativeCost(ctx);
 	});
 
-	pi.on("agent_settled", async () => handoff.settled());
+	pi.on("agent_settled", async () => { handoff.settled(); if (nativeContext) refreshNativeCost(nativeContext); });
+	pi.on("session_shutdown", async () => { cancelNativeRequest?.(); unsubscribeNativeComplete(); nativeContext = undefined; session.nativeGeneration++; });
 
 	pi.on("before_agent_start", async (event) => {
 		if (modeOf(runtime) === "lite") {
@@ -628,5 +685,5 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 		updateStatus(session, ctx, modeOf(runtime));
 	});
 
-	pi.on("message_end", async (event, ctx) => onMessageEnd(runtime, event.message, ctx));
+	pi.on("message_end", async (event, ctx) => { onMessageEnd(runtime, event.message, ctx); if (event.message.role === "assistant") refreshNativeCost(ctx); });
 }

@@ -81,8 +81,10 @@ pi install /path/to/pi-planner-only                          # 本地 checkout
 | 模式 | 行为 |
 |---|---|
 | `off` | 本扩展不工作；pi-subagents 自行管理自己的工具。 |
-| `native` | 仅注入「实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。」；pi-subagents 自行管理原生工具。不启用 Lite 工具、strict 拦截、交接、上下文提醒或费用统计。 |
+| `native` | 注入「实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。」；pi-subagents 自行管理原生工具。显示用量及上下文颜色，不启用 Lite 工具、strict 拦截、交接或上下文提醒。 |
 | `lite`（默认） | 启用上文的委派工具、提示、检查与费用状态栏。 |
+
+Native 子代理用量来自 pi-subagents 当前会话的 cost RPC，始终是已记录下限而非完整总额：工作流收据缺失、未完成或元数据不可用时可能遗漏。RPC 不可用时显示 unavailable。Root 用量按观察到的回合累计，在会话启动或 reload 时重置；子代理快照可从当前会话分支及可用产物恢复已记录用量。上下文颜色与 Lite 使用相同阈值和渐变，但不会发送上下文提醒。
 
 档位不会更换模型；对比时应保持相同的 Root 和子模型配置。
 

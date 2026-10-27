@@ -679,7 +679,86 @@ try {
 	assert.equal(await callTool("subagent"), undefined);
 	await h2.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200_000, output: 5, cost: { total: 1 } } } }, h2.ctx);
 	assert.equal(h2.sentMessages.length, 0);
-	assert.doesNotMatch(h2.statuses.at(-1), /children\(/);
+	assert.match(h2.statuses.at(-1), /native.*root.*\$1\.000.*child.*unavailable/);
+	assert.equal(statusRgb(h2.statusColors.at(-1)), "247,118,142");
+	const requests = [];
+	h2.events.on("subagents:rpc:v1:request", (request) => { if (request.method === "cost") requests.push(request); });
+	await h2.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 5, output: 0, cost: { total: 0 } } } }, h2.ctx);
+	const old = requests.at(-1);
+	await h2.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 5, output: 0, cost: { total: 0 } } } }, h2.ctx);
+	const latest = requests.at(-1);
+	assert.notEqual(old.requestId, latest.requestId);
+	const replyCost = (request, cost) => h2.events.emit(`subagents:rpc:v1:reply:${request.requestId}`, { version: 1, requestId: request.requestId, success: true, data: { version: 1, childTotal: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, cost, turns: 1 }, children: [], unresolvedAsyncChildren: 0 } });
+	replyCost(latest, 0.25);
+	replyCost(old, 9);
+	assert.match(h2.statuses.at(-1), /child.*≥\$0\.250/);
+	await h2.commands.get("planner-only").handler("status", h2.ctx);
+	assert.match(h2.notes.at(-1), /(missing|incomplete).*workflow/i);
+	const beforeForeign = requests.length;
+	h2.events.emit("subagent:async-complete", { sessionId: "old-session", runId: "foreign" });
+	assert.equal(requests.length, beforeForeign);
+	h2.events.emit("subagent:async-complete", { sessionId: "session-1", runId: "workflow-child", awaitedByWorkflow: true });
+	const completion = requests.at(-1);
+	replyCost(completion, 0.25);
+	h2.events.emit("subagent:async-complete", { sessionId: "session-1", runId: "workflow-child", awaitedByWorkflow: true });
+	replyCost(requests.at(-1), 0.25);
+	assert.match(h2.statuses.at(-1), /child.*≥\$0\.250/);
+	h2.events.emit("subagent:async-complete", { sessionId: "session-1", runId: "failed" });
+	const failed = requests.at(-1);
+	h2.events.emit(`subagents:rpc:v1:reply:${failed.requestId}`, { version: 1, requestId: failed.requestId, success: false });
+	assert.match(h2.statuses.at(-1), /child unavailable/);
+	h2.events.emit("subagent:async-complete", { sessionId: "session-1", runId: "pending" });
+	const staleSessionRequest = requests.at(-1);
+	h2.sessionId("session-2");
+	await h2.handlers.get("session_start")({ reason: "reload" }, h2.ctx);
+	assert.equal(h2.events.listeners(`subagents:rpc:v1:reply:${staleSessionRequest.requestId}`), 0, "reload releases the old request listener");
+	replyCost(staleSessionRequest, 9);
+	assert.doesNotMatch(h2.statuses.at(-1), /\$9\.000/);
+	h2.sessionId("session-1");
+	{
+		const lifecycle = fakePi();
+		await lifecycle.handlers.get("session_start")({ reason: "new" }, lifecycle.ctx);
+		const costRequests = [];
+		lifecycle.events.on("subagents:rpc:v1:request", (req) => costRequests.push(req));
+		await lifecycle.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 1 } } }, lifecycle.ctx);
+		const pending = costRequests.at(-1);
+		assert.equal(lifecycle.events.listeners(`subagents:rpc:v1:reply:${pending.requestId}`), 1);
+		assert.equal(typeof lifecycle.handlers.get("session_shutdown"), "function", "shutdown handler releases RPC resources");
+		await lifecycle.handlers.get("session_shutdown")({}, lifecycle.ctx);
+		assert.equal(lifecycle.events.listeners(`subagents:rpc:v1:reply:${pending.requestId}`), 0, "shutdown releases pending RPC listener");
+		assert.equal(lifecycle.events.listeners("subagent:async-complete"), 0, "shutdown releases completion listener");
+	}
+	{
+		const originalSetTimeout = globalThis.setTimeout, originalClearTimeout = globalThis.clearTimeout;
+		const timers = [];
+		globalThis.setTimeout = (fn) => { const timer = { fn, unref() {} }; timers.push(timer); return timer; };
+		globalThis.clearTimeout = () => {};
+		try {
+			const guarded = fakePi();
+			await guarded.handlers.get("session_start")({ reason: "new" }, guarded.ctx);
+			const rpc = [];
+			guarded.events.on("subagents:rpc:v1:request", (request) => rpc.push(request));
+			const start = async () => { await guarded.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 1 } } }, guarded.ctx); return rpc.at(-1); };
+			const respond = (req, patch = {}, total = { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, cost: 0.5 }) => guarded.events.emit(`subagents:rpc:v1:reply:${req.requestId}`, { version: 1, requestId: req.requestId, success: true, data: { version: 1, childTotal: total }, ...patch });
+			for (const total of [null, { input: NaN, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }, { input: 0, output: -1, cacheRead: 0, cacheWrite: 0, cost: 0 }, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: Infinity }]) {
+				respond(await start(), {}, total);
+				assert.match(guarded.statuses.at(-1), /child unavailable/);
+			}
+			for (const patch of [{ version: 2 }, { requestId: "foreign" }, { data: { version: 2, childTotal: {} } }]) {
+				respond(await start(), patch);
+				assert.match(guarded.statuses.at(-1), /child unavailable/);
+			}
+			await start();
+			const oldTimer = timers.at(-1);
+			respond(await start());
+			oldTimer.fn();
+			assert.match(guarded.statuses.at(-1), /child.*≥\$0\.500/, "stale timeout cannot erase newer snapshot");
+			await start();
+			timers.at(-1).fn();
+			assert.match(guarded.statuses.at(-1), /child unavailable/, "timeout is unavailable");
+			await guarded.handlers.get("session_shutdown")({}, guarded.ctx);
+		} finally { globalThis.setTimeout = originalSetTimeout; globalThis.clearTimeout = originalClearTimeout; }
+	}
 	const nativeTools = [
 		["delegate", { role: "worker", task: "task" }],
 		["git_audit", { operation: "status" }],

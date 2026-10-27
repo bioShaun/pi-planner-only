@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as local from "./subagent-delegation-contract.ts";
 import { DEFAULT_LIMITS, ROLE_AGENTS, createCwdLocks, runDelegation } from "./delegate.ts";
 import { ARTIFACT_DIRS, resolveArtifacts } from "./subagent-artifacts.ts";
-import { fakeBus, noGit, usage } from "./test-helpers.mjs";
+import { fakeBus, noGit, usage, tempDir } from "./test-helpers.mjs";
 
 const root = process.env.PI_SUBAGENTS_DIR ?? join(homedir(), ".pi", "agent", "npm", "node_modules", "pi-subagents");
 const apiPath = join(root, "src", "api", "delegation.js");
 const parserPath = join(root, "src", "slash", "delegation-request.js");
+const costFixture = tempDir("ppo-cost-contract-");
+process.env.PI_SUBAGENTS_TEMP_ROOT = costFixture;
 
 if (!existsSync(apiPath) || !existsSync(parserPath)) {
 	console.log(`contract.test: SKIP (pi-subagents not found at ${root})`);
@@ -73,3 +75,65 @@ for (const role of ["worker", "explorer", "validator", "reviewer"]) {
 }
 
 console.log("contract.test: ok");
+
+// Exercise the installed RPC bridge and its real current-branch artifact accounting.
+{
+	const { registerSubagentRpcBridge } = await import(join(root, "src/extension/rpc.js"));
+	const { buildWorkflowReceipt, writeWorkflowReceipt } = await import(join(root, "src/workflows/workflow-receipt.js"));
+	const { getArtifactPaths } = await import(join(root, "src/shared/artifacts.js"));
+	const sessionFile = join(costFixture, "session.jsonl");
+	const artifacts = join(costFixture, "subagent-artifacts");
+	const runDir = (id) => join(costFixture, "async-subagent-runs", id);
+	mkdirSync(artifacts, { recursive: true });
+	for (const [id, amount] of [["async-child", 0.2], ["workflow-child", 0.3]]) {
+		writeFileSync(getArtifactPaths(artifacts, id, "worker", 0).metadataPath, JSON.stringify({ runId: id, agent: "worker", usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: amount, turns: 1 } }));
+	}
+	mkdirSync(runDir("async-child"), { recursive: true });
+	writeFileSync(join(runDir("async-child"), "status.json"), JSON.stringify({ steps: [{ agent: "worker", status: "completed" }] }));
+	mkdirSync(runDir("workflow-parent"), { recursive: true });
+	writeWorkflowReceipt(runDir("workflow-parent"), buildWorkflowReceipt({ workflowRunId: "workflow-parent", state: "complete", children: [{ key: "work", runId: "workflow-child", agent: "worker" }] }));
+	const entry = (details) => ({ type: "message", message: { role: "toolResult", toolName: "subagent", details } });
+	const branch = [entry({ mode: "single", asyncId: "async-child", results: [] }), entry({ mode: "workflow", runId: "workflow-parent", asyncId: "workflow-parent", results: [] })];
+	let current = branch;
+	const ctx = { cwd: costFixture, sessionManager: { getSessionId: () => current === branch ? "one" : "two", getSessionFile: () => sessionFile, getBranch: () => current } };
+	const events = fakeBus();
+	const bridge = registerSubagentRpcBridge({ events, getContext: () => ctx, execute: async () => { throw new Error("unexpected execute"); } });
+	const cost = (requestId) => new Promise((resolve) => {
+		const off = events.on(`subagents:rpc:v1:reply:${requestId}`, (reply) => { off(); resolve(reply); });
+		events.emit("subagents:rpc:v1:request", { version: 1, requestId, method: "cost" });
+	});
+	const first = await cost("first");
+	assert.equal(first.success, true);
+	assert.equal(first.data.childTotal.cost, 0.5);
+	assert.equal(first.data.childTotal.input, 20);
+	const second = await cost("second");
+	assert.equal(second.data.childTotal.cost, 0.5, "repeated snapshots are cumulative, not deltas");
+	const { default: plannerOnly } = await import("./index.ts");
+	const handlers = new Map(), statuses = [];
+	const pi = { events, on: (name, handler) => handlers.set(name, handler), registerTool() {}, registerCommand() {}, getActiveTools: () => [], setActiveTools() {}, appendEntry() {}, exec: async () => ({ code: 1, stdout: "", stderr: "" }) };
+	const plannerCtx = { ...ctx, hasUI: true, ui: { setStatus: (_key, text) => statuses.push(text), notify() {}, theme: { fg: (_color, text) => text } } };
+	const previousMode = process.env.PI_PLANNER_ONLY_MODE;
+	const previousChild = process.env.PI_SUBAGENT_CHILD;
+	delete process.env.PI_SUBAGENT_CHILD;
+	process.env.PI_PLANNER_ONLY_MODE = "native";
+	plannerOnly(pi);
+	await handlers.get("session_start")({ reason: "new" }, plannerCtx);
+	await handlers.get("message_end")({ message: { role: "assistant", usage: { input: 2 } } }, plannerCtx);
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.match(statuses.at(-1), /child.*≥\$0\.500/, "planner receives installed bridge cost snapshot");
+	await handlers.get("message_end")({ message: { role: "assistant", usage: { input: 2 } } }, plannerCtx);
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.match(statuses.at(-1), /child.*≥\$0\.500/, "planner replaces cumulative snapshots");
+	current = [];
+	const other = await cost("other-session");
+	assert.equal(other.data.childTotal.cost, 0, "another session branch excludes prior runs");
+	await handlers.get("session_start")({ reason: "new" }, plannerCtx);
+	await handlers.get("message_end")({ message: { role: "assistant", usage: { input: 2 } } }, plannerCtx);
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.match(statuses.at(-1), /child.*≥\$0\.000/, "planner displays only the new branch");
+	await handlers.get("session_shutdown")({}, plannerCtx);
+	if (previousMode === undefined) delete process.env.PI_PLANNER_ONLY_MODE; else process.env.PI_PLANNER_ONLY_MODE = previousMode;
+	if (previousChild !== undefined) process.env.PI_SUBAGENT_CHILD = previousChild;
+	bridge.dispose();
+	console.log("contract.test: installed cost RPC and async/workflow artifacts ok");
+}
