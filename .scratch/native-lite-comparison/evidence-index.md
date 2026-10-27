@@ -15,7 +15,8 @@ The archive contains byte-identical snapshots, not new experiments. Historical l
 | Frozen / stopped | [Protocol](protocol.md), [observations](observations.md) | User authorized US$20 and Terra/Luna; batch stopped after two controller startup failures |
 | Accepted with limits | [Current recommendation and Root acceptance](recommendation.md) | P1/P2 accepted; no controlled mode conclusion |
 | Offline checks | [Preflight](preflight/preflight.md), [guard fix](preflight/guard-fix.md) | Same baseline/model configuration verified; budget identity defect red/green preserved |
-| Stopped, 0 valid pairs | [P6 acceptance](pairs/acceptance.md), [controller report](pairs/pairs-execution-report.md) | No experimental provider request; final affected harness suite 10/10; actual child chain still unverified |
+| Previous batch stopped, 0 valid pairs | [P6 acceptance](pairs/acceptance.md), [controller report](pairs/pairs-execution-report.md) | No experimental provider request; final affected harness suite 10/10; actual child chain still unverified |
+| New batch stopped, 0 valid pairs | [20261028 closeout](batches/20261028T054700+0800/closeout.md), [retry1 execution](batches/20261028T054700+0800/retry1/execution.md) | 18 actual experimental requests; shared Root/child guard verified; 22/22 focused checks; async harness failure prevented Root acceptance; reported costs US$3.26128516 excluding unknown main-session/billing |
 
 Original research is under `docs/`; original Native acceptance is `/project/tmp/native-status-acceptance-20261027/acceptance.md`. SHA-256 checked against copies with `sha256sum` exit 0. Committed release evidence is from reviewer integration, not proof of the currently loaded installation. Original raw slot logs and session content are not archived. See [sync](sync.md), [runtime](native-runtime.md), and [link check](link-check.md).
 
