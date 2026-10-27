@@ -31,7 +31,7 @@ _Avoid_: subagent (the launch mechanism, not the role)
 A child that searches and reads code and returns compact findings. Runs as the builtin `scout` agent.
 
 **Validator**:
-A child that runs checks and reports each command with its exit code. Runs as the builtin `oracle` agent.
+A child that runs checks and reports each command with its exit code. Runs as the package `planner-validator` agent.
 
 **Delegation**:
 One `delegate` call: one request, one terminal (or a stop Root could not confirm). Root judges it by the Git summary and check output, not by the child's own claims. Rework is a new delegation carrying the previous report and the fixes.

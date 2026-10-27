@@ -14,13 +14,13 @@
 | `git_audit({operation, base?, path?, maxEntries?})` | 只读的 `status` / `diff-stat` / `diff` / `log`，argv 固定。 |
 | `git_commit({message, paths?})` | 暂存并提交验收通过的改动。从不 push。 |
 
-角色对应 pi-subagents 内置 agent：
+角色对应 pi-subagents 内置 agent 和本包的 validator agent：
 
 | 角色 | Agent | cwd 锁 |
 |---|---|---|
 | `worker` | `worker` | 独占（单独运行） |
 | `explorer` | `scout` | 共享（可与其他 explorer 并行） |
-| `validator` | `oracle` | 独占（单独运行） |
+| `validator` | `planner-validator`（本包） | 独占（单独运行） |
 | `reviewer` | `reviewer` | 无（只读） |
 
 worker 和 validator 每个仓库独占运行；explorer 可以多个并行，但不能与 worker 或 validator 同跑；reviewer 或其他仓库可以并行。停止请求得不到确认时，目录一直保持占用，直到迟到的终态到达。
@@ -52,7 +52,7 @@ Check: npm test -- cache.test.ts, exit code 0; report the diff.
     "agentOverrides": {
       "worker":   { "model": "provider/cheap-model", "thinking": "medium" },
       "scout":    { "model": "provider/cheap-model", "thinking": "low" },
-      "oracle":   { "model": "provider/mid-model",   "thinking": "medium" },
+      "planner-validator": { "model": "provider/mid-model", "thinking": "medium" },
       "reviewer": { "model": "provider/mid-model",   "thinking": "high" }
     }
   }
@@ -60,6 +60,8 @@ Check: npm test -- cache.test.ts, exit code 0; report the diff.
 ```
 
 delegate 的结果里会写出宿主实际使用的模型。
+
+请有意识地将原先用于 Lite 验证的 `oracle` 配置移动或复制到 `planner-validator`。`oracle` 配置现在仅影响 oracle/advisor 咨询，不作为 Lite 验证的后备配置。未配置 `planner-validator` 模型时，它继承 `subagents.defaultModel`，若后者也未配置则继承父模型。检查可能产生测试或构建产物；validator 不是操作系统沙箱。
 
 内置 `scout` 会写一个输出文件（`context.md`），其内容会替代它的最终回复成为 explorer 报告。explorer 的任务说明已考虑这一点；在 `scout` 的 override 里加 `"output": false` 可关闭该文件。
 
