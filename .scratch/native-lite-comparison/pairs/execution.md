@@ -1,0 +1,9 @@
+# P6 Execution Status
+
+Status: **stopped before the first model request**. S1 Native was first in the frozen order. The first slot command ran the RPC driver from the repo root instead of the S1 Native worktree; it rejected CWD before Pi spawn (exit 1). Root authorized the protocol's single corrected retry. That retry ran from the correct worktree but exposed a second controller defect: it spawned Pi and then omitted the initial RPC `get_state`, so it never submitted the task brief. Root stopped Pi at its 240-second no-progress alert; the slot command exited 143. Both failures are preserved in [S1 Native failure](S1-native-run-failure.md). The one retry is consumed; S1 Lite, S2 Lite, and S2 Native were not launched.
+
+The approved order remains S1 Native → S1 Lite → S2 Lite → S2 Native. S1 Native has a startup-only RPC session fragment; no arm has a submitted task, Root answer, child terminal, candidate result, or actual provider usage. No result/child evidence may be treated as an experiment sample. Root's final reconciliation, corrected timing and controller cost are in [acceptance](acceptance.md).
+
+At stop, the shared reserve ledger remained `$1.00` (preparation only); no P6 provider request/reservation occurred. Provider invoice and execution-controller Luna cost are unknown, not zero. All four brief hashes, baselines, guard and local settings had been verified before launch. The four external results roots remain isolated; only S1 Native has pre-run manifest, two sets of slot audit/status, both launcher attempts, the RPC startup session fragment, and both failure records. No other arm results were read or written.
+
+The RPC controller now has an offline fake-Pi regression proving first-command `get_state`, prompt gating on matching model/session, fail-closed mismatch, and bounded handshake timeout. Root must review this controller fix; the authorized P6 retry has already been consumed and this worker did not restart an arm.

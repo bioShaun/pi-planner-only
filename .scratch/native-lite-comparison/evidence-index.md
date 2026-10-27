@@ -12,9 +12,10 @@ The archive contains byte-identical snapshots, not new experiments. Historical l
 | Untracked original, archived | [Supervisor diagnosis](archive/diagnosis-supervisor-declaration.md) | `76b61967c2812134b39ffc761be9e66053bbb24b0d141f87c46ae29df7890958` |
 | Untracked original, archived | [Native workflow research](archive/research-native-workflow-concurrency-2026-10-27.md) | `c34bbf376281613365aa466cb4a6943861f18bbe013003a05975d826e5f476bb` |
 | Untracked originals, archived | [Supervisor research](archive/research-pi-subagents-supervisor.md), [upstream research](archive/research-pi-subagents-supervisor-upstream.md) | `748dcd0a98fa7f7c94b94ab6519166536cf43fb27e5d5ea3540daf1dc994c65f`, `4ac2c9a32fdc45627ad82341db2a43acf1727ebc2bab9359d3c2485abc6b6d77` |
-| Prepared | [Protocol](protocol.md), [observations](observations.md) | Preparation authorized; documents created by Root; paired experiments not started |
-| Prepared | [Current recommendation and Root acceptance](recommendation.md) | P1/P2 accepted; comparison conclusions provisional |
-| Future | Paired runs | Experiments not started; protocol fields and authorization prerequisites remain applicable |
+| Frozen / stopped | [Protocol](protocol.md), [observations](observations.md) | User authorized US$20 and Terra/Luna; batch stopped after two controller startup failures |
+| Accepted with limits | [Current recommendation and Root acceptance](recommendation.md) | P1/P2 accepted; no controlled mode conclusion |
+| Offline checks | [Preflight](preflight/preflight.md), [guard fix](preflight/guard-fix.md) | Same baseline/model configuration verified; budget identity defect red/green preserved |
+| Stopped, 0 valid pairs | [P6 acceptance](pairs/acceptance.md), [controller report](pairs/pairs-execution-report.md) | No experimental provider request; final affected harness suite 10/10; actual child chain still unverified |
 
 Original research is under `docs/`; original Native acceptance is `/project/tmp/native-status-acceptance-20261027/acceptance.md`. SHA-256 checked against copies with `sha256sum` exit 0. Committed release evidence is from reviewer integration, not proof of the currently loaded installation. Original raw slot logs and session content are not archived. See [sync](sync.md), [runtime](native-runtime.md), and [link check](link-check.md).
 
