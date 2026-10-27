@@ -71,7 +71,8 @@ pi install https://github.com/bioShaun/pi-planner-only -l    # 项目级
 pi install /path/to/pi-planner-only                          # 本地 checkout
 ```
 
-装完重启 Pi 或执行 `/reload`。需要 pi-subagents `>=0.70 <1`。
+装完重启 Pi 或执行 `/reload`。需要 Pi **1.4.0**、Node **>=22.19.0** 和 pi-subagents `>=0.70 <1`。
+宿主声明与开发依赖固定在同一验证版本，当前不声明支持其他宿主版本。
 
 ## 开关
 

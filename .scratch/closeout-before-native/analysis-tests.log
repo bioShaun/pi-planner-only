@@ -1,0 +1,12 @@
+✔ parallel intervals retain overlap instead of adding wall time (0.690649ms)
+✔ parallel calls join out-of-order results by toolCallId (1.722545ms)
+✔ missing or duplicated terminals stay unknown and do not fabricate a gap (0.250044ms)
+✔ handoff gaps exclude intervening user messages (0.307643ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 60.868407

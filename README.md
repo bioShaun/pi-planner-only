@@ -89,7 +89,9 @@ pi install https://github.com/bioShaun/pi-planner-only -l    # project-level
 pi install /path/to/pi-planner-only                          # local checkout
 ```
 
-Restart Pi or run `/reload`. Requires pi-subagents `>=0.70 <1`.
+Restart Pi or run `/reload`. Requires Pi **1.4.0**, Node **>=22.19.0**, and
+pi-subagents `>=0.70 <1`. The host and development dependency are pinned to the
+same verified version; other host versions are not currently declared supported.
 
 ## Switches
 

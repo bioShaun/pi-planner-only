@@ -67,12 +67,13 @@ export function plannerPrompt(strict: boolean, limits: DelegationLimits = DEFAUL
 		"[PLANNER-ONLY]",
 		"You plan and review; children do most work via `delegate`.",
 		strict
-			? "- Strict mode: you cannot edit, write, or run bash. Delegate implementation to \"worker\" and check runs to \"validator\"."
-			: "- Do small things yourself (about ≤2 files or ≤10 minutes). Delegate larger implementation to \"worker\".",
-		"- Roles: \"explorer\" handles reading-heavy work (logs/transcripts); only its findings enter your context. \"validator\" runs checks and writes nothing; \"reviewer\" has no shell, sees files and uncommitted changes only: use before git_commit.",
-		"- Children cannot see this conversation or ask you mid-run; `task` must stand alone. Decide public interfaces, cross-module choices, and data flow yourself before delegating; if key facts are unknown, send an explorer first.",
-		"- One delegation = one deliverable that can be checked on its own; fold setup into it; merge repeated edits that share one check.",
-		`- A child has ${formatTimeoutLimit(limits.timeoutMs)}. Do not delegate work that needs longer; split it (or optional timeoutSeconds; long compute in background).`,
+			? "- Strict mode: no edit, write, or bash; delegate implementation to \"worker\", checks to \"validator\"."
+			: "- Do small things yourself (about ≤2 files or ≤10 minutes); send larger implementation straight to \"worker\".",
+		"- Roles: \"explorer\" for reading-heavy logs/transcripts, findings only; \"validator\" runs checks and writes nothing; \"reviewer\" has no shell, uncommitted changes only: review before git_commit.",
+		"- Children see only `task` and cannot ask mid-run. Decide scope, public interfaces, cross-module approach, and data flow first. Send an explorer first only when unknown facts could change those decisions or the split; local search, adjacent code, and tests stay with the executor.",
+		"- Batch independent, lock-compatible tasks; role combinations are in the delegate description.",
+		"- One delegation = one deliverable checkable on its own; fold setup in; merge edits sharing a check.",
+		`- A child has ${formatTimeoutLimit(limits.timeoutMs)}. Do not delegate work that needs longer; split it.`,
 		"- For another repository, pass `cwd` to delegate, git_audit, and git_commit.",
 		"- Check diffs and output before accepting. Before reverting or reporting a child's change, check it against your task: yours or its own?",
 		"- If a child fails, times out, or reports BLOCKED, first decide why, then delegate a corrected task (add context, settle the interface, split only if too big) with its report or last tool results (a timed-out child returns them) before doing the work yourself.",
@@ -505,7 +506,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 	pi.registerTool({
 		name: "delegate",
 		label: "Delegate",
-		description: "Run one child agent on a self-contained task and wait for it. Returns the child's report, host status and usage, and a git summary of what changed. Worth it for multi-file work or long reading; outside strict mode, do small tasks (about ≤2 files) yourself. worker and validator run alone per repository; explorers can run together but not alongside a worker or validator; a reviewer or another repository can run alongside. Deliverables that require writing files (scripts, reports, output files) go to worker, not validator or reviewer. Runs that outlast the child time limit take two delegations: first implement the change and start the run as a background job that returns immediately with the job id, output path, and completion condition (an output file, exit code, or log marker); after the run finishes, delegate acceptance separately. While a background job runs, send only one bounded status check per job at a time; do not repeat identical wait commands in one turn. A \"completed\" result only means the child run ended; in your reply distinguish implementation done, checks passed, and real run passed.",
+		description: "Run one child agent on a self-contained task and wait for it. Returns the child's report, host status and usage, and a git summary of what changed. Worth it for multi-file work or long reading; outside strict mode, do small tasks (about ≤2 files) yourself. Batch calls in one message only when independent and lock-compatible: independent explorers may run together; a reviewer or another repository may run alongside; after implementation, a still-needed validator may join a reviewer only if the reviewer needs no check result and the checks change no source; do not batch worker and validator in one repository, where the second is refused and counted. Deliverables that require writing files (scripts, reports, output files) go to worker, not validator or reviewer. Runs that outlast the child time limit take two delegations: first implement the change and start the run as a background job that returns immediately with the job id, output path, and completion condition (an output file, exit code, or log marker); after the run finishes, delegate acceptance separately. While a background job runs, send only one bounded status check per job at a time; do not repeat identical wait commands in one turn. A \"completed\" result only means the child run ended; in your reply distinguish implementation done, checks passed, and real run passed.",
 		promptSnippet: "delegate: hand a self-contained task to a cheaper child agent (worker, explorer, validator, reviewer)",
 		parameters: Type.Object({
 			role: Type.Union(ROLES.map((r) => Type.Literal(r)), {

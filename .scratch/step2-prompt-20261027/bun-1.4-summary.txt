@@ -1,0 +1,22 @@
+bun --version: 1.4.2
+--- bun run typecheck
+$ tsc --noEmit
+exit=0
+--- bun index.test.mjs
+index.test: ok
+exit=0
+--- bun test host-runtime.test.mjs
+bun test v1.4.2 (744846f84)
+
+host-runtime.test.mjs:
+host-runtime.test: host declarations and installed types aligned at 1.4.0
+(pass) independent delegate calls overlap on Pi 1.4.0 and results preserve source order [96.58ms]
+(pass) a parallel worker/validator batch refuses the conflicting writer [36.46ms]
+(pass) progress crosses the host tool boundary and confirmed cancellation releases the lock [21.39ms]
+(pass) host abort reaches delegate and keeps the repository locked until a late terminal [32.71ms]
+(pass) agent_end does not imply idle until asynchronous host listeners settle [13.32ms]
+
+ 5 pass
+ 0 fail
+Ran 5 tests across 1 file. [497.00ms]
+exit=0

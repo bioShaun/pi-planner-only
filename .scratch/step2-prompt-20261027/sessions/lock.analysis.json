@@ -1,0 +1,68 @@
+{
+  "path": "sessions/lock.jsonl",
+  "session": {
+    "id": "01a17bf0-beec-71d8-ae46-902489e1d468",
+    "cwd": "/project/tmp/pi-planner-step2-20261027/lock",
+    "timestamp": "2026-10-27T05:58:57.518Z",
+    "version": 3
+  },
+  "delegateCalls": [
+    {
+      "turn": 0,
+      "role": "worker",
+      "task": "In the current working directory, create a file named left.txt containing exactly the text \"A\". That's all.",
+      "status": "[worker/worker] completed · qwen-local/qwen3.8-27b:low · 0 tok · $0.0000 · 3 turns · 21s",
+      "refused": false,
+      "report": "[worker/worker] completed · qwen-local/qwen3.8-27b:low · 0 tok · $0.0000 · 3 turns · 21s\n\nChild report:\nImplemented the task.\n\nCreated `/project/tmp/pi-planner-step2-20261027/lock/left.txt` containing exactly `A` (1 byte, no trailing newline, per \"exactly the text \\\"A\\\"\").\n\nChanged files: `left.txt` (new).\nValidation: `od -c left.txt` shows a single byte `A`; `ls -la` confirms size 1.\nOpen risks/questions: none (if a trailing newline is desired instead, say so and I'll adjust).\nRecommended next step: none required.\n\nTracked files: no changes.\nUntracked files (1):\nleft.txt"
+    },
+    {
+      "turn": 0,
+      "role": "worker",
+      "task": "In the current working directory, create a file named right.txt containing exactly the text \"B\". That's all.",
+      "status": "delegate refused: another worker/validator child is still running in repository /project/tmp/pi-planner-step2-20261027/lock. Wait for it to finish, or use role \"reviewer\" (read-only). If this task targets another repository (e.g. one nested inside), pass that repository as cwd.",
+      "refused": true,
+      "report": "delegate refused: another worker/validator child is still running in repository /project/tmp/pi-planner-step2-20261027/lock. Wait for it to finish, or use role \"reviewer\" (read-only). If this task targets another repository (e.g. one nested inside), pass that repository as cwd."
+    }
+  ],
+  "parallelDelegateTurns": [
+    {
+      "turn": 0,
+      "delegates": 2
+    }
+  ],
+  "errors": [],
+  "finalText": "Probe results (both `delegate` calls issued in the same message, no retry/serialization):\n\n- **Worker A — `left.txt`**: **completed** successfully. File exists at `/project/tmp/pi-planner-step2-20261027/lock/left.txt`, contents exactly `A` (1 byte, no trailing newline).\n- **Worker B — `right.txt`**: **refused** by the lock manager with the exact error: `delegate refused: another worker/validator child is still running in repository /project/tmp/pi-planner-step2-20261027/lock. Wait for it to finish, or use role \"reviewer\" (read-only).`\n\nVerified on disk: only `left.txt` exists; `right.txt` was never created, confirming the worker lock on this repository is exclusive and the second concurrent call was refused while the first held the lock.",
+  "turns": [
+    {
+      "turn": 0,
+      "stopReason": "toolUse",
+      "calls": [
+        {
+          "name": "delegate",
+          "role": "worker"
+        },
+        {
+          "name": "delegate",
+          "role": "worker"
+        }
+      ],
+      "results": 2
+    },
+    {
+      "turn": 1,
+      "stopReason": "toolUse",
+      "calls": [
+        {
+          "name": "bash"
+        }
+      ],
+      "results": 1
+    },
+    {
+      "turn": 2,
+      "stopReason": "stop",
+      "calls": [],
+      "results": 0
+    }
+  ]
+}

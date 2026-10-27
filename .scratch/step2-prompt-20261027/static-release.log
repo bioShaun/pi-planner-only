@@ -1,0 +1,33 @@
+
+> pi-planner-only@0.9.0-lite.0 test:release
+> npm run typecheck && npm test
+
+
+> pi-planner-only@0.9.0-lite.0 typecheck
+> tsc --noEmit
+
+
+> pi-planner-only@0.9.0-lite.0 test
+> node --experimental-strip-types contract.test.mjs && node --experimental-strip-types git.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types host.test.mjs && node --experimental-strip-types host-runtime.test.mjs && node --experimental-strip-types handoff.test.mjs && node --experimental-strip-types status-color.test.mjs && node --experimental-strip-types index.test.mjs
+
+contract.test: ok
+git.test: ok
+delegate.test: ok
+host.test: ok
+host-runtime.test: host declarations and installed types aligned at 1.4.0
+✔ independent delegate calls overlap on Pi 1.4.0 and results preserve source order (107.692206ms)
+✔ a parallel worker/validator batch refuses the conflicting writer (22.524081ms)
+✔ progress crosses the host tool boundary and confirmed cancellation releases the lock (35.347637ms)
+✔ host abort reaches delegate and keeps the repository locked until a late terminal (76.386099ms)
+✔ agent_end does not imply idle until asynchronous host listeners settle (19.366827ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 937.234768
+handoff.test: ok
+status-color.test: ok
+index.test: ok

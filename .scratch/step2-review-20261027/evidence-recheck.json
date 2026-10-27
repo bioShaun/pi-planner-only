@@ -1,0 +1,80 @@
+{
+  "hashes": [
+    "batch.jsonl",
+    "explore2-strict.jsonl",
+    "explore.jsonl",
+    "lock.jsonl",
+    "small.jsonl",
+    "batch.analysis.json",
+    "explore2-strict.analysis.json",
+    "explore.analysis.json",
+    "lock.analysis.json",
+    "small.analysis.json"
+  ],
+  "analysisMatches": true,
+  "sessions": [
+    {
+      "name": "small",
+      "calls": [],
+      "errors": 0,
+      "finalTextLength": 63
+    },
+    {
+      "name": "batch",
+      "calls": [
+        [
+          3,
+          "explorer",
+          "[explorer/scout] completed · qwen-local/qwen3.8-27b:low · 0 tok · $0.0000 · 5 turns · 28s"
+        ],
+        [
+          3,
+          "explorer",
+          "[explorer/scout] completed · qwen-local/qwen3.8-27b:low · 0 tok · $0.0000 · 5 turns · 26s"
+        ]
+      ],
+      "errors": 3,
+      "finalTextLength": 1804
+    },
+    {
+      "name": "lock",
+      "calls": [
+        [
+          0,
+          "worker",
+          "[worker/worker] completed · qwen-local/qwen3.8-27b:low · 0 tok · $0.0000 · 3 turns · 21s"
+        ],
+        [
+          0,
+          "worker",
+          "delegate refused: another worker/validator child is still running in repository /project/tmp/pi-planner-step2-20261027/lock. Wait for it to finish, or use role \"reviewer\" (read-only). If this task targets another repository (e.g. one nested inside), pass that repository as cwd."
+        ]
+      ],
+      "errors": 0,
+      "finalTextLength": 747
+    },
+    {
+      "name": "explore",
+      "calls": [],
+      "errors": 0,
+      "finalTextLength": 558
+    },
+    {
+      "name": "explore2-strict",
+      "calls": [
+        [
+          3,
+          "explorer",
+          "[explorer/scout] completed · qwen-local/qwen3.8-27b:low · 0 tok · $0.0000 · 8 turns · 23s"
+        ],
+        [
+          5,
+          "worker",
+          "[worker/worker] completed · qwen-local/qwen3.8-27b:low · 0 tok · $0.0000 · 5 turns · 16s"
+        ]
+      ],
+      "errors": 8,
+      "finalTextLength": 0
+    }
+  ]
+}

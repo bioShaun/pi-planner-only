@@ -1,0 +1,4 @@
+$ diff -qr global/src isolated/src
+exit=0
+$ diff -qr global/agents isolated/agents
+exit=0

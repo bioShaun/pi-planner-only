@@ -1,0 +1,8 @@
+# prompt lengths
+nonstrict 1487
+strict 1478
+
+# delegate description length
+1345
+
+# git diff check
