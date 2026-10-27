@@ -510,7 +510,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 		promptSnippet: "delegate: hand a self-contained task to a cheaper child agent (worker, explorer, validator, reviewer)",
 		parameters: Type.Object({
 			role: Type.Union(ROLES.map((r) => Type.Literal(r)), {
-				description: "worker: implement, including any deliverable that is a written file; explorer: search/read code, logs, or transcripts and return findings; validator: run existing checks only, writes no files; reviewer: independent read-only review; no shell, sees files and uncommitted changes (review before committing); if the changes are already committed, state the baseline commit in the task.",
+				description: "worker: implement, including any deliverable that is a written file; explorer: search/read code, logs, or transcripts and return findings; validator: run existing checks only, writes no files; reviewer: independent read-only review; no shell, sees files and uncommitted changes (review before committing); for committed changes use base to supply the complete range diff.",
 			}),
 			task: Type.String({
 				minLength: 1,
@@ -519,6 +519,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 			cwd: Type.Optional(Type.String({
 				description: "The repository or directory the child works in. Set it when the target is not the session cwd; the diff summary uses it, and the lock covers its whole repository.",
 			})),
+			base: Type.Optional(Type.String({ description: "Reviewer only: committed range base (HEAD, HEAD~N, named ref, or full commit ID). Requires a clean worktree, changed blobs at most 1 MiB each, and a nonempty text diff up to 32 KiB." })),
 			timeoutSeconds: Type.Optional(Type.Integer({
 				minimum: 1,
 				maximum: 86400,

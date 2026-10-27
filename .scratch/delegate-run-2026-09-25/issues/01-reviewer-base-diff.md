@@ -25,3 +25,7 @@ Optional `base` on `delegate` (commit sha, branch, or `HEAD~N`), valid for `revi
 - `delegate({ role: "reviewer", cwd, base, task })` gives the reviewer the `base...HEAD` diff without Root writing files.
 - An invalid `base` is refused before a child starts, with the git error.
 - Tests in `delegate.test.mjs` for the happy path and the invalid-base refusal; no existing assertion weakened.
+
+## Comments
+
+Root chose an inline complete diff for the first version. Implementation in worktree `reviewer-range-20261027` is under review; see `.scratch/reviewer-range-implementation-20261027/execution.md` for validation and limitations.

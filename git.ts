@@ -10,6 +10,86 @@
  * cannot pass them.
  */
 import { clip } from "./format.ts";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+
+/** Bounded output avoids relying on pi.exec's output transport for review input. */
+const reviewGit: GitRunner = async (args, cwd) => {
+	try {
+		const result = await execFileAsync("git", ["-c", "core.warnAmbiguousRefs=true", ...args], { cwd, encoding: "buffer", maxBuffer: 1024 * 1024, timeout: 30_000, env: { ...process.env, LC_ALL: "C" } });
+		if (/warning: refname .* is ambiguous/i.test(result.stderr.toString("utf8"))) throw new Error(result.stderr.toString("utf8").trim());
+		return { stdout: new TextDecoder("utf-8", { fatal: true }).decode(result.stdout), stderr: result.stderr.toString("utf8"), code: 0 };
+	} catch (error) {
+		const e = error as NodeJS.ErrnoException & { killed?: boolean; stderr?: Buffer };
+		if (e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") throw new Error("git output exceeded 1 MiB execution limit");
+		if (e.killed) throw new Error("git execution timed out");
+		if (typeof e.code === "number") return { stdout: "", stderr: (e.stderr?.toString("utf8") ?? "").slice(0, 1000), code: e.code };
+		throw new Error(`git execution failed: ${(e.message ?? String(error)).slice(0, 1000)}`);
+	}
+};
+
+export interface ReviewRange { root: string; base: string; head: string; mergeBase: string; diff: string }
+
+async function reviewCommand(cwd: string, args: string[]): Promise<string> {
+	const result = await reviewGit([...(await gitSafePrefix(reviewGit, cwd)), ...args], cwd);
+	if (result.code !== 0) throw new Error(`git ${args[0]} failed: ${result.stderr || result.stdout}`);
+	return result.stdout;
+}
+
+export async function checkReviewCheckout(root: string, head: string): Promise<void> {
+	const actual = (await reviewCommand(root, ["rev-parse", "--verify", "HEAD^{commit}"])).trim();
+	if (actual !== head) throw new Error("HEAD changed");
+	const status = await reviewCommand(root, ["status", "--porcelain", "-z", "--untracked-files=all", "--ignore-submodules=none"]);
+	if (status) throw new Error("worktree is not clean");
+}
+
+export async function prepareReviewRange(cwd: string, input: string): Promise<ReviewRange> {
+	if (typeof input !== "string" || !input || input.startsWith("-") || /[\s\x00-\x1f\x7f]/.test(input)) throw new Error("invalid base ref");
+	let ref = input;
+	if (!/^(?:HEAD(?:~[0-9]+)?|[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(input)) {
+		await reviewCommand(cwd, ["check-ref-format", "--allow-onelevel", input]);
+		const named = await reviewCommand(cwd, ["rev-parse", "--symbolic-full-name", "--verify", input]);
+		if (!/^refs\/(?:heads|remotes|tags)\//.test(named.trim())) throw new Error("base must be a branch, remote, tag, or full object ID");
+		ref = named.trim();
+	}
+	const root = (await reviewCommand(cwd, ["rev-parse", "--show-toplevel"])).trim();
+	const head = (await reviewCommand(root, ["rev-parse", "--verify", "HEAD^{commit}"])).trim();
+	await checkReviewCheckout(root, head);
+	const base = (await reviewCommand(root, ["rev-parse", "--verify", `${ref}^{commit}`])).trim();
+	if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(base) || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head)) throw new Error("invalid resolved commit");
+	const merge = await reviewGit([...(await gitSafePrefix(reviewGit, root)), "merge-base", "--all", base, head], root);
+	if (merge.code === 1) throw new Error("no merge base for committed range");
+	if (merge.code !== 0) throw new Error(`git merge-base failed: ${merge.stderr || `exit ${merge.code}`}`);
+	const bases = merge.stdout.trim().split("\n").filter(Boolean);
+	if (bases.length === 0) throw new Error("no merge base for committed range");
+	if (bases.length > 1) throw new Error("multiple merge bases for committed range");
+	const mergeBase = bases[0];
+	const flags = ["--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--ignore-submodules=none"];
+	const raw = await reviewCommand(root, ["diff", "--raw", "-z", "--no-abbrev", ...flags, mergeBase, head, "--"]);
+	const records = raw.split("\0");
+	const blobs = new Set<string>();
+	for (let i = 0; i < records.length - 1; i += 2) {
+		const record = /^:(\d{6}) (\d{6}) ([0-9a-f]+) ([0-9a-f]+) [A-Z]$/.exec(records[i]);
+		if (!record || !records[i + 1]) throw new Error("invalid raw diff output");
+		if (record[1] === "160000" || record[2] === "160000") throw new Error("gitlink changes cannot be reviewed as text");
+		for (const id of [record[3], record[4]]) if (!/^0+$/.test(id)) blobs.add(id);
+	}
+	for (const id of blobs) {
+		let blob: string;
+		try { blob = await reviewCommand(root, ["cat-file", "blob", id]); }
+		catch (error) { throw new Error(`changed blob cannot be inspected (1 MiB maximum): ${String(error)}`); }
+		if (blob.includes("\0")) throw new Error("binary changes cannot be reviewed as text");
+	}
+	const numstat = await reviewCommand(root, ["diff", "--numstat", ...flags, mergeBase, head, "--"]);
+	if (/^-\s+-\s/m.test(numstat)) throw new Error("binary changes cannot be reviewed as text");
+	const diff = await reviewCommand(root, ["diff", ...flags, mergeBase, head, "--"]);
+	if (!diff) throw new Error("empty range diff");
+	if (diff.includes("\0")) throw new Error("binary changes cannot be reviewed as text");
+	if (Buffer.byteLength(diff, "utf8") > 32 * 1024) throw new Error("range diff exceeds 32 KiB");
+	return { root, base, head, mergeBase, diff };
+}
 
 export type GitRunner = (
 	args: readonly string[],

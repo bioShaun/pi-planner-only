@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -14,12 +15,87 @@ import { formatTokens } from "./format.ts";
 import { DEFAULT_CONFIG, loadConfig } from "./config.ts";
 import { artifactsDir, loadArtifactDir, resolveArtifacts, tempArtifactsDir } from "./subagent-artifacts.ts";
 import { fakeBus, noGit, tempDir, tick, usage } from "./test-helpers.mjs";
+import "./reviewer-range.test.mjs";
 
 const limits = { timeoutMs: 60_000, maxTokens: 1_000, startTimeoutMs: 40, cancelGraceMs: 40 };
 const deps = (bus, locks = createCwdLocks(), extra = {}) => ({ events: bus, git: noGit, ownerRunId: "owner-1", limits, locks, ...extra });
 const sent = (bus, event) => bus.emitted.filter(([e]) => e === event).map(([, d]) => d);
 const respond = (bus, req, over = {}) =>
 	bus.emit(RESPONSE, { requestId: req.requestId, nodeId: req.nodeId, status: "completed", agent: req.agent, model: "cheap/model", result: { kind: "text", text: "changed a.ts; tests pass" }, usage: usage(), ...over });
+
+// A clean checkout can still contain a committed range to review.
+{
+	const repo = tempDir("reviewer-range-");
+	const git = (...args) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+	try {
+		git("init", "-q");
+		git("config", "user.email", "test@example.com");
+		git("config", "user.name", "Test");
+		writeFileSync(join(repo, "sample.txt"), "before\n");
+		git("add", "sample.txt");
+		git("commit", "-qm", "before");
+		const base = git("rev-parse", "HEAD");
+		writeFileSync(join(repo, "sample.txt"), "after\n");
+		git("commit", "-qam", "after");
+		const head = git("rev-parse", "HEAD");
+		const bus = fakeBus();
+		bus.on(REQUEST, (req) => respond(bus, req));
+		const out = await runDelegation(deps(bus), { role: "reviewer", task: "review", cwd: repo, base: "HEAD~1" });
+		assert.equal(out.ok, true);
+		const [req] = sent(bus, REQUEST);
+		assert.match(req.task, /-before\n\+after/);
+		assert.ok(req.task.includes(base));
+		assert.ok(req.task.includes(head));
+		assert.ok(out.text.includes(base));
+		assert.ok(out.text.includes(head));
+		assert.deepEqual(Object.keys(req).sort(), ["agent", "context", "cwd", "intercomBridge", "nodeId", "ownerRunId", "requestId", "result", "task", "timeoutMs"].sort());
+		for (const ref of [base, "HEAD~1", "refs/heads/baseline"]) {
+			if (ref === "refs/heads/baseline") git("branch", "baseline", base);
+			const b = fakeBus();
+			b.on(REQUEST, (request) => respond(b, request));
+			assert.equal((await runDelegation(deps(b), { role: "reviewer", task: "review", cwd: repo, base: ref })).ok, true, ref);
+		}
+		for (const ref of ["-bad", "HEAD^", "HEAD~1 --help", "does-not-exist", "HEAD"]) {
+			const b = fakeBus();
+			const result = await runDelegation(deps(b), { role: "reviewer", task: "review", cwd: repo, base: ref });
+			assert.equal(result.ok, false, ref);
+			assert.equal(sent(b, REQUEST).length, 0, ref);
+		}
+		const wrongRole = fakeBus();
+		assert.equal((await runDelegation(deps(wrongRole), { role: "worker", task: "review", cwd: repo, base })).ok, false);
+		assert.equal(sent(wrongRole, REQUEST).length, 0);
+		writeFileSync(join(repo, "untracked"), "dirty");
+		const dirty = fakeBus();
+		assert.equal((await runDelegation(deps(dirty), { role: "reviewer", task: "review", cwd: repo, base })).ok, false);
+		assert.equal(sent(dirty, REQUEST).length, 0);
+		rmSync(join(repo, "untracked"));
+		const stale = fakeBus();
+		stale.on(REQUEST, (request) => { writeFileSync(join(repo, "sample.txt"), "concurrent\n"); respond(stale, request); });
+		const staleOut = await runDelegation(deps(stale), { role: "reviewer", task: "review", cwd: repo, base });
+		assert.equal(staleOut.ok, false);
+		assert.match(staleOut.text, /^Committed range review invalid or cannot be confirmed/);
+		git("checkout", "--", "sample.txt");
+		const cancelled = fakeBus();
+		const abort = new AbortController();
+		abort.abort();
+		assert.equal((await runDelegation(deps(cancelled), { role: "reviewer", task: "review", cwd: repo, base }, abort.signal)).ok, false);
+		assert.equal(sent(cancelled, REQUEST).length, 0);
+		writeFileSync(join(repo, "sample.txt"), Buffer.from([0, 1, 2, 3]));
+		git("commit", "-qam", "binary");
+		const binary = fakeBus();
+		const binaryOut = await runDelegation(deps(binary), { role: "reviewer", task: "review", cwd: repo, base: "HEAD~1" });
+		assert.match(binaryOut.text, /binary/);
+		assert.equal(sent(binary, REQUEST).length, 0);
+		writeFileSync(join(repo, "sample.txt"), "a".repeat(33 * 1024) + "\n");
+		git("commit", "-qam", "large");
+		const large = fakeBus();
+		const largeOut = await runDelegation(deps(large), { role: "reviewer", task: "review", cwd: repo, base });
+		assert.match(largeOut.text, /32 KiB/);
+		assert.equal(sent(large, REQUEST).length, 0);
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
+}
 
 // Completed: request shape, report formatting, lock released, no listeners left.
 {

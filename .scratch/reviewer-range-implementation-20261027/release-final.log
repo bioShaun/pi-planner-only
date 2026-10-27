@@ -1,0 +1,57 @@
+
+> pi-planner-only@0.9.0-lite.0 test:release:isolated
+> node scripts/test-release-isolated.mjs
+
+npm warn deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+
+added 94 packages in 2s
+
+> pi-planner-only@0.9.0-lite.0 test:release
+> npm run typecheck && npm test
+
+
+> pi-planner-only@0.9.0-lite.0 typecheck
+> tsc --noEmit
+
+
+> pi-planner-only@0.9.0-lite.0 test
+> node --test isolated-release.test.mjs && node --experimental-strip-types contract.test.mjs && node --experimental-strip-types git.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types host.test.mjs && node --experimental-strip-types host-runtime.test.mjs && node --experimental-strip-types handoff.test.mjs && node --experimental-strip-types status-color.test.mjs && node --experimental-strip-types index.test.mjs
+
+✔ isolated release installs outside the repo and passes its package path (175.298086ms)
+✔ installation failure prevents release (203.425157ms)
+✔ rejects unset TMPDIR before installation (207.297397ms)
+✔ rejects repo TMPDIR before installation (128.240888ms)
+✔ rejects symlink TMPDIR before installation (105.226781ms)
+✔ release failure propagates its exit status (156.943741ms)
+✔ missing package source fails before release (150.588363ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1172.366466
+contract.test: ok
+git.test: ok
+reviewer-range SHA-256: ok
+reviewer-range.test: ok
+delegate.test: ok
+host.test: ok
+host-runtime.test: host declarations and installed types aligned at 1.4.0
+✔ independent delegate calls overlap on Pi 1.4.0 and results preserve source order (292.988634ms)
+✔ a parallel worker/validator batch refuses the conflicting writer (44.913193ms)
+✔ progress crosses the host tool boundary and confirmed cancellation releases the lock (49.186574ms)
+✔ host abort reaches delegate and keeps the repository locked until a late terminal (37.964269ms)
+✔ agent_end does not imply idle until asynchronous host listeners settle (16.278991ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1257.272604
+handoff.test: ok
+status-color.test: ok
+index.test: ok

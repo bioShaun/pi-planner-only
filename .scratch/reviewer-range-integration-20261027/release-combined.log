@@ -1,0 +1,59 @@
+
+> pi-planner-only@0.9.0-lite.0 test:release:isolated
+> node scripts/test-release-isolated.mjs
+
+npm warn deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+
+added 94 packages in 3s
+
+> pi-planner-only@0.9.0-lite.0 test:release
+> npm run typecheck && npm test
+
+
+> pi-planner-only@0.9.0-lite.0 typecheck
+> tsc --noEmit
+
+
+> pi-planner-only@0.9.0-lite.0 test
+> node --test isolated-release.test.mjs && node --experimental-strip-types contract.test.mjs && node --experimental-strip-types git.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types host.test.mjs && node --experimental-strip-types host-runtime.test.mjs && node --experimental-strip-types handoff.test.mjs && node --experimental-strip-types status-color.test.mjs && node --experimental-strip-types index.test.mjs
+
+✔ isolated release installs outside the repo and passes its package path (206.131863ms)
+✔ installation failure prevents release (155.578429ms)
+✔ rejects unset TMPDIR before installation (110.302092ms)
+✔ rejects repo TMPDIR before installation (178.223737ms)
+✔ rejects symlink TMPDIR before installation (174.780798ms)
+✔ release failure propagates its exit status (226.824527ms)
+✔ missing package source fails before release (155.893897ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1280.054746
+contract.test: ok
+contract.test: installed cost RPC and async/workflow artifacts ok
+git.test: ok
+reviewer-range actual git timeout: 30053ms
+reviewer-range SHA-256: ok
+reviewer-range.test: ok
+delegate.test: ok
+host.test: ok
+host-runtime.test: host declarations and installed types aligned at 1.4.0
+✔ independent delegate calls overlap on Pi 1.4.0 and results preserve source order (855.572534ms)
+✔ a parallel worker/validator batch refuses the conflicting writer (71.794227ms)
+✔ progress crosses the host tool boundary and confirmed cancellation releases the lock (78.754675ms)
+✔ host abort reaches delegate and keeps the repository locked until a late terminal (56.113355ms)
+✔ agent_end does not imply idle until asynchronous host listeners settle (24.90416ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1816.752078
+handoff.test: ok
+status-color.test: ok
+index.test: ok

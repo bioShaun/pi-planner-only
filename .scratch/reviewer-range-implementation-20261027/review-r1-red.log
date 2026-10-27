@@ -1,0 +1,93 @@
+
+CASE patch-bytes
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
+  'diff --git a/file b/file\n' +
+    'index 5626abf..cebd993 100644\n' +
+    '--- a/file\n' +
+    '+++ b/file\n' +
+    '@@ -1 +1 @@\n' +
+    '-one\n' +
++   '+one\n' +
++   '\n' +
++   '-'
+-   '+one  \n'
+
+    at file:///home/tcuni-claw/pi/worktrees/reviewer-range-20261027/reviewer-range.test.mjs:41:10
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: 'diff --git a/file b/file\n' +
+    'index 5626abf..cebd993 100644\n' +
+    '--- a/file\n' +
+    '+++ b/file\n' +
+    '@@ -1 +1 @@\n' +
+    '-one\n' +
+    '+one\n' +
+    '\n' +
+    '-',
+  expected: 'diff --git a/file b/file\n' +
+    'index 5626abf..cebd993 100644\n' +
+    '--- a/file\n' +
+    '+++ b/file\n' +
+    '@@ -1 +1 @@\n' +
+    '-one\n' +
+    '+one  \n',
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.14.0
+exit=1
+
+CASE hidden-nul
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: binary review launched: Committed range: base cd98d44e9ad45aa33c9f5f81c5242a9f816d37ac, HEAD 19e8cb59746ff7e01b57ec28ac4b6dd430a5a9ac, merge-base cd98d44e9ad45aa33c9f5f81c5242a9f816d37ac. Source was a live checkout; concurrent changes cannot be ruled out.
+[reviewer/reviewer] completed · usage unknown
+
+Child report:
+PASS
+
+1 !== 0
+
+    at file:///home/tcuni-claw/pi/worktrees/reviewer-range-20261027/reviewer-range.test.mjs:61:10 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 1,
+  expected: 0,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.14.0
+exit=1
+
+CASE custom-ref
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: custom namespace must be rejected
+
+1 !== 0
+
+    at file:///home/tcuni-claw/pi/worktrees/reviewer-range-20261027/reviewer-range.test.mjs:74:10
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 1,
+  expected: 0,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.14.0
+exit=1

@@ -1,0 +1,90 @@
+
+CASE gitlink
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: The input did not match the regular expression /gitlink/. Input:
+
+'delegate refused: committed range preparation failed; no review started: Error: empty range diff'
+
+    at file:///home/tcuni-claw/pi/worktrees/reviewer-range-20261027/reviewer-range.test.mjs:43:10
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: 'delegate refused: committed range preparation failed; no review started: Error: empty range diff',
+  expected: /gitlink/,
+  operator: 'match',
+  diff: 'simple'
+}
+
+Node.js v24.14.0
+exit=1
+
+CASE no-base
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: The input did not match the regular expression /no merge base/i. Input:
+
+'delegate refused: committed range preparation failed; no review started: Error: git execution failed or output exceeded limit: Error: Command failed: git --no-optional-locks -c core.fsmonitor=false merge-base --all b1052049cfb109d9712957a2aeafed98b7de18e2 ad1d61d42e1eced8a4d7797d85a663b4ee741d22\n'
+
+    at file:///home/tcuni-claw/pi/worktrees/reviewer-range-20261027/reviewer-range.test.mjs:54:10
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: 'delegate refused: committed range preparation failed; no review started: Error: git execution failed or output exceeded limit: Error: Command failed: git --no-optional-locks -c core.fsmonitor=false merge-base --all b1052049cfb109d9712957a2aeafed98b7de18e2 ad1d61d42e1eced8a4d7797d85a663b4ee741d22\n',
+  expected: /no merge base/i,
+  operator: 'match',
+  diff: 'simple'
+}
+
+Node.js v24.14.0
+exit=1
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: The input did not match the regular expression /gitlink/. Input:
+
+'Committed range: base 46cbc0ef4b4d88de9af9e568a0c9e9e0b202567d, HEAD 1afe67ea97bcffdf5ccba1c1e49654804b4fa921, merge-base 46cbc0ef4b4d88de9af9e568a0c9e9e0b202567d. Source was a live checkout; concurrent changes cannot be ruled out.\n' +
+  '[reviewer/reviewer] completed · usage unknown\n' +
+  '\n' +
+  'Child report:\n' +
+  'PASS'
+
+    at file:///home/tcuni-claw/pi/worktrees/reviewer-range-20261027/reviewer-range.test.mjs:45:10
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: 'Committed range: base 46cbc0ef4b4d88de9af9e568a0c9e9e0b202567d, HEAD 1afe67ea97bcffdf5ccba1c1e49654804b4fa921, merge-base 46cbc0ef4b4d88de9af9e568a0c9e9e0b202567d. Source was a live checkout; concurrent changes cannot be ruled out.\n' +
+    '[reviewer/reviewer] completed · usage unknown\n' +
+    '\n' +
+    'Child report:\n' +
+    'PASS',
+  expected: /gitlink/,
+  operator: 'match',
+  diff: 'simple'
+}
+
+Node.js v24.14.0
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: The input did not match the regular expression /ambiguous/i. Input:
+
+'delegate refused: committed range preparation failed; no review started: Error: empty range diff'
+
+    at file:///home/tcuni-claw/pi/worktrees/reviewer-range-20261027/reviewer-range.test.mjs:87:10
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: 'delegate refused: committed range preparation failed; no review started: Error: empty range diff',
+  expected: /ambiguous/i,
+  operator: 'match',
+  diff: 'simple'
+}
+
+Node.js v24.14.0

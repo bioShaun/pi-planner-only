@@ -172,7 +172,8 @@ try {
 	assert.match(h.tools.get("delegate").description, /one bounded status check per job at a time; do not repeat identical wait commands/);
 	assert.match(h.tools.get("delegate").description, /"completed" result only means the child run ended; in your reply distinguish implementation done, checks passed, and real run passed/);
 	assert.match(h.tools.get("delegate").parameters.properties.role.description, /validator: run existing checks only, writes no files/);
-	assert.match(h.tools.get("delegate").parameters.properties.role.description, /state the baseline commit in the task/);
+	assert.match(h.tools.get("delegate").parameters.properties.role.description, /for committed changes use base to supply the complete range diff/);
+	assert.equal(h.tools.get("delegate").parameters.properties.base.type, "string");
 	assert.match(h.tools.get("delegate").parameters.properties.cwd.description, /the diff summary uses it, and the lock covers its whole repository\./);
 	assert.match(plannerPrompt(false), /Do small things yourself \(about ≤2 files/);
 	process.env.PI_PLANNER_ONLY_TIMEOUT_MS = "300000";
