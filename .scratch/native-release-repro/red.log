@@ -1,0 +1,106 @@
+✖ isolated release installs outside the repo and passes its package path (244.783519ms)
+✖ installation failure prevents release (170.827958ms)
+✖ release failure propagates its exit status (166.12859ms)
+✖ missing package source fails before release (126.409352ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 0
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 760.601835
+
+✖ failing tests:
+
+test at isolated-release.test.mjs:37:1
+✖ isolated release installs outside the repo and passes its package path (244.783519ms)
+  AssertionError [ERR_ASSERTION]: npm error Missing script: "test:release:isolated"
+  npm error
+  npm error To see a list of scripts, run:
+  npm error   npm run
+  npm error A complete log of this run can be found in: /home/tcuni-claw/.npm/_logs/2026-10-27T07_10_24_050Z-debug-0.log
+  
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (file:///home/tcuni-claw/pi/pi-planner-only/isolated-release.test.mjs:39:9)
+      at Test.runInAsyncScope (node:async_hooks:228:14)
+      at Test.run (node:internal/test_runner/test:1118:25)
+      at Test.start (node:internal/test_runner/test:1015:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:358:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at isolated-release.test.mjs:47:1
+✖ installation failure prevents release (170.827958ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /^ci /. Input:
+  
+  ''
+  
+      at TestContext.<anonymous> (file:///home/tcuni-claw/pi/pi-planner-only/isolated-release.test.mjs:50:9)
+      at Test.runInAsyncScope (node:async_hooks:228:14)
+      at Test.run (node:internal/test_runner/test:1118:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:787:18)
+      at Test.postRun (node:internal/test_runner/test:1247:19)
+      at Test.run (node:internal/test_runner/test:1175:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '',
+    expected: /^ci /,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at isolated-release.test.mjs:54:1
+✖ release failure propagates its exit status (166.12859ms)
+  AssertionError [ERR_ASSERTION]: npm error Missing script: "test:release:isolated"
+  npm error
+  npm error To see a list of scripts, run:
+  npm error   npm run
+  npm error A complete log of this run can be found in: /home/tcuni-claw/.npm/_logs/2026-10-27T07_10_24_435Z-debug-0.log
+  
+  
+  1 !== 37
+  
+      at TestContext.<anonymous> (file:///home/tcuni-claw/pi/pi-planner-only/isolated-release.test.mjs:56:9)
+      at Test.runInAsyncScope (node:async_hooks:228:14)
+      at Test.run (node:internal/test_runner/test:1118:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:787:18)
+      at Test.postRun (node:internal/test_runner/test:1247:19)
+      at Test.run (node:internal/test_runner/test:1175:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 37,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at isolated-release.test.mjs:60:1
+✖ missing package source fails before release (126.409352ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /^ci /. Input:
+  
+  ''
+  
+      at TestContext.<anonymous> (file:///home/tcuni-claw/pi/pi-planner-only/isolated-release.test.mjs:63:9)
+      at Test.runInAsyncScope (node:async_hooks:228:14)
+      at Test.run (node:internal/test_runner/test:1118:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:787:18)
+      at Test.postRun (node:internal/test_runner/test:1247:19)
+      at Test.run (node:internal/test_runner/test:1175:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '',
+    expected: /^ci /,
+    operator: 'match',
+    diff: 'simple'
+  }

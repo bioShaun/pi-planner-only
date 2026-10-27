@@ -1,0 +1,39 @@
+Baseline: git rev-parse HEAD
+69e521cdbabdd5c198f083491088764a59b8f529
+exit=0
+
+Command: sha256sum -c .scratch/native-release-repro/final-sha256.txt
+package.json: OK
+README.md: OK
+README.zh-CN.md: OK
+isolated-release.test.mjs: OK
+scripts/test-release-isolated.mjs: OK
+fixtures/isolated-release/package.json: OK
+fixtures/isolated-release/package-lock.json: OK
+.scratch/native-release-repro/execution.md: OK
+.scratch/native-release-repro/red.log: OK
+.scratch/native-release-repro/green.log: OK
+.scratch/native-release-repro/followup-tests.log: OK
+.scratch/native-release-repro/followup-tests-green.log: OK
+.scratch/native-release-repro/release.log: OK
+.scratch/native-release-repro/release-final.log: OK
+.scratch/native-release-repro/comparison.log: OK
+exit=0
+
+Command: git diff --check
+exit=0
+Command: git diff --cached --quiet
+exit=0 (no staged changes)
+
+Evidence inspection: release-final.log records npm ci 94 packages, typecheck,
+CLI 7 passed / 0 skipped, contract.test: ok, host-runtime 5 passed / 0 skipped,
+remaining release suites ok, and exit=0. followup-tests-green.log records 7
+passed / 0 failed; followup-tests.log records 4 failures caused by the initial
+test's node-compile-cache assertion, as described in execution.md.
+No tests rerun: the accepted source and recorded evidence match the hashes.
+
+Evidence size/sensitivity inspection: wc -c on the 13 release evidence files
+reported 77241 bytes, including resource-preflight.log at 52696 bytes.
+rg -ni 'token|password|secret|authorization|api[_-]?key|bearer|credential|cookie|https?://' on those files returned exit=0 solely for two prose mentions of token; this is a keyword scan, not a guarantee of no secrets. Logs contain local paths; resource-preflight.log also contains unrelated job names and resource statistics. Root should review disclosure before committing.
+
+git check-ignore on selected closeout and release logs: exit=0; logs are ignored and require explicit force-add by Root. All 23 listed paths were checked to exist.

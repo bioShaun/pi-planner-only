@@ -1,0 +1,15 @@
+✔ isolated release installs outside the repo and passes its package path (155.444194ms)
+✔ installation failure prevents release (134.784719ms)
+✔ rejects unset TMPDIR before installation (117.75213ms)
+✔ rejects repo TMPDIR before installation (111.149702ms)
+✔ rejects symlink TMPDIR before installation (155.91712ms)
+✔ release failure propagates its exit status (144.102444ms)
+✔ missing package source fails before release (142.56605ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1018.107973

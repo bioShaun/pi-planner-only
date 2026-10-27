@@ -1,0 +1,9 @@
+{
+  "name": "pi-planner-isolated-release-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@earendil-works/pi-ai": "1.4.0",
+    "pi-subagents": "0.83.0"
+  }
+}

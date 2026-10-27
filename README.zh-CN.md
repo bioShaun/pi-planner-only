@@ -122,3 +122,5 @@ TMPDIR=/仓库外的目录 npm test
 ```
 
 `contract.test.mjs` 用已安装的 pi-subagents 核对事件名、agent 名和实际发出的请求结构（位置可用 `PI_SUBAGENTS_DIR` 覆盖）；未安装 pi-subagents 时跳过。
+
+先在根项目运行 `npm ci` 安装开发依赖。`TMPDIR` 必须指向已存在的仓库外目录。`TMPDIR=/仓库外的目录 npm run test:release:isolated` 在全新临时目录中安装锁定的 registry fixture（pi-subagents 0.83.0 和 pi-ai 1.4.0），检查源码并运行 `test:release`，在正常完成或报告失败后删除该临时目录；中断信号后的清理不作保证。此入口验证固定版本；默认 `npm run test:release` 仍验证本机安装版本。安装需要访问 registry。

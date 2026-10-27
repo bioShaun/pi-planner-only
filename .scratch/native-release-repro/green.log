@@ -1,0 +1,12 @@
+✔ isolated release installs outside the repo and passes its package path (412.206463ms)
+✔ installation failure prevents release (163.835162ms)
+✔ release failure propagates its exit status (169.590251ms)
+✔ missing package source fails before release (186.031561ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 999.528041

@@ -1,0 +1,119 @@
+✖ isolated release installs outside the repo and passes its package path (198.995106ms)
+✖ installation failure prevents release (163.29668ms)
+✔ rejects unset TMPDIR before installation (179.271605ms)
+✔ rejects repo TMPDIR before installation (125.849219ms)
+✔ rejects symlink TMPDIR before installation (123.201279ms)
+✖ release failure propagates its exit status (184.904624ms)
+✖ missing package source fails before release (158.702682ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 3
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1214.261914
+
+✖ failing tests:
+
+test at isolated-release.test.mjs:49:1
+✖ isolated release installs outside the repo and passes its package path (198.995106ms)
+  AssertionError [ERR_ASSERTION]: isolated install directory is removed
+  + actual - expected
+  
+    [
+  +   'node-compile-cache',
+      'sentinel'
+    ]
+  
+      at runScenario (file:///home/tcuni-claw/pi/pi-planner-only/isolated-release.test.mjs:42:9)
+      at TestContext.<anonymous> (file:///home/tcuni-claw/pi/pi-planner-only/isolated-release.test.mjs:50:17)
+      at Test.runInAsyncScope (node:async_hooks:228:14)
+      at Test.run (node:internal/test_runner/test:1118:25)
+      at Test.start (node:internal/test_runner/test:1015:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:358:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ 'node-compile-cache', 'sentinel' ],
+    expected: [ 'sentinel' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at isolated-release.test.mjs:60:1
+✖ installation failure prevents release (163.29668ms)
+  AssertionError [ERR_ASSERTION]: isolated install directory is removed
+  + actual - expected
+  
+    [
+  +   'node-compile-cache',
+      'sentinel'
+    ]
+  
+      at runScenario (file:///home/tcuni-claw/pi/pi-planner-only/isolated-release.test.mjs:42:9)
+      at TestContext.<anonymous> (file:///home/tcuni-claw/pi/pi-planner-only/isolated-release.test.mjs:61:17)
+      at Test.runInAsyncScope (node:async_hooks:228:14)
+      at Test.run (node:internal/test_runner/test:1118:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:787:18)
+      at Test.postRun (node:internal/test_runner/test:1247:19)
+      at Test.run (node:internal/test_runner/test:1175:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ 'node-compile-cache', 'sentinel' ],
+    expected: [ 'sentinel' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at isolated-release.test.mjs:76:1
+✖ release failure propagates its exit status (184.904624ms)
+  AssertionError [ERR_ASSERTION]: isolated install directory is removed
+  + actual - expected
+  
+    [
+  +   'node-compile-cache',
+      'sentinel'
+    ]
+  
+      at runScenario (file:///home/tcuni-claw/pi/pi-planner-only/isolated-release.test.mjs:42:9)
+      at TestContext.<anonymous> (file:///home/tcuni-claw/pi/pi-planner-only/isolated-release.test.mjs:77:17)
+      at Test.runInAsyncScope (node:async_hooks:228:14)
+      at Test.run (node:internal/test_runner/test:1118:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:787:18)
+      at Test.postRun (node:internal/test_runner/test:1247:19)
+      at Test.run (node:internal/test_runner/test:1175:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ 'node-compile-cache', 'sentinel' ],
+    expected: [ 'sentinel' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at isolated-release.test.mjs:82:1
+✖ missing package source fails before release (158.702682ms)
+  AssertionError [ERR_ASSERTION]: isolated install directory is removed
+  + actual - expected
+  
+    [
+  +   'node-compile-cache',
+      'sentinel'
+    ]
+  
+      at runScenario (file:///home/tcuni-claw/pi/pi-planner-only/isolated-release.test.mjs:42:9)
+      at TestContext.<anonymous> (file:///home/tcuni-claw/pi/pi-planner-only/isolated-release.test.mjs:83:17)
+      at Test.runInAsyncScope (node:async_hooks:228:14)
+      at Test.run (node:internal/test_runner/test:1118:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:787:18)
+      at Test.postRun (node:internal/test_runner/test:1247:19)
+      at Test.run (node:internal/test_runner/test:1175:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ 'node-compile-cache', 'sentinel' ],
+    expected: [ 'sentinel' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

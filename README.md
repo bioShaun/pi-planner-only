@@ -152,3 +152,12 @@ TMPDIR=/path/outside/repo npm test
 `contract.test.mjs` checks event names, agent names, and the exact request
 shape against the installed pi-subagents (`PI_SUBAGENTS_DIR` to override the
 location); it skips when pi-subagents is absent.
+
+First run `npm ci` in the root project to install its development dependencies.
+With an existing directory outside the repository as `TMPDIR`,
+`TMPDIR=/path/outside/repo npm run test:release:isolated` installs the locked
+registry fixture (pi-subagents 0.83.0 and pi-ai 1.4.0) in a fresh temporary
+directory, checks its source, runs `test:release`, and removes that directory on
+normal completion or reported failure. Cleanup after interruption is not guaranteed.
+This checks the fixed versions; `npm run test:release` continues to check the
+locally installed pi-subagents instead. Installation requires registry access.

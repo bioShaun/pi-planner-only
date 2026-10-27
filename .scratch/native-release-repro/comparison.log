@@ -1,0 +1,7 @@
+npm warn deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+
+added 94 packages in 3s
+npm ci exit=0
+comparison_dir=/project/tmp/pi-planner-native-release-repro/compare-xh4zUD
+src diff exit=0
+agents diff exit=0
