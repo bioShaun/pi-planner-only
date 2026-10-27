@@ -1,0 +1,6 @@
+1e9239b05a585816af58648adf82bd7041eb15bf317e3d4e04cf2df04f71d961  git.ts
+99b94314c46a4c4e5c88b61b83f865d6f01b4dcdb24fb56ddf29b14c3d73ef10  git.test.mjs
+550bc392480b58665ac150f05107dfccacdce970d82a5e0daf28426e477e8851  .scratch/git-operation-summary-20261027/red.log
+9956fa2edc552546f990828ed5c390b474dd860e504f1697f8209025161d8b2a  .scratch/git-operation-summary-20261027/green.log
+d89ba90b52ec2f407f03490d14a07c987ebfe46f1fa7edda2ca9bede57dcf1dd  .scratch/git-operation-summary-20261027/resource-preflight.log
+94ace38b7d19dbade16c268d38758b6fd2dfffca5022a99e4befa1bb27023f0b  .scratch/git-operation-summary-20261027/release.log

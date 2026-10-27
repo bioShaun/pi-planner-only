@@ -202,6 +202,90 @@ assert.deepEqual(parseStatusZ("x"), []);
 	assert.equal(out.text.split("\n")[0], "abc1234 m");
 }
 
+// A merge resolved and completed by the child still affects attribution.
+{
+	const dir = tempDir("ppo-merge-");
+	try {
+		const g = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+		const run = async (args, cwd) => {
+			try { return { stdout: execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }), code: 0 }; }
+			catch (error) { return { stdout: String(error.stdout ?? ""), stderr: String(error.stderr ?? ""), code: error.status ?? 1 }; }
+		};
+		g("init", "-q");
+		g("config", "user.email", "t@example.com");
+		g("config", "user.name", "t");
+		writeFileSync(join(dir, "conflict.txt"), "base\n");
+		g("add", ".");
+		g("commit", "-qm", "base");
+		g("checkout", "-qb", "incoming");
+		writeFileSync(join(dir, "conflict.txt"), "incoming\n");
+		g("commit", "-qam", "incoming");
+		g("checkout", "-q", "-");
+		writeFileSync(join(dir, "conflict.txt"), "ours\n");
+		g("commit", "-qam", "ours");
+		assert.throws(() => g("merge", "incoming"));
+		const base = await captureBase(run, dir);
+		writeFileSync(join(dir, "conflict.txt"), "resolved\n");
+		g("add", "conflict.txt");
+		g("commit", "-qm", "resolve merge");
+		const summary = await summarizeWork(run, dir, base);
+		assert.match(summary, /Note:.*merge.*diff.*not only the child/i);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// Operation markers are observed on both sides; failed probes never invent one.
+{
+	const refs = ["MERGE_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"];
+	const names = ["merge", "rebase", "cherry-pick", "revert"];
+	const makeRunner = (before, after, failure) => {
+		let phase = 0;
+		const calls = [];
+		const run = async (args) => {
+			calls.push(args);
+			if (args[0] === "--version") return { stdout: "git version 2.43.0\n", code: 0 };
+			const a = args.slice(args.indexOf("core.fsmonitor=false") + 1);
+			if (a[0] === "rev-parse" && a[1] === "-q") {
+				if (failure === "throw") throw new Error("injected probe failure");
+				if (failure === "exit") return { stdout: "a".repeat(40), code: 128 };
+				if (failure === "invalid") return { stdout: "not an object id", code: 0 };
+				return { stdout: (phase === 0 ? before : after) === a[3] ? "a".repeat(40) + "\n" : "", code: (phase === 0 ? before : after) === a[3] ? 0 : 1 };
+			}
+			if (a[0] === "rev-parse") return { stdout: a[1] === "--is-inside-work-tree" ? "true\n" : a[1] === "--show-toplevel" ? "/w\n" : "b".repeat(40) + "\n", code: 0 };
+			return { stdout: "", code: 0 };
+		};
+		return { run, calls, advance: () => { phase = 1; } };
+	};
+	for (let i = 0; i < refs.length; i++) {
+		for (const [before, after] of [[refs[i], null], [null, refs[i]]]) {
+			const runner = makeRunner(before, after);
+			const base = await captureBase(runner.run, "/w/sub");
+			runner.advance();
+			const summary = await summarizeWork(runner.run, "/w/sub", base, 250);
+			assert.match(summary, new RegExp(`^Note: ${names[i]}.*diff.*not only the child`));
+			assert.match(summary, /before or after delegation/);
+			assert.ok(summary.length <= 250);
+		}
+	}
+	for (const failure of [undefined, "throw", "exit", "invalid"]) {
+		const runner = makeRunner(null, null, failure);
+		const base = await captureBase(runner.run, "/w");
+		runner.advance();
+		assert.equal(await summarizeWork(runner.run, "/w", base), "Tracked files: no changes.");
+	}
+	const calls = [];
+	const outside = async (args) => {
+		calls.push(args);
+		return args[0] === "--version" ? { stdout: "git version 2.43.0", code: 0 } : { stdout: "", code: 128 };
+	};
+	const base = await captureBase(outside, "/outside");
+	const count = calls.length;
+	await summarizeWork(outside, "/outside", base);
+	assert.equal(calls.length, count);
+	assert.equal(calls.some((args) => args.includes("--verify")), false);
+}
+
 // Real repository: summarizeWork reports commits, tracked diffs, untracked files.
 const dir = tempDir("ppo-git-");
 try {

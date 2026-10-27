@@ -116,6 +116,27 @@ export interface WorkBase {
 	dirty?: Record<string, string>;
 	/** Work-tree root; status/diff paths are relative to it, so later calls run there. */
 	root?: string;
+	operationsBefore?: string[];
+}
+
+const operationRefs = [
+	["MERGE_HEAD", "merge"],
+	["REBASE_HEAD", "rebase"],
+	["CHERRY_PICK_HEAD", "cherry-pick"],
+	["REVERT_HEAD", "revert"],
+] as const;
+
+async function gitOperations(run: GitRunner, cwd: string): Promise<string[]> {
+	const found: string[] = [];
+	for (const [ref, name] of operationRefs) {
+		try {
+			const result = await git(run, ["rev-parse", "-q", "--verify", ref], cwd);
+			if (result.code === 0 && /^[0-9a-f]{40,64}$/i.test(result.stdout.trim())) found.push(name);
+		} catch {
+			// An unavailable probe is not evidence of an operation.
+		}
+	}
+	return found;
 }
 
 /** Above this many uncommitted paths, fingerprinting is skipped and the summary keeps the plain note. */
@@ -160,14 +181,15 @@ async function fingerprint(run: GitRunner, cwd: string, paths: string[]): Promis
 
 export async function captureBase(run: GitRunner, cwd: string): Promise<WorkBase> {
 	if (!(await isWorkTree(run, cwd))) return { inWorkTree: false, dirtyBefore: 0 };
+	const operationsBefore = await gitOperations(run, cwd);
 	const head = await git(run, ["rev-parse", "HEAD"], cwd);
-	if (head.code !== 0) return { inWorkTree: true, dirtyBefore: 0 };
+	if (head.code !== 0) return { inWorkTree: true, dirtyBefore: 0, operationsBefore };
 	const top = await git(run, ["rev-parse", "--show-toplevel"], cwd);
 	const root = top.code === 0 && top.stdout.trim() ? top.stdout.trim() : cwd;
 	const status = await git(run, ["status", "--porcelain", "-z", "--untracked-files=all"], root);
-	if (status.code !== 0) return { inWorkTree: true, head: head.stdout.trim(), dirtyBefore: 0, root };
+	if (status.code !== 0) return { inWorkTree: true, head: head.stdout.trim(), dirtyBefore: 0, root, operationsBefore };
 	const paths = parseStatusZ(status.stdout);
-	const base: WorkBase = { inWorkTree: true, head: head.stdout.trim(), dirtyBefore: paths.length, root };
+	const base: WorkBase = { inWorkTree: true, head: head.stdout.trim(), dirtyBefore: paths.length, root, operationsBefore };
 	if (paths.length <= MAX_FINGERPRINT_PATHS) base.dirty = await fingerprint(run, root, paths).catch(() => undefined);
 	return base;
 }
@@ -276,6 +298,8 @@ export async function summarizeWork(run: GitRunner, cwd: string, base: WorkBase,
 	}
 	if (!base.head) return "Workspace changes: not a git repository (or no commits); inspect the files directly.";
 	const lines: string[] = [];
+	const operations = [...new Set([...(base.operationsBefore ?? []), ...await gitOperations(run, cwd)])];
+	if (operations.length) lines.push(`Note: ${operations.join(", ")} operation(s) were detected before or after delegation; the diff may include changes brought in or replayed by the operation, not only the child's work.`);
 	// All path-level calls run at the work-tree root, where status/diff paths are anchored.
 	const root = base.root ?? cwd;
 	const commits = await listNewCommits(run, cwd, base.head);

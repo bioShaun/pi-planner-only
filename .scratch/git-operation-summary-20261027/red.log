@@ -1,0 +1,30 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Note:.*merge.*diff.*not only the child/i. Input:
+
+'New commits:\n' +
+  'bff30f5 resolve merge\n' +
+  '547bf25 incoming\n' +
+  'Diff since 2e3f218e:\n' +
+  ' conflict.txt | 2 +-\n' +
+  ' 1 file changed, 1 insertion(+), 1 deletion(-)\n' +
+  'Note: 1 path(s) were already uncommitted before this delegation and changed again; their diff includes the earlier edits: conflict.txt'
+
+    at file:///home/tcuni-claw/pi/pi-planner-only/git.test.mjs:232:10 {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: 'New commits:\n' +
+    'bff30f5 resolve merge\n' +
+    '547bf25 incoming\n' +
+    'Diff since 2e3f218e:\n' +
+    ' conflict.txt | 2 +-\n' +
+    ' 1 file changed, 1 insertion(+), 1 deletion(-)\n' +
+    'Note: 1 path(s) were already uncommitted before this delegation and changed again; their diff includes the earlier edits: conflict.txt',
+  expected: /Note:.*merge.*diff.*not only the child/i,
+  operator: 'match',
+  diff: 'simple'
+}
+
+Node.js v24.14.0
