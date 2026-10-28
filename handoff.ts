@@ -1,6 +1,7 @@
 /** Root handoff owns the brief from admission through session replacement and manual retry. */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { AGENT_DIR, loadConfig } from "./config.ts";
 import type { HandoffMode, PlannerMode } from "./config.ts";
@@ -13,6 +14,7 @@ export const HANDOFF_PREFERENCE = join(AGENT_DIR, "planner-only.handoff");
 
 interface PendingHandoff {
 	brief: string;
+	sourceMode: PlannerMode;
 	cwd: string;
 	sessionFile?: string;
 	selection?: { provider: string; id: string; thinkingLevel?: string };
@@ -64,13 +66,13 @@ async function gatherGitFacts(git: GitRunner, cwd: string): Promise<string> {
 }
 
 function handoffPrompt(handoff: PendingHandoff, facts: string): string {
-	return `[planner-only handoff] You are the new Root session. The previous session handed this work to you because its context was large. "This session"/"the next session" in the brief below both mean YOU: do the next step now. ${handoffMode() === "off" ? "Do not call the handoff tool unless the user asks for one." : "Do not call the handoff tool unless your own context grows past the warning threshold."}\n\n## Brief\n${handoff.brief}\n\n## Facts from the previous session\nPrevious session file: ${handoff.sessionFile ?? "unknown"}\nRepository (git facts below): ${handoff.cwd}\n${facts}\n\nContinue as Root under planner-only; the brief is authoritative.`;
+	return `[planner-only handoff] You are the new Root session. The previous session handed this work to you because its context was large. "This session"/"the next session" in the brief below both mean YOU: do the next step now. ${handoffMode() === "off" ? "Do not call the handoff tool unless the user asks for one." : "Do not call the handoff tool unless your own context grows past the warning threshold."}\n\n## Brief\n${handoff.brief}\n\n## Facts from the previous session\nPrevious session file: ${handoff.sessionFile ?? "unknown"}\nRepository (git facts below): ${handoff.cwd}\n${facts}\n\n${handoff.sourceMode === "lite" ? "Continue as Root under planner-only" : "Continue the work"}; the brief is authoritative.`;
 }
 
 interface HandoffRuntime {
 	pi: Pick<ExtensionAPI, "setModel" | "setThinkingLevel" | "sendUserMessage">;
 	git: GitRunner;
-	host: Pick<HostAdapter, "sessionFile" | "sendMessage">;
+	host: Pick<HostAdapter, "sessionFile" | "sendMessage" | "events">;
 	activity: { readonly locks: { readonly size: number }; readonly delegationsInFlight: number; readonly rootContext: number | undefined };
 	mode(): PlannerMode;
 }
@@ -78,12 +80,47 @@ interface HandoffRuntime {
 // Pi replaces extension instances during newSession. Only this module chooses
 // the live owner; callers never transfer a pending brief between instances.
 let activeHandoff: RootHandoff | undefined;
+let nextHandoffMode: PlannerMode | undefined;
+export function takeHandoffMode(): PlannerMode | undefined {
+	const mode = nextHandoffMode;
+	nextHandoffMode = undefined;
+	return mode;
+}
 const result = (text: string, ok: boolean) => ({ content: [{ type: "text" as const, text }], details: { ok } });
+type NativeActivity = "idle" | "busy" | "unknown";
+const record = (value: unknown): Record<string, unknown> | undefined => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+const nonnegativeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const terminalStates = new Set(["complete", "failed", "partial", "paused", "stopped", "rejected"]);
+
+function nativeStatusActivity(raw: unknown, requestId: string): NativeActivity {
+	const reply = record(raw);
+	const data = record(reply?.data);
+	const fleet = record(data?.fleet);
+	const snapshot = record(data?.asyncSnapshot);
+	const caps = record(snapshot?.caps);
+	const omitted = record(snapshot?.omitted);
+	if (reply?.version !== 1 || reply.requestId !== requestId || reply.success !== true ||
+		fleet?.version !== 1 || !nonnegativeInteger(fleet.totalActive) || !Array.isArray(fleet.entries) || !nonnegativeInteger(fleet.omitted) ||
+		snapshot?.kind !== "pi-subagents.async-status-snapshot" || snapshot.version !== 1 || typeof snapshot.generatedAt !== "number" || !Number.isFinite(snapshot.generatedAt) ||
+		!caps || !["maxRuns", "maxChildrenPerNode", "maxDepth", "maxStringLength", "maxSerializedBytes"].every(key => nonnegativeInteger(caps[key]) && caps[key] > 0) ||
+		!Array.isArray(snapshot.runs) || omitted?.runs !== 0 || !nonnegativeInteger(omitted.children) || omitted.byteLimitExceeded !== false) return "unknown";
+	let running = false;
+	for (const value of snapshot.runs) {
+		const run = record(value);
+		if (!run || typeof run.id !== "string" || typeof run.state !== "string") return "unknown";
+		if (run.state === "queued" || run.state === "running") running = true;
+		else if (!terminalStates.has(run.state)) return "unknown";
+	}
+	return fleet.totalActive > 0 || running ? "busy" : "idle";
+}
 
 export class RootHandoff {
 	readonly #runtime: HandoffRuntime;
 	#pending: PendingHandoff | undefined;
 	#requested = false;
+	#revision = 0;
+	#dispatching = false;
+	#scheduleInFlight: PendingHandoff | undefined;
 
 	constructor(runtime: HandoffRuntime) {
 		this.#runtime = runtime;
@@ -92,21 +129,64 @@ export class RootHandoff {
 
 	/** A new conversation discards its pending brief and explicit request. */
 	reset(): void {
+		this.#revision++;
 		this.#pending = undefined;
 		this.#requested = false;
 	}
 
 	/** Turning Lite off cancels a pending dispatch, as before. */
-	deactivate(): void { this.#pending = undefined; }
+	deactivate(): void { this.#revision++; this.#pending = undefined; }
 
 	schedule(params: { brief: string; cwd?: string }, ctx: ExtensionContext) {
-		if (this.#runtime.mode() !== "lite") return result("Handoff unavailable: planner-only Lite mode is inactive.", false);
+		if (this.#runtime.mode() === "off") return result("Handoff unavailable: planner-only mode is inactive.", false);
 		if (!ctx.hasUI) return result("Handoff refused: a UI session is required.", false);
 		const reason = this.#refusal(params.brief);
 		if (reason) return result(`Handoff refused: ${reason}`, false);
+		const pending: PendingHandoff = { brief: params.brief, cwd: params.cwd ? resolve(ctx.cwd, params.cwd) : ctx.cwd, sessionFile: this.#runtime.host.sessionFile(ctx), sourceMode: this.#runtime.mode() };
+		if (pending.sourceMode === "native") return this.#scheduleNative(pending, ctx);
 		this.#requested = false;
-		this.#pending = { brief: params.brief, cwd: params.cwd ? resolve(ctx.cwd, params.cwd) : ctx.cwd, sessionFile: this.#runtime.host.sessionFile(ctx) };
+		this.#pending = pending;
 		return result("Handoff scheduled: a new session will start with this brief after this turn ends. Stop working now; end your turn with a one-line note to the user.", true);
+	}
+
+	async #scheduleNative(pending: PendingHandoff, ctx: ExtensionContext) {
+		this.#requested = false;
+		this.#pending = pending;
+		this.#scheduleInFlight = pending;
+		const revision = this.#revision;
+		const sessionId = ctx.sessionManager?.getSessionId?.();
+		const activity = await this.#nativeActivity();
+		if (this.#scheduleInFlight === pending) this.#scheduleInFlight = undefined;
+		if (this.#revision !== revision || this.#pending !== pending || this.#runtime.mode() !== pending.sourceMode || ctx.sessionManager?.getSessionId?.() !== sessionId) {
+			if (this.#revision === revision && this.#pending === pending) this.deactivate();
+			return result("Handoff cancelled: source session or pending brief changed.", false);
+		}
+		if (activity !== "idle") {
+			this.#defer(pending);
+			return result(`Handoff refused: Native activity is ${activity}; brief retained for /planner-only handoff retry or handoff drop.`, false);
+		}
+		return result("Handoff scheduled: a new session will start with this brief after this turn ends. Stop working now; end your turn with a one-line note to the user.", true);
+	}
+
+	async #nativeActivity(): Promise<"idle" | "busy" | "unknown"> {
+		const events = this.#runtime.host.events;
+		return new Promise((resolve) => {
+			const requestId = randomUUID();
+			let done = false;
+			let unsubscribe: (() => void) | undefined;
+			const finish = (state: NativeActivity) => {
+				if (done) return;
+				done = true;
+				clearTimeout(timer);
+				unsubscribe?.();
+				resolve(state);
+			};
+			const timer = setTimeout(() => finish("unknown"), 3000);
+			try {
+				unsubscribe = events.on(`subagents:rpc:v1:reply:${requestId}`, (raw: unknown) => finish(nativeStatusActivity(raw, requestId)));
+				events.emit("subagents:rpc:v1:request", { version: 1, requestId, method: "status" });
+			} catch { finish("unknown"); }
+		});
 	}
 
 	/** Handles handoff commands; false leaves unrelated planner commands to Root. */
@@ -133,22 +213,26 @@ export class RootHandoff {
 			return true;
 		}
 		if (cmd !== "handoff" && !cmd.startsWith("handoff ")) return false;
-		if (this.#runtime.mode() !== "lite") {
-			ctx.ui.notify("handoff requires planner-only Lite mode", "warning");
+		if (this.#runtime.mode() === "off" && !this.#pending) {
+			ctx.ui.notify("handoff requires planner-only Native or Lite mode", "warning");
 			return true;
 		}
 		if (!this.#pending) {
 			this.#requested = true;
 			const goal = raw.slice("handoff".length).trim();
 			this.#runtime.pi.sendUserMessage(`[planner-only] The user asked for a handoff${goal ? ` (next goal: ${goal})` : ""}. Call the handoff tool now with a complete brief.`, ctx.isIdle?.() ? undefined : { deliverAs: "followUp" });
-		} else await this.#dispatch(this.#pending, ctx);
+		} else if (!this.#dispatching && this.#scheduleInFlight !== this.#pending) {
+			this.#dispatching = true;
+			try { await this.#dispatch(this.#pending, ctx); }
+			finally { this.#dispatching = false; }
+		}
 		return true;
 	}
 
 	/** Dispatch happens after the tool turn, through the host command path. */
 	settled(): void {
-		if (this.#runtime.mode() !== "lite") { this.deactivate(); return; }
-		if (!this.#pending || this.#pending.manualOnly) return;
+		if (this.#runtime.mode() === "off") return;
+		if (!this.#pending || this.#pending.manualOnly || this.#scheduleInFlight === this.#pending) return;
 		try { this.#runtime.pi.sendUserMessage("/planner-only handoff", { expandPromptTemplates: true }); }
 		catch {
 			this.deactivate();
@@ -177,6 +261,10 @@ export class RootHandoff {
 
 	async #dispatch(handoff: PendingHandoff, ctx: ExtensionCommandContext): Promise<void> {
 		const { git } = this.#runtime;
+		const revision = this.#revision;
+		const sourceMode = this.#runtime.mode();
+		const sessionId = ctx.sessionManager?.getSessionId?.();
+		const stillOwned = () => this.#revision === revision && this.#pending === handoff && this.#runtime.mode() === sourceMode && ctx.sessionManager?.getSessionId?.() === sessionId;
 		if (!handoff.selection) {
 			const model = ctx.model;
 			if (!model) {
@@ -188,11 +276,23 @@ export class RootHandoff {
 			this.#pending = handoff;
 		}
 		const prompt = handoffPrompt(handoff, await gatherGitFacts(git, handoff.cwd));
+		if (!stillOwned()) { if (this.#revision === revision && this.#pending === handoff) this.deactivate(); return; }
 		const mode = handoffMode();
+		if (handoff.sourceMode === "native") {
+			const activity = await this.#nativeActivity();
+			if (!stillOwned()) { if (this.#revision === revision && this.#pending === handoff) this.deactivate(); return; }
+			if (activity !== "idle") {
+				this.#defer(handoff);
+				ctx.ui.notify(`handoff refused: Native activity is ${activity}; run /planner-only handoff to retry or /planner-only handoff drop to discard`, "warning");
+				return;
+			}
+		}
 		try {
+			nextHandoffMode = handoff.sourceMode;
 			const result = await ctx.newSession({ parentSession: handoff.sessionFile, withSession: async (rctx) => {
 				rctx.ui.notify("planner-only: handoff from previous session", "info");
 				try {
+					if (!activeHandoff || activeHandoff.#runtime.mode() !== handoff.sourceMode) throw new Error("source mode was not restored");
 					const selection = handoff.selection;
 					if (!selection) throw new Error("source model selection is missing");
 					const pi = activeHandoff ? activeHandoff.#runtime.pi : undefined;
@@ -230,6 +330,6 @@ export class RootHandoff {
 			} catch {
 				// Session replacement invalidates the old command context.
 			}
-		}
+		} finally { nextHandoffMode = undefined; }
 	}
 }

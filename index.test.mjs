@@ -671,19 +671,21 @@ try {
 	assert.ok(h2.active().includes("subagents_enable"));
 	const nativeEvent = { systemPrompt: "B", systemPromptOptions: { selectedTools: ["read", "subagents_enable", "subagent", "delegate", "bash"] } };
 	assert.deepEqual(await h2.handlers.get("before_agent_start")(nativeEvent, h2.ctx), { systemPrompt: `B\n\n${NATIVE_PROMPT}` });
-	assert.deepEqual(nativeEvent.systemPromptOptions.selectedTools, ["read", "subagents_enable", "subagent", "bash"]);
+	assert.deepEqual(nativeEvent.systemPromptOptions.selectedTools, ["read", "subagents_enable", "subagent", "bash", "handoff"]);
 	process.env.PI_PLANNER_ONLY_STRICT = "1";
 	process.env.PI_PLANNER_ONLY_HANDOFF = "auto";
 	assert.equal(await callTool("bash"), undefined);
 	assert.equal(await callTool("subagent"), undefined);
 	await h2.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200_000, output: 5, cost: { total: 1 } } } }, h2.ctx);
-	assert.equal(h2.sentMessages.length, 0);
+	assert.equal(h2.sentMessages.length, 1);
+	assert.equal(h2.sentMessages[0][0].customType, "planner-only-context");
+	await h2.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200_000, output: 5 } } }, h2.ctx);
+	assert.equal(h2.sentMessages.length, 1, "Native context warning is deduplicated");
 	assert.doesNotMatch(h2.statuses.at(-1), /children\(/);
 	const nativeTools = [
 		["delegate", { role: "worker", task: "task" }],
 		["git_audit", { operation: "status" }],
 		["git_commit", { message: "do not write" }],
-		["handoff", { brief: "x".repeat(200) }],
 	];
 	for (const [name, params] of nativeTools) {
 		assert.equal((await h2.tools.get(name).execute("id", params, undefined, undefined, h2.ctx)).details.ok, false, `${name} direct execute refused`);
@@ -712,6 +714,7 @@ try {
 	for (const [name, params] of nativeTools) {
 		assert.equal((await h2.tools.get(name).execute("id", params, undefined, undefined, h2.ctx)).details.ok, false, `${name} direct execute refused while off`);
 	}
+	assert.equal((await h2.tools.get("handoff").execute("off", { brief: "x".repeat(200) }, undefined, undefined, h2.ctx)).details.ok, false);
 	await h2.commands.get("planner-only").handler("on", h2.ctx);
 	assert.equal(h2.appended.at(-1).data.mode, "lite");
 	const resumed = fakePi(["read", "bash", "subagents_enable"]);
