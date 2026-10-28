@@ -96,7 +96,7 @@ Restart Pi or run `/reload`. Requires pi-subagents `>=0.70 <1`.
 | Mode | Behavior |
 |---|---|
 | `off` | This extension is inactive; pi-subagents remains under its own control. |
-| `native` | Adds only: 实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。 Native pi-subagents tools remain under pi-subagents' control. No Lite tools, strict block, handoff, context warning, or cost accounting. |
+| `native` | Adds: 实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。 Native pi-subagents tools remain under pi-subagents' control. Shares context warnings and handoff; no Lite delegation or Git tools, strict block, or cost accounting. |
 | `lite` (default) | The delegation tools, prompt, checks, and cost line described above. |
 
 Modes do not select models. Keep the same Root and child model settings when comparing modes.
@@ -130,8 +130,9 @@ extension and does not reproduce an older benchmark's user-message prefix byte f
 | `PI_PLANNER_ONLY_HANDOFF` | Overrides the persisted `/planner-only handoff-mode` preference when nonempty. Resolution order is env > persisted preference > default `off`. `confirm` allows Root self-initiation above the threshold and puts the brief in the editor; `auto` does the same but submits automatically (experimental; savings not measured, smoke tests only show the flow runs). |
 | `PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS` | Root context size at which the status reaches red and Root gets one message suggesting delegation, a new session, or `/compact` (default 150000). The status heats up with the context: the theme accent when empty, the warning color at half the threshold, red at the threshold. |
 
-In off and native, the extension's four Lite tools are inactive even if called
-directly. Native restores only pi-subagents tools that Lite had hidden; it does
+In off, all four tools are inactive even if called directly. Native enables only
+`handoff` from this extension; the Lite delegation and Git tools remain inactive.
+Native restores only pi-subagents tools that Lite had hidden; it does
 not activate tools that the upstream extension did not register or activate.
 Child processes (`PI_SUBAGENT_CHILD=1`) never load this extension. Preferences live
 in `planner-only.mode` in the user agent directory and apply to new sessions using
@@ -139,6 +140,18 @@ that directory; they do not modify `settings.json`, model settings, or install/r
 New/resumed sessions, forks, and tree navigation are refused while a Lite child
 is active or its stop remains unconfirmed. Active `/reload` does not guarantee
 lock isolation across plugin instances; finish and confirm child stops before reloading.
+
+Native handoff queries pi-subagents status both when the brief is scheduled and
+immediately before switching. Active or uncertain status retains the brief for
+manual retry or `handoff drop`; it does not cancel work. This is best effort,
+not an atomic barrier: a scheduled job can start between the final check and
+session replacement. In one isolated Pi 1.4.0 / pi-subagents 0.83.0 RPC probe,
+a detached single run continued after replacement and its completion notification
+reached the new session; a running workflow stopped with `runtime-replaced` while
+its child continued. One active run remained visible across reload, which does not
+prove all restoration timings are safe. User-initiated `/new` is unchanged.
+
+The verified host is Pi 1.4.0; other host versions are not declared supported.
 
 ## Development
 

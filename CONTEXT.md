@@ -11,7 +11,7 @@ One Root session's choice of Off, Native, or Lite delegation behavior.
 The extension contributes no delegation instructions or active execution tools.
 
 **Native**:
-The neutral instruction only, with delegation and child lifecycle owned by pi-subagents. No Lite tools or cost accounting.
+The neutral instruction, with delegation and child lifecycle owned by pi-subagents, shared context warnings and Root handoff. No Lite delegation or Git tools, strict control behavior, or cost accounting.
 
 **Lite**:
 The extension's guided delegation interface, change summaries, optional strict behavior, and acceptance by Root. The Root/child/role contract below applies here.
@@ -21,7 +21,7 @@ The parent session. It plans, delegates, inspects the actual changes, and commit
 _Avoid_: orchestrator, planner service
 
 **Root handoff**:
-The transfer of unfinished work to a fresh Root session through a self-contained brief. The source model and known thinking level are preserved; failed or cancelled delivery retains the brief for manual retry or discard.
+The transfer of unfinished work to a fresh Root session through a self-contained brief. The source mode, model and known thinking level are preserved; failed, uncertain or cancelled delivery retains the brief for manual retry or discard.
 
 **Worker**:
 A child that implements a task and ends with a short text report. Runs as the builtin `worker` agent.

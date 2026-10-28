@@ -20,7 +20,7 @@ export { rootUsageOf } from "./host.ts";
 import { GIT_AUDIT_OPERATIONS, gitCommit, runGitAudit } from "./git.ts";
 import type { GitAuditRequest, GitRunner } from "./git.ts";
 import { loadArtifactDir } from "./subagent-artifacts.ts";
-import { RootHandoff, handoffMode, handoffModeSetting } from "./handoff.ts";
+import { RootHandoff, handoffMode, handoffModeSetting, takeHandoffMode } from "./handoff.ts";
 export { HANDOFF_PREFERENCE, handoffMode, formatStatusLines } from "./handoff.ts";
 
 export const OFF_MARKER = join(AGENT_DIR, "planner-only.off");
@@ -279,7 +279,7 @@ function bindMode(runtime: PlannerRuntime, reason: string | undefined, ctx: Exte
 	const recorded = sessionEntry(ctx);
 	const sessionId = ctx.sessionManager?.getSessionId?.();
 	const fresh = reason === "new" || (!recorded && (!session.modeBound || (!!sessionId && session.modeSessionId !== sessionId)));
-	const selected = fresh ? initialMode() : recorded ?? session.mode;
+	const selected = fresh ? (reason === "new" ? takeHandoffMode() : undefined) ?? initialMode() : recorded ?? session.mode;
 	if (selected !== modeOf(runtime) && busy(session)) return false;
 	session.mode = selected;
 	session.modeBound = true;
@@ -345,6 +345,7 @@ function syncTools(runtime: PlannerRuntime): void {
 			.filter((t) => !HIDDEN_HOST_TOOL_SET.has(t));
 	} else {
 		next = active.filter((t) => !ours.has(t));
+		if (modeOf(runtime) === "native" && !next.includes("handoff")) next.push("handoff");
 		const restore = modeOf(runtime) === "native" ? session.hiddenNativeTools : session.hidLoader ? new Set(["subagents_enable"]) : new Set<string>();
 		for (const tool of restore) if (!next.includes(tool)) next.push(tool);
 		session.hidLoader = false;
@@ -480,7 +481,7 @@ async function plannerCommand(runtime: PlannerRuntime, args: string, ctx: Extens
 }
 
 function onMessageEnd(runtime: PlannerRuntime, message: Parameters<typeof rootUsageOf>[0], ctx: ExtensionContext): void {
-	if (modeOf(runtime) !== "lite") return;
+	if (modeOf(runtime) === "off") return;
 	const { host, session } = runtime;
 	const usage = rootUsageOf(message);
 	if (!usage) return;
@@ -592,6 +593,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 	});
 
 	pi.on("agent_settled", async () => handoff.settled());
+	pi.on("session_shutdown", async () => handoff.deactivate());
 
 	pi.on("before_agent_start", async (event) => {
 		if (modeOf(runtime) === "lite") {
@@ -603,7 +605,11 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 		}
 		else {
 			const sel = event.systemPromptOptions?.selectedTools;
-			if (sel) event.systemPromptOptions.selectedTools = sel.filter((t) => !PLUGIN_TOOLS.includes(t as typeof PLUGIN_TOOLS[number]));
+			if (sel) {
+				const kept = sel.filter((t) => !PLUGIN_TOOLS.includes(t as typeof PLUGIN_TOOLS[number]));
+				if (modeOf(runtime) === "native") kept.push("handoff");
+				event.systemPromptOptions.selectedTools = kept;
+			}
 		}
 		syncTools(runtime);
 		if (modeOf(runtime) === "native") return { systemPrompt: `${event.systemPrompt}\n\n${NATIVE_PROMPT}` };
