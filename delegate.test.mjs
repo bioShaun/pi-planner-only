@@ -146,7 +146,7 @@ const respond = (bus, req, over = {}) =>
 	// Bench: 7/250 oracle validators answered "no execution tool" without trying bash (ticket 07).
 	assert.match(ROLE_AGENTS.validator.closing, /You have a `bash` tool: run the requested checks yourself/);
 	await runDelegation(deps(bus), { role: "validator", task: "check", cwd: "/w" });
-	assert.deepEqual(sent(bus, REQUEST).map((r) => r.agent), ["reviewer", "scout", "oracle"]);
+	assert.deepEqual(sent(bus, REQUEST).map((r) => r.agent), ["reviewer", "scout", "planner-validator"]);
 }
 
 // Failed status is not ok and surfaces the error.

@@ -16,13 +16,13 @@
 
 审查已提交的变更时，给 `reviewer` 传入 `base`，完整的 `base...HEAD` 文本 diff 会内嵌到任务中，上限为 32 KiB。每个变更 blob 最大为 1 MiB，才能检查。仓库必须已有提交且工作树干净；空 diff、二进制、非 UTF-8 和子模块变更会被拒绝。范围提交固定，但源码仍是实时工作树，无法排除并发修改。不传 `base` 时行为不变。
 
-角色对应 pi-subagents 内置 agent：
+角色对应 pi-subagents 内置 agent 和本包的 validator agent：
 
 | 角色 | Agent | cwd 锁 |
 |---|---|---|
 | `worker` | `worker` | 独占（单独运行） |
 | `explorer` | `scout` | 共享（可与其他 explorer 并行） |
-| `validator` | `oracle` | 独占（单独运行） |
+| `validator` | `planner-validator`（本包） | 独占（单独运行） |
 | `reviewer` | `reviewer` | 无（只读） |
 
 worker 和 validator 每个仓库独占运行；explorer 可以多个并行，但不能与 worker 或 validator 同跑；reviewer 或其他仓库可以并行。停止请求得不到确认时，目录一直保持占用，直到迟到的终态到达。
@@ -54,7 +54,7 @@ Check: npm test -- cache.test.ts, exit code 0; report the diff.
     "agentOverrides": {
       "worker":   { "model": "provider/cheap-model", "thinking": "medium" },
       "scout":    { "model": "provider/cheap-model", "thinking": "low" },
-      "oracle":   { "model": "provider/mid-model",   "thinking": "medium" },
+      "planner-validator": { "model": "provider/mid-model", "thinking": "medium" },
       "reviewer": { "model": "provider/mid-model",   "thinking": "high" }
     }
   }
@@ -62,6 +62,8 @@ Check: npm test -- cache.test.ts, exit code 0; report the diff.
 ```
 
 delegate 的结果里会写出宿主实际使用的模型。
+
+请有意识地将原先用于 Lite 验证的 `oracle` 配置移动或复制到 `planner-validator`。`oracle` 配置现在仅影响 oracle/advisor 咨询，不作为 Lite 验证的后备配置。未配置 `planner-validator` 模型时，它继承 `subagents.defaultModel`，若后者也未配置则继承父模型。检查可能产生测试或构建产物；validator 不是操作系统沙箱。
 
 内置 `scout` 会写一个输出文件（`context.md`），其内容会替代它的最终回复成为 explorer 报告。explorer 的任务说明已考虑这一点；在 `scout` 的 override 里加 `"output": false` 可关闭该文件。
 
@@ -81,10 +83,10 @@ pi install /path/to/pi-planner-only                          # 本地 checkout
 | 模式 | 行为 |
 |---|---|
 | `off` | 本扩展不工作；pi-subagents 自行管理自己的工具。 |
-| `native` | 注入「实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。」；pi-subagents 自行管理原生工具。显示用量及上下文颜色，不启用 Lite 工具、strict 拦截、交接或上下文提醒。 |
+| `native` | 注入「实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。」；pi-subagents 自行管理原生工具。显示用量，共享上下文提醒和交接，但不启用 Lite 委派、Git 工具或 strict 拦截。 |
 | `lite`（默认） | 启用上文的委派工具、提示、检查与费用状态栏。 |
 
-Native 子代理用量来自 pi-subagents 当前会话的 cost RPC，始终是已记录下限而非完整总额：工作流收据缺失、未完成或元数据不可用时可能遗漏。RPC 不可用时显示 unavailable。Root 用量按观察到的回合累计，在会话启动或 reload 时重置；子代理快照可从当前会话分支及可用产物恢复已记录用量。上下文颜色与 Lite 使用相同阈值和渐变，但不会发送上下文提醒。
+Native 子代理用量来自 pi-subagents 当前会话的 cost RPC，始终是已记录下限而非完整总额：工作流收据缺失、未完成或元数据不可用时可能遗漏。RPC 不可用时显示 unavailable。Root 用量按观察到的回合累计，在会话启动或 reload 时重置；子代理快照可从当前会话分支及可用产物恢复已记录用量。上下文提醒和颜色与 Lite 使用相同阈值。
 
 档位不会更换模型；对比时应保持相同的 Root 和子模型配置。
 
@@ -113,10 +115,14 @@ Native 子代理用量来自 pi-subagents 当前会话的 cost RPC，始终是�
 | `PI_PLANNER_ONLY_HANDOFF` | 非空时覆盖 `/planner-only handoff-mode` 保存的偏好。优先级为 env > 持久偏好 > 默认 `off`。`confirm` 允许 Root 超过阈值后自行发起，并把简报放入编辑框；`auto` 同样允许自行发起并自动提交（实验性：节省效果尚未测量，冒烟测试仅确认流程可运行）。 |
 | `PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS` | Root 上下文达到此值时状态栏变红，并给 Root 发一条提示：委派、开新会话或 `/compact`（默认 150000）。状态栏颜色随上下文升温：空上下文用主题强调色，阈值一半用警告色，到阈值即红色。 |
 
-关闭或 Native 模式下，本扩展的四个 Lite 工具即使被直接调用也会拒绝执行。
+关闭模式下，本扩展的四个工具即使被直接调用也会拒绝执行。Native 只启用 `handoff`，Lite 委派和 Git 工具仍不可用。
 Native 仅恢复先前被 Lite 隐藏的 pi-subagents 工具，不会强行启用上游未注册或未启用的工具。
 子进程（`PI_SUBAGENT_CHILD=1`）不加载本扩展。偏好保存在用户 agent 目录的 `planner-only.mode`，适用于该目录下的新会话；不会修改 `settings.json`、模型配置或自动安装/重载扩展。
 Lite 委派未结束或停止尚未确认时，新建、恢复、fork 与树导航会被拒绝。运行中的 `/reload` 不提供跨插件实例的锁隔离保证；应先确认子任务结束，再重载扩展。
+
+Native handoff 在接收简报和切换前各查询一次 pi-subagents status；活动或不确定时保留简报供手动重试或 `handoff drop`，不取消任务。这是尽力检查而非原子屏障，定时任务可能在最后一次检查与切换之间启动。一次隔离的 Pi 1.4.0 / pi-subagents 0.83.0 RPC 实测中，单任务在切换后继续并向新会话发送完成通知；运行中的 workflow 因 `runtime-replaced` 停止，但 child 继续运行。一个活动 run 在 reload 前后均可见，不能证明所有恢复时序都安全。用户自行执行 `/new` 的行为不变。
+
+已验证的宿主为 Pi 1.4.0；不声明支持其他宿主版本。
 
 ## 开发
 

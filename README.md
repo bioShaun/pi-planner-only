@@ -21,13 +21,13 @@ was removed.
 
 For a committed review, pass `base` with role `reviewer` to include the complete `base...HEAD` text diff, up to 32 KiB. Each changed blob must be at most 1 MiB to inspect. The repository must have commits and a clean worktree; empty, binary, non-UTF-8, and submodule changes are refused. The range commits are fixed, but source files remain a live checkout and concurrent changes cannot be ruled out. Without `base`, delegation behaves as before.
 
-Roles map to pi-subagents builtin agents:
+Roles map to pi-subagents builtin agents and this package's validator agent:
 
 | Role | Agent | cwd lock |
 |---|---|---|
 | `worker` | `worker` | exclusive (alone) |
 | `explorer` | `scout` | shared (other explorers) |
-| `validator` | `oracle` | exclusive (alone) |
+| `validator` | `planner-validator` (package) | exclusive (alone) |
 | `reviewer` | `reviewer` | none (read-only) |
 
 worker and validator run alone per repository; explorers can run together but
@@ -72,7 +72,7 @@ Configure `subagents.agentOverrides` in `~/.pi/agent/settings.json`:
     "agentOverrides": {
       "worker":   { "model": "provider/cheap-model", "thinking": "medium" },
       "scout":    { "model": "provider/cheap-model", "thinking": "low" },
-      "oracle":   { "model": "provider/mid-model",   "thinking": "medium" },
+      "planner-validator": { "model": "provider/mid-model", "thinking": "medium" },
       "reviewer": { "model": "provider/mid-model",   "thinking": "high" }
     }
   }
@@ -80,6 +80,8 @@ Configure `subagents.agentOverrides` in `~/.pi/agent/settings.json`:
 ```
 
 The delegate result names the model the host actually ran.
+
+Move or copy any existing `oracle` tuning intended for Lite validation deliberately to `planner-validator`. The `oracle` override now affects oracle/advisor consultations only; it is not a fallback for Lite validation. Without a `planner-validator` model override, the agent inherits `subagents.defaultModel`, or the parent model when that is absent. Checks may create test or build artifacts; the validator is not an OS sandbox.
 
 The builtin `scout` writes an output file (`context.md`) whose content replaces its final message as the explorer report. The explorer task text accounts for this; adding `"output": false` to the `scout` override turns the file off.
 
@@ -100,10 +102,10 @@ same verified version; other host versions are not currently declared supported.
 | Mode | Behavior |
 |---|---|
 | `off` | This extension is inactive; pi-subagents remains under its own control. |
-| `native` | Adds the neutral instruction: 实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。 Native pi-subagents tools remain under pi-subagents' control. Shows observational usage and context color, without Lite tools, strict block, handoff, or context warning. |
+| `native` | Adds the neutral instruction: 实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。 Native pi-subagents tools remain under pi-subagents' control. Shows observational usage and shares context warnings and handoff, without Lite delegation or Git tools or strict blocking. |
 | `lite` (default) | The delegation tools, prompt, checks, and cost line described above. |
 
-Native child usage is a recorded lower bound from pi-subagents' current-session cost RPC, not a complete total: missing or incomplete workflow receipts and unavailable metadata can omit usage. An unavailable RPC is shown as unavailable. Root usage is counted from observed turns and resets on session start or reload; child snapshots can recover recorded usage from the current session branch and available artifacts. Context color uses the same threshold and gradient as Lite, without sending a context warning.
+Native child usage is a recorded lower bound from pi-subagents' current-session cost RPC, not a complete total: missing or incomplete workflow receipts and unavailable metadata can omit usage. An unavailable RPC is shown as unavailable. Root usage is counted from observed turns and resets on session start or reload; child snapshots can recover recorded usage from the current session branch and available artifacts. Context warnings and color use the same threshold as Lite.
 
 Modes do not select models. Keep the same Root and child model settings when comparing modes.
 
@@ -136,8 +138,9 @@ extension and does not reproduce an older benchmark's user-message prefix byte f
 | `PI_PLANNER_ONLY_HANDOFF` | Overrides the persisted `/planner-only handoff-mode` preference when nonempty. Resolution order is env > persisted preference > default `off`. `confirm` allows Root self-initiation above the threshold and puts the brief in the editor; `auto` does the same but submits automatically (experimental; savings not measured, smoke tests only show the flow runs). |
 | `PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS` | Root context size at which the status reaches red and Root gets one message suggesting delegation, a new session, or `/compact` (default 150000). The status heats up with the context: the theme accent when empty, the warning color at half the threshold, red at the threshold. |
 
-In off and native, the extension's four Lite tools are inactive even if called
-directly. Native restores only pi-subagents tools that Lite had hidden; it does
+In off, all four tools are inactive even if called directly. Native enables only
+`handoff` from this extension; the Lite delegation and Git tools remain inactive.
+Native restores only pi-subagents tools that Lite had hidden; it does
 not activate tools that the upstream extension did not register or activate.
 Child processes (`PI_SUBAGENT_CHILD=1`) never load this extension. Preferences live
 in `planner-only.mode` in the user agent directory and apply to new sessions using
@@ -145,6 +148,18 @@ that directory; they do not modify `settings.json`, model settings, or install/r
 New/resumed sessions, forks, and tree navigation are refused while a Lite child
 is active or its stop remains unconfirmed. Active `/reload` does not guarantee
 lock isolation across plugin instances; finish and confirm child stops before reloading.
+
+Native handoff queries pi-subagents status both when the brief is scheduled and
+immediately before switching. Active or uncertain status retains the brief for
+manual retry or `handoff drop`; it does not cancel work. This is best effort,
+not an atomic barrier: a scheduled job can start between the final check and
+session replacement. In one isolated Pi 1.4.0 / pi-subagents 0.83.0 RPC probe,
+a detached single run continued after replacement and its completion notification
+reached the new session; a running workflow stopped with `runtime-replaced` while
+its child continued. One active run remained visible across reload, which does not
+prove all restoration timings are safe. User-initiated `/new` is unchanged.
+
+The verified host is Pi 1.4.0; other host versions are not declared supported.
 
 ## Development
 

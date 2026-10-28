@@ -11,7 +11,7 @@ One Root session's choice of Off, Native, or Lite delegation behavior.
 The extension contributes no delegation instructions or active execution tools.
 
 **Native**:
-The neutral instruction, with delegation and child lifecycle owned by pi-subagents, and observational usage accounting. No Lite tools or control behavior.
+The neutral instruction, with delegation and child lifecycle owned by pi-subagents, observational usage accounting, and shared context warnings and Root handoff. No Lite delegation or Git tools or strict control behavior.
 
 **Lite**:
 The extension's guided delegation interface, change summaries, optional strict behavior, and acceptance by Root. The Root/child/role contract below applies here.
@@ -21,7 +21,7 @@ The parent session. It plans, delegates, inspects the actual changes, and commit
 _Avoid_: orchestrator, planner service
 
 **Root handoff**:
-The transfer of unfinished work to a fresh Root session through a self-contained brief. The source model and known thinking level are preserved; failed or cancelled delivery retains the brief for manual retry or discard.
+The transfer of unfinished work to a fresh Root session through a self-contained brief. The source mode, model and known thinking level are preserved; failed, uncertain or cancelled delivery retains the brief for manual retry or discard.
 
 **Worker**:
 A child that implements a task and ends with a short text report. Runs as the builtin `worker` agent.
@@ -31,7 +31,7 @@ _Avoid_: subagent (the launch mechanism, not the role)
 A child that searches and reads code and returns compact findings. Runs as the builtin `scout` agent.
 
 **Validator**:
-A child that runs checks and reports each command with its exit code. Runs as the builtin `oracle` agent.
+A child that runs checks and reports each command with its exit code. Runs as the package `planner-validator` agent.
 
 **Delegation**:
 One `delegate` call: one request, one terminal (or a stop Root could not confirm). Root judges it by the Git summary and check output, not by the child's own claims. Rework is a new delegation carrying the previous report and the fixes.

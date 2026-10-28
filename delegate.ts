@@ -35,7 +35,7 @@ export const ROLES = ["worker", "explorer", "validator", "reviewer"] as const;
 export type Role = (typeof ROLES)[number];
 
 /**
- * Builtin pi-subagents agents. Models come from the operator's
+ * Builtin pi-subagents agents and the package validator. Models come from the operator's
  * `subagents.agentOverrides` in pi settings, not from this plugin.
  * `lock` is the cwd hold: worker and validator run alone per repository
  * ("exclusive"); explorers only read project files, so they share a
@@ -57,9 +57,9 @@ export const ROLE_AGENTS: Record<Role, { agent: string; lock: "exclusive" | "sha
 		closing: "Do not modify project files; writing the report/output file the runtime names is allowed. If the runtime names an output file, Root receives that file instead of your final message: write it once, at the end, with the full findings. Answer the questions asked; use the code-context headings only where they fit. If you did not finish, begin the report with INCOMPLETE and list what is done, what is missing, and why. Keep findings compact (paths, line numbers, short excerpts).",
 	},
 	validator: {
-		agent: "oracle",
+		agent: "planner-validator",
 		lock: "exclusive",
-		closing: "Do not modify any files. You have a `bash` tool: run the requested checks yourself (never answer without running them) and report each command with its exit code and the relevant failure lines.",
+		closing: "Do not fix or edit source files. You have a `bash` tool: run the requested checks yourself (never answer without running them) and report each command with its exit code and the relevant failure lines. Checks may create test or build artifacts; report blockers instead of making source fixes.",
 	},
 	reviewer: {
 		agent: "reviewer",
