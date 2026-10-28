@@ -19,13 +19,13 @@ was removed.
 | `git_audit({operation, base?, path?, maxEntries?})` | Read-only `status` / `diff-stat` / `diff` / `log`, with fixed argv. |
 | `git_commit({message, paths?})` | Stage and commit accepted work. Never pushes. |
 
-Roles map to pi-subagents builtin agents:
+Roles map to pi-subagents builtin agents and this package's validator agent:
 
 | Role | Agent | cwd lock |
 |---|---|---|
 | `worker` | `worker` | exclusive (alone) |
 | `explorer` | `scout` | shared (other explorers) |
-| `validator` | `oracle` | exclusive (alone) |
+| `validator` | `planner-validator` (package) | exclusive (alone) |
 | `reviewer` | `reviewer` | none (read-only) |
 
 worker and validator run alone per repository; explorers can run together but
@@ -70,7 +70,7 @@ Configure `subagents.agentOverrides` in `~/.pi/agent/settings.json`:
     "agentOverrides": {
       "worker":   { "model": "provider/cheap-model", "thinking": "medium" },
       "scout":    { "model": "provider/cheap-model", "thinking": "low" },
-      "oracle":   { "model": "provider/mid-model",   "thinking": "medium" },
+      "planner-validator": { "model": "provider/mid-model", "thinking": "medium" },
       "reviewer": { "model": "provider/mid-model",   "thinking": "high" }
     }
   }
@@ -78,6 +78,8 @@ Configure `subagents.agentOverrides` in `~/.pi/agent/settings.json`:
 ```
 
 The delegate result names the model the host actually ran.
+
+Move or copy any existing `oracle` tuning intended for Lite validation deliberately to `planner-validator`. The `oracle` override now affects oracle/advisor consultations only; it is not a fallback for Lite validation. Without a `planner-validator` model override, the agent inherits `subagents.defaultModel`, or the parent model when that is absent. Checks may create test or build artifacts; the validator is not an OS sandbox.
 
 The builtin `scout` writes an output file (`context.md`) whose content replaces its final message as the explorer report. The explorer task text accounts for this; adding `"output": false` to the `scout` override turns the file off.
 

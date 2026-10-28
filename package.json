@@ -18,6 +18,7 @@
     "reviewer"
   ],
   "files": [
+    "agents",
     "CONTEXT.md",
     "README.md",
     "README.zh-CN.md",
@@ -36,6 +37,9 @@
     "extensions": [
       "./index.ts"
     ]
+  },
+  "pi-subagents": {
+    "agents": ["./agents"]
   },
   "pi-planner-only": {
     "piSubagents": ">=0.70 <1",
