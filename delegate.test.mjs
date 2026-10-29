@@ -64,6 +64,11 @@ const respond = (bus, req, over = {}) =>
 		const wrongRole = fakeBus();
 		assert.equal((await runDelegation(deps(wrongRole), { role: "worker", task: "review", cwd: repo, base })).ok, false);
 		assert.equal(sent(wrongRole, REQUEST).length, 0);
+		// Strict tool schemas send "" for omitted optional strings; it must not read as a base.
+		const emptyBase = fakeBus();
+		emptyBase.on(REQUEST, (req) => respond(emptyBase, req));
+		assert.equal((await runDelegation(deps(emptyBase), { role: "worker", task: "work", cwd: repo, base: "" })).ok, true);
+		assert.equal(sent(emptyBase, REQUEST).length, 1);
 		writeFileSync(join(repo, "untracked"), "dirty");
 		const dirty = fakeBus();
 		assert.equal((await runDelegation(deps(dirty), { role: "reviewer", task: "review", cwd: repo, base })).ok, false);
