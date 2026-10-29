@@ -112,7 +112,7 @@ same verified version; other host versions are not currently declared supported.
 | Mode | Behavior |
 |---|---|
 | `off` | This extension is inactive; pi-subagents remains under its own control. |
-| `native` | Adds the neutral instruction: 实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。 Native pi-subagents tools remain under pi-subagents' control. Shows observational usage and shares context warnings and handoff, without Lite delegation or Git tools or strict blocking. |
+| `native` | Prefers delegating implementation and tests while Root splits work and checks diffs and results. Root may complete both changes and necessary verification when it already has the context, the remaining work is clear and local, and no further investigation, test design, or independent review is needed; otherwise it continues delegating. Native pi-subagents tools remain under pi-subagents' control. Shows observational usage and shares context warnings and handoff, without Lite delegation or Git tools or strict blocking. |
 | `lite` (default) | The delegation tools, prompt, checks, and cost line described above. |
 
 Native child usage is a recorded lower bound from pi-subagents' current-session cost RPC, not a complete total: missing or incomplete workflow receipts and unavailable metadata can omit usage. An unavailable RPC is shown as unavailable. Root usage is counted from observed turns and resets on session start or reload; child snapshots can recover recorded usage from the current session branch and available artifacts. Context warnings and color use the same threshold as Lite.

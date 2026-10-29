@@ -140,10 +140,12 @@ try {
 	rmSync(HANDOFF_PREFERENCE, { force: true, recursive: true });
 
 	// Prompt: appended when enabled, short, strict variant differs.
+	const expectedNativePrompt = "实现和跑测试优先交给子代理，自己负责拆分、检查 git diff 与测试结果。若你已掌握相关上下文，剩余修改与必要验证都明确、局部，且无需进一步调查、设计测试或独立复核，可直接完成修改与验证；否则继续委派。";
 	await h.handlers.get("session_start")({}, h.ctx);
 	assert.deepEqual(h.active(), ["read", "bash", "edit", "write", "delegate", "git_audit", "git_commit", "handoff"]);
 	const injected = await h.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, h.ctx);
 	assert.ok(injected.systemPrompt.startsWith("BASE\n\n[PLANNER-ONLY]"));
+	assert.ok(!injected.systemPrompt.includes(expectedNativePrompt));
 	for (const strict of [false, true]) assert.ok(plannerPrompt(strict).length < 1_500, "prompt should stay short (cap 1,500 chars; raise only with measured benefit, issue #25)");
 	assert.match(plannerPrompt(false), /"validator" runs checks and writes nothing/);
 	assert.match(plannerPrompt(true), /"validator" runs checks and writes nothing/);
@@ -651,7 +653,7 @@ try {
 	// Disabled: selectedTools left untouched, hidden tools not blocked.
 	await h2.commands.get("planner-only").handler("off", h2.ctx);
 	const evSelOff = { systemPrompt: "B", systemPromptOptions: { selectedTools: ["read", "subagents_enable", "subagent"] } };
-	await h2.handlers.get("before_agent_start")(evSelOff, h2.ctx);
+	assert.equal(await h2.handlers.get("before_agent_start")(evSelOff, h2.ctx), undefined);
 	assert.deepEqual(evSelOff.systemPromptOptions.selectedTools, ["read", "subagents_enable", "subagent"]);
 	assert.equal(await callTool("subagents_enable"), undefined);
 	assert.equal(await callTool("subagent"), undefined);
@@ -679,6 +681,7 @@ try {
 	assert.ok(h2.active().includes("subagents_enable"));
 	const nativeEvent = { systemPrompt: "B", systemPromptOptions: { selectedTools: ["read", "subagents_enable", "subagent", "delegate", "bash"] } };
 	assert.deepEqual(await h2.handlers.get("before_agent_start")(nativeEvent, h2.ctx), { systemPrompt: `B\n\n${NATIVE_PROMPT}` });
+	assert.deepEqual(await h2.handlers.get("before_agent_start")(nativeEvent, h2.ctx), { systemPrompt: `B\n\n${expectedNativePrompt}` });
 	assert.deepEqual(nativeEvent.systemPromptOptions.selectedTools, ["read", "subagents_enable", "subagent", "bash", "handoff"]);
 	process.env.PI_PLANNER_ONLY_STRICT = "1";
 	process.env.PI_PLANNER_ONLY_HANDOFF = "auto";
@@ -818,9 +821,11 @@ try {
 	reloaded.branch(startup.appended);
 	await reloaded.handlers.get("session_start")({ reason: "reload" }, reloaded.ctx);
 	assert.equal((await reloaded.handlers.get("before_agent_start")({ systemPrompt: "B" }, reloaded.ctx)).systemPrompt, `B\n\n${NATIVE_PROMPT}`);
+	assert.equal((await reloaded.handlers.get("before_agent_start")({ systemPrompt: "B" }, reloaded.ctx)).systemPrompt, `B\n\n${expectedNativePrompt}`);
 	reloaded.branch([...startup.appended, { type: "custom", customType: "planner-only-mode", data: { mode: "invalid" } }]);
 	await reloaded.handlers.get("session_start")({ reason: "resume" }, reloaded.ctx);
 	assert.equal((await reloaded.handlers.get("before_agent_start")({ systemPrompt: "B" }, reloaded.ctx)).systemPrompt, `B\n\n${NATIVE_PROMPT}`);
+	assert.equal((await reloaded.handlers.get("before_agent_start")({ systemPrompt: "B" }, reloaded.ctx)).systemPrompt, `B\n\n${expectedNativePrompt}`);
 	await startup.commands.get("planner-only").handler("lite", startup.ctx);
 	reloaded.branch([]);
 	reloaded.sessionId("session-2");
