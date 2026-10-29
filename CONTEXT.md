@@ -11,7 +11,7 @@ One Root session's choice of Off, Native, or Lite delegation behavior.
 The extension contributes no delegation instructions or active execution tools.
 
 **Native**:
-The neutral instruction, with delegation and child lifecycle owned by pi-subagents, shared context warnings and Root handoff. No Lite delegation or Git tools, strict control behavior, or cost accounting.
+The neutral instruction, with delegation and child lifecycle owned by pi-subagents, observational usage accounting, and shared context warnings and Root handoff. No Lite delegation or Git tools or strict control behavior.
 
 **Lite**:
 The extension's guided delegation interface, change summaries, optional strict behavior, and acceptance by Root. The Root/child/role contract below applies here.

@@ -149,15 +149,15 @@ try {
 	assert.match(plannerPrompt(false), /report or last tool results \(a timed-out child returns them\)/);
 	assert.match(plannerPrompt(false), /Before reverting or reporting a child's change, check it against your task/);
 	assert.match(plannerPrompt(false), /commit with git_commit: pass paths when the work tree has unrelated changes/);
-	assert.match(plannerPrompt(false), /explorer.*reading-heavy.*logs\/transcripts.*only its findings enter your context/);
+	assert.match(plannerPrompt(false), /explorer.*reading-heavy.*logs\/transcripts.*findings only/);
 	assert.match(plannerPrompt(false), /reviewer.*no shell.*uncommitted changes only.*before git_commit/);
 	assert.match(plannerPrompt(false), /fails, times out, or reports BLOCKED.*delegate a corrected task.*last tool results.*before doing the work yourself/);
-	assert.match(plannerPrompt(false), /cannot see this conversation or ask you mid-run/);
-	assert.match(plannerPrompt(false), /Decide public interfaces, cross-module choices, and data flow yourself before delegating; if key facts are unknown, send an explorer first/);
-	assert.match(plannerPrompt(false), /One delegation = one deliverable that can be checked on its own; fold setup into it; merge repeated edits that share one check/);
+	assert.match(plannerPrompt(false), /Children see only `task` and cannot ask mid-run/);
+	assert.match(plannerPrompt(false), /Children see only `task` and cannot ask mid-run.*Decide scope, public interfaces, cross-module approach, and data flow first.*explorer first only when unknown facts could change those decisions or the split.*local search, adjacent code, and tests stay with the executor/);
+	assert.match(plannerPrompt(false), /One delegation = one deliverable checkable on its own; fold setup in; merge edits sharing a check/);
 	assert.match(plannerPrompt(false), /reports BLOCKED, first decide why, then delegate a corrected task/);
 	assert.match(plannerPrompt(false), /add context, settle the interface, split only if too big/);
-	assert.match(plannerPrompt(true), /Decide public interfaces, cross-module choices/);
+	assert.match(plannerPrompt(true), /Decide scope, public interfaces, cross-module approach/);
 	assert.match(plannerPrompt(true), /reports BLOCKED, first decide why/);
 	assert.match(plannerPrompt(true), /add context, settle the interface, split only if too big/);
 	assert.match(h.tools.get("delegate").parameters.properties.role.description, /logs, or transcripts and return findings/);
@@ -165,14 +165,15 @@ try {
 	assert.match(h.tools.get("delegate").parameters.properties.task.description, /Ask only for checks that finish well within the child's time limit; keep long jobs \(full pipelines, large data processing\) out of the task and run them outside delegation/);
 	assert.match(h.tools.get("delegate").parameters.properties.role.description, /no shell, sees files and uncommitted changes \(review before committing\)/);
 	assert.match(h.tools.get("delegate").description, /Worth it for multi-file work or long reading; outside strict mode, do small tasks \(about ≤2 files\) yourself\./);
-	assert.match(h.tools.get("delegate").description, /worker and validator run alone per repository; explorers can run together but not alongside a worker or validator; a reviewer or another repository can run alongside\./);
+	assert.match(h.tools.get("delegate").description, /Batch calls in one message only when independent and lock-compatible.*independent explorers may run together.*still-needed validator may join a reviewer only if the reviewer needs no check result.*checks change no source.*do not batch worker and validator in one repository, where the second is refused and counted/);
 	assert.match(h.tools.get("delegate").description, /Deliverables that require writing files \(scripts, reports, output files\) go to worker/);
 	assert.match(h.tools.get("delegate").description, /start the run as a background job that returns immediately with the job id, output path, and completion condition/);
 	assert.match(h.tools.get("delegate").description, /after the run finishes, delegate acceptance separately/);
 	assert.match(h.tools.get("delegate").description, /one bounded status check per job at a time; do not repeat identical wait commands/);
 	assert.match(h.tools.get("delegate").description, /"completed" result only means the child run ended; in your reply distinguish implementation done, checks passed, and real run passed/);
 	assert.match(h.tools.get("delegate").parameters.properties.role.description, /validator: run existing checks only, writes no files/);
-	assert.match(h.tools.get("delegate").parameters.properties.role.description, /state the baseline commit in the task/);
+	assert.match(h.tools.get("delegate").parameters.properties.role.description, /for committed changes use base to supply the complete range diff/);
+	assert.equal(h.tools.get("delegate").parameters.properties.base.type, "string");
 	assert.match(h.tools.get("delegate").parameters.properties.cwd.description, /the diff summary uses it, and the lock covers its whole repository\./);
 	assert.match(plannerPrompt(false), /Do small things yourself \(about ≤2 files/);
 	process.env.PI_PLANNER_ONLY_TIMEOUT_MS = "300000";
@@ -679,9 +680,89 @@ try {
 	await h2.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200_000, output: 5, cost: { total: 1 } } } }, h2.ctx);
 	assert.equal(h2.sentMessages.length, 1);
 	assert.equal(h2.sentMessages[0][0].customType, "planner-only-context");
+	assert.match(h2.statuses.at(-1), /native.*root.*\$1\.000.*child.*unavailable/);
+	assert.equal(statusRgb(h2.statusColors.at(-1)), "247,118,142");
+	assert.doesNotMatch(h2.statuses.at(-1), /children\(/);
 	await h2.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200_000, output: 5 } } }, h2.ctx);
 	assert.equal(h2.sentMessages.length, 1, "Native context warning is deduplicated");
-	assert.doesNotMatch(h2.statuses.at(-1), /children\(/);
+	const requests = [];
+	h2.events.on("subagents:rpc:v1:request", (request) => { if (request.method === "cost") requests.push(request); });
+	await h2.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 5, output: 0, cost: { total: 0 } } } }, h2.ctx);
+	const old = requests.at(-1);
+	await h2.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 5, output: 0, cost: { total: 0 } } } }, h2.ctx);
+	const latest = requests.at(-1);
+	assert.notEqual(old.requestId, latest.requestId);
+	const replyCost = (request, cost) => h2.events.emit(`subagents:rpc:v1:reply:${request.requestId}`, { version: 1, requestId: request.requestId, success: true, data: { version: 1, childTotal: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, cost, turns: 1 }, children: [], unresolvedAsyncChildren: 0 } });
+	replyCost(latest, 0.25);
+	replyCost(old, 9);
+	assert.match(h2.statuses.at(-1), /child.*≥\$0\.250/);
+	await h2.commands.get("planner-only").handler("status", h2.ctx);
+	assert.match(h2.notes.at(-1), /(missing|incomplete).*workflow/i);
+	const beforeForeign = requests.length;
+	h2.events.emit("subagent:async-complete", { sessionId: "old-session", runId: "foreign" });
+	assert.equal(requests.length, beforeForeign);
+	h2.events.emit("subagent:async-complete", { sessionId: "session-1", runId: "workflow-child", awaitedByWorkflow: true });
+	const completion = requests.at(-1);
+	replyCost(completion, 0.25);
+	h2.events.emit("subagent:async-complete", { sessionId: "session-1", runId: "workflow-child", awaitedByWorkflow: true });
+	replyCost(requests.at(-1), 0.25);
+	assert.match(h2.statuses.at(-1), /child.*≥\$0\.250/);
+	h2.events.emit("subagent:async-complete", { sessionId: "session-1", runId: "failed" });
+	const failed = requests.at(-1);
+	h2.events.emit(`subagents:rpc:v1:reply:${failed.requestId}`, { version: 1, requestId: failed.requestId, success: false });
+	assert.match(h2.statuses.at(-1), /child unavailable/);
+	h2.events.emit("subagent:async-complete", { sessionId: "session-1", runId: "pending" });
+	const staleSessionRequest = requests.at(-1);
+	h2.sessionId("session-2");
+	await h2.handlers.get("session_start")({ reason: "reload" }, h2.ctx);
+	assert.equal(h2.events.listeners(`subagents:rpc:v1:reply:${staleSessionRequest.requestId}`), 0, "reload releases the old request listener");
+	replyCost(staleSessionRequest, 9);
+	assert.doesNotMatch(h2.statuses.at(-1), /\$9\.000/);
+	h2.sessionId("session-1");
+	{
+		const lifecycle = fakePi();
+		await lifecycle.handlers.get("session_start")({ reason: "new" }, lifecycle.ctx);
+		const costRequests = [];
+		lifecycle.events.on("subagents:rpc:v1:request", (req) => costRequests.push(req));
+		await lifecycle.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 1 } } }, lifecycle.ctx);
+		const pending = costRequests.at(-1);
+		assert.equal(lifecycle.events.listeners(`subagents:rpc:v1:reply:${pending.requestId}`), 1);
+		assert.equal(typeof lifecycle.handlers.get("session_shutdown"), "function", "shutdown handler releases RPC resources");
+		await lifecycle.handlers.get("session_shutdown")({}, lifecycle.ctx);
+		assert.equal(lifecycle.events.listeners(`subagents:rpc:v1:reply:${pending.requestId}`), 0, "shutdown releases pending RPC listener");
+		assert.equal(lifecycle.events.listeners("subagent:async-complete"), 0, "shutdown releases completion listener");
+	}
+	{
+		const originalSetTimeout = globalThis.setTimeout, originalClearTimeout = globalThis.clearTimeout;
+		const timers = [];
+		globalThis.setTimeout = (fn) => { const timer = { fn, unref() {} }; timers.push(timer); return timer; };
+		globalThis.clearTimeout = () => {};
+		try {
+			const guarded = fakePi();
+			await guarded.handlers.get("session_start")({ reason: "new" }, guarded.ctx);
+			const rpc = [];
+			guarded.events.on("subagents:rpc:v1:request", (request) => rpc.push(request));
+			const start = async () => { await guarded.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 1 } } }, guarded.ctx); return rpc.at(-1); };
+			const respond = (req, patch = {}, total = { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, cost: 0.5 }) => guarded.events.emit(`subagents:rpc:v1:reply:${req.requestId}`, { version: 1, requestId: req.requestId, success: true, data: { version: 1, childTotal: total }, ...patch });
+			for (const total of [null, { input: NaN, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }, { input: 0, output: -1, cacheRead: 0, cacheWrite: 0, cost: 0 }, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: Infinity }]) {
+				respond(await start(), {}, total);
+				assert.match(guarded.statuses.at(-1), /child unavailable/);
+			}
+			for (const patch of [{ version: 2 }, { requestId: "foreign" }, { data: { version: 2, childTotal: {} } }]) {
+				respond(await start(), patch);
+				assert.match(guarded.statuses.at(-1), /child unavailable/);
+			}
+			await start();
+			const oldTimer = timers.at(-1);
+			respond(await start());
+			oldTimer.fn();
+			assert.match(guarded.statuses.at(-1), /child.*≥\$0\.500/, "stale timeout cannot erase newer snapshot");
+			await start();
+			timers.at(-1).fn();
+			assert.match(guarded.statuses.at(-1), /child unavailable/, "timeout is unavailable");
+			await guarded.handlers.get("session_shutdown")({}, guarded.ctx);
+		} finally { globalThis.setTimeout = originalSetTimeout; globalThis.clearTimeout = originalClearTimeout; }
+	}
 	const nativeTools = [
 		["delegate", { role: "worker", task: "task" }],
 		["git_audit", { operation: "status" }],
