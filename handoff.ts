@@ -14,11 +14,12 @@ export const HANDOFF_PREFERENCE = join(AGENT_DIR, "planner-only.handoff");
 
 interface PendingHandoff {
 	brief: string;
+	origin: "user" | "root";
 	sourceMode: PlannerMode;
 	cwd: string;
 	sessionFile?: string;
 	selection?: { provider: string; id: string; thinkingLevel?: string };
-	/** Set after a failed or cancelled dispatch: only `/planner-only handoff` retries it. */
+	/** Set after a failed or cancelled dispatch: retry manually or replace it. */
 	manualOnly?: boolean;
 }
 
@@ -142,14 +143,21 @@ export class RootHandoff {
 		if (!ctx.hasUI) return result("Handoff refused: a UI session is required.", false);
 		const reason = this.#refusal(params.brief);
 		if (reason) return result(`Handoff refused: ${reason}`, false);
-		const pending: PendingHandoff = { brief: params.brief, cwd: params.cwd ? resolve(ctx.cwd, params.cwd) : ctx.cwd, sessionFile: this.#runtime.host.sessionFile(ctx), sourceMode: this.#runtime.mode() };
-		if (pending.sourceMode === "native") return this.#scheduleNative(pending, ctx);
+		const replacing = !!this.#pending;
+		if (replacing) this.#revision++;
+		const pending: PendingHandoff = { brief: params.brief, origin: this.#requested ? "user" : "root", cwd: params.cwd ? resolve(ctx.cwd, params.cwd) : ctx.cwd, sessionFile: this.#runtime.host.sessionFile(ctx), sourceMode: this.#runtime.mode() };
+		if (pending.sourceMode === "native") return this.#scheduleNative(pending, ctx, replacing);
 		this.#requested = false;
 		this.#pending = pending;
-		return result("Handoff scheduled: a new session will start with this brief after this turn ends. Stop working now; end your turn with a one-line note to the user.", true);
+		return this.#scheduled(replacing);
 	}
 
-	async #scheduleNative(pending: PendingHandoff, ctx: ExtensionContext) {
+	#scheduled(replacing: boolean) {
+		return result(`Handoff scheduled${replacing ? "; it replaces the earlier brief kept after a failed delivery." : ": a new session will start with this brief after this turn ends."} Stop working now; end your turn with a one-line note to the user.`, true);
+	}
+
+	async #scheduleNative(pending: PendingHandoff, ctx: ExtensionContext, replacing: boolean) {
+		const requested = this.#requested;
 		this.#requested = false;
 		this.#pending = pending;
 		this.#scheduleInFlight = pending;
@@ -162,10 +170,11 @@ export class RootHandoff {
 			return result("Handoff cancelled: source session or pending brief changed.", false);
 		}
 		if (activity !== "idle") {
-			this.#defer(pending);
-			return result(`Handoff refused: Native activity is ${activity}; brief retained for /planner-only handoff retry or handoff drop.`, false);
+			this.#pending = undefined;
+			this.#requested = requested;
+			return result(activity === "busy" ? "Handoff refused: Native subagents are still running; the brief was not kept. Wait for them to finish, then call handoff again with the full brief." : "Handoff refused: Native subagent status could not be confirmed (query failed or timed out); the brief was not kept. Call handoff again later with the full brief, or tell the user.", false);
 		}
-		return result("Handoff scheduled: a new session will start with this brief after this turn ends. Stop working now; end your turn with a one-line note to the user.", true);
+		return this.#scheduled(replacing);
 	}
 
 	async #nativeActivity(): Promise<"idle" | "busy" | "unknown"> {
@@ -247,7 +256,7 @@ export class RootHandoff {
 	#refusal(brief: string): string | undefined {
 		if (this.#runtime.activity.locks.size > 0) return "a child is still running.";
 		if (this.#runtime.activity.delegationsInFlight > 0) return "a delegated child is still running.";
-		if (this.#pending) return "one is already pending.";
+		if (this.#pending && (!this.#pending.manualOnly || this.#dispatching || this.#scheduleInFlight === this.#pending)) return "one is already pending.";
 		const threshold = loadConfig().contextWarnTokens;
 		if (!this.#requested && handoffMode() === "off") {
 			return "the user did not request a handoff and self-initiated handoff is off (enable it with /planner-only handoff-mode confirm|auto, or PI_PLANNER_ONLY_HANDOFF). Continue in this session, or suggest the user run /planner-only handoff at a task boundary.";
@@ -269,7 +278,7 @@ export class RootHandoff {
 			const model = ctx.model;
 			if (!model) {
 				this.#defer(handoff);
-				ctx.ui.notify("handoff refused: the current model cannot be identified; run /planner-only handoff to retry, or /planner-only handoff drop to discard it", "warning");
+				ctx.ui.notify("handoff refused: the current model cannot be identified; run /planner-only handoff to retry, or /planner-only handoff drop to discard it. Root's next handoff call will replace this brief.", "warning");
 				return;
 			}
 			handoff.selection = { provider: model.provider, id: model.id, ...(ctx.thinkingLevel === undefined ? {} : { thinkingLevel: String(ctx.thinkingLevel) }) };
@@ -283,7 +292,7 @@ export class RootHandoff {
 			if (!stillOwned()) { if (this.#revision === revision && this.#pending === handoff) this.deactivate(); return; }
 			if (activity !== "idle") {
 				this.#defer(handoff);
-				ctx.ui.notify(`handoff refused: Native activity is ${activity}; run /planner-only handoff to retry or /planner-only handoff drop to discard`, "warning");
+				ctx.ui.notify(`handoff refused: Native activity is ${activity}; run /planner-only handoff to retry or /planner-only handoff drop to discard. Root's next handoff call will replace this brief.`, "warning");
 				return;
 			}
 		}
@@ -304,7 +313,7 @@ export class RootHandoff {
 					const current = rctx.model;
 					if (!current || current.provider !== selection.provider || current.id !== selection.id) throw new Error(`active model did not match ${selection.provider}/${selection.id}`);
 					if (selection.thinkingLevel !== undefined && rctx.thinkingLevel !== selection.thinkingLevel) throw new Error(`thinking level did not match ${selection.thinkingLevel}`);
-					if (mode === "confirm") {
+					if (mode === "confirm" && handoff.origin === "root") {
 						rctx.ui.setEditorText(prompt);
 						rctx.ui.notify(`Handoff ready. Submit when ready.${selection.thinkingLevel === undefined ? " Thinking level was not carried over." : ""}`, "info");
 					} else {
@@ -314,19 +323,19 @@ export class RootHandoff {
 				} catch (error) {
 					const reason = error instanceof Error ? error.message : String(error);
 					(activeHandoff ?? this).#defer({ ...handoff, selection: handoff.selection });
-					rctx.ui.notify(`handoff settings could not be restored (${reason}); brief was not sent. Run /planner-only handoff to retry, or /planner-only handoff drop to discard it`, "warning");
+					rctx.ui.notify(`handoff settings could not be restored (${reason}); brief was not sent. Run /planner-only handoff to retry, or /planner-only handoff drop to discard it. Root's next handoff call will replace this brief.`, "warning");
 				}
 			} });
 			if (result?.cancelled) {
 				this.#defer(handoff);
-				ctx.ui.notify("handoff cancelled; run /planner-only handoff to retry, or /planner-only handoff drop to discard it", "warning");
+				ctx.ui.notify("handoff cancelled; run /planner-only handoff to retry, or /planner-only handoff drop to discard it. Root's next handoff call will replace this brief.", "warning");
 			} else this.deactivate();
 		} catch (error) {
 			const liveHandoff = activeHandoff ?? this;
 			liveHandoff.#defer(handoff);
 			const reason = error instanceof Error ? error.message : String(error);
 			try {
-				ctx.ui.notify(`handoff failed (${reason}); run /planner-only handoff to retry, or /planner-only handoff drop to discard it`, "warning");
+				ctx.ui.notify(`handoff failed (${reason}); run /planner-only handoff to retry, or /planner-only handoff drop to discard it. Root's next handoff call will replace this brief.`, "warning");
 			} catch {
 				// Session replacement invalidates the old command context.
 			}

@@ -127,7 +127,7 @@ extension and does not reproduce an older benchmark's user-message prefix byte f
 | `/planner-only on` / `off` | Legacy immediate Lite/off switch; update the marker and next-session preference. Refused while a Lite child is in flight or its cwd is held. |
 | `/planner-only status` | Show effective mode, next fresh-session mode, saved preference, Lite session totals, and current loaded session per-role diagnostics (`calls`, completed runtime terminals, timed_out, incomplete, refused, cumulative duration including concurrent overlap). Role statistics are in-memory diagnostics for the active session only; they reset on `/new` and are not restored across `/reload`. |
 | `PI_PLANNER_ONLY_MODE=off|native|lite` | Choose the mode for new sessions (highest fresh-session priority). |
-| `/planner-only handoff [goal]` | Ask Root to write a brief and continue in a fresh session (`handoff drop` discards a failed one). Root self-initiation above the context threshold follows the effective handoff mode (`confirm` or `auto`). Resolution order: nonempty `PI_PLANNER_ONLY_HANDOFF` > `~/.pi/agent/planner-only.handoff` > default `off`. |
+| `/planner-only handoff [goal]` | Ask Root to write a brief and continue in a fresh session, automatically submitting even in confirm mode. Retry a failed delivery, discard it with `handoff drop`, or let Root replace it with a new brief. Root self-initiation above the context threshold follows the effective handoff mode (`confirm` or `auto`). Resolution order: nonempty `PI_PLANNER_ONLY_HANDOFF` > `~/.pi/agent/planner-only.handoff` > default `off`. |
 | `/planner-only handoff-mode [off|confirm|auto]` | Show or save the handoff mode. Resolution order: nonempty `PI_PLANNER_ONLY_HANDOFF` > `~/.pi/agent/planner-only.handoff` > default `off`; status shows the effective value and source. |
 | `PI_PLANNER_ONLY=1` / `0` | Legacy live Lite/off override when `MODE` is unset; overrides saved preference and marker for new sessions. |
 | `PI_PLANNER_ONLY_STRICT=1` | Block Root's own `edit`, `write`, and `bash` by name. It does not block write capabilities provided by other plugins, so it is not a security boundary. Off by default, because small tasks are cheaper done directly. |
@@ -135,7 +135,7 @@ extension and does not reproduce an older benchmark's user-message prefix byte f
 | `PI_PLANNER_ONLY_MAX_TOKENS` | Cancel a child whose reported tokens exceed this (default 1500000). The count is the child's cumulative input+output tokens from its progress events, excluding cache reads. |
 | `PI_PLANNER_ONLY_START_TIMEOUT_MS` | Give up if the child has not started (default 30000). |
 | `PI_PLANNER_ONLY_CANCEL_GRACE_MS` | Wait for a cancel to be confirmed (default 5000). |
-| `PI_PLANNER_ONLY_HANDOFF` | Overrides the persisted `/planner-only handoff-mode` preference when nonempty. Resolution order is env > persisted preference > default `off`. `confirm` allows Root self-initiation above the threshold and puts the brief in the editor; `auto` does the same but submits automatically (experimental; savings not measured, smoke tests only show the flow runs). |
+| `PI_PLANNER_ONLY_HANDOFF` | Overrides the persisted `/planner-only handoff-mode` preference when nonempty. Resolution order is env > persisted preference > default `off`. `confirm` allows Root self-initiation above the threshold and puts its brief in the editor; user-initiated handoffs submit automatically. `auto` also submits Root handoffs automatically (experimental; savings not measured, smoke tests only show the flow runs). |
 | `PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS` | Root context size at which the status reaches red and Root gets one message suggesting delegation, a new session, or `/compact` (default 150000). The status heats up with the context: the theme accent when empty, the warning color at half the threshold, red at the threshold. |
 
 In off, all four tools are inactive even if called directly. Native enables only
@@ -150,8 +150,10 @@ is active or its stop remains unconfirmed. Active `/reload` does not guarantee
 lock isolation across plugin instances; finish and confirm child stops before reloading.
 
 Native handoff queries pi-subagents status both when the brief is scheduled and
-immediately before switching. Active or uncertain status retains the brief for
-manual retry or `handoff drop`; it does not cancel work. This is best effort,
+immediately before switching. Active or uncertain status at scheduling rejects
+the brief without retaining it; on a replacement, neither brief is retained.
+At dispatch it retains the brief for manual retry, `handoff drop`, or replacement
+by Root's next handoff call; it does not cancel work. This is best effort,
 not an atomic barrier: a scheduled job can start between the final check and
 session replacement. In one isolated Pi 1.4.0 / pi-subagents 0.83.0 RPC probe,
 a detached single run continued after replacement and its completion notification

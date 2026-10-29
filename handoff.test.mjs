@@ -33,7 +33,7 @@ function harness(options = {}) {
 				setThinkingLevel: (next) => { thinking = next; },
 				sendUserMessage: (message) => commands.push(message),
 			},
-			git: noGit, host: { sessionFile: () => "/sessions/source.jsonl", sendMessage: (message) => notes.push(message) },
+			git: options.git ?? noGit, host: { sessionFile: () => "/sessions/source.jsonl", sendMessage: (message) => notes.push(message) },
 			activity, mode: () => "lite",
 		});
 	}
@@ -93,6 +93,66 @@ try {
 	blocked.activity.delegationsInFlight = 1;
 	assert.match(blocked.current.schedule({ brief }, blocked.ctx).content[0].text, /a delegated child is still running/);
 	assert.equal(await blocked.current.command("status", blocked.ctx), false);
+
+	process.env.PI_PLANNER_ONLY_HANDOFF = "confirm";
+	{
+		const h = harness();
+		await h.current.command("handoff", h.ctx);
+		assert.equal(h.current.schedule({ brief }, h.ctx).details.ok, true);
+		await h.current.command("handoff", h.ctx);
+		assert.equal(h.sent.length, 1);
+		assert.equal(h.editor.length, 0);
+	}
+	for (const options of [{ failRestore: true }, { cancel: true }]) {
+		const h = harness(options);
+		h.activity.rootContext = 200000;
+		assert.equal(h.current.schedule({ brief }, h.ctx).details.ok, true);
+		await h.current.command("handoff", h.ctx);
+		options.cancel = false;
+		h.setSource({ provider: "new", id: "model" });
+		const fresh = "A fresh replacement brief with new work. ".repeat(8);
+		const replacement = h.current.schedule({ brief: fresh }, h.ctx);
+		assert.equal(replacement.details.ok, true);
+		assert.match(replacement.content[0].text, /replaces/);
+		await h.current.command("handoff", h.ctx);
+		assert.ok(h.editor[0].includes(fresh));
+		assert.ok(!h.editor[0].includes(brief));
+		assert.deepEqual(h.ctx.model, { provider: "new", id: "model" });
+	}
+	{
+		const h = harness({ cancel: true });
+		h.activity.rootContext = 200000;
+		assert.equal(h.current.schedule({ brief }, h.ctx).details.ok, true);
+		await h.current.command("handoff", h.ctx);
+		assert.match(h.current.schedule({ brief: "short" }, h.ctx).content[0].text, /at least 200/);
+		h.ctx.newSession = async ({ withSession }) => { await withSession(h.ctx); return {}; };
+		await h.current.command("handoff", h.ctx);
+		assert.ok(h.editor[0].includes(brief));
+	}
+	for (const user of [true, false]) {
+		const h = harness({ failRestore: true });
+		h.activity.rootContext = 200000;
+		if (user) await h.current.command("handoff", h.ctx);
+		assert.equal(h.current.schedule({ brief }, h.ctx).details.ok, true);
+		await h.current.command("handoff", h.ctx);
+		await h.current.command("handoff", h.ctx);
+		assert.equal(h.sent.length, user ? 1 : 0);
+		assert.equal(h.editor.length, user ? 0 : 1);
+	}
+	{
+		let release;
+		let hold = false;
+		const gate = new Promise(resolve => { release = resolve; });
+		const h = harness({ failRestore: true, git: async (...args) => { if (hold) await gate; return noGit(...args); } });
+		h.activity.rootContext = 200000;
+		assert.equal(h.current.schedule({ brief }, h.ctx).details.ok, true);
+		await h.current.command("handoff", h.ctx);
+		hold = true;
+		const retry = h.current.command("handoff", h.ctx);
+		assert.match(h.current.schedule({ brief }, h.ctx).content[0].text, /already pending/);
+		release();
+		await retry;
+	}
 	console.log("handoff.test: ok");
 } finally {
 	if (savedMode === undefined) delete process.env.PI_PLANNER_ONLY_HANDOFF;

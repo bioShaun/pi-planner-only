@@ -341,9 +341,9 @@ try {
 	await disabledHandoff.handlers.get("agent_settled")({}, disabledHandoff.ctx);
 	assert.equal(disabledHandoff.sentUserMessages.length, 1);
 	const confirm = fakePi();
-	await confirm.commands.get("planner-only").handler("handoff", confirm.ctx);
-	await confirm.tools.get("handoff").execute("confirm", { brief }, undefined, undefined, confirm.ctx);
 	process.env.PI_PLANNER_ONLY_HANDOFF = "confirm";
+	await confirm.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200000, output: 0 } } }, confirm.ctx);
+	await confirm.tools.get("handoff").execute("confirm", { brief }, undefined, undefined, confirm.ctx);
 	await confirm.commands.get("planner-only").handler("handoff", confirm.ctx);
 	delete process.env.PI_PLANNER_ONLY_HANDOFF;
 	assert.equal(confirm.replaced.editor.length, 1);
@@ -363,9 +363,9 @@ try {
 	assert.equal(unknownAuto.pi.setThinkingLevel ? unknownAuto.activeThinking() : "", "medium");
 	assert.ok(unknownAuto.replaced.notes.some((n) => /thinking level was not carried over/i.test(n)));
 	const unknownConfirm = fakePi(undefined, undefined, { unknownSourceThinking: true });
-	await unknownConfirm.commands.get("planner-only").handler("handoff", unknownConfirm.ctx);
-	await unknownConfirm.tools.get("handoff").execute("unknown-confirm", { brief }, undefined, undefined, unknownConfirm.ctx);
 	process.env.PI_PLANNER_ONLY_HANDOFF = "confirm";
+	await unknownConfirm.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200000, output: 0 } } }, unknownConfirm.ctx);
+	await unknownConfirm.tools.get("handoff").execute("unknown-confirm", { brief }, undefined, undefined, unknownConfirm.ctx);
 	await unknownConfirm.commands.get("planner-only").handler("handoff", unknownConfirm.ctx);
 	delete process.env.PI_PLANNER_ONLY_HANDOFF;
 	assert.equal(unknownConfirm.replaced.sent.length, 0);

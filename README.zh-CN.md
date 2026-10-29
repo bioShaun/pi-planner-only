@@ -104,7 +104,7 @@ Native 子代理用量来自 pi-subagents 当前会话的 cost RPC，始终是�
 | `/planner-only on` / `off` | 旧版即时切换 Lite/关闭，同时修改标记和新会话偏好；Lite 子代理运行中或 cwd 仍被占用时拒绝切换。 |
 | `/planner-only status` | 显示当前生效模式、新会话模式、保存的偏好、适用时的 Lite 费用合计，以及当前加载会话的角色统计（`calls`、完成终态、timed_out、未完成、refused、包含并发重叠的累计用时）。角色统计为当前会话的内存诊断，新会话时 reset，且在 `/reload` 后不保留。 |
 | `PI_PLANNER_ONLY_MODE=off|native|lite` | 新会话模式，优先级最高。 |
-| `/planner-only handoff [目标]` | 让 Root 写简报并在新会话里继续（`handoff drop` 丢弃失败的交接）。Root 在上下文超过阈值后自行发起取决于生效 handoff 模式（`confirm` 或 `auto`）。优先级：非空 `PI_PLANNER_ONLY_HANDOFF` > `~/.pi/agent/planner-only.handoff` > 默认 `off`。 |
+| `/planner-only handoff [目标]` | 让 Root 写简报并在新会话里继续，confirm 模式下也自动提交。失败的交接可重试、用 `handoff drop` 丢弃或由 Root 的新简报替换。Root 在上下文超过阈值后自行发起取决于生效 handoff 模式（`confirm` 或 `auto`）。优先级：非空 `PI_PLANNER_ONLY_HANDOFF` > `~/.pi/agent/planner-only.handoff` > 默认 `off`。 |
 | `/planner-only handoff-mode [off|confirm|auto]` | 查看或保存 handoff 模式。优先级：非空 `PI_PLANNER_ONLY_HANDOFF` > `~/.pi/agent/planner-only.handoff` > 默认 `off`；状态会显示生效值和来源。 |
 | `PI_PLANNER_ONLY=1` / `0` | 未设置 MODE 时，旧版即时强制 Lite/关闭；新会话优先于保存的偏好和标记。 |
 | `PI_PLANNER_ONLY_STRICT=1` | 按名字禁止 Root 自己用 `edit`、`write`、`bash`。不拦截其他插件提供的写能力，不是安全边界。默认关闭，因为小任务直接做更省。 |
@@ -112,7 +112,7 @@ Native 子代理用量来自 pi-subagents 当前会话的 cost RPC，始终是�
 | `PI_PLANNER_ONLY_MAX_TOKENS` | 子代理上报的 token 超过此值就取消（默认 1500000）。计数取子代理进度事件里的累计 input+output token，不含缓存读取。 |
 | `PI_PLANNER_ONLY_START_TIMEOUT_MS` | 子代理迟迟不启动时放弃（默认 30000）。 |
 | `PI_PLANNER_ONLY_CANCEL_GRACE_MS` | 等待取消被确认的时间（默认 5000）。 |
-| `PI_PLANNER_ONLY_HANDOFF` | 非空时覆盖 `/planner-only handoff-mode` 保存的偏好。优先级为 env > 持久偏好 > 默认 `off`。`confirm` 允许 Root 超过阈值后自行发起，并把简报放入编辑框；`auto` 同样允许自行发起并自动提交（实验性：节省效果尚未测量，冒烟测试仅确认流程可运行）。 |
+| `PI_PLANNER_ONLY_HANDOFF` | 非空时覆盖 `/planner-only handoff-mode` 保存的偏好。优先级为 env > 持久偏好 > 默认 `off`。`confirm` 允许 Root 超过阈值后自行发起，并把其简报放入编辑框；用户发起的交接自动提交。`auto` 同样允许自行发起并自动提交（实验性：节省效果尚未测量，冒烟测试仅确认流程可运行）。 |
 | `PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS` | Root 上下文达到此值时状态栏变红，并给 Root 发一条提示：委派、开新会话或 `/compact`（默认 150000）。状态栏颜色随上下文升温：空上下文用主题强调色，阈值一半用警告色，到阈值即红色。 |
 
 关闭模式下，本扩展的四个工具即使被直接调用也会拒绝执行。Native 只启用 `handoff`，Lite 委派和 Git 工具仍不可用。
@@ -120,7 +120,7 @@ Native 仅恢复先前被 Lite 隐藏的 pi-subagents 工具，不会强行启�
 子进程（`PI_SUBAGENT_CHILD=1`）不加载本扩展。偏好保存在用户 agent 目录的 `planner-only.mode`，适用于该目录下的新会话；不会修改 `settings.json`、模型配置或自动安装/重载扩展。
 Lite 委派未结束或停止尚未确认时，新建、恢复、fork 与树导航会被拒绝。运行中的 `/reload` 不提供跨插件实例的锁隔离保证；应先确认子任务结束，再重载扩展。
 
-Native handoff 在接收简报和切换前各查询一次 pi-subagents status；活动或不确定时保留简报供手动重试或 `handoff drop`，不取消任务。这是尽力检查而非原子屏障，定时任务可能在最后一次检查与切换之间启动。一次隔离的 Pi 1.4.0 / pi-subagents 0.83.0 RPC 实测中，单任务在切换后继续并向新会话发送完成通知；运行中的 workflow 因 `runtime-replaced` 停止，但 child 继续运行。一个活动 run 在 reload 前后均可见，不能证明所有恢复时序都安全。用户自行执行 `/new` 的行为不变。
+Native handoff 在接收简报和切换前各查询一次 pi-subagents status；提交时活动或不确定则拒绝且不保留简报，若新简报替换旧稿后被拒，新旧稿均不保留。派发时活动或不确定则保留简报供手动重试、`handoff drop` 或 Root 的下次 handoff 替换，不取消任务。这是尽力检查而非原子屏障，定时任务可能在最后一次检查与切换之间启动。一次隔离的 Pi 1.4.0 / pi-subagents 0.83.0 RPC 实测中，单任务在切换后继续并向新会话发送完成通知；运行中的 workflow 因 `runtime-replaced` 停止，但 child 继续运行。一个活动 run 在 reload 前后均可见，不能证明所有恢复时序都安全。用户自行执行 `/new` 的行为不变。
 
 已验证的宿主为 Pi 1.4.0；不声明支持其他宿主版本。
 
