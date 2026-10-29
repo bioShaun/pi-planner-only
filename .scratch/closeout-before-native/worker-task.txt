@@ -1,0 +1,17 @@
+Goal: 收尾现有步骤0–2，修复已确认的提示词遗漏并提供当前测试证据。Repo/cwd /home/tcuni-claw/pi/pi-planner-only，HEAD 6e2c95a091fd0eb17e0ec3b8915affcebc3c29ab。你是此cwd唯一写入者。Root负责后续diff与最终接受/commit。使用fresh上下文，不派生子代理，不读Root会话或用户级Codex协议。
+
+已知：工作树有步骤0宿主1.4.0对齐（README*、package*.json、host-runtime.test.mjs）、步骤1离线基线和研究文档、步骤2 index.ts/index.test.mjs 改写；另有 .claude 本机配置，保留不碰。历史记录 .scratch/host-1.4-alignment/execution.md、.scratch/offline-baseline/execution.md、.scratch/step2-prompt-20261027/{static-checks,execution}.md、.scratch/step2-review-20261027/review.md。上轮唯一Root采纳缺陷：index.ts 的 Check diffs before accepting 删除 and output。恢复为 Check diffs and output before accepting，预期非strict1498/strict1489字符。不要做其他文案压缩/代码重构。
+
+Ownership: 仅 index.ts 的上述短句；docs/planner-optimization-plan-2026-10-26.md 的当前状态/追加本轮收尾说明（保留历史验收数字与日期，明确已修正后的长度和旧证据区别，步骤3–5暂缓，下一轮Native试用后再评估）；.scratch/closeout-before-native/ 下新执行证据。index.test.mjs已有改动必须保留不删弱，不新增固定完整文案测试；无须为文案加产品测试。其余既有源码、依赖、历史证据、本机配置均不改，不commit/push、不切模式，不实现check v1。
+
+验证顺序必须先红后绿：先写仅本轮使用的最小回归探针（存本轮scratch目录，可用测试导入plannerPrompt检查接受前同时核对diff与output的语义、两模式及<1500约束，不锁定整段提示词原文），先在未修文案运行，保留完整失败输出 .scratch/closeout-before-native/regression-red.log。失败必须来自缺失output要求而非导入/语法；再改实现，再跑同探针保存 regression-green.log。报告贴出失败和通过关键输出。此后运行项目完整 npm run test:release（含host-runtime 5项），以及 node --test .scratch/offline-baseline/analyze.test.mjs。完整日志分别 release.log 和 analysis-tests.log，明确实际命令、环境版本、退出码。
+
+TMPDIR必须仓库外 /project/tmp/pi-planner-closeout-before-native，所有临时/中间文件禁止/tmp。预计>1min/>2G内存/大量/data_0读写必须slot cpu/io执行。起重活前读 ~/.config/agents/slot.md，先slot audit、slot status并保存到本轮resource-preflight.log；所有release检查按slot cpu -- npm run test:release执行。不要改slot容量、杀其他任务。不要重复运行已经通过且没有变化的检查。
+
+当前全局pi-subagents已升级0.83.0，旧release使用 /project/tmp/pi-planner-host-1.4-contract-20261026/node_modules/pi-subagents 的0.81.0隔离副本。先检查当前0.83.0的可用性，优先当前全局默认目录跑release。若因缺少optional pi-ai peer等环境依赖失败，保留失败日志，在/project/tmp任务目录隔离安装当前0.83.0本地原包副本及所需peer（参考旧执行记录，npm install前同样slot preflight，不升级/改变全局或仓库依赖），核实契约源文件与全局原包一致，用PI_SUBAGENTS_DIR指向该副本重跑。不要偷用旧0.81.0伪称0.83覆盖；无法构造则BLOCKED明确缺口。验证实际host package版本、pi-subagents版本、覆盖边界。无需重跑付费模型会话或历史全量日志分析。
+
+写 execution.md: 完整命令/退出码、红绿证据、当前长度、release/分析检查结论、原有改动与本轮改动区分、当前源码/历史会话版本界限、限制；检查 git diff --check，记录状态，保存 git diff HEAD -- README.md README.zh-CN.md package.json package-lock.json index.ts index.test.mjs 到 final.diff（额外注明host-runtime是未跟踪新增文件，review manifest会包含它）。不改旧审核/证据文件，不把旧BLOCKED改成PASS。
+
+所有写入与测试结束后执行冻结准备（Root已编写中性spec，不修改它的范围/要求）：python3 /home/tcuni-claw/.codex/review-workflow.py prepare --spec .scratch/closeout-before-native/review-spec.json --output .scratch/closeout-before-native/review-package --protocol-sha256 cb350b9cdddbba3023e7fa4ac2d6fb508c9ea49b8485498676fc7c9fc91d76bf；再check该包，再review-contract.py preflight 该包/request.json。prepare失败则报告，不能自行改scope绕过；freeze后不再改绑定文件。将检查输出保存在包外如prepare.log。你不判业务final PASS，只报告工作状态。
+
+Return 首行严格 COMPLETED 或 BLOCKED 或 ESCALATE，后含 changes/files_changed/checks/risks/blockers、红绿输出片段、review-package绝对路径。COMPLETED仅限全部必需检查已通过且冻结preflight成功。advisory预算：约8分钟检查进展，发现范围外失败只回报，禁止扩大修复；不必等待预算到期。

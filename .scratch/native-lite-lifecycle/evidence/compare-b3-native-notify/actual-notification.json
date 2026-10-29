@@ -1,0 +1,16 @@
+{
+  "customType": "subagent-notify",
+  "details": {
+    "runs": [
+      {
+        "agent": "worker",
+        "status": "completed",
+        "asyncDir": "/home/tcuni-claw/.pi/agent/runtime/pi-subagents/async-subagent-runs/5a8550b7-fd12-4535-9df9-ade4914fdc04",
+        "durationMs": 64034,
+        "runId": "5a8550b7-fd12-4535-9df9-ade4914fdc04",
+        "sessionLabel": "Session file",
+        "sessionValue": "/project/tmp/pi-native-lite-20261028T115324+0800/results/compare-b3/S1-native/5a8550b7-fd12-4535-9df9-ade4914fdc04/run-0/session.jsonl"
+      }
+    ]
+  }
+}

@@ -1,0 +1,53 @@
+# REVIEW DRAFT ONLY. Not executed or validated. Never run without the specific
+# Root launch gate for the one arm. No loop and no automatic retry.
+# Before filling parameters, read ~/.config/agents/slot.md. Human/Root must
+# confirm this arm's authorization, frozen candidate/brief/settings/runtime/
+# controller hashes, intact ledger prefix and current ledger/checksum/budget,
+# absent ledger lock, and empty target output. Completed arms remain untouched.
+# First whole-batch preflight may use verify-batch.mjs; after an arm runs it
+# cannot because it requires an equal-length ledger and all outputs empty.
+# The new read-only per-arm checker permits a valid ledger append and retained
+# completed-arm output while requiring the target output to remain empty:
+# env PI_NATIVE_LITE_BATCH_ROOT="$BATCH_ROOT" PI_NATIVE_LITE_BATCH_ID="$BATCH_ID" \
+#   PI_NATIVE_LITE_ATTEMPT_ID="$ATTEMPT" PI_NATIVE_LITE_ARM="$ARM" \
+#   PI_NATIVE_LITE_SHARED_LEDGER=/project/tmp/pi-native-lite-20261028T054700+0800/budget-ledger.json \
+#   node /home/tcuni-claw/pi/pi-planner-only/.scratch/native-lite-scope-contract/arm-preflight.mjs
+# Offline fixture, fault-injection and legacy-verifier baseline now exist; this
+# checker still requires Root's review/acceptance and a separate per-arm gate.
+# Stop on any discrepancy, new lock or failed arm.
+
+# Required, frozen by Root: BATCH_ID, BATCH_ROOT, ATTEMPT, ARM, GATE_LOG_ID,
+# ARM_DEADLINE_MS, and ARM_COST_STOP_USD (Root monitors reported costs; neither
+# runner deadlines nor ledger reservations are a hard provider-dollar cap).
+# ARM is exactly the gated arm, in order S1-native, S1-lite, S2-lite, S2-native.
+# BATCH_ROOT=/project/tmp/pi-native-lite-<unique timestamp>; all inputs and
+# outputs must already be frozen. GATE_LOG_ID must be unique for this invocation.
+: "${BATCH_ID:?required}" "${BATCH_ROOT:?required}" "${ATTEMPT:?required}"
+: "${ARM:?required}" "${GATE_LOG_ID:?required}" "${ARM_DEADLINE_MS:?required}" "${ARM_COST_STOP_USD:?required}"
+case "$ARM" in S1-native|S1-lite|S2-lite|S2-native) ;; *) exit 1 ;; esac
+case "$ARM_DEADLINE_MS" in *[!0-9]*|'') exit 1 ;; esac
+export TMPDIR=/project/tmp/pi-native-lite-scope-next/tmp
+export TMP="$TMPDIR" TEMP="$TMPDIR"
+printf 'arm=%s deadlineMs=%s reportedCostStopUsd=%s\n' "$ARM" "$ARM_DEADLINE_MS" "$ARM_COST_STOP_USD" > "$BATCH_ROOT/logs/$GATE_LOG_ID.limits"
+cd "$BATCH_ROOT/worktrees/$ARM" || exit 1
+/home/tcuni-claw/.local/bin/slot audit > "$BATCH_ROOT/logs/$GATE_LOG_ID.audit" 2>&1 || exit 1
+/home/tcuni-claw/.local/bin/slot status > "$BATCH_ROOT/logs/$GATE_LOG_ID.status" 2>&1 || exit 1
+# Root must inspect audit/status and explicitly confirm the same launch gate
+# remains valid after these checks, before invoking the command below.
+read -r -p 'Root gate reconfirmed? Type LAUNCH to continue: ' confirmation
+[ "$confirmation" = LAUNCH ] || exit 1
+/home/tcuni-claw/.local/bin/slot cpu -- env \
+  PI_NATIVE_LITE_BATCH_ROOT="$BATCH_ROOT" PI_NATIVE_LITE_BATCH_ID="$BATCH_ID" \
+  PI_NATIVE_LITE_ATTEMPT_ID="$ATTEMPT" PI_CODING_AGENT_DIR=/home/tcuni-claw/.pi/agent \
+  PI_NATIVE_LITE_SHARED_LEDGER=/project/tmp/pi-native-lite-20261028T054700+0800/budget-ledger.json \
+  PI_NATIVE_LITE_MANIFEST="$BATCH_ROOT/manifests/$ARM.json" \
+  PI_NATIVE_LITE_RPC_DEADLINE_MS="$ARM_DEADLINE_MS" TMPDIR="$TMPDIR" TMP="$TMP" TEMP="$TEMP" \
+  node --experimental-strip-types /home/tcuni-claw/pi/pi-planner-only/.scratch/native-lite-lifecycle/run-rpc-arm.mjs
+
+# Launcher TMPDIR/TMP/TEMP stay at /project/tmp/pi-native-lite-scope-next/tmp.
+# The accepted Root path rule lets the existing runner set its spawned Root and
+# children TMPDIR/TMP/TEMP/PI_SUBAGENTS_TEMP_ROOT to this unique
+# $BATCH_ROOT/tmp. Verify that directory resolves under /project/tmp and not /tmp.
+# Record exit/wallclock and raw session, fingerprints vs ledger, usage,
+# child terminal, Root acceptance, report hashes and unchanged configuration;
+# await Root acceptance before the next arm. Failure/timeout/stop ends batch.

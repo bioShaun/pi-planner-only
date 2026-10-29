@@ -1,0 +1,9 @@
+Shared contract: sessions/reports under `{{BATCH_ROOT}}/results/{{ATTEMPT_ID}}/<pair>-<mode>/`, worktree CWD `{{BATCH_ROOT}}/worktrees/<pair>-<mode>`.
+
+Calibration only, not a formal sample. Replace template tokens during isolated preparation. Batch `{{BATCH_ID}}`; attempt `{{ATTEMPT_ID}}`. Root session ID is `nl-{{SANITIZED_BATCH_ID}}-{{ATTEMPT_ID}}-<pair>-<mode>` using the runner's non-`[A-Za-z0-9._-]` replacement. Root is `tcuni/gpt-6.1-terra` high. Use exactly one worker (`worker`, `tcuni/gpt-6-luna` medium); do not switch model, thinking, role or CLI. The worker writes only `report.md`. Native read-only launch sets `options.acceptance: { level: "none", reason: "read-only report; Root performs evidence acceptance" }`; Lite uses `delegate` and plain-text reports.
+
+## Task
+
+In candidate `f818cc91c98d6129a152fb28161e00d2f601e494`, identify the exported interface in `index.ts` that declares all four fields `input`, `output`, `cacheRead`, and `cacheWrite`. Return exact path, symbol and a short source excerpt. No other research or edits.
+
+Root reads the actual report, checks the citation and hash, and makes its own content decision. For accepted completion emit the controller's fenced `root-acceptance` JSON with the actual sessionId, attemptId, runId, `role:"worker"`, `agent:"worker"`, reportPath, reportSha256, `accepted:true`, `verdict:"accepted"`, `reviewVerdict:"accepted"`. These field names and the separate review verdict are part of the execution contract. Lite additionally copies actual requestId/ownerRunId/nodeId from its receipt. Missing reports/hashes remain missing with raw failure. The object-level task verdict and whether the worker faithfully completed this calibration task are separate records; a correct reviewer may report a rejected object while Root accepts the review task.

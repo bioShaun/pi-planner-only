@@ -1,0 +1,9 @@
+# Phase3c I/O 故障测试子任务授权
+
+实现worker 5df218be 主动阻塞报告：观察stop.json必须区分合法ENOENT；其他stat异常若原样抛出可能使controller异常退出并遗留直属Pi。Root接受这是必须补齐且需要先红灯的新行为，未授权先写错误分支。
+
+Root通过supervisor请求1ef409b4-79e9-4ba4-b854-9cee5c830dd4回复：先仅新增测试与纯fixture，精确对本臂cost-monitor/stop.json观察注入EIO等非ENOENT错误，覆盖Native/Lite的非零拒绝、明确观察失败/目录/child-stop-unobserved及有界直属Pi终止；不可用总deadline或fixture自退作为成功，不影响其他路径/全局插件/真实账本。保留合法ENOENT成功和旧断言。
+
+先保存此时实现快照及已有增量，说明常规授权实现是否开始；运行目标测试保存实际diff、原始红灯、命令exit/hash。缺少整个观察行为的旧实现红灯只能证明接线缺失，不能夸大为已命中错误处理；另需独立注入器回归确认指定路径EIO有效。
+
+测试完成后再次contact_supervisor阻塞，Root亲读原始证据再单独授权实现错误分支。当前只有测试许可，无新守卫实现许可。预算、slot、外部TMPDIR、无真实provider及无再次委派限制不变。

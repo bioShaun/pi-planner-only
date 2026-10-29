@@ -1,0 +1,16 @@
+Source HEAD cd5362490251aabdb1214b8041e70542cd5ff54a
+Target HEAD 8168e126bed60d5a7f485718f17d7114d1322bfa
+Source patch SHA256 75a66c24bdd4b60b5ca85e2986e27f3947997380296a8752ff40c0df09c64d83
+Target diff SHA256 0728c5a54006d98b54dc15c606a80049dc883a4f6c250109b576f89d8ce49211
+Target index before SHA256 8d9a12bef00e496f8c7d38c42de488619f2180a2eb1460840385ade1a35544c7
+Target index after SHA256 832d783eb50d95838c8cb73229810c55050cff779f91ffe694639ee10b9aac04
+package-lock before/after SHA256 ca55fb0cc65d536940141b670cfb59bcd724129d8a368027078009ce8212870a
+The target baseline differs from source in unrelated Lite prompt text. Removing diff index and hunk headers, target and source patch content is identical.
+Node direct import exit 1: typebox not resolvable from installed directory; node-direct-import.log.
+Pi resource loader smoke exit 0: TMPDIR=/project/tmp/native-runtime-path-test node --experimental-strip-types .scratch/native-status/deploy/smoke.mjs; smoke.log.
+Smoke uses a synthetic cost RPC reply; no model requests or Pi agent session were started.
+
+Rollback, after confirming no subsequent edits to the installed index.ts:
+git -C /home/tcuni-claw/.pi/agent/git/github.com/bioShaun/pi-planner-only apply --reverse --check /home/tcuni-claw/pi/pi-planner-only/.scratch/native-status/deploy/native-index.patch
+git -C /home/tcuni-claw/.pi/agent/git/github.com/bioShaun/pi-planner-only apply --reverse /home/tcuni-claw/pi/pi-planner-only/.scratch/native-status/deploy/native-index.patch
+The original file is also saved as index-before.ts. Do not replace package-lock.json.

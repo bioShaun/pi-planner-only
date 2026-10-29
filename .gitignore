@@ -66,6 +66,18 @@ node_modules/
 .scratch/**/validation/snapshot/
 .scratch/**/validation-tmp/
 .scratch/**/node-compile-cache/
+node-compile-cache/
+
+# native-lite supervisor probe: isolated agent dirs carry provider credentials and
+# jiti runtime bundles, raw step2 prompt sessions stay local; small text evidence
+# next to them stays committed.
+.scratch/supervisor-declaration/runtime*/
+.scratch/**/auth.json
+.scratch/step2-prompt-20261027/sessions/
+
+# Claude Code local config (machine-specific; the tracked .claude/skills links are gone)
+.claude/settings.local.json
+.claude/profiles/
 
 # P0 request-admission acceptance (2026-09-20): isolated agent dirs carry provider
 # credentials and raw sessions; workspaces are embedded git repos; temp roots hold

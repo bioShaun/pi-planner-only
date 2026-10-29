@@ -1,0 +1,18 @@
+Installed source: /home/tcuni-claw/.pi/agent/npm/node_modules/pi-subagents (version 0.83.0)
+Isolated source: /project/tmp/native-runtime-path-test/installed-contract/node_modules/pi-subagents (version 0.83.0)
+Created outside the repository with:
+mkdir -p /project/tmp/native-runtime-path-test/installed-contract/node_modules
+cp -a ~/.pi/agent/npm/node_modules/pi-subagents /project/tmp/native-runtime-path-test/installed-contract/node_modules/
+ln -s /home/tcuni-claw/pi/pi-planner-only/node_modules/@earendil-works /project/tmp/native-runtime-path-test/installed-contract/node_modules/@earendil-works
+for item in node_modules/*; do name=${item##*/}; [ -e "/project/tmp/native-runtime-path-test/installed-contract/node_modules/$name" ] || ln -s "$PWD/$item" "/project/tmp/native-runtime-path-test/installed-contract/node_modules/$name"; done
+
+SHA256, identical in installed and isolated source:
+package.json 753e66504724d74e12dd02ba324744dbe3a9a5073dc5ffdf22c0154ebf36b7e8
+src/extension/rpc.js f07679c7d361d00f426c894a9027f6a629b5c14bc4f953f02d80eb14acfc7b8a
+src/slash/subagent-cost.js d898fdf62ea26b87bc9b0efd61ca9dfd5a85337a96664b26922b1e6a90bfad91
+src/workflows/workflow-receipt.js 31804929186bd7537c4f4f455663377dfed1ef0d5cd6bd34b288d14a998c6885
+
+Preflight: slot audit; slot status (followup-final-audit.log and followup-final-status.log)
+Release command:
+slot cpu -- env TMPDIR=/project/tmp/native-runtime-path-test PI_SUBAGENTS_DIR=/project/tmp/native-runtime-path-test/installed-contract/node_modules/pi-subagents npm run test:release > .scratch/native-status/followup-final-release.log 2>&1
+Exit code: 0

@@ -1,0 +1,62 @@
+{
+  "runId": "c660ad9a-4070-4c8f-b3fb-dd7d35354319",
+  "parentSessionId": "01a17c0a-b471-762e-83ea-1d38005fdc5f",
+  "agent": "reviewer",
+  "task": "[prompt redacted]",
+  "exitCode": 0,
+  "model": "qwen-local/qwen3.8-27b:low",
+  "requestedModel": "qwen-local/qwen3.8-27b:low",
+  "usage": {
+    "input": 0,
+    "output": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "cost": 0,
+    "turns": 10
+  },
+  "acceptance": {
+    "status": "not-required",
+    "evidenceStatus": "not-required",
+    "explicit": false,
+    "effectiveAcceptance": {
+      "level": "none",
+      "explicit": false,
+      "inferredReason": [
+        "declared read-only acceptance role"
+      ],
+      "criteria": [],
+      "evidence": [],
+      "verify": [],
+      "stopRules": []
+    },
+    "inferredReason": [
+      "declared read-only acceptance role"
+    ],
+    "criteria": [],
+    "runtimeChecks": [],
+    "verifyRuns": []
+  },
+  "launchContractDigest": "004faade2de4494a344dd53c6fd02436117ca792f1fabdd3a2152586ea5cc211",
+  "launchResolvedExtensions": {
+    "version": 1,
+    "source": "launch-resolved",
+    "disableAmbientExtensions": false,
+    "runtime": [
+      "sha256:d6d3f3845a63e189"
+    ],
+    "configured": [],
+    "required": [],
+    "effective": [
+      "sha256:d6d3f3845a63e189"
+    ],
+    "omitted": {
+      "runtime": 0,
+      "configured": 0,
+      "required": 0,
+      "effective": 0
+    }
+  },
+  "transcriptPath": "/home/tcuni-claw/.pi/agent/sessions/--home-tcuni-claw-pi-pi-planner-only--/subagent-artifacts/c660ad9a-4070-4c8f-b3fb-dd7d35354319_reviewer_transcript.jsonl",
+  "skills": [],
+  "timestamp": 1793082763942
+}

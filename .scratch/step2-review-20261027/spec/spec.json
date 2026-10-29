@@ -1,0 +1,28 @@
+{
+  "review_kind": "code",
+  "scope_id": "step2-spec",
+  "isolation_requirement": "ordinary",
+  "instructions_file": "/home/tcuni-claw/pi/pi-planner-only/.scratch/step2-review-20261027/spec-instructions.txt",
+  "files": [
+    "/home/tcuni-claw/pi/pi-planner-only/AGENTS.md",
+    "/home/tcuni-claw/pi/pi-planner-only/CONTEXT.md",
+    "/home/tcuni-claw/pi/pi-planner-only/index.ts",
+    "/home/tcuni-claw/pi/pi-planner-only/index.test.mjs",
+    "/home/tcuni-claw/pi/pi-planner-only/delegate.ts",
+    "/home/tcuni-claw/pi/pi-planner-only/docs/planner-optimization-plan-2026-10-26.md",
+    "/home/tcuni-claw/pi/pi-planner-only/.scratch/step2-prompt-20261027/execution.md",
+    "/home/tcuni-claw/pi/pi-planner-only/.scratch/step2-prompt-20261027/static-checks.md",
+    "/home/tcuni-claw/pi/pi-planner-only/.scratch/step2-prompt-20261027/static-release.log",
+    "/home/tcuni-claw/pi/pi-planner-only/.scratch/step2-prompt-20261027/code.sha256",
+    "/home/tcuni-claw/pi/pi-planner-only/.scratch/step2-review-20261027/diff.patch",
+    "/home/tcuni-claw/pi/pi-planner-only/.scratch/step2-review-20261027/baseline-index.ts",
+    "/home/tcuni-claw/pi/pi-planner-only/.scratch/step2-review-20261027/baseline-index.test.mjs"
+  ],
+  "required_files": [
+    "/home/tcuni-claw/pi/pi-planner-only/index.ts",
+    "/home/tcuni-claw/pi/pi-planner-only/index.test.mjs",
+    "/home/tcuni-claw/pi/pi-planner-only/CONTEXT.md",
+    "/home/tcuni-claw/pi/pi-planner-only/docs/planner-optimization-plan-2026-10-26.md",
+    "/home/tcuni-claw/pi/pi-planner-only/.scratch/step2-review-20261027/diff.patch"
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "defaultThinkingLevel": "high",
+  "subagents": {
+    "defaultModel": "tcuni/gpt-6-luna",
+    "defaultThinking": "medium",
+    "agentOverrides": {
+      "worker": {
+        "model": "tcuni/gpt-6-luna",
+        "thinking": "medium",
+        "tools": ["read", "grep", "find", "ls", "write"]
+      },
+      "oracle": {
+        "model": "tcuni/gpt-6-luna",
+        "thinking": "medium",
+        "tools": ["read", "grep", "find", "ls", "bash", "write"]
+      },
+      "reviewer": {
+        "model": "tcuni/gpt-6-luna",
+        "thinking": "medium",
+        "tools": ["read", "grep", "find", "ls", "write"]
+      }
+    }
+  }
+}

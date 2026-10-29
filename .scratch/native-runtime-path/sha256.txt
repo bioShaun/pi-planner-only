@@ -1,0 +1,16 @@
+13fb3abacd99f0aee8633a4c75e97d473b6e895f5689553c9f18ef4167586092  /home/tcuni-claw/.pi/agent/bin/pi
+cd8fd830b3ac475d0cbe4e55e6e3005a1aa408c5c9740fdf4d6a8181bb18f363  /home/tcuni-claw/.config/pi/runtime-env.sh
+65f8433bb84033d4fc241623d06bddb86c1b075dea65444bad5ae53591541f6c  /home/tcuni-claw/.pi/agent/AGENTS.md
+f0c0b6e6600623fbc20123702e9a73b7e4f0f8fd27c5aa94bf955db652de3d76  /home/tcuni-claw/.config/agents/pi-runtime.md
+ce362c79c93c2443441e8c1ff52d712a336fdbcc814bb484a16ff10159874601  /home/tcuni-claw/.pi/agent/npm/node_modules/pi-subagents/src/shared/types.js
+da0c6a49fe94aadc9765cc7afc6ba6b17e553eed0247d0385c160bc188f5cfbb  .scratch/native-runtime-path/pi.original
+90193f7d5acaa83f74c4612ac46416b5a58c415eb706ccde61c93f30df8970c9  .scratch/native-runtime-path/AGENTS.original
+564384a28d9ffbdf35f8248ab51756d524ac4d36dbb3ac527ceb2c745c7b4352  .scratch/native-runtime-path/launcher.diff
+302d4bbb35aa9a48adb1e4d5e04cf56b41b63321b534f1696af44773d9d4c642  .scratch/native-runtime-path/agents.diff
+89f603a4bb5a650a8481dac03651b198e942191f7c2e8ad221472c026b1cf511  .scratch/native-runtime-path/runtime.test.mjs
+201d24ac09de15fe92761129ef6d05146f01a126eb5857702e89efc66dbba45a  .scratch/native-runtime-path/red.log
+4a0876aead058f1a1f709db7b4cb83f1173bdeab93b03edd69e2bbc6d13e5ffc  .scratch/native-runtime-path/green.log
+440607676d25a70c2036d1c42d0e42255e485cf1adb22d0e63ed065aa2be9fa4  .scratch/native-runtime-path/probe.log
+78b591400c56b7b67b8cb3b2b8a8e65e9093897f02ce0878e6b5405c68620fa7  .scratch/native-runtime-path/pi-version.log
+da738fcc70a22a2bfedfa24d1b559d9ec21aea365dd345cdd30ba66f2e227c11  .scratch/native-runtime-path/execution.md
+908ef9ac04a35c6c91268c558d443b88d945440800290d9e950085ef99aeda29  .scratch/native-runtime-path/worker-result.md

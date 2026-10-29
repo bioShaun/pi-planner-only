@@ -1,0 +1,11 @@
+# Phase3c I/O 红灯复核与守卫实现授权
+
+Root在worker阻塞期间实读 `/project/tmp/pi-native-lite-phase3c-io-5df218be/{test.diff,injector.after,io-red.log}`，独立核对before/after/当前文件与hash。实际测试增量与test.diff逐字节一致；runner仍与runner.before逐字节相同，SHA94d509c86f2a2e3f1116451c68a54b011472dfb25f8265d4952d8bcc35cd54d0，普通实现和新守卫均未开始。
+
+io-red exit1：Native/Lite各一项缺少monitor-check-failed而断言失败，fixture约6秒自退；另一个sync/async精确路径EIO注入器回归通过。没有语法/导入错误。注入器仅在started文件存在后对严格相等target路径的statSync/fs.promises.stat抛EIO，其他路径沿用原操作。旧runner没有观察操作，因此这两个红灯证明错误检查/停止接线缺失，不证明旧runner执行过EIO分支。后续目录/清理/timing/注入marker断言在红灯中被前置失败遮住，须在绿灯核对。
+
+test.diff SHA a6895b77c02f05d4fefa7330b92e0d5252ae18366de9a1d6b9e8ea846bd12f78；io-red.log SHA60bce99665589401d9429f49e222fe1188b0cff26a0914f3cfd7aace7c328203；injector.after SHA855e00fee3f6658c8ed1fc8b5c4ff6e3ae9f681f41014de6dbdf325d5da738a9。旧测试断言未删除/弱化，fixture只扩展io-error场景。
+
+Root现在单独授权对应守卫：stop.json检查的ENOENT视为无标记正常继续；其他观察错误记录monitor-check-failed、原始错误信息及monitorDir，设置本臂失败/禁止成功，记录child-stop-unobserved，并走已授权的直属Pi有界SIGTERM→SIGKILL路径。不能仅throw导致controller先退遗留Pi，也不静默忽略。与此前8项红灯授权合并实施，但不得扩大到monitor算法、真实child清理、guard或产品代码。
+
+聚焦需包含全部monitor stop及注入器测试，之后既定组合回归。worker最终报告补齐精确命令、exit、原始日志、slot前检、实现diff/快照、session费用及进程终态；Root完成后亲自复核。预算与真实provider禁令不变。

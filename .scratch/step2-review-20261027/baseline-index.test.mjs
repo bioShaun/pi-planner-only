@@ -1,0 +1,957 @@
+import assert from "node:assert/strict";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { SUBAGENT_DELEGATION_REQUEST_EVENT, SUBAGENT_DELEGATION_RESPONSE_EVENT, SUBAGENT_DELEGATION_STARTED_EVENT } from "./subagent-delegation-contract.ts";
+import { fakeBus, tempDir, usage } from "./test-helpers.mjs";
+
+const agentDir = tempDir("ppo-agent-");
+process.env.PI_CODING_AGENT_DIR = agentDir;
+delete process.env.PI_PLANNER_ONLY;
+delete process.env.PI_PLANNER_ONLY_MODE;
+delete process.env.PI_PLANNER_ONLY_STRICT;
+delete process.env.PI_SUBAGENT_CHILD;
+const { default: plannerOnly, MAX_COMMIT_MESSAGE_CHARS, OFF_MARKER, MODE_PREFERENCE, HANDOFF_PREFERENCE, NATIVE_PROMPT, PlannerSession, formatTotals, plannerPrompt, rootUsageOf, initialMode, handoffMode } = await import("./index.ts");
+
+// The heat stops the fake theme serves (grok-open colors); the expectations below are fixed points of the ramp.
+const HEAT_COOL = { kind: "rgb", r: 122, g: 162, b: 247 };
+const HEAT_MID = { kind: "rgb", r: 224, g: 175, b: 104 };
+const HEAT_HOT = { kind: "rgb", r: 247, g: 118, b: 142 };
+const statusRgb = (color) => `${color.r},${color.g},${color.b}`;
+
+function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async () => ({ stdout: "", stderr: "not a repo", code: 128 }), options = {}) {
+	const tools = new Map();
+	const handlers = new Map();
+	const commands = new Map();
+	const events = fakeBus();
+	let active = initialActive;
+	let branch = [];
+	let sessionId = "session-1";
+	let activeModel = options.sourceModel === undefined ? { provider: "provider-a", id: "model-a" } : options.sourceModel;
+	let activeThinking = options.unknownSourceThinking ? undefined : options.sourceThinking === undefined ? "high" : options.sourceThinking;
+	let pi;
+	const actionInstances = [];
+	let setModelThrown = false;
+	const appended = [];
+	let staleContext = false;
+	const notes = [];
+	const statuses = [];
+	const statusColors = [];
+	const sentMessages = [];
+	const sentUserMessages = [];
+	const queuedSteers = [];
+	const queuedNextTurn = [];
+	const modelRequests = [];
+	const sessionCalls = [];
+	const registry = options.registry ?? [{ provider: "provider-a", id: "model-a" }, { provider: "provider-b", id: "model-b" }];
+	const replaced = { sent: [], editor: [], notes: [], modelRegistry: { find: (provider, id) => registry.some((m) => m.provider === provider && m.id === id) ? { provider, id } : undefined }, get model() { return activeModel; }, get thinkingLevel() { return activeThinking; }, ui: { notify: (m) => replaced.notes.push(m), setEditorText: (m) => replaced.editor.push(m) }, sendUserMessage: async (m) => replaced.sent.push(m) };
+	const registrations = {
+		events,
+		registerTool: (t) => tools.set(t.name, t),
+		registerCommand: (n, c) => commands.set(n, c),
+		on: (event, h) => handlers.set(event, h),
+		getActiveTools: () => active,
+		setActiveTools: (next) => (active = next),
+		appendEntry: (customType, data) => { const entry = { type: "custom", customType, data }; appended.push(entry); branch.push(entry); },
+		get model() { return activeModel; },
+		get thinkingLevel() { return activeThinking; },
+	};
+	function makePi() {
+		const actions = { stale: false, modelCalls: 0, lastSetModel: undefined,
+			setModel: async (model) => { if (actions.stale) throw new Error("This extension ctx is stale"); actions.lastSetModel = model; actions.modelCalls++; if (options.setModelThrowOnce && !setModelThrown) { setModelThrown = true; throw new Error("setModel boom"); } if (options.setModelResult === false) return false; if (!options.setModelLies) activeModel = model; return true; },
+			setThinkingLevel: (level) => { if (actions.stale) throw new Error("This extension ctx is stale"); if (!options.setThinkingLies) activeThinking = level; },
+			exec, sendMessage: (...args) => { sentMessages.push(args); (args[1]?.deliverAs === "nextTurn" ? queuedNextTurn : queuedSteers).push(args[0]); }, sendUserMessage: (...args) => sentUserMessages.push(args) };
+		actionInstances.push(actions);
+		return Object.assign(Object.create(registrations), actions);
+	}
+	pi = makePi();
+	plannerOnly(pi);
+	const ctx = {
+		cwd: "/w",
+		hasUI: true,
+		isIdle: () => true,
+		sessionManager: { getSessionId: () => sessionId, getSessionFile: () => "/sessions/previous.jsonl", getBranch: () => branch },
+		newSession: async (opts) => { sessionCalls.push(opts); activeModel = options.replacementModel ?? { provider: "provider-b", id: "model-b" }; activeThinking = options.replacementThinking ?? "medium"; actionInstances.at(-1).stale = true; staleContext = Boolean(options.throwAfterReplacement); pi = makePi(); plannerOnly(pi); await opts.withSession(replaced); if (options.throwAfterReplacement) throw new Error("post-replacement boom"); return {}; },
+		get model() { return activeModel; },
+		get thinkingLevel() { return activeThinking; },
+		ui: { setStatus: (k, v) => statuses.push(v), notify: (m) => { if (staleContext) { staleContext = false; throw new Error("This extension ctx is stale"); } notes.push(m); }, theme: options.legacyTheme ? { fg: (c, s) => { statusColors.push(c); return s; } } : { fg: (c, s) => { statusColors.push(c); return s; }, style: (s, opts) => { statusColors.push(opts.fg); return s; }, colors: { accent: HEAT_COOL, warning: HEAT_MID, error: HEAT_HOT } } },
+	};
+	return { get pi() { return pi; }, tools, handlers, commands, events, ctx, notes, statuses, statusColors, sentMessages, sentUserMessages, sessionCalls, replaced, queuedSteers, queuedNextTurn, modelRequests, toolBoundary: () => { modelRequests.push(...queuedSteers.splice(0)); }, userRun: () => { modelRequests.push(...queuedNextTurn.splice(0)); }, active: () => active, appended, activeModel: () => activeModel, activeThinking: () => activeThinking, lastSetModel: () => actionInstances.at(-1).lastSetModel, oldModelCalls: () => actionInstances[0].modelCalls, setSource: (model, thinking = activeThinking) => { activeModel = model; activeThinking = thinking; }, branch: (entries) => { branch = entries; }, sessionId: (id) => { sessionId = id; } };
+}
+
+try {
+	// Child processes load nothing.
+	process.env.PI_SUBAGENT_CHILD = "1";
+	assert.equal(fakePi().tools.size, 0);
+	delete process.env.PI_SUBAGENT_CHILD;
+
+	const h = fakePi();
+	assert.deepEqual([...h.tools.keys()], ["delegate", "git_audit", "git_commit", "handoff"]);
+	for (const event of ["session_before_switch", "session_before_fork", "session_before_tree"]) {
+		assert.equal(await h.handlers.get(event)({}, h.ctx), undefined, `${event} permits idle session`);
+	}
+	// om09 run4: a 540-char message was rejected at the old 500 cap.
+	assert.equal(MAX_COMMIT_MESSAGE_CHARS, 2_000);
+	assert.equal(h.tools.get("git_commit").parameters.properties.message.maxLength, MAX_COMMIT_MESSAGE_CHARS);
+	assert.ok(h.commands.has("planner-only"));
+	delete process.env.PI_PLANNER_ONLY_HANDOFF;
+	rmSync(HANDOFF_PREFERENCE, { force: true, recursive: true });
+	assert.equal(handoffMode(), "off");
+	await h.commands.get("planner-only").handler("handoff-mode auto", h.ctx);
+	assert.equal(readFileSync(HANDOFF_PREFERENCE, "utf8"), "auto\n");
+	assert.equal(handoffMode(), "auto");
+	process.env.PI_PLANNER_ONLY_HANDOFF = "confirm";
+	assert.equal(handoffMode(), "confirm");
+	process.env.PI_PLANNER_ONLY_HANDOFF = "off";
+	assert.equal(handoffMode(), "off");
+	process.env.PI_PLANNER_ONLY_HANDOFF = "Confirm";
+	assert.equal(handoffMode(), "confirm");
+	process.env.PI_PLANNER_ONLY_HANDOFF = "Auto";
+	assert.equal(handoffMode(), "auto");
+	process.env.PI_PLANNER_ONLY_HANDOFF = "CONFIRM";
+	assert.equal(handoffMode(), "confirm");
+	process.env.PI_PLANNER_ONLY_HANDOFF = "AUTO";
+	assert.equal(handoffMode(), "auto");
+	process.env.PI_PLANNER_ONLY_HANDOFF = " Confirm ";
+	assert.equal(handoffMode(), "confirm");
+	await h.commands.get("planner-only").handler("handoff-mode", h.ctx);
+	assert.match(h.notes.at(-1), /handoff mode: confirm \(source: env\)/);
+	process.env.PI_PLANNER_ONLY_HANDOFF = "Bogus";
+	assert.equal(handoffMode(), "off");
+	await h.commands.get("planner-only").handler("handoff-mode", h.ctx);
+	assert.match(h.notes.at(-1), /handoff mode: off \(source: env\)/);
+	delete process.env.PI_PLANNER_ONLY_HANDOFF;
+	await h.commands.get("planner-only").handler("handoff-mode invalid", h.ctx);
+	assert.equal(readFileSync(HANDOFF_PREFERENCE, "utf8"), "auto\n");
+	assert.match(h.notes.at(-1), /Usage: \/planner-only handoff-mode/);
+	await h.commands.get("planner-only").handler("handoff-mode", h.ctx);
+	assert.match(h.notes.at(-1), /handoff mode: auto \(source: persisted\)/);
+	await h.commands.get("planner-only").handler("status", h.ctx);
+	assert.match(h.notes.at(-1), /handoff: auto \(source: persisted\)/);
+	rmSync(HANDOFF_PREFERENCE, { force: true });
+	mkdirSync(HANDOFF_PREFERENCE, { recursive: true });
+	assert.doesNotThrow(() => handoffMode());
+	assert.equal(handoffMode(), "off");
+	rmSync(HANDOFF_PREFERENCE, { force: true, recursive: true });
+
+	// Prompt: appended when enabled, short, strict variant differs.
+	await h.handlers.get("session_start")({}, h.ctx);
+	assert.deepEqual(h.active(), ["read", "bash", "edit", "write", "delegate", "git_audit", "git_commit", "handoff"]);
+	const injected = await h.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, h.ctx);
+	assert.ok(injected.systemPrompt.startsWith("BASE\n\n[PLANNER-ONLY]"));
+	for (const strict of [false, true]) assert.ok(plannerPrompt(strict).length < 1_500, "prompt should stay short (cap 1,500 chars; raise only with measured benefit, issue #25)");
+	assert.match(plannerPrompt(false), /"validator" runs checks and writes nothing/);
+	assert.match(plannerPrompt(true), /"validator" runs checks and writes nothing/);
+	assert.match(plannerPrompt(true), /Strict mode/);
+	const { loadLimits } = await import("./delegate.ts");
+	assert.match(plannerPrompt(false), /A child has 10 minutes\. Do not delegate work that needs longer/);
+	assert.match(plannerPrompt(false, loadLimits({ PI_PLANNER_ONLY_TIMEOUT_MS: "300000" })), /A child has 5 minutes\./);
+	assert.match(plannerPrompt(false, loadLimits({ PI_PLANNER_ONLY_TIMEOUT_MS: "1234" })), /A child has 1\.234 seconds\./);
+	assert.match(plannerPrompt(false), /pass `cwd` to delegate, git_audit, and git_commit/);
+	assert.match(plannerPrompt(false), /report or last tool results \(a timed-out child returns them\)/);
+	assert.match(plannerPrompt(false), /Before reverting or reporting a child's change, check it against your task/);
+	assert.match(plannerPrompt(false), /commit with git_commit: pass paths when the work tree has unrelated changes/);
+	assert.match(plannerPrompt(false), /explorer.*reading-heavy.*logs\/transcripts.*only its findings enter your context/);
+	assert.match(plannerPrompt(false), /reviewer.*no shell.*uncommitted changes only.*before git_commit/);
+	assert.match(plannerPrompt(false), /fails, times out, or reports BLOCKED.*delegate a corrected task.*last tool results.*before doing the work yourself/);
+	assert.match(plannerPrompt(false), /cannot see this conversation or ask you mid-run/);
+	assert.match(plannerPrompt(false), /Decide public interfaces, cross-module choices, and data flow yourself before delegating; if key facts are unknown, send an explorer first/);
+	assert.match(plannerPrompt(false), /One delegation = one deliverable that can be checked on its own; fold setup into it; merge repeated edits that share one check/);
+	assert.match(plannerPrompt(false), /reports BLOCKED, first decide why, then delegate a corrected task/);
+	assert.match(plannerPrompt(false), /add context, settle the interface, split only if too big/);
+	assert.match(plannerPrompt(true), /Decide public interfaces, cross-module choices/);
+	assert.match(plannerPrompt(true), /reports BLOCKED, first decide why/);
+	assert.match(plannerPrompt(true), /add context, settle the interface, split only if too big/);
+	assert.match(h.tools.get("delegate").parameters.properties.role.description, /logs, or transcripts and return findings/);
+	assert.match(h.tools.get("delegate").parameters.properties.task.description, /goal as an observable result.*what must not change.*decisions already made \(public interfaces, implementation approach, existing code to reuse; pseudocode only where a key algorithm is still ambiguous\).*acceptance with key edge cases.*exact check command and expected result/);
+	assert.match(h.tools.get("delegate").parameters.properties.task.description, /Ask only for checks that finish well within the child's time limit; keep long jobs \(full pipelines, large data processing\) out of the task and run them outside delegation/);
+	assert.match(h.tools.get("delegate").parameters.properties.role.description, /no shell, sees files and uncommitted changes \(review before committing\)/);
+	assert.match(h.tools.get("delegate").description, /Worth it for multi-file work or long reading; outside strict mode, do small tasks \(about ≤2 files\) yourself\./);
+	assert.match(h.tools.get("delegate").description, /worker and validator run alone per repository; explorers can run together but not alongside a worker or validator; a reviewer or another repository can run alongside\./);
+	assert.match(h.tools.get("delegate").description, /Deliverables that require writing files \(scripts, reports, output files\) go to worker/);
+	assert.match(h.tools.get("delegate").description, /start the run as a background job that returns immediately with the job id, output path, and completion condition/);
+	assert.match(h.tools.get("delegate").description, /after the run finishes, delegate acceptance separately/);
+	assert.match(h.tools.get("delegate").description, /one bounded status check per job at a time; do not repeat identical wait commands/);
+	assert.match(h.tools.get("delegate").description, /"completed" result only means the child run ended; in your reply distinguish implementation done, checks passed, and real run passed/);
+	assert.match(h.tools.get("delegate").parameters.properties.role.description, /validator: run existing checks only, writes no files/);
+	assert.match(h.tools.get("delegate").parameters.properties.role.description, /state the baseline commit in the task/);
+	assert.match(h.tools.get("delegate").parameters.properties.cwd.description, /the diff summary uses it, and the lock covers its whole repository\./);
+	assert.match(plannerPrompt(false), /Do small things yourself \(about ≤2 files/);
+	process.env.PI_PLANNER_ONLY_TIMEOUT_MS = "300000";
+	assert.match((await h.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, h.ctx)).systemPrompt, /A child has 5 minutes\./);
+	delete process.env.PI_PLANNER_ONLY_TIMEOUT_MS;
+
+	// Strict mode blocks only edit/write/bash, and only when enabled.
+	const toolCall = h.handlers.get("tool_call");
+	assert.equal(await toolCall({ toolName: "bash" }, h.ctx), undefined);
+	process.env.PI_PLANNER_ONLY_STRICT = "1";
+	for (const toolName of ["edit", "write", "bash"]) assert.equal((await toolCall({ toolName }, h.ctx)).block, true);
+	assert.equal(await toolCall({ toolName: "read" }, h.ctx), undefined);
+	assert.equal(await toolCall({ toolName: "delegate" }, h.ctx), undefined);
+
+	// Env off wins over strict; tools are hidden and no prompt is added.
+	process.env.PI_PLANNER_ONLY = "0";
+	assert.equal(await toolCall({ toolName: "bash" }, h.ctx), undefined);
+	assert.equal(await h.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, h.ctx), undefined);
+	assert.deepEqual(h.active(), ["read", "bash", "edit", "write"]);
+	delete process.env.PI_PLANNER_ONLY;
+	delete process.env.PI_PLANNER_ONLY_STRICT;
+
+	// /planner-only off|on toggles the marker file.
+	await h.commands.get("planner-only").handler("off", h.ctx);
+	assert.ok(existsSync(OFF_MARKER));
+	assert.match(h.notes.at(-1), /^planner-only off/);
+	assert.ok(!h.active().includes("delegate"));
+	await h.commands.get("planner-only").handler("on", h.ctx);
+	assert.ok(!existsSync(OFF_MARKER));
+	assert.ok(h.active().includes("delegate"));
+
+	const brief = "Continue the parser migration in this repository. Goal: finish the streaming parser. Decisions: preserve the public API and avoid dependencies. Constraints: TypeScript, existing tests, no commits. Relevant files: index.ts and index.test.mjs. Done: analysis and initial implementation. Open: validate edge cases and update tests. Exact next step: inspect parser tests, implement missing cases, then run npm run test:release.";
+	const gate = fakePi();
+	const gateTool = gate.tools.get("handoff");
+	const unrequestedRefusal = await gateTool.execute("small-unrequested", { brief }, undefined, undefined, gate.ctx);
+	assert.equal(unrequestedRefusal.details.ok, false);
+	assert.match(unrequestedRefusal.content[0].text, /user did not request a handoff and self-initiated handoff is off/);
+	await gate.commands.get("planner-only").handler("handoff", gate.ctx);
+	assert.equal((await gateTool.execute("manual-request", { brief }, undefined, undefined, gate.ctx)).details.ok, true);
+	await gate.commands.get("planner-only").handler("handoff", gate.ctx);
+	await gate.handlers.get("session_start")({}, gate.ctx);
+	const secondSmallCall = await gateTool.execute("after-handoff", { brief }, undefined, undefined, gate.ctx);
+	assert.equal(secondSmallCall.details.ok, false);
+	// Default (off): high context alone does not let Root self-initiate.
+	const highOff = fakePi();
+	await highOff.handlers.get("session_start")({}, highOff.ctx);
+	await highOff.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200_000, output: 0, cacheRead: 0, cacheWrite: 0 } } }, highOff.ctx);
+	const highOffRefusal = await highOff.tools.get("handoff").execute("high-off", { brief }, undefined, undefined, highOff.ctx);
+	assert.equal(highOffRefusal.details.ok, false);
+	assert.match(highOffRefusal.content[0].text, /self-initiated handoff is off/);
+	process.env.PI_PLANNER_ONLY_HANDOFF = "auto";
+	const lowAuto = fakePi();
+	const lowAutoRefusal = await lowAuto.tools.get("handoff").execute("low-auto", { brief }, undefined, undefined, lowAuto.ctx);
+	assert.match(lowAutoRefusal.content[0].text, /below the 150k threshold, and the user did not request a handoff/);
+	const high = fakePi();
+	await high.handlers.get("session_start")({}, high.ctx);
+	await high.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200_000, output: 0, cacheRead: 0, cacheWrite: 0 } } }, high.ctx);
+	assert.equal((await high.tools.get("handoff").execute("high-context", { brief }, undefined, undefined, high.ctx)).details.ok, true);
+	assert.match(high.sentMessages[0][0].content, /prepare a complete handoff brief with the handoff tool/);
+	delete process.env.PI_PLANNER_ONLY_HANDOFF;
+	const handoffTool = h.tools.get("handoff");
+	assert.equal((await handoffTool.execute("short", { brief: "too short" }, undefined, undefined, h.ctx)).details.ok, false);
+	assert.deepStrictEqual(await handoffTool.execute("no-ui", { brief }, undefined, undefined, { ...h.ctx, hasUI: false }), {
+		content: [{ type: "text", text: "Handoff refused: a UI session is required." }],
+		details: { ok: false },
+	});
+	await h.commands.get("planner-only").handler("handoff", h.ctx);
+	assert.equal((await handoffTool.execute("handoff-1", { brief, cwd: "repo" }, undefined, undefined, h.ctx)).details.ok, true);
+	assert.equal((await handoffTool.execute("handoff-2", { brief }, undefined, undefined, h.ctx)).details.ok, false);
+	await h.handlers.get("agent_settled")({}, h.ctx);
+	assert.deepEqual(h.sentUserMessages.at(-1), ["/planner-only handoff", { expandPromptTemplates: true }]);
+	await h.commands.get("planner-only").handler("handoff", h.ctx);
+	assert.equal(h.sessionCalls.at(-1).parentSession, "/sessions/previous.jsonl");
+	assert.ok(h.replaced.sent.at(-1).startsWith("[planner-only handoff] You are the new Root session."));
+	assert.match(h.replaced.sent.at(-1), /## Brief/);
+	assert.match(h.replaced.sent.at(-1), /Facts from the previous session/);
+	assert.match(h.replaced.sent.at(-1), /Not inside a git work tree/);
+	assert.match(h.replaced.sent.at(-1), /Continue the parser migration/);
+	assert.deepEqual(h.ctx.model, { provider: "provider-a", id: "model-a" }, "replacement brief must use the source model, not its configured default");
+	assert.equal(h.oldModelCalls(), 0, "restoration must use the fresh Pi instance");
+	const gitFacts = fakePi(undefined, async (_cmd, args) => {
+		if (args[0] === "--version") return { stdout: "git version 2.43.0", stderr: "", code: 0 };
+		if (args.includes("--is-inside-work-tree")) return { stdout: "true", stderr: "", code: 0 };
+		if (args.includes("status")) return { stdout: " M index.ts\n?? new.ts\n", stderr: "", code: 0 };
+		if (args.includes("log")) return { stdout: "abc123 latest change\n", stderr: "", code: 0 };
+		return { stdout: "", stderr: "", code: 0 };
+	});
+	await gitFacts.commands.get("planner-only").handler("handoff", gitFacts.ctx);
+	await gitFacts.tools.get("handoff").execute("facts", { brief, cwd: "repo" }, undefined, undefined, gitFacts.ctx);
+	await gitFacts.commands.get("planner-only").handler("handoff", gitFacts.ctx);
+	assert.match(gitFacts.replaced.sent[0], /M index.ts/);
+	assert.match(gitFacts.replaced.sent[0], /abc123 latest change/);
+	assert.match(gitFacts.replaced.sent[0], /Repository \(git facts below\): \/w\/repo/);
+	// Handoff facts truncate a long status: first 30 lines plus "… N more"; empty stays "(clean)".
+	const longStatus = Array.from({ length: 40 }, (_, i) => ` M file${i}.ts`).join("\n") + "\n";
+	const truncFacts = fakePi(undefined, async (_cmd, args) => {
+		if (args[0] === "--version") return { stdout: "git version 2.43.0", stderr: "", code: 0 };
+		if (args.includes("--is-inside-work-tree")) return { stdout: "true", stderr: "", code: 0 };
+		if (args.includes("status")) return { stdout: longStatus, stderr: "", code: 0 };
+		if (args.includes("log")) return { stdout: "abc123 latest change\n", stderr: "", code: 0 };
+		return { stdout: "", stderr: "", code: 0 };
+	});
+	await truncFacts.commands.get("planner-only").handler("handoff", truncFacts.ctx);
+	await truncFacts.tools.get("handoff").execute("facts-trunc", { brief, cwd: "repo" }, undefined, undefined, truncFacts.ctx);
+	await truncFacts.commands.get("planner-only").handler("handoff", truncFacts.ctx);
+	assert.match(truncFacts.replaced.sent[0], / M file0\.ts/);
+	assert.match(truncFacts.replaced.sent[0], / M file29\.ts/);
+	assert.match(truncFacts.replaced.sent[0], /… 10 more/);
+	assert.doesNotMatch(truncFacts.replaced.sent[0], / M file30\.ts/);
+	const cleanFacts = fakePi(undefined, async (_cmd, args) => {
+		if (args[0] === "--version") return { stdout: "git version 2.43.0", stderr: "", code: 0 };
+		if (args.includes("--is-inside-work-tree")) return { stdout: "true", stderr: "", code: 0 };
+		if (args.includes("status")) return { stdout: "", stderr: "", code: 0 };
+		if (args.includes("log")) return { stdout: "abc123 latest change\n", stderr: "", code: 0 };
+		return { stdout: "", stderr: "", code: 0 };
+	});
+	await cleanFacts.commands.get("planner-only").handler("handoff", cleanFacts.ctx);
+	await cleanFacts.tools.get("handoff").execute("facts-clean", { brief, cwd: "repo" }, undefined, undefined, cleanFacts.ctx);
+	await cleanFacts.commands.get("planner-only").handler("handoff", cleanFacts.ctx);
+	assert.match(cleanFacts.replaced.sent[0], /\(clean\)/);
+	const cancelled = fakePi();
+	let cancelSession = true;
+	cancelled.ctx.newSession = async (opts) => { cancelled.sessionCalls.push(opts); if (cancelSession) return { cancelled: true }; await opts.withSession(cancelled.replaced); return {}; };
+	await cancelled.commands.get("planner-only").handler("handoff", cancelled.ctx);
+	await cancelled.tools.get("handoff").execute("cancel", { brief }, undefined, undefined, cancelled.ctx);
+	await cancelled.commands.get("planner-only").handler("handoff", cancelled.ctx);
+	assert.match(cancelled.notes.at(-1), /handoff cancelled/);
+	await cancelled.handlers.get("agent_settled")({}, cancelled.ctx);
+	assert.equal(cancelled.sentUserMessages.length, 1);
+	cancelSession = false;
+	await cancelled.commands.get("planner-only").handler("handoff", cancelled.ctx);
+	assert.equal(cancelled.sessionCalls.length, 2);
+	assert.match(cancelled.replaced.sent.at(-1), /Continue the parser migration/);
+	await cancelled.tools.get("handoff").execute("drop", { brief }, undefined, undefined, cancelled.ctx);
+	await cancelled.commands.get("planner-only").handler("handoff drop", cancelled.ctx);
+	assert.match(cancelled.notes.at(-1), /handoff dropped/);
+	const thrown = fakePi();
+	thrown.ctx.newSession = async () => { throw new Error("new session boom"); };
+	await thrown.commands.get("planner-only").handler("handoff", thrown.ctx);
+	await thrown.tools.get("handoff").execute("throw", { brief }, undefined, undefined, thrown.ctx);
+	await assert.doesNotReject(thrown.commands.get("planner-only").handler("handoff", thrown.ctx));
+	assert.match(thrown.notes.at(-1), /handoff failed/);
+	await thrown.handlers.get("agent_settled")({}, thrown.ctx);
+	assert.equal(thrown.sentUserMessages.length, 1);
+	const postReplacementThrow = fakePi(undefined, undefined, { throwAfterReplacement: true });
+	await postReplacementThrow.commands.get("planner-only").handler("handoff", postReplacementThrow.ctx);
+	await postReplacementThrow.tools.get("handoff").execute("post-replacement", { brief }, undefined, undefined, postReplacementThrow.ctx);
+	await postReplacementThrow.commands.get("planner-only").handler("handoff", postReplacementThrow.ctx);
+	const afterPostThrow = postReplacementThrow.sessionCalls.length;
+	await postReplacementThrow.handlers.get("agent_settled")({}, postReplacementThrow.ctx);
+	assert.equal(postReplacementThrow.sessionCalls.length, afterPostThrow, "recovered replacement handoff is manual-only");
+	await postReplacementThrow.commands.get("planner-only").handler("handoff", postReplacementThrow.ctx);
+	assert.match(postReplacementThrow.replaced.sent.at(-1), /Continue the parser migration/);
+	const gitFailure = fakePi(undefined, async () => { throw new Error("git unavailable"); });
+	await gitFailure.commands.get("planner-only").handler("handoff", gitFailure.ctx);
+	await gitFailure.tools.get("handoff").execute("git-failure", { brief }, undefined, undefined, gitFailure.ctx);
+	await gitFailure.commands.get("planner-only").handler("handoff", gitFailure.ctx);
+	assert.match(gitFailure.replaced.sent[0], /git facts unavailable: git unavailable/);
+	const disabledHandoff = fakePi();
+	await disabledHandoff.commands.get("planner-only").handler("handoff", disabledHandoff.ctx);
+	await disabledHandoff.tools.get("handoff").execute("off-handoff", { brief }, undefined, undefined, disabledHandoff.ctx);
+	await disabledHandoff.commands.get("planner-only").handler("off", disabledHandoff.ctx);
+	await disabledHandoff.handlers.get("agent_settled")({}, disabledHandoff.ctx);
+	await disabledHandoff.commands.get("planner-only").handler("on", disabledHandoff.ctx);
+	await disabledHandoff.handlers.get("agent_settled")({}, disabledHandoff.ctx);
+	assert.equal(disabledHandoff.sentUserMessages.length, 1);
+	const confirm = fakePi();
+	await confirm.commands.get("planner-only").handler("handoff", confirm.ctx);
+	await confirm.tools.get("handoff").execute("confirm", { brief }, undefined, undefined, confirm.ctx);
+	process.env.PI_PLANNER_ONLY_HANDOFF = "confirm";
+	await confirm.commands.get("planner-only").handler("handoff", confirm.ctx);
+	delete process.env.PI_PLANNER_ONLY_HANDOFF;
+	assert.equal(confirm.replaced.editor.length, 1);
+	assert.equal(confirm.replaced.sent.length, 0);
+	assert.deepEqual(confirm.activeModel(), { provider: "provider-a", id: "model-a" });
+	const providerCollision = fakePi(undefined, undefined, { sourceModel: { provider: "provider-b", id: "model-a" }, registry: [{ provider: "provider-a", id: "model-a" }, { provider: "provider-b", id: "model-a" }] });
+	await providerCollision.commands.get("planner-only").handler("handoff", providerCollision.ctx);
+	await providerCollision.tools.get("handoff").execute("collision", { brief }, undefined, undefined, providerCollision.ctx);
+	await providerCollision.commands.get("planner-only").handler("handoff", providerCollision.ctx);
+	assert.deepEqual(providerCollision.replaced.sent.length, 1);
+	assert.deepEqual(providerCollision.activeModel(), { provider: "provider-b", id: "model-a" });
+	const unknownAuto = fakePi(undefined, undefined, { unknownSourceThinking: true });
+	await unknownAuto.commands.get("planner-only").handler("handoff", unknownAuto.ctx);
+	await unknownAuto.tools.get("handoff").execute("unknown-auto", { brief }, undefined, undefined, unknownAuto.ctx);
+	await unknownAuto.commands.get("planner-only").handler("handoff", unknownAuto.ctx);
+	assert.equal(unknownAuto.replaced.sent.length, 1);
+	assert.equal(unknownAuto.pi.setThinkingLevel ? unknownAuto.activeThinking() : "", "medium");
+	assert.ok(unknownAuto.replaced.notes.some((n) => /thinking level was not carried over/i.test(n)));
+	const unknownConfirm = fakePi(undefined, undefined, { unknownSourceThinking: true });
+	await unknownConfirm.commands.get("planner-only").handler("handoff", unknownConfirm.ctx);
+	await unknownConfirm.tools.get("handoff").execute("unknown-confirm", { brief }, undefined, undefined, unknownConfirm.ctx);
+	process.env.PI_PLANNER_ONLY_HANDOFF = "confirm";
+	await unknownConfirm.commands.get("planner-only").handler("handoff", unknownConfirm.ctx);
+	delete process.env.PI_PLANNER_ONLY_HANDOFF;
+	assert.equal(unknownConfirm.replaced.sent.length, 0);
+	assert.equal(unknownConfirm.replaced.editor.length, 1);
+	assert.ok(unknownConfirm.replaced.notes.some((n) => /thinking level was not carried over/i.test(n)));
+	for (const [name, options, reason] of [
+		["absent", { registry: [{ provider: "provider-b", id: "model-b" }] }, /unavailable/],
+		["false", { setModelResult: false }, /refused/],
+		["throw", { setModelThrowOnce: true }, /setModel boom/],
+		["lying-model", { setModelLies: true }, /active model did not match/],
+		["thinking-mismatch", { setThinkingLies: true }, /thinking level did not match/],
+	]) {
+		const failed = fakePi(undefined, undefined, options);
+		await failed.commands.get("planner-only").handler("handoff", failed.ctx);
+		await failed.tools.get("handoff").execute(name, { brief }, undefined, undefined, failed.ctx);
+		await failed.commands.get("planner-only").handler("handoff", failed.ctx);
+		assert.equal(failed.replaced.sent.length, 0, name);
+		assert.equal(failed.replaced.editor.length, 0, name);
+		assert.ok(failed.replaced.notes.some((n) => reason.test(n)), name);
+		assert.ok(failed.replaced.notes.some((n) => /\/planner-only handoff.*retry.*\/planner-only handoff drop.*discard/i.test(n)), `${name} should explain retry/drop`);
+	}
+	const retrySelection = fakePi(undefined, undefined, { setModelThrowOnce: true, registry: [{ provider: "provider-a", id: "model-a" }, { provider: "provider-b", id: "model-b" }, { provider: "provider-c", id: "model-c" }] });
+	await retrySelection.commands.get("planner-only").handler("handoff", retrySelection.ctx);
+	await retrySelection.tools.get("handoff").execute("retry-selection", { brief }, undefined, undefined, retrySelection.ctx);
+	await retrySelection.commands.get("planner-only").handler("handoff", retrySelection.ctx);
+	assert.ok(retrySelection.replaced.notes.some((n) => /settings could not be restored.*retry.*drop/i.test(n)));
+	const failedCalls = retrySelection.sessionCalls.length;
+	await retrySelection.handlers.get("agent_settled")({}, retrySelection.ctx);
+	assert.equal(retrySelection.sessionCalls.length, failedCalls, "failed handoff must be manual-only in the replacement instance");
+	retrySelection.setSource({ provider: "provider-c", id: "model-c" });
+	await retrySelection.commands.get("planner-only").handler("handoff", retrySelection.ctx);
+	assert.equal(retrySelection.replaced.sent.length, 1);
+	assert.deepEqual(retrySelection.lastSetModel(), { provider: "provider-a", id: "model-a" });
+	const dropSelection = fakePi(undefined, undefined, { setModelThrowOnce: true, registry: [{ provider: "provider-a", id: "model-a" }, { provider: "provider-b", id: "model-b" }, { provider: "provider-c", id: "model-c" }] });
+	await dropSelection.commands.get("planner-only").handler("handoff", dropSelection.ctx);
+	await dropSelection.tools.get("handoff").execute("drop-selection", { brief }, undefined, undefined, dropSelection.ctx);
+	await dropSelection.commands.get("planner-only").handler("handoff", dropSelection.ctx);
+	await dropSelection.commands.get("planner-only").handler("handoff drop", dropSelection.ctx);
+	const droppedCalls = dropSelection.sessionCalls.length;
+	await dropSelection.commands.get("planner-only").handler("handoff", dropSelection.ctx);
+	assert.equal(dropSelection.sessionCalls.length, droppedCalls);
+	assert.ok(dropSelection.sentUserMessages.some(([m]) => /Call the handoff tool/.test(m)));
+	dropSelection.setSource({ provider: "provider-c", id: "model-c" });
+	await dropSelection.commands.get("planner-only").handler("handoff", dropSelection.ctx);
+	await dropSelection.tools.get("handoff").execute("fresh-after-drop", { brief }, undefined, undefined, dropSelection.ctx);
+	await dropSelection.commands.get("planner-only").handler("handoff", dropSelection.ctx);
+	assert.deepEqual(dropSelection.lastSetModel(), { provider: "provider-c", id: "model-c" });
+	const consecutive = fakePi(undefined, undefined, { registry: [{ provider: "provider-a", id: "model-a" }, { provider: "provider-b", id: "model-b" }, { provider: "provider-c", id: "model-c" }] });
+	await consecutive.commands.get("planner-only").handler("handoff", consecutive.ctx);
+	await consecutive.tools.get("handoff").execute("first-consecutive", { brief }, undefined, undefined, consecutive.ctx);
+	await consecutive.commands.get("planner-only").handler("handoff", consecutive.ctx);
+	assert.deepEqual(consecutive.lastSetModel(), { provider: "provider-a", id: "model-a" });
+	consecutive.setSource({ provider: "provider-c", id: "model-c" });
+	await consecutive.commands.get("planner-only").handler("handoff", consecutive.ctx);
+	await consecutive.tools.get("handoff").execute("second-consecutive", { brief }, undefined, undefined, consecutive.ctx);
+	await consecutive.commands.get("planner-only").handler("handoff", consecutive.ctx);
+	assert.deepEqual(consecutive.lastSetModel(), { provider: "provider-c", id: "model-c" });
+	const unidentified = fakePi(undefined, undefined, { sourceModel: null });
+	await unidentified.commands.get("planner-only").handler("handoff", unidentified.ctx);
+	await unidentified.tools.get("handoff").execute("unknown-model", { brief }, undefined, undefined, unidentified.ctx);
+	const beforeUnidentified = unidentified.sessionCalls.length;
+	await unidentified.commands.get("planner-only").handler("handoff", unidentified.ctx);
+	assert.equal(unidentified.sessionCalls.length, beforeUnidentified);
+	assert.ok(unidentified.notes.some((n) => /current model cannot be identified/.test(n)));
+	const manual = fakePi();
+	await manual.commands.get("planner-only").handler("handoff-mode auto", manual.ctx);
+	assert.equal(manual.sentUserMessages.length, 0, "setting handoff mode does not schedule a handoff");
+	rmSync(HANDOFF_PREFERENCE, { force: true });
+	await manual.commands.get("planner-only").handler("handoff next goal", manual.ctx);
+	assert.match(manual.sentUserMessages[0][0], /Call the handoff tool/);
+	assert.match(manual.sentUserMessages[0][0], /next goal/);
+
+	const inflight = fakePi();
+	let finishReviewer;
+	inflight.events.on(SUBAGENT_DELEGATION_REQUEST_EVENT, (req) => { finishReviewer = () => inflight.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, { requestId: req.requestId, nodeId: req.nodeId, agent: req.agent, status: "completed", result: { kind: "text", text: "reviewed" }, usage: usage() }); });
+	const reviewerPromise = inflight.tools.get("delegate").execute("review-inflight", { role: "reviewer", task: "review" }, undefined, undefined, inflight.ctx);
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	await inflight.commands.get("planner-only").handler("handoff", inflight.ctx);
+	const inflightRefusal = await inflight.tools.get("handoff").execute("inflight-refusal", { brief }, undefined, undefined, inflight.ctx);
+	assert.match(inflightRefusal.content[0].text, /a delegated child is still running/);
+	finishReviewer();
+	await reviewerPromise;
+
+	// delegate end to end over pi.events; child and Root usage are both counted.
+	let reply = { status: "completed", result: { kind: "text", text: "done" }, usage: usage({ cost: 0.01 }) };
+	h.events.on(SUBAGENT_DELEGATION_REQUEST_EVENT, (req) => {
+		assert.equal(req.ownerRunId, "session-1");
+		assert.equal(req.cwd, "/w/sub");
+		h.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, { requestId: req.requestId, nodeId: req.nodeId, agent: req.agent, ...reply });
+	});
+	const result = await h.tools.get("delegate").execute("call-1", { role: "worker", task: "t", cwd: "sub" }, undefined, undefined, h.ctx);
+	assert.match(result.content[0].text, /Child report:\ndone/);
+	assert.equal(result.details.status, "completed");
+	const hc = fakePi();
+	await hc.handlers.get("session_start")({}, hc.ctx);
+	assert.equal(rootUsageOf({ role: "assistant", usage: { input: 5, output: "x", cacheRead: 7, cacheWrite: 3 } }).context, 15);
+	const largeContext = { message: { role: "assistant", usage: { input: 0, output: 0, cacheRead: 200_000, cacheWrite: 0, cost: { total: 0 } } } };
+	await hc.handlers.get("message_end")(largeContext, hc.ctx);
+	assert.equal(hc.sentMessages.length, 1);
+	assert.equal(hc.sentMessages[0][0].customType, "planner-only-context");
+	assert.equal(hc.sentMessages[0][1].deliverAs, "steer");
+	assert.match(hc.sentMessages[0][0].content, /about 200k tokens/);
+	assert.match(hc.sentMessages[0][0].content, /\/compact/);
+	assert.match(hc.sentMessages[0][0].content, /suggest the user run \/planner-only handoff/);
+	assert.doesNotMatch(hc.sentMessages[0][0].content, /call the handoff tool/);
+	hc.toolBoundary();
+	assert.equal(hc.modelRequests.length, 1, "steer reaches the next model request in the same run");
+	assert.equal(hc.queuedNextTurn.length, 0);
+	assert.equal(hc.modelRequests[0].content, hc.sentMessages[0][0].content);
+	assert.equal(hc.sentUserMessages.length, 0, "warning does not start another run while idle");
+	assert.equal(hc.modelRequests.length, 1, "a warning does not continue the model by itself");
+	const { AgentSession } = await import("@earendil-works/pi-coding-agent");
+	const makeHostSession = (isStreaming) => {
+		const host = Object.create(AgentSession.prototype);
+		let starts = 0, appends = 0, steers = 0, followUps = 0;
+		Object.defineProperty(host, "isStreaming", { value: isStreaming });
+		host._pendingNextTurnMessages = [];
+		host.agent = { steer: () => { steers++; }, followUp: () => { followUps++; } };
+		host._appendCustomMessage = () => { appends++; };
+		host._startRun = () => { starts++; };
+		host._runAgentPrompt = () => { starts++; };
+		return { host, counts: () => ({ starts, appends, steers, followUps }) };
+	};
+	const idleHost = makeHostSession(false);
+	await AgentSession.prototype.sendCustomMessage.call(idleHost.host, ...hc.sentMessages[0]);
+	assert.deepEqual(idleHost.counts(), { starts: 0, appends: 1, steers: 0, followUps: 0 });
+	const startControl = makeHostSession(false);
+	await AgentSession.prototype.sendCustomMessage.call(startControl.host, hc.sentMessages[0][0], { ...hc.sentMessages[0][1], triggerTurn: true });
+	assert.equal(startControl.counts().starts, 1, "triggerTurn control proves the run spy catches a started run");
+	const streamingHost = makeHostSession(true);
+	await AgentSession.prototype.sendCustomMessage.call(streamingHost.host, hc.sentMessages[0][0], { deliverAs: "nextTurn" });
+	assert.equal(streamingHost.host._pendingNextTurnMessages.length, 1, "old delivery waits for a new run");
+	assert.deepEqual(streamingHost.counts(), { starts: 0, appends: 0, steers: 0, followUps: 0 });
+	await AgentSession.prototype.sendCustomMessage.call(streamingHost.host, ...hc.sentMessages[0]);
+	assert.deepEqual(streamingHost.counts(), { starts: 0, appends: 0, steers: 1, followUps: 0 });
+	const enabledWarning = fakePi();
+	await enabledWarning.commands.get("planner-only").handler("handoff-mode auto", enabledWarning.ctx);
+	await enabledWarning.handlers.get("session_start")({}, enabledWarning.ctx);
+	await enabledWarning.handlers.get("message_end")(largeContext, enabledWarning.ctx);
+	assert.match(enabledWarning.sentMessages[0][0].content, /finish the current bounded operation.*auto mode submits it.*automatically/i);
+	assert.match(enabledWarning.sentMessages[0][0].content, /handoff tool/);
+	assert.doesNotMatch(enabledWarning.sentMessages[0][0].content, /ask the user to \/compact/i);
+	const confirmWarning = fakePi();
+	await confirmWarning.commands.get("planner-only").handler("handoff-mode confirm", confirmWarning.ctx);
+	await confirmWarning.handlers.get("session_start")({}, confirmWarning.ctx);
+	await confirmWarning.handlers.get("message_end")(largeContext, confirmWarning.ctx);
+	assert.match(confirmWarning.sentMessages[0][0].content, /finish the current bounded operation.*brief in the editor for the user to submit/i);
+	await hc.handlers.get("message_end")(largeContext, hc.ctx);
+	assert.equal(hc.sentMessages.length, 1);
+	await hc.commands.get("planner-only").handler("status", hc.ctx);
+	assert.match(hc.notes.at(-1), /ctx 200k/);
+	assert.equal(statusRgb(hc.statusColors.at(-1)), "247,118,142", "above the threshold the status is the theme's error color");
+	assert.doesNotMatch((await hc.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, hc.ctx)).systemPrompt, /Root context is about/);
+	await hc.handlers.get("session_compact")({}, hc.ctx);
+	await hc.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 10_000, output: 0, cacheRead: 0, cacheWrite: 0 } } }, hc.ctx);
+	await hc.handlers.get("message_end")(largeContext, hc.ctx);
+	assert.equal(hc.sentMessages.length, 2);
+	// Status heat: cool at an empty context, the warning color at half the threshold, red at it.
+	const heat = fakePi();
+	await heat.handlers.get("session_start")({}, heat.ctx);
+	assert.equal(statusRgb(heat.statusColors.at(-1)), "122,162,247", "an empty context shows the cool accent");
+	await heat.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 0, output: 0, cacheRead: 20_000, cacheWrite: 0 } } }, heat.ctx);
+	assert.equal(statusRgb(heat.statusColors.at(-1)), "29,189,217", "20k of the 150k threshold is still cool");
+	await heat.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 0, output: 0, cacheRead: 75_000, cacheWrite: 0 } } }, heat.ctx);
+	assert.equal(statusRgb(heat.statusColors.at(-1)), "224,175,104", "half the threshold shows the warning color");
+	assert.equal(heat.sentMessages.length, 0, "no warning below the threshold");
+	await heat.handlers.get("message_end")(largeContext, heat.ctx);
+	assert.equal(statusRgb(heat.statusColors.at(-1)), "247,118,142", "the threshold turns the status red");
+	assert.equal(heat.sentMessages.length, 1);
+	// Hosts before pi 0.99 have no theme.style/colors: the status keeps the plain warning/error tokens.
+	const legacy = fakePi(undefined, undefined, { legacyTheme: true });
+	await legacy.handlers.get("session_start")({}, legacy.ctx);
+	assert.equal(legacy.statusColors.at(-1), "warning");
+	await legacy.handlers.get("message_end")(largeContext, legacy.ctx);
+	assert.equal(legacy.statusColors.at(-1), "error");
+	const preferred = fakePi();
+	await preferred.handlers.get("session_start")({}, preferred.ctx);
+	preferred.ctx.getContextUsage = () => ({ tokens: 180_000 });
+	await preferred.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 10_000, output: 0, cacheRead: 0, cacheWrite: 0 } } }, preferred.ctx);
+	await preferred.commands.get("planner-only").handler("status", preferred.ctx);
+	assert.match(preferred.notes.at(-1), /ctx 180k/);
+	assert.equal(preferred.sentMessages.length, 1);
+	const threshold = fakePi();
+	await threshold.handlers.get("session_start")({}, threshold.ctx);
+	process.env.PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS = "300000";
+	await threshold.handlers.get("message_end")(largeContext, threshold.ctx);
+	assert.equal(threshold.sentMessages.length, 0);
+	delete process.env.PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS;
+	process.env.PI_PLANNER_ONLY = "0";
+	const disabled = fakePi();
+	await disabled.handlers.get("session_start")({}, disabled.ctx);
+	await disabled.handlers.get("message_end")(largeContext, disabled.ctx);
+	assert.equal(disabled.sentMessages.length, 0);
+	delete process.env.PI_PLANNER_ONLY;
+	await h.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 10_000, output: 2_000, cacheRead: 0, cacheWrite: 0, cost: { total: 0.03 } } } }, h.ctx);
+	await h.handlers.get("message_end")({ message: { role: "user", content: "hi" } }, h.ctx);
+	await h.commands.get("planner-only").handler("status", h.ctx);
+	assert.match(h.notes.at(-1), /root 12k \$0\.030 · children\(1\) 3\.5k \$0\.010 · root share 77% tok · 75% \$/);
+
+	// A child that did not complete counts as failed even without usage; a refusal launched nothing and is not counted.
+	reply = { status: "timed_out", error: "Subagent timed out after 600000ms." };
+	const timedOut = await h.tools.get("delegate").execute("call-1b", { role: "worker", task: "t", cwd: "sub" }, undefined, undefined, h.ctx);
+	assert.equal(timedOut.details.status, "timed_out");
+	const refused = await h.tools.get("delegate").execute("call-1c", { role: "worker", task: "   ", cwd: "sub" }, undefined, undefined, h.ctx);
+	assert.equal(refused.details.status, "refused");
+	await h.commands.get("planner-only").handler("status", h.ctx);
+	assert.match(h.notes.at(-1), /children\(2, 1 failed\) 3\.5k \$0\.010/);
+
+	// git_audit refusals come back as text, not exceptions.
+	const audit = await h.tools.get("git_audit").execute("call-2", { operation: "diff", base: "--output=x" }, undefined, undefined, h.ctx);
+	assert.match(audit.content[0].text, /refused/);
+	// An empty optional path (common from models) means "no filter", not a refusal.
+	const emptyPath = await h.tools.get("git_audit").execute("call-2b", { operation: "status", path: "" }, undefined, undefined, h.ctx);
+	assert.doesNotMatch(emptyPath.content[0].text, /path must be non-empty/);
+
+	// git_audit/git_commit: cwd resolves against ctx.cwd; non-repos get a clear hint.
+	const notRepo = await h.tools.get("git_audit").execute("call-3", { operation: "status", cwd: "elsewhere" }, undefined, undefined, h.ctx);
+	assert.equal(notRepo.content[0].text, "/w/elsewhere is not inside a git work tree; pass cwd=<repo>");
+	assert.equal(notRepo.details.ok, false);
+	const notRepoCommit = await h.tools.get("git_commit").execute("call-4", { message: "m" }, undefined, undefined, h.ctx);
+	assert.equal(notRepoCommit.content[0].text, "/w is not inside a git work tree; pass cwd=<repo>");
+	assert.equal(notRepoCommit.details.ok, false);
+	{
+		const seen = [];
+		const hg = fakePi(undefined, async (cmd, args, opts) => {
+			assert.equal(cmd, "git");
+			seen.push([args.filter((a) => !a.startsWith("-") && a !== "core.fsmonitor=false")[0], opts.cwd]);
+			return { stdout: args[0] === "--version" ? "git version 2.43.0" : "ok", stderr: "", code: 0 };
+		});
+		const cwdOf = (op) => seen.filter(([o]) => o === op).map(([, c]) => c);
+		assert.equal((await hg.tools.get("git_audit").execute("a", { operation: "log", cwd: "../repo" }, undefined, undefined, hg.ctx)).details.ok, true);
+		assert.deepEqual(cwdOf("log"), ["/repo"]);
+		await hg.tools.get("git_audit").execute("b", { operation: "diff" }, undefined, undefined, hg.ctx);
+		assert.deepEqual(cwdOf("diff"), ["/w"]);
+		assert.equal((await hg.tools.get("git_commit").execute("c", { message: "m", paths: ["a.ts"], cwd: "/abs/repo" }, undefined, undefined, hg.ctx)).details.ok, true);
+		assert.deepEqual(cwdOf("commit"), ["/abs/repo"]);
+		await hg.tools.get("git_commit").execute("d", { message: "m" }, undefined, undefined, hg.ctx);
+		assert.deepEqual(cwdOf("commit"), ["/abs/repo", "/w"]);
+	}
+
+	assert.equal(rootUsageOf({ role: "assistant", usage: { input: 5, output: "x" } }).tokens, 5);
+	assert.equal(rootUsageOf({ role: "assistant", usage: { input: 5, output: "x" } }).context, 5);
+	assert.equal(rootUsageOf(undefined), undefined);
+
+	// HIDDEN_HOST_TOOLS: while enabled, subagents_enable/subagent are stripped.
+	const h2 = fakePi(["read", "bash", "subagents_enable", "subagent"]);
+	await h2.handlers.get("session_start")({}, h2.ctx);
+	assert.deepEqual(h2.active(), ["read", "bash", "delegate", "git_audit", "git_commit", "handoff"]);
+	// pi-subagents re-adds the loader on its own hooks; before_agent_start strips again.
+	h2.pi.setActiveTools([...h2.active(), "subagents_enable", "subagent"]);
+	await h2.handlers.get("before_agent_start")({ systemPrompt: "B" }, h2.ctx);
+	assert.deepEqual(h2.active(), ["read", "bash", "delegate", "git_audit", "git_commit", "handoff"]);
+
+	// off: subagents_enable comes back, subagent does not; on: stripped again.
+	await h2.commands.get("planner-only").handler("off", h2.ctx);
+	assert.ok(h2.active().includes("subagents_enable"));
+	assert.ok(!h2.active().includes("subagent"));
+	assert.ok(!h2.active().includes("delegate"));
+	await h2.commands.get("planner-only").handler("on", h2.ctx);
+	assert.ok(!h2.active().includes("subagents_enable"));
+	assert.ok(!h2.active().includes("subagent"));
+	assert.ok(h2.active().includes("delegate"));
+
+	// before_agent_start scrubs systemPromptOptions.selectedTools when enabled.
+	const evSel = { systemPrompt: "B", systemPromptOptions: { selectedTools: ["read", "subagents_enable", "subagent", "bash"] } };
+	await h2.handlers.get("before_agent_start")(evSel, h2.ctx);
+	assert.deepEqual(evSel.systemPromptOptions.selectedTools, ["read", "bash", "delegate", "git_audit", "git_commit", "handoff"]);
+
+	// tool_call: hidden tools are blocked even without strict; ordinary tools are not.
+	const callTool = (toolName) => h2.handlers.get("tool_call")({ toolName }, h2.ctx);
+	assert.equal((await callTool("subagents_enable")).block, true);
+	assert.match((await callTool("subagent")).reason, /use the delegate tool instead of subagent\./);
+	assert.equal(await callTool("read"), undefined);
+	assert.equal(await callTool("bash"), undefined);
+
+	// Disabled: selectedTools left untouched, hidden tools not blocked.
+	await h2.commands.get("planner-only").handler("off", h2.ctx);
+	const evSelOff = { systemPrompt: "B", systemPromptOptions: { selectedTools: ["read", "subagents_enable", "subagent"] } };
+	await h2.handlers.get("before_agent_start")(evSelOff, h2.ctx);
+	assert.deepEqual(evSelOff.systemPromptOptions.selectedTools, ["read", "subagents_enable", "subagent"]);
+	assert.equal(await callTool("subagents_enable"), undefined);
+	assert.equal(await callTool("subagent"), undefined);
+
+	// New MODE wins over legacy flag; unknown values fail closed and empty values are unset.
+	process.env.PI_PLANNER_ONLY_MODE = "native";
+	process.env.PI_PLANNER_ONLY = "0";
+	assert.equal(initialMode(), "native");
+	process.env.PI_PLANNER_ONLY_MODE = "typo";
+	assert.equal(initialMode(), "off");
+	process.env.PI_PLANNER_ONLY_MODE = "";
+	assert.equal(initialMode(), "off");
+	delete process.env.PI_PLANNER_ONLY;
+	delete process.env.PI_PLANNER_ONLY_MODE;
+	await h2.commands.get("planner-only").handler("native", h2.ctx);
+	assert.equal(readFileSync(MODE_PREFERENCE, "utf8"), "native\n");
+	assert.equal(initialMode(), "native");
+	assert.equal(h2.active().includes("subagents_enable"), true, "preference does not switch the current session");
+	assert.equal((await h2.handlers.get("before_agent_start")({ systemPrompt: "B" }, h2.ctx)), undefined);
+	// A fresh session binds the preference, while reload and resume retain its own entry.
+	h2.branch([]);
+	await h2.handlers.get("session_start")({ reason: "new" }, h2.ctx);
+	assert.deepEqual(h2.appended.at(-1), { type: "custom", customType: "planner-only-mode", data: { mode: "native" } });
+	assert.ok(!h2.active().includes("delegate"));
+	assert.ok(h2.active().includes("subagents_enable"));
+	const nativeEvent = { systemPrompt: "B", systemPromptOptions: { selectedTools: ["read", "subagents_enable", "subagent", "delegate", "bash"] } };
+	assert.deepEqual(await h2.handlers.get("before_agent_start")(nativeEvent, h2.ctx), { systemPrompt: `B\n\n${NATIVE_PROMPT}` });
+	assert.deepEqual(nativeEvent.systemPromptOptions.selectedTools, ["read", "subagents_enable", "subagent", "bash"]);
+	process.env.PI_PLANNER_ONLY_STRICT = "1";
+	process.env.PI_PLANNER_ONLY_HANDOFF = "auto";
+	assert.equal(await callTool("bash"), undefined);
+	assert.equal(await callTool("subagent"), undefined);
+	await h2.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200_000, output: 5, cost: { total: 1 } } } }, h2.ctx);
+	assert.equal(h2.sentMessages.length, 0);
+	assert.doesNotMatch(h2.statuses.at(-1), /children\(/);
+	const nativeTools = [
+		["delegate", { role: "worker", task: "task" }],
+		["git_audit", { operation: "status" }],
+		["git_commit", { message: "do not write" }],
+		["handoff", { brief: "x".repeat(200) }],
+	];
+	for (const [name, params] of nativeTools) {
+		assert.equal((await h2.tools.get(name).execute("id", params, undefined, undefined, h2.ctx)).details.ok, false, `${name} direct execute refused`);
+	}
+	assert.equal(h2.sessionCalls.length, 0);
+	await h2.commands.get("planner-only").handler("lite", h2.ctx);
+	assert.equal(h2.active().includes("delegate"), false);
+	await h2.handlers.get("session_start")({ reason: "reload" }, h2.ctx);
+	assert.equal(h2.active().includes("delegate"), false);
+	await h2.handlers.get("session_start")({ reason: "resume" }, h2.ctx);
+	assert.equal(h2.active().includes("delegate"), false);
+	h2.branch([]);
+	await h2.handlers.get("session_start")({ reason: "new" }, h2.ctx);
+	assert.ok(h2.active().includes("delegate"));
+	assert.ok(!h2.active().includes("subagents_enable"));
+	delete process.env.PI_PLANNER_ONLY_STRICT;
+	delete process.env.PI_PLANNER_ONLY_HANDOFF;
+	// Native never forces a host tool that Lite did not actually hide.
+	const noNative = fakePi(["read", "bash"]);
+	await noNative.handlers.get("session_start")({ reason: "new" }, noNative.ctx);
+	assert.ok(!noNative.active().includes("subagent"));
+	assert.ok(!noNative.active().includes("subagents_enable"));
+	// Legacy immediate commands update the bound branch, including resume into a new extension instance.
+	await h2.commands.get("planner-only").handler("off", h2.ctx);
+	assert.equal(h2.appended.at(-1).data.mode, "off");
+	for (const [name, params] of nativeTools) {
+		assert.equal((await h2.tools.get(name).execute("id", params, undefined, undefined, h2.ctx)).details.ok, false, `${name} direct execute refused while off`);
+	}
+	await h2.commands.get("planner-only").handler("on", h2.ctx);
+	assert.equal(h2.appended.at(-1).data.mode, "lite");
+	const resumed = fakePi(["read", "bash", "subagents_enable"]);
+	resumed.branch(h2.appended);
+	await resumed.handlers.get("session_start")({ reason: "resume" }, resumed.ctx);
+	assert.ok(resumed.active().includes("delegate"));
+	const startup = fakePi(["read", "bash"]);
+	startup.branch([]);
+	await startup.commands.get("planner-only").handler("native", startup.ctx);
+	await startup.handlers.get("session_start")({ reason: "startup" }, startup.ctx);
+	assert.equal(startup.appended.at(-1).data.mode, "native");
+	const reloaded = fakePi(["read", "bash"]);
+	reloaded.branch(startup.appended);
+	await reloaded.handlers.get("session_start")({ reason: "reload" }, reloaded.ctx);
+	assert.equal((await reloaded.handlers.get("before_agent_start")({ systemPrompt: "B" }, reloaded.ctx)).systemPrompt, `B\n\n${NATIVE_PROMPT}`);
+	reloaded.branch([...startup.appended, { type: "custom", customType: "planner-only-mode", data: { mode: "invalid" } }]);
+	await reloaded.handlers.get("session_start")({ reason: "resume" }, reloaded.ctx);
+	assert.equal((await reloaded.handlers.get("before_agent_start")({ systemPrompt: "B" }, reloaded.ctx)).systemPrompt, `B\n\n${NATIVE_PROMPT}`);
+	await startup.commands.get("planner-only").handler("lite", startup.ctx);
+	reloaded.branch([]);
+	reloaded.sessionId("session-2");
+	await reloaded.handlers.get("session_start")({}, reloaded.ctx);
+	assert.equal(reloaded.appended.at(-1).data.mode, "lite", "older hosts without reason still bind a fresh session");
+	// Actual in-flight child holds the Lite boundary; direct bypass cannot change mode.
+	const running = fakePi();
+	await running.handlers.get("session_start")({ reason: "new" }, running.ctx);
+	const child = running.tools.get("delegate").execute("id", { role: "worker", task: "wait" }, undefined, undefined, running.ctx);
+	for (let i = 0; i < 100 && !running.events.emitted.some(([name]) => name === SUBAGENT_DELEGATION_REQUEST_EVENT); i++) await new Promise((resolve) => setImmediate(resolve));
+	const request = running.events.emitted.find(([name]) => name === SUBAGENT_DELEGATION_REQUEST_EVENT)?.[1];
+	assert.ok(request, "fault injection reached in-flight child");
+	for (const event of ["session_before_switch", "session_before_fork", "session_before_tree"]) {
+		assert.deepEqual(await running.handlers.get(event)({}, running.ctx), { cancel: true }, `${event} cancels teardown while child runs`);
+	}
+	await running.commands.get("planner-only").handler("off", running.ctx);
+	assert.match(running.notes.at(-1), /mode change refused/);
+	assert.ok(running.active().includes("delegate"));
+	process.env.PI_PLANNER_ONLY_MODE = "native";
+	running.branch([]);
+	await running.handlers.get("session_start")({ reason: "new" }, running.ctx);
+	assert.ok(running.active().includes("delegate"));
+	assert.equal(running.appended.at(-1).data.mode, "lite");
+	delete process.env.PI_PLANNER_ONLY_MODE;
+	running.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, { requestId: request.requestId, nodeId: request.nodeId, status: "completed", agent: request.agent, result: { kind: "text", text: "done" }, usage: usage() });
+	await child;
+	assert.equal(await running.handlers.get("session_before_switch")({}, running.ctx), undefined);
+	process.env.PI_PLANNER_ONLY_CANCEL_GRACE_MS = "1";
+	const late = fakePi();
+	await late.handlers.get("session_start")({ reason: "new" }, late.ctx);
+	const abort = new AbortController();
+	const stopping = late.tools.get("delegate").execute("id", { role: "worker", task: "wait for late terminal" }, abort.signal, undefined, late.ctx);
+	for (let i = 0; i < 100 && !late.events.emitted.some(([name]) => name === SUBAGENT_DELEGATION_REQUEST_EVENT); i++) await new Promise((resolve) => setImmediate(resolve));
+	const lateRequest = late.events.emitted.find(([name]) => name === SUBAGENT_DELEGATION_REQUEST_EVENT)?.[1];
+	assert.ok(lateRequest);
+	late.events.emit(SUBAGENT_DELEGATION_STARTED_EVENT, { requestId: lateRequest.requestId, nodeId: lateRequest.nodeId });
+	abort.abort();
+	assert.equal((await stopping).details.status, "stop_unconfirmed");
+	for (const event of ["session_before_switch", "session_before_fork", "session_before_tree"]) {
+		assert.deepEqual(await late.handlers.get(event)({}, late.ctx), { cancel: true }, `${event} cancels teardown on late cwd lock`);
+	}
+	await late.commands.get("planner-only").handler("off", late.ctx);
+	assert.match(late.notes.at(-1), /mode change refused/);
+	assert.ok(late.active().includes("delegate"));
+	late.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, { requestId: lateRequest.requestId, nodeId: lateRequest.nodeId, status: "cancelled", agent: lateRequest.agent });
+	assert.equal(await late.handlers.get("session_before_switch")({}, late.ctx), undefined);
+	await late.commands.get("planner-only").handler("off", late.ctx);
+	assert.ok(!late.active().includes("delegate"));
+	delete process.env.PI_PLANNER_ONLY_CANCEL_GRACE_MS;
+} finally {
+	rmSync(agentDir, { recursive: true, force: true });
+}
+
+// PlannerSession: transitions are testable without the pi event loop.
+{
+	const s = new PlannerSession();
+	assert.equal(s.recordChildRun("refused", undefined), false);
+	assert.equal(s.recordChildRun("timed_out", usage()), true);
+	assert.deepEqual([s.totals.children, s.totals.failed, s.totals.childTokens], [1, 1, 3_500]);
+	// Handoff admission, request consumption, manual retry and reset invariants
+	// now run through RootHandoff in handoff.test.mjs, without plugin hooks.
+	s.recordRootTurn({ tokens: 10, cost: 0.1 }, 200_000);
+	assert.equal(s.claimContextWarning(), true);
+	assert.equal(s.claimContextWarning(), false);
+	s.recordRootTurn({ tokens: 10, cost: 0.1 }, 100_000);
+	s.recordRootTurn({ tokens: 10, cost: 0.1 }, 200_000);
+	assert.equal(s.claimContextWarning(), true, "re-arms after dropping below the threshold");
+	s.noteCompacted();
+	assert.deepEqual([s.rootContext, s.contextWarned], [undefined, false]);
+	s.delegationsInFlight = 1;
+	s.hidLoader = true;
+	s.reset();
+	assert.equal(s.totals.rootTokens, 0); // Root handoff reset is covered in handoff.test.mjs.
+	assert.deepEqual([s.delegationsInFlight, s.hidLoader], [1, true], "process-scoped fields survive session_start");
+	let inFlight;
+	await s.trackDelegation(async () => { inFlight = s.delegationsInFlight; });
+	assert.deepEqual([inFlight, s.delegationsInFlight], [2, 1]);
+}
+
+// timeoutSeconds tool schema registration
+{
+	const h = fakePi();
+	const delegateTool = h.tools.get("delegate");
+	const timeoutProp = delegateTool.parameters.properties.timeoutSeconds;
+	assert.ok(timeoutProp, "timeoutSeconds parameter should be registered on delegate tool");
+	assert.equal(timeoutProp.type, "integer");
+	assert.equal(timeoutProp.minimum, 1);
+	assert.equal(timeoutProp.maximum, 86400);
+	assert.match(timeoutProp.description, /PI_PLANNER_ONLY_TIMEOUT_MS value in milliseconds \(default 600000 = 10 minutes\)/);
+}
+
+// PlannerSession per-role lightweight in-memory statistics, reset, and executeDelegate recording
+{
+	const s = new PlannerSession();
+	assert.ok(s.roleStats, "session should have roleStats");
+	for (const role of ["worker", "explorer", "validator", "reviewer"]) {
+		assert.deepEqual(s.roleStats[role], {
+			calls: 0,
+			completed: 0,
+			timed_out: 0,
+			otherFailed: 0,
+			refused: 0,
+			durationMs: 0,
+			durationMissing: 0,
+		});
+	}
+
+	// Direct recording onto PlannerSession
+	s.recordRoleDelegation("worker", "completed", 12_000);
+	s.recordRoleDelegation("worker", "timed_out", 60_000);
+	s.recordRoleDelegation("explorer", "completed", undefined); // missing duration
+	s.recordRoleDelegation("validator", "refused", 5_000); // refused: duration ignored
+	s.recordRoleDelegation("reviewer", "failed", 8_000); // otherFailed
+
+	assert.deepEqual(s.roleStats.worker, {
+		calls: 2,
+		completed: 1,
+		timed_out: 1,
+		otherFailed: 0,
+		refused: 0,
+		durationMs: 72_000,
+		durationMissing: 0,
+	});
+	assert.deepEqual(s.roleStats.explorer, {
+		calls: 1,
+		completed: 1,
+		timed_out: 0,
+		otherFailed: 0,
+		refused: 0,
+		durationMs: 0,
+		durationMissing: 1,
+	});
+	assert.deepEqual(s.roleStats.validator, {
+		calls: 1,
+		completed: 0,
+		timed_out: 0,
+		otherFailed: 0,
+		refused: 1,
+		durationMs: 0,
+		durationMissing: 0,
+	});
+	assert.deepEqual(s.roleStats.reviewer, {
+		calls: 1,
+		completed: 0,
+		timed_out: 0,
+		otherFailed: 1,
+		refused: 0,
+		durationMs: 8_000,
+		durationMissing: 0,
+	});
+
+	// Reset clears all role statistics
+	s.reset();
+	for (const role of ["worker", "explorer", "validator", "reviewer"]) {
+		assert.deepEqual(s.roleStats[role], {
+			calls: 0,
+			completed: 0,
+			timed_out: 0,
+			otherFailed: 0,
+			refused: 0,
+			durationMs: 0,
+			durationMissing: 0,
+		});
+	}
+
+	// Integration via fakePi and executeDelegate:
+	const h = fakePi();
+	await h.handlers.get("session_start")({}, h.ctx);
+
+	let reply = { status: "completed", result: { kind: "text", text: "ok" }, usage: { ...usage(), durationMs: 15_000 } };
+	h.events.on(SUBAGENT_DELEGATION_REQUEST_EVENT, (req) => {
+		h.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, { requestId: req.requestId, nodeId: req.nodeId, agent: req.agent, ...reply });
+	});
+
+	// 1. Worker completed with known duration
+	await h.tools.get("delegate").execute("w1", { role: "worker", task: "work 1", timeoutSeconds: 120 }, undefined, undefined, h.ctx);
+
+	// 2. Worker timed out with known duration
+	reply = { status: "timed_out", error: "timeout", usage: { ...usage(), durationMs: 45_000 } };
+	await h.tools.get("delegate").execute("w2", { role: "worker", task: "work 2" }, undefined, undefined, h.ctx);
+
+	// 3. Explorer completed with missing duration
+	reply = { status: "completed", result: { kind: "text", text: "scouted" }, usage: undefined };
+	await h.tools.get("delegate").execute("e1", { role: "explorer", task: "explore 1" }, undefined, undefined, h.ctx);
+
+	// 4. Validator refused (illegal timeout)
+	const refResult = await h.tools.get("delegate").execute("v1", { role: "validator", task: "val 1", timeoutSeconds: 0 }, undefined, undefined, h.ctx);
+	assert.equal(refResult.details.status, "refused");
+
+	// 5. Reviewer completed with known duration = 0
+	reply = { status: "completed", result: { kind: "text", text: "looked good" }, usage: { ...usage(), durationMs: 0 } };
+	await h.tools.get("delegate").execute("r1", { role: "reviewer", task: "review 1" }, undefined, undefined, h.ctx);
+
+	// 6. Worker failed: non-completed statuses other than timed_out and refused count as incomplete
+	reply = { status: "failed", error: "boom" };
+	await h.tools.get("delegate").execute("w3", { role: "worker", task: "work 3" }, undefined, undefined, h.ctx);
+
+	// Status command output includes role stats for roles with calls > 0
+	await h.commands.get("planner-only").handler("status", h.ctx);
+	const statusMsg = h.notes.at(-1);
+	assert.match(statusMsg, /worker: 3 calls/);
+	assert.match(statusMsg, /1 completed/);
+	assert.match(statusMsg, /1 timed_out/);
+	assert.match(statusMsg, /1 incomplete/);
+	assert.match(statusMsg, /cumulative duration 1m00s/);
+	assert.match(statusMsg, /explorer: 1 call/);
+	assert.match(statusMsg, /cumulative duration missing \(1\)/);
+	assert.match(statusMsg, /validator: 1 call.*1 refused/);
+	assert.match(statusMsg, /reviewer: 1 call.*cumulative duration 0s/);
+	assert.match(statusMsg, /concurrent/);
+
+	// Status bar text does NOT contain role breakdown (existing fee/tokens text intact)
+	const statusBar = h.statuses.at(-1);
+	assert.doesNotMatch(statusBar, /Role stats|calls|runs/);
+}
+
+console.log("index.test: ok");
+
+// Status line: k/M/B units, root share by tokens and by cost, non-completed children counted.
+{
+	const line = formatTotals({ rootTokens: 4_166_000, rootCost: 3.854, childTokens: 2_822_000, childCost: 0.103, children: 3, failed: 1 });
+	assert.equal(line, "root 4.17M $3.854 · children(3, 1 failed) 2.82M $0.103 · root share 60% tok · 97% $");
+	assert.equal(formatTotals({ rootTokens: 12_000, rootCost: 0.05, childTokens: 0, childCost: 0, children: 0, failed: 0 }), "root 12k $0.050 · children(0) 0 $0.000");
+	assert.equal(formatTotals({ rootTokens: 0, rootCost: 0, childTokens: 500, childCost: 0, children: 1, failed: 0 }), "root 0 $0.000 · children(1) 500 $0.000 · root share 0% tok");
+}

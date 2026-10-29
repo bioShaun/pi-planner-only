@@ -1,0 +1,25 @@
+# Native/Lite Protocol v2 (Preparation Only)
+
+## Outcome layers
+
+Every arm records three independent results, each with a reason and evidence references:
+
+1. **Infrastructure terminal**: `completed`, `failed`, `timed_out`, `stopped`, or `unobserved`. Bind runner exit, child terminal receipt, request fingerprints, report presence/hash, timestamps, and ledger usage/cost rows. A controller exit of 1 is not itself an infrastructure failure: a valid Root content rejection may produce it. Never infer an end-to-end link from exit code alone.
+2. **Root content verdict**: `accepted`, `rejected`, `incomplete`, or `not_reviewed`; Root records actual `accepted` boolean, verdict, rationale, criteria, and cited report/evidence hashes in the evaluation record. The controller's `root-acceptance` schema represents accepted completion only; it cannot truthfully encode a rejected/incomplete Root decision. Such outcomes remain in the separate result record and raw terminal/failure evidence, not a fabricated accepted JSON. A formal rejection is not automatically an infrastructure failure or evidence that the mode is worse.
+3. **Comparison eligibility**: `eligible` or `ineligible` under the following fixed primary-outcome rule. A pair is eligible for the primary Root-content-acceptance outcome only if both arms have observed completed infrastructure terminals, both reports exist and their byte hashes verify, both Roots recorded a final `accepted` or `rejected` verdict, and the arms have identical frozen paired briefs plus no candidate/config/runtime/identity drift. For that outcome, accepted=1 and rejected=0; neither is filtered. Any incomplete/not-reviewed verdict, missing/invalid evidence, refusal, timeout, stop, unobserved/failed terminal, drift, or pair mismatch makes the pair ineligible for that primary outcome; it remains in the attempts table with the exact reason and is never dropped. Usage/cost is a separate secondary outcome, eligible only when both arms' usage records have comparable coverage and association; missing usage makes that secondary value unavailable, not a change to the content verdict. Retain every attempted arm and failure; never select only successes after observation.
+
+Historical valid sample and complete-pair counts remain 0 and 0. No old batch is reclassified.
+
+## Scope and verdict standard
+
+S1 fixes candidate `f818cc91c98d6129a152fb28161e00d2f601e494`, original Root `tcuni/gpt-6.1-terra` high and worker `tcuni/gpt-6-luna` medium, one worker, same-byte paired brief. S2 preserves the same candidate, Root model/thinking, oracle `tcuni/gpt-6-luna` medium and separate no-shell reviewer at that model/thinking. Do not change role topology.
+
+Acceptance covers every in-candidate answerable question. S1 must cite source and symbols for usage sources, snapshots/increments and duplicate boundary, Root/child input/output/cache-read/cache-write coverage, and missing usage/cost behavior. Candidate-external RPC aggregation, real execution and provider invoice facts may be explicitly unknown when candidate evidence cannot establish them; those unknowns alone cannot reject and never prove zero cost or no duplication. S2 validator/oracle checks ancestry, candidate binding, manifest and release applicability. Reviewer independently assesses only the frozen candidate diff, has no shell, and is not required to provide validator commands or manifest checks. Root assesses each role within its permissions.
+
+The review record uses factual `accepted: true|false` and `verdict: accepted|rejected|incomplete`. If a report is absent, state `report missing`, retain the original terminal/error evidence and leave report path/hash null or absent; never fabricate either. Emit controller `root-acceptance` only for accepted completion. Lite child plain text is not structured acceptance; Root records the actual decision separately in all cases. Machine-readable fields prove format only, not semantic correctness.
+
+## Gates
+
+Offline preparation and checks do not freeze or authorize a formal batch. Next gates are: (a) protocol/brief/test review; (b) separately authorized S1 two-mode common-task link calibration; (c) separately authorized synthetic semantic calibration; (d) separately authorized S2 topology calibration; (e) Root review of evidence, budget, current lock/slot and runtime/config fingerprints; (f) only then prepare/freeze four formal arms and issue one-arm launch gates in order. Each gate has its own evidence and stop decision. Failure, timeout, lock, drift, missing report, budget anomaly, or ambiguous role terminal stops; no automatic retry, cleanup, ledger edit, or controller change.
+
+The primary and secondary eligibility rules above are frozen before any formal run. Prepared/diagnostic calibration runs never count as formal samples. Rejected reports are retained as zero outcomes for the primary metric, not filtered. Ineligible pairs remain reported with their infrastructure/content reason and do not enter the eligible-pair primary estimate.

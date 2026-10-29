@@ -1,0 +1,15 @@
+# Phase3c Root 红灯核对与最小实现授权
+
+Root 在实现 worker 5df218be 阻塞等待时，实读测试报告、test.diff、focused.log全部8项原始失败、Root费用回归原始日志和exit、slot audit/status，并从before与当前测试重新计算diff，逐字节与artifact一致。原断言保留。
+
+runner before及当前SHA均94d509c86f2a2e3f1116451c68a54b011472dfb25f8265d4952d8bcc35cd54d0；测试before SHA6e06eff6c84421f2c8567f4a1437911a3dab7fb54b0f1ae49503ae92ea07c6d6，当前b3f435530bac89ab01d8d21ad9ff44906adba13fc3376c70956489d4145a8e5a。确认实现未先行修改。
+
+接受8项有效行为红灯：Native/Lite各自valid、invalid标记后直到8秒deadline且缺少monitor-stop；stubborn等到6秒fixture自退且缺少monitor-stop；fast路径返回0错误成功。focused exit1，2过8败；无语法/导入失败。两模式另一目录标记不影响正常成功已绿；Root费用既有5项回归exit0。后续路径、停止时限、child-stop-unobserved断言在红灯中被前置失败遮住，不能声称独立红灯或已通过。
+
+仅授权run-rpc-arm.mjs：运行期间观察本臂stop.json（无RPC也需生效），标记存在即拒绝，不依赖内容JSON有效性；成功收尾和最终退出前重查；明确monitor-stop、monitorDir及child-stop-unobserved；终止直属Pi并有界SIGTERM→SIGKILL升级；清理新增定时器并协调事件/日志写入。保留旧Root费用/生命周期/审计逻辑，不改monitor、child、guard及产品代码。读取错误或其他新增守卫没有红灯，不可先实现再补测；如需此分支，先单独测试并阻塞请求Root。不要用existsSync等吞掉I/O错误并宣称fail-closed。
+
+证据目录/project/tmp/pi-native-lite-phase3c-tests-f297cdad；test.diff SHA7f54caf4f4060ae26f20fba255b2db2d0b2cf417ca9be2282f36660d64bee4ab，focused.log SHAcf8b387334672ff05d545e74c2dc8957d888b2c8744e333cfb88602f70187cc6。fast是费用审计回复前写标记测试，不宣称确定性覆盖所有轮询竞态；直属fixture终止不证明真实child清理。
+
+测试worker已结束，Root按唯一assistant entry id重算14条、重复0缺费0，reported USD0.11079140，session SHA989212f9d93ac4389e19aeab847d14ea70dac06819099fa748db939979fb26b2，路径见测试报告。累计known USD9.98519842（不含交互Root，未计仍运行实现worker）；本步USD0.75检查点余USD0.63920860。真实共享账本SHA仍e2f88530b5fd448da53572be3401e74ceb9e6a17af971247d5144f6fbe2b354d，无lock。
+
+授权后做聚焦与controller/stage-a/monitor等组合回归，保留命令exit、原始日志/快照/实际diff。适用release仍待后续链路集成，真实两臂继续不放行。

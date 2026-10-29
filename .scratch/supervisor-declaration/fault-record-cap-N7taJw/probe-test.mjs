@@ -1,0 +1,21 @@
+import assert from 'node:assert/strict';
+import { createProbe } from './live-probe.ts';
+
+const handlers = new Map();
+const records = [];
+const pi = { on: (name, fn) => handlers.set(name, fn), getAllTools: () => [{ name: 'subagent' }, { name: 'SECRET_SENTINEL' }], getActiveTools: () => ['contact_supervisor', 'SECRET_SENTINEL'] };
+createProbe(pi, record => records.push(record));
+const ctx = id => ({ sessionManager: { getSessionId: () => id } });
+const target = ctx('01a17c4f-b3b8-752b-a6e0-149ee18fcf56');
+handlers.get('session_start')({}, ctx('other'));
+assert.equal(records.length, 0);
+handlers.get('before_provider_request')({ payload: { headers: { authorization: 'SECRET_SENTINEL' }, tools: [{ type: 'function', name: 'subagent' }, { type: 'namespace', name: 'group', tools: [{ type: 'function', name: 'subagent_supervisor', description: 'SECRET_SENTINEL' }] }] } }, target);
+assert.deepEqual(records[0].providerTools, ['subagent', 'subagent_supervisor']);
+handlers.get('context_with_system')({ messages: [{ role: 'system', content: 'SECRET_SENTINEL', toolsAdded: [{ name: 'subagent' }, { name: 'subagent_supervisor' }] }, { role: 'system', toolsRemoved: [{ name: 'subagent' }] }] }, target);
+assert.deepEqual(records[1].systemActive, ['subagent_supervisor']);
+handlers.get('message_end')({ message: { role: 'custom', customType: 'subagent_supervisor_request', content: 'SECRET_SENTINEL' } }, target);
+assert.equal(records[2].event, 'supervisor_request');
+for (let i = 0; i < 110; i++) handlers.get('session_start')({}, target);
+assert.equal(records.length, 100);
+assert(!JSON.stringify(records).includes('SECRET_SENTINEL'));
+console.log('probe fixtures: nested tools, redaction, target isolation, cap passed');

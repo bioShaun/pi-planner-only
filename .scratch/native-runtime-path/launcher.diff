@@ -1,0 +1,11 @@
+--- .scratch/native-runtime-path/pi.original	2026-10-05 23:03:42.208689975 +0800
++++ /home/tcuni-claw/.pi/agent/bin/pi	2026-10-27 15:29:48.841199999 +0800
+@@ -39,4 +39,8 @@
+ fi
+ PI_MANAGED_INSTALL_ROOT=$pi_agent_dir/install
+ export PI_MANAGED_INSTALL_ROOT
++if [ ! -r /home/tcuni-claw/.config/pi/runtime-env.sh ] || ! . /home/tcuni-claw/.config/pi/runtime-env.sh; then
++  printf 'Could not load Pi runtime environment.\n' >&2
++  exit 1
++fi
+ exec "$pi_release_bin" "$@"

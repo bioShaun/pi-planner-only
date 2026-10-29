@@ -1,0 +1,18 @@
+ M README.md
+ M README.zh-CN.md
+ M index.test.mjs
+ M index.ts
+ M package-lock.json
+ M package.json
+?? .claude/profiles/
+?? .claude/settings.local.json
+?? .scratch/closeout-before-native/
+?? .scratch/host-1.4-alignment/
+?? .scratch/offline-baseline/
+?? .scratch/step2-prompt-20261027/
+?? .scratch/step2-review-20261027/
+?? docs/planner-offline-baseline-2026-10-26.md
+?? docs/planner-optimization-plan-2026-10-26.md
+?? docs/research-orchestration-frameworks-2026-10-26.md
+?? docs/research-planner-optimizations-2026-10-26.md
+?? host-runtime.test.mjs
