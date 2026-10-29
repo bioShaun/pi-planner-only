@@ -86,7 +86,7 @@
   - 只读，`defaultContext: fork`：子会话从父会话当前位置真实分叉，签名的 thinking 块会被剥掉。
   - 配置 `forkContext: "pruned"` 后，上下文压到 64 KiB 以内。
   - 来源：`agents/oracle.md`、`docs/tool-reference.md:77,120-126`、`docs/configuration.md:239-254`。
-  - 这相当于 pi 版的 advisor。但 pi-planner-only 的 `delegate` 写死了 `context: "fresh"`（`delegate.ts:527`），而且 validator 角色已经占用了 oracle。
+  - 这相当于 pi 版的 advisor。但 pi-planner-only 的 `delegate` 写死了 `context: "fresh"`（见当时 `delegate.ts`），Lite 的 `validator` 角色现已改走本包 agent `planner-validator`（#36），不再占用 builtin `oracle`；`oracle`/`advisor` 可留给咨询用途。
 
 ## 2. 四种范式
 
