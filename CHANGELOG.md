@@ -2,7 +2,7 @@
 
 ## 0.9.0-lite.0 - unreleased
 
-- Native shares context warnings and Root handoff. Its handoff checks pi-subagents status at scheduling and immediately before replacement, retaining the brief when activity is busy or unknown; checks are best effort and not an atomic barrier. Source mode, model and known thinking are preserved. The supported Pi host is 1.4.0.
+- Native shares context warnings and Root handoff. Its handoff checks pi-subagents status at scheduling and immediately before replacement: a busy or unknown scheduling check refuses without retaining the brief, while a failed dispatch retains it for retry, discard or replacement by a new brief. If a replacement is refused at scheduling, neither brief is retained. User-initiated handoffs submit automatically in confirm mode; Root-initiated ones still require confirmation. Checks are best effort and not an atomic barrier. Source mode, model and known thinking are preserved. The supported Pi host is 1.4.0.
 
 - Per-delegation timeout (0ea2671, #32; d1ee6b3, #33): `delegate` takes an optional `timeoutSeconds` (integer 1..86400) that sets `timeoutMs` for that one run; omitted, it uses `PI_PLANNER_ONLY_TIMEOUT_MS` (default ten minutes). Invalid values are refused before Git access, locking, or dispatch. The child's task text states the effective limit ("N minutes" for whole minutes, otherwise "N seconds"; singular for one), and result details carry `timeoutMs`.
 - `/planner-only status` (0ea2671, #32): adds per-role diagnostics for the current session: calls, completed runtime terminals, timed_out, incomplete, refused, and cumulative child duration (concurrent runs overlap, so it is not wall time). They are in memory only, reset on a new session, and are not restored after `/reload`.

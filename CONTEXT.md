@@ -21,7 +21,7 @@ The parent session. It plans, delegates, inspects the actual changes, and commit
 _Avoid_: orchestrator, planner service
 
 **Root handoff**:
-The transfer of unfinished work to a fresh Root session through a self-contained brief. The source mode, model and known thinking level are preserved; failed, uncertain or cancelled delivery retains the brief for manual retry or discard.
+The transfer of unfinished work to a fresh Root session through a self-contained brief. The source mode, model and known thinking level are preserved. A brief refused at scheduling is not retained; failed, uncertain or cancelled delivery retains it for manual retry, discard or replacement by a new brief. User-initiated handoffs are submitted automatically even in confirm mode.
 
 **Worker**:
 A child that implements a task and ends with a short text report. Runs as the builtin `worker` agent.
