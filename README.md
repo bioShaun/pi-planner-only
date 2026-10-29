@@ -15,9 +15,11 @@ was removed.
 
 | Tool | Purpose |
 |---|---|
-| `delegate({role, task, cwd?, timeoutSeconds?})` | Run one child agent and wait. Returns the child's text report, host status, model and usage, and a Git summary of what changed (new commits, diff stat, untracked files). |
+| `delegate({role, task, cwd?, timeoutSeconds?, base?})` | Run one child agent and wait. Returns the child's text report, host status, model and usage, and a Git summary of what changed (new commits, diff stat, untracked files). |
 | `git_audit({operation, base?, path?, maxEntries?})` | Read-only `status` / `diff-stat` / `diff` / `log`, with fixed argv. |
 | `git_commit({message, paths?})` | Stage and commit accepted work. Never pushes. |
+
+For a committed review, pass `base` with role `reviewer` to include the complete `base...HEAD` text diff, up to 32 KiB. Each changed blob must be at most 1 MiB to inspect. The repository must have commits and a clean worktree; empty, binary, non-UTF-8, and submodule changes are refused. The range commits are fixed, but source files remain a live checkout and concurrent changes cannot be ruled out. Without `base`, delegation behaves as before.
 
 Roles map to pi-subagents builtin agents and this package's validator agent:
 
@@ -91,15 +93,19 @@ pi install https://github.com/bioShaun/pi-planner-only -l    # project-level
 pi install /path/to/pi-planner-only                          # local checkout
 ```
 
-Restart Pi or run `/reload`. Requires pi-subagents `>=0.70 <1`.
+Restart Pi or run `/reload`. Requires Pi **1.4.0**, Node **>=22.19.0**, and
+pi-subagents `>=0.70 <1`. The host and development dependency are pinned to the
+same verified version; other host versions are not currently declared supported.
 
 ## Switches
 
 | Mode | Behavior |
 |---|---|
 | `off` | This extension is inactive; pi-subagents remains under its own control. |
-| `native` | Adds: 实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。 Native pi-subagents tools remain under pi-subagents' control. Shares context warnings and handoff; no Lite delegation or Git tools, strict block, or cost accounting. |
+| `native` | Adds the neutral instruction: 实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。 Native pi-subagents tools remain under pi-subagents' control. Shows observational usage and shares context warnings and handoff, without Lite delegation or Git tools or strict blocking. |
 | `lite` (default) | The delegation tools, prompt, checks, and cost line described above. |
+
+Native child usage is a recorded lower bound from pi-subagents' current-session cost RPC, not a complete total: missing or incomplete workflow receipts and unavailable metadata can omit usage. An unavailable RPC is shown as unavailable. Root usage is counted from observed turns and resets on session start or reload; child snapshots can recover recorded usage from the current session branch and available artifacts. Context warnings and color use the same threshold as Lite.
 
 Modes do not select models. Keep the same Root and child model settings when comparing modes.
 
@@ -165,3 +171,12 @@ TMPDIR=/path/outside/repo npm test
 `contract.test.mjs` checks event names, agent names, and the exact request
 shape against the installed pi-subagents (`PI_SUBAGENTS_DIR` to override the
 location); it skips when pi-subagents is absent.
+
+First run `npm ci` in the root project to install its development dependencies.
+With an existing directory outside the repository as `TMPDIR`,
+`TMPDIR=/path/outside/repo npm run test:release:isolated` installs the locked
+registry fixture (pi-subagents 0.83.0 and pi-ai 1.4.0) in a fresh temporary
+directory, checks its source, runs `test:release`, and removes that directory on
+normal completion or reported failure. Cleanup after interruption is not guaranteed.
+This checks the fixed versions; `npm run test:release` continues to check the
+locally installed pi-subagents instead. Installation requires registry access.

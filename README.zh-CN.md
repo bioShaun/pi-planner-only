@@ -10,9 +10,11 @@
 
 | 工具 | 作用 |
 |---|---|
-| `delegate({role, task, cwd?, timeoutSeconds?})` | 启动一个子代理并等它结束。返回子代理的文字报告、宿主状态、实际模型和用量，以及 Git 变更摘要（新提交、diff stat、未跟踪文件）。 |
+| `delegate({role, task, cwd?, timeoutSeconds?, base?})` | 启动一个子代理并等它结束。返回子代理的文字报告、宿主状态、实际模型和用量，以及 Git 变更摘要（新提交、diff stat、未跟踪文件）。 |
 | `git_audit({operation, base?, path?, maxEntries?})` | 只读的 `status` / `diff-stat` / `diff` / `log`，argv 固定。 |
 | `git_commit({message, paths?})` | 暂存并提交验收通过的改动。从不 push。 |
+
+审查已提交的变更时，给 `reviewer` 传入 `base`，完整的 `base...HEAD` 文本 diff 会内嵌到任务中，上限为 32 KiB。每个变更 blob 最大为 1 MiB，才能检查。仓库必须已有提交且工作树干净；空 diff、二进制、非 UTF-8 和子模块变更会被拒绝。范围提交固定，但源码仍是实时工作树，无法排除并发修改。不传 `base` 时行为不变。
 
 角色对应 pi-subagents 内置 agent 和本包的 validator agent：
 
@@ -73,15 +75,18 @@ pi install https://github.com/bioShaun/pi-planner-only -l    # 项目级
 pi install /path/to/pi-planner-only                          # 本地 checkout
 ```
 
-装完重启 Pi 或执行 `/reload`。需要 pi-subagents `>=0.70 <1`。
+装完重启 Pi 或执行 `/reload`。需要 Pi **1.4.0**、Node **>=22.19.0** 和 pi-subagents `>=0.70 <1`。
+宿主声明与开发依赖固定在同一验证版本，当前不声明支持其他宿主版本。
 
 ## 开关
 
 | 模式 | 行为 |
 |---|---|
 | `off` | 本扩展不工作；pi-subagents 自行管理自己的工具。 |
-| `native` | 注入「实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。」；pi-subagents 自行管理原生工具。共享上下文提醒和交接，但不启用 Lite 委派、Git 工具、strict 拦截或费用统计。 |
+| `native` | 注入「实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。」；pi-subagents 自行管理原生工具。显示用量，共享上下文提醒和交接，但不启用 Lite 委派、Git 工具或 strict 拦截。 |
 | `lite`（默认） | 启用上文的委派工具、提示、检查与费用状态栏。 |
+
+Native 子代理用量来自 pi-subagents 当前会话的 cost RPC，始终是已记录下限而非完整总额：工作流收据缺失、未完成或元数据不可用时可能遗漏。RPC 不可用时显示 unavailable。Root 用量按观察到的回合累计，在会话启动或 reload 时重置；子代理快照可从当前会话分支及可用产物恢复已记录用量。上下文提醒和颜色与 Lite 使用相同阈值。
 
 档位不会更换模型；对比时应保持相同的 Root 和子模型配置。
 
@@ -127,3 +132,5 @@ TMPDIR=/仓库外的目录 npm test
 ```
 
 `contract.test.mjs` 用已安装的 pi-subagents 核对事件名、agent 名和实际发出的请求结构（位置可用 `PI_SUBAGENTS_DIR` 覆盖）；未安装 pi-subagents 时跳过。
+
+先在根项目运行 `npm ci` 安装开发依赖。`TMPDIR` 必须指向已存在的仓库外目录。`TMPDIR=/仓库外的目录 npm run test:release:isolated` 在全新临时目录中安装锁定的 registry fixture（pi-subagents 0.83.0 和 pi-ai 1.4.0），检查源码并运行 `test:release`，在正常完成或报告失败后删除该临时目录；中断信号后的清理不作保证。此入口验证固定版本；默认 `npm run test:release` 仍验证本机安装版本。安装需要访问 registry。

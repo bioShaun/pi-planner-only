@@ -5,6 +5,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { AGENT_DIR, DEFAULT_LIMITS, loadConfig } from "./config.ts";
@@ -67,12 +68,13 @@ export function plannerPrompt(strict: boolean, limits: DelegationLimits = DEFAUL
 		"[PLANNER-ONLY]",
 		"You plan and review; children do most work via `delegate`.",
 		strict
-			? "- Strict mode: you cannot edit, write, or run bash. Delegate implementation to \"worker\" and check runs to \"validator\"."
-			: "- Do small things yourself (about ≤2 files or ≤10 minutes). Delegate larger implementation to \"worker\".",
-		"- Roles: \"explorer\" handles reading-heavy work (logs/transcripts); only its findings enter your context. \"validator\" runs checks and writes nothing; \"reviewer\" has no shell, sees files and uncommitted changes only: use before git_commit.",
-		"- Children cannot see this conversation or ask you mid-run; `task` must stand alone. Decide public interfaces, cross-module choices, and data flow yourself before delegating; if key facts are unknown, send an explorer first.",
-		"- One delegation = one deliverable that can be checked on its own; fold setup into it; merge repeated edits that share one check.",
-		`- A child has ${formatTimeoutLimit(limits.timeoutMs)}. Do not delegate work that needs longer; split it (or optional timeoutSeconds; long compute in background).`,
+			? "- Strict mode: no edit, write, or bash; delegate implementation to \"worker\", checks to \"validator\"."
+			: "- Do small things yourself (about ≤2 files or ≤10 minutes); send larger implementation straight to \"worker\".",
+		"- Roles: \"explorer\" for reading-heavy logs/transcripts, findings only; \"validator\" runs checks and writes nothing; \"reviewer\" has no shell, uncommitted changes only: review before git_commit.",
+		"- Children see only `task` and cannot ask mid-run. Decide scope, public interfaces, cross-module approach, and data flow first. Send an explorer first only when unknown facts could change those decisions or the split; local search, adjacent code, and tests stay with the executor.",
+		"- Batch independent, lock-compatible tasks; role combinations are in the delegate description.",
+		"- One delegation = one deliverable checkable on its own; fold setup in; merge edits sharing a check.",
+		`- A child has ${formatTimeoutLimit(limits.timeoutMs)}. Do not delegate work that needs longer; split it.`,
 		"- For another repository, pass `cwd` to delegate, git_audit, and git_commit.",
 		"- Check diffs and output before accepting. Before reverting or reporting a child's change, check it against your task: yours or its own?",
 		"- If a child fails, times out, or reports BLOCKED, first decide why, then delegate a corrected task (add context, settle the interface, split only if too big) with its report or last tool results (a timed-out child returns them) before doing the work yourself.",
@@ -161,12 +163,16 @@ export class PlannerSession {
 	roleStats: Record<Role, RoleStats> = emptyRoleStats();
 	rootContext: number | undefined;
 	contextWarned = false;
+	nativeChild: { tokens: number; cost: number } | undefined;
+	nativeGeneration = 0;
 
 	reset(): void {
 		this.totals = emptyTotals();
 		this.roleStats = emptyRoleStats();
 		this.rootContext = undefined;
 		this.contextWarned = false;
+		this.nativeChild = undefined;
+		this.nativeGeneration++;
 	}
 
 	async trackDelegation<T>(run: () => Promise<T>): Promise<T> {
@@ -296,6 +302,12 @@ function statusTotals(session: PlannerSession): string {
 	return `${formatTotals(session.totals)}${ctx}`;
 }
 
+function nativeTotals(session: PlannerSession): string {
+	const child = session.nativeChild;
+	const context = session.rootContext ? ` · ctx ${formatTokens(session.rootContext)}` : "";
+	return `root ${formatTokens(session.totals.rootTokens)} $${session.totals.rootCost.toFixed(3)} · child ${child ? `≥${formatTokens(child.tokens)} ≥$${child.cost.toFixed(3)}` : "unavailable"}${context}`;
+}
+
 /** The theme surface the status line needs; `style` and `colors` exist only on pi >= 0.99. */
 interface StatusTheme {
 	fg: ExtensionContext["ui"]["theme"]["fg"];
@@ -316,7 +328,7 @@ function contextHeat(session: PlannerSession): number {
  * pi 0.99 have no theme `style`/`colors` and keep the plain warning/error tokens.
  */
 function statusText(theme: StatusTheme, session: PlannerSession, mode: PlannerMode, label: string): string {
-	if (mode !== "lite") return theme.fg("muted", label);
+	if (mode === "off") return theme.fg("muted", label);
 	const colors = theme.colors as Partial<Record<"accent" | "warning" | "error", HostColor>> | undefined;
 	const style = theme.style;
 	if (typeof style === "function" && colors?.accent && colors.warning && colors.error) {
@@ -328,7 +340,7 @@ function statusText(theme: StatusTheme, session: PlannerSession, mode: PlannerMo
 
 function updateStatus(session: PlannerSession, ctx: ExtensionContext, mode: PlannerMode = session.mode): void {
 	if (!ctx.hasUI) return;
-	const label = mode === "lite" ? `planner-only${isStrict() ? " (strict)" : ""} · ${statusTotals(session)}` : `planner-only: ${mode}`;
+	const label = mode === "lite" ? `planner-only${isStrict() ? " (strict)" : ""} · ${statusTotals(session)}` : mode === "native" ? `planner-only: native · ${nativeTotals(session)}` : `planner-only: ${mode}`;
 	ctx.ui.setStatus(STATUS_KEY, statusText(ctx.ui.theme, session, mode, label));
 }
 
@@ -460,7 +472,7 @@ function notifyStatus(runtime: PlannerRuntime, ctx: ExtensionContext): void {
 		.filter((r) => session.roleStats[r]?.calls > 0)
 		.map((r) => `  ${r}: ${formatRoleSummary(session.roleStats[r])}`);
 	const roleBlock = roleLines.length ? `\nRole stats (current session; completed = runtime terminal; cumulative duration includes concurrent child time, not total wall time):\n${roleLines.join("\n")}` : "";
-	ctx.ui.notify(`planner-only ${mode === "lite" ? "on" : mode}${mode === "lite" && isStrict() ? ", strict" : ""}${env}; next fresh session: ${initialMode()}${preference() ? ` (preference: ${preference()})` : ""}; handoff: ${handoff.mode} (source: ${handoff.source})${mode !== "lite" ? "" : `\n${statusTotals(session)}${roleBlock}`}`, "info");
+	ctx.ui.notify(`planner-only ${mode === "lite" ? "on" : mode}${mode === "lite" && isStrict() ? ", strict" : ""}${env}; next fresh session: ${initialMode()}${preference() ? ` (preference: ${preference()})` : ""}; handoff: ${handoff.mode} (source: ${handoff.source})${mode === "native" ? `\n${nativeTotals(session)}\nChild usage is a recorded lower bound; missing or incomplete workflow receipts may omit usage.` : mode === "lite" ? `\n${statusTotals(session)}${roleBlock}` : ""}`, "info");
 }
 
 async function plannerCommand(runtime: PlannerRuntime, args: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -502,15 +514,53 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 	const host = hostAdapter ?? createHostAdapter(pi);
 	const handoff = new RootHandoff({ pi, git, host, activity: session, mode: () => modeOf({ session }) });
 	const runtime: PlannerRuntime = { pi, git, host, session, handoff };
+	let nativeContext: ExtensionContext | undefined;
+	let cancelNativeRequest: (() => void) | undefined;
+	const refreshNativeCost = (ctx: ExtensionContext): void => {
+		if (modeOf(runtime) !== "native") return;
+		const sessionId = ctx.sessionManager.getSessionId();
+		if (!sessionId) return;
+		cancelNativeRequest?.();
+		const generation = ++session.nativeGeneration;
+		const requestId = randomUUID();
+		const replyEvent = `subagents:rpc:v1:reply:${requestId}`;
+		const current = () => modeOf(runtime) === "native" && session.nativeGeneration === generation && ctx.sessionManager.getSessionId() === sessionId;
+		const timer = setTimeout(() => {
+			if (cancelNativeRequest === cancel) cancel();
+			if (current()) { session.nativeChild = undefined; updateStatus(session, ctx); }
+		}, 5000);
+		timer.unref();
+		const unsubscribe = host.events.on(replyEvent, (raw: unknown) => {
+			if (cancelNativeRequest === cancel) cancel();
+			if (!current()) return;
+			const reply = raw as { version?: unknown; requestId?: unknown; success?: unknown; data?: { version?: unknown; childTotal?: Record<string, unknown> } } | undefined;
+			const u = reply?.data?.childTotal;
+			const values = [u?.input, u?.output, u?.cacheRead, u?.cacheWrite, u?.cost];
+			if (reply?.version !== 1 || reply.requestId !== requestId || reply.success !== true || reply.data?.version !== 1 || !values.every((v) => typeof v === "number" && Number.isFinite(v) && v >= 0)) {
+				session.nativeChild = undefined;
+			} else {
+				const [input, output, cacheRead, cacheWrite, cost] = values as number[];
+				session.nativeChild = { tokens: input + output + cacheRead + cacheWrite, cost };
+			}
+			updateStatus(session, ctx);
+		});
+		const cancel = () => { clearTimeout(timer); unsubscribe(); cancelNativeRequest = undefined; };
+		cancelNativeRequest = cancel;
+		host.events.emit("subagents:rpc:v1:request", { version: 1, requestId, method: "cost" });
+	};
+	const unsubscribeNativeComplete = host.events.on("subagent:async-complete", (raw: unknown) => {
+		const event = raw as { sessionId?: unknown } | undefined;
+		if (nativeContext && event?.sessionId === nativeContext.sessionManager.getSessionId()) refreshNativeCost(nativeContext);
+	});
 
 	pi.registerTool({
 		name: "delegate",
 		label: "Delegate",
-		description: "Run one child agent on a self-contained task and wait for it. Returns the child's report, host status and usage, and a git summary of what changed. Worth it for multi-file work or long reading; outside strict mode, do small tasks (about ≤2 files) yourself. worker and validator run alone per repository; explorers can run together but not alongside a worker or validator; a reviewer or another repository can run alongside. Deliverables that require writing files (scripts, reports, output files) go to worker, not validator or reviewer. Runs that outlast the child time limit take two delegations: first implement the change and start the run as a background job that returns immediately with the job id, output path, and completion condition (an output file, exit code, or log marker); after the run finishes, delegate acceptance separately. While a background job runs, send only one bounded status check per job at a time; do not repeat identical wait commands in one turn. A \"completed\" result only means the child run ended; in your reply distinguish implementation done, checks passed, and real run passed.",
+		description: "Run one child agent on a self-contained task and wait for it. Returns the child's report, host status and usage, and a git summary of what changed. Worth it for multi-file work or long reading; outside strict mode, do small tasks (about ≤2 files) yourself. Batch calls in one message only when independent and lock-compatible: independent explorers may run together; a reviewer or another repository may run alongside; after implementation, a still-needed validator may join a reviewer only if the reviewer needs no check result and the checks change no source; do not batch worker and validator in one repository, where the second is refused and counted. Deliverables that require writing files (scripts, reports, output files) go to worker, not validator or reviewer. Runs that outlast the child time limit take two delegations: first implement the change and start the run as a background job that returns immediately with the job id, output path, and completion condition (an output file, exit code, or log marker); after the run finishes, delegate acceptance separately. While a background job runs, send only one bounded status check per job at a time; do not repeat identical wait commands in one turn. A \"completed\" result only means the child run ended; in your reply distinguish implementation done, checks passed, and real run passed.",
 		promptSnippet: "delegate: hand a self-contained task to a cheaper child agent (worker, explorer, validator, reviewer)",
 		parameters: Type.Object({
 			role: Type.Union(ROLES.map((r) => Type.Literal(r)), {
-				description: "worker: implement, including any deliverable that is a written file; explorer: search/read code, logs, or transcripts and return findings; validator: run existing checks only, writes no files; reviewer: independent read-only review; no shell, sees files and uncommitted changes (review before committing); if the changes are already committed, state the baseline commit in the task.",
+				description: "worker: implement, including any deliverable that is a written file; explorer: search/read code, logs, or transcripts and return findings; validator: run existing checks only, writes no files; reviewer: independent read-only review; no shell, sees files and uncommitted changes (review before committing); for committed changes use base to supply the complete range diff.",
 			}),
 			task: Type.String({
 				minLength: 1,
@@ -519,6 +569,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 			cwd: Type.Optional(Type.String({
 				description: "The repository or directory the child works in. Set it when the target is not the session cwd; the diff summary uses it, and the lock covers its whole repository.",
 			})),
+			base: Type.Optional(Type.String({ description: "Reviewer only: committed range base (HEAD, HEAD~N, named ref, or full commit ID). Requires a clean worktree, changed blobs at most 1 MiB each, and a nonempty text diff up to 32 KiB." })),
 			timeoutSeconds: Type.Optional(Type.Integer({
 				minimum: 1,
 				maximum: 86400,
@@ -579,7 +630,9 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 			ctx.ui.notify(BUSY_MODE_MESSAGE, "warning");
 			return;
 		}
+		cancelNativeRequest?.();
 		session.reset();
+		nativeContext = ctx;
 		handoff.reset();
 		syncTools(runtime);
 		updateStatus(session, ctx, modeOf(runtime));
@@ -588,12 +641,17 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 	pi.on("session_before_fork", async (_event, ctx) => guardSessionBoundary(runtime, ctx));
 	pi.on("session_before_tree", async (_event, ctx) => guardSessionBoundary(runtime, ctx));
 	pi.on("session_tree", async (_event, ctx) => {
+		cancelNativeRequest?.();
 		if (bindMode(runtime, "resume", ctx)) syncTools(runtime);
+		nativeContext = ctx;
+		session.nativeChild = undefined;
+		session.nativeGeneration++;
 		updateStatus(session, ctx, modeOf(runtime));
+		refreshNativeCost(ctx);
 	});
 
-	pi.on("agent_settled", async () => handoff.settled());
-	pi.on("session_shutdown", async () => handoff.deactivate());
+	pi.on("agent_settled", async () => { handoff.settled(); if (nativeContext) refreshNativeCost(nativeContext); });
+	pi.on("session_shutdown", async () => { handoff.deactivate(); cancelNativeRequest?.(); unsubscribeNativeComplete(); nativeContext = undefined; session.nativeGeneration++; });
 
 	pi.on("before_agent_start", async (event) => {
 		if (modeOf(runtime) === "lite") {
@@ -632,5 +690,5 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 		updateStatus(session, ctx, modeOf(runtime));
 	});
 
-	pi.on("message_end", async (event, ctx) => onMessageEnd(runtime, event.message, ctx));
+	pi.on("message_end", async (event, ctx) => { onMessageEnd(runtime, event.message, ctx); if (event.message.role === "assistant") refreshNativeCost(ctx); });
 }
