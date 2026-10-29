@@ -44,6 +44,16 @@ Check: npm test -- cache.test.ts, exit code 0; report the diff.
 
 状态栏显示本会话 Root 与子代理的 token 和费用，以及 Root 在两者中各自的占比，例如 `root 4.17M $3.854 · children(3, 1 failed) 2.82M $0.103 · root share 60% tok · 97% $`。token 计数包含缓存读取。
 
+### 等待子代理时的 Root 提示缓存
+
+Native Root 异步等待子代理时，其提示缓存可能过期。本地测量中，Anthropic Claude Root 在至少等待 5 分钟后被子代理通知唤醒的每个回合都是冷启动，会重写整个前缀；使用 OpenAI responses 类型提供商的模型在等待 5–60 分钟后大多仍能命中缓存。Claude 样本量较小。
+
+`PI_CACHE_RETENTION=long` 是 pi 进程的环境变量，不是本插件设置的选项。它将 Anthropic 缓存保留时间延长到 1 小时（直连 OpenAI 为 24 小时），但 Anthropic 缓存写入价格会从基础价格的 1.25 倍升到 2 倍。在该环境中启动的子代理通常也会继承它。
+
+当 Root 使用 Claude 且经常异步等待子代理超过 5 分钟时，延长保留时间可能值得。若大多数回合连续且间隔较短，它会增加总缓存费用。请根据自己的用量决定；默认不会启用。
+
+在本仓库的 checkout 中运行 `python3 bench/root_cache.py <sessions-dir>`，可以按提供商查看自己会话的缓存命中率和冷启动情况（`bench/` 不包含在已安装的包中）。
+
 ## 模型
 
 子代理模型由 pi-subagents 配置决定，本插件不管。在 `~/.pi/agent/settings.json` 里配置 `subagents.agentOverrides`：

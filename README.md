@@ -61,6 +61,16 @@ Check: npm test -- cache.test.ts, exit code 0; report the diff.
 
 The status line shows Root and child tokens and cost for the session, and Root's share of each, for example `root 4.17M $3.854 · children(3, 1 failed) 2.82M $0.103 · root share 60% tok · 97% $`. Token counts include cache reads.
 
+### Root prompt cache while waiting for children
+
+While Native Root waits asynchronously for children, its prompt cache can expire. In local measurements, every Anthropic Claude Root turn awakened by a child notification after at least 5 minutes was a cold start that rewrote the entire prefix; models using an OpenAI responses-type provider mostly retained cache hits after 5-60 minutes. The Claude sample was small.
+
+`PI_CACHE_RETENTION=long` is a pi process environment variable, not a setting applied by this plugin. It extends Anthropic cache retention to 1 hour (24 hours for direct OpenAI), but Anthropic cache writes rise from 1.25x to 2x the base price. Children launched from that environment usually inherit it too.
+
+Long retention may be worthwhile when Root uses Claude and often waits asynchronously for children for more than 5 minutes. When most turns are consecutive and closely spaced, it increases total cache costs. Decide based on your own usage; it is not enabled by default.
+
+From a checkout of this repository, run `python3 bench/root_cache.py <sessions-dir>` to inspect cache hit rates and cold starts by provider in your own sessions (bench/ is not part of the installed package).
+
 ## Models
 
 Child models come from your pi-subagents settings, not from this plugin.
