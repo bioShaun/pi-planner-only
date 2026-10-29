@@ -91,6 +91,13 @@ try {
 	// om09 run4: a 540-char message was rejected at the old 500 cap.
 	assert.equal(MAX_COMMIT_MESSAGE_CHARS, 2_000);
 	assert.equal(h.tools.get("git_commit").parameters.properties.message.maxLength, MAX_COMMIT_MESSAGE_CHARS);
+	const briefDescription = h.tools.get("handoff").parameters.properties.brief.description;
+	assert.match(briefDescription, /goal/);
+	assert.match(briefDescription, /approaches ruled out and why/);
+	assert.match(briefDescription, /command -> result/);
+	assert.match(briefDescription, /unverified/);
+	assert.match(briefDescription, /known pitfalls/);
+	assert.match(briefDescription, /exact next step/);
 	assert.ok(h.commands.has("planner-only"));
 	delete process.env.PI_PLANNER_ONLY_HANDOFF;
 	rmSync(HANDOFF_PREFERENCE, { force: true, recursive: true });

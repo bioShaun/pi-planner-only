@@ -2,6 +2,8 @@
 
 ## 0.9.0-lite.0 - unreleased
 
+- Root handoff `brief` now also asks for approaches ruled out and why, how done work was verified (command -> result; anything unverified marked as unverified), and known pitfalls, so a fresh session does not retry rejected routes or treat unverified work as fact.
+
 - Native shares context warnings and Root handoff. Its handoff checks pi-subagents status at scheduling and immediately before replacement: a busy or unknown scheduling check refuses without retaining the brief, while a failed dispatch retains it for retry, discard or replacement by a new brief. If a replacement is refused at scheduling, neither brief is retained. User-initiated handoffs submit automatically in confirm mode; Root-initiated ones still require confirmation. Checks are best effort and not an atomic barrier. Source mode, model and known thinking are preserved. The supported Pi host is 1.4.0.
 
 - Lite `validator` now runs the package agent `planner-validator` instead of the builtin `oracle`, so oracle/advisor overrides no longer hijack check runs (#36 / fa03a63). Existing oracle tuning intended for Lite validation must be moved deliberately to `planner-validator`.

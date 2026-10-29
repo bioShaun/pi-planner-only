@@ -614,7 +614,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 		description: "Start a fresh Root session from a complete, self-contained brief when the user asks or the context warning says to.",
 		promptSnippet: "handoff: continue in a fresh session from a brief when the user asks",
 		parameters: Type.Object({
-			brief: Type.String({ minLength: 200, description: "Self-contained brief for the next Root session: goal, decisions made, constraints, relevant files/specs, what is done, open items, and the exact next step." }),
+			brief: Type.String({ minLength: 200, description: "Self-contained brief for the next Root session: goal, decisions made, approaches ruled out and why, constraints, relevant files/specs, what is done, how it was verified (command -> result; mark anything not verified as unverified), open items, known pitfalls, and the exact next step." }),
 			cwd: Type.Optional(Type.String({ description: REPO_CWD_DESCRIPTION })),
 		}),
 		execute: async (_toolCallId, params: { brief: string; cwd?: string }, _signal, _onUpdate, ctx) => handoff.schedule(params, ctx),
