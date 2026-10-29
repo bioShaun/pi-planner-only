@@ -2,7 +2,7 @@
 
 日期：2026-10-26。状态：第 0 步已完成版本对齐与验证，第 1 步已完成历史离线基线，第 2 步已完成提示词改写及静态/实际会话验收，本轮已修复验收前检查 output 的遗漏；步骤 3–5 暂缓，下一轮 Native 试用后再评估。本文规定各步的范围、顺序和验收；第 0 步的命令、结果与验证边界见[执行记录](../.scratch/host-1.4-alignment/execution.md)，第 1 步见[基线报告](planner-offline-baseline-2026-10-26.md)及[执行记录](../.scratch/offline-baseline/execution.md)，第 2 步见[静态检查](../.scratch/step2-prompt-20261027/static-checks.md)与[会话执行记录](../.scratch/step2-prompt-20261027/execution.md)，本轮收尾见[执行记录](../.scratch/closeout-before-native/execution.md)。
 
-依据：[产品参照与适用边界](research-planner-optimizations-2026-10-26.md)、[通用框架对比](research-orchestration-frameworks-2026-10-26.md)。实施以本文约束为准。下文 `validator` 是 Lite 的角色名，对应宿主 agent `oracle`。
+依据：[产品参照与适用边界](research-planner-optimizations-2026-10-26.md)、[通用框架对比](research-orchestration-frameworks-2026-10-26.md)。实施以本文约束为准。下文 `validator` 是 Lite 的角色名，对应本包 agent `planner-validator`（不再占用 builtin `oracle`）。
 
 ## 目标与实施顺序
 

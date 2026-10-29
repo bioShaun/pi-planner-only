@@ -38,8 +38,8 @@ late terminal arrives.
 The optional `timeoutSeconds` parameter (integer 1..86400, e.g. `120` for quick tasks, `900` for 15-minute heavier implementations) sets the child's wall-clock limit for that single delegation only. When omitted, it defaults to the environment value `PI_PLANNER_ONLY_TIMEOUT_MS` (in milliseconds; default 600000 = 10 minutes). It does not change the global default or subsequent calls, and other limits (`PI_PLANNER_ONLY_MAX_TOKENS`, start timeout, cancel grace) remain unchanged.
 
 Root also gets a short prompt (under 1,500 characters, roughly 375 tokens): do small things yourself,
-delegate larger work, decide public interfaces and cross-module choices before
-delegating (explore first when facts are missing), assign one independently
+delegate larger work, decide scope, public interfaces, and cross-module approach before
+delegating (send an explorer first only when unknown facts could change those decisions or the split), assign one independently
 checkable deliverable per delegation, judge results by the diff and check output
 rather than the child's claims, and re-delegate a corrected task (add context,
 settle the interface, or split only if too big) with the previous report when

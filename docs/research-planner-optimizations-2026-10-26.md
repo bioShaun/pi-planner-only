@@ -2,7 +2,7 @@
 
 日期：2026-10-26。范围：对照官方资料与当前 Lite 实现，评估并行、验收、上下文传递及计时。本文是研究建议，不修改运行代码、配置或 ADR，也不是性能实验结果。
 
-已根据后续版本、strict 边界和调度约束核对修订。具体实施顺序和验收以 [Lite 编排优化实施方案](planner-optimization-plan-2026-10-26.md) 为准。下文 `validator` 是 Lite 角色名，对应宿主 agent `oracle`。
+已根据后续版本、strict 边界和调度约束核对修订。具体实施顺序和验收以 [Lite 编排优化实施方案](planner-optimization-plan-2026-10-26.md) 为准。下文 `validator` 是 Lite 角色名，对应本包 agent `planner-validator`（不再占用 builtin `oracle`）。
 
 ## 结论
 
