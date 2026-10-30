@@ -95,3 +95,9 @@ om36 `/project/glx/app/deliver-workspace-ai` 的 pi Native 会话链：2026-10-3
 
 - 2026-10-31 D3.1 已完成：om36 `~/.pi/agent/settings.json` 已备份为 `settings.json.bak-20261031-roleModels`，新增 `subagents.watchdog.rules`（warn，worker 只允许 `tcuni/gpt-6.1-terra`，scout 只允许 `tcuni/gpt-6-luna`，各带 note）。
   - 验证：用 om36 上 pi-subagents 0.84.0 的 `resolveWatchdogConfigStrict` 和 `evaluateLaunchRule`，在 `/project/glx/app/deliver-workspace-ai`、`/project/glx/app/deliver-workspace`（有项目级 settings，但只覆盖 worker 工具）、`/home/glx/scripts/tc-skills` 三个 cwd 上解析。结果都是 `enabled=false`、无配置错误，rules 生效：worker terra 和 scout luna 通过，worker sol 和 scout sol 触发警告，reviewer sol 不受影响。
+- 2026-10-31 候选提交 c335408（D1+D2）经 reviewer 审 `git diff 81929c9 c335408`：无必改项，两条建议均已修复，修复提交为 f1c64d4。
+  - P2-1：宿主不强制 schema 时，progress 缺省、空串、超长或非字符串都会被原样接受。修复：工具执行入口先校验 progress 为 1-600 字符的字符串，不合格就拒绝，且不改动已有 pending；内部 `schedule` 仍兼容缺省；prompt 和通知把空串当作没有摘要。worker 先写测试，红灯为 `invalid progress undefined must be refused` 和 `!h.editor[0].includes(progressHeading)`，原因是缺少该行为。实现后转绿。
+  - P2-2：CONTEXT.md 中的警告规则限定为 confirm/auto 模式。
+- 2026-10-31 完整门禁（最终候选 f1c64d4）：先跑 `slot audit`/`slot status`，输出在 `gate/preflight.txt`。随后 `git worktree add --detach /project/tmp/pi-planner-only-gate f1c64d4`，用 `slot cpu` 跑，`TMPDIR=/project/tmp/pi-planner-only-gate-tmp`，日志在 `gate/gate.log`。
+  - 前：sha f1c64d450426628af6ef5364c85847b34e4454b1，tree 9fd15fe22ea24b3c22c0166931b460fcaebb941b，工作区干净；后：两者都不变，工作区仍干净。
+  - `npm run test:release` exit 1：已安装的 pi-subagents 缺少 `@earendil-works/pi-ai`（ERR_MODULE_NOT_FOUND）。按仓库约定改跑 `npm run test:release:isolated`，exit 0：typecheck 通过；contract/git/reviewer-range/delegate/host/host-runtime/handoff/status-color/index 均 ok；native-handoff 42/42。
