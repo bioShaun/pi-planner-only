@@ -167,7 +167,7 @@ try {
 	rmSync(HANDOFF_PREFERENCE, { force: true, recursive: true });
 
 	// Prompt: appended when enabled, short, strict variant differs.
-	const expectedNativePrompt = "实现和跑测试优先交给子代理，自己负责拆分、检查 git diff 与测试结果。若你已掌握相关上下文，剩余修改与必要验证都明确、局部，且无需进一步调查、设计测试或独立复核，可直接完成修改与验证；否则继续委派。每次委派只交付一项可单独验收的成果，例如一个新模块或命令连同其测试；共用同一验收命令或同一次昂贵读取的步骤合并为一次，有各自测试且互不依赖的部分分开委派。子代理请求拆分或只交回部分结果时，先缩小本次交付范围再派，可续用原子代理，不要只要求它继续或在同一任务内分阶段；缩范围时沿用原模型，仍失败再换模型。";
+	const expectedNativePrompt = "实现和跑测试优先交给子代理，自己负责拆分、检查 git diff 与测试结果。若你已掌握相关上下文，剩余修改与必要验证都明确、局部，且无需进一步调查、设计测试或独立复核，可直接完成修改与验证；否则继续委派。每次委派只交付一项可单独验收的成果，例如一个新模块或命令连同其测试；同一成果中共用一次验收或昂贵读取的步骤合并，互不依赖且可分别验收的成果分开委派。按审查意见修复时，需共同维护同一状态一致性或锁协议的修复优先合并；需等新事实或用户决定的项后派。子代理请求拆分或只交回部分结果时，先缩小本次交付范围再派，可续用原子代理，不要只要求它继续或在同一任务内分阶段；缩范围时沿用原模型，仍失败再换模型。改变并发行为、锁协议或持久化状态一致性的交付及其修复，检查 diff 与测试后先经独立 reviewer 审查，通过后再开展依赖这些改动的后续工作；自查与测试不能代替该审查。派 reviewer 前，写明待审范围和依据；其工具无法取得的 diff 或依据，先导出为可读文件并给出路径。";
 	await h.handlers.get("session_start")({}, h.ctx);
 	assert.deepEqual(h.active(), ["read", "bash", "edit", "write", "delegate", "git_audit", "git_commit", "handoff"]);
 	const injected = await h.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, h.ctx);

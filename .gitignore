@@ -134,3 +134,7 @@ __pycache__/
 bench/tasks/T2c.json
 bench/tasks/T2c.md
 .scratch/worker-tiers-real-share-20261007/raw/
+
+# om36 session 01a18d37 raw transcripts and derived timelines (findings.md, plan.md, timeline.py stay committed)
+.scratch/om36-review-lessons/snapshot/
+.scratch/om36-review-lessons/timeline*.txt
