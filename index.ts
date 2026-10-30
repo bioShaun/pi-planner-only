@@ -27,7 +27,7 @@ export { HANDOFF_PREFERENCE, handoffMode, formatStatusLines } from "./handoff.ts
 export const OFF_MARKER = join(AGENT_DIR, "planner-only.off");
 export const MODE_PREFERENCE = join(AGENT_DIR, "planner-only.mode");
 const MODE_ENTRY = "planner-only-mode";
-export const NATIVE_PROMPT = "实现和跑测试优先交给子代理，自己负责拆分、检查 git diff 与测试结果。若你已掌握相关上下文，剩余修改与必要验证都明确、局部，且无需进一步调查、设计测试或独立复核，可直接完成修改与验证；否则继续委派。";
+export const NATIVE_PROMPT = "实现和跑测试优先交给子代理，自己负责拆分、检查 git diff 与测试结果。若你已掌握相关上下文，剩余修改与必要验证都明确、局部，且无需进一步调查、设计测试或独立复核，可直接完成修改与验证；否则继续委派。每次委派只交付一项可单独验收的成果，例如一个新模块或命令连同其测试；共用同一验收命令或同一次昂贵读取的步骤合并为一次，有各自测试且互不依赖的部分分开委派。子代理请求拆分或只交回部分结果时，先缩小本次交付范围再派，可续用原子代理，不要只要求它继续或在同一任务内分阶段；缩范围时沿用原模型，仍失败再换模型。";
 const STATUS_KEY = "planner-only";
 const GIT_TIMEOUT_MS = 30_000;
 export const MAX_COMMIT_MESSAGE_CHARS = 2_000;
