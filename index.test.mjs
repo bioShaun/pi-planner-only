@@ -97,6 +97,9 @@ try {
 	assert.match(briefDescription, /command -> result/);
 	assert.match(briefDescription, /unverified/);
 	assert.match(briefDescription, /known pitfalls/);
+	assert.match(briefDescription, /Separate user authorization \(goal, scope, acceptance criteria/);
+	assert.match(briefDescription, /each with its source: a user message or a document path/);
+	assert.match(briefDescription, /mark it as a Root decision/);
 	assert.match(briefDescription, /exact next step/);
 	assert.ok(h.commands.has("planner-only"));
 	delete process.env.PI_PLANNER_ONLY_HANDOFF;
@@ -133,6 +136,30 @@ try {
 	assert.match(h.notes.at(-1), /handoff mode: auto \(source: persisted\)/);
 	await h.commands.get("planner-only").handler("status", h.ctx);
 	assert.match(h.notes.at(-1), /handoff: auto \(source: persisted\)/);
+
+	// Chain status and input wiring: only input that is not extension-injected resets the chain.
+	const chainEntry = (count) => ({ type: "custom", customType: "planner-only-handoff-chain", data: { version: 1, count } });
+	const chainWrites = (h) => h.appended.filter((e) => e.customType === "planner-only-handoff-chain");
+	h.branch([chainEntry(1)]);
+	await h.commands.get("planner-only").handler("status", h.ctx);
+	assert.match(h.notes.at(-1), /chain 1\/3/);
+	h.branch([{ type: "custom", customType: "planner-only-handoff-chain", data: { version: 9, count: 1 } }]);
+	await h.commands.get("planner-only").handler("status", h.ctx);
+	assert.match(h.notes.at(-1), /chain \?\/3/);
+	h.branch([chainEntry(2)]);
+	await h.handlers.get("input")({ type: "input", text: "continue", source: "extension" }, h.ctx);
+	assert.equal(chainWrites(h).length, 0, "extension input does not reset the chain");
+	await h.handlers.get("input")({ type: "input", text: "continue", source: "interactive" }, h.ctx);
+	assert.deepEqual(chainWrites(h).at(-1), chainEntry(0));
+	h.branch([]);
+	process.env.PI_PLANNER_ONLY_MODE = "off";
+	const offMode = fakePi();
+	await offMode.handlers.get("session_start")({ reason: "new" }, offMode.ctx);
+	offMode.branch([chainEntry(2)]);
+	await offMode.handlers.get("input")({ type: "input", text: "continue", source: "interactive" }, offMode.ctx);
+	assert.equal(chainWrites(offMode).length, 0, "off mode writes no chain entry");
+	delete process.env.PI_PLANNER_ONLY_MODE;
+
 	rmSync(HANDOFF_PREFERENCE, { force: true });
 	mkdirSync(HANDOFF_PREFERENCE, { recursive: true });
 	assert.doesNotThrow(() => handoffMode());

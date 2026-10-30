@@ -30,6 +30,8 @@ export interface PlannerConfig {
 	mode: PlannerMode | undefined;
 	strict: boolean;
 	handoffMode: HandoffMode;
+	/** Consecutive Root-initiated handoffs allowed in auto mode before falling back to confirm. */
+	handoffAutoLimit: number;
 }
 
 export const DEFAULT_LIMITS: DelegationLimits = {
@@ -46,6 +48,7 @@ export const DEFAULT_CONFIG: PlannerConfig = {
 	mode: undefined,
 	strict: false,
 	handoffMode: "off",
+	handoffAutoLimit: 3,
 };
 
 const TRUE_VALUES = ["1", "true", "on"];
@@ -88,5 +91,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): PlannerConfig 
 		mode: mode ? (mode === "native" || mode === "lite" ? mode : "off") : undefined,
 		strict: boolEnv(env, "PI_PLANNER_ONLY_STRICT", DEFAULT_CONFIG.strict),
 		handoffMode: handoffMode === "confirm" || handoffMode === "auto" ? handoffMode : "off",
+		handoffAutoLimit: intEnv(env, "PI_PLANNER_ONLY_HANDOFF_AUTO_LIMIT", DEFAULT_CONFIG.handoffAutoLimit),
 	};
 }

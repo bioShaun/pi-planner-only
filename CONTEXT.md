@@ -21,7 +21,7 @@ The parent session. It plans, delegates, inspects the actual changes, and commit
 _Avoid_: orchestrator, planner service
 
 **Root handoff**:
-The transfer of unfinished work to a fresh Root session through a self-contained brief. The source mode, model and known thinking level are preserved. A brief refused at scheduling is not retained; failed, uncertain or cancelled delivery retains it for manual retry, discard or replacement by a new brief. User-initiated handoffs are submitted automatically even in confirm mode.
+The transfer of unfinished work to a fresh Root session through a self-contained brief. The source mode, model and known thinking level are preserved. A brief refused at scheduling is not retained; failed, uncertain or cancelled delivery retains it for manual retry, discard or replacement by a new brief. User-initiated handoffs are submitted automatically even in confirm mode. In auto mode consecutive Root-initiated handoffs are capped (default 3, `PI_PLANNER_ONLY_HANDOFF_AUTO_LIMIT`): the delivery that would exceed the cap waits in the editor with a notice instead of submitting, and real user input or a user-initiated handoff resets the count. The brief separates user authorization from Root decisions, and the next Root is told not to treat those decisions as user rules.
 
 **Worker**:
 A child that implements a task and ends with a short text report. Runs as the builtin `worker` agent.

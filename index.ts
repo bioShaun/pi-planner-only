@@ -21,7 +21,7 @@ export { rootUsageOf } from "./host.ts";
 import { GIT_AUDIT_OPERATIONS, gitCommit, runGitAudit } from "./git.ts";
 import type { GitAuditRequest, GitRunner } from "./git.ts";
 import { loadArtifactDir } from "./subagent-artifacts.ts";
-import { RootHandoff, handoffMode, handoffModeSetting, takeHandoffMode } from "./handoff.ts";
+import { HANDOFF_CHAIN_ENTRY, RootHandoff, handoffMode, handoffModeSetting, takeHandoffChain, takeHandoffMode } from "./handoff.ts";
 export { HANDOFF_PREFERENCE, handoffMode, formatStatusLines } from "./handoff.ts";
 
 export const OFF_MARKER = join(AGENT_DIR, "planner-only.off");
@@ -465,6 +465,8 @@ function notifyStatus(runtime: PlannerRuntime, ctx: ExtensionContext): void {
 	const { session } = runtime;
 	const mode = modeOf(runtime);
 	const handoff = handoffModeSetting(process.env);
+	const chain = runtime.handoff.chain(ctx);
+	const chainText = ` · chain ${chain.count === "unknown" ? "?" : chain.count}/${chain.limit}`;
 	updateStatus(session, ctx, mode);
 	const env = process.env.PI_PLANNER_ONLY_MODE?.trim() ? ` (PI_PLANNER_ONLY_MODE=${process.env.PI_PLANNER_ONLY_MODE} selects new sessions)`
 		: process.env.PI_PLANNER_ONLY ? ` (PI_PLANNER_ONLY=${process.env.PI_PLANNER_ONLY} overrides the marker)` : "";
@@ -472,7 +474,7 @@ function notifyStatus(runtime: PlannerRuntime, ctx: ExtensionContext): void {
 		.filter((r) => session.roleStats[r]?.calls > 0)
 		.map((r) => `  ${r}: ${formatRoleSummary(session.roleStats[r])}`);
 	const roleBlock = roleLines.length ? `\nRole stats (current session; completed = runtime terminal; cumulative duration includes concurrent child time, not total wall time):\n${roleLines.join("\n")}` : "";
-	ctx.ui.notify(`planner-only ${mode === "lite" ? "on" : mode}${mode === "lite" && isStrict() ? ", strict" : ""}${env}; next fresh session: ${initialMode()}${preference() ? ` (preference: ${preference()})` : ""}; handoff: ${handoff.mode} (source: ${handoff.source})${mode === "native" ? `\n${nativeTotals(session)}\nChild usage is a recorded lower bound; missing or incomplete workflow receipts may omit usage.` : mode === "lite" ? `\n${statusTotals(session)}${roleBlock}` : ""}`, "info");
+	ctx.ui.notify(`planner-only ${mode === "lite" ? "on" : mode}${mode === "lite" && isStrict() ? ", strict" : ""}${env}; next fresh session: ${initialMode()}${preference() ? ` (preference: ${preference()})` : ""}; handoff: ${handoff.mode} (source: ${handoff.source})${chainText}${mode === "native" ? `\n${nativeTotals(session)}\nChild usage is a recorded lower bound; missing or incomplete workflow receipts may omit usage.` : mode === "lite" ? `\n${statusTotals(session)}${roleBlock}` : ""}`, "info");
 }
 
 async function plannerCommand(runtime: PlannerRuntime, args: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -614,7 +616,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 		description: "Start a fresh Root session from a complete, self-contained brief when the user asks or the context warning says to.",
 		promptSnippet: "handoff: continue in a fresh session from a brief when the user asks",
 		parameters: Type.Object({
-			brief: Type.String({ minLength: 200, description: "Self-contained brief for the next Root session: goal, decisions made, approaches ruled out and why, constraints, relevant files/specs, what is done, how it was verified (command -> result; mark anything not verified as unverified), open items, known pitfalls, and the exact next step." }),
+			brief: Type.String({ minLength: 200, description: "Self-contained brief for the next Root session: goal, decisions made, approaches ruled out and why, constraints, relevant files/specs, what is done, how it was verified (command -> result; mark anything not verified as unverified), open items, known pitfalls, and the exact next step. Separate user authorization (goal, scope, acceptance criteria, each with its source: a user message or a document path) from Root's own decisions (for example child model overrides, task splits, or scope changes); give each Root decision its reason and mark it as a Root decision." }),
 			cwd: Type.Optional(Type.String({ description: REPO_CWD_DESCRIPTION })),
 		}),
 		execute: async (_toolCallId, params: { brief: string; cwd?: string }, _signal, _onUpdate, ctx) => handoff.schedule(params, ctx),
@@ -626,6 +628,8 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 	});
 
 	pi.on("session_start", async (event, ctx) => {
+		const chain = takeHandoffChain();
+		if (chain !== undefined) pi.appendEntry(HANDOFF_CHAIN_ENTRY, { version: 1, count: chain });
 		if (!bindMode(runtime, event.reason, ctx)) {
 			ctx.ui.notify(BUSY_MODE_MESSAGE, "warning");
 			return;
@@ -688,6 +692,12 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 	pi.on("session_compact", async (_event, ctx) => {
 		session.noteCompacted();
 		updateStatus(session, ctx, modeOf(runtime));
+	});
+
+	pi.on("input", async (event, ctx) => {
+		if (modeOf(runtime) === "off") return;
+		if (event.source === "extension") return;
+		runtime.handoff.userInput(ctx);
 	});
 
 	pi.on("message_end", async (event, ctx) => { onMessageEnd(runtime, event.message, ctx); if (event.message.role === "assistant") refreshNativeCost(ctx); });

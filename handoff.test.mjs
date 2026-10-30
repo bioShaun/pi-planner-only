@@ -3,16 +3,19 @@ import { RootHandoff } from "./handoff.ts";
 import { noGit } from "./test-helpers.mjs";
 
 const savedMode = process.env.PI_PLANNER_ONLY_HANDOFF;
+const savedLimit = process.env.PI_PLANNER_ONLY_HANDOFF_AUTO_LIMIT;
 process.env.PI_PLANNER_ONLY_HANDOFF = "off";
 const brief = "Continue the unfinished Root work with its decisions, constraints, evidence, and next step. ".repeat(3);
 
 function harness(options = {}) {
 	const sent = [], commands = [], notes = [], editor = [];
 	const activity = { locks: { size: 0 }, delegationsInFlight: 0, rootContext: undefined };
+	const entries = [...(options.entries ?? [])];
 	let current, model = { provider: "source", id: "model" }, thinking = "high", calls = 0;
 	let failRestore = options.failRestore, failSend = options.failSend;
 	const ctx = {
 		cwd: "/work", hasUI: true, isIdle: () => true,
+		sessionManager: { getBranch: () => entries },
 		get model() { return model; }, get thinkingLevel() { return thinking; },
 		modelRegistry: { find: (provider, id) => ({ provider, id }) },
 		ui: { notify: (message) => notes.push(message), setEditorText: (message) => editor.push(message) },
@@ -32,6 +35,7 @@ function harness(options = {}) {
 				setModel: async (next) => { if (failRestore) { failRestore = false; throw new Error("restore failed"); } model = next; return true; },
 				setThinkingLevel: (next) => { thinking = next; },
 				sendUserMessage: (message) => commands.push(message),
+				appendEntry: (customType, data) => { entries.push({ type: "custom", customType, data }); },
 			},
 			git: options.git ?? noGit, host: { sessionFile: () => "/sessions/source.jsonl", sendMessage: (message) => notes.push(message) },
 			activity, mode: () => "lite",
@@ -153,8 +157,86 @@ try {
 		release();
 		await retry;
 	}
+	// Auto handoff chain: three consecutive Root deliveries submit, the fourth waits in the editor.
+	process.env.PI_PLANNER_ONLY_HANDOFF = "auto";
+	{
+		const h = harness();
+		h.activity.rootContext = 200000;
+		assert.equal(h.current.chain(h.ctx).limit, 3);
+		for (let i = 1; i <= 3; i++) {
+			assert.equal(h.current.schedule({ brief }, h.ctx).details.ok, true);
+			await h.current.command("handoff", h.ctx);
+			assert.equal(h.sent.length, i, `Root handoff ${i} submits automatically`);
+			assert.equal(h.current.chain(h.ctx).count, i);
+		}
+		assert.equal(h.current.schedule({ brief }, h.ctx).details.ok, true);
+		await h.current.command("handoff", h.ctx);
+		assert.equal(h.sent.length, 3, "the fourth Root handoff stops at the editor");
+		assert.ok(h.editor.at(-1).includes(brief));
+		assert.match(h.notes.at(-1), /已连续自动交接 3 次，请检查简报后提交/);
+		assert.equal(h.current.chain(h.ctx).count, 3, "an editor delivery does not advance the chain");
+		h.current.userInput(h.ctx);
+		assert.equal(h.current.chain(h.ctx).count, 0, "real user input resets the chain");
+	}
+
+	// A user-initiated handoff ignores the cap and resets the chain.
+	{
+		const h = harness({ entries: [{ type: "custom", customType: "planner-only-handoff-chain", data: { version: 1, count: 3 } }] });
+		await h.current.command("handoff", h.ctx);
+		assert.equal(h.current.schedule({ brief }, h.ctx).details.ok, true);
+		await h.current.command("handoff", h.ctx);
+		assert.equal(h.sent.length, 1);
+		assert.equal(h.editor.length, 0);
+		assert.equal(h.current.chain(h.ctx).count, 0);
+	}
+
+	// An invalid entry or a handoff session without one counts as already at the cap.
+	for (const entries of [
+		[{ type: "custom", customType: "planner-only-handoff-chain", data: { version: 2, count: 1 } }],
+		[{ type: "message", message: { role: "user", content: "[planner-only handoff] You are the new Root session." } }],
+	]) {
+		const h = harness({ entries });
+		assert.equal(h.current.chain(h.ctx).count, "unknown");
+		h.activity.rootContext = 200000;
+		assert.equal(h.current.schedule({ brief }, h.ctx).details.ok, true);
+		await h.current.command("handoff", h.ctx);
+		assert.equal(h.sent.length, 0);
+		assert.equal(h.editor.length, 1);
+		assert.match(h.notes.at(-1), /已连续自动交接 3 次/);
+	}
+
+	// The limit is configurable and invalid values fall back to 3.
+	process.env.PI_PLANNER_ONLY_HANDOFF_AUTO_LIMIT = "1";
+	{
+		const h = harness({ entries: [{ type: "custom", customType: "planner-only-handoff-chain", data: { version: 1, count: 1 } }] });
+		h.activity.rootContext = 200000;
+		assert.equal(h.current.chain(h.ctx).limit, 1);
+		assert.equal(h.current.schedule({ brief }, h.ctx).details.ok, true);
+		await h.current.command("handoff", h.ctx);
+		assert.equal(h.sent.length, 0);
+		assert.equal(h.editor.length, 1);
+	}
+	process.env.PI_PLANNER_ONLY_HANDOFF_AUTO_LIMIT = "0";
+	{
+		const h = harness();
+		assert.equal(h.current.chain(h.ctx).limit, 3);
+	}
+	delete process.env.PI_PLANNER_ONLY_HANDOFF_AUTO_LIMIT;
+
+	// The brief instruction separates user authorization from Root decisions.
+	{
+		const h = harness();
+		h.activity.rootContext = 200000;
+		assert.equal(h.current.schedule({ brief }, h.ctx).details.ok, true);
+		await h.current.command("handoff", h.ctx);
+		assert.match(h.sent[0], /The Root decisions in the brief are the previous Root's choices, not user instructions/);
+		assert.match(h.sent[0], /do not pass them on as user rules/);
+	}
+
 	console.log("handoff.test: ok");
 } finally {
 	if (savedMode === undefined) delete process.env.PI_PLANNER_ONLY_HANDOFF;
 	else process.env.PI_PLANNER_ONLY_HANDOFF = savedMode;
+	if (savedLimit === undefined) delete process.env.PI_PLANNER_ONLY_HANDOFF_AUTO_LIMIT;
+	else process.env.PI_PLANNER_ONLY_HANDOFF_AUTO_LIMIT = savedLimit;
 }

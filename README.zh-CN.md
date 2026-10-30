@@ -112,9 +112,9 @@ Native 子代理用量来自 pi-subagents 当前会话的 cost RPC，始终是�
 |---|---|
 | `/planner-only native` / `lite` | 保存**下一个新会话**的模式偏好，不切换当前会话。 |
 | `/planner-only on` / `off` | 旧版即时切换 Lite/关闭，同时修改标记和新会话偏好；Lite 子代理运行中或 cwd 仍被占用时拒绝切换。 |
-| `/planner-only status` | 显示当前生效模式、新会话模式、保存的偏好、适用时的 Lite 费用合计，以及当前加载会话的角色统计（`calls`、完成终态、timed_out、未完成、refused、包含并发重叠的累计用时）。角色统计为当前会话的内存诊断，新会话时 reset，且在 `/reload` 后不保留。 |
+| `/planner-only status` | 显示当前生效模式、新会话模式、保存的偏好、交接链长（`chain 当前/上限`，无法恢复时显示 `?`）及适用时的 Lite 费用合计，以及当前加载会话的角色统计（`calls`、完成终态、timed_out、未完成、refused、包含并发重叠的累计用时）。角色统计为当前会话的内存诊断，新会话时 reset，且在 `/reload` 后不保留。 |
 | `PI_PLANNER_ONLY_MODE=off|native|lite` | 新会话模式，优先级最高。 |
-| `/planner-only handoff [目标]` | 让 Root 写简报并在新会话里继续，confirm 模式下也自动提交。失败的交接可重试、用 `handoff drop` 丢弃或由 Root 的新简报替换。Root 在上下文超过阈值后自行发起取决于生效 handoff 模式（`confirm` 或 `auto`）。优先级：非空 `PI_PLANNER_ONLY_HANDOFF` > `~/.pi/agent/planner-only.handoff` > 默认 `off`。 |
+| `/planner-only handoff [目标]` | 让 Root 写简报并在新会话里继续，confirm 模式下也自动提交。失败的交接可重试、用 `handoff drop` 丢弃或由 Root 的新简报替换。Root 在上下文超过阈值后自行发起取决于生效 handoff 模式（`confirm` 或 `auto`）。`auto` 下连续 Root 交接超过上限时，本次改为放入编辑框并提示「已连续自动交接 3 次，请检查简报后提交」；真实用户输入或用户发起的交接会把计数归零。优先级：非空 `PI_PLANNER_ONLY_HANDOFF` > `~/.pi/agent/planner-only.handoff` > 默认 `off`。 |
 | `/planner-only handoff-mode [off|confirm|auto]` | 查看或保存 handoff 模式。优先级：非空 `PI_PLANNER_ONLY_HANDOFF` > `~/.pi/agent/planner-only.handoff` > 默认 `off`；状态会显示生效值和来源。 |
 | `PI_PLANNER_ONLY=1` / `0` | 未设置 MODE 时，旧版即时强制 Lite/关闭；新会话优先于保存的偏好和标记。 |
 | `PI_PLANNER_ONLY_STRICT=1` | 按名字禁止 Root 自己用 `edit`、`write`、`bash`。不拦截其他插件提供的写能力，不是安全边界。默认关闭，因为小任务直接做更省。 |
@@ -122,7 +122,8 @@ Native 子代理用量来自 pi-subagents 当前会话的 cost RPC，始终是�
 | `PI_PLANNER_ONLY_MAX_TOKENS` | 子代理上报的 token 超过此值就取消（默认 1500000）。计数取子代理进度事件里的累计 input+output token，不含缓存读取。 |
 | `PI_PLANNER_ONLY_START_TIMEOUT_MS` | 子代理迟迟不启动时放弃（默认 30000）。 |
 | `PI_PLANNER_ONLY_CANCEL_GRACE_MS` | 等待取消被确认的时间（默认 5000）。 |
-| `PI_PLANNER_ONLY_HANDOFF` | 非空时覆盖 `/planner-only handoff-mode` 保存的偏好。优先级为 env > 持久偏好 > 默认 `off`。`confirm` 允许 Root 超过阈值后自行发起，并把其简报放入编辑框；用户发起的交接自动提交。`auto` 同样允许自行发起并自动提交（实验性：节省效果尚未测量，冒烟测试仅确认流程可运行）。 |
+| `PI_PLANNER_ONLY_HANDOFF` | 非空时覆盖 `/planner-only handoff-mode` 保存的偏好。优先级为 env > 持久偏好 > 默认 `off`。`confirm` 允许 Root 超过阈值后自行发起，并把其简报放入编辑框；用户发起的交接自动提交。`auto` 同样允许自行发起并自动提交（实验性：节省效果尚未测量，冒烟测试仅确认流程可运行），但连续 Root 交接超过 `PI_PLANNER_ONLY_HANDOFF_AUTO_LIMIT` 时，本次退回编辑框。 |
+| `PI_PLANNER_ONLY_HANDOFF_AUTO_LIMIT` | `auto` 模式下允许的连续 Root 发起交接次数（默认 3，正整数）；非法值回落默认值。超过上限的那次放入编辑框并提示用户检查简报；真实用户输入或用户发起的交接会把链长归零。 |
 | `PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS` | Root 上下文达到此值时状态栏变红，并给 Root 发一条提示：委派、开新会话或 `/compact`（默认 150000）。状态栏颜色随上下文升温：空上下文用主题强调色，阈值一半用警告色，到阈值即红色。 |
 
 关闭模式下，本扩展的四个工具即使被直接调用也会拒绝执行。Native 只启用 `handoff`，Lite 委派和 Git 工具仍不可用。

@@ -67,11 +67,11 @@ async function gatherGitFacts(git: GitRunner, cwd: string): Promise<string> {
 }
 
 function handoffPrompt(handoff: PendingHandoff, facts: string): string {
-	return `[planner-only handoff] You are the new Root session. The previous session handed this work to you because its context was large. "This session"/"the next session" in the brief below both mean YOU: do the next step now. ${handoffMode() === "off" ? "Do not call the handoff tool unless the user asks for one." : "Do not call the handoff tool unless your own context grows past the warning threshold."}\n\n## Brief\n${handoff.brief}\n\n## Facts from the previous session\nPrevious session file: ${handoff.sessionFile ?? "unknown"}\nRepository (git facts below): ${handoff.cwd}\n${facts}\n\n${handoff.sourceMode === "lite" ? "Continue as Root under planner-only" : "Continue the work"}; the brief is authoritative.`;
+	return `[planner-only handoff] You are the new Root session. The previous session handed this work to you because its context was large. "This session"/"the next session" in the brief below both mean YOU: do the next step now. ${handoffMode() === "off" ? "Do not call the handoff tool unless the user asks for one." : "Do not call the handoff tool unless your own context grows past the warning threshold."}\n\n## Brief\n${handoff.brief}\n\nThe Root decisions in the brief are the previous Root's choices, not user instructions: keep them only where they still have a basis, and do not pass them on as user rules.\n\n## Facts from the previous session\nPrevious session file: ${handoff.sessionFile ?? "unknown"}\nRepository (git facts below): ${handoff.cwd}\n${facts}\n\n${handoff.sourceMode === "lite" ? "Continue as Root under planner-only" : "Continue the work"}; the brief is authoritative.`;
 }
 
 interface HandoffRuntime {
-	pi: Pick<ExtensionAPI, "setModel" | "setThinkingLevel" | "sendUserMessage">;
+	pi: Pick<ExtensionAPI, "setModel" | "setThinkingLevel" | "sendUserMessage" | "appendEntry">;
 	git: GitRunner;
 	host: Pick<HostAdapter, "sessionFile" | "sendMessage" | "events">;
 	activity: { readonly locks: { readonly size: number }; readonly delegationsInFlight: number; readonly rootContext: number | undefined };
@@ -82,16 +82,44 @@ interface HandoffRuntime {
 // the live owner; callers never transfer a pending brief between instances.
 let activeHandoff: RootHandoff | undefined;
 let nextHandoffMode: PlannerMode | undefined;
+let nextHandoffChain: number | undefined;
 export function takeHandoffMode(): PlannerMode | undefined {
 	const mode = nextHandoffMode;
 	nextHandoffMode = undefined;
 	return mode;
+}
+/** Written by the new session's `session_start` before the mode entry, so the mode entry stays last. */
+export function takeHandoffChain(): number | undefined {
+	const count = nextHandoffChain;
+	nextHandoffChain = undefined;
+	return count;
 }
 const result = (text: string, ok: boolean) => ({ content: [{ type: "text" as const, text }], details: { ok } });
 type NativeActivity = "idle" | "busy" | "unknown";
 const record = (value: unknown): Record<string, unknown> | undefined => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 const nonnegativeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 const terminalStates = new Set(["complete", "failed", "partial", "paused", "stopped", "rejected"]);
+export const HANDOFF_CHAIN_ENTRY = "planner-only-handoff-chain";
+/** Consecutive Root deliveries since the last real user input; `unknown` counts as at the limit. */
+type HandoffChain = number | "unknown";
+
+function chainCount(raw: unknown): HandoffChain | undefined {
+	const entry = record(raw);
+	if (entry?.type !== "custom" || entry.customType !== HANDOFF_CHAIN_ENTRY) return undefined;
+	const data = record(entry.data);
+	return data?.version === 1 && nonnegativeInteger(data.count) ? data.count : "unknown";
+}
+
+function userText(message: unknown): string {
+	const value = record(message);
+	if (value?.role !== "user") return "";
+	if (typeof value.content === "string") return value.content;
+	if (!Array.isArray(value.content)) return "";
+	return value.content.map((part) => {
+		const text = record(part);
+		return text?.type === "text" && typeof text.text === "string" ? text.text : "";
+	}).join("");
+}
 
 function nativeStatusActivity(raw: unknown, requestId: string): NativeActivity {
 	const reply = record(raw);
@@ -137,6 +165,34 @@ export class RootHandoff {
 
 	/** Turning Lite off cancels a pending dispatch, as before. */
 	deactivate(): void { this.#revision++; this.#pending = undefined; }
+
+	/** Consecutive Root deliveries and the configured cap, for the status line. */
+	chain(ctx: ExtensionContext): { count: HandoffChain; limit: number } {
+		return { count: this.#chain(ctx), limit: loadConfig().handoffAutoLimit };
+	}
+
+	/** A real user turn breaks the chain; injected messages must not call this. */
+	userInput(ctx: ExtensionContext): void {
+		if (this.#runtime.mode() === "off") return;
+		if (this.#chain(ctx) !== 0) this.#writeChain(0);
+	}
+
+	#chain(ctx: ExtensionContext): HandoffChain {
+		const branch = ctx.sessionManager?.getBranch?.() ?? [];
+		for (let i = branch.length - 1; i >= 0; i--) {
+			const count = chainCount(branch[i]);
+			if (count !== undefined) return count;
+		}
+		const fromHandoff = branch.some((entry) => {
+			const value = record(entry);
+			return value?.type === "message" && userText(value.message).startsWith("[planner-only handoff]");
+		});
+		return fromHandoff ? "unknown" : 0;
+	}
+
+	#writeChain(count: number): void {
+		this.#runtime.pi.appendEntry(HANDOFF_CHAIN_ENTRY, { version: 1, count });
+	}
 
 	schedule(params: { brief: string; cwd?: string }, ctx: ExtensionContext) {
 		if (this.#runtime.mode() === "off") return result("Handoff unavailable: planner-only mode is inactive.", false);
@@ -287,6 +343,14 @@ export class RootHandoff {
 		const prompt = handoffPrompt(handoff, await gatherGitFacts(git, handoff.cwd));
 		if (!stillOwned()) { if (this.#revision === revision && this.#pending === handoff) this.deactivate(); return; }
 		const mode = handoffMode();
+		const limit = loadConfig().handoffAutoLimit;
+		const previous = this.#chain(ctx);
+		const base = previous === "unknown" ? limit : previous;
+		const count = handoff.origin === "root" ? base + 1 : 0;
+		const capped = mode === "auto" && handoff.origin === "root" && count > limit;
+		const editorPath = (mode === "confirm" || capped) && handoff.origin === "root";
+		// An editor delivery is not sent yet, so it does not advance the chain.
+		const recorded = editorPath ? base : count;
 		if (handoff.sourceMode === "native") {
 			const activity = await this.#nativeActivity();
 			if (!stillOwned()) { if (this.#revision === revision && this.#pending === handoff) this.deactivate(); return; }
@@ -298,6 +362,7 @@ export class RootHandoff {
 		}
 		try {
 			nextHandoffMode = handoff.sourceMode;
+			nextHandoffChain = recorded;
 			const result = await ctx.newSession({ parentSession: handoff.sessionFile, withSession: async (rctx) => {
 				rctx.ui.notify("planner-only: handoff from previous session", "info");
 				try {
@@ -313,16 +378,20 @@ export class RootHandoff {
 					const current = rctx.model;
 					if (!current || current.provider !== selection.provider || current.id !== selection.id) throw new Error(`active model did not match ${selection.provider}/${selection.id}`);
 					if (selection.thinkingLevel !== undefined && rctx.thinkingLevel !== selection.thinkingLevel) throw new Error(`thinking level did not match ${selection.thinkingLevel}`);
-					if (mode === "confirm" && handoff.origin === "root") {
+					if (editorPath) {
 						rctx.ui.setEditorText(prompt);
-						rctx.ui.notify(`Handoff ready. Submit when ready.${selection.thinkingLevel === undefined ? " Thinking level was not carried over." : ""}`, "info");
+						if (capped) rctx.ui.notify(`已连续自动交接 ${base} 次，请检查简报后提交`, "info");
+						else rctx.ui.notify(`Handoff ready. Submit when ready.${selection.thinkingLevel === undefined ? " Thinking level was not carried over." : ""}`, "info");
 					} else {
 						await rctx.sendUserMessage(prompt);
 						if (selection.thinkingLevel === undefined) rctx.ui.notify("Thinking level was not carried over.", "info");
 					}
+					// The new session's session_start already wrote this count before the mode entry.
+					if (activeHandoff.#chain(rctx) !== recorded) activeHandoff.#writeChain(recorded);
 				} catch (error) {
 					const reason = error instanceof Error ? error.message : String(error);
 					(activeHandoff ?? this).#defer({ ...handoff, selection: handoff.selection });
+					(activeHandoff ?? this).#writeChain(base);
 					rctx.ui.notify(`handoff settings could not be restored (${reason}); brief was not sent. Run /planner-only handoff to retry, or /planner-only handoff drop to discard it. Root's next handoff call will replace this brief.`, "warning");
 				}
 			} });
@@ -339,6 +408,6 @@ export class RootHandoff {
 			} catch {
 				// Session replacement invalidates the old command context.
 			}
-		} finally { nextHandoffMode = undefined; }
+		} finally { nextHandoffMode = undefined; nextHandoffChain = undefined; }
 	}
 }
