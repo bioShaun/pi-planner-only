@@ -160,6 +160,8 @@ New/resumed sessions, forks, and tree navigation are refused while a Lite child
 is active or its stop remains unconfirmed. Active `/reload` does not guarantee
 lock isolation across plugin instances; finish and confirm child stops before reloading.
 
+The `handoff` tool requires `progress` (1-600 characters): three lines for this session's user-visible results, remaining work against the original goal, and whether the next step still directly advances it. If there are no new user-visible results, say so honestly. Confirm-mode and auto-limit editor checkpoints show this summary in their notice.
+
 Native handoff queries pi-subagents status both when the brief is scheduled and
 immediately before switching. Active or uncertain status at scheduling rejects
 the brief without retaining it; on a replacement, neither brief is retained.

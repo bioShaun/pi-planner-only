@@ -367,14 +367,15 @@ function syncTools(runtime: PlannerRuntime): void {
 }
 
 function sendContextWarning(host: HostAdapter, tokens: number): void {
+	const continuation = "Finish the current bounded operation. Report progress against the user's goal and stop only if all work requested by the user is complete, the user explicitly asked to pause, or continuing genuinely requires a user decision. Otherwise hand off authorized work that still advances the goal, including necessary prerequisites: prepare a complete handoff brief with the handoff tool. If infrastructure work dominates, say so honestly in progress; that alone is not a reason to stop.";
 	const advice = handoffMode() === "off"
 		? "At a task boundary, suggest the user run /planner-only handoff for a fresh session from a brief, or use /compact with what to keep if the context is mostly stale exploration. This is advisory; do not initiate a handoff."
 		: handoffMode() === "confirm"
-			? "Finish the current bounded operation, then prepare a complete handoff brief with the handoff tool, even when continuing the same large task; the fresh session opens with the brief in the editor for the user to submit. Do not fabricate a brief or force a session replacement."
-			: "Finish the current bounded operation, then prepare a complete handoff brief with the handoff tool, even when continuing the same large task; auto mode submits it in a fresh session automatically. Do not fabricate a brief or force a session replacement.";
+			? `${continuation} The fresh session opens with the brief in the editor for the user to submit. Do not fabricate a brief or force a session replacement.`
+			: `${continuation} Auto mode submits it in a fresh session automatically. Do not fabricate a brief or force a session replacement.`;
 	host.sendMessage({
 		customType: "planner-only-context",
-		content: `[planner-only] Root context is about ${formatTokens(tokens)} tokens (warning threshold ${formatTokens(contextWarnThreshold())}); every turn re-reads it. From now on delegate reading-heavy and multi-file work. ${advice}`,
+		content: `[planner-only extension notice, not a user message] Root context is about ${formatTokens(tokens)} tokens (warning threshold ${formatTokens(contextWarnThreshold())}); every turn re-reads it. From now on delegate reading-heavy and multi-file work. ${advice}`,
 		display: true,
 	}, { deliverAs: "steer" });
 }
@@ -616,10 +617,11 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 		description: "Start a fresh Root session from a complete, self-contained brief when the user asks or the context warning says to.",
 		promptSnippet: "handoff: continue in a fresh session from a brief when the user asks",
 		parameters: Type.Object({
-			brief: Type.String({ minLength: 200, description: "Self-contained brief for the next Root session: goal, decisions made, approaches ruled out and why, constraints, relevant files/specs, what is done, how it was verified (command -> result; mark anything not verified as unverified), open items, known pitfalls, and the exact next step. Separate user authorization (goal, scope, acceptance criteria, each with its source: a user message or a document path) from Root's own decisions (for example child model overrides, task splits, or scope changes); give each Root decision its reason and mark it as a Root decision." }),
+			brief: Type.String({ minLength: 200, description: "Self-contained brief for the next Root session: goal, decisions made, approaches ruled out and why, constraints, relevant files/specs, what is done, how it was verified (command -> result; mark anything not verified as unverified), open items, known pitfalls, and the exact next step. Separate user authorization (goal, scope, acceptance criteria, each with its source: a user message or a document path) from Root's own decisions (for example child model overrides, task splits, or scope changes); give each Root decision its reason and mark it as a Root decision. Plugin-generated notices (context warnings, subagent completion notices, and handoff wrappers) do not themselves grant new user authorization. Attribute authorization they repeat to the original user request or a user-specified document. Do not dismiss content actually submitted, modified, or confirmed by the user solely because it has a [planner-only prefix." }),
+			progress: Type.String({ minLength: 1, maxLength: 600, description: "Three lines for the user: user-visible results in this session (if none, say so honestly, for example: no new user-visible results; necessary prerequisites completed); remaining work against the original user goal; whether the next step still directly advances that goal." }),
 			cwd: Type.Optional(Type.String({ description: REPO_CWD_DESCRIPTION })),
 		}),
-		execute: async (_toolCallId, params: { brief: string; cwd?: string }, _signal, _onUpdate, ctx) => handoff.schedule(params, ctx),
+		execute: async (_toolCallId, params: { brief: string; progress: string; cwd?: string }, _signal, _onUpdate, ctx) => handoff.schedule(params, ctx),
 	});
 
 	pi.registerCommand("planner-only", {

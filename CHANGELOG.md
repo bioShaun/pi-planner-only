@@ -2,6 +2,10 @@
 
 ## 0.9.0-lite.0 - unreleased
 
+- The `handoff` tool requires a 1-600 character, three-line progress account of user-visible results, remaining work and whether the next step advances the original goal. Confirm and auto-limit editor notices show that account; retry or replacement retains or replaces it together with the brief.
+
+- Context warnings identify themselves as extension notices. In confirm and auto modes they call for reporting progress and stopping only when all requested work is complete, the user explicitly asks to pause, or continuation genuinely needs a user decision; otherwise authorized goal-advancing work, including prerequisites, is handed off. Handoff instructions attribute authorization to real user sources, not plugin-generated notices or Root decisions, without dismissing user-submitted content based on its prefix.
+
 - Root handoff `brief` now also asks for approaches ruled out and why, how done work was verified (command -> result; anything unverified marked as unverified), and known pitfalls, so a fresh session does not retry rejected routes or treat unverified work as fact.
 
 - Native shares context warnings and Root handoff. Its handoff checks pi-subagents status at scheduling and immediately before replacement: a busy or unknown scheduling check refuses without retaining the brief, while a failed dispatch retains it for retry, discard or replacement by a new brief. If a replacement is refused at scheduling, neither brief is retained. User-initiated handoffs submit automatically in confirm mode; Root-initiated ones still require confirmation. Checks are best effort and not an atomic barrier. Source mode, model and known thinking are preserved. The supported Pi host is 1.4.0.
