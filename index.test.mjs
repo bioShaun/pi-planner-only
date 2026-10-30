@@ -254,6 +254,28 @@ try {
 	assert.ok(h.active().includes("delegate"));
 
 	const brief = "Continue the parser migration in this repository. Goal: finish the streaming parser. Decisions: preserve the public API and avoid dependencies. Constraints: TypeScript, existing tests, no commits. Relevant files: index.ts and index.test.mjs. Done: analysis and initial implementation. Open: validate edge cases and update tests. Exact next step: inspect parser tests, implement missing cases, then run npm run test:release.";
+	for (const value of [undefined, "", "x".repeat(601), 42]) {
+		for (const pending of [false, true]) {
+			const check = fakePi();
+			const tool = check.tools.get("handoff");
+			await check.commands.get("planner-only").handler("handoff", check.ctx);
+			if (pending) assert.equal((await tool.execute("existing", { brief, progress }, undefined, undefined, check.ctx)).details.ok, true);
+			const refused = await tool.execute("invalid-progress", { brief, ...(value === undefined ? {} : { progress: value }) }, undefined, undefined, check.ctx);
+			assert.equal(refused.details.ok, false, `invalid progress ${String(value)} must be refused`);
+			assert.match(refused.content[0].text, /^Handoff refused: .*progress/i);
+			await check.handlers.get("agent_settled")({}, check.ctx);
+			assert.equal(check.sentUserMessages.filter(([message]) => message === "/planner-only handoff").length, pending ? 1 : 0);
+			if (pending) {
+				await check.commands.get("planner-only").handler("handoff", check.ctx);
+				assert.ok(check.replaced.sent[0].includes(progress));
+			}
+		}
+	}
+	{
+		const check = fakePi();
+		await check.commands.get("planner-only").handler("handoff", check.ctx);
+		assert.equal((await check.tools.get("handoff").execute("max-progress", { brief, progress: "x".repeat(600) }, undefined, undefined, check.ctx)).details.ok, true);
+	}
 	const gate = fakePi();
 	const gateTool = gate.tools.get("handoff");
 	const unrequestedRefusal = await gateTool.execute("small-unrequested", { brief, progress }, undefined, undefined, gate.ctx);

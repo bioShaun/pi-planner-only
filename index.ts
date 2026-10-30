@@ -621,7 +621,12 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 			progress: Type.String({ minLength: 1, maxLength: 600, description: "Three lines for the user: user-visible results in this session (if none, say so honestly, for example: no new user-visible results; necessary prerequisites completed); remaining work against the original user goal; whether the next step still directly advances that goal." }),
 			cwd: Type.Optional(Type.String({ description: REPO_CWD_DESCRIPTION })),
 		}),
-		execute: async (_toolCallId, params: { brief: string; progress: string; cwd?: string }, _signal, _onUpdate, ctx) => handoff.schedule(params, ctx),
+		execute: async (_toolCallId, params: { brief: string; progress: string; cwd?: string }, _signal, _onUpdate, ctx) => {
+			if (typeof params.progress !== "string" || params.progress.length < 1 || params.progress.length > 600) {
+				return { content: [{ type: "text" as const, text: "Handoff refused: progress must be a string of 1-600 characters." }], details: { ok: false } };
+			}
+			return handoff.schedule(params, ctx);
+		},
 	});
 
 	pi.registerCommand("planner-only", {

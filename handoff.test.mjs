@@ -102,6 +102,16 @@ try {
 	assert.equal(await blocked.current.command("status", blocked.ctx), false);
 
 	process.env.PI_PLANNER_ONLY_HANDOFF = "confirm";
+	for (const value of [undefined, ""]) {
+		const h = harness();
+		h.activity.rootContext = 200000;
+		assert.equal(h.current.schedule({ brief, progress: value }, h.ctx).details.ok, true);
+		await h.current.command("handoff", h.ctx);
+		assert.equal(h.editor.length, 1);
+		assert.ok(!h.editor[0].includes(progressHeading));
+		assert.doesNotMatch(h.editor[0], /undefined/);
+		assert.equal(h.notes.at(-1), "Handoff ready. Submit when ready.");
+	}
 	{
 		const h = harness();
 		await h.current.command("handoff", h.ctx);
