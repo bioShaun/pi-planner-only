@@ -6,6 +6,12 @@
 
 - Context warnings identify themselves as extension notices. In confirm and auto modes they call for reporting progress and stopping only when all requested work is complete, the user explicitly asks to pause, or continuation genuinely needs a user decision; otherwise authorized goal-advancing work, including prerequisites, is handed off. Handoff instructions attribute authorization to real user sources, not plugin-generated notices or Root decisions, without dismissing user-submitted content based on its prefix.
 
+- Empty optional `delegate` `base` (`b648a6a` / #41): strict tool schemas send `""` for omitted optional strings; an empty or whitespace-only `base` is treated as absent so non-reviewer roles are no longer refused with "base is only valid for reviewer".
+
+- Native local-task exception (`8db3e6c`): Native prompt keeps prefer-delegate, but allows Root to finish clear, local changes and necessary verification when it already has the context and no further investigation, test design, or independent review is needed (README EN/zh synced).
+
+- Manual skill `brainstorming-lite` (`49740ae`): decision-only skill under `.agents/skills/` with `disable-model-invocation: true` (no automatic invocation).
+
 - Root handoff `brief` now also asks for approaches ruled out and why, how done work was verified (command -> result; anything unverified marked as unverified), and known pitfalls, so a fresh session does not retry rejected routes or treat unverified work as fact.
 
 - Native shares context warnings and Root handoff. Its handoff checks pi-subagents status at scheduling and immediately before replacement: a busy or unknown scheduling check refuses without retaining the brief, while a failed dispatch retains it for retry, discard or replacement by a new brief. If a replacement is refused at scheduling, neither brief is retained. User-initiated handoffs submit automatically in confirm mode; Root-initiated ones still require confirmation. Checks are best effort and not an atomic barrier. Source mode, model and known thinking are preserved. The supported Pi host is 1.4.0.
