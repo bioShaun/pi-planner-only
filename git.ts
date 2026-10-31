@@ -12,6 +12,7 @@
 import { clip } from "./format.ts";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { createHash } from "node:crypto";
 
 const execFileAsync = promisify(execFile);
 
@@ -32,9 +33,149 @@ const reviewGit: GitRunner = async (args, cwd) => {
 
 export interface ReviewRange { root: string; base: string; head: string; mergeBase: string; diff: string }
 
+type ReviewCommand = (cwd: string, args: string[]) => Promise<string>;
+
+async function normalizeReviewRef(command: ReviewCommand, root: string, input: string): Promise<string> {
+	if (typeof input !== "string" || !input || input.startsWith("-") || /[\s\x00-\x1f\x7f]/.test(input)) throw new Error("invalid base ref");
+	let ref = input;
+	if (!/^(?:HEAD(?:~[0-9]+)?|[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(input)) {
+		await command(root, ["check-ref-format", "--allow-onelevel", input]);
+		ref = (await command(root, ["rev-parse", "--symbolic-full-name", "--verify", input])).trim();
+		if (!/^refs\/(?:heads|remotes|tags)\//.test(ref)) throw new Error("base must be a branch, remote, tag, or full object ID");
+	}
+	return ref;
+}
+
+export async function resolveReviewCommit(command: ReviewCommand, root: string, input: string, normalized = false): Promise<string> {
+	const ref = normalized ? input : await normalizeReviewRef(command, root, input);
+	const result = (await command(root, ["rev-parse", "--verify", `${ref}^{commit}`])).trim();
+	if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(result)) throw new Error("invalid resolved commit");
+	return result;
+}
+
+export async function reviewMergeBase(command: ReviewCommand, root: string, base: string, head: string): Promise<string> {
+	let output: string;
+	try { output = await command(root, ["merge-base", "--all", base, head]); }
+	catch (error) {
+		if ((error as { gitCode?: number }).gitCode === 1) throw new Error("no merge base for committed range");
+		throw error;
+	}
+	const bases = output.trim().split("\n").filter(Boolean);
+	if (!bases.length) throw new Error("no merge base for committed range");
+	if (bases.length > 1) throw new Error("multiple merge bases for committed range");
+	return bases[0];
+}
+
+export function validateReviewPath(path: unknown): asserts path is string {
+	if (typeof path !== "string" || !path || path.startsWith("/") || /[\x00-\x1f\x7f]/.test(path) || path.split("/").some(part => part === "." || part === "..")) throw new Error("invalid path");
+}
+
+export interface ReviewQueryRequest {
+	operation: "log" | "diff" | "show";
+	base?: string; head?: string; rev?: string; path?: string;
+	offset?: number; limit?: number; contentId?: string;
+}
+type ReviewQueryRunner = (args: readonly string[], cwd: string, options: { signal?: AbortSignal; env: NodeJS.ProcessEnv }) => Promise<{ stdout: string; stderr?: string; code: number }>;
+
+export const REVIEW_QUERY_COMMANDS = ["rev-parse", "check-ref-format", "merge-base", "log", "diff", "show", "ls-tree", "cat-file"] as const;
+const REVIEW_QUERY_PREFIX = ["--no-pager", "--no-lazy-fetch", "--no-replace-objects", "--literal-pathspecs", "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.warnAmbiguousRefs=true", "-c", "core.attributesFile=/dev/null"];
+const QUERY_MAX_OUTPUT = 1024 * 1024;
+
+export const reviewQueryRunner: ReviewQueryRunner = async (args, cwd, options) => {
+	try {
+		const result = await execFileAsync("git", args, { cwd, env: options.env, signal: options.signal, encoding: "buffer", maxBuffer: QUERY_MAX_OUTPUT, timeout: 30_000 });
+		return { stdout: new TextDecoder("utf-8", { fatal: true }).decode(result.stdout), stderr: result.stderr.toString("utf8"), code: 0 };
+	} catch (error) {
+		const e = error as NodeJS.ErrnoException & { killed?: boolean; stderr?: Buffer };
+		const stderr = e.stderr?.toString("utf8").slice(0, 1000) || "";
+		if (e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") throw new Error(`git output exceeded 1 MiB: ${stderr}`);
+		if (e.name === "AbortError") throw new Error(`git aborted: ${stderr}`);
+		if (e.killed) throw new Error(`git execution timed out: ${stderr}`);
+		throw Object.assign(new Error(`git execution failed: ${(stderr || e.message || String(error)).slice(0, 1000)}`), { gitCode: typeof e.code === "number" ? e.code : undefined });
+	}
+};
+
+const queryVersions = new WeakMap<ReviewQueryRunner, Promise<void>>();
+
+export async function runReviewQuery(request: ReviewQueryRequest, cwd: string, options: { signal?: AbortSignal; runner?: ReviewQueryRunner } = {}): Promise<string> {
+	if (!request || typeof request !== "object" || Object.keys(request).some(key => !["operation", "base", "head", "rev", "path", "offset", "limit", "contentId"].includes(key))) throw new Error("invalid query fields");
+	if (!["log", "diff", "show"].includes(request.operation)) throw new Error("invalid operation");
+	if (request.path !== undefined) validateReviewPath(request.path);
+	for (const value of [request.base, request.head, request.rev, request.contentId]) if (value !== undefined && typeof value !== "string") throw new Error("invalid query field");
+	const offset = request.offset ?? 1, limit = request.limit ?? 1000;
+	if (!Number.isSafeInteger(offset) || offset < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error("invalid offset or limit");
+	if (request.operation !== "log") throw new Error(`${request.operation} not implemented`);
+	if (!request.base || !request.head) throw new Error("base and head required");
+	const runner = options.runner ?? reviewQueryRunner;
+	const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
+	Object.assign(env, { LC_ALL: "C", GIT_PAGER: "cat", GIT_TERMINAL_PROMPT: "0" });
+	const invoke = async (args: readonly string[], dir: string) => {
+		if (options.signal?.aborted) throw new Error("git aborted");
+		const controller = new AbortController();
+		const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let onAbort: (() => void) | undefined;
+		const interrupted = new Promise<never>((_, reject) => {
+			onAbort = () => reject(new Error("git aborted"));
+			options.signal?.addEventListener("abort", onAbort, { once: true });
+			timer = setTimeout(() => { reject(new Error("git execution timed out")); controller.abort(); }, 30_000);
+		});
+		let result: Awaited<ReturnType<ReviewQueryRunner>>;
+		try { result = await Promise.race([runner(args, dir, { env, signal }), interrupted]); }
+		finally { if (timer) clearTimeout(timer); if (onAbort) options.signal?.removeEventListener("abort", onAbort); }
+		if (Buffer.byteLength(result.stdout) > QUERY_MAX_OUTPUT) throw new Error("git output exceeded 1 MiB");
+		if (/warning: refname .* is ambiguous/i.test(result.stderr ?? "")) throw new Error((result.stderr ?? "").slice(0, 1000));
+		if (result.code !== 0) throw Object.assign(new Error(`git failed: ${(result.stderr || result.stdout || `exit ${result.code}`).slice(0, 1000)}`), { gitCode: result.code });
+		return result.stdout;
+	};
+	let version = queryVersions.get(runner);
+	if (!version) {
+		version = invoke(["--version"], cwd).then(out => {
+			const match = /git version (\d+)\.(\d+)/.exec(out);
+			if (!match || Number(match[1]) < 2 || (Number(match[1]) === 2 && Number(match[2]) < 45)) throw new Error("需要 Git ≥ 2.45");
+		});
+		queryVersions.set(runner, version);
+		version.catch(error => { if (/abort|timed out/i.test(String(error)) && queryVersions.get(runner) === version) queryVersions.delete(runner); });
+	}
+	await version;
+	let attr: string | undefined;
+	const command: ReviewCommand = (dir, args) => {
+		if (!(REVIEW_QUERY_COMMANDS as readonly string[]).includes(args[0])) throw new Error("git command not allowed");
+		return invoke([...REVIEW_QUERY_PREFIX, ...(attr ? [`--attr-source=${attr}`] : []), ...args], dir);
+	};
+	const root = (await command(cwd, ["rev-parse", "--show-toplevel"])).trim();
+	const head = await resolveReviewCommit(command, root, request.head);
+	const base = await resolveReviewCommit(command, root, request.base);
+	attr = head;
+	const mergeBase = await reviewMergeBase(command, root, base, head);
+	const body = await command(root, ["log", "--no-show-signature", "--format=%H %s", `${mergeBase}..${head}`]);
+	const identity = JSON.stringify(["log", base, head, mergeBase, null]);
+	const contentId = `sha256:${createHash("sha256").update(identity).update("\0").update(body).digest("hex")}`;
+	if (offset > 1 && request.contentId !== contentId) throw new Error("内容已变化或缺少 contentId，请从 offset 1 重读");
+	const lines = body ? body.split("\n") : [];
+	const noNewline = !!body && !body.endsWith("\n");
+	if (body.endsWith("\n")) lines.pop();
+	if (offset > lines.length && lines.length) throw new Error("offset exceeds content");
+	const header = `git_review log: base=${base} head=${head} merge-base=${mergeBase} contentId=${contentId}`;
+	const selected: string[] = [];
+	for (let i = offset - 1; i < lines.length && selected.length < Math.min(limit, 998); i++) {
+		const line = lines[i] + (noNewline && i === lines.length - 1 ? " (no newline at end)" : "");
+		const end = i + 1;
+		const footer = `lines ${offset}-${end} of ${lines.length}; next offset: ${end < lines.length ? end + 1 : "none"}`;
+		if (Buffer.byteLength([header, ...selected, line, footer].join("\n")) > 40 * 1024) {
+			if (!selected.length) throw new Error(`line ${i + 1} exceeds page size (log)`);
+			break;
+		}
+		selected.push(line);
+	}
+	const end = offset + selected.length - 1;
+	const footer = lines.length ? `lines ${offset}-${end} of ${lines.length}; next offset: ${end < lines.length ? end + 1 : "none"}` : "lines 0-0 of 0; next offset: none";
+	return [header, ...selected, footer].join("\n");
+}
+
 async function reviewCommand(cwd: string, args: string[]): Promise<string> {
 	const result = await reviewGit([...(await gitSafePrefix(reviewGit, cwd)), ...args], cwd);
-	if (result.code !== 0) throw new Error(`git ${args[0]} failed: ${result.stderr || result.stdout}`);
+	if (result.code !== 0) throw Object.assign(new Error(`git ${args[0]} failed: ${result.stderr || result.stdout}`), { gitCode: result.code });
 	return result.stdout;
 }
 
@@ -46,26 +187,13 @@ export async function checkReviewCheckout(root: string, head: string): Promise<v
 }
 
 export async function prepareReviewRange(cwd: string, input: string): Promise<ReviewRange> {
-	if (typeof input !== "string" || !input || input.startsWith("-") || /[\s\x00-\x1f\x7f]/.test(input)) throw new Error("invalid base ref");
-	let ref = input;
-	if (!/^(?:HEAD(?:~[0-9]+)?|[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(input)) {
-		await reviewCommand(cwd, ["check-ref-format", "--allow-onelevel", input]);
-		const named = await reviewCommand(cwd, ["rev-parse", "--symbolic-full-name", "--verify", input]);
-		if (!/^refs\/(?:heads|remotes|tags)\//.test(named.trim())) throw new Error("base must be a branch, remote, tag, or full object ID");
-		ref = named.trim();
-	}
+	const ref = await normalizeReviewRef(reviewCommand, cwd, input);
 	const root = (await reviewCommand(cwd, ["rev-parse", "--show-toplevel"])).trim();
 	const head = (await reviewCommand(root, ["rev-parse", "--verify", "HEAD^{commit}"])).trim();
 	await checkReviewCheckout(root, head);
-	const base = (await reviewCommand(root, ["rev-parse", "--verify", `${ref}^{commit}`])).trim();
+	const base = await resolveReviewCommit(reviewCommand, root, ref, true);
 	if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(base) || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head)) throw new Error("invalid resolved commit");
-	const merge = await reviewGit([...(await gitSafePrefix(reviewGit, root)), "merge-base", "--all", base, head], root);
-	if (merge.code === 1) throw new Error("no merge base for committed range");
-	if (merge.code !== 0) throw new Error(`git merge-base failed: ${merge.stderr || `exit ${merge.code}`}`);
-	const bases = merge.stdout.trim().split("\n").filter(Boolean);
-	if (bases.length === 0) throw new Error("no merge base for committed range");
-	if (bases.length > 1) throw new Error("multiple merge bases for committed range");
-	const mergeBase = bases[0];
+	const mergeBase = await reviewMergeBase(reviewCommand, root, base, head);
 	const flags = ["--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--ignore-submodules=none"];
 	const raw = await reviewCommand(root, ["diff", "--raw", "-z", "--no-abbrev", ...flags, mergeBase, head, "--"]);
 	const records = raw.split("\0");
