@@ -111,3 +111,11 @@ ID   State      Output               E-Level  Times(r/u/s)   Command [run=0/1]
 - 结果（mutate-01b1.txt，两轮）：第 1 轮有 3 个变异因模式在文件中出现多次而跳过，改用唯一模式重跑。最终 noIgnoreSub、noExtDiff、noTextconv、noRenames、gitlinkMode、binaryCount、pendingNote、nameCheck 均被杀死；pairCheck（`records.length !== stats.length * 2`）存活，numstat 少一条记录时，概览会静默漏掉该文件。
 - Root 补测 f3b5429：故障注入变体 numstat-missing-last。去掉该守卫后红灯为 `Missing expected rejection: numstat-missing-last`；恢复后 reviewer-git.test.mjs 5 pass。01b-1 验收通过。
 - 下一步：01b-2 带 path 的 diff，续用原 worker。
+
+## 2026-10-31 01b-2 逐文件 diff 核对（Root）
+- worker run 03459d09 提交 bbe3ae0。红灯为 `diff not implemented`，之后绿灯。路径在范围内没有改动时返回空正文（N=0）；log 收到 path 时拒绝。Root 复跑 reviewer-git.test.mjs：8 pass，约 31s；tsc 退出 0。
+- 变异检查 mutate-01b2.mjs（10 个）。启动前 `slot audit` 没发现绕过 slot 的重进程；`slot status` 中没有 running/queued 任务。
+- 结果（mutate-01b2.txt）：8 个被杀死（NUL 检查、两侧 blob、gitlink、numstat binary、patch 算法、前缀、log 拒 path、path 校验）。存活的 2 个判为等价变异，不补测：
+  - rawSingle（`records.length !== 3`）：多条 raw 记录时 `records[2] !== ""` 已拒绝；
+  - pathIdentity（身份去掉 path）：patch 正文的 `diff --git a/<path>` 头已含路径，空正文 N=0 时不会出现 offset>1。
+- 01b 验收通过（bbe3ae0）。下一步：01c `show`。
