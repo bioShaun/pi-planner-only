@@ -160,3 +160,10 @@ ID   State      Output               E-Level  Times(r/u/s)   Command [run=0/1]
 - 修复由 worker run 44b4c2d2 提交 c54911e；Root 复跑 reviewer-git 16/16、runtime 2/2，git/reviewer-range/index/delegate 测试和 tsc 均通过。
 - 复审 PASS，Merge verdict OK，无新问题。报告：subagent-artifacts/dd08875e-f484-4252-8d86-ded193838db0_reviewer_output.md。fsmonitor 的阳性对照只能证明 fixture 有效（git status 会触发 hook）；`core.fsmonitor=false` 保护的存在由前缀断言覆盖。
 - 未验证项：`--no-mailmap/--no-decorate/--no-notes` 只在 Git 2.51 上测过，没有用 2.45 实测。
+
+## 2026-10-31 A14 完整门禁（Root）
+- 预检：`slot audit` 无绕过 slot 的重进程；`slot status` heavy.slice 63.9G/64.0G 软限、进程 2，io/cpu/gpu/nf 池无运行中作业。
+- 独立检出：`git worktree add --detach /project/tmp/reviewer-git-tool/gate-157e51f 157e51f`；HEAD 157e51fd25e61f9c72826b84c6e2f0e46295e47f，tree 96b085d683501fdb465604addf543524c1f35cba；TMPDIR=/project/tmp/reviewer-git-tool/gate-tmp。
+- `slot cpu -- npm run test:release`：exit 1。tsc 和 isolated-release 7/7 通过，contract.test 在默认安装下报 `Cannot find package '@earendil-works/pi-ai'`，按 AGENTS.md 改跑 isolated。日志 /project/tmp/reviewer-git-tool/gate-release.log。
+- `slot cpu -- npm run test:release:isolated`：**exit 0**。tsc 通过，contract.test 通过（含 installed cost RPC 和 async/workflow artifacts），reviewer-git 16/16、runtime 2/2，delegate、host、host-runtime（1.4.0）、handoff、status-color、index 均通过，native-handoff 42/42。日志 /project/tmp/reviewer-git-tool/gate-isolated.log。
+- 门禁之后检出 HEAD 和 tree 不变（157e51f / 96b085d），`git status --porcelain` 为空（node_modules 用符号链接接到主检出，已被 gitignore）。A14 通过。
