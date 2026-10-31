@@ -80,6 +80,7 @@ type ReviewQueryRunner = (args: readonly string[], cwd: string, options: { signa
 export const REVIEW_QUERY_COMMANDS = ["rev-parse", "check-ref-format", "merge-base", "log", "diff", "show", "ls-tree", "cat-file"] as const;
 export async function reviewQueryCommand(command: ReviewCommand, cwd: string, args: string[]): Promise<string> {
 	if (!(REVIEW_QUERY_COMMANDS as readonly string[]).includes(args[0])) throw new Error("git command not allowed");
+	if ((args[0] === "show" && args[1] !== "-s") || (args[0] === "cat-file" && args[1] !== "blob")) throw new Error(`git ${args[0]} form not allowed`);
 	return command(cwd, args);
 }
 const REVIEW_QUERY_PREFIX = ["--no-pager", "--no-lazy-fetch", "--no-replace-objects", "--literal-pathspecs", "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.warnAmbiguousRefs=true", "-c", "core.attributesFile=/dev/null"];

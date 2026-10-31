@@ -24,10 +24,14 @@ test("whitelist rejects disallowed commands before invocation", async () => {
 	assert.equal(typeof api.reviewQueryCommand, "function", "restricted command entry must be exported");
 	let calls = 0;
 	const invoke = async () => { calls++; return ""; };
-	for (const command of ["config", "fetch"]) await assert.rejects(api.reviewQueryCommand(invoke, ".", [command]), /not allowed/);
+	for (const args of [["config"], ["fetch"], ["show", "HEAD"], ["show", "--format=%H", "-s"], ["cat-file", "-p", "HEAD"], ["cat-file", "--batch"], ["cat-file", "--textconv", "HEAD:x"]]) {
+		await assert.rejects(api.reviewQueryCommand(invoke, ".", args), /not allowed/, args.join(" "));
+	}
 	assert.equal(calls, 0);
 	await api.reviewQueryCommand(invoke, ".", ["log"]);
-	assert.equal(calls, 1);
+	await api.reviewQueryCommand(invoke, ".", ["show", "-s", "--no-show-signature", "HEAD"]);
+	await api.reviewQueryCommand(invoke, ".", ["cat-file", "blob", "0123"]);
+	assert.equal(calls, 3);
 });
 
 test("log range has a path separator", async () => {
