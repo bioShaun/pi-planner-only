@@ -12,6 +12,7 @@
 import { clip } from "./format.ts";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { createHash } from "node:crypto";
 
 const execFileAsync = promisify(execFile);
 
@@ -32,9 +33,271 @@ const reviewGit: GitRunner = async (args, cwd) => {
 
 export interface ReviewRange { root: string; base: string; head: string; mergeBase: string; diff: string }
 
+type ReviewCommand = (cwd: string, args: string[]) => Promise<string>;
+
+async function normalizeReviewRef(command: ReviewCommand, root: string, input: string, field: "base" | "head" | "rev" = "base"): Promise<string> {
+	if (typeof input !== "string" || !input || input.startsWith("-") || /[\s\x00-\x1f\x7f]/.test(input)) throw new Error(`invalid ${field} ref`);
+	let ref = input;
+	if (!/^(?:HEAD(?:~[0-9]+)?|[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(input)) {
+		await command(root, ["check-ref-format", "--allow-onelevel", input]);
+		ref = (await command(root, ["rev-parse", "--symbolic-full-name", "--verify", input])).trim();
+		if (!/^refs\/(?:heads|remotes|tags)\//.test(ref)) throw new Error(`${field} must be a branch, remote, tag, or full object ID`);
+	}
+	return ref;
+}
+
+export async function resolveReviewCommit(command: ReviewCommand, root: string, input: string, normalized = false, field: "base" | "head" | "rev" = "base", oidLength?: number): Promise<string> {
+	if (oidLength && /^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(input) && input.length !== oidLength) throw new Error(`${field} object ID must have full length ${oidLength}`);
+	const ref = normalized ? input : await normalizeReviewRef(command, root, input, field);
+	const result = (await command(root, ["rev-parse", "--verify", `${ref}^{commit}`])).trim();
+	if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(result)) throw new Error("invalid resolved commit");
+	return result;
+}
+
+export async function reviewMergeBase(command: ReviewCommand, root: string, base: string, head: string): Promise<string> {
+	let output: string;
+	try { output = await command(root, ["merge-base", "--all", base, head]); }
+	catch (error) {
+		if ((error as { gitCode?: number }).gitCode === 1) throw new Error("no merge base for committed range");
+		throw error;
+	}
+	const bases = output.trim().split("\n").filter(Boolean);
+	if (!bases.length) throw new Error("no merge base for committed range");
+	if (bases.length > 1) throw new Error("multiple merge bases for committed range");
+	return bases[0];
+}
+
+export function validateReviewPath(path: unknown): asserts path is string {
+	if (typeof path !== "string" || !path || path.startsWith("/") || /[\x00-\x1f\x7f]/.test(path) || path.split("/").some(part => part === "." || part === "..")) throw new Error("invalid path");
+}
+
+export interface ReviewQueryRequest {
+	operation: "log" | "diff" | "show";
+	base?: string; head?: string; rev?: string; path?: string;
+	offset?: number; limit?: number; contentId?: string;
+}
+type ReviewQueryRunner = (args: readonly string[], cwd: string, options: { signal?: AbortSignal; env: NodeJS.ProcessEnv }) => Promise<{ stdout: string; stderr?: string; code: number }>;
+
+export const REVIEW_QUERY_COMMANDS = ["rev-parse", "check-ref-format", "merge-base", "log", "diff", "show", "ls-tree", "cat-file"] as const;
+export async function reviewQueryCommand(command: ReviewCommand, cwd: string, args: string[]): Promise<string> {
+	if (!(REVIEW_QUERY_COMMANDS as readonly string[]).includes(args[0])) throw new Error("git command not allowed");
+	if ((args[0] === "show" && args[1] !== "-s") || (args[0] === "cat-file" && args[1] !== "blob")) throw new Error(`git ${args[0]} form not allowed`);
+	return command(cwd, args);
+}
+const REVIEW_QUERY_PREFIX = ["--no-pager", "--no-lazy-fetch", "--no-replace-objects", "--literal-pathspecs", "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.warnAmbiguousRefs=true", "-c", "core.attributesFile=/dev/null"];
+const QUERY_MAX_OUTPUT = 1024 * 1024;
+const REVIEW_DIFF_SAFE = ["--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--ignore-submodules=none", "--no-relative"];
+const REVIEW_DIFF_PATCH = ["--unified=3", "--diff-algorithm=myers", "--indent-heuristic", "--src-prefix=a/", "--dst-prefix=b/"];
+const REVIEW_LOG_SAFE = ["--no-show-signature", "--no-mailmap", "--no-decorate", "--no-color", "--no-notes"];
+
+async function reviewShowPath(command: ReviewCommand, root: string, rev: string, path: string): Promise<{ body: string; symlink: boolean }> {
+	const output = await command(root, ["ls-tree", "-z", "--full-tree", rev, "--", path]);
+	if (!output) throw new Error(`${JSON.stringify(path)}: path not found`);
+	const match = /^(100644|100755|120000|040000|160000) (blob|tree|commit) ([0-9a-f]{40}|[0-9a-f]{64})\t([^\0]+)\0$/.exec(output);
+	if (!match || match[4] !== path) throw new Error(`${JSON.stringify(path)}: invalid or multiple ls-tree records`);
+	const [, mode, type, oid] = match;
+	if (mode === "160000" && type === "commit") throw new Error(`${JSON.stringify(path)}: gitlink cannot be read`);
+	if (mode === "040000" && type === "tree") {
+		const listing = await command(root, ["ls-tree", "-z", "--full-tree", oid]);
+		if (!listing) return { body: "", symlink: false };
+		const records = listing.split("\0");
+		if (records.pop() !== "") throw new Error(`${JSON.stringify(path)}: invalid tree listing`);
+		const lines = records.map(record => {
+			const entry = /^(100644|100755|120000|040000|160000) (blob|tree|commit) ([0-9a-f]{40}|[0-9a-f]{64})\t([^\0]+)$/.exec(record);
+			if (!entry || (entry[1] === "040000" ? entry[2] !== "tree" : entry[1] === "160000" ? entry[2] !== "commit" : entry[2] !== "blob")) throw new Error(`${JSON.stringify(path)}: invalid tree listing`);
+			return `${entry[1]} ${entry[2]} ${entry[3]} ${JSON.stringify(entry[4])}`;
+		});
+		return { body: lines.join("\n") + "\n", symlink: false };
+	}
+	if (!["100644", "100755", "120000"].includes(mode) || type !== "blob") throw new Error(`${JSON.stringify(path)}: invalid ls-tree mode or type`);
+	const body = await command(root, ["cat-file", "blob", oid]);
+	if (body.includes("\0")) throw new Error(`${JSON.stringify(path)}: binary blob cannot be read as text`);
+	return { body, symlink: mode === "120000" };
+}
+
+async function reviewShowStats(command: ReviewCommand, root: string, rev: string): Promise<{ body: string; parent: string }> {
+	const parents = (await command(root, ["show", "-s", ...REVIEW_LOG_SAFE, "--format=%P", rev])).trim();
+	if (parents && !/^(?:[0-9a-f]{40}|[0-9a-f]{64})(?: (?:[0-9a-f]{40}|[0-9a-f]{64}))*$/.test(parents)) throw new Error("invalid commit parents");
+	const parent = parents ? parents.split(" ")[0] : "empty-tree";
+	let compare = parent;
+	if (parent === "empty-tree") {
+		const format = (await command(root, ["rev-parse", "--show-object-format"])).trim();
+		if (format === "sha1") compare = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+		else if (format === "sha256") compare = "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321";
+		else throw new Error(`unsupported object format: ${format}`);
+	}
+	const metadata = await command(root, ["show", "-s", ...REVIEW_LOG_SAFE, "--format=fuller", rev]);
+	const numstat = await command(root, ["diff", ...REVIEW_DIFF_SAFE, "--numstat", "-z", compare, rev, "--"]);
+	const records = numstat ? numstat.split("\0") : [];
+	if (numstat && records.pop() !== "") throw new Error("invalid show numstat output");
+	const lines = records.map(record => {
+		const stat = /^(\d+|-)\t(\d+|-)\t([^\0]+)$/.exec(record);
+		if (!stat || (stat[1] === "-") !== (stat[2] === "-")) throw new Error("invalid show numstat record");
+		return `${stat[1] === "-" ? "-" : `+${stat[1]}`} ${stat[2] === "-" ? "-" : `-${stat[2]}`} ${JSON.stringify(stat[3])}`;
+	});
+	return { body: `${metadata}${metadata.endsWith("\n") ? "" : "\n"}first-parent: ${parent}\n${lines.length ? lines.join("\n") + "\n" : ""}`, parent };
+}
+
+async function reviewFilePatch(command: ReviewCommand, root: string, base: string, head: string, path: string): Promise<string> {
+	try {
+		const raw = await command(root, ["diff", ...REVIEW_DIFF_SAFE, "--raw", "-z", "--no-abbrev", base, head, "--", path]);
+		if (!raw) return "";
+		const records = raw.split("\0");
+		const record = /^:(\d{6}) (\d{6}) ([0-9a-f]+) ([0-9a-f]+) [A-Z]$/.exec(records[0]);
+		if (records.length !== 3 || records[2] !== "" || records[1] !== path || !record) throw new Error("invalid or non-file raw diff output");
+		if (record[1] === "160000" || record[2] === "160000") throw new Error("gitlink cannot be reviewed as text");
+		for (const oid of new Set([record[3], record[4]])) {
+			if (/^0+$/.test(oid)) continue;
+			const blob = await command(root, ["cat-file", "blob", oid]);
+			if (blob.includes("\0")) throw new Error("binary blob cannot be reviewed as text");
+		}
+		const numstat = await command(root, ["diff", ...REVIEW_DIFF_SAFE, "--numstat", "-z", base, head, "--", path]);
+		const stat = /^(\d+|-)\t(\d+|-)\t([^\0]+)\0$/.exec(numstat);
+		if (!stat || stat[3] !== path || (stat[1] === "-") !== (stat[2] === "-")) throw new Error("invalid numstat output");
+		if (stat[1] === "-") throw new Error("binary diff cannot be reviewed as text");
+		return await command(root, ["diff", ...REVIEW_DIFF_SAFE, ...REVIEW_DIFF_PATCH, base, head, "--", path]);
+	} catch (error) {
+		throw new Error(`${JSON.stringify(path)}: ${error instanceof Error ? error.message : String(error)}`);
+	}
+}
+
+async function reviewDiffOverview(command: ReviewCommand, root: string, base: string, head: string): Promise<string> {
+	const raw = await command(root, ["diff", ...REVIEW_DIFF_SAFE, "--raw", "-z", "--no-abbrev", base, head, "--"]);
+	const numstat = await command(root, ["diff", ...REVIEW_DIFF_SAFE, "--numstat", "-z", base, head, "--"]);
+	const records = raw ? raw.split("\0") : [];
+	const stats = numstat ? numstat.split("\0") : [];
+	if (raw && records.pop() !== "" || numstat && stats.pop() !== "" || records.length !== stats.length * 2) throw new Error("invalid diff overview output");
+	let binary = 0, gitlinks = 0;
+	const lines: string[] = [];
+	for (let i = 0; i < stats.length; i++) {
+		const record = /^:(\d{6}) (\d{6}) ([0-9a-f]+) ([0-9a-f]+) ([A-Z])$/.exec(records[i * 2]);
+		const stat = /^(\d+|-)\t(\d+|-)\t([\s\S]+)$/.exec(stats[i]);
+		if (!record || !stat || records[i * 2 + 1] !== stat[3] || (stat[1] === "-") !== (stat[2] === "-")) throw new Error("invalid diff overview record");
+		const isBinary = stat[1] === "-", gitlink = record[1] === "160000" || record[2] === "160000";
+		if (isBinary) binary++;
+		if (gitlink) gitlinks++;
+		const additions = isBinary ? "-" : `+${stat[1]}`;
+		const deletions = isBinary ? "-" : `-${stat[2]}`;
+		lines.push(`${record[5]} ${additions} ${deletions}${isBinary ? " binary" : ""}${gitlink ? " gitlink" : ""} git-text-diff: ${isBinary ? "no" : "yes"} ${JSON.stringify(stat[3])}`);
+	}
+	lines.push(`binary: ${binary}; gitlink: ${gitlinks}; 逐文件读取尚未验证`);
+	return lines.join("\n") + "\n";
+}
+
+export const reviewQueryRunner: ReviewQueryRunner = async (args, cwd, options) => {
+	try {
+		const result = await execFileAsync("git", args, { cwd, env: options.env, signal: options.signal, encoding: "buffer", maxBuffer: QUERY_MAX_OUTPUT, timeout: 30_000 });
+		return { stdout: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(result.stdout), stderr: result.stderr.toString("utf8"), code: 0 };
+	} catch (error) {
+		const e = error as NodeJS.ErrnoException & { killed?: boolean; stderr?: Buffer };
+		const stderr = e.stderr?.toString("utf8").slice(0, 1000) || "";
+		if (e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") throw new Error(`git output exceeded 1 MiB: ${stderr}`);
+		if (e.name === "AbortError") throw new Error(`git aborted: ${stderr}`);
+		if (e.killed) throw new Error(`git execution timed out: ${stderr}`);
+		throw Object.assign(new Error(`git execution failed: ${(stderr || e.message || String(error)).slice(0, 1000)}`), { gitCode: typeof e.code === "number" ? e.code : undefined });
+	}
+};
+
+const queryVersions = new WeakMap<ReviewQueryRunner, Promise<void>>();
+
+export async function runReviewQuery(request: ReviewQueryRequest, cwd: string, options: { signal?: AbortSignal; runner?: ReviewQueryRunner } = {}): Promise<string> {
+	if (!request || typeof request !== "object" || Object.keys(request).some(key => !["operation", "base", "head", "rev", "path", "offset", "limit", "contentId"].includes(key))) throw new Error("invalid query fields");
+	if (!["log", "diff", "show"].includes(request.operation)) throw new Error("invalid operation");
+	if (request.path !== undefined) validateReviewPath(request.path);
+	for (const value of [request.base, request.head, request.rev, request.contentId]) if (value !== undefined && typeof value !== "string") throw new Error("invalid query field");
+	const offset = request.offset ?? 1, limit = request.limit ?? 1000;
+	if (!Number.isSafeInteger(offset) || offset < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error("invalid offset or limit");
+	if (request.operation === "show" && (request.base !== undefined || request.head !== undefined || !request.rev)) throw new Error("show requires rev and does not accept base or head");
+	if (request.operation !== "show" && request.rev !== undefined) throw new Error(`${request.operation} does not accept rev`);
+	if (request.operation === "log" && request.path !== undefined) throw new Error("log does not accept path");
+	if (request.operation !== "show" && (!request.base || !request.head)) throw new Error("base and head required");
+	const runner = options.runner ?? reviewQueryRunner;
+	const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
+	Object.assign(env, { LC_ALL: "C", GIT_PAGER: "cat", GIT_TERMINAL_PROMPT: "0" });
+	const invoke = async (args: readonly string[], dir: string) => {
+		if (options.signal?.aborted) throw new Error("git aborted");
+		const controller = new AbortController();
+		const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let onAbort: (() => void) | undefined;
+		const interrupted = new Promise<never>((_, reject) => {
+			onAbort = () => reject(new Error("git aborted"));
+			options.signal?.addEventListener("abort", onAbort, { once: true });
+			timer = setTimeout(() => { reject(new Error("git execution timed out")); controller.abort(); }, 30_000);
+		});
+		let result: Awaited<ReturnType<ReviewQueryRunner>>;
+		try { result = await Promise.race([runner(args, dir, { env, signal }), interrupted]); }
+		finally { if (timer) clearTimeout(timer); if (onAbort) options.signal?.removeEventListener("abort", onAbort); }
+		if (Buffer.byteLength(result.stdout) > QUERY_MAX_OUTPUT) throw new Error("git output exceeded 1 MiB");
+		if (/warning: refname .* is ambiguous/i.test(result.stderr ?? "")) throw new Error((result.stderr ?? "").slice(0, 1000));
+		if (result.code !== 0) throw Object.assign(new Error(`git failed: ${(result.stderr || result.stdout || `exit ${result.code}`).slice(0, 1000)}`), { gitCode: result.code });
+		return result.stdout;
+	};
+	let version = queryVersions.get(runner);
+	if (!version) {
+		version = invoke(["--version"], cwd).then(out => {
+			const match = /git version (\d+)\.(\d+)/.exec(out);
+			if (!match || Number(match[1]) < 2 || (Number(match[1]) === 2 && Number(match[2]) < 45)) throw new Error("需要 Git ≥ 2.45");
+		});
+		queryVersions.set(runner, version);
+		version.catch(error => { if (/abort|timed out/i.test(String(error)) && queryVersions.get(runner) === version) queryVersions.delete(runner); });
+	}
+	await version;
+	let attr: string | undefined;
+	const command: ReviewCommand = (dir, args) => reviewQueryCommand((cwd, accepted) => invoke([...REVIEW_QUERY_PREFIX, ...(attr ? [`--attr-source=${attr}`] : []), ...accepted], cwd), dir, args);
+	const root = (await command(cwd, ["rev-parse", "--show-toplevel"])).trim();
+	const format = (await command(root, ["rev-parse", "--show-object-format"])).trim();
+	if (format !== "sha1" && format !== "sha256") throw new Error(`unsupported object format: ${format}`);
+	const oidLength = format === "sha1" ? 40 : 64;
+	let body: string, identity: string, headerFields: string;
+	if (request.operation === "show") {
+		const rev = await resolveReviewCommit(command, root, request.rev!, false, "rev", oidLength);
+		attr = rev;
+		identity = JSON.stringify(["show", rev, request.path ?? null]);
+		if (request.path === undefined) {
+			const result = await reviewShowStats(command, root, rev); body = result.body; headerFields = `rev=${rev} parent=${result.parent}`;
+		} else {
+			const result = await reviewShowPath(command, root, rev, request.path); body = result.symlink ? `symlink\n${result.body}` : result.body; headerFields = `rev=${rev} path=${request.path}`;
+		}
+	} else {
+		const head = await resolveReviewCommit(command, root, request.head!, false, "head", oidLength);
+		const base = await resolveReviewCommit(command, root, request.base!, false, "base", oidLength);
+		attr = head;
+		const mergeBase = await reviewMergeBase(command, root, base, head);
+		body = request.operation === "log"
+			? await command(root, ["log", ...REVIEW_LOG_SAFE, "--format=%H %s", `${mergeBase}..${head}`, "--"])
+			: request.path === undefined ? await reviewDiffOverview(command, root, mergeBase, head) : await reviewFilePatch(command, root, mergeBase, head, request.path);
+		identity = JSON.stringify([request.operation, base, head, mergeBase, request.operation === "diff" ? request.path ?? null : null]);
+		headerFields = `base=${base} head=${head} merge-base=${mergeBase}`;
+	}
+	const contentId = `sha256:${createHash("sha256").update(identity).update("\0").update(body).digest("hex")}`;
+	if (offset > 1 && request.contentId !== contentId) throw new Error("内容已变化或缺少 contentId，请从 offset 1 重读");
+	const lines = body ? body.split("\n") : [];
+	const noNewline = !!body && !body.endsWith("\n");
+	if (body.endsWith("\n")) lines.pop();
+	if (offset > lines.length && lines.length) throw new Error("offset exceeds content");
+	const header = `git_review ${request.operation}: ${headerFields} contentId=${contentId}`;
+	const selected: string[] = [];
+	for (let i = offset - 1; i < lines.length && selected.length < Math.min(limit, 998); i++) {
+		const line = lines[i];
+		const end = i + 1;
+		const footer = `lines ${offset}-${end} of ${lines.length}; next offset: ${end < lines.length ? end + 1 : "none"}${noNewline && end === lines.length ? " (no newline at end)" : ""}`;
+		if (Buffer.byteLength([header, ...selected, line, footer].join("\n")) > 40 * 1024) {
+			if (!selected.length) throw new Error(`line ${i + 1} exceeds page size (${request.path === undefined ? request.operation : JSON.stringify(request.path)})`);
+			break;
+		}
+		selected.push(line);
+	}
+	const end = offset + selected.length - 1;
+	const footer = lines.length ? `lines ${offset}-${end} of ${lines.length}; next offset: ${end < lines.length ? end + 1 : "none"}${noNewline && end === lines.length ? " (no newline at end)" : ""}` : "lines 0-0 of 0; next offset: none";
+	const response = [header, ...selected, footer].join("\n");
+	if (Buffer.byteLength(response, "utf8") > 40 * 1024 || response.split("\n").length > 1000) throw new Error("page exceeds size or line limit");
+	return response;
+}
+
 async function reviewCommand(cwd: string, args: string[]): Promise<string> {
 	const result = await reviewGit([...(await gitSafePrefix(reviewGit, cwd)), ...args], cwd);
-	if (result.code !== 0) throw new Error(`git ${args[0]} failed: ${result.stderr || result.stdout}`);
+	if (result.code !== 0) throw Object.assign(new Error(`git ${args[0]} failed: ${result.stderr || result.stdout}`), { gitCode: result.code });
 	return result.stdout;
 }
 
@@ -46,26 +309,13 @@ export async function checkReviewCheckout(root: string, head: string): Promise<v
 }
 
 export async function prepareReviewRange(cwd: string, input: string): Promise<ReviewRange> {
-	if (typeof input !== "string" || !input || input.startsWith("-") || /[\s\x00-\x1f\x7f]/.test(input)) throw new Error("invalid base ref");
-	let ref = input;
-	if (!/^(?:HEAD(?:~[0-9]+)?|[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(input)) {
-		await reviewCommand(cwd, ["check-ref-format", "--allow-onelevel", input]);
-		const named = await reviewCommand(cwd, ["rev-parse", "--symbolic-full-name", "--verify", input]);
-		if (!/^refs\/(?:heads|remotes|tags)\//.test(named.trim())) throw new Error("base must be a branch, remote, tag, or full object ID");
-		ref = named.trim();
-	}
+	const ref = await normalizeReviewRef(reviewCommand, cwd, input);
 	const root = (await reviewCommand(cwd, ["rev-parse", "--show-toplevel"])).trim();
 	const head = (await reviewCommand(root, ["rev-parse", "--verify", "HEAD^{commit}"])).trim();
 	await checkReviewCheckout(root, head);
-	const base = (await reviewCommand(root, ["rev-parse", "--verify", `${ref}^{commit}`])).trim();
+	const base = await resolveReviewCommit(reviewCommand, root, ref, true);
 	if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(base) || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head)) throw new Error("invalid resolved commit");
-	const merge = await reviewGit([...(await gitSafePrefix(reviewGit, root)), "merge-base", "--all", base, head], root);
-	if (merge.code === 1) throw new Error("no merge base for committed range");
-	if (merge.code !== 0) throw new Error(`git merge-base failed: ${merge.stderr || `exit ${merge.code}`}`);
-	const bases = merge.stdout.trim().split("\n").filter(Boolean);
-	if (bases.length === 0) throw new Error("no merge base for committed range");
-	if (bases.length > 1) throw new Error("multiple merge bases for committed range");
-	const mergeBase = bases[0];
+	const mergeBase = await reviewMergeBase(reviewCommand, root, base, head);
 	const flags = ["--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--ignore-submodules=none"];
 	const raw = await reviewCommand(root, ["diff", "--raw", "-z", "--no-abbrev", ...flags, mergeBase, head, "--"]);
 	const records = raw.split("\0");

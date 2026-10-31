@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
+import { spawnSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import * as local from "./subagent-delegation-contract.ts";
@@ -83,6 +84,44 @@ for (const [role, { agent, lock }] of Object.entries(ROLE_AGENTS)) {
 	} finally {
 		if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// Verify the deployed reviewer using the installed discovery and launch planner.
+{
+	const { checkReviewerConfig } = await import("./scripts/check-reviewer-config.mjs");
+	const dir = tempDir("reviewer-config-contract-");
+	const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+	try {
+		const config = join(dir, "config"), project = join(dir, "project");
+		mkdirSync(join(config, "agents"), { recursive: true });
+		mkdirSync(join(project, ".pi"), { recursive: true });
+		process.env.PI_CODING_AGENT_DIR = config;
+		const tools = ["read", "grep", "find", "ls", "watchdog_diff", "contact_supervisor", "git_review"];
+		const entry = resolve("reviewer-git.ts");
+		writeFileSync(join(config, "agents", "reviewer.md"), `---\nname: reviewer\ndescription: Review\ntools: ${tools.join(", ")}\nsubagentOnlyExtensions: ${entry}\n---\nReview.\n`);
+		const override = { tools, subagentOnlyExtensions: [entry] };
+		writeFileSync(join(config, "settings.json"), JSON.stringify({ subagents: { agentOverrides: { reviewer: override } } }));
+		const good = await checkReviewerConfig(project, { piSubagentsDir: root });
+		assert.deepEqual(good.issues, []);
+		assert.deepEqual(good.tools, tools);
+		assert.deepEqual(good.subagentOnlyExtensions, [entry]);
+		const cli = () => spawnSync(process.execPath, [resolve("scripts/check-reviewer-config.mjs"), project], { encoding: "utf8", env: { ...process.env, PI_SUBAGENTS_DIR: root } });
+		const goodCli = cli();
+		assert.equal(goodCli.status, 0, goodCli.stderr);
+		assert.match(goodCli.stdout, /reviewer configuration: ok/);
+		writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify({ subagents: { agentOverrides: { reviewer: { tools: [...tools, "bash"] } } } }));
+		const badTools = await checkReviewerConfig(project, { piSubagentsDir: root });
+		assert.match(badTools.issues.join("\n"), /bash/);
+		const badCli = cli();
+		assert.equal(badCli.status, 1);
+		assert.match(badCli.stderr, /bash/);
+		writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify({ subagents: { agentOverrides: { reviewer: { subagentOnlyExtensions: [join(dir, "missing", "reviewer-git.ts")] } } } }));
+		const badExtension = await checkReviewerConfig(project, { piSubagentsDir: root });
+		assert.match(badExtension.issues.join("\n"), /reviewer-git\.ts.*(?:exist|missing)/i);
+	} finally {
+		if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
 		rmSync(dir, { recursive: true, force: true });
 	}
 }

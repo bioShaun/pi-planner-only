@@ -198,7 +198,9 @@ try {
 	assert.match(plannerPrompt(false), /Before reverting or reporting a child's change, check it against your task/);
 	assert.match(plannerPrompt(false), /commit with git_commit: pass paths when the work tree has unrelated changes/);
 	assert.match(plannerPrompt(false), /explorer.*reading-heavy.*logs\/transcripts.*findings only/);
-	assert.match(plannerPrompt(false), /reviewer.*no shell.*uncommitted changes only.*before git_commit/);
+	assert.match(plannerPrompt(false), /"reviewer" has no shell; review uncommitted changes before git_commit\./);
+	assert.match(plannerPrompt(false), /You plan and review; children do most work via `delegate`\./);
+	assert.match(plannerPrompt(false), /role combinations are in the delegate description/);
 	assert.match(plannerPrompt(false), /fails, times out, or reports BLOCKED.*delegate a corrected task.*last tool results.*before doing the work yourself/);
 	assert.match(plannerPrompt(false), /Children see only `task` and cannot ask mid-run/);
 	assert.match(plannerPrompt(false), /Children see only `task` and cannot ask mid-run.*Decide scope, public interfaces, cross-module approach, and data flow first.*explorer first only when unknown facts could change those decisions or the split.*local search, adjacent code, and tests stay with the executor/);
@@ -212,6 +214,7 @@ try {
 	assert.match(h.tools.get("delegate").parameters.properties.task.description, /goal as an observable result.*what must not change.*decisions already made \(public interfaces, implementation approach, existing code to reuse; pseudocode only where a key algorithm is still ambiguous\).*acceptance with key edge cases.*exact check command and expected result/);
 	assert.match(h.tools.get("delegate").parameters.properties.task.description, /Ask only for checks that finish well within the child's time limit; keep long jobs \(full pipelines, large data processing\) out of the task and run them outside delegation/);
 	assert.match(h.tools.get("delegate").parameters.properties.role.description, /no shell, sees files and uncommitted changes \(review before committing\)/);
+	assert.match(h.tools.get("delegate").parameters.properties.role.description, /subagentOnlyExtensions.*git_review.*full SHA.*overview.*every file.*all pages.*INCOMPLETE/);
 	assert.match(h.tools.get("delegate").description, /Worth it for multi-file work or long reading; outside strict mode, do small tasks \(about ≤2 files\) yourself\./);
 	assert.match(h.tools.get("delegate").description, /Batch calls in one message only when independent and lock-compatible.*independent explorers may run together.*still-needed validator may join a reviewer only if the reviewer needs no check result.*checks change no source.*do not batch worker and validator in one repository, where the second is refused and counted/);
 	assert.match(h.tools.get("delegate").description, /Deliverables that require writing files \(scripts, reports, output files\) go to worker/);

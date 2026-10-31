@@ -44,6 +44,7 @@ const respond = (bus, req, over = {}) =>
 		assert.equal(out.ok, true);
 		const [req] = sent(bus, REQUEST);
 		assert.match(req.task, /-before\n\+after/);
+		assert.doesNotMatch(req.task, /git_review/, "Root guidance must not be sent to the reviewer");
 		assert.ok(req.task.includes(base));
 		assert.ok(req.task.includes(head));
 		assert.ok(out.text.includes(base));
@@ -96,6 +97,7 @@ const respond = (bus, req, over = {}) =>
 		const large = fakeBus();
 		const largeOut = await runDelegation(deps(large), { role: "reviewer", task: "review", cwd: repo, base });
 		assert.match(largeOut.text, /32 KiB/);
+		assert.match(largeOut.text, /subagentOnlyExtensions.*git_review.*without base.*full SHA.*overview.*every file.*all pages.*INCOMPLETE/);
 		assert.equal(sent(large, REQUEST).length, 0);
 	} finally {
 		rmSync(repo, { recursive: true, force: true });

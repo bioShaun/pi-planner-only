@@ -27,6 +27,7 @@
     "delegate.ts",
     "format.ts",
     "git.ts",
+    "reviewer-git.ts",
     "handoff.ts",
     "host.ts",
     "status-color.ts",
@@ -46,7 +47,7 @@
     "piHost": "1.4.0"
   },
   "scripts": {
-    "test": "node --test isolated-release.test.mjs && node --experimental-strip-types contract.test.mjs && node --experimental-strip-types git.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types host.test.mjs && node --experimental-strip-types host-runtime.test.mjs && node --experimental-strip-types handoff.test.mjs && node --experimental-strip-types status-color.test.mjs && node --experimental-strip-types index.test.mjs && node --experimental-strip-types --test native-handoff.test.mjs",
+    "test": "node --test isolated-release.test.mjs && node --experimental-strip-types contract.test.mjs && node --experimental-strip-types git.test.mjs && node --experimental-strip-types reviewer-git.test.mjs && node --experimental-strip-types reviewer-git-runtime.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types host.test.mjs && node --experimental-strip-types host-runtime.test.mjs && node --experimental-strip-types handoff.test.mjs && node --experimental-strip-types status-color.test.mjs && node --experimental-strip-types index.test.mjs && node --experimental-strip-types --test native-handoff.test.mjs",
     "typecheck": "tsc --noEmit",
     "test:release": "npm run typecheck && npm test",
     "test:release:isolated": "node scripts/test-release-isolated.mjs",
