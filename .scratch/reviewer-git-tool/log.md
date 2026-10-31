@@ -104,3 +104,10 @@ ID   State      Output               E-Level  Times(r/u/s)   Command [run=0/1]
 - 重跑变异检查前：`slot audit` 没发现绕过 slot 的重进程；`slot status` 显示 io/cpu/gpu/nf 各池均无 running/queued。首轮结果另存为 mutate-01a-r1.txt。
 - `slot cpu -- node mutate.mjs` 退出 0；19 个变异全部被杀死（mutate-01a.txt）。Root 复跑未变异的 reviewer-git.test.mjs 退出 0（约 31s），`tsc --noEmit` 退出 0。01a 验收通过（df2d0d0）。
 - 下一步：01b `diff`，同一 worktree。
+
+## 2026-10-31 01b-1 diff 概览核对（Root）
+- worker run 2b1773ef 提交 30e4e88（git.ts、reviewer-git.test.mjs）。worker 报告红灯为 `Error: diff not implemented`，之后绿灯。Root 复跑 reviewer-git.test.mjs：5 pass，耗时约 31s；`tsc --noEmit` 退出 0。
+- 变异检查 mutate-01b1.mjs（9 个：去掉各个 diff 安全选项、gitlink 判定、binary 计数、“逐文件读取尚未验证”标记、raw/numstat 配对与路径一致性校验）。启动前 `slot audit` 没发现绕过 slot 的重进程；`slot status` 中没有 running/queued 任务。
+- 结果（mutate-01b1.txt，两轮）：第 1 轮有 3 个变异因模式在文件中出现多次而跳过，改用唯一模式重跑。最终 noIgnoreSub、noExtDiff、noTextconv、noRenames、gitlinkMode、binaryCount、pendingNote、nameCheck 均被杀死；pairCheck（`records.length !== stats.length * 2`）存活，numstat 少一条记录时，概览会静默漏掉该文件。
+- Root 补测 f3b5429：故障注入变体 numstat-missing-last。去掉该守卫后红灯为 `Missing expected rejection: numstat-missing-last`；恢复后 reviewer-git.test.mjs 5 pass。01b-1 验收通过。
+- 下一步：01b-2 带 path 的 diff，续用原 worker。
