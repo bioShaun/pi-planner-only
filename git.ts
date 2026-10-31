@@ -87,6 +87,54 @@ const QUERY_MAX_OUTPUT = 1024 * 1024;
 const REVIEW_DIFF_SAFE = ["--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--ignore-submodules=none", "--no-relative"];
 const REVIEW_DIFF_PATCH = ["--unified=3", "--diff-algorithm=myers", "--indent-heuristic", "--src-prefix=a/", "--dst-prefix=b/"];
 
+async function reviewShowPath(command: ReviewCommand, root: string, rev: string, path: string): Promise<{ body: string; symlink: boolean }> {
+	const output = await command(root, ["ls-tree", "-z", "--full-tree", rev, "--", path]);
+	if (!output) throw new Error(`${JSON.stringify(path)}: path not found`);
+	const match = /^(100644|100755|120000|040000|160000) (blob|tree|commit) ([0-9a-f]{40}|[0-9a-f]{64})\t([^\0]+)\0$/.exec(output);
+	if (!match || match[4] !== path) throw new Error(`${JSON.stringify(path)}: invalid or multiple ls-tree records`);
+	const [, mode, type, oid] = match;
+	if (mode === "160000" && type === "commit") throw new Error(`${JSON.stringify(path)}: gitlink cannot be read`);
+	if (mode === "040000" && type === "tree") {
+		const listing = await command(root, ["ls-tree", "-z", "--full-tree", oid]);
+		if (!listing) return { body: "", symlink: false };
+		const records = listing.split("\0");
+		if (records.pop() !== "") throw new Error(`${JSON.stringify(path)}: invalid tree listing`);
+		const lines = records.map(record => {
+			const entry = /^(100644|100755|120000|040000|160000) (blob|tree|commit) ([0-9a-f]{40}|[0-9a-f]{64})\t([^\0]+)$/.exec(record);
+			if (!entry || (entry[1] === "040000" ? entry[2] !== "tree" : entry[1] === "160000" ? entry[2] !== "commit" : entry[2] !== "blob")) throw new Error(`${JSON.stringify(path)}: invalid tree listing`);
+			return `${entry[1]} ${entry[2]} ${entry[3]} ${JSON.stringify(entry[4])}`;
+		});
+		return { body: lines.join("\n") + "\n", symlink: false };
+	}
+	if (!["100644", "100755", "120000"].includes(mode) || type !== "blob") throw new Error(`${JSON.stringify(path)}: invalid ls-tree mode or type`);
+	const body = await command(root, ["cat-file", "blob", oid]);
+	if (body.includes("\0")) throw new Error(`${JSON.stringify(path)}: binary blob cannot be read as text`);
+	return { body, symlink: mode === "120000" };
+}
+
+async function reviewShowStats(command: ReviewCommand, root: string, rev: string): Promise<{ body: string; parent: string }> {
+	const parents = (await command(root, ["show", "-s", "--no-show-signature", "--format=%P", rev])).trim();
+	if (parents && !/^(?:[0-9a-f]{40}|[0-9a-f]{64})(?: (?:[0-9a-f]{40}|[0-9a-f]{64}))*$/.test(parents)) throw new Error("invalid commit parents");
+	const parent = parents ? parents.split(" ")[0] : "empty-tree";
+	let compare = parent;
+	if (parent === "empty-tree") {
+		const format = (await command(root, ["rev-parse", "--show-object-format"])).trim();
+		if (format === "sha1") compare = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+		else if (format === "sha256") compare = "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321";
+		else throw new Error(`unsupported object format: ${format}`);
+	}
+	const metadata = await command(root, ["show", "-s", "--no-show-signature", "--format=fuller", rev]);
+	const numstat = await command(root, ["diff", ...REVIEW_DIFF_SAFE, "--numstat", "-z", compare, rev, "--"]);
+	const records = numstat ? numstat.split("\0") : [];
+	if (numstat && records.pop() !== "") throw new Error("invalid show numstat output");
+	const lines = records.map(record => {
+		const stat = /^(\d+|-)\t(\d+|-)\t([^\0]+)$/.exec(record);
+		if (!stat || (stat[1] === "-") !== (stat[2] === "-")) throw new Error("invalid show numstat record");
+		return `${stat[1] === "-" ? "-" : `+${stat[1]}`} ${stat[2] === "-" ? "-" : `-${stat[2]}`} ${JSON.stringify(stat[3])}`;
+	});
+	return { body: `${metadata}${metadata.endsWith("\n") ? "" : "\n"}first-parent: ${parent}\n${lines.length ? lines.join("\n") + "\n" : ""}`, parent };
+}
+
 async function reviewFilePatch(command: ReviewCommand, root: string, base: string, head: string, path: string): Promise<string> {
 	try {
 		const raw = await command(root, ["diff", ...REVIEW_DIFF_SAFE, "--raw", "-z", "--no-abbrev", base, head, "--", path]);
@@ -156,9 +204,10 @@ export async function runReviewQuery(request: ReviewQueryRequest, cwd: string, o
 	for (const value of [request.base, request.head, request.rev, request.contentId]) if (value !== undefined && typeof value !== "string") throw new Error("invalid query field");
 	const offset = request.offset ?? 1, limit = request.limit ?? 1000;
 	if (!Number.isSafeInteger(offset) || offset < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error("invalid offset or limit");
-	if (request.operation === "show") throw new Error("show not implemented");
+	if (request.operation === "show" && (request.base !== undefined || request.head !== undefined || !request.rev)) throw new Error("show requires rev and does not accept base or head");
+	if (request.operation !== "show" && request.rev !== undefined) throw new Error(`${request.operation} does not accept rev`);
 	if (request.operation === "log" && request.path !== undefined) throw new Error("log does not accept path");
-	if (!request.base || !request.head) throw new Error("base and head required");
+	if (request.operation !== "show" && (!request.base || !request.head)) throw new Error("base and head required");
 	const runner = options.runner ?? reviewQueryRunner;
 	const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
 	Object.assign(env, { LC_ALL: "C", GIT_PAGER: "cat", GIT_TERMINAL_PROMPT: "0" });
@@ -194,21 +243,34 @@ export async function runReviewQuery(request: ReviewQueryRequest, cwd: string, o
 	let attr: string | undefined;
 	const command: ReviewCommand = (dir, args) => reviewQueryCommand((cwd, accepted) => invoke([...REVIEW_QUERY_PREFIX, ...(attr ? [`--attr-source=${attr}`] : []), ...accepted], cwd), dir, args);
 	const root = (await command(cwd, ["rev-parse", "--show-toplevel"])).trim();
-	const head = await resolveReviewCommit(command, root, request.head, false, "head");
-	const base = await resolveReviewCommit(command, root, request.base);
-	attr = head;
-	const mergeBase = await reviewMergeBase(command, root, base, head);
-	const body = request.operation === "log"
-		? await command(root, ["log", "--no-show-signature", "--format=%H %s", `${mergeBase}..${head}`, "--"])
-		: request.path === undefined ? await reviewDiffOverview(command, root, mergeBase, head) : await reviewFilePatch(command, root, mergeBase, head, request.path);
-	const identity = JSON.stringify([request.operation, base, head, mergeBase, request.operation === "diff" ? request.path ?? null : null]);
+	let body: string, identity: string, headerFields: string;
+	if (request.operation === "show") {
+		const rev = await resolveReviewCommit(command, root, request.rev!, false, "rev");
+		attr = rev;
+		identity = JSON.stringify(["show", rev, request.path ?? null]);
+		if (request.path === undefined) {
+			const result = await reviewShowStats(command, root, rev); body = result.body; headerFields = `rev=${rev} parent=${result.parent}`;
+		} else {
+			const result = await reviewShowPath(command, root, rev, request.path); body = result.symlink ? `symlink\n${result.body}` : result.body; headerFields = `rev=${rev} path=${request.path}`;
+		}
+	} else {
+		const head = await resolveReviewCommit(command, root, request.head!, false, "head");
+		const base = await resolveReviewCommit(command, root, request.base!);
+		attr = head;
+		const mergeBase = await reviewMergeBase(command, root, base, head);
+		body = request.operation === "log"
+			? await command(root, ["log", "--no-show-signature", "--format=%H %s", `${mergeBase}..${head}`, "--"])
+			: request.path === undefined ? await reviewDiffOverview(command, root, mergeBase, head) : await reviewFilePatch(command, root, mergeBase, head, request.path);
+		identity = JSON.stringify([request.operation, base, head, mergeBase, request.operation === "diff" ? request.path ?? null : null]);
+		headerFields = `base=${base} head=${head} merge-base=${mergeBase}`;
+	}
 	const contentId = `sha256:${createHash("sha256").update(identity).update("\0").update(body).digest("hex")}`;
 	if (offset > 1 && request.contentId !== contentId) throw new Error("内容已变化或缺少 contentId，请从 offset 1 重读");
 	const lines = body ? body.split("\n") : [];
 	const noNewline = !!body && !body.endsWith("\n");
 	if (body.endsWith("\n")) lines.pop();
 	if (offset > lines.length && lines.length) throw new Error("offset exceeds content");
-	const header = `git_review ${request.operation}: base=${base} head=${head} merge-base=${mergeBase} contentId=${contentId}`;
+	const header = `git_review ${request.operation}: ${headerFields} contentId=${contentId}`;
 	const selected: string[] = [];
 	for (let i = offset - 1; i < lines.length && selected.length < Math.min(limit, 998); i++) {
 		const line = lines[i] + (noNewline && i === lines.length - 1 ? " (no newline at end)" : "");

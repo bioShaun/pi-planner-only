@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import * as api from "./git.ts";
@@ -47,6 +47,104 @@ test("log range has a path separator", async () => {
 test("invalid ref messages identify the field", async () => {
 	const command = async () => { throw new Error("unexpected command"); };
 	for (const field of ["base", "head", "rev"]) await assert.rejects(api.resolveReviewCommit(command, ".", "-bad", false, field), new RegExp(`invalid ${field} ref`));
+});
+
+test("show reads historical objects and first-parent statistics safely", async () => {
+	const dir = mkdtempSync(join(process.env.TMPDIR, "review-show-"));
+	const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+	try {
+		git("init", "-q"); git("config", "user.name", "Test"); git("config", "user.email", "test@example.com");
+		mkdirSync(join(dir, "docs")); const content = Array.from({ length: 22 }, (_, i) => `多字节 ${i}`).join("\n");
+		writeFileSync(join(dir, "docs", "file"), content); for (const name of ["a", "b", "c"]) writeFileSync(join(dir, "docs", name), name);
+		writeFileSync(join(dir, "binary"), "a\0b\n"); symlinkSync("docs/file", join(dir, "link"));
+		git("add", "."); git("commit", "-qm", "root"); const root = git("rev-parse", "HEAD");
+		writeFileSync(join(dir, "docs", "file"), "committed change\n"); writeFileSync(join(dir, "other"), "other\n"); git("add", "."); git("update-index", "--add", "--cacheinfo", `160000,${root},nested`); git("commit", "-qm", "second");
+		const second = git("rev-parse", "HEAD"); const tree = git("rev-parse", "HEAD^{tree}");
+		const merge = git("commit-tree", tree, "-p", root, "-p", second, "-m", "merge");
+		writeFileSync(join(dir, "docs", "file"), "working tree change\n");
+		const calls = []; const runner = async (args, cwd, options) => { calls.push(args); return api.reviewQueryRunner(args, cwd, options); };
+		const query = (request, options = {}) => api.runReviewQuery({ operation: "show", ...request }, dir, { runner, ...options });
+		let next = 1, id, assembled = "";
+		while (next) {
+			const page = await query({ rev: root, path: "docs/file", offset: next, limit: 5, ...(id ? { contentId: id } : {}) });
+			id ??= /contentId=(sha256:[0-9a-f]{64})/.exec(page)?.[1]; assert.ok(id);
+			const body = page.split("\n").slice(1, -1).join("\n");
+			const noNewline = body.endsWith(" (no newline at end)");
+			assembled += noNewline ? body.slice(0, -" (no newline at end)".length) : `${body}\n`;
+			next = Number(/next offset: (\d+)$/.exec(page)?.[1]);
+		}
+		assert.equal(assembled, content);
+		for (const contentId of [undefined, "bad", `sha256:${"0".repeat(64)}`]) await assert.rejects(query({ rev: root, path: "docs/file", offset: 2, contentId }), /contentId/i);
+		await assert.rejects(query({ rev: second, path: "docs/file", offset: 2, contentId: id }), /contentId/i);
+		const link = await query({ rev: root, path: "link" }); assert.match(link, /symlink/i); assert.match(link, /docs\/file/);
+		const directory = await query({ rev: root, path: "docs", limit: 1 });
+		const dirId = /contentId=(sha256:[0-9a-f]{64})/.exec(directory)?.[1]; assert.ok(dirId);
+		const dirNext = Number(/next offset: (\d+)$/.exec(directory)?.[1]); assert.ok(dirNext > 1);
+		assert.match(await query({ rev: root, path: "docs", offset: dirNext, contentId: dirId }), /file/);
+		await assert.rejects(query({ rev: root, path: "binary" }), /binary/i);
+		await assert.rejects(query({ rev: second, path: "nested" }), /gitlink/i);
+		await assert.rejects(query({ rev: root, path: "missing" }), /missing|not found/i);
+		for (const request of [{ rev: root, base: root }, { rev: root, head: root }, {}, { rev: "-bad" }]) await assert.rejects(query(request));
+		for (const operation of ["log", "diff"]) await assert.rejects(api.runReviewQuery({ operation, base: root, head: second, rev: root }, dir), /rev/i);
+		const rootOut = await query({ rev: root }); assert.match(rootOut, /parent=empty-tree/); assert.match(rootOut, /docs\/file/); assert.doesNotMatch(rootOut, /diff --git|@@/);
+		const normal = await query({ rev: second }); assert.match(normal, new RegExp(`parent=${root}`)); assert.match(normal, /other/);
+		const mergeOut = await query({ rev: merge }); assert.match(mergeOut, new RegExp(`parent=${root}`)); assert.match(mergeOut, /other/); assert.doesNotMatch(mergeOut, /diff --git|@@/);
+		for (const [rev, output] of [[second, normal], [merge, mergeOut]]) {
+			for (const line of git("diff", "--numstat", root, rev, "--").split("\n")) {
+				const [added, deleted, path] = line.split("\t");
+				assert.ok(output.includes(`${added === "-" ? "-" : `+${added}`} ${deleted === "-" ? "-" : `-${deleted}`} ${JSON.stringify(path)}`), line);
+			}
+		}
+		const marker = join(dir, "gpg-marker"), script = join(dir, "gpg"); writeFileSync(script, `#!/bin/sh\ntouch '${marker}'\n`); chmodSync(script, 0o755);
+		git("config", "log.showSignature", "true"); git("config", "gpg.program", script);
+		const signed = `tree ${tree}\nparent ${root}\nauthor Test <test@example.com> 1700000000 +0000\ncommitter Test <test@example.com> 1700000000 +0000\ngpgsig -----BEGIN PGP SIGNATURE-----\n fake\n -----END PGP SIGNATURE-----\n\nsigned\n`;
+		const signedOid = execFileSync("git", ["hash-object", "-t", "commit", "-w", "--stdin"], { cwd: dir, encoding: "utf8", input: signed }).trim();
+		git("show", "-s", "--show-signature", signedOid); assert.ok(existsSync(marker), "signature fixture must invoke gpg without the guard"); rmSync(marker);
+		await query({ rev: signedOid }); assert.equal(existsSync(marker), false);
+		for (const args of calls) {
+			if (args[0] === "--version") continue;
+			assert.deepEqual(args.slice(0, 5), ["--no-pager", "--no-lazy-fetch", "--no-replace-objects", "--literal-pathspecs", "--no-optional-locks"]);
+			const i = args[11]?.startsWith("--attr-source=") ? 12 : 11; const subcommand = args[i]; assert.ok(api.REVIEW_QUERY_COMMANDS.includes(subcommand));
+			if (["show", "ls-tree", "cat-file", "diff"].includes(subcommand)) assert.ok(args[11].startsWith("--attr-source="));
+			if (subcommand === "show") { assert.ok(args.includes("-s")); assert.ok(args.includes("--no-show-signature")); }
+			if (subcommand === "diff") { assert.ok(args.includes("--numstat")); assert.ok(!args.some(a => a === "-p" || a === "--patch" || a.startsWith("--unified"))); }
+		}
+		for (const variant of ["multiple", "wrong-path", "invalid-mode"]) {
+			const faulty = async (args, cwd, options) => {
+				const result = await api.reviewQueryRunner(args, cwd, options);
+				if (args.includes("ls-tree")) {
+					if (variant === "multiple") result.stdout += result.stdout;
+					if (variant === "wrong-path") result.stdout = result.stdout.replace("docs/file\0", "other\0");
+					if (variant === "invalid-mode") result.stdout = result.stdout.replace(/^100644/, "999999");
+				}
+				return result;
+			};
+			await assert.rejects(query({ rev: root, path: "docs/file" }, { runner: faulty }), /invalid|multiple/i, variant);
+		}
+		for (const variant of ["parents", "object-format", "numstat-unterminated", "numstat-mixed", "tree-listing"]) {
+			const faulty = async (args, cwd, options) => {
+				const result = await api.reviewQueryRunner(args, cwd, options);
+				if (variant === "parents" && args.includes("--format=%P")) result.stdout = "not-a-sha\n";
+				if (variant === "object-format" && args.includes("--show-object-format")) result.stdout = "unsupported\n";
+				if (variant === "numstat-unterminated" && args.includes("--numstat")) result.stdout = result.stdout.slice(0, -1);
+				if (variant === "numstat-mixed" && args.includes("--numstat")) result.stdout = "-\t1\tfile\0";
+				if (variant === "tree-listing" && args.includes("ls-tree") && !args.includes("--")) result.stdout = "malformed\0";
+				return result;
+			};
+			await assert.rejects(query({ rev: root, ...(variant === "tree-listing" ? { path: "docs" } : {}) }, { runner: faulty }), /invalid|unsupported/i, variant);
+		}
+		console.log(`show stats sample:\n${normal}\nshow path sample:\n${link}`);
+	} finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("show root statistics support SHA-256 repositories", async () => {
+	const dir = mkdtempSync(join(process.env.TMPDIR, "review-show-sha256-"));
+	const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+	try {
+		git("init", "-q", "--object-format=sha256"); git("config", "user.name", "Test"); git("config", "user.email", "test@example.com");
+		writeFileSync(join(dir, "file"), "sha256\n"); git("add", "."); git("commit", "-qm", "root"); const rev = git("rev-parse", "HEAD");
+		const out = await api.runReviewQuery({ operation: "show", rev }, dir); assert.match(out, /parent=empty-tree/); assert.match(out, /file/);
+	} finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("file diff returns safe complete patches and refuses unsafe inputs", async () => {
@@ -261,7 +359,7 @@ try {
 	const query = (request = req, options) => api.runReviewQuery(request, cwd, options);
 	for (const path of ["", "../x", "/etc/passwd", "a/./b", "a/../b", "a\0b", "a\nb"]) assert.throws(() => api.validateReviewPath(path), undefined, path);
 	for (const path of ["docs/-f.md", ":(top)foo", ":name"]) assert.doesNotThrow(() => api.validateReviewPath(path));
-	await assert.rejects(query({ operation: "show" }), /not implemented/i);
+	await assert.rejects(query({ operation: "show" }), /rev/i);
 	for (const value of ["--output=x", "-c", "--exec-path", "-D", base.slice(0, 8), "a..b", "HEAD@{1}", "HEAD^"]) {
 		for (const field of ["base", "head"]) await assert.rejects(query({ ...req, [field]: value }), undefined, `${field} ${value}`);
 	}
@@ -294,7 +392,9 @@ try {
 	const calls = [];
 	const runner = async (args, dir, options) => { calls.push({ args, options }); return api.reviewQueryRunner(args, dir, options); };
 	process.env.GIT_DIR = "/injected";
-	try { await query({ ...req, base: "base-branch" }, { runner }); await query(req, { runner }); } finally { delete process.env.GIT_DIR; }
+	let pendingEnvQuery;
+	try { pendingEnvQuery = query({ ...req, base: "base-branch" }, { runner }); } finally { delete process.env.GIT_DIR; }
+	await pendingEnvQuery; await query(req, { runner });
 	assert.equal(calls.filter(c => c.args[0] === "--version").length, 1);
 	assert.ok(calls.some(c => c.args.includes("check-ref-format")));
 	assert.ok(calls.some(c => c.args.includes("merge-base")));
