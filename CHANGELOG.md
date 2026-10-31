@@ -2,9 +2,19 @@
 
 ## 0.9.0-lite.0 - unreleased
 
+- Auto handoff chain (`be287c3`): `PI_PLANNER_ONLY_HANDOFF_AUTO_LIMIT` caps consecutive Root-initiated handoffs in `auto` mode (default 3). The delivery that would exceed the cap waits in the editor with a notice; real user input or a user-initiated handoff resets the count. `/planner-only status` shows `chain current/limit` (`?` when unknown). Brief text separates user authorization (with sources) from Root decisions.
+
+- Native task sizing (`f363b30`, `e44bdef`): Native Root prompt asks for one independently acceptable deliverable per delegation (merge steps that share one acceptance or expensive read; split independent deliverables). When a child asks to split or returns a partial result, shrink this delivery and re-dispatch (reuse the atomic agent / same model first). Merge review fixes that share state-consistency or lock-protocol work before dependents; concurrency/lock/persistence deliveries need an independent reviewer before dependent work.
+
 - The `handoff` tool requires a 1-600 character, three-line progress account of user-visible results, remaining work and whether the next step advances the original goal; its execution entry also validates the length and type. Confirm and auto-limit editor notices show that account; retry or replacement retains or replaces it together with the brief.
 
 - Context warnings identify themselves as extension notices. In confirm and auto modes they call for reporting progress and stopping only when all requested work is complete, the user explicitly asks to pause, or continuation genuinely needs a user decision; otherwise authorized goal-advancing work, including prerequisites, is handed off. Handoff instructions attribute authorization to real user sources, not plugin-generated notices or Root decisions, without dismissing user-submitted content based on its prefix.
+
+- Empty optional `delegate` `base` (`b648a6a` / #41): strict tool schemas send `""` for omitted optional strings; an empty or whitespace-only `base` is treated as absent so non-reviewer roles are no longer refused with "base is only valid for reviewer".
+
+- Native local-task exception (`8db3e6c`): Native prompt keeps prefer-delegate, but allows Root to finish clear, local changes and necessary verification when it already has the context and no further investigation, test design, or independent review is needed (README EN/zh synced).
+
+- Manual skill `brainstorming-lite` (`49740ae`): decision-only skill under `.agents/skills/` with `disable-model-invocation: true` (no automatic invocation).
 
 - Root handoff `brief` now also asks for approaches ruled out and why, how done work was verified (command -> result; anything unverified marked as unverified), and known pitfalls, so a fresh session does not retry rejected routes or treat unverified work as fact.
 
