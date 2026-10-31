@@ -155,3 +155,8 @@ ID   State      Output               E-Level  Times(r/u/s)   Command [run=0/1]
   - 补 contentId 身份断言。之前把 showIdentityPath、pathIdentity 记为“等价变异”的理由不成立：身份是显式契约，不能用正文相同来豁免。
 - 已接受的偏差：index.ts:73 受 1500 字符预算限制；Root 指引放在拒绝信息中。
 - 修复委派给 worker run 44b4c2d2（续用 f7e2a6b5，模型不变）。
+
+## 2026-10-31 实现审查第 2 轮（reviewer run dd08875e，范围 f7c1260..c54911e）
+- 修复由 worker run 44b4c2d2 提交 c54911e；Root 复跑 reviewer-git 16/16、runtime 2/2，git/reviewer-range/index/delegate 测试和 tsc 均通过。
+- 复审 PASS，Merge verdict OK，无新问题。报告：subagent-artifacts/dd08875e-f484-4252-8d86-ded193838db0_reviewer_output.md。fsmonitor 的阳性对照只能证明 fixture 有效（git status 会触发 hook）；`core.fsmonitor=false` 保护的存在由前缀断言覆盖。
+- 未验证项：`--no-mailmap/--no-decorate/--no-notes` 只在 Git 2.51 上测过，没有用 2.45 实测。
