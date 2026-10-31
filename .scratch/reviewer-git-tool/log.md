@@ -131,3 +131,13 @@ ID   State      Output               E-Level  Times(r/u/s)   Command [run=0/1]
 - worker run e0f0b9c9 提交 18561fc：新增 reviewer-git.ts、reviewer-git-runtime.test.mjs（加入 scripts.test），package.json files 加入 reviewer-git.ts。worker 报告的红灯是入口文件不存在、files 中缺少该文件，之后转绿。
 - Root 复跑 reviewer-git-runtime.test.mjs：2 pass。测试用宿主 DefaultResourceLoader 与 createAgentSession 加载，断言：只注册 git_review；成功调用的文本原样进入结果；失败调用 isError=true；`path: ""` 视为未提供；pi.extensions 仍是 ["./index.ts"]；入口不 import index.ts。
 - 部署位置：操作员 settings 的 packages 里含 `https://github.com/bioShaun/pi-planner-only`，检出在 ~/.pi/agent/git/github.com/bioShaun/pi-planner-only。03 的 subagentOnlyExtensions 将指向该目录下的 reviewer-git.ts，前提是合并、推送并更新包之后。
+
+## 2026-10-31 02b 契约与提示核对（Root）
+- worker run e25d9796 提交 d888db3：新增 scripts/check-reviewer-config.mjs（真实 discoverAgents + resolvePiLaunchToolPlan，CLI 为 `node scripts/check-reviewer-config.mjs [cwd]`），contract.test.mjs 加隔离 fixture 和两例故障注入（项目 override 加 bash、扩展文件不存在），并改了提示文本。worker 报告红灯为检查模块缺失、提示断言失败，之后转绿。默认安装下 contract.test 缺 `@earendil-works/pi-ai`，绿灯用的是隔离安装（PI_SUBAGENTS_DIR）。
+- 处理 worker 的阻塞请求：plannerPrompt 的 <1500 字符断言（issue #25 的预算）不放宽。
+- Root 修正 f7c1260：
+  - 恢复 worker 为省字符改写的两句无关提示（"You plan and review; …"、"role combinations are in the delegate description"）；
+  - reviewer 角色行只去掉 "only"，改为 "has no shell; review uncommitted changes before git_commit."，plannerPrompt 为 1492/1483 字符；
+  - delegate.ts 中写给 Root 的 git_review 指引从 reviewer 的任务文本挪到 range 准备失败（如 >32 KiB）时返回给 Root 的拒绝信息。
+- 红灯：index.test 新断言不匹配；delegate.test 报 "Root guidance must not be sent to the reviewer"。绿灯：index.test、delegate.test、reviewer-range.test、tsc 均通过。
+- 与 spec 第 7 节的偏差：index.ts:73 没有补 git_review 说明（受 1500 字符预算限制），条件说明放在 delegate 的 role 描述和拒绝信息里。
