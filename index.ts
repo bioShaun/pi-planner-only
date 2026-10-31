@@ -66,13 +66,13 @@ export function isStrict(env: NodeJS.ProcessEnv = process.env): boolean {
 export function plannerPrompt(strict: boolean, limits: DelegationLimits = DEFAULT_LIMITS): string {
 	return [
 		"[PLANNER-ONLY]",
-		"You plan and review; children do most work via `delegate`.",
+		"Plan and review; delegate most work.",
 		strict
 			? "- Strict mode: no edit, write, or bash; delegate implementation to \"worker\", checks to \"validator\"."
 			: "- Do small things yourself (about ≤2 files or ≤10 minutes); send larger implementation straight to \"worker\".",
-		"- Roles: \"explorer\" for reading-heavy logs/transcripts, findings only; \"validator\" runs checks and writes nothing; \"reviewer\" has no shell, uncommitted changes only: review before git_commit.",
+		"- Roles: \"explorer\" for reading-heavy logs/transcripts, findings only; \"validator\" runs checks and writes nothing; \"reviewer\" has no shell, reviews uncommitted changes before git_commit or committed full SHAs via git_review if configured.",
 		"- Children see only `task` and cannot ask mid-run. Decide scope, public interfaces, cross-module approach, and data flow first. Send an explorer first only when unknown facts could change those decisions or the split; local search, adjacent code, and tests stay with the executor.",
-		"- Batch independent, lock-compatible tasks; role combinations are in the delegate description.",
+		"- Batch independent, lock-compatible tasks; see delegate description.",
 		"- One delegation = one deliverable checkable on its own; fold setup in; merge edits sharing a check.",
 		`- A child has ${formatTimeoutLimit(limits.timeoutMs)}. Do not delegate work that needs longer; split it.`,
 		"- For another repository, pass `cwd` to delegate, git_audit, and git_commit.",
@@ -563,7 +563,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 		promptSnippet: "delegate: hand a self-contained task to a cheaper child agent (worker, explorer, validator, reviewer)",
 		parameters: Type.Object({
 			role: Type.Union(ROLES.map((r) => Type.Literal(r)), {
-				description: "worker: implement, including any deliverable that is a written file; explorer: search/read code, logs, or transcripts and return findings; validator: run existing checks only, writes no files; reviewer: independent read-only review; no shell, sees files and uncommitted changes (review before committing); for committed changes use base to supply the complete range diff.",
+				description: "worker: implement, including any deliverable that is a written file; explorer: search/read code, logs, or transcripts and return findings; validator: run existing checks only, writes no files; reviewer: independent read-only review; no shell, sees files and uncommitted changes (review before committing); for committed changes use base to supply the complete range diff. When reviewer has subagentOnlyExtensions mounting git_review (not available in every installation), give large committed ranges as full SHA values in the task; ask reviewer to read the overview and every file, all pages, or report INCOMPLETE.",
 			}),
 			task: Type.String({
 				minLength: 1,

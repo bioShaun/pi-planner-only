@@ -44,6 +44,7 @@ const respond = (bus, req, over = {}) =>
 		assert.equal(out.ok, true);
 		const [req] = sent(bus, REQUEST);
 		assert.match(req.task, /-before\n\+after/);
+		assert.match(req.task, /subagentOnlyExtensions.*git_review.*full SHA.*overview.*every file.*all pages.*INCOMPLETE/);
 		assert.ok(req.task.includes(base));
 		assert.ok(req.task.includes(head));
 		assert.ok(out.text.includes(base));
