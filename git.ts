@@ -35,19 +35,19 @@ export interface ReviewRange { root: string; base: string; head: string; mergeBa
 
 type ReviewCommand = (cwd: string, args: string[]) => Promise<string>;
 
-async function normalizeReviewRef(command: ReviewCommand, root: string, input: string): Promise<string> {
-	if (typeof input !== "string" || !input || input.startsWith("-") || /[\s\x00-\x1f\x7f]/.test(input)) throw new Error("invalid base ref");
+async function normalizeReviewRef(command: ReviewCommand, root: string, input: string, field: "base" | "head" | "rev" = "base"): Promise<string> {
+	if (typeof input !== "string" || !input || input.startsWith("-") || /[\s\x00-\x1f\x7f]/.test(input)) throw new Error(`invalid ${field} ref`);
 	let ref = input;
 	if (!/^(?:HEAD(?:~[0-9]+)?|[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(input)) {
 		await command(root, ["check-ref-format", "--allow-onelevel", input]);
 		ref = (await command(root, ["rev-parse", "--symbolic-full-name", "--verify", input])).trim();
-		if (!/^refs\/(?:heads|remotes|tags)\//.test(ref)) throw new Error("base must be a branch, remote, tag, or full object ID");
+		if (!/^refs\/(?:heads|remotes|tags)\//.test(ref)) throw new Error(`${field} must be a branch, remote, tag, or full object ID`);
 	}
 	return ref;
 }
 
-export async function resolveReviewCommit(command: ReviewCommand, root: string, input: string, normalized = false): Promise<string> {
-	const ref = normalized ? input : await normalizeReviewRef(command, root, input);
+export async function resolveReviewCommit(command: ReviewCommand, root: string, input: string, normalized = false, field: "base" | "head" | "rev" = "base"): Promise<string> {
+	const ref = normalized ? input : await normalizeReviewRef(command, root, input, field);
 	const result = (await command(root, ["rev-parse", "--verify", `${ref}^{commit}`])).trim();
 	if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(result)) throw new Error("invalid resolved commit");
 	return result;
@@ -78,6 +78,10 @@ export interface ReviewQueryRequest {
 type ReviewQueryRunner = (args: readonly string[], cwd: string, options: { signal?: AbortSignal; env: NodeJS.ProcessEnv }) => Promise<{ stdout: string; stderr?: string; code: number }>;
 
 export const REVIEW_QUERY_COMMANDS = ["rev-parse", "check-ref-format", "merge-base", "log", "diff", "show", "ls-tree", "cat-file"] as const;
+export async function reviewQueryCommand(command: ReviewCommand, cwd: string, args: string[]): Promise<string> {
+	if (!(REVIEW_QUERY_COMMANDS as readonly string[]).includes(args[0])) throw new Error("git command not allowed");
+	return command(cwd, args);
+}
 const REVIEW_QUERY_PREFIX = ["--no-pager", "--no-lazy-fetch", "--no-replace-objects", "--literal-pathspecs", "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.warnAmbiguousRefs=true", "-c", "core.attributesFile=/dev/null"];
 const QUERY_MAX_OUTPUT = 1024 * 1024;
 
@@ -139,16 +143,13 @@ export async function runReviewQuery(request: ReviewQueryRequest, cwd: string, o
 	}
 	await version;
 	let attr: string | undefined;
-	const command: ReviewCommand = (dir, args) => {
-		if (!(REVIEW_QUERY_COMMANDS as readonly string[]).includes(args[0])) throw new Error("git command not allowed");
-		return invoke([...REVIEW_QUERY_PREFIX, ...(attr ? [`--attr-source=${attr}`] : []), ...args], dir);
-	};
+	const command: ReviewCommand = (dir, args) => reviewQueryCommand((cwd, accepted) => invoke([...REVIEW_QUERY_PREFIX, ...(attr ? [`--attr-source=${attr}`] : []), ...accepted], cwd), dir, args);
 	const root = (await command(cwd, ["rev-parse", "--show-toplevel"])).trim();
-	const head = await resolveReviewCommit(command, root, request.head);
+	const head = await resolveReviewCommit(command, root, request.head, false, "head");
 	const base = await resolveReviewCommit(command, root, request.base);
 	attr = head;
 	const mergeBase = await reviewMergeBase(command, root, base, head);
-	const body = await command(root, ["log", "--no-show-signature", "--format=%H %s", `${mergeBase}..${head}`]);
+	const body = await command(root, ["log", "--no-show-signature", "--format=%H %s", `${mergeBase}..${head}`, "--"]);
 	const identity = JSON.stringify(["log", base, head, mergeBase, null]);
 	const contentId = `sha256:${createHash("sha256").update(identity).update("\0").update(body).digest("hex")}`;
 	if (offset > 1 && request.contentId !== contentId) throw new Error("内容已变化或缺少 contentId，请从 offset 1 重读");

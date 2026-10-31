@@ -2,7 +2,52 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "node:test";
 import * as api from "./git.ts";
+
+test("refsOnly rejects stash and notes for all ref fields", async () => {
+	const dir = mkdtempSync(join(process.env.TMPDIR, "review-query-refs-"));
+	const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+	try {
+		git("init", "-q"); git("config", "user.name", "Test"); git("config", "user.email", "test@example.com");
+		writeFileSync(join(dir, "file"), "initial\n"); git("add", "file"); git("commit", "-qm", "initial");
+		writeFileSync(join(dir, "file"), "stashed\n"); git("stash", "push", "-qm", "fixture");
+		git("update-ref", "refs/notes/x", git("rev-parse", "HEAD"));
+		const command = async (cwd, args) => git(...args);
+		for (const ref of ["stash", "refs/notes/x"]) for (const field of ["base", "head", "rev"]) {
+			await assert.rejects(api.resolveReviewCommit(command, dir, ref, false, field), /branch, remote, tag/, `${field}: ${ref}`);
+		}
+	} finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("whitelist rejects disallowed commands before invocation", async () => {
+	assert.equal(typeof api.reviewQueryCommand, "function", "restricted command entry must be exported");
+	let calls = 0;
+	const invoke = async () => { calls++; return ""; };
+	for (const command of ["config", "fetch"]) await assert.rejects(api.reviewQueryCommand(invoke, ".", [command]), /not allowed/);
+	assert.equal(calls, 0);
+	await api.reviewQueryCommand(invoke, ".", ["log"]);
+	assert.equal(calls, 1);
+});
+
+test("log range has a path separator", async () => {
+	const dir = mkdtempSync(join(process.env.TMPDIR, "review-query-log-"));
+	const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+	try {
+		git("init", "-q"); git("config", "user.name", "Test"); git("config", "user.email", "test@example.com");
+		writeFileSync(join(dir, "file"), "x\n"); git("add", "file"); git("commit", "-qm", "initial");
+		const head = git("rev-parse", "HEAD"); let logArgs;
+		const runner = async (args, cwd, options) => { if (args.includes("log")) logArgs = args; return api.reviewQueryRunner(args, cwd, options); };
+		await api.runReviewQuery({ operation: "log", base: head, head }, dir, { runner });
+		assert.deepEqual(logArgs.slice(-2), [`${head}..${head}`, "--"]);
+		await assert.rejects(api.runReviewQuery({ operation: "log", base: head, head: "-bad" }, dir), /invalid head ref/);
+	} finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("invalid ref messages identify the field", async () => {
+	const command = async () => { throw new Error("unexpected command"); };
+	for (const field of ["base", "head", "rev"]) await assert.rejects(api.resolveReviewCommit(command, ".", "-bad", false, field), new RegExp(`invalid ${field} ref`));
+});
 
 assert.equal(typeof api.runReviewQuery, "function", "runReviewQuery must be exported");
 assert.equal(typeof api.validateReviewPath, "function");
