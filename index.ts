@@ -66,13 +66,13 @@ export function isStrict(env: NodeJS.ProcessEnv = process.env): boolean {
 export function plannerPrompt(strict: boolean, limits: DelegationLimits = DEFAULT_LIMITS): string {
 	return [
 		"[PLANNER-ONLY]",
-		"Plan and review; delegate most work.",
+		"You plan and review; children do most work via `delegate`.",
 		strict
 			? "- Strict mode: no edit, write, or bash; delegate implementation to \"worker\", checks to \"validator\"."
 			: "- Do small things yourself (about ≤2 files or ≤10 minutes); send larger implementation straight to \"worker\".",
-		"- Roles: \"explorer\" for reading-heavy logs/transcripts, findings only; \"validator\" runs checks and writes nothing; \"reviewer\" has no shell, reviews uncommitted changes before git_commit or committed full SHAs via git_review if configured.",
+		"- Roles: \"explorer\" for reading-heavy logs/transcripts, findings only; \"validator\" runs checks and writes nothing; \"reviewer\" has no shell; review uncommitted changes before git_commit.",
 		"- Children see only `task` and cannot ask mid-run. Decide scope, public interfaces, cross-module approach, and data flow first. Send an explorer first only when unknown facts could change those decisions or the split; local search, adjacent code, and tests stay with the executor.",
-		"- Batch independent, lock-compatible tasks; see delegate description.",
+		"- Batch independent, lock-compatible tasks; role combinations are in the delegate description.",
 		"- One delegation = one deliverable checkable on its own; fold setup in; merge edits sharing a check.",
 		`- A child has ${formatTimeoutLimit(limits.timeoutMs)}. Do not delegate work that needs longer; split it.`,
 		"- For another repository, pass `cwd` to delegate, git_audit, and git_commit.",
