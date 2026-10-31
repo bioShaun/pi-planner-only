@@ -141,3 +141,17 @@ ID   State      Output               E-Level  Times(r/u/s)   Command [run=0/1]
   - delegate.ts 中写给 Root 的 git_review 指引从 reviewer 的任务文本挪到 range 准备失败（如 >32 KiB）时返回给 Root 的拒绝信息。
 - 红灯：index.test 新断言不匹配；delegate.test 报 "Root guidance must not be sent to the reviewer"。绿灯：index.test、delegate.test、reviewer-range.test、tsc 均通过。
 - 与 spec 第 7 节的偏差：index.ts:73 没有补 git_review 说明（受 1500 字符预算限制），条件说明放在 delegate 的 role 描述和拒绝信息里。
+
+## 2026-10-31 实现审查第 1 轮（reviewer run d80d41ce，范围 b794fa6..f7c1260）
+- 结论 CHANGES REQUESTED。报告：~/.pi/agent/sessions/--home-tcuni-claw-pi-pi-planner-only--/subagent-artifacts/d80d41ce-dd9f-4ec8-9692-c32688e6f86c_reviewer_output.md；复现脚本在 /project/tmp/reviewer-git-tool/review-f7c1260/。
+- 必须修改 5 项，全部采纳：
+  1. BOM 被 TextDecoder 吞掉；
+  2. `(no newline at end)` 应放在 footer（spec 第 4 节“尾行”），不应拼进正文行；
+  3. SHA-256 仓库接受 40 位前缀；
+  4. 空正文跳过 40 KiB 页面检查；
+  5. A1 缺 `.git` 快照；promisor 测试假阳性（去掉 `--no-lazy-fetch` 后仍通过）；fsmonitor 没有真实 hook 测试。
+- 建议 2 项，采纳：
+  - show/log 加 `--no-mailmap --no-decorate --no-color --no-notes`。spec 第 5 节已同步收紧，这是 Root 决定，理由是与“固定内容”的契约一致；
+  - 补 contentId 身份断言。之前把 showIdentityPath、pathIdentity 记为“等价变异”的理由不成立：身份是显式契约，不能用正文相同来豁免。
+- 已接受的偏差：index.ts:73 受 1500 字符预算限制；Root 指引放在拒绝信息中。
+- 修复委派给 worker run 44b4c2d2（续用 f7e2a6b5，模型不变）。

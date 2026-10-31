@@ -103,7 +103,7 @@ reviewer 审查已提交的范围时，现有两条路径都不完整：
   - 不跟踪重命名（`--no-renames`），重命名显示为一删一增。
 - **log**：`merge-base..head` 的提交，每行 `<完整 sha> <subject>`。在 1 MiB 上限内一次取完，再按 offset/limit 分页，总数从解析出的记录数计算。
 - **show 只给 rev**：
-  - 元数据用 `show -s --no-show-signature --format=fuller <sha>`；
+  - 元数据用 `show -s --no-show-signature --no-mailmap --no-decorate --no-color --no-notes --format=fuller <sha>`（实现审查后收紧：mailmap/decorate/color/notes 会把工作区或 refs 状态混入固定提交的元数据；log 同样加这四项）；
   - 统计用单独一条 `diff --numstat -z <parent> <sha>`，显式取第一父提交；
   - root commit 与对象格式对应的空树比较（sha1 用 `4b825dc6…`，sha256 用对应常量；常量由 `rev-parse --show-object-format` 选取）；
   - merge commit 只对第一父提交作比较。
