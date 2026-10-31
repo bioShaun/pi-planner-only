@@ -1,9 +1,103 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { createHash } from "node:crypto";
 import * as api from "./git.ts";
+
+function fixFixture(format = "sha1") {
+	const dir = mkdtempSync(join(process.env.TMPDIR, "review-fix-"));
+	const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+	git("init", "-q", `--object-format=${format}`); git("config", "user.name", "Test"); git("config", "user.email", "test@example.com");
+	return { dir, git, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+async function restoreShow(dir, rev, path) {
+	let offset = 1, id, text = "", pages = 0;
+	while (offset) {
+		const page = await api.runReviewQuery({ operation: "show", rev, path, offset, limit: 2, ...(id ? { contentId: id } : {}) }, dir);
+		assert.ok(Buffer.byteLength(page) <= 40 * 1024); assert.ok(page.split("\n").length <= 1000);
+		id ??= /contentId=(sha256:[0-9a-f]{64})/.exec(page)?.[1]; assert.ok(id);
+		const lines = page.split("\n"), footer = lines.at(-1), body = lines.slice(1, -1).join("\n");
+		text += body + (footer.endsWith(" (no newline at end)") ? "" : "\n");
+		offset = Number(/next offset: (\d+)/.exec(footer)?.[1]); pages++;
+	}
+	return { text, id, pages };
+}
+
+test("fix 1 preserves UTF-8 BOM bytes and content identity", async () => {
+	const f = fixFixture(); try {
+		const values = { only: "\ufeff", multi: "\ufeffone\ntwo\nthree\nfour\n" };
+		for (const [path, value] of Object.entries(values)) writeFileSync(join(f.dir, path), value);
+		f.git("add", "."); f.git("commit", "-qm", "root"); const rev = f.git("rev-parse", "HEAD");
+		for (const [path, value] of Object.entries(values)) {
+			const result = await restoreShow(f.dir, rev, path); assert.deepEqual(Buffer.from(result.text), Buffer.from(value));
+			const expected = createHash("sha256").update(JSON.stringify(["show", rev, path])).update("\0").update(Buffer.from(value)).digest("hex");
+			assert.equal(result.id, `sha256:${expected}`); if (path === "multi") assert.ok(result.pages > 1);
+		}
+	} finally { f.cleanup(); }
+});
+
+test("fix 2 distinguishes footer newline marker from literal text", async () => {
+	const f = fixFixture(); try {
+		for (const [path, value] of Object.entries({ missing: "text", literal: "text (no newline at end)\n" })) writeFileSync(join(f.dir, path), value);
+		f.git("add", "."); f.git("commit", "-qm", "root"); const rev = f.git("rev-parse", "HEAD");
+		assert.equal((await restoreShow(f.dir, rev, "missing")).text, "text");
+		assert.equal((await restoreShow(f.dir, rev, "literal")).text, "text (no newline at end)\n");
+	} finally { f.cleanup(); }
+});
+
+test("fix 3 rejects SHA-256 abbreviated object IDs for all ref fields", async () => {
+	const f = fixFixture("sha256"); try {
+		writeFileSync(join(f.dir, "file"), "one\n"); f.git("add", "."); f.git("commit", "-qm", "one"); const base = f.git("rev-parse", "HEAD");
+		writeFileSync(join(f.dir, "file"), "two\n"); f.git("commit", "-qam", "two"); const head = f.git("rev-parse", "HEAD");
+		for (const request of [{ operation: "log", base: base.slice(0, 40), head }, { operation: "log", base, head: head.slice(0, 40) }, { operation: "show", rev: head.slice(0, 40) }]) await assert.rejects(api.runReviewQuery(request, f.dir), /full|length|object id/i);
+		await api.runReviewQuery({ operation: "log", base, head }, f.dir); await api.runReviewQuery({ operation: "show", rev: head }, f.dir);
+	} finally { f.cleanup(); }
+});
+
+test("fix 4 rejects oversized empty-body headers", async () => {
+	const f = fixFixture(); try {
+		const input = (args, data) => execFileSync("git", args, { cwd: f.dir, input: data, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+		const oid = input(["hash-object", "-w", "--stdin"], ""); const path = "x".repeat(42000);
+		const tree = input(["mktree", "-z"], `100644 blob ${oid}\t${path}\0`); const rev = f.git("commit-tree", tree, "-m", "long path");
+		await assert.rejects(api.runReviewQuery({ operation: "show", rev, path }, f.dir), /page|limit|size/i);
+	} finally { f.cleanup(); }
+});
+
+test("fix 5 ignores mailmap, decorations, color and notes", async () => {
+	const f = fixFixture(); try {
+		writeFileSync(join(f.dir, "file"), "one\n"); f.git("add", "."); f.git("commit", "-qm", "one"); const base = f.git("rev-parse", "HEAD");
+		writeFileSync(join(f.dir, "file"), "two\n"); f.git("commit", "-qam", "two"); const head = f.git("rev-parse", "HEAD");
+		const show = { operation: "show", rev: head }, log = { operation: "log", base, head }; const before = await Promise.all([api.runReviewQuery(show, f.dir), api.runReviewQuery(log, f.dir)]);
+		writeFileSync(join(f.dir, ".mailmap"), "Changed <changed@example.com> Test <test@example.com>\n");
+		f.git("config", "log.decorate", "full"); f.git("config", "color.ui", "always"); f.git("config", "log.showNotes", "true"); f.git("notes", "add", "-m", "note", head);
+		assert.deepEqual(await Promise.all([api.runReviewQuery(show, f.dir), api.runReviewQuery(log, f.dir)]), before);
+	} finally { f.cleanup(); }
+});
+
+test("fix 6 preserves repository state and query identity without fsmonitor", async () => {
+	const f = fixFixture(); try {
+		writeFileSync(join(f.dir, "file"), "same\n"); writeFileSync(join(f.dir, "same"), "same\n"); f.git("add", "."); f.git("commit", "-qm", "one"); const base = f.git("rev-parse", "HEAD");
+		writeFileSync(join(f.dir, "file"), "changed\n"); f.git("commit", "-qam", "two"); const head = f.git("rev-parse", "HEAD");
+		const marker = join(f.dir, "fsmonitor-marker"), hook = join(f.dir, "fsmonitor"); writeFileSync(hook, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`); chmodSync(hook, 0o755); f.git("config", "core.fsmonitor", hook);
+		f.git("status", "--porcelain"); assert.ok(existsSync(marker), "positive control must invoke fsmonitor"); rmSync(marker);
+		const files = dir => readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? files(join(dir, entry.name)).map(name => `${entry.name}/${name}`) : [entry.name]).sort();
+		const hash = path => existsSync(path) ? createHash("sha256").update(readFileSync(path)).digest("hex") : "absent";
+		const snapshot = () => ({ objects: files(join(f.dir, ".git", "objects")), refs: f.git("for-each-ref", "--format=%(refname) %(objectname)"), packed: hash(join(f.dir, ".git", "packed-refs")), config: hash(join(f.dir, ".git", "config")), index: hash(join(f.dir, ".git", "index")) });
+		const before = snapshot();
+		await api.runReviewQuery({ operation: "log", base, head }, f.dir);
+		await api.runReviewQuery({ operation: "diff", base, head }, f.dir);
+		const first = await api.runReviewQuery({ operation: "show", rev: base, path: "file" }, f.dir);
+		const second = await api.runReviewQuery({ operation: "show", rev: base, path: "same" }, f.dir);
+		const id = text => /contentId=(sha256:[a-f0-9]{64})/.exec(text)?.[1]; assert.notEqual(id(first), id(second));
+		const empty1 = await api.runReviewQuery({ operation: "diff", base, head, path: "missing-one" }, f.dir);
+		const empty2 = await api.runReviewQuery({ operation: "diff", base, head, path: "missing-two" }, f.dir);
+		assert.match(empty1, /lines 0-0 of 0/); assert.match(empty2, /lines 0-0 of 0/); assert.notEqual(id(empty1), id(empty2));
+		assert.equal(existsSync(marker), false); assert.deepEqual(snapshot(), before);
+	} finally { f.cleanup(); }
+});
 
 test("refsOnly rejects stash and notes for all ref fields", async () => {
 	const dir = mkdtempSync(join(process.env.TMPDIR, "review-query-refs-"));
@@ -71,11 +165,12 @@ test("show reads historical objects and first-parent statistics safely", async (
 		let next = 1, id, assembled = "";
 		while (next) {
 			const page = await query({ rev: root, path: "docs/file", offset: next, limit: 5, ...(id ? { contentId: id } : {}) });
+			assert.ok(Buffer.byteLength(page) <= 40 * 1024); assert.ok(page.split("\n").length <= 1000);
 			id ??= /contentId=(sha256:[0-9a-f]{64})/.exec(page)?.[1]; assert.ok(id);
 			const body = page.split("\n").slice(1, -1).join("\n");
-			const noNewline = body.endsWith(" (no newline at end)");
-			assembled += noNewline ? body.slice(0, -" (no newline at end)".length) : `${body}\n`;
-			next = Number(/next offset: (\d+)$/.exec(page)?.[1]);
+			const noNewline = page.split("\n").at(-1).endsWith(" (no newline at end)");
+			assembled += noNewline ? body : `${body}\n`;
+			next = Number(/next offset: (\d+)/.exec(page)?.[1]);
 		}
 		assert.equal(assembled, content);
 		for (const contentId of [undefined, "bad", `sha256:${"0".repeat(64)}`]) await assert.rejects(query({ rev: root, path: "docs/file", offset: 2, contentId }), /contentId/i);
@@ -110,7 +205,7 @@ test("show reads historical objects and first-parent statistics safely", async (
 			assert.deepEqual(args.slice(0, 5), ["--no-pager", "--no-lazy-fetch", "--no-replace-objects", "--literal-pathspecs", "--no-optional-locks"]);
 			const i = args[11]?.startsWith("--attr-source=") ? 12 : 11; const subcommand = args[i]; assert.ok(api.REVIEW_QUERY_COMMANDS.includes(subcommand));
 			if (["show", "ls-tree", "cat-file", "diff"].includes(subcommand)) assert.ok(args[11].startsWith("--attr-source="));
-			if (subcommand === "show") { assert.ok(args.includes("-s")); assert.ok(args.includes("--no-show-signature")); }
+			if (subcommand === "show") { assert.ok(args.includes("-s")); for (const flag of ["--no-show-signature", "--no-mailmap", "--no-decorate", "--no-color", "--no-notes"]) assert.ok(args.includes(flag)); }
 			if (subcommand === "diff") { assert.ok(args.includes("--numstat")); assert.ok(!args.some(a => a === "-p" || a === "--patch" || a.startsWith("--unified"))); }
 		}
 		for (const variant of ["multiple", "wrong-path", "invalid-mode"]) {
@@ -183,6 +278,7 @@ test("file diff returns safe complete patches and refuses unsafe inputs", async 
 			let next = 1, id, result = "";
 			while (next) {
 				const page = await query(path, { offset: next, limit: 300, ...(id ? { contentId: id } : {}) });
+				assert.ok(Buffer.byteLength(page) <= 40 * 1024); assert.ok(page.split("\n").length <= 1000);
 				id ??= /contentId=(sha256:[a-f0-9]{64})/.exec(page)?.[1]; assert.ok(id);
 				result += page.split("\n").slice(1, -1).join("\n") + "\n";
 				next = Number(/next offset: (\d+)$/.exec(page)?.[1]);
@@ -257,11 +353,16 @@ test("file diff does not fetch missing promisor blobs", async () => {
 		const blob = git(source, "rev-parse", "HEAD:file");
 		writeFileSync(join(source, "file"), "new\n"); git(source, "commit", "-qam", "head"); const head = git(source, "rev-parse", "HEAD");
 		git(dir, "clone", "-q", "--no-checkout", "--filter=blob:none", `file://${source}`, clone);
-		git(clone, "config", "remote.origin.url", join(dir, "missing")); git(clone, "config", "remote.origin.promisor", "true");
+		const marker = join(dir, "transport-marker"), upload = join(dir, "upload-pack");
+		writeFileSync(upload, `#!/bin/sh\ntouch '${marker}'\nexec git-upload-pack "$@"\n`); chmodSync(upload, 0o755);
+		git(clone, "config", "remote.origin.uploadpack", upload); git(clone, "config", "remote.origin.promisor", "true");
 		assert.throws(() => git(clone, "--no-lazy-fetch", "cat-file", "-e", blob));
 		const before = git(clone, "count-objects", "-v");
 		await assert.rejects(api.runReviewQuery({ operation: "diff", base, head, path: "file" }, clone), /missing|unable|failed|bad object/i);
-		assert.equal(git(clone, "count-objects", "-v"), before);
+		assert.equal(git(clone, "count-objects", "-v"), before); assert.equal(existsSync(marker), false);
+		const unsafeRunner = (args, cwd, options) => api.reviewQueryRunner(args.filter(arg => arg !== "--no-lazy-fetch"), cwd, options);
+		await api.runReviewQuery({ operation: "diff", base, head, path: "file" }, clone, { runner: unsafeRunner });
+		assert.equal(existsSync(marker), true, "removing --no-lazy-fetch must invoke transport");
 	} finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -289,6 +390,7 @@ test("diff overview reports paginated facts without generating patches", async (
 		const pages = [first]; let next = Number(/next offset: (\d+)$/.exec(first)?.[1]);
 		while (next) {
 			const page = await query({ ...req, limit: 100, offset: next, contentId: id }); pages.push(page);
+			assert.ok(Buffer.byteLength(page) <= 40 * 1024); assert.ok(page.split("\n").length <= 1000);
 			next = Number(/next offset: (\d+)$/.exec(page)?.[1]);
 		}
 		assert.ok(pages.length > 1);
@@ -409,7 +511,7 @@ try {
 		assert.deepEqual(args.slice(0, 11), ["--no-pager", "--no-lazy-fetch", "--no-replace-objects", "--literal-pathspecs", "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.warnAmbiguousRefs=true", "-c", "core.attributesFile=/dev/null"]);
 		const subcommand = args[11]?.startsWith("--attr-source=") ? args[12] : args[11];
 		assert.ok(["rev-parse", "check-ref-format", "merge-base", "log"].includes(subcommand), args.join(" "));
-		if (args.includes("log")) { assert.ok(args.includes(`--attr-source=${head}`)); assert.ok(args.includes("--no-show-signature")); }
+		if (args.includes("log")) { assert.ok(args.includes(`--attr-source=${head}`)); for (const flag of ["--no-show-signature", "--no-mailmap", "--no-decorate", "--no-color", "--no-notes"]) assert.ok(args.includes(flag)); }
 	}
 	for (const [version, ok] of [["git version 2.44.9", false], ["git version 2.45.0", true]]) {
 		const versionRunner = (args, dir, options) => args[0] === "--version" ? Promise.resolve({ stdout: version, code: 0 }) : api.reviewQueryRunner(args, dir, options);
@@ -421,7 +523,7 @@ try {
 	const injected = body => async (args, dir, options) => args.includes("log") ? { stdout: body, code: 0 } : api.reviewQueryRunner(args, dir, options);
 	await assert.rejects(query(req, { runner: injected("x".repeat(1024 * 1024 + 1)) }), /1 MiB/);
 	await assert.rejects(query(req, { runner: injected("x".repeat(41 * 1024)) }), /line 1.*page/i);
-	assert.match(await query(req, { runner: injected("last line") }), /last line \(no newline at end\)/);
+	assert.match(await query(req, { runner: injected("last line") }), /last line\nlines 1-1 of 1; next offset: none \(no newline at end\)$/);
 	const lateAbort = new AbortController();
 	const waiting = async (args, dir, options) => args.includes("log") ? new Promise(() => {}) : api.reviewQueryRunner(args, dir, options);
 	const pending = query(req, { runner: waiting, signal: lateAbort.signal });

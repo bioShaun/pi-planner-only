@@ -46,7 +46,8 @@ async function normalizeReviewRef(command: ReviewCommand, root: string, input: s
 	return ref;
 }
 
-export async function resolveReviewCommit(command: ReviewCommand, root: string, input: string, normalized = false, field: "base" | "head" | "rev" = "base"): Promise<string> {
+export async function resolveReviewCommit(command: ReviewCommand, root: string, input: string, normalized = false, field: "base" | "head" | "rev" = "base", oidLength?: number): Promise<string> {
+	if (oidLength && /^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(input) && input.length !== oidLength) throw new Error(`${field} object ID must have full length ${oidLength}`);
 	const ref = normalized ? input : await normalizeReviewRef(command, root, input, field);
 	const result = (await command(root, ["rev-parse", "--verify", `${ref}^{commit}`])).trim();
 	if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(result)) throw new Error("invalid resolved commit");
@@ -87,6 +88,7 @@ const REVIEW_QUERY_PREFIX = ["--no-pager", "--no-lazy-fetch", "--no-replace-obje
 const QUERY_MAX_OUTPUT = 1024 * 1024;
 const REVIEW_DIFF_SAFE = ["--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--ignore-submodules=none", "--no-relative"];
 const REVIEW_DIFF_PATCH = ["--unified=3", "--diff-algorithm=myers", "--indent-heuristic", "--src-prefix=a/", "--dst-prefix=b/"];
+const REVIEW_LOG_SAFE = ["--no-show-signature", "--no-mailmap", "--no-decorate", "--no-color", "--no-notes"];
 
 async function reviewShowPath(command: ReviewCommand, root: string, rev: string, path: string): Promise<{ body: string; symlink: boolean }> {
 	const output = await command(root, ["ls-tree", "-z", "--full-tree", rev, "--", path]);
@@ -114,7 +116,7 @@ async function reviewShowPath(command: ReviewCommand, root: string, rev: string,
 }
 
 async function reviewShowStats(command: ReviewCommand, root: string, rev: string): Promise<{ body: string; parent: string }> {
-	const parents = (await command(root, ["show", "-s", "--no-show-signature", "--format=%P", rev])).trim();
+	const parents = (await command(root, ["show", "-s", ...REVIEW_LOG_SAFE, "--format=%P", rev])).trim();
 	if (parents && !/^(?:[0-9a-f]{40}|[0-9a-f]{64})(?: (?:[0-9a-f]{40}|[0-9a-f]{64}))*$/.test(parents)) throw new Error("invalid commit parents");
 	const parent = parents ? parents.split(" ")[0] : "empty-tree";
 	let compare = parent;
@@ -124,7 +126,7 @@ async function reviewShowStats(command: ReviewCommand, root: string, rev: string
 		else if (format === "sha256") compare = "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321";
 		else throw new Error(`unsupported object format: ${format}`);
 	}
-	const metadata = await command(root, ["show", "-s", "--no-show-signature", "--format=fuller", rev]);
+	const metadata = await command(root, ["show", "-s", ...REVIEW_LOG_SAFE, "--format=fuller", rev]);
 	const numstat = await command(root, ["diff", ...REVIEW_DIFF_SAFE, "--numstat", "-z", compare, rev, "--"]);
 	const records = numstat ? numstat.split("\0") : [];
 	if (numstat && records.pop() !== "") throw new Error("invalid show numstat output");
@@ -185,7 +187,7 @@ async function reviewDiffOverview(command: ReviewCommand, root: string, base: st
 export const reviewQueryRunner: ReviewQueryRunner = async (args, cwd, options) => {
 	try {
 		const result = await execFileAsync("git", args, { cwd, env: options.env, signal: options.signal, encoding: "buffer", maxBuffer: QUERY_MAX_OUTPUT, timeout: 30_000 });
-		return { stdout: new TextDecoder("utf-8", { fatal: true }).decode(result.stdout), stderr: result.stderr.toString("utf8"), code: 0 };
+		return { stdout: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(result.stdout), stderr: result.stderr.toString("utf8"), code: 0 };
 	} catch (error) {
 		const e = error as NodeJS.ErrnoException & { killed?: boolean; stderr?: Buffer };
 		const stderr = e.stderr?.toString("utf8").slice(0, 1000) || "";
@@ -244,9 +246,12 @@ export async function runReviewQuery(request: ReviewQueryRequest, cwd: string, o
 	let attr: string | undefined;
 	const command: ReviewCommand = (dir, args) => reviewQueryCommand((cwd, accepted) => invoke([...REVIEW_QUERY_PREFIX, ...(attr ? [`--attr-source=${attr}`] : []), ...accepted], cwd), dir, args);
 	const root = (await command(cwd, ["rev-parse", "--show-toplevel"])).trim();
+	const format = (await command(root, ["rev-parse", "--show-object-format"])).trim();
+	if (format !== "sha1" && format !== "sha256") throw new Error(`unsupported object format: ${format}`);
+	const oidLength = format === "sha1" ? 40 : 64;
 	let body: string, identity: string, headerFields: string;
 	if (request.operation === "show") {
-		const rev = await resolveReviewCommit(command, root, request.rev!, false, "rev");
+		const rev = await resolveReviewCommit(command, root, request.rev!, false, "rev", oidLength);
 		attr = rev;
 		identity = JSON.stringify(["show", rev, request.path ?? null]);
 		if (request.path === undefined) {
@@ -255,12 +260,12 @@ export async function runReviewQuery(request: ReviewQueryRequest, cwd: string, o
 			const result = await reviewShowPath(command, root, rev, request.path); body = result.symlink ? `symlink\n${result.body}` : result.body; headerFields = `rev=${rev} path=${request.path}`;
 		}
 	} else {
-		const head = await resolveReviewCommit(command, root, request.head!, false, "head");
-		const base = await resolveReviewCommit(command, root, request.base!);
+		const head = await resolveReviewCommit(command, root, request.head!, false, "head", oidLength);
+		const base = await resolveReviewCommit(command, root, request.base!, false, "base", oidLength);
 		attr = head;
 		const mergeBase = await reviewMergeBase(command, root, base, head);
 		body = request.operation === "log"
-			? await command(root, ["log", "--no-show-signature", "--format=%H %s", `${mergeBase}..${head}`, "--"])
+			? await command(root, ["log", ...REVIEW_LOG_SAFE, "--format=%H %s", `${mergeBase}..${head}`, "--"])
 			: request.path === undefined ? await reviewDiffOverview(command, root, mergeBase, head) : await reviewFilePatch(command, root, mergeBase, head, request.path);
 		identity = JSON.stringify([request.operation, base, head, mergeBase, request.operation === "diff" ? request.path ?? null : null]);
 		headerFields = `base=${base} head=${head} merge-base=${mergeBase}`;
@@ -274,9 +279,9 @@ export async function runReviewQuery(request: ReviewQueryRequest, cwd: string, o
 	const header = `git_review ${request.operation}: ${headerFields} contentId=${contentId}`;
 	const selected: string[] = [];
 	for (let i = offset - 1; i < lines.length && selected.length < Math.min(limit, 998); i++) {
-		const line = lines[i] + (noNewline && i === lines.length - 1 ? " (no newline at end)" : "");
+		const line = lines[i];
 		const end = i + 1;
-		const footer = `lines ${offset}-${end} of ${lines.length}; next offset: ${end < lines.length ? end + 1 : "none"}`;
+		const footer = `lines ${offset}-${end} of ${lines.length}; next offset: ${end < lines.length ? end + 1 : "none"}${noNewline && end === lines.length ? " (no newline at end)" : ""}`;
 		if (Buffer.byteLength([header, ...selected, line, footer].join("\n")) > 40 * 1024) {
 			if (!selected.length) throw new Error(`line ${i + 1} exceeds page size (${request.path === undefined ? request.operation : JSON.stringify(request.path)})`);
 			break;
@@ -284,8 +289,10 @@ export async function runReviewQuery(request: ReviewQueryRequest, cwd: string, o
 		selected.push(line);
 	}
 	const end = offset + selected.length - 1;
-	const footer = lines.length ? `lines ${offset}-${end} of ${lines.length}; next offset: ${end < lines.length ? end + 1 : "none"}` : "lines 0-0 of 0; next offset: none";
-	return [header, ...selected, footer].join("\n");
+	const footer = lines.length ? `lines ${offset}-${end} of ${lines.length}; next offset: ${end < lines.length ? end + 1 : "none"}${noNewline && end === lines.length ? " (no newline at end)" : ""}` : "lines 0-0 of 0; next offset: none";
+	const response = [header, ...selected, footer].join("\n");
+	if (Buffer.byteLength(response, "utf8") > 40 * 1024 || response.split("\n").length > 1000) throw new Error("page exceeds size or line limit");
+	return response;
 }
 
 async function reviewCommand(cwd: string, args: string[]): Promise<string> {
