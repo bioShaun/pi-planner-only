@@ -126,3 +126,8 @@ ID   State      Output               E-Level  Times(r/u/s)   Command [run=0/1]
 - 变异检查 mutate-01c.mjs（12 个）。启动前 `slot audit` 没发现绕过 slot 的重进程；`slot status` 中没有 running/queued 任务。
 - 结果（mutate-01c.txt）：11/12 被杀死。showIdentityPath（show 的身份去掉 path）存活，判为等价变异：只有两个路径正文完全相同时 contentId 才会相同，此时各页内容一致，contentId 的保证不受影响。
 - 01 查询模块验收通过（分支 feat/reviewer-git-query，HEAD 6a148d8）。下一步：02 入口与契约。
+
+## 2026-10-31 02a 入口核对（Root）
+- worker run e0f0b9c9 提交 18561fc：新增 reviewer-git.ts、reviewer-git-runtime.test.mjs（加入 scripts.test），package.json files 加入 reviewer-git.ts。worker 报告的红灯是入口文件不存在、files 中缺少该文件，之后转绿。
+- Root 复跑 reviewer-git-runtime.test.mjs：2 pass。测试用宿主 DefaultResourceLoader 与 createAgentSession 加载，断言：只注册 git_review；成功调用的文本原样进入结果；失败调用 isError=true；`path: ""` 视为未提供；pi.extensions 仍是 ["./index.ts"]；入口不 import index.ts。
+- 部署位置：操作员 settings 的 packages 里含 `https://github.com/bioShaun/pi-planner-only`，检出在 ~/.pi/agent/git/github.com/bioShaun/pi-planner-only。03 的 subagentOnlyExtensions 将指向该目录下的 reviewer-git.ts，前提是合并、推送并更新包之后。
