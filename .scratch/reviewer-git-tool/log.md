@@ -98,3 +98,9 @@ ID   State      Output               E-Level  Times(r/u/s)   Command [run=0/1]
   - whitelist：去掉运行时子命令白名单检查后测试仍过，缺少直接调用非白名单子命令被拒的用例。
 - 待办：补这两个用例后 01a 才算验收；worker 自述执行器故障注入和 SHA-256 用例是实现后补写的（TDD 顺序偏离），由变异检查替代红灯证据。
 - 已知小问题（不阻塞，02 处理）：query 层空串 path 会被拒绝，spec 第 3 节要求“空字符串视为未提供”，应在 02 的入口层把空串映射为 undefined；log 的 `${mergeBase}..${head}` 后没有 `--`（建议补上）；head/rev 的 ref 错误信息仍写作 "invalid base ref"。
+
+## 2026-10-31 01a 补测核对（Root）
+- worker run 0cb7de1a（续用 4475b12d，模型不变）提交 df2d0d0：补 refsOnly（stash、notes 被拒）与 whitelist（非白名单子命令被拒且未调用底层执行）用例；log 范围后补 `--`；ref 错误信息按字段区分 head/base。worker 报告了四项红灯与绿灯。
+- 重跑变异检查前：`slot audit` 没发现绕过 slot 的重进程；`slot status` 显示 io/cpu/gpu/nf 各池均无 running/queued。首轮结果另存为 mutate-01a-r1.txt。
+- `slot cpu -- node mutate.mjs` 退出 0；19 个变异全部被杀死（mutate-01a.txt）。Root 复跑未变异的 reviewer-git.test.mjs 退出 0（约 31s），`tsc --noEmit` 退出 0。01a 验收通过（df2d0d0）。
+- 下一步：01b `diff`，同一 worktree。
