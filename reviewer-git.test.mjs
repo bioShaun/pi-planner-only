@@ -49,6 +49,85 @@ test("invalid ref messages identify the field", async () => {
 	for (const field of ["base", "head", "rev"]) await assert.rejects(api.resolveReviewCommit(command, ".", "-bad", false, field), new RegExp(`invalid ${field} ref`));
 });
 
+test("diff overview reports paginated facts without generating patches", async () => {
+	const dir = mkdtempSync(join(process.env.TMPDIR, "review-overview-"));
+	const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", maxBuffer: 4 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] }).trim();
+	try {
+		git("init", "-q"); git("config", "user.name", "Test"); git("config", "user.email", "test@example.com");
+		writeFileSync(join(dir, "initial"), "initial\n"); git("add", "."); git("commit", "-qm", "initial");
+		const base = git("rev-parse", "HEAD"); git("branch", "review-base", base);
+		writeFileSync(join(dir, ".gitattributes"), "forced diff\n");
+		writeFileSync(join(dir, "forced"), "forced\0text\n");
+		writeFileSync(join(dir, "binary"), "binary\0data\n");
+		writeFileSync(join(dir, "odd\tname\nfile"), "special\n");
+		for (let i = 0; i < 1050; i++) writeFileSync(join(dir, `file-${String(i).padStart(4, "0")}`), `${"x".repeat(1100)}\n`);
+		git("add", "."); git("update-index", "--add", "--cacheinfo", `160000,${base},nested`); git("commit", "-qm", "changes");
+		const head = git("rev-parse", "HEAD");
+		assert.ok(Buffer.byteLength(git("diff", base, head, "--")) > 1024 * 1024);
+		const req = { operation: "diff", base: "review-base", head };
+		const calls = [];
+		const runner = async (args, cwd, options) => { calls.push(args); return api.reviewQueryRunner(args, cwd, options); };
+		const query = (request = req) => api.runReviewQuery(request, dir, { runner });
+		const first = await query({ ...req, limit: 100 });
+		const id = /contentId=(sha256:[0-9a-f]{64})/.exec(first)?.[1]; assert.ok(id);
+		const pages = [first]; let next = Number(/next offset: (\d+)$/.exec(first)?.[1]);
+		while (next) {
+			const page = await query({ ...req, limit: 100, offset: next, contentId: id }); pages.push(page);
+			next = Number(/next offset: (\d+)$/.exec(page)?.[1]);
+		}
+		assert.ok(pages.length > 1);
+		const body = pages.flatMap(page => page.split("\n").slice(1, -1)).join("\n");
+		assert.equal(body.split("\n").length, 1056);
+		assert.match(body, /binary[^\n]*git-text-diff: no[^\n]*binary/);
+		assert.match(body, /gitlink[^\n]*nested/);
+		assert.match(body, /git-text-diff: yes[^\n]*forced/);
+		assert.match(body, /odd\\tname\\nfile/);
+		assert.match(body, /binary: 1/); assert.match(body, /gitlink: 1/); assert.match(body, /逐文件读取尚未验证/);
+		assert.doesNotMatch(body, /reviewable|diff --git|@@/i);
+		const baseline = await query({ ...req, limit: 100 });
+		git("branch", "-f", "review-base", head);
+		await assert.rejects(query({ ...req, offset: 2, contentId: id }), /contentId/i);
+		assert.equal(await query({ ...req, base, limit: 100 }), baseline);
+		git("replace", head, base);
+		assert.equal(await query({ ...req, base, limit: 100 }), baseline);
+		writeFileSync(join(dir, ".gitattributes"), "forced -diff\n");
+		assert.equal(await query({ ...req, base, limit: 100 }), baseline);
+		const marker = join(dir, "executed"); const script = join(dir, "external");
+		writeFileSync(script, `#!/bin/sh\ntouch '${marker}'\n`); chmodSync(script, 0o755);
+		git("config", "diff.external", script); git("config", "diff.ignoreSubmodules", "all"); git("config", "submodule.nested.ignore", "all");
+		assert.equal(await query({ ...req, base, limit: 100 }), baseline);
+		assert.throws(() => execFileSync("test", ["-e", marker]));
+		const diffs = calls.filter(args => args.includes("diff")); assert.ok(diffs.length >= 2);
+		for (const args of diffs) {
+			for (const flag of ["--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--ignore-submodules=none", "--no-relative", "-z", `--attr-source=${head}`]) assert.ok(args.includes(flag), flag);
+			assert.equal(args.at(-1), "--"); assert.ok(args.includes("--raw") || args.includes("--numstat"));
+			assert.ok(!args.some(arg => ["-p", "--patch"].includes(arg) || arg.startsWith("--unified")));
+		}
+		assert.ok(diffs.some(args => args.includes("--raw") && args.includes("--no-abbrev")));
+		assert.ok(diffs.some(args => args.includes("--numstat")));
+		for (const args of calls) {
+			if (args[0] === "--version") continue;
+			const subcommand = args[11]?.startsWith("--attr-source=") ? args[12] : args[11];
+			assert.ok(api.REVIEW_QUERY_COMMANDS.includes(subcommand));
+		}
+		for (const variant of ["raw-unterminated", "numstat-unterminated", "mismatched-path", "mixed-binary"]) {
+			const faulty = async (args, cwd, options) => {
+				const result = await api.reviewQueryRunner(args, cwd, options);
+				if (args.includes("--raw") && variant === "raw-unterminated") result.stdout = result.stdout.slice(0, -1);
+				if (args.includes("--numstat")) {
+					if (variant === "numstat-unterminated") result.stdout = result.stdout.slice(0, -1);
+					if (variant === "mismatched-path") result.stdout = result.stdout.replace(".gitattributes", "other");
+					if (variant === "mixed-binary") result.stdout = result.stdout.replace(/^\d+\t\d+\t/, "-\t0\t");
+				}
+				return result;
+			};
+			await assert.rejects(api.runReviewQuery({ ...req, base }, dir, { runner: faulty }), /invalid diff overview/, variant);
+		}
+		const example = body.split("\n").filter(line => /"(?:binary|forced|nested)"$|逐文件读取尚未验证/.test(line));
+		console.log(`overview sample:\n${pages[0].split("\n")[0]}\n${example.join("\n")}`);
+	} finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 assert.equal(typeof api.runReviewQuery, "function", "runReviewQuery must be exported");
 assert.equal(typeof api.validateReviewPath, "function");
 const cwd = mkdtempSync(join(process.env.TMPDIR, "review-query-"));
@@ -67,7 +146,8 @@ try {
 	const query = (request = req, options) => api.runReviewQuery(request, cwd, options);
 	for (const path of ["", "../x", "/etc/passwd", "a/./b", "a/../b", "a\0b", "a\nb"]) assert.throws(() => api.validateReviewPath(path), undefined, path);
 	for (const path of ["docs/-f.md", ":(top)foo", ":name"]) assert.doesNotThrow(() => api.validateReviewPath(path));
-	for (const operation of ["diff", "show"]) await assert.rejects(query({ operation }), /not implemented/i);
+	await assert.rejects(query({ operation: "show" }), /not implemented/i);
+	await assert.rejects(query({ operation: "diff", base, head, path: "file" }), /not implemented/i);
 	for (const value of ["--output=x", "-c", "--exec-path", "-D", base.slice(0, 8), "a..b", "HEAD@{1}", "HEAD^"]) {
 		for (const field of ["base", "head"]) await assert.rejects(query({ ...req, [field]: value }), undefined, `${field} ${value}`);
 	}

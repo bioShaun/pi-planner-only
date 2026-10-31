@@ -84,6 +84,30 @@ export async function reviewQueryCommand(command: ReviewCommand, cwd: string, ar
 }
 const REVIEW_QUERY_PREFIX = ["--no-pager", "--no-lazy-fetch", "--no-replace-objects", "--literal-pathspecs", "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.warnAmbiguousRefs=true", "-c", "core.attributesFile=/dev/null"];
 const QUERY_MAX_OUTPUT = 1024 * 1024;
+const REVIEW_DIFF_SAFE = ["--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--ignore-submodules=none", "--no-relative"];
+
+async function reviewDiffOverview(command: ReviewCommand, root: string, base: string, head: string): Promise<string> {
+	const raw = await command(root, ["diff", ...REVIEW_DIFF_SAFE, "--raw", "-z", "--no-abbrev", base, head, "--"]);
+	const numstat = await command(root, ["diff", ...REVIEW_DIFF_SAFE, "--numstat", "-z", base, head, "--"]);
+	const records = raw ? raw.split("\0") : [];
+	const stats = numstat ? numstat.split("\0") : [];
+	if (raw && records.pop() !== "" || numstat && stats.pop() !== "" || records.length !== stats.length * 2) throw new Error("invalid diff overview output");
+	let binary = 0, gitlinks = 0;
+	const lines: string[] = [];
+	for (let i = 0; i < stats.length; i++) {
+		const record = /^:(\d{6}) (\d{6}) ([0-9a-f]+) ([0-9a-f]+) ([A-Z])$/.exec(records[i * 2]);
+		const stat = /^(\d+|-)\t(\d+|-)\t([\s\S]+)$/.exec(stats[i]);
+		if (!record || !stat || records[i * 2 + 1] !== stat[3] || (stat[1] === "-") !== (stat[2] === "-")) throw new Error("invalid diff overview record");
+		const isBinary = stat[1] === "-", gitlink = record[1] === "160000" || record[2] === "160000";
+		if (isBinary) binary++;
+		if (gitlink) gitlinks++;
+		const additions = isBinary ? "-" : `+${stat[1]}`;
+		const deletions = isBinary ? "-" : `-${stat[2]}`;
+		lines.push(`${record[5]} ${additions} ${deletions}${isBinary ? " binary" : ""}${gitlink ? " gitlink" : ""} git-text-diff: ${isBinary ? "no" : "yes"} ${JSON.stringify(stat[3])}`);
+	}
+	lines.push(`binary: ${binary}; gitlink: ${gitlinks}; 逐文件读取尚未验证`);
+	return lines.join("\n") + "\n";
+}
 
 export const reviewQueryRunner: ReviewQueryRunner = async (args, cwd, options) => {
 	try {
@@ -108,7 +132,7 @@ export async function runReviewQuery(request: ReviewQueryRequest, cwd: string, o
 	for (const value of [request.base, request.head, request.rev, request.contentId]) if (value !== undefined && typeof value !== "string") throw new Error("invalid query field");
 	const offset = request.offset ?? 1, limit = request.limit ?? 1000;
 	if (!Number.isSafeInteger(offset) || offset < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error("invalid offset or limit");
-	if (request.operation !== "log") throw new Error(`${request.operation} not implemented`);
+	if (request.operation === "show" || (request.operation === "diff" && request.path !== undefined)) throw new Error(`${request.operation} not implemented`);
 	if (!request.base || !request.head) throw new Error("base and head required");
 	const runner = options.runner ?? reviewQueryRunner;
 	const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
@@ -149,22 +173,24 @@ export async function runReviewQuery(request: ReviewQueryRequest, cwd: string, o
 	const base = await resolveReviewCommit(command, root, request.base);
 	attr = head;
 	const mergeBase = await reviewMergeBase(command, root, base, head);
-	const body = await command(root, ["log", "--no-show-signature", "--format=%H %s", `${mergeBase}..${head}`, "--"]);
-	const identity = JSON.stringify(["log", base, head, mergeBase, null]);
+	const body = request.operation === "log"
+		? await command(root, ["log", "--no-show-signature", "--format=%H %s", `${mergeBase}..${head}`, "--"])
+		: await reviewDiffOverview(command, root, mergeBase, head);
+	const identity = JSON.stringify([request.operation, base, head, mergeBase, null]);
 	const contentId = `sha256:${createHash("sha256").update(identity).update("\0").update(body).digest("hex")}`;
 	if (offset > 1 && request.contentId !== contentId) throw new Error("内容已变化或缺少 contentId，请从 offset 1 重读");
 	const lines = body ? body.split("\n") : [];
 	const noNewline = !!body && !body.endsWith("\n");
 	if (body.endsWith("\n")) lines.pop();
 	if (offset > lines.length && lines.length) throw new Error("offset exceeds content");
-	const header = `git_review log: base=${base} head=${head} merge-base=${mergeBase} contentId=${contentId}`;
+	const header = `git_review ${request.operation}: base=${base} head=${head} merge-base=${mergeBase} contentId=${contentId}`;
 	const selected: string[] = [];
 	for (let i = offset - 1; i < lines.length && selected.length < Math.min(limit, 998); i++) {
 		const line = lines[i] + (noNewline && i === lines.length - 1 ? " (no newline at end)" : "");
 		const end = i + 1;
 		const footer = `lines ${offset}-${end} of ${lines.length}; next offset: ${end < lines.length ? end + 1 : "none"}`;
 		if (Buffer.byteLength([header, ...selected, line, footer].join("\n")) > 40 * 1024) {
-			if (!selected.length) throw new Error(`line ${i + 1} exceeds page size (log)`);
+			if (!selected.length) throw new Error(`line ${i + 1} exceeds page size (${request.operation})`);
 			break;
 		}
 		selected.push(line);
