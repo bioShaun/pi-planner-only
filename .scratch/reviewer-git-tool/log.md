@@ -119,3 +119,10 @@ ID   State      Output               E-Level  Times(r/u/s)   Command [run=0/1]
   - rawSingle（`records.length !== 3`）：多条 raw 记录时 `records[2] !== ""` 已拒绝；
   - pathIdentity（身份去掉 path）：patch 正文的 `diff --git a/<path>` 头已含路径，空正文 N=0 时不会出现 offset>1。
 - 01b 验收通过（bbe3ae0）。下一步：01c `show`。
+
+## 2026-10-31 01c show 核对（Root）
+- worker run f7e2a6b5 提交 dc24baf。worker 报告红灯为 `show not implemented`，之后转绿。
+- Root 补 6a148d8：spec 第 6 节的白名单是 `show -s` 和 `cat-file blob`，而原实现只检查子命令名。whitelist 用例加了 `show HEAD`、`cat-file -p/--batch/--textconv`，红灯为 `Missing expected rejection: show HEAD`。修改后 reviewer-git.test.mjs 10 pass；git.test.mjs、reviewer-range.test.mjs、tsc 均退出 0。
+- 变异检查 mutate-01c.mjs（12 个）。启动前 `slot audit` 没发现绕过 slot 的重进程；`slot status` 中没有 running/queued 任务。
+- 结果（mutate-01c.txt）：11/12 被杀死。showIdentityPath（show 的身份去掉 path）存活，判为等价变异：只有两个路径正文完全相同时 contentId 才会相同，此时各页内容一致，contentId 的保证不受影响。
+- 01 查询模块验收通过（分支 feat/reviewer-git-query，HEAD 6a148d8）。下一步：02 入口与契约。
