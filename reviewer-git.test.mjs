@@ -110,13 +110,14 @@ test("diff overview reports paginated facts without generating patches", async (
 			const subcommand = args[11]?.startsWith("--attr-source=") ? args[12] : args[11];
 			assert.ok(api.REVIEW_QUERY_COMMANDS.includes(subcommand));
 		}
-		for (const variant of ["raw-unterminated", "numstat-unterminated", "mismatched-path", "mixed-binary"]) {
+		for (const variant of ["raw-unterminated", "numstat-unterminated", "mismatched-path", "mixed-binary", "numstat-missing-last"]) {
 			const faulty = async (args, cwd, options) => {
 				const result = await api.reviewQueryRunner(args, cwd, options);
 				if (args.includes("--raw") && variant === "raw-unterminated") result.stdout = result.stdout.slice(0, -1);
 				if (args.includes("--numstat")) {
 					if (variant === "numstat-unterminated") result.stdout = result.stdout.slice(0, -1);
 					if (variant === "mismatched-path") result.stdout = result.stdout.replace(".gitattributes", "other");
+					if (variant === "numstat-missing-last") result.stdout = result.stdout.replace(/[^\0]*\0$/, "");
 					if (variant === "mixed-binary") result.stdout = result.stdout.replace(/^\d+\t\d+\t/, "-\t0\t");
 				}
 				return result;
