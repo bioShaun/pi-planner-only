@@ -167,3 +167,24 @@ ID   State      Output               E-Level  Times(r/u/s)   Command [run=0/1]
 - `slot cpu -- npm run test:release`：exit 1。tsc 和 isolated-release 7/7 通过，contract.test 在默认安装下报 `Cannot find package '@earendil-works/pi-ai'`，按 AGENTS.md 改跑 isolated。日志 /project/tmp/reviewer-git-tool/gate-release.log。
 - `slot cpu -- npm run test:release:isolated`：**exit 0**。tsc 通过，contract.test 通过（含 installed cost RPC 和 async/workflow artifacts），reviewer-git 16/16、runtime 2/2，delegate、host、host-runtime（1.4.0）、handoff、status-color、index 均通过，native-handoff 42/42。日志 /project/tmp/reviewer-git-tool/gate-isolated.log。
 - 门禁之后检出 HEAD 和 tree 不变（157e51f / 96b085d），`git status --porcelain` 为空（node_modules 用符号链接接到主检出，已被 gitignore）。A14 通过。
+
+## 2026-10-31 推送与 03 部署（Root）
+- 用户确认“可以推送”。`git push origin main`：2d45933..123fd1a。
+- `pi update https://github.com/bioShaun/pi-planner-only`：前两次网络失败（GnuTLS recv error、连接超时），第三次成功。已安装检出从 e1d0ab6 更新到 123fd1a，reviewer-git.ts 已存在。
+- 备份：settings.json、reviewer.md → /project/tmp/reviewer-git-tool-backup/。
+- settings.json 的 `subagents.agentOverrides.reviewer` 新增 subagentOnlyExtensions（指向已安装检出的 reviewer-git.ts）和 tools（read, grep, find, ls, watchdog_diff, contact_supervisor, git_review）。和备份比，只多了这两个字段。
+- reviewer.md：
+  - 第 4 行 tools 改为同一份列表；
+  - 第 25–27 行改写：已提交范围用 git_review 或任务提供的完整 patch，读不完就报 INCOMPLETE，不给 PASS；没有 shell，需要运行的命令写进报告交给 supervisor/validator；保留不修改仓库的约束。
+  - 第 28 行原来是“引用命令、退出码、日志”，现在 reviewer 不能运行命令，改为引用回显的 SHA、文件和行号。这是 Root 决定，理由是原句已经无法执行。
+- A13 检查（真实配置）：`node scripts/check-reviewer-config.mjs` 和 `node scripts/check-reviewer-config.mjs /project/tmp` 均 exit 0。有效工具等于部署列表，扩展存在。默认安装的 pi-subagents 可以直接加载该脚本。
+- A15：已派 reviewer run 2186578e，审查 b794fa6..157e51f（116538 字节，14 个文件）。审查前 HEAD 123fd1a，status 快照在 /project/tmp/reviewer-git-tool/a15/。
+- A15 结果（reviewer run 2186578e，async）：
+  - 启动描述 recovery-descriptor.json 里 tools 为 [read, grep, find, ls, watchdog_diff, contact_supervisor, git_review]，subagentOnlyExtensions 指向已安装的 reviewer-git.ts。child 自报工具相同，没有 bash；会话中工具调用为 git_review 18 次、read 14 次、grep 3 次、ls 1 次。
+  - 前两次传短 SHA 被拒，符合 A3。之后 child 读 `.git/logs/HEAD` 取到完整 SHA，概览 1 页加 14/14 个文件共 16 页全部读完（reviewer-git.test.mjs 分 2 页，用同一个 contentId 续页）。
+  - 结论引用 b794fa6dd3b4…ee7..157e51fd25e6…e2f0，Merge verdict 为 OK with notes，没有必须修改项。报告：subagent-artifacts/2186578e-309c-4810-9e6c-7e825cc82abe_reviewer_output.md。
+  - 审查后 HEAD 仍为 123fd1a。status 与快照相比只多了 log.md，原因是 Root 在快照之后追加了记录，diff 是纯新增 12 行，与 reviewer 无关。
+- 前台补充核对（reviewer run 4d97eeba，sync）：child 工具列表与上面相同，没有 bash；git_review 可以调用，按契约拒绝了 Root 写错的参数（log 不接受 rev）。
+- 结论：async 和前台两种启动方式都挂载了 git_review，且都没有 bash。
+- 未验证：Git 2.45 实机。
+- 可用性备注：任务中只给短 SHA 时，reviewer 只能绕道读 .git 取完整 SHA。派 reviewer 审查已提交范围时应给完整 SHA 或分支名。

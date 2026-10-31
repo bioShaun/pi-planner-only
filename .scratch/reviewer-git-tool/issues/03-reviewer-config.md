@@ -1,6 +1,6 @@
 # 03: 部署 reviewer 用户配置并端到端验证
 
-Status: needs-triage
+Status: done
 Type: task
 Blocked by: 02，以及 01+02 合并后 A14 门禁通过
 
