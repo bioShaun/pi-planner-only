@@ -85,6 +85,30 @@ export async function reviewQueryCommand(command: ReviewCommand, cwd: string, ar
 const REVIEW_QUERY_PREFIX = ["--no-pager", "--no-lazy-fetch", "--no-replace-objects", "--literal-pathspecs", "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.warnAmbiguousRefs=true", "-c", "core.attributesFile=/dev/null"];
 const QUERY_MAX_OUTPUT = 1024 * 1024;
 const REVIEW_DIFF_SAFE = ["--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--ignore-submodules=none", "--no-relative"];
+const REVIEW_DIFF_PATCH = ["--unified=3", "--diff-algorithm=myers", "--indent-heuristic", "--src-prefix=a/", "--dst-prefix=b/"];
+
+async function reviewFilePatch(command: ReviewCommand, root: string, base: string, head: string, path: string): Promise<string> {
+	try {
+		const raw = await command(root, ["diff", ...REVIEW_DIFF_SAFE, "--raw", "-z", "--no-abbrev", base, head, "--", path]);
+		if (!raw) return "";
+		const records = raw.split("\0");
+		const record = /^:(\d{6}) (\d{6}) ([0-9a-f]+) ([0-9a-f]+) [A-Z]$/.exec(records[0]);
+		if (records.length !== 3 || records[2] !== "" || records[1] !== path || !record) throw new Error("invalid or non-file raw diff output");
+		if (record[1] === "160000" || record[2] === "160000") throw new Error("gitlink cannot be reviewed as text");
+		for (const oid of new Set([record[3], record[4]])) {
+			if (/^0+$/.test(oid)) continue;
+			const blob = await command(root, ["cat-file", "blob", oid]);
+			if (blob.includes("\0")) throw new Error("binary blob cannot be reviewed as text");
+		}
+		const numstat = await command(root, ["diff", ...REVIEW_DIFF_SAFE, "--numstat", "-z", base, head, "--", path]);
+		const stat = /^(\d+|-)\t(\d+|-)\t([^\0]+)\0$/.exec(numstat);
+		if (!stat || stat[3] !== path || (stat[1] === "-") !== (stat[2] === "-")) throw new Error("invalid numstat output");
+		if (stat[1] === "-") throw new Error("binary diff cannot be reviewed as text");
+		return await command(root, ["diff", ...REVIEW_DIFF_SAFE, ...REVIEW_DIFF_PATCH, base, head, "--", path]);
+	} catch (error) {
+		throw new Error(`${JSON.stringify(path)}: ${error instanceof Error ? error.message : String(error)}`);
+	}
+}
 
 async function reviewDiffOverview(command: ReviewCommand, root: string, base: string, head: string): Promise<string> {
 	const raw = await command(root, ["diff", ...REVIEW_DIFF_SAFE, "--raw", "-z", "--no-abbrev", base, head, "--"]);
@@ -132,7 +156,8 @@ export async function runReviewQuery(request: ReviewQueryRequest, cwd: string, o
 	for (const value of [request.base, request.head, request.rev, request.contentId]) if (value !== undefined && typeof value !== "string") throw new Error("invalid query field");
 	const offset = request.offset ?? 1, limit = request.limit ?? 1000;
 	if (!Number.isSafeInteger(offset) || offset < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error("invalid offset or limit");
-	if (request.operation === "show" || (request.operation === "diff" && request.path !== undefined)) throw new Error(`${request.operation} not implemented`);
+	if (request.operation === "show") throw new Error("show not implemented");
+	if (request.operation === "log" && request.path !== undefined) throw new Error("log does not accept path");
 	if (!request.base || !request.head) throw new Error("base and head required");
 	const runner = options.runner ?? reviewQueryRunner;
 	const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
@@ -175,8 +200,8 @@ export async function runReviewQuery(request: ReviewQueryRequest, cwd: string, o
 	const mergeBase = await reviewMergeBase(command, root, base, head);
 	const body = request.operation === "log"
 		? await command(root, ["log", "--no-show-signature", "--format=%H %s", `${mergeBase}..${head}`, "--"])
-		: await reviewDiffOverview(command, root, mergeBase, head);
-	const identity = JSON.stringify([request.operation, base, head, mergeBase, null]);
+		: request.path === undefined ? await reviewDiffOverview(command, root, mergeBase, head) : await reviewFilePatch(command, root, mergeBase, head, request.path);
+	const identity = JSON.stringify([request.operation, base, head, mergeBase, request.operation === "diff" ? request.path ?? null : null]);
 	const contentId = `sha256:${createHash("sha256").update(identity).update("\0").update(body).digest("hex")}`;
 	if (offset > 1 && request.contentId !== contentId) throw new Error("内容已变化或缺少 contentId，请从 offset 1 重读");
 	const lines = body ? body.split("\n") : [];
@@ -190,7 +215,7 @@ export async function runReviewQuery(request: ReviewQueryRequest, cwd: string, o
 		const end = i + 1;
 		const footer = `lines ${offset}-${end} of ${lines.length}; next offset: ${end < lines.length ? end + 1 : "none"}`;
 		if (Buffer.byteLength([header, ...selected, line, footer].join("\n")) > 40 * 1024) {
-			if (!selected.length) throw new Error(`line ${i + 1} exceeds page size (${request.operation})`);
+			if (!selected.length) throw new Error(`line ${i + 1} exceeds page size (${request.path === undefined ? request.operation : JSON.stringify(request.path)})`);
 			break;
 		}
 		selected.push(line);

@@ -49,6 +49,120 @@ test("invalid ref messages identify the field", async () => {
 	for (const field of ["base", "head", "rev"]) await assert.rejects(api.resolveReviewCommit(command, ".", "-bad", false, field), new RegExp(`invalid ${field} ref`));
 });
 
+test("file diff returns safe complete patches and refuses unsafe inputs", async () => {
+	const dir = mkdtempSync(join(process.env.TMPDIR, "review-file-diff-"));
+	const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", maxBuffer: 5 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] }).trim();
+	const direct = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", maxBuffer: 5 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+	try {
+		git("init", "-q"); git("config", "user.name", "Test"); git("config", "user.email", "test@example.com");
+		writeFileSync(join(dir, "file"), "old\n");
+		writeFileSync(join(dir, "oldbinary"), "old\0binary\n");
+		writeFileSync(join(dir, "oversize"), ("a".repeat(200) + "\n").repeat(3000));
+		git("add", "."); git("commit", "-qm", "base"); const base = git("rev-parse", "HEAD");
+		git("branch", "base-branch", base);
+		mkdirSync(join(dir, "docs"));
+		writeFileSync(join(dir, "docs", "-f.md"), "dash\n");
+		writeFileSync(join(dir, ":(top)foo"), "literal magic\n"); writeFileSync(join(dir, ":name"), "colon\n");
+		writeFileSync(join(dir, "file"), "new\n"); writeFileSync(join(dir, "empty"), "");
+		writeFileSync(join(dir, "nonewline"), "without newline");
+		writeFileSync(join(dir, ".gitattributes"), "forced diff\ngitbinary -diff\n");
+		writeFileSync(join(dir, "forced"), "nul\0hidden\n"); writeFileSync(join(dir, "binary"), "nul\0binary\n");
+		writeFileSync(join(dir, "oldbinary"), "now text\n"); writeFileSync(join(dir, "gitbinary"), "text marked binary\n");
+		writeFileSync(join(dir, "long"), "l".repeat(41000) + "\n");
+		writeFileSync(join(dir, "bigblob"), ("c".repeat(100) + "\n").repeat(10500));
+		writeFileSync(join(dir, "oversize"), ("b".repeat(200) + "\n").repeat(3000));
+		for (let i = 0; i < 3; i++) writeFileSync(join(dir, `large${i}`), ("多字节" + "x".repeat(190) + "\n").repeat(2000));
+		git("add", "."); git("update-index", "--add", "--cacheinfo", `160000,${base},nested`); git("commit", "-qm", "change");
+		const head = git("rev-parse", "HEAD");
+		const calls = []; const runner = async (args, cwd, options) => { calls.push(args); return api.reviewQueryRunner(args, cwd, options); };
+		const req = { operation: "diff", base, head }; const query = (path, extra = {}) => api.runReviewQuery({ ...req, path, ...extra }, dir, { runner });
+		const flags = ["--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--ignore-submodules=none", "--no-relative", "--unified=3", "--diff-algorithm=myers", "--indent-heuristic", "--src-prefix=a/", "--dst-prefix=b/"];
+		const read = async path => {
+			let next = 1, id, result = "";
+			while (next) {
+				const page = await query(path, { offset: next, limit: 300, ...(id ? { contentId: id } : {}) });
+				id ??= /contentId=(sha256:[a-f0-9]{64})/.exec(page)?.[1]; assert.ok(id);
+				result += page.split("\n").slice(1, -1).join("\n") + "\n";
+				next = Number(/next offset: (\d+)$/.exec(page)?.[1]);
+			}
+			return result;
+		};
+		for (const path of ["file", "docs/-f.md", ":(top)foo", ":name", "empty", "nonewline", "large0", "large1", "large2"]) {
+			const expected = direct("--literal-pathspecs", "diff", ...flags, base, head, "--", path);
+			assert.equal(await read(path), expected, path);
+		}
+		assert.ok(Buffer.byteLength(direct("diff", base, head, "--", "large0", "large1", "large2")) > 1024 * 1024);
+		for (const path of ["", "../x", "/etc/passwd", "a/./b"]) await assert.rejects(query(path), /path/i);
+		await assert.rejects(api.runReviewQuery({ operation: "log", base, head, path: "file" }, dir), /path/i);
+		for (const path of ["forced", "binary", "oldbinary", "gitbinary", "nested"]) await assert.rejects(query(path), new RegExp(`${path}.*${path === "nested" ? "gitlink" : "binary"}`, "i"));
+		await assert.rejects(read("long"), /line \d+.*long/i);
+		await assert.rejects(query("bigblob"), /bigblob.*1 MiB|1 MiB.*bigblob/i);
+		await assert.rejects(query("oversize"), /oversize.*1 MiB|1 MiB.*oversize/i);
+		const page = await query("large0", { limit: 2 }); const id = /contentId=(sha256:[a-f0-9]{64})/.exec(page)[1];
+		for (const contentId of [undefined, "bad", `sha256:${"0".repeat(64)}`]) await assert.rejects(query("large0", { offset: 2, contentId }), /contentId/i);
+		git("branch", "-f", "base-branch", head);
+		await assert.rejects(query("large0", { base: "base-branch", offset: 2, contentId: id }), /contentId/i);
+		assert.match(await query("not-changed"), /lines 0-0 of 0; next offset: none/);
+		const patchCalls = calls.filter(args => args.includes("--unified=3")); assert.ok(patchCalls.length);
+		for (const args of patchCalls) {
+			for (const flag of flags) assert.ok(args.includes(flag), flag);
+			assert.ok(args.includes(`--attr-source=${head}`)); assert.equal(args.at(-2), "--");
+		}
+		for (const oid of [git("rev-parse", `${base}:file`), git("rev-parse", `${head}:file`)]) assert.ok(calls.some(args => args.includes("cat-file") && args.includes("blob") && args.includes(oid)), oid);
+		for (const args of calls.filter(args => args[0] !== "--version")) {
+			const subcommand = args[11]?.startsWith("--attr-source=") ? args[12] : args[11]; assert.ok(api.REVIEW_QUERY_COMMANDS.includes(subcommand));
+		}
+		for (const variant of ["raw-malformed", "raw-wrong-path", "numstat-malformed", "numstat-wrong-path", "numstat-mixed"]) {
+			const faulty = async (args, cwd, options) => {
+				const result = await api.reviewQueryRunner(args, cwd, options);
+				if (args.includes("--raw") && variant === "raw-malformed") result.stdout = "malformed\0file\0";
+				if (args.includes("--raw") && variant === "raw-wrong-path") result.stdout = result.stdout.replace("\0file\0", "\0other\0");
+				if (args.includes("--numstat") && variant === "numstat-malformed") result.stdout = "malformed\0";
+				if (args.includes("--numstat") && variant === "numstat-wrong-path") result.stdout = result.stdout.replace("\tfile\0", "\tother\0");
+				if (args.includes("--numstat") && variant === "numstat-mixed") result.stdout = "-\t0\tfile\0";
+				return result;
+			};
+			await assert.rejects(api.runReviewQuery({ ...req, path: "file" }, dir, { runner: faulty }), /file.*invalid/i, variant);
+		}
+		const example = await query("file");
+		const marker = join(dir, "marker"), script = join(dir, "external"); writeFileSync(script, `#!/bin/sh\ntouch '${marker}'\n`); chmodSync(script, 0o755);
+		git("config", "diff.external", script); git("config", "diff.test.textconv", script); git("config", "diff.noprefix", "true"); git("config", "diff.algorithm", "patience"); git("config", "diff.mnemonicPrefix", "true");
+		writeFileSync(join(dir, ".git", "info", "attributes"), "file diff=test\n");
+		assert.equal(await query("file"), example); assert.throws(() => execFileSync("test", ["-e", marker]));
+		console.log(`file diff sample:\n${example}`);
+	} finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("file patch matches prepareReviewRange on the default configuration", async () => {
+	const dir = mkdtempSync(join(process.env.TMPDIR, "review-file-range-"));
+	const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+	try {
+		git("init", "-q"); git("config", "user.name", "Test"); git("config", "user.email", "test@example.com");
+		writeFileSync(join(dir, "file"), "old\n"); git("add", "."); git("commit", "-qm", "base"); const base = git("rev-parse", "HEAD");
+		writeFileSync(join(dir, "file"), "new\n"); git("commit", "-qam", "head");
+		const range = await api.prepareReviewRange(dir, base);
+		const page = await api.runReviewQuery({ operation: "diff", base, head: range.head, path: "file" }, dir);
+		assert.equal(page.split("\n").slice(1, -1).join("\n") + "\n", range.diff);
+	} finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("file diff does not fetch missing promisor blobs", async () => {
+	const dir = mkdtempSync(join(process.env.TMPDIR, "review-promisor-")); const source = join(dir, "source"), clone = join(dir, "clone"); mkdirSync(source);
+	const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+	try {
+		git(source, "init", "-q"); git(source, "config", "user.name", "Test"); git(source, "config", "user.email", "test@example.com"); git(source, "config", "uploadpack.allowFilter", "true");
+		writeFileSync(join(source, "file"), "old\n"); git(source, "add", "."); git(source, "commit", "-qm", "base"); const base = git(source, "rev-parse", "HEAD");
+		const blob = git(source, "rev-parse", "HEAD:file");
+		writeFileSync(join(source, "file"), "new\n"); git(source, "commit", "-qam", "head"); const head = git(source, "rev-parse", "HEAD");
+		git(dir, "clone", "-q", "--no-checkout", "--filter=blob:none", `file://${source}`, clone);
+		git(clone, "config", "remote.origin.url", join(dir, "missing")); git(clone, "config", "remote.origin.promisor", "true");
+		assert.throws(() => git(clone, "--no-lazy-fetch", "cat-file", "-e", blob));
+		const before = git(clone, "count-objects", "-v");
+		await assert.rejects(api.runReviewQuery({ operation: "diff", base, head, path: "file" }, clone), /missing|unable|failed|bad object/i);
+		assert.equal(git(clone, "count-objects", "-v"), before);
+	} finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("diff overview reports paginated facts without generating patches", async () => {
 	const dir = mkdtempSync(join(process.env.TMPDIR, "review-overview-"));
 	const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", maxBuffer: 4 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -148,7 +262,6 @@ try {
 	for (const path of ["", "../x", "/etc/passwd", "a/./b", "a/../b", "a\0b", "a\nb"]) assert.throws(() => api.validateReviewPath(path), undefined, path);
 	for (const path of ["docs/-f.md", ":(top)foo", ":name"]) assert.doesNotThrow(() => api.validateReviewPath(path));
 	await assert.rejects(query({ operation: "show" }), /not implemented/i);
-	await assert.rejects(query({ operation: "diff", base, head, path: "file" }), /not implemented/i);
 	for (const value of ["--output=x", "-c", "--exec-path", "-D", base.slice(0, 8), "a..b", "HEAD@{1}", "HEAD^"]) {
 		for (const field of ["base", "head"]) await assert.rejects(query({ ...req, [field]: value }), undefined, `${field} ${value}`);
 	}
