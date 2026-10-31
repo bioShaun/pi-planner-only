@@ -2,6 +2,8 @@
 
 ## 0.9.0-lite.0 - unreleased
 
+- Native Mandate ≠ Assignment + handoff `status` (dsh-inspired, no ledger): user authorization (goal, scope, acceptance) is immutable Mandate; the Root session is a replaceable Assignment. In-Mandate follow-ups inherit authorization without re-evaluating it; out-of-Mandate work is a new request. `handoff` requires `status` (`progress` | `waiting` | `ready` | `blocked` | `failed` | `dropped`) alongside the existing three-line `progress` narrative; delivery prefixes `status:` in the progress section. Subagent terminal reports share the same vocabulary in prompt text only.
+
 - Auto handoff chain (`be287c3`): `PI_PLANNER_ONLY_HANDOFF_AUTO_LIMIT` caps consecutive Root-initiated handoffs in `auto` mode (default 3). The delivery that would exceed the cap waits in the editor with a notice; real user input or a user-initiated handoff resets the count. `/planner-only status` shows `chain current/limit` (`?` when unknown). Brief text separates user authorization (with sources) from Root decisions.
 
 - Native task sizing (`f363b30`, `e44bdef`): Native Root prompt asks for one independently acceptable deliverable per delegation (merge steps that share one acceptance or expensive read; split independent deliverables). When a child asks to split or returns a partial result, shrink this delivery and re-dispatch (reuse the atomic agent / same model first). Merge review fixes that share state-consistency or lock-protocol work before dependents; concurrency/lock/persistence deliveries need an independent reviewer before dependent work.
