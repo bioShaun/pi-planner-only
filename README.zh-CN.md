@@ -16,6 +16,8 @@
 
 审查已提交的变更时，给 `reviewer` 传入 `base`，完整的 `base...HEAD` 文本 diff 会内嵌到任务中，上限为 32 KiB。每个变更 blob 最大为 1 MiB，才能检查。仓库必须已有提交且工作树干净；空 diff、二进制、非 UTF-8 和子模块变更会被拒绝。范围提交固定，但源码仍是实时工作树，无法排除并发修改。不传 `base` 时行为不变。
 
+更大的已提交范围可用本包装载的可选 reviewer 扩展 `reviewer-git.ts`：它注册只读分页工具 `git_review`（`log` / `diff` / `show`）。它**不会**通过 `pi.extensions` 全局启用；请在 pi-subagents 的 reviewer `subagentOnlyExtensions` 中挂载，并把 reviewer 的 tools 设为 `read, grep, find, ls, watchdog_diff, contact_supervisor, git_review`（不要包含 `bash` / `edit` / `write`）。扩展路径指向已安装包里的 `reviewer-git.ts`（例如 `~/.pi/agent/git/.../reviewer-git.ts`）。挂载后，大范围可省略 `base`，在任务里给出完整 SHA，并要求 reviewer 读完概览与每个文件的全部分页，否则报告 `INCOMPLETE`。`scripts/check-reviewer-config.mjs` 可核对生效的 allowlist 与扩展路径是否存在。该路径不是沙箱：它信任本机 Git 配置，加固范围仅限 `git_review` 执行路径。
+
 角色对应 pi-subagents 内置 agent 和本包的 validator agent：
 
 | 角色 | Agent | cwd 锁 |

@@ -2,6 +2,8 @@
 
 ## 0.9.0-lite.0 - unreleased
 
+- Reviewer optional `git_review` (`157e51fd`): packaged entry `reviewer-git.ts` (not in `pi.extensions`) mounts a read-only paginated `log` / `diff` / `show` tool for committed ranges when the operator adds it via reviewer `subagentOnlyExtensions` and a matching tools allowlist (no bash/edit/write). Large ranges can be reviewed without inlining the full patch into `delegate`; the existing `base` path (≤32 KiB clean text diff) is unchanged. `scripts/check-reviewer-config.mjs` checks the effective allowlist and extension path.
+
 - Auto handoff chain (`be287c3`): `PI_PLANNER_ONLY_HANDOFF_AUTO_LIMIT` caps consecutive Root-initiated handoffs in `auto` mode (default 3). The delivery that would exceed the cap waits in the editor with a notice; real user input or a user-initiated handoff resets the count. `/planner-only status` shows `chain current/limit` (`?` when unknown). Brief text separates user authorization (with sources) from Root decisions.
 
 - Native task sizing (`f363b30`, `e44bdef`): Native Root prompt asks for one independently acceptable deliverable per delegation (merge steps that share one acceptance or expensive read; split independent deliverables). When a child asks to split or returns a partial result, shrink this delivery and re-dispatch (reuse the atomic agent / same model first). Merge review fixes that share state-consistency or lock-protocol work before dependents; concurrency/lock/persistence deliveries need an independent reviewer before dependent work.

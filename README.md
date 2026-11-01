@@ -21,6 +21,8 @@ was removed.
 
 For a committed review, pass `base` with role `reviewer` to include the complete `base...HEAD` text diff, up to 32 KiB. Each changed blob must be at most 1 MiB to inspect. The repository must have commits and a clean worktree; empty, binary, non-UTF-8, and submodule changes are refused. The range commits are fixed, but source files remain a live checkout and concurrent changes cannot be ruled out. Without `base`, delegation behaves as before.
 
+For larger committed ranges, the package also ships `reviewer-git.ts`, an optional reviewer-only extension that registers `git_review` (paginated read-only `log` / `diff` / `show`). It is **not** enabled by `pi.extensions`; mount it on the reviewer through pi-subagents `subagentOnlyExtensions` and set the reviewer tools allowlist to `read, grep, find, ls, watchdog_diff, contact_supervisor, git_review` (no `bash` / `edit` / `write`). Point the extension path at the installed package file (for example the GitHub package checkout under `~/.pi/agent/git/.../reviewer-git.ts`). When that mount is present, Root can omit `base` for large ranges, put full SHAs in the task, and ask the reviewer to read the overview and every file (all pages) or report `INCOMPLETE`. `scripts/check-reviewer-config.mjs` verifies the effective allowlist and that `reviewer-git.ts` resolves. This path is not a sandbox: it trusts local Git configuration and only hardens the `git_review` execution path.
+
 Roles map to pi-subagents builtin agents and this package's validator agent:
 
 | Role | Agent | cwd lock |
