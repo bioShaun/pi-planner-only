@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Offline behavioral metrics for guidance benchmark runs."""
+"""Offline behavioral metrics for guidance benchmark runs.
+
+reviews counts reviewer conclusions received by Root. reviews_verified counts
+those followed by read/grep/find/ls or a non-sleep bash before the next worker
+delegation; reviews_fix_unverified counts those followed by a worker delegation
+without such verification. Reviews with neither event remain unclassified.
+"""
 import argparse
 import csv
 import json
@@ -12,11 +18,13 @@ FIELDS = (
     'del_explorer del_validator del_reviewer del_unknown_role del_completed '
     'del_timed_out del_failed del_other validator_write_tasks '
     'redelegate_after_timeout dup_tool_calls dup_wait_cmds bash_sleep_cmds '
-    'bash_sleep_seconds root_bash root_edit root_write'
+    'bash_sleep_seconds root_bash root_edit root_write reviews reviews_verified reviews_fix_unverified'
 ).split()
 WRITE_TASK = re.compile(r'(?i)(创建|新建|生成|写出|写入|输出|produce|generate|create|write|save)\S{0,25}(文件|脚本|报告|汇总|file|script|report|summary|json|tsv)')
 SLEEP = re.compile(r'sleep\s+(\d+(?:\.\d+)?)(s|m)?', re.I)
 ROLES = ('worker', 'explorer', 'validator', 'reviewer')
+NATIVE_ROLES = {'worker': 'worker', 'scout': 'explorer', 'reviewer': 'reviewer',
+                'planner-validator': 'validator', 'oracle': 'validator'}
 
 
 def read_json(path):
@@ -41,7 +49,8 @@ def parse_run(path):
                del_reviewer=0, del_unknown_role=0, del_completed=0, del_timed_out=0,
                del_failed=0, del_other=0, validator_write_tasks=0,
                redelegate_after_timeout=0, dup_tool_calls=0, dup_wait_cmds=0,
-               bash_sleep_cmds=0, bash_sleep_seconds=0.0, root_bash=0, root_edit=0, root_write=0)
+               bash_sleep_cmds=0, bash_sleep_seconds=0.0, root_bash=0, root_edit=0, root_write=0,
+               reviews=0, reviews_verified=0, reviews_fix_unverified=0)
     row['validator_write_task_matches'] = []
     meta = read_json(path.parent / (rid + '.meta.json'))
     task = meta.get('task') if isinstance(meta.get('task'), dict) else {}
@@ -74,15 +83,48 @@ def parse_run(path):
         return row
 
     timed_out_seen = False
+    pending_reviews = 0
+    native_calls = {}
+    detached_runs = {}
     for event in events:
         msg = event.get('message')
         if not isinstance(msg, dict):
             continue
         role = msg.get('role')
-        if role == 'toolResult' and msg.get('toolName') == 'delegate':
+        if role == 'custom' and msg.get('customType') == 'subagent-notify':
+            content = msg.get('content', '')
+            if isinstance(content, str) and re.match(r'^(?:Detached foreground task|Background task) completed:', content):
+                for run_id, call_id in list(detached_runs.items()):
+                    if re.search(r'/'+re.escape(run_id)+r'/run-\d+/session\.jsonl\b', content):
+                        details = results[call_id]
+                        details['status'] = 'completed'
+                        if details['role'] == 'reviewer':
+                            row['reviews'] += 1
+                            pending_reviews += 1
+                        del detached_runs[run_id]
+            continue
+        if role == 'toolResult' and msg.get('toolName') in ('delegate', 'subagent'):
             details = msg.get('details') if isinstance(msg.get('details'), dict) else {}
+            call_id = msg.get('toolCallId')
+            if msg.get('toolName') == 'subagent':
+                call = native_calls.get(call_id)
+                if not call:
+                    continue
+                entries = details.get('results') or []
+                entry = entries[0] if entries and isinstance(entries[0], dict) else {}
+                role_name = NATIVE_ROLES.get(call['arguments'].get('agent'), 'unknown')
+                detached = entry.get('detached') is True or entry.get('exitCode') == -2 or bool(details.get('asyncId'))
+                exit_code = entry.get('exitCode')
+                status = 'other' if detached or exit_code is None else ('completed' if exit_code == 0 else 'failed')
+                details = {'role': role_name, 'status': status}
+                run_id = msg.get('details', {}).get('runId')
+                if detached and isinstance(run_id, str):
+                    detached_runs[run_id] = call_id
+            if details.get('role') == 'reviewer' and details.get('status') == 'completed':
+                row['reviews'] += 1
+                pending_reviews += 1
             status = str(details.get('status', '')).lower()
-            results[msg.get('toolCallId')] = details
+            results[call_id] = details
             if 'timed_out' in status or 'timeout' in status:
                 timed_out_seen = True
             continue
@@ -97,6 +139,10 @@ def parse_run(path):
             key = (name, canonical(args))
             in_message[key] = in_message.get(key, 0) + 1
             command = args.get('command', '') if isinstance(args, dict) else ''
+            if pending_reviews and (name in ('read', 'grep', 'find', 'ls') or
+                                    (name == 'bash' and isinstance(command, str) and not re.search(r'\bsleep\b', command))):
+                row['reviews_verified'] += pending_reviews
+                pending_reviews = 0
             if name == 'bash':
                 row['root_bash'] += 1
                 if isinstance(command, str) and re.search(r'\bsleep\b', command):
@@ -108,10 +154,17 @@ def parse_run(path):
                 row['root_edit'] += 1
             elif name == 'write':
                 row['root_write'] += 1
-            if name == 'delegate':
+            native = name == 'subagent' and isinstance(args.get('agent'), str) and 'action' not in args
+            if name == 'delegate' or native:
+                if pending_reviews and ((native and NATIVE_ROLES.get(args['agent']) == 'worker') or
+                                        (name == 'delegate' and args.get('role') == 'worker')):
+                    row['reviews_fix_unverified'] += pending_reviews
+                    pending_reviews = 0
                 if timed_out_seen:
                     row['redelegate_after_timeout'] += 1
                 calls.append(item)
+                if native:
+                    native_calls[item.get('id')] = item
         for (name, args_key), count in in_message.items():
             extra = count - 1
             row['dup_tool_calls'] += extra
@@ -122,7 +175,8 @@ def parse_run(path):
         row['delegations'] += 1
         details = results.get(call.get('id'))
         if not isinstance(details, dict):
-            row['del_unknown_role'] += 1
+            native_role = NATIVE_ROLES.get((call.get('arguments') or {}).get('agent')) if call.get('name') == 'subagent' else None
+            row['del_' + native_role if native_role else 'del_unknown_role'] += 1
             row['del_other'] += 1
             continue
         role = details.get('role')

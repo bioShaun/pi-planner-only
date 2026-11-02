@@ -75,39 +75,89 @@ def _digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _references(events):
-    refs = {}
+def _notifications(events):
+    notices = {}
     for event in events:
-        if event.get('type') != 'tool_execution_end' or event.get('toolName') != 'subagent':
+        message = event.get('message') or {}
+        if event.get('type') != 'message_end' or message.get('customType') != 'subagent-notify':
+            continue
+        for notice in (message.get('details') or {}).get('runs') or []:
+            run_id = notice.get('runId')
+            if not _run_id(run_id) or not isinstance(notice.get('asyncDir'), str) or notice.get('status') != 'completed':
+                raise ValueError('invalid async notification')
+            if run_id in notices and notices[run_id] != notice:
+                raise ValueError('conflicting async notification')
+            notices[run_id] = notice
+    return notices
+
+
+def _references(events, statuses=None):
+    refs = {}
+    async_launches = set()
+    for event in events:
+        details = (event.get('result') or {}).get('details') or {}
+        if event.get('type') == 'tool_execution_end' and event.get('toolName') == 'subagent' and details.get('asyncId'):
+            run_id = details['asyncId']
+            if not _run_id(run_id) or details.get('runId') != run_id or run_id in async_launches or details.get('mode') != 'single':
+                raise ValueError('invalid or duplicate async launch')
+            async_launches.add(run_id)
+    for run_id, notice in _notifications(events).items():
+        launch = next((e for e in events if e.get('type') == 'tool_execution_end' and e.get('toolName') == 'subagent' and ((e.get('result') or {}).get('details') or {}).get('asyncId') == run_id), None)
+        if not launch or statuses is None or run_id not in statuses:
+            raise ValueError('unbound async notification')
+        launch_details = launch['result']['details']
+        status = statuses[run_id]
+        steps = status.get('steps') or []
+        terminal = status.get('processTerminal') or {}
+        if (launch_details.get('asyncDir') != notice.get('asyncDir') or status.get('runId') != run_id
+                or status.get('toolCallId') != launch.get('toolCallId') or status.get('state') != 'complete'
+                or terminal.get('runId') != run_id or terminal.get('state') != 'observed'
+                or not terminal.get('instances') or any(x.get('exitCode') != 0 or x.get('signal') for x in terminal['instances'])
+                or len(steps) != 1 or steps[0].get('agent') != notice.get('agent')
+                or steps[0].get('status') != 'complete' or steps[0].get('exitCode') != 0
+                or steps[0].get('sessionFile') != notice.get('sessionValue')):
+            raise ValueError('conflicting async notification status')
+        transcript = steps[0].get('transcriptPath')
+        if not isinstance(transcript, str) or not transcript.endswith('_transcript.jsonl'):
+            raise ValueError('missing async notification transcript')
+        paths = {'transcriptPath': transcript, 'metadataPath': transcript[:-len('_transcript.jsonl')] + '_meta.json'}
+        refs[(run_id, 0)] = (paths, steps[0]['agent'])
+    for event in events:
+        if event.get('type') != 'tool_execution_end' or event.get('toolName') not in TOOLS:
             continue
         details = (event.get('result') or {}).get('details') or {}
-        declared_run_id = details.get('runId')
-        if 'runId' in details and not _run_id(declared_run_id):
-            raise ValueError('invalid parent runId')
-        for position, row in enumerate(details.get('results') or []):
-            if not isinstance(row, dict):
-                raise ValueError('malformed child result')
-            child_run_id = row.get('runId')
-            if 'runId' in row and not _run_id(child_run_id):
-                raise ValueError('invalid child runId')
-            if child_run_id and declared_run_id and child_run_id != declared_run_id:
-                raise ValueError('conflicting child runId')
-            run_id = child_run_id or declared_run_id
-            if not _run_id(run_id):
-                raise ValueError('missing child runId')
-            index = row.get('index', position)
-            if not isinstance(index, int) or isinstance(index, bool) or index < 0:
-                raise ValueError('invalid child index')
-            agent = row.get('agent')
-            if not isinstance(agent, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]*', agent):
-                raise ValueError('invalid child agent')
-            key = (run_id, index)
-            paths = row.get('artifactPaths') or {}
-            if not isinstance(paths, dict) or any(not isinstance(paths.get(field), str) or not paths[field].strip() for field in ('metadataPath', 'transcriptPath')):
-                raise ValueError('missing or malformed child artifact references')
-            if key in refs and refs[key] != (paths, agent):
-                raise ValueError('conflicting child artifact references')
-            refs[key] = (paths, agent)
+        groups = [(details.get('runId'), details.get('results') or [])] if event.get('toolName') == 'subagent' else []
+        for completion in details.get('completions') or []:
+            if completion.get('runId') not in async_launches or completion.get('state') != 'complete' or completion.get('success') is not True or completion.get('mode') != 'single' or not isinstance(completion.get('results'), list) or len(completion['results']) != 1:
+                raise ValueError('unbound or unsuccessful async completion')
+            groups.append((completion['runId'], completion.get('results') or []))
+        for declared_run_id, group in groups:
+            if declared_run_id is not None and not _run_id(declared_run_id):
+                raise ValueError('invalid parent runId')
+            for position, row in enumerate(group):
+                if not isinstance(row, dict):
+                    raise ValueError('malformed child result')
+                child_run_id = row.get('runId')
+                if 'runId' in row and not _run_id(child_run_id):
+                    raise ValueError('invalid child runId')
+                if child_run_id and declared_run_id and child_run_id != declared_run_id:
+                    raise ValueError('conflicting child runId')
+                run_id = child_run_id or declared_run_id
+                if not _run_id(run_id):
+                    raise ValueError('missing child runId')
+                index = row.get('index', position)
+                if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+                    raise ValueError('invalid child index')
+                agent = row.get('agent')
+                if not isinstance(agent, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]*', agent):
+                    raise ValueError('invalid child agent')
+                key = (run_id, index)
+                paths = row.get('artifactPaths') or {}
+                if not isinstance(paths, dict) or any(not isinstance(paths.get(field), str) or not paths[field].strip() for field in ('metadataPath', 'transcriptPath')):
+                    raise ValueError('missing or malformed child artifact references')
+                if key in refs and refs[key] != (paths, agent):
+                    raise ValueError('conflicting child artifact references')
+                refs[key] = (paths, agent)
     return refs
 
 
@@ -170,18 +220,34 @@ def collect_bundle(main, source, destination):
     main, source, destination = Path(main), Path(source) if source is not None else None, Path(destination)
     if destination.exists():
         raise ValueError('evidence bundle already exists')
-    refs = _references(_events(main))
+    events = _events(main)
+    notices = _notifications(events)
+    if source is not None and len(notices) > 1:
+        raise ValueError('source override supports only one async notification')
+    statuses = {}
+    for run_id, notice in notices.items():
+        original = source / 'status.json' if source is not None else Path(notice['asyncDir']) / 'status.json'
+        statuses[run_id] = json.loads(original.read_text())
+    refs = _references(events, statuses)
     if not refs:
         return False
     destination.mkdir(parents=True)
-    manifest = {'main_sha256': _digest(main), 'children': []}
+    manifest = {'main_sha256': _digest(main), 'children': [], 'statuses': []}
     try:
+        for run_id, notice in notices.items():
+            original = source / 'status.json' if source is not None else Path(notice['asyncDir']) / 'status.json'
+            target = destination / (run_id + '_status.json')
+            before = _digest(original)
+            shutil.copyfile(original, target)
+            if before != _digest(original) or before != _digest(target) or json.loads(target.read_text()) != statuses[run_id]:
+                raise ValueError('async status changed during collection')
+            manifest['statuses'].append({'runId': run_id, 'name': target.name, 'sha256': before})
         for (run_id, index), (paths, agent) in refs.items():
             files = {}
             for kind, field, suffix in (('meta', 'metadataPath', '_meta.json'), ('transcript', 'transcriptPath', '_transcript.jsonl')):
                 declared = paths.get(field)
                 name = Path(declared).name if isinstance(declared, str) else ''
-                if name != f'{run_id}_{agent}_{index}{suffix}':
+                if name not in (f'{run_id}_{agent}_{index}{suffix}', f'{run_id}_{agent}{suffix}' if index == 0 else ''):
                     raise ValueError('missing or unbound child artifact agent/path')
                 original = source / name if source is not None else Path(declared)
                 if not original.is_file():
@@ -192,7 +258,9 @@ def collect_bundle(main, source, destination):
                 if before != _digest(original) or before != _digest(target):
                     raise ValueError('child artifact changed during collection')
                 files[kind] = {'name': name, 'sha256': before, 'declared': declared}
-            _terminal(json.loads((destination / files['meta']['name']).read_text()), destination / files['transcript']['name'], run_id, index, agent)
+            terminal = _terminal(json.loads((destination / files['meta']['name']).read_text()), destination / files['transcript']['name'], run_id, index, agent)
+            if run_id in statuses and model_key(statuses[run_id]['steps'][0].get('model')) != model_key(terminal['model']):
+                raise ValueError('async status model mismatch')
             manifest['children'].append({'runId': run_id, 'index': index, 'files': files})
         (destination / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     except Exception:
@@ -206,7 +274,15 @@ def _bundle(main, events, bundle):
     manifest = json.loads((bundle / 'manifest.json').read_text())
     if manifest.get('main_sha256') != _digest(Path(main)):
         raise ValueError('evidence bundle main transcript digest mismatch')
-    refs = _references(events)
+    statuses = {}
+    for record in manifest.get('statuses', []):
+        run_id = record['runId']
+        if run_id in statuses or record['name'] != run_id + '_status.json' or _digest(bundle / record['name']) != record['sha256']:
+            raise ValueError('async status missing, tampered, or duplicate')
+        statuses[run_id] = json.loads((bundle / record['name']).read_text())
+    if set(statuses) != set(_notifications(events)):
+        raise ValueError('missing async status')
+    refs = _references(events, statuses)
     rows = {}
     if len(manifest.get('children', [])) != len(refs):
         raise ValueError('evidence bundle missing or duplicate children')
@@ -219,9 +295,11 @@ def _bundle(main, events, bundle):
         for kind, field, suffix in (('meta', 'metadataPath', '_meta.json'), ('transcript', 'transcriptPath', '_transcript.jsonl')):
             info = files[kind]
             name = Path(paths.get(field) or '').name
-            if name != f'{key[0]}_{agent}_{key[1]}{suffix}' or info['name'] != name or info['declared'] != paths.get(field) or _digest(bundle / name) != info['sha256']:
+            if name not in (f'{key[0]}_{agent}_{key[1]}{suffix}', f'{key[0]}_{agent}{suffix}' if key[1] == 0 else '') or info['name'] != name or info['declared'] != paths.get(field) or _digest(bundle / name) != info['sha256']:
                 raise ValueError('child artifact missing, tampered, or unbound')
         rows[key] = _terminal(json.loads((bundle / files['meta']['name']).read_text()), bundle / files['transcript']['name'], *key, agent)
+        if key[0] in statuses and model_key(statuses[key[0]]['steps'][0].get('model')) != model_key(rows[key]['model']):
+            raise ValueError('async status model mismatch')
     return rows
 
 
@@ -233,6 +311,15 @@ def children(events, *, main=None, bundle=None):
     rejected_duplicates = 0
     starts = set()
     ends = set()
+    start_args = {e.get('toolCallId'): e.get('args') for e in events
+                  if e.get('type') == 'tool_execution_start' and e.get('toolName') == 'subagent' and e.get('toolCallId')}
+    launched_ids = set()
+    launch_calls = {}
+    for event in events:
+        details = (event.get('result') or {}).get('details')
+        if event.get('type') == 'tool_execution_end' and event.get('toolName') == 'subagent' and isinstance(details, dict) and details.get('asyncId'):
+            launched_ids.add(details['asyncId'])
+            launch_calls[details['asyncId']] = event.get('toolCallId')
     terminals = {}
     if bundle is not None:
         try:
@@ -251,13 +338,29 @@ def children(events, *, main=None, bundle=None):
         details = raw_details if isinstance(raw_details, dict) else {}
         mode = details.get("mode")
         rows = details.get("results")
+        args = start_args.get(event.get('toolCallId')) if event.get('toolName') == 'subagent' else None
+        action = args.get('action') if isinstance(args, dict) else None
+        if action in ('status', 'list'):
+            target = args.get('id')
+            if (target and target not in launched_ids) or (details.get('runId') and details['runId'] != target) or (details.get('toolCallId') and details['toolCallId'] != launch_calls.get(target)) or details.get('asyncId') or rows:
+                problems.append('conflicting status observation')
+            continue
+        if action and action != 'steer':
+            problems.append('unsupported subagent action')
+            continue
+        if action == 'steer' and (args.get('id') not in launched_ids or mode != 'management' or rows or details.get('asyncId')):
+            problems.append('conflicting subagent steering')
+            continue
+        if event.get('toolName') == 'subagent' and mode == 'management' and event.get('toolCallId') and not isinstance(args, dict):
+            problems.append('subagent management call missing start')
+            continue
         if not isinstance(rows, list):
             if is_rejected_duplicate(event, result, raw_details):
                 rejected_duplicates += 1
                 continue
             problems.append("subagent result has no child results array")
             continue
-        if event.get("toolName") == "subagent" and mode in ("single", "parallel", "chain", "workflow") and rows:
+        if event.get("toolName") == "subagent" and mode in ("single", "parallel", "chain", "workflow") and (rows or details.get('asyncId')):
             launches += 1
         if (event.get("toolName") == "subagent" and not rows and not details.get("asyncId")
                 and (mode != "management" or event.get("isError") is True)):
@@ -267,7 +370,8 @@ def children(events, *, main=None, bundle=None):
         if any("API error (" in str(item.get("text", "")) for item in result.get("content") or [] if isinstance(item, dict)):
             problems.append("subagent provider error")
         if details.get("asyncId") or details.get("background") or details.get("wait"):
-            problems.append("nonterminal/asynchronous subagent result")
+            if not any(key[0] == details.get('asyncId') for key in terminals):
+                problems.append("nonterminal/asynchronous subagent result")
         groups = [(details.get("runId"), rows)]
         for completion in details.get("completions") or []:
             if completion.get("success") is False or completion.get("state") not in (None, "complete", "completed"):
@@ -291,9 +395,10 @@ def children(events, *, main=None, bundle=None):
                     partial = child.get('usage')
                     if not isinstance(partial, dict) or any(not isinstance(partial.get(k), (int, float)) or isinstance(partial[k], bool) or not math.isfinite(partial[k]) or partial[k] < 0 for k in FIELDS):
                         problems.append('child usage missing or malformed')
-                    if child.get('exitCode') not in (0, -2) or child.get('error') or child.get('interrupted') or child.get('timedOut') or child.get('stopped') or (child.get('exitCode') == -2 and child.get('detached') is not True):
+                    async_completion = event.get('toolName') == 'bg_wait' and child.get('success') is True
+                    if (async_completion and (child.get('exitCode') not in (None, 0) or child.get('detached'))) or (not async_completion and child.get('exitCode') not in (0, -2)) or child.get('error') or child.get('interrupted') or child.get('timedOut') or child.get('stopped') or (child.get('exitCode') == -2 and child.get('detached') is not True):
                         problems.append('failed child result')
-                    if child.get('model') != terminal['model'] or (isinstance(partial, dict) and any(isinstance(partial.get(k), (int, float)) and partial[k] > terminal['usage'][k] for k in FIELDS)):
+                    if child.get('model') != terminal['model'] or (isinstance(partial, dict) and any(isinstance(partial.get(k), (int, float)) and (partial[k] != terminal['usage'][k] if async_completion else partial[k] > terminal['usage'][k]) for k in FIELDS)):
                         problems.append('conflicting child partial and terminal')
                     if child.get('exitCode') == 0 and not child.get('detached') and any(child.get(k) != terminal.get(k) for k in ('model', 'usage', 'exitCode')):
                         problems.append('conflicting duplicate child result')
@@ -326,6 +431,15 @@ def children(events, *, main=None, bundle=None):
                 problems.append("nested child usage cannot be fully priced")
     if starts - ends:
         problems.append("tool call has no terminal result")
+    try:
+        notices = _notifications(events)
+    except (ValueError, TypeError, AttributeError) as exc:
+        problems.append(f'invalid async notification: {exc}')
+        notices = {}
+    for run_id in notices:
+        key = ('run-index', run_id, 0)
+        if key not in found and (run_id, 0) in terminals:
+            found[key] = terminals[(run_id, 0)]
     return list(found.values()), sorted(set(problems)), launches, rejected_duplicates
 
 

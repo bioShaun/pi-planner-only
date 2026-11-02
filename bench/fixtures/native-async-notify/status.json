@@ -1,0 +1,32 @@
+{
+  "runId": "2ac8f476-de5b-4a98-b503-b84dbf21ecc8",
+  "state": "complete",
+  "toolCallId": "call_0cfa282fcea64439a0a02dd663824b7a|fc_06544b9987f468a9016ae3066df0f88191b2a3ed39e1d4787e",
+  "processTerminal": {
+    "version": 1,
+    "state": "observed",
+    "runId": "2ac8f476-de5b-4a98-b503-b84dbf21ecc8",
+    "runnerProcessInstanceId": "831a95fe-8b19-4069-ade0-e0dab235b2a4",
+    "observedAt": 1793263270205,
+    "instances": [
+      {
+        "kind": "runner",
+        "processInstanceId": "831a95fe-8b19-4069-ade0-e0dab235b2a4",
+        "closeObservedAt": 1793263270205,
+        "exitCode": 0,
+        "signal": null
+      }
+    ],
+    "resumeDisposition": "resumable"
+  },
+  "steps": [
+    {
+      "agent": "worker",
+      "status": "complete",
+      "exitCode": 0,
+      "model": "tcuni/gpt-6.1-terra",
+      "sessionFile": "/fixture/session.jsonl",
+      "transcriptPath": "/fixture/2ac8f476-de5b-4a98-b503-b84dbf21ecc8_worker_transcript.jsonl"
+    }
+  ]
+}

@@ -45,7 +45,7 @@ case $MODE in direct|lite|native) ;; *) echo "unsupported arm mode: $MODE" >&2; 
 # Optional arm "env": extra environment variables for the pi process (e.g. PI_PLANNER_ONLY_STRICT).
 ARM_ENV=(); mapfile -t ARM_ENV < <(python3 -c 'import json,sys; [print(f"{k}={v}") for k,v in json.loads(sys.argv[1]).items()]' "${CONFIG[13]}")
 for setting in "${ARM_ENV[@]}"; do
-  case ${setting%%=*} in TMPDIR|TMP|TEMP|BENCH_TEMP_RESOURCE) echo "arm cannot override temp resource" >&2; exit 2 ;; esac
+  case ${setting%%=*} in TMPDIR|TMP|TEMP|BENCH_TEMP_RESOURCE) echo "arm cannot override temp resource" >&2; exit 2 ;; PI_SUBAGENT_CHILD|PI_SUBAGENTS_HERDR_BRIDGE|PI_CODING_AGENT_DIR) echo "arm cannot override native root isolation" >&2; exit 2 ;; esac
 done
 TESTS=(); mapfile -t TESTS < <(python3 -c 'import json,sys; print("\n".join(json.loads(sys.argv[1])))' "$TESTS_JSON")
 ID=$TASK-$ARM-$REP
@@ -53,6 +53,9 @@ RUNS=$BENCH_OUT/runs
 CLONE_ROOT=/project/tmp/ppo-bench/clones
 CLONE=$CLONE_ROOT/$(basename "$BENCH_OUT")-$ID
 PLUGIN_SHA= WORKTREE_DIRTY=false
+SUBAGENTS=$HOME/.pi/agent/npm/node_modules/pi-subagents
+ROOT_ISOLATION=()
+[[ $MODE == native ]] && ROOT_ISOLATION=(-u PI_SUBAGENT_CHILD -u PI_SUBAGENTS_HERDR_BRIDGE)
 
 # Validate all run paths before creating them.
 [[ -d $(dirname "$BENCH_OUT") || -d $BENCH_OUT ]] || { echo "BENCH_OUT parent must already exist" >&2; exit 2; }
@@ -64,9 +67,30 @@ model_present() { awk -v want="$1" 'NF >= 2 && $1 "/" $2 == want {found=1} END {
 model_present "$ROOT_MODEL" || { echo "BLOCKED $ROOT_MODEL"; exit 3; }
 # Child models: whatever pi-subagents is configured to use for the roles the plugin launches.
 CHILD_MODELS=
+SETTINGS_FILE=${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/settings.json
 if [[ $MODE != direct ]]; then
-  CHILD_MODELS=$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])).get("subagents",{}); o=s.get("agentOverrides",{}); print("\n".join(sorted({(o.get(a) or {}).get("model") or s.get("defaultModel","") for a in ("worker","scout","oracle","reviewer")} - {""})))' "$HOME/.pi/agent/settings.json")
+  CHILD_MODELS=$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])).get("subagents",{}); o=s.get("agentOverrides",{}); print("\n".join(sorted({(o.get(a) or {}).get("model") or s.get("defaultModel","") for a in ("worker","scout","oracle","reviewer")} - {""})))' "$SETTINGS_FILE") || { echo "BLOCKED invalid child settings" >&2; exit 3; }
   for m in $CHILD_MODELS; do model_present "$m" || { echo "BLOCKED child model $m"; exit 3; }; done
+fi
+
+if [[ $MODE == native ]]; then
+  if [[ ${BENCH_DRY_RUN:-0} != 1 ]]; then
+    [[ -d $CLONE_ROOT ]] || mkdir -p "$CLONE_ROOT"
+    rm -rf "$CLONE"
+    BASE_LINE=$("$ROOT/bench/prepare-clone.sh" "$TASK" "$CLONE") || exit 2
+    BASE=${BASE_LINE#BASE=}
+    echo "base=$BASE clone=$CLONE"
+    PROBE_CWD=$CLONE
+  else
+    PROBE_CWD=$ROOT
+  fi
+  PROBE_OUTPUT=$(cd "$PROBE_CWD" && env -u PI_PLANNER_ONLY -u PI_PLANNER_ONLY_HANDOFF -u PI_PLANNER_ONLY_STRICT "${ROOT_ISOLATION[@]}" "${ARM_ENV[@]}" PI_OFFLINE=1 timeout 30 pi -ne -e "$SUBAGENTS" -e "$ROOT/bench/native_tool_probe.js" --model "$ROOT_MODEL" --no-session --mode rpc </dev/null 2>&1)
+  PROBE_EXIT=$?
+  if (( PROBE_EXIT != 0 )) || ! grep -Fxq 'BENCH_NATIVE_TOOLS_AVAILABLE' <<<"$PROBE_OUTPUT"; then
+    printf '%s\n' "$PROBE_OUTPUT" >&2
+    fail_run 3 "native tool preflight failed (exit $PROBE_EXIT)"
+  fi
+  echo 'native tool preflight: available'
 fi
 
 if [[ ${BENCH_SKIP_HEALTH:-0} == 1 ]]; then
@@ -116,17 +140,17 @@ if [[ $MODE == lite ]]; then
   fi
 fi
 
-SUBAGENTS=$HOME/.pi/agent/npm/node_modules/pi-subagents
 PI_VERSION=$(pi --version 2>&1 | head -n 1)
 SUBAGENTS_VERSION=$(node -p "require('$SUBAGENTS/package.json').version" 2>/dev/null || printf unknown)
 START=$(date -Is)
-python3 - "$RUNS/$ID.meta.json" "$TASK_FILE" "$ARM_FILE" "$REP" "$PLUGIN_SHA" "$WORKTREE_DIRTY" "$PI_VERSION" "$SUBAGENTS_VERSION" "$HOME/.pi/agent/settings.json" "$START" "$PLUGIN_REF" "$BENCH_TEMP_RESOURCE" <<'PY'
+python3 - "$RUNS/$ID.meta.json" "$TASK_FILE" "$ARM_FILE" "$REP" "$PLUGIN_SHA" "$WORKTREE_DIRTY" "$PI_VERSION" "$SUBAGENTS_VERSION" "$SETTINGS_FILE" "$START" "$PLUGIN_REF" "$BENCH_TEMP_RESOURCE" <<'PY'
 import json, socket, sys
 out,tf,af,rep,sha,dirty,pi,sub,settings,start,plugin_ref,temp_resource=sys.argv[1:]
-try: overrides=json.load(open(settings)).get('subagents',{}).get('agentOverrides',{})
-except (OSError,ValueError): overrides={}
+try: child_settings=json.load(open(settings)).get('subagents',{})
+except (OSError,ValueError): child_settings={}
+overrides=child_settings.get('agentOverrides',{})
 arm=json.load(open(af)); arm['pluginRef']=plugin_ref
-json.dump({'task':json.load(open(tf)),'arm':arm,'rep':rep,'pluginSha':sha or None,'dirty':dirty=='true','piVersion':pi,'piSubagentsVersion':sub,'childOverrides':overrides,'start':start,'hostname':socket.gethostname(),'tempResource':json.loads(temp_resource)},open(out,'w'),indent=2)
+json.dump({'task':json.load(open(tf)),'arm':arm,'rep':rep,'pluginSha':sha or None,'dirty':dirty=='true','piVersion':pi,'piSubagentsVersion':sub,'childOverrides':overrides,'childDefaultModel':child_settings.get('defaultModel'),'childModelScope':child_settings.get('modelScope'),'start':start,'hostname':socket.gethostname(),'tempResource':json.loads(temp_resource)},open(out,'w'),indent=2)
 PY
 
 BODY=$(<"$PROMPT_FILE")
@@ -155,14 +179,16 @@ fi
 
 source "$HOME/.config/pi/secrets.zsh"
 export TMPDIR=$RESOURCE_TMPDIR TMP=$RESOURCE_TMPDIR TEMP=$RESOURCE_TMPDIR
-[[ -d $CLONE_ROOT ]] || mkdir -p "$CLONE_ROOT"
-rm -rf "$CLONE"
-BASE_LINE=$("$ROOT/bench/prepare-clone.sh" "$TASK" "$CLONE") || exit 2
+if [[ $MODE != native ]]; then
+  [[ -d $CLONE_ROOT ]] || mkdir -p "$CLONE_ROOT"
+  rm -rf "$CLONE"
+  BASE_LINE=$("$ROOT/bench/prepare-clone.sh" "$TASK" "$CLONE") || exit 2
+  BASE=${BASE_LINE#BASE=}
+  echo "base=$BASE clone=$CLONE"
+fi
 cd "$CLONE" || exit 2
-BASE=${BASE_LINE#BASE=}
-echo "base=$BASE clone=$CLONE"
 T_START=$(date +%s)
-if [[ $MODE == lite ]]; then env -u PI_PLANNER_ONLY_HANDOFF -u PI_PLANNER_ONLY_STRICT "${ARM_ENV[@]}" PI_PLANNER_ONLY=1 timeout "$RUN_TIMEOUT" pi "${PI_ARGS[@]}" </dev/null >"$RUNS/$ID.jsonl" 2>"$RUNS/$ID.stderr"; else env -u PI_PLANNER_ONLY -u PI_PLANNER_ONLY_HANDOFF -u PI_PLANNER_ONLY_STRICT "${ARM_ENV[@]}" timeout "$RUN_TIMEOUT" pi "${PI_ARGS[@]}" </dev/null >"$RUNS/$ID.jsonl" 2>"$RUNS/$ID.stderr"; fi
+if [[ $MODE == lite ]]; then env -u PI_PLANNER_ONLY_HANDOFF -u PI_PLANNER_ONLY_STRICT "${ARM_ENV[@]}" PI_PLANNER_ONLY=1 timeout "$RUN_TIMEOUT" pi "${PI_ARGS[@]}" </dev/null >"$RUNS/$ID.jsonl" 2>"$RUNS/$ID.stderr"; else env -u PI_PLANNER_ONLY -u PI_PLANNER_ONLY_HANDOFF -u PI_PLANNER_ONLY_STRICT "${ROOT_ISOLATION[@]}" "${ARM_ENV[@]}" timeout "$RUN_TIMEOUT" pi "${PI_ARGS[@]}" </dev/null >"$RUNS/$ID.jsonl" 2>"$RUNS/$ID.stderr"; fi
 PI_EXIT=$?
 echo $(($(date +%s)-T_START)) >"$RUNS/$ID.wall"
 echo "$PI_EXIT" >"$RUNS/$ID.exit"

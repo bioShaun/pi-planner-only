@@ -1,0 +1,1 @@
+{"name": "native-terra-base", "mode": "native", "rootModel": "tcuni/gpt-6.1-terra", "pluginRef": "", "promptPrefix": "实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。"}

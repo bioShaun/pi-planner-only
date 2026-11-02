@@ -61,6 +61,8 @@ Guard 从 `/proc/self/mountinfo` 读取 `/tmp` 及其子挂载的设备号，若
 
 有效运行必须有包含 arm mode 和 Root 模型的元数据，以及明确为 0 的 Pi 退出记录。缺失/损坏元数据、截断 JSONL、缺失退出记录或非零 Pi 退出会阻止完整费用声明；JSON 中 `known_cost_lower_bound` 仅是已知费用下界，不能用它代替 `cost: null` 的未知总费用。
 
+Native 运行在任何付费健康检查之前，以相同模型、扩展和克隆目录离线启动 Pi RPC，确认 `subagent` 或 `subagents_enable` 实际处于活跃工具列表；探测失败、超时或缺少成功标记均停止。独立 Root 的探测和正式运行均清除继承的 `PI_SUBAGENT_CHILD` 与 `PI_SUBAGENTS_HERDR_BRIDGE`，子代理仍由 pi-subagents 正常设置自身标记。`PI_CODING_AGENT_DIR` 可选择实验专用 Pi 配置，子代理模型预检和 metadata 读取该目录的 settings；若项目 settings 覆盖它，需另行核对实际有效配置。dry-run 在源码仓库目录进行离线探测，不创建任务克隆。
+
 ```bash
 export BENCH_OUT=/project/tmp/ppo-bench/results/<campaign>
 slot audit > /project/tmp/ppo-bench/results/<campaign>.log 2>&1

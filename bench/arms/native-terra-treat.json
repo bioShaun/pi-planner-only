@@ -1,0 +1,1 @@
+{"name": "native-terra-treat", "mode": "native", "rootModel": "tcuni/gpt-6.1-terra", "pluginRef": "", "promptPrefix": "实现和跑测试交给子代理，自己负责拆分、检查 git diff 与测试结果。一两处的小改动你自己直接做，不必委派。子代理审查给出的发现，先打开相关代码逐条核实，再决定是否修复。"}

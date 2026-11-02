@@ -1,0 +1,14 @@
+{
+  "runId": "2ac8f476-de5b-4a98-b503-b84dbf21ecc8",
+  "agent": "worker",
+  "exitCode": 0,
+  "model": "tcuni/gpt-6.1-terra:high",
+  "usage": {
+    "input": 11201,
+    "output": 2153,
+    "cacheRead": 60416,
+    "cacheWrite": 0,
+    "cost": 0.0249868,
+    "turns": 8
+  }
+}

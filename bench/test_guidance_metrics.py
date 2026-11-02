@@ -20,6 +20,46 @@ def call(name, args, ident):
 
 
 class GuidanceMetricsTest(unittest.TestCase):
+    def test_native_background_review_notification(self):
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as tmp:
+            runs = Path(tmp)
+            events = [
+                event('assistant', [call('subagent', {'agent': 'reviewer', 'task': 'review', 'async': True}, 'r')]),
+                event('toolResult', toolCallId='r', toolName='subagent', details={'mode': 'single', 'runId': 'run3', 'asyncId': 'run3', 'results': []}),
+                event('custom', 'Background task completed: **reviewer**\n\nFindings.\n\nSession file: /project/tmp/run3/run-0/session.jsonl', customType='subagent-notify'),
+                event('assistant', [call('bash', {'command': 'git diff'}, 'verify')]),
+            ]
+            (runs / 'background.jsonl').write_text('\n'.join(map(json.dumps, events)) + '\n')
+            result = subprocess.run([sys.executable, str(BENCH / 'guidance_metrics.py'), str(runs)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            headers, values = (line.split('\t') for line in result.stdout.splitlines())
+            actual = dict(zip(headers, values))
+            self.assertEqual([actual.get(k) for k in ('del_completed', 'reviews', 'reviews_verified')], ['1', '1', '1'])
+
+    def test_native_delegations_and_review_verification(self):
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as tmp:
+            runs = Path(tmp)
+            events = [
+                event('assistant', [call('subagent', {'action': 'list'}, 'list')]),
+                event('assistant', [call('subagent', {'agent': 'reviewer', 'task': 'review'}, 'r1')]),
+                event('toolResult', toolCallId='r1', toolName='subagent', details={'mode': 'single', 'runId': 'run1', 'results': [{'agent': 'reviewer', 'exitCode': 0, 'outputState': 'present'}]}),
+                event('assistant', [call('read', {'path': 'a'}, 'read'), call('subagent', {'agent': 'worker', 'task': 'fix'}, 'w1')]),
+                event('toolResult', toolCallId='w1', toolName='subagent', details={'mode': 'single', 'results': [{'agent': 'worker', 'exitCode': 0, 'outputState': 'present'}]}),
+                event('assistant', [call('subagent', {'agent': 'reviewer', 'task': 'review', 'async': True}, 'r2')]),
+                event('toolResult', toolCallId='r2', toolName='subagent', details={'mode': 'single', 'runId': 'run2', 'results': [{'agent': 'reviewer', 'exitCode': -2, 'detached': True, 'outputState': 'absent'}]}),
+                event('custom', 'Detached foreground task completed: **reviewer**\n\nFindings.\n\nSession file: /project/tmp/run2/run-0/session.jsonl', customType='subagent-notify'),
+                event('assistant', [call('bash', {'command': 'sleep 1'}, 'sleep'), call('subagent', {'agent': 'worker', 'task': 'fix'}, 'w2')]),
+                event('toolResult', toolCallId='w2', toolName='subagent', details={'mode': 'single', 'results': [{'agent': 'worker', 'exitCode': 1, 'outputState': 'present'}]}),
+                event('assistant', [call('subagent', {'agent': agent, 'task': 'check'}, agent) for agent in ('scout', 'oracle', 'planner-validator', 'other')]),
+            ]
+            (runs / 'native.jsonl').write_text('\n'.join(map(json.dumps, events)) + '\n')
+            result = subprocess.run([sys.executable, str(BENCH / 'guidance_metrics.py'), str(runs)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            headers, values = (line.split('\t') for line in result.stdout.splitlines())
+            actual = dict(zip(headers, values))
+            expected = {'delegations': '8', 'del_worker': '2', 'del_explorer': '1', 'del_validator': '2', 'del_reviewer': '2', 'del_unknown_role': '1', 'del_completed': '3', 'del_failed': '1', 'del_other': '4', 'reviews': '2', 'reviews_verified': '1', 'reviews_fix_unverified': '1'}
+            self.assertEqual({key: actual.get(key) for key in expected}, expected)
+
     def test_synthetic_run_metrics(self):
         with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as tmp:
             runs = Path(tmp) / 'runs'

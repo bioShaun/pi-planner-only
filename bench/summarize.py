@@ -87,7 +87,8 @@ def parse_run(directory,rid,weight,bundle=None):
                 continue
             rec['child_cost']+=price(u,PRICES['models'][key])
         uncertain={'subagent result has no child results array','launched subagent has no terminal child results','nonterminal/asynchronous subagent result','failed or nonterminal async completion','malformed child result','conflicting duplicate child result','nonterminal child result','child usage missing or malformed','child model missing','nested child usage cannot be fully priced','tool call has no terminal result','conflicting child partial and terminal'}
-        if unknown or any(p in uncertain or p.startswith('invalid native terminal evidence:') for p in problems) or (problems and not children): rec['child_cost']=None
+        uncertain.update({'unsupported subagent action', 'conflicting status observation', 'conflicting subagent steering', 'subagent management call missing start'})
+        if unknown or any(p in uncertain or p.startswith(('invalid native terminal evidence:', 'invalid async notification:')) for p in problems) or (problems and not children): rec['child_cost']=None
     elif not child_usage_complete: rec['child_cost']=None
     if not metadata_valid: rec['child_cost']=None
     rec['turns_per_delegate']=rec['root_turns']/rec['delegates'] if rec['delegates'] else None

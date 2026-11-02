@@ -78,6 +78,154 @@ def materialize_fixture(root):
 
 
 class NativeBenchTest(unittest.TestCase):
+    def test_native_async_status_observation_is_not_launch(self):
+        from native_results import collect_bundle
+        fixture = BENCH / 'fixtures/native-async-status'
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            main = fixture / 'main.jsonl'
+            bundle = Path(directory) / 'bundle'
+            self.assertTrue(collect_bundle(main, fixture, bundle))
+            events = [json.loads(line) for line in main.read_text().splitlines()]
+            rows, problems, launches, _ = children(events, main=main, bundle=bundle)
+            self.assertEqual(problems, [])
+            self.assertEqual(launches, 1)
+            self.assertEqual(len(rows), 1)
+            status_index = next(i for i, e in enumerate(events) if e.get('type') == 'tool_execution_start')
+            for label, change, expected in (('unknown', {'action': 'unknown'}, 'unsupported subagent action'), ('resume', {'action': 'resume'}, 'unsupported subagent action'), ('wrong-id', {'action': 'status', 'id': 'wrong'}, 'conflicting status observation')):
+                altered = deepcopy(events)
+                altered[status_index]['args'].update(change)
+                _, faults, _, _ = children(altered)
+                self.assertIn(expected, faults, label)
+            altered = deepcopy(events)
+            altered[status_index]['toolCallId'] = 'wrong-call'
+            _, faults, _, _ = children(altered)
+            self.assertIn('tool call has no terminal result', faults)
+            altered = deepcopy(events)
+            status_end = next(e for e in altered if e.get('type') == 'tool_execution_end' and (e.get('result') or {}).get('details', {}).get('lifecycleStatus'))
+            status_end['result']['details']['toolCallId'] = 'wrong-launch-call'
+            _, faults, _, _ = children(altered)
+            self.assertIn('conflicting status observation', faults)
+            _, faults, _, _ = children(events)
+            self.assertIn('nonterminal/asynchronous subagent result', faults)
+
+    def test_native_async_notification_terminal_artifacts(self):
+        from native_results import collect_bundle
+        fixture = BENCH / 'fixtures/native-async-notify'
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            bundle = Path(directory) / 'bundle'
+            main = fixture / 'main.jsonl'
+            self.assertTrue(collect_bundle(main, fixture, bundle))
+            rows, problems, launches, _ = children([json.loads(line) for line in main.read_text().splitlines()], main=main, bundle=bundle)
+            self.assertEqual(problems, [])
+            self.assertEqual(launches, 1)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]['model'], 'tcuni/gpt-6.1-terra:high')
+
+    def test_native_async_notification_faults_fail_closed(self):
+        from native_results import collect_bundle
+        fixture = BENCH / 'fixtures/native-async-notify'
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            root = Path(directory)
+            source = root / 'source'
+            shutil.copytree(fixture, source)
+            events = [json.loads(line) for line in (source / 'main.jsonl').read_text().splitlines()]
+            def main(name, rows):
+                path = root / (name + '.jsonl')
+                path.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+                return path
+            bad = deepcopy(events)
+            bad[1]['message']['details']['runs'][0]['runId'] = 'wrong-run'
+            with self.assertRaises(ValueError):
+                collect_bundle(main('wrong', bad), source, root / 'wrong-bundle')
+            bad = deepcopy(events)
+            bad[1]['message']['details']['runs'][0]['status'] = 'running'
+            with self.assertRaises(ValueError):
+                collect_bundle(main('unfinished', bad), source, root / 'unfinished-bundle')
+            duplicate = events + [deepcopy(events[1])]
+            duplicate_main = main('duplicate', duplicate)
+            bundle = root / 'duplicate-bundle'
+            self.assertTrue(collect_bundle(duplicate_main, source, bundle))
+            rows, problems, _, _ = children(duplicate, main=duplicate_main, bundle=bundle)
+            self.assertEqual(problems, [])
+            self.assertEqual(len(rows), 1)
+            status = next(bundle.glob('*_status.json'))
+            status.write_text(status.read_text() + ' ')
+            _, problems, _, _ = children(duplicate, main=duplicate_main, bundle=bundle)
+            self.assertTrue(any('invalid native terminal evidence' in p for p in problems))
+            (source / 'status.json').unlink()
+            with self.assertRaises(OSError):
+                collect_bundle(main('no-status', events), source, root / 'no-status-bundle')
+            status_data = json.loads((fixture / 'status.json').read_text())
+            status_data['steps'][0]['model'] = 'tcuni/gpt-6-luna'
+            (source / 'status.json').write_text(json.dumps(status_data))
+            with self.assertRaisesRegex(ValueError, 'model mismatch'):
+                collect_bundle(main('bad-model', events), source, root / 'bad-model-bundle')
+            status_data['steps'][0]['model'] = 'tcuni/gpt-6.1-terra'
+            status_data['steps'][0]['exitCode'] = 1
+            (source / 'status.json').write_text(json.dumps(status_data))
+            with self.assertRaisesRegex(ValueError, 'conflicting async notification status'):
+                collect_bundle(main('bad-exit', events), source, root / 'bad-exit-bundle')
+
+    def test_native_async_wait_terminal_artifacts(self):
+        from native_results import collect_bundle
+        fixture = BENCH / 'fixtures/native-async-wait'
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            bundle = Path(directory) / 'bundle'
+            main = fixture / 'main.jsonl'
+            self.assertTrue(collect_bundle(main, fixture, bundle))
+            rows, problems, launches, _ = children([json.loads(line) for line in main.read_text().splitlines()], main=main, bundle=bundle)
+            self.assertEqual(problems, [])
+            self.assertEqual(launches, 1)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]['usage']['cacheRead'], 52480)
+            self.assertEqual(rows[0]['model'], 'tcuni/gpt-6.1-terra:high')
+
+    def test_native_async_wait_faults_fail_closed(self):
+        from native_results import collect_bundle
+        fixture = BENCH / 'fixtures/native-async-wait'
+        with tempfile.TemporaryDirectory(dir=os.environ['TMPDIR']) as directory:
+            root = Path(directory)
+            events = [json.loads(line) for line in (fixture / 'main.jsonl').read_text().splitlines()]
+            def write_events(name, rows):
+                path = root / (name + '.jsonl')
+                path.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+                return path
+            wrong = deepcopy(events)
+            wrong[-1]['result']['details']['completions'][0]['runId'] = 'wrong-run'
+            with self.assertRaises(ValueError):
+                collect_bundle(write_events('wrong', wrong), fixture, root / 'wrong-bundle')
+            empty = deepcopy(events)
+            empty[-1]['result']['details']['completions'][0]['results'] = []
+            with self.assertRaises(ValueError):
+                collect_bundle(write_events('empty', empty), fixture, root / 'empty-bundle')
+            duplicate = events + [deepcopy(events[0])]
+            dup_main = write_events('duplicate', duplicate)
+            with self.assertRaises(ValueError):
+                collect_bundle(dup_main, fixture, root / 'duplicate-bundle')
+            no_terminal = write_events('missing', events[:1])
+            self.assertFalse(collect_bundle(no_terminal, fixture, root / 'missing-bundle'))
+            _, problems, _, _ = children(events[:1], main=no_terminal)
+            self.assertIn('nonterminal/asynchronous subagent result', problems)
+            for flag, value in (('exitCode', 1), ('detached', True), ('interrupted', True)):
+                conflicting = deepcopy(events)
+                conflicting[-1]['result']['details']['completions'][0]['results'][0][flag] = value
+                conflict_main = write_events('conflict-' + flag, conflicting)
+                conflict_bundle = root / ('conflict-' + flag + '-bundle')
+                self.assertTrue(collect_bundle(conflict_main, fixture, conflict_bundle))
+                _, problems, _, _ = children(conflicting, main=conflict_main, bundle=conflict_bundle)
+                self.assertIn('failed child result', problems)
+            main = write_events('good', events)
+            bundle = root / 'good-bundle'
+            self.assertTrue(collect_bundle(main, fixture, bundle))
+            artifact = next(bundle.glob('*_transcript.jsonl'))
+            original = artifact.read_text()
+            artifact.write_text(original + '{}\n')
+            _, problems, _, _ = children(events, main=main, bundle=bundle)
+            self.assertTrue(any('invalid native terminal evidence' in p for p in problems))
+            artifact.write_text(original[:-10])
+            _, problems, _, _ = children(events, main=main, bundle=bundle)
+            self.assertTrue(any('invalid native terminal evidence' in p for p in problems))
+
     def test_archived_detached_terminal_replay(self):
         self.assertTrue((FIXTURE / 'runs' / (FIXTURE_MAIN + '.gz')).is_file(), 'native replay fixture missing')
         from native_results import collect_bundle
@@ -702,17 +850,20 @@ class NativeBenchTest(unittest.TestCase):
             (home / '.pi/agent/settings.json').write_text(json.dumps({'subagents': {'defaultModel': MODEL}}))
             (root / 'bench/run.sh').write_bytes((BENCH / 'run.sh').read_bytes())
             (root / 'bench/temp_guard.py').write_bytes((BENCH / 'temp_guard.py').read_bytes())
+            if (BENCH / 'native_tool_probe.js').exists():
+                (root / 'bench/native_tool_probe.js').write_bytes((BENCH / 'native_tool_probe.js').read_bytes())
             isolated_script = (BENCH / 'run-body.sh').read_text().replace('$HOME/.config/pi/secrets.zsh', str(home / '.config/pi/secrets.zsh')).replace('$HOME/.pi/agent/settings.json', str(home / '.pi/agent/settings.json'))
             (root / 'bench/run-body.sh').write_text(isolated_script)
             (root / 'bench/tasks/T3.json').write_text(json.dumps({'id': 'T3', 'repo': 'x', 'target': 'a', 'parent': 'b', 'python': 'python3', 'prompt': 'T3.md', 'baseline': 'T3.json', 'tests': []}))
             (root / 'bench/tasks/T3.md').write_text('task')
-            (root / 'bin/pi').write_text('#!/bin/sh\nif [ -n "${PI_MARKER:-}" ]; then printf called > "$PI_MARKER"; fi\ncase "$1" in --list-models) printf "cline/cline-pass deepseek-v4.1-flash\\ntcuni gpt-6-luna\\n";; --version) echo pi-test;; esac\n')
+            (root / 'bin/pi').write_text('#!/bin/sh\nif [ -n "${PI_MARKER:-}" ]; then printf called > "$PI_MARKER"; fi\ncase " $* " in *" --mode rpc "*) echo BENCH_NATIVE_TOOLS_AVAILABLE >&2; exit 0;; esac\ncase "$1" in --list-models) printf "cline/cline-pass deepseek-v4.1-flash\\ntcuni gpt-6-luna\\n";; --version) echo pi-test;; esac\n')
             (root / 'bin/pi').chmod(0o755)
             (root / 'bin/git').write_text('#!/bin/sh\ncase "$3" in rev-parse) echo testsha;; esac\n')
             (root / 'bin/git').chmod(0o755)
             (root / 'index.ts').write_text('')
             env = {**os.environ, 'PATH': str(root / 'bin') + ':' + os.environ['PATH'], 'TMPDIR': '/project/tmp',
-                   'BENCH_OUT': str(root / 'out'), 'BENCH_DRY_RUN': '1', 'BENCH_SKIP_HEALTH': '1'}
+                   'BENCH_OUT': str(root / 'out'), 'BENCH_DRY_RUN': '1', 'BENCH_SKIP_HEALTH': '1',
+                   'PI_CODING_AGENT_DIR': str(home / '.pi/agent')}
             (root / 'out').mkdir()
             for arm in ('native-pds', 'lite-pds-head', 'direct-pds'):
                 (root / f'bench/arms/{arm}.json').write_bytes((BENCH / f'arms/{arm}.json').read_bytes())
@@ -722,6 +873,67 @@ class NativeBenchTest(unittest.TestCase):
                 self.assertEqual(done.stdout.count(' -e '), expected, done.stdout)
                 self.assertIn('temp guard: ', done.stderr)
                 self.assertIn('tempResource', (root / f'out/runs/T3-{arm}-1.meta.json').read_text())
+            isolated = root / 'isolated-agent'
+            isolated.mkdir()
+            overrides = {'worker': {'model': 'tcuni/gpt-6-luna'}}
+            scope = {'enforce': True, 'strict': True, 'allow': ['tcuni/gpt-6-luna']}
+            (isolated / 'settings.json').write_text(json.dumps({'subagents': {'agentOverrides': overrides, 'defaultModel': 'tcuni/gpt-6-luna', 'modelScope': scope}}))
+            isolated_env = {**env, 'PI_CODING_AGENT_DIR': str(isolated)}
+            done = subprocess.run(['bash', str(root / 'bench/run.sh'), 'T3', 'native-pds', '2'], env=isolated_env, capture_output=True, text=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            meta = json.loads((root / 'out/runs/T3-native-pds-2.meta.json').read_text())
+            self.assertEqual(meta['childOverrides'], overrides)
+            self.assertEqual(meta['childDefaultModel'], 'tcuni/gpt-6-luna')
+            self.assertEqual(meta['childModelScope'], scope)
+            (isolated / 'models.json').symlink_to(Path.home() / '.pi/agent/models.json')
+            marker = root / 'probe-environment.json'
+            real_pi = shutil.which('pi')
+            (root / 'bin/pi').write_text('#!/bin/bash\n'
+                'if [[ " $* " == *" --mode rpc "* ]]; then\n'
+                '  printf "{\\"child\\":\\"%s\\",\\"bridge\\":\\"%s\\",\\"agent\\":\\"%s\\",\\"tmp\\":\\"%s\\"}" "${PI_SUBAGENT_CHILD-unset}" "${PI_SUBAGENTS_HERDR_BRIDGE-unset}" "$PI_CODING_AGENT_DIR" "$TMPDIR" > "$PROBE_MARKER"\n'
+                f'  exec {real_pi} "$@"\n'
+                'fi\n'
+                'case "$1" in --list-models) printf "cline/cline-pass deepseek-v4.1-flash\\ntcuni gpt-6-luna\\n";; --version) echo pi-test;; esac\n')
+            injected = {**isolated_env, 'PI_SUBAGENT_CHILD': '1', 'PI_SUBAGENTS_HERDR_BRIDGE': '1', 'PROBE_MARKER': str(marker)}
+            done = subprocess.run(['bash', str(root / 'bench/run.sh'), 'T3', 'native-pds', '4'], env=injected, capture_output=True, text=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertTrue(marker.exists(), 'native tool preflight was not executed')
+            observed = json.loads(marker.read_text())
+            self.assertEqual(observed['child'], 'unset')
+            self.assertEqual(observed['bridge'], 'unset')
+            self.assertEqual(observed['agent'], str(isolated))
+            self.assertTrue(Path(observed['tmp']).is_relative_to('/project/tmp'))
+            self.assertIn('native tool preflight: available', done.stdout)
+            (root / 'bench/prepare-clone.sh').write_text('#!/bin/bash\nmkdir -p "$2"\nprintf "BASE=test\\n"\n')
+            (root / 'bench/prepare-clone.sh').chmod(0o755)
+            (root / 'bin/pi').write_text('#!/bin/bash\n'
+                'case " $* " in *" --mode rpc "*) '
+                'case "$PROBE_FAULT" in missing) exit 0;; error) exit 9;; timeout) exit 124;; esac;; esac\n'
+                'case "$1" in --list-models) printf "cline/cline-pass deepseek-v4.1-flash\\ntcuni gpt-6-luna\\n";; '
+                '*) printf paid > "$PAID_MARKER";; esac\n')
+            paid = root / 'paid-called'
+            for fault in ('missing', 'error', 'timeout'):
+                fault_env = {**injected, 'BENCH_DRY_RUN': '0', 'BENCH_SKIP_HEALTH': '0',
+                             'PROBE_FAULT': fault, 'PAID_MARKER': str(paid)}
+                done = subprocess.run(['bash', str(root / 'bench/run.sh'), 'T3', 'native-pds', '5'], env=fault_env, capture_output=True, text=True)
+                self.assertEqual(done.returncode, 3, done.stderr)
+                self.assertIn('native tool preflight failed', (root / 'out/STOP').read_text())
+                self.assertFalse(paid.exists(), fault)
+            bad_native = json.loads((root / 'bench/arms/native-pds.json').read_text())
+            bad_native['env'] = {'PI_SUBAGENT_CHILD': '1'}
+            (root / 'bench/arms/bad-native.json').write_text(json.dumps(bad_native))
+            done = subprocess.run(['bash', str(root / 'bench/run.sh'), 'T3', 'bad-native', '1'], env=injected, capture_output=True, text=True)
+            self.assertEqual(done.returncode, 2)
+            self.assertIn('arm cannot override native root isolation', done.stderr)
+            bad_native['env'] = {'PI_CODING_AGENT_DIR': '/project/tmp/another-agent'}
+            (root / 'bench/arms/bad-native.json').write_text(json.dumps(bad_native))
+            done = subprocess.run(['bash', str(root / 'bench/run.sh'), 'T3', 'bad-native', '1'], env=injected, capture_output=True, text=True)
+            self.assertEqual(done.returncode, 2)
+            self.assertIn('arm cannot override native root isolation', done.stderr)
+            (isolated / 'settings.json').write_text('{invalid')
+            done = subprocess.run(['bash', str(root / 'bench/run.sh'), 'T3', 'native-pds', '3'], env=isolated_env, capture_output=True, text=True)
+            self.assertNotEqual(done.returncode, 0)
+            self.assertFalse((root / 'out/runs/T3-native-pds-3.meta.json').exists())
             (root / 'bench/arms/bad.json').write_text(json.dumps({'name': 'bad', 'mode': 'not-supported', 'rootModel': ROOT_MODEL, 'pluginRef': '', 'promptPrefix': ''}))
             done = subprocess.run(['bash', str(root / 'bench/run.sh'), 'T3', 'bad', '1'], env=env, capture_output=True, text=True)
             self.assertEqual(done.returncode, 2)
