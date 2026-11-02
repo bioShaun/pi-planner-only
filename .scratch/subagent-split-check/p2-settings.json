@@ -1,0 +1,30 @@
+{
+  "subagents": {
+    "defaultModel": "tcuni/gpt-6.1-terra",
+    "agentOverrides": {
+      "worker": {"model": "tcuni/gpt-6.1-terra"},
+      "reviewer": {"model": "tcuni/gpt-6.1-terra"},
+      "oracle": {"model": "tcuni/gpt-6.1-terra"},
+      "planner-validator": {"model": "tcuni/gpt-6.1-terra"},
+      "scout": {"model": "tcuni/gpt-6-luna"},
+      "claude-code": {"disabled": true},
+      "claude-code-writer": {"disabled": true},
+      "codex-exec": {"disabled": true},
+      "codex-exec-writer": {"disabled": true},
+      "cursor-agent": {"disabled": true},
+      "cursor-agent-writer": {"disabled": true}
+    },
+    "modelScope": {
+      "enforce": true,
+      "strict": true,
+      "allow": ["tcuni/gpt-6.1-terra", "tcuni/gpt-6-luna"],
+      "agents": {
+        "worker": {"allow": ["tcuni/gpt-6.1-terra"]},
+        "reviewer": {"allow": ["tcuni/gpt-6.1-terra"]},
+        "oracle": {"allow": ["tcuni/gpt-6.1-terra"]},
+        "planner-validator": {"allow": ["tcuni/gpt-6.1-terra"]},
+        "scout": {"allow": ["tcuni/gpt-6-luna"]}
+      }
+    }
+  }
+}
