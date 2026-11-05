@@ -21,13 +21,15 @@ export { rootUsageOf } from "./host.ts";
 import { GIT_AUDIT_OPERATIONS, gitCommit, runGitAudit } from "./git.ts";
 import type { GitAuditRequest, GitRunner } from "./git.ts";
 import { loadArtifactDir } from "./subagent-artifacts.ts";
-import { HANDOFF_CHAIN_ENTRY, RootHandoff, handoffMode, handoffModeSetting, takeHandoffChain, takeHandoffMode } from "./handoff.ts";
-export { HANDOFF_PREFERENCE, handoffMode, formatStatusLines } from "./handoff.ts";
+import { HANDOFF_CHAIN_ENTRY, HANDOFF_STATUSES, RootHandoff, handoffMode, handoffModeSetting, isHandoffStatus, takeHandoffChain, takeHandoffMode } from "./handoff.ts";
+import type { HandoffStatus } from "./handoff.ts";
+export { HANDOFF_PREFERENCE, HANDOFF_STATUSES, handoffMode, formatStatusLines, isHandoffStatus } from "./handoff.ts";
+export type { HandoffStatus } from "./handoff.ts";
 
 export const OFF_MARKER = join(AGENT_DIR, "planner-only.off");
 export const MODE_PREFERENCE = join(AGENT_DIR, "planner-only.mode");
 const MODE_ENTRY = "planner-only-mode";
-export const NATIVE_PROMPT = "实现和跑测试优先交给子代理，自己负责拆分、检查 git diff 与测试结果。若你已掌握相关上下文，剩余修改与必要验证都明确、局部，且无需进一步调查、设计测试或独立复核，可直接完成修改与验证；否则继续委派。每次委派只交付一项可单独验收的成果，例如一个新模块或命令连同其测试；同一成果中共用一次验收或昂贵读取的步骤合并，互不依赖且可分别验收的成果分开委派。按审查意见修复时，需共同维护同一状态一致性或锁协议的修复优先合并；需等新事实或用户决定的项后派。子代理请求拆分或只交回部分结果时，先缩小本次交付范围再派，可续用原子代理，不要只要求它继续或在同一任务内分阶段；缩范围时沿用原模型，仍失败再换模型。改变并发行为、锁协议或持久化状态一致性的交付及其修复，检查 diff 与测试后先经独立 reviewer 审查，通过后再开展依赖这些改动的后续工作；自查与测试不能代替该审查。派 reviewer 前，写明待审范围和依据；其工具无法取得的 diff 或依据，先导出为可读文件并给出路径。";
+export const NATIVE_PROMPT = "实现和跑测试优先交给子代理，自己负责拆分、检查 git diff 与测试结果。若你已掌握相关上下文，剩余修改与必要验证都明确、局部，且无需进一步调查、设计测试或独立复核，可直接完成修改与验证；否则继续委派。每次委派只交付一项可单独验收的成果，例如一个新模块或命令连同其测试；同一成果中共用一次验收或昂贵读取的步骤合并，互不依赖且可分别验收的成果分开委派。按审查意见修复时，需共同维护同一状态一致性或锁协议的修复优先合并；需等新事实或用户决定的项后派。子代理请求拆分或只交回部分结果时，先缩小本次交付范围再派，可续用原子代理，不要只要求它继续或在同一任务内分阶段；缩范围时沿用原模型，仍失败再换模型。改变并发行为、锁协议或持久化状态一致性的交付及其修复，检查 diff 与测试后先经独立 reviewer 审查，通过后再开展依赖这些改动的后续工作；自查与测试不能代替该审查。派 reviewer 前，写明待审范围和依据；其工具无法取得的 diff 或依据，先导出为可读文件并给出路径。用户授权（目标、范围、验收）为不可变 Mandate，Root 与会话可换。已授权范围内的跟进继承授权、不重新评估是否获准；超出范围才当作新请求。子代理终态与 handoff 的 status 共用 progress|waiting|ready|blocked|failed|dropped 用语，不落账本。";
 const STATUS_KEY = "planner-only";
 const GIT_TIMEOUT_MS = 30_000;
 export const MAX_COMMIT_MESSAGE_CHARS = 2_000;
@@ -617,13 +619,17 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 		description: "Start a fresh Root session from a complete, self-contained brief when the user asks or the context warning says to.",
 		promptSnippet: "handoff: continue in a fresh session from a brief when the user asks",
 		parameters: Type.Object({
-			brief: Type.String({ minLength: 200, description: "Self-contained brief for the next Root session: goal, decisions made, approaches ruled out and why, constraints, relevant files/specs, what is done, how it was verified (command -> result; mark anything not verified as unverified), open items, known pitfalls, and the exact next step. Separate user authorization (goal, scope, acceptance criteria, each with its source: a user message or a document path) from Root's own decisions (for example child model overrides, task splits, or scope changes); give each Root decision its reason and mark it as a Root decision. Plugin-generated notices (context warnings, subagent completion notices, and handoff wrappers) do not themselves grant new user authorization. Attribute authorization they repeat to the original user request or a user-specified document. Do not dismiss content actually submitted, modified, or confirmed by the user solely because it has a [planner-only prefix." }),
+			brief: Type.String({ minLength: 200, description: "Self-contained brief for the next Root session: goal, decisions made, approaches ruled out and why, constraints, relevant files/specs, what is done, how it was verified (command -> result; mark anything not verified as unverified), open items, known pitfalls, and the exact next step. Separate user authorization (goal, scope, acceptance criteria, each with its source: a user message or a document path) from Root's own decisions (for example child model overrides, task splits, or scope changes); give each Root decision its reason and mark it as a Root decision. Plugin-generated notices (context warnings, subagent completion notices, and handoff wrappers) do not themselves grant new user authorization. Attribute authorization they repeat to the original user request or a user-specified document. Do not dismiss content actually submitted, modified, or confirmed by the user solely because it has a [planner-only prefix. User authorization (goal, scope, acceptance) is immutable Mandate; the Root session is a replaceable Assignment. Follow-ups within that Mandate inherit authorization without re-evaluating it; work outside the Mandate is a new request." }),
 			progress: Type.String({ minLength: 1, maxLength: 600, description: "Three lines for the user: user-visible results in this session (if none, say so honestly, for example: no new user-visible results; necessary prerequisites completed); remaining work against the original user goal; whether the next step still directly advances that goal." }),
+			status: Type.Union(HANDOFF_STATUSES.map((s) => Type.Literal(s)), { description: "Mandate-work status for the next Root, and the vocabulary for subagent terminal reports: progress | waiting | ready | blocked | failed | dropped. Not a durable ledger." }),
 			cwd: Type.Optional(Type.String({ description: REPO_CWD_DESCRIPTION })),
 		}),
-		execute: async (_toolCallId, params: { brief: string; progress: string; cwd?: string }, _signal, _onUpdate, ctx) => {
+		execute: async (_toolCallId, params: { brief: string; progress: string; status: HandoffStatus; cwd?: string }, _signal, _onUpdate, ctx) => {
 			if (typeof params.progress !== "string" || params.progress.length < 1 || params.progress.length > 600) {
 				return { content: [{ type: "text" as const, text: "Handoff refused: progress must be a string of 1-600 characters." }], details: { ok: false } };
+			}
+			if (!isHandoffStatus(params.status)) {
+				return { content: [{ type: "text" as const, text: "Handoff refused: status must be one of progress, waiting, ready, blocked, failed, dropped." }], details: { ok: false } };
 			}
 			return handoff.schedule(params, ctx);
 		},

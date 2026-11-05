@@ -10,7 +10,7 @@ delete process.env.PI_PLANNER_ONLY;
 delete process.env.PI_PLANNER_ONLY_MODE;
 delete process.env.PI_PLANNER_ONLY_STRICT;
 delete process.env.PI_SUBAGENT_CHILD;
-const { default: plannerOnly, MAX_COMMIT_MESSAGE_CHARS, OFF_MARKER, MODE_PREFERENCE, HANDOFF_PREFERENCE, NATIVE_PROMPT, PlannerSession, formatTotals, plannerPrompt, rootUsageOf, initialMode, handoffMode } = await import("./index.ts");
+const { default: plannerOnly, MAX_COMMIT_MESSAGE_CHARS, OFF_MARKER, MODE_PREFERENCE, HANDOFF_PREFERENCE, HANDOFF_STATUSES, NATIVE_PROMPT, PlannerSession, formatTotals, plannerPrompt, rootUsageOf, initialMode, handoffMode } = await import("./index.ts");
 
 // The heat stops the fake theme serves (grok-open colors); the expectations below are fixed points of the ramp.
 const HEAT_COOL = { kind: "rgb", r: 122, g: 162, b: 247 };
@@ -18,6 +18,7 @@ const HEAT_MID = { kind: "rgb", r: 224, g: 175, b: 104 };
 const HEAT_HOT = { kind: "rgb", r: 247, g: 118, b: 142 };
 const statusRgb = (color) => `${color.r},${color.g},${color.b}`;
 const progress = "Completed: parser tests.\nRemaining: migration.\nNext: finish migration.";
+const status = "progress";
 
 function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async () => ({ stdout: "", stderr: "not a repo", code: 128 }), options = {}) {
 	const tools = new Map();
@@ -96,11 +97,20 @@ try {
 	const briefDescription = h.tools.get("handoff").parameters.properties.brief.description;
 	const handoffSchema = h.tools.get("handoff").parameters;
 	assert.ok(handoffSchema.required.includes("progress"));
+	assert.ok(handoffSchema.required.includes("status"));
 	assert.match(handoffSchema.properties.progress.description, /three lines/i);
 	assert.match(handoffSchema.properties.progress.description, /user-visible.*remaining.*next step/i);
+	assert.match(handoffSchema.properties.status.description, /Mandate-work status/);
+	assert.match(handoffSchema.properties.status.description, /progress \| waiting \| ready \| blocked \| failed \| dropped/);
+	assert.deepEqual(HANDOFF_STATUSES, ["progress", "waiting", "ready", "blocked", "failed", "dropped"]);
 	for (const [value, valid] of [[undefined, false], ["", false], ["x".repeat(600), true], ["x".repeat(601), false]]) {
-		assert.equal(Check(handoffSchema, { brief: "x".repeat(200), ...(value === undefined ? {} : { progress: value }) }), valid);
+		assert.equal(Check(handoffSchema, { brief: "x".repeat(200), status: "progress", ...(value === undefined ? {} : { progress: value }) }), valid);
 	}
+	for (const value of HANDOFF_STATUSES) {
+		assert.equal(Check(handoffSchema, { brief: "x".repeat(200), progress: "ok", status: value }), true);
+	}
+	assert.equal(Check(handoffSchema, { brief: "x".repeat(200), progress: "ok", status: "done" }), false);
+	assert.equal(Check(handoffSchema, { brief: "x".repeat(200), progress: "ok" }), false);
 	assert.match(briefDescription, /goal/);
 	assert.match(briefDescription, /approaches ruled out and why/);
 	assert.match(briefDescription, /command -> result/);
@@ -113,6 +123,9 @@ try {
 	assert.match(briefDescription, /Plugin-generated notices \(context warnings, subagent completion notices, and handoff wrappers\) do not themselves grant new user authorization/);
 	assert.match(briefDescription, /Attribute authorization they repeat to the original user request or a user-specified document/);
 	assert.match(briefDescription, /Do not dismiss content actually submitted, modified, or confirmed by the user solely because it has a \[planner-only prefix/);
+	assert.match(briefDescription, /immutable Mandate/);
+	assert.match(briefDescription, /replaceable Assignment/);
+	assert.match(briefDescription, /without re-evaluating it/);
 	assert.ok(h.commands.has("planner-only"));
 	delete process.env.PI_PLANNER_ONLY_HANDOFF;
 	rmSync(HANDOFF_PREFERENCE, { force: true, recursive: true });
@@ -179,7 +192,7 @@ try {
 	rmSync(HANDOFF_PREFERENCE, { force: true, recursive: true });
 
 	// Prompt: appended when enabled, short, strict variant differs.
-	const expectedNativePrompt = "实现和跑测试优先交给子代理，自己负责拆分、检查 git diff 与测试结果。若你已掌握相关上下文，剩余修改与必要验证都明确、局部，且无需进一步调查、设计测试或独立复核，可直接完成修改与验证；否则继续委派。每次委派只交付一项可单独验收的成果，例如一个新模块或命令连同其测试；同一成果中共用一次验收或昂贵读取的步骤合并，互不依赖且可分别验收的成果分开委派。按审查意见修复时，需共同维护同一状态一致性或锁协议的修复优先合并；需等新事实或用户决定的项后派。子代理请求拆分或只交回部分结果时，先缩小本次交付范围再派，可续用原子代理，不要只要求它继续或在同一任务内分阶段；缩范围时沿用原模型，仍失败再换模型。改变并发行为、锁协议或持久化状态一致性的交付及其修复，检查 diff 与测试后先经独立 reviewer 审查，通过后再开展依赖这些改动的后续工作；自查与测试不能代替该审查。派 reviewer 前，写明待审范围和依据；其工具无法取得的 diff 或依据，先导出为可读文件并给出路径。";
+	const expectedNativePrompt = "实现和跑测试优先交给子代理，自己负责拆分、检查 git diff 与测试结果。若你已掌握相关上下文，剩余修改与必要验证都明确、局部，且无需进一步调查、设计测试或独立复核，可直接完成修改与验证；否则继续委派。每次委派只交付一项可单独验收的成果，例如一个新模块或命令连同其测试；同一成果中共用一次验收或昂贵读取的步骤合并，互不依赖且可分别验收的成果分开委派。按审查意见修复时，需共同维护同一状态一致性或锁协议的修复优先合并；需等新事实或用户决定的项后派。子代理请求拆分或只交回部分结果时，先缩小本次交付范围再派，可续用原子代理，不要只要求它继续或在同一任务内分阶段；缩范围时沿用原模型，仍失败再换模型。改变并发行为、锁协议或持久化状态一致性的交付及其修复，检查 diff 与测试后先经独立 reviewer 审查，通过后再开展依赖这些改动的后续工作；自查与测试不能代替该审查。派 reviewer 前，写明待审范围和依据；其工具无法取得的 diff 或依据，先导出为可读文件并给出路径。用户授权（目标、范围、验收）为不可变 Mandate，Root 与会话可换。已授权范围内的跟进继承授权、不重新评估是否获准；超出范围才当作新请求。子代理终态与 handoff 的 status 共用 progress|waiting|ready|blocked|failed|dropped 用语，不落账本。";
 	await h.handlers.get("session_start")({}, h.ctx);
 	assert.deepEqual(h.active(), ["read", "bash", "edit", "write", "delegate", "git_audit", "git_commit", "handoff"]);
 	const injected = await h.handlers.get("before_agent_start")({ systemPrompt: "BASE" }, h.ctx);
@@ -262,8 +275,8 @@ try {
 			const check = fakePi();
 			const tool = check.tools.get("handoff");
 			await check.commands.get("planner-only").handler("handoff", check.ctx);
-			if (pending) assert.equal((await tool.execute("existing", { brief, progress }, undefined, undefined, check.ctx)).details.ok, true);
-			const refused = await tool.execute("invalid-progress", { brief, ...(value === undefined ? {} : { progress: value }) }, undefined, undefined, check.ctx);
+			if (pending) assert.equal((await tool.execute("existing", { brief, progress, status }, undefined, undefined, check.ctx)).details.ok, true);
+			const refused = await tool.execute("invalid-progress", { brief, status, ...(value === undefined ? {} : { progress: value }) }, undefined, undefined, check.ctx);
 			assert.equal(refused.details.ok, false, `invalid progress ${String(value)} must be refused`);
 			assert.match(refused.content[0].text, /^Handoff refused: .*progress/i);
 			await check.handlers.get("agent_settled")({}, check.ctx);
@@ -276,46 +289,59 @@ try {
 	}
 	{
 		const check = fakePi();
+		const tool = check.tools.get("handoff");
 		await check.commands.get("planner-only").handler("handoff", check.ctx);
-		assert.equal((await check.tools.get("handoff").execute("max-progress", { brief, progress: "x".repeat(600) }, undefined, undefined, check.ctx)).details.ok, true);
+		assert.equal((await tool.execute("max-progress", { brief, progress: "x".repeat(600), status }, undefined, undefined, check.ctx)).details.ok, true);
+		await check.commands.get("planner-only").handler("handoff drop", check.ctx);
+		for (const value of [undefined, "", "done", "ready "]) {
+			const refused = await tool.execute("invalid-status", { brief, progress, ...(value === undefined ? {} : { status: value }) }, undefined, undefined, check.ctx);
+			assert.equal(refused.details.ok, false, `invalid status ${String(value)} must be refused`);
+			assert.match(refused.content[0].text, /^Handoff refused: .*status/i);
+		}
+		for (const value of HANDOFF_STATUSES) {
+			await check.commands.get("planner-only").handler("handoff", check.ctx);
+			assert.equal((await tool.execute(`status-${value}`, { brief, progress, status: value }, undefined, undefined, check.ctx)).details.ok, true);
+			await check.commands.get("planner-only").handler("handoff drop", check.ctx);
+		}
+		// Fault injection: if status were not validated, a non-enum value would schedule; keep the refuse path covered above.
 	}
 	const gate = fakePi();
 	const gateTool = gate.tools.get("handoff");
-	const unrequestedRefusal = await gateTool.execute("small-unrequested", { brief, progress }, undefined, undefined, gate.ctx);
+	const unrequestedRefusal = await gateTool.execute("small-unrequested", { brief, progress, status }, undefined, undefined, gate.ctx);
 	assert.equal(unrequestedRefusal.details.ok, false);
 	assert.match(unrequestedRefusal.content[0].text, /user did not request a handoff and self-initiated handoff is off/);
 	await gate.commands.get("planner-only").handler("handoff", gate.ctx);
-	assert.equal((await gateTool.execute("manual-request", { brief, progress }, undefined, undefined, gate.ctx)).details.ok, true);
+	assert.equal((await gateTool.execute("manual-request", { brief, progress, status }, undefined, undefined, gate.ctx)).details.ok, true);
 	await gate.commands.get("planner-only").handler("handoff", gate.ctx);
 	await gate.handlers.get("session_start")({}, gate.ctx);
-	const secondSmallCall = await gateTool.execute("after-handoff", { brief, progress }, undefined, undefined, gate.ctx);
+	const secondSmallCall = await gateTool.execute("after-handoff", { brief, progress, status }, undefined, undefined, gate.ctx);
 	assert.equal(secondSmallCall.details.ok, false);
 	// Default (off): high context alone does not let Root self-initiate.
 	const highOff = fakePi();
 	await highOff.handlers.get("session_start")({}, highOff.ctx);
 	await highOff.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200_000, output: 0, cacheRead: 0, cacheWrite: 0 } } }, highOff.ctx);
-	const highOffRefusal = await highOff.tools.get("handoff").execute("high-off", { brief, progress }, undefined, undefined, highOff.ctx);
+	const highOffRefusal = await highOff.tools.get("handoff").execute("high-off", { brief, progress, status }, undefined, undefined, highOff.ctx);
 	assert.equal(highOffRefusal.details.ok, false);
 	assert.match(highOffRefusal.content[0].text, /self-initiated handoff is off/);
 	process.env.PI_PLANNER_ONLY_HANDOFF = "auto";
 	const lowAuto = fakePi();
-	const lowAutoRefusal = await lowAuto.tools.get("handoff").execute("low-auto", { brief, progress }, undefined, undefined, lowAuto.ctx);
+	const lowAutoRefusal = await lowAuto.tools.get("handoff").execute("low-auto", { brief, progress, status }, undefined, undefined, lowAuto.ctx);
 	assert.match(lowAutoRefusal.content[0].text, /below the 150k threshold, and the user did not request a handoff/);
 	const high = fakePi();
 	await high.handlers.get("session_start")({}, high.ctx);
 	await high.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200_000, output: 0, cacheRead: 0, cacheWrite: 0 } } }, high.ctx);
-	assert.equal((await high.tools.get("handoff").execute("high-context", { brief, progress }, undefined, undefined, high.ctx)).details.ok, true);
+	assert.equal((await high.tools.get("handoff").execute("high-context", { brief, progress, status }, undefined, undefined, high.ctx)).details.ok, true);
 	assert.match(high.sentMessages[0][0].content, /prepare a complete handoff brief with the handoff tool/);
 	delete process.env.PI_PLANNER_ONLY_HANDOFF;
 	const handoffTool = h.tools.get("handoff");
-	assert.equal((await handoffTool.execute("short", { brief: "too short", progress }, undefined, undefined, h.ctx)).details.ok, false);
-	assert.deepStrictEqual(await handoffTool.execute("no-ui", { brief, progress }, undefined, undefined, { ...h.ctx, hasUI: false }), {
+	assert.equal((await handoffTool.execute("short", { brief: "too short", progress, status }, undefined, undefined, h.ctx)).details.ok, false);
+	assert.deepStrictEqual(await handoffTool.execute("no-ui", { brief, progress, status }, undefined, undefined, { ...h.ctx, hasUI: false }), {
 		content: [{ type: "text", text: "Handoff refused: a UI session is required." }],
 		details: { ok: false },
 	});
 	await h.commands.get("planner-only").handler("handoff", h.ctx);
-	assert.equal((await handoffTool.execute("handoff-1", { brief, progress, cwd: "repo" }, undefined, undefined, h.ctx)).details.ok, true);
-	assert.equal((await handoffTool.execute("handoff-2", { brief, progress }, undefined, undefined, h.ctx)).details.ok, false);
+	assert.equal((await handoffTool.execute("handoff-1", { brief, progress, status, cwd: "repo" }, undefined, undefined, h.ctx)).details.ok, true);
+	assert.equal((await handoffTool.execute("handoff-2", { brief, progress, status }, undefined, undefined, h.ctx)).details.ok, false);
 	await h.handlers.get("agent_settled")({}, h.ctx);
 	assert.deepEqual(h.sentUserMessages.at(-1), ["/planner-only handoff", { expandPromptTemplates: true }]);
 	await h.commands.get("planner-only").handler("handoff", h.ctx);
@@ -335,7 +361,7 @@ try {
 		return { stdout: "", stderr: "", code: 0 };
 	});
 	await gitFacts.commands.get("planner-only").handler("handoff", gitFacts.ctx);
-	await gitFacts.tools.get("handoff").execute("facts", { brief, progress, cwd: "repo" }, undefined, undefined, gitFacts.ctx);
+	await gitFacts.tools.get("handoff").execute("facts", { brief, progress, status, cwd: "repo" }, undefined, undefined, gitFacts.ctx);
 	await gitFacts.commands.get("planner-only").handler("handoff", gitFacts.ctx);
 	assert.match(gitFacts.replaced.sent[0], /M index.ts/);
 	assert.match(gitFacts.replaced.sent[0], /abc123 latest change/);
@@ -350,7 +376,7 @@ try {
 		return { stdout: "", stderr: "", code: 0 };
 	});
 	await truncFacts.commands.get("planner-only").handler("handoff", truncFacts.ctx);
-	await truncFacts.tools.get("handoff").execute("facts-trunc", { brief, progress, cwd: "repo" }, undefined, undefined, truncFacts.ctx);
+	await truncFacts.tools.get("handoff").execute("facts-trunc", { brief, progress, status, cwd: "repo" }, undefined, undefined, truncFacts.ctx);
 	await truncFacts.commands.get("planner-only").handler("handoff", truncFacts.ctx);
 	assert.match(truncFacts.replaced.sent[0], / M file0\.ts/);
 	assert.match(truncFacts.replaced.sent[0], / M file29\.ts/);
@@ -364,14 +390,14 @@ try {
 		return { stdout: "", stderr: "", code: 0 };
 	});
 	await cleanFacts.commands.get("planner-only").handler("handoff", cleanFacts.ctx);
-	await cleanFacts.tools.get("handoff").execute("facts-clean", { brief, progress, cwd: "repo" }, undefined, undefined, cleanFacts.ctx);
+	await cleanFacts.tools.get("handoff").execute("facts-clean", { brief, progress, status, cwd: "repo" }, undefined, undefined, cleanFacts.ctx);
 	await cleanFacts.commands.get("planner-only").handler("handoff", cleanFacts.ctx);
 	assert.match(cleanFacts.replaced.sent[0], /\(clean\)/);
 	const cancelled = fakePi();
 	let cancelSession = true;
 	cancelled.ctx.newSession = async (opts) => { cancelled.sessionCalls.push(opts); if (cancelSession) return { cancelled: true }; await opts.withSession(cancelled.replaced); return {}; };
 	await cancelled.commands.get("planner-only").handler("handoff", cancelled.ctx);
-	await cancelled.tools.get("handoff").execute("cancel", { brief, progress }, undefined, undefined, cancelled.ctx);
+	await cancelled.tools.get("handoff").execute("cancel", { brief, progress, status }, undefined, undefined, cancelled.ctx);
 	await cancelled.commands.get("planner-only").handler("handoff", cancelled.ctx);
 	assert.match(cancelled.notes.at(-1), /handoff cancelled/);
 	await cancelled.handlers.get("agent_settled")({}, cancelled.ctx);
@@ -380,20 +406,20 @@ try {
 	await cancelled.commands.get("planner-only").handler("handoff", cancelled.ctx);
 	assert.equal(cancelled.sessionCalls.length, 2);
 	assert.match(cancelled.replaced.sent.at(-1), /Continue the parser migration/);
-	await cancelled.tools.get("handoff").execute("drop", { brief, progress }, undefined, undefined, cancelled.ctx);
+	await cancelled.tools.get("handoff").execute("drop", { brief, progress, status }, undefined, undefined, cancelled.ctx);
 	await cancelled.commands.get("planner-only").handler("handoff drop", cancelled.ctx);
 	assert.match(cancelled.notes.at(-1), /handoff dropped/);
 	const thrown = fakePi();
 	thrown.ctx.newSession = async () => { throw new Error("new session boom"); };
 	await thrown.commands.get("planner-only").handler("handoff", thrown.ctx);
-	await thrown.tools.get("handoff").execute("throw", { brief, progress }, undefined, undefined, thrown.ctx);
+	await thrown.tools.get("handoff").execute("throw", { brief, progress, status }, undefined, undefined, thrown.ctx);
 	await assert.doesNotReject(thrown.commands.get("planner-only").handler("handoff", thrown.ctx));
 	assert.match(thrown.notes.at(-1), /handoff failed/);
 	await thrown.handlers.get("agent_settled")({}, thrown.ctx);
 	assert.equal(thrown.sentUserMessages.length, 1);
 	const postReplacementThrow = fakePi(undefined, undefined, { throwAfterReplacement: true });
 	await postReplacementThrow.commands.get("planner-only").handler("handoff", postReplacementThrow.ctx);
-	await postReplacementThrow.tools.get("handoff").execute("post-replacement", { brief, progress }, undefined, undefined, postReplacementThrow.ctx);
+	await postReplacementThrow.tools.get("handoff").execute("post-replacement", { brief, progress, status }, undefined, undefined, postReplacementThrow.ctx);
 	await postReplacementThrow.commands.get("planner-only").handler("handoff", postReplacementThrow.ctx);
 	const afterPostThrow = postReplacementThrow.sessionCalls.length;
 	await postReplacementThrow.handlers.get("agent_settled")({}, postReplacementThrow.ctx);
@@ -402,12 +428,12 @@ try {
 	assert.match(postReplacementThrow.replaced.sent.at(-1), /Continue the parser migration/);
 	const gitFailure = fakePi(undefined, async () => { throw new Error("git unavailable"); });
 	await gitFailure.commands.get("planner-only").handler("handoff", gitFailure.ctx);
-	await gitFailure.tools.get("handoff").execute("git-failure", { brief, progress }, undefined, undefined, gitFailure.ctx);
+	await gitFailure.tools.get("handoff").execute("git-failure", { brief, progress, status }, undefined, undefined, gitFailure.ctx);
 	await gitFailure.commands.get("planner-only").handler("handoff", gitFailure.ctx);
 	assert.match(gitFailure.replaced.sent[0], /git facts unavailable: git unavailable/);
 	const disabledHandoff = fakePi();
 	await disabledHandoff.commands.get("planner-only").handler("handoff", disabledHandoff.ctx);
-	await disabledHandoff.tools.get("handoff").execute("off-handoff", { brief, progress }, undefined, undefined, disabledHandoff.ctx);
+	await disabledHandoff.tools.get("handoff").execute("off-handoff", { brief, progress, status }, undefined, undefined, disabledHandoff.ctx);
 	await disabledHandoff.commands.get("planner-only").handler("off", disabledHandoff.ctx);
 	await disabledHandoff.handlers.get("agent_settled")({}, disabledHandoff.ctx);
 	await disabledHandoff.commands.get("planner-only").handler("on", disabledHandoff.ctx);
@@ -416,7 +442,7 @@ try {
 	const confirm = fakePi();
 	process.env.PI_PLANNER_ONLY_HANDOFF = "confirm";
 	await confirm.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200000, output: 0 } } }, confirm.ctx);
-	await confirm.tools.get("handoff").execute("confirm", { brief, progress }, undefined, undefined, confirm.ctx);
+	await confirm.tools.get("handoff").execute("confirm", { brief, progress, status }, undefined, undefined, confirm.ctx);
 	await confirm.commands.get("planner-only").handler("handoff", confirm.ctx);
 	delete process.env.PI_PLANNER_ONLY_HANDOFF;
 	assert.equal(confirm.replaced.editor.length, 1);
@@ -424,13 +450,13 @@ try {
 	assert.deepEqual(confirm.activeModel(), { provider: "provider-a", id: "model-a" });
 	const providerCollision = fakePi(undefined, undefined, { sourceModel: { provider: "provider-b", id: "model-a" }, registry: [{ provider: "provider-a", id: "model-a" }, { provider: "provider-b", id: "model-a" }] });
 	await providerCollision.commands.get("planner-only").handler("handoff", providerCollision.ctx);
-	await providerCollision.tools.get("handoff").execute("collision", { brief, progress }, undefined, undefined, providerCollision.ctx);
+	await providerCollision.tools.get("handoff").execute("collision", { brief, progress, status }, undefined, undefined, providerCollision.ctx);
 	await providerCollision.commands.get("planner-only").handler("handoff", providerCollision.ctx);
 	assert.deepEqual(providerCollision.replaced.sent.length, 1);
 	assert.deepEqual(providerCollision.activeModel(), { provider: "provider-b", id: "model-a" });
 	const unknownAuto = fakePi(undefined, undefined, { unknownSourceThinking: true });
 	await unknownAuto.commands.get("planner-only").handler("handoff", unknownAuto.ctx);
-	await unknownAuto.tools.get("handoff").execute("unknown-auto", { brief, progress }, undefined, undefined, unknownAuto.ctx);
+	await unknownAuto.tools.get("handoff").execute("unknown-auto", { brief, progress, status }, undefined, undefined, unknownAuto.ctx);
 	await unknownAuto.commands.get("planner-only").handler("handoff", unknownAuto.ctx);
 	assert.equal(unknownAuto.replaced.sent.length, 1);
 	assert.equal(unknownAuto.pi.setThinkingLevel ? unknownAuto.activeThinking() : "", "medium");
@@ -438,7 +464,7 @@ try {
 	const unknownConfirm = fakePi(undefined, undefined, { unknownSourceThinking: true });
 	process.env.PI_PLANNER_ONLY_HANDOFF = "confirm";
 	await unknownConfirm.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200000, output: 0 } } }, unknownConfirm.ctx);
-	await unknownConfirm.tools.get("handoff").execute("unknown-confirm", { brief, progress }, undefined, undefined, unknownConfirm.ctx);
+	await unknownConfirm.tools.get("handoff").execute("unknown-confirm", { brief, progress, status }, undefined, undefined, unknownConfirm.ctx);
 	await unknownConfirm.commands.get("planner-only").handler("handoff", unknownConfirm.ctx);
 	delete process.env.PI_PLANNER_ONLY_HANDOFF;
 	assert.equal(unknownConfirm.replaced.sent.length, 0);
@@ -453,7 +479,7 @@ try {
 	]) {
 		const failed = fakePi(undefined, undefined, options);
 		await failed.commands.get("planner-only").handler("handoff", failed.ctx);
-		await failed.tools.get("handoff").execute(name, { brief, progress }, undefined, undefined, failed.ctx);
+		await failed.tools.get("handoff").execute(name, { brief, progress, status }, undefined, undefined, failed.ctx);
 		await failed.commands.get("planner-only").handler("handoff", failed.ctx);
 		assert.equal(failed.replaced.sent.length, 0, name);
 		assert.equal(failed.replaced.editor.length, 0, name);
@@ -462,7 +488,7 @@ try {
 	}
 	const retrySelection = fakePi(undefined, undefined, { setModelThrowOnce: true, registry: [{ provider: "provider-a", id: "model-a" }, { provider: "provider-b", id: "model-b" }, { provider: "provider-c", id: "model-c" }] });
 	await retrySelection.commands.get("planner-only").handler("handoff", retrySelection.ctx);
-	await retrySelection.tools.get("handoff").execute("retry-selection", { brief, progress }, undefined, undefined, retrySelection.ctx);
+	await retrySelection.tools.get("handoff").execute("retry-selection", { brief, progress, status }, undefined, undefined, retrySelection.ctx);
 	await retrySelection.commands.get("planner-only").handler("handoff", retrySelection.ctx);
 	assert.ok(retrySelection.replaced.notes.some((n) => /settings could not be restored.*retry.*drop/i.test(n)));
 	const failedCalls = retrySelection.sessionCalls.length;
@@ -474,7 +500,7 @@ try {
 	assert.deepEqual(retrySelection.lastSetModel(), { provider: "provider-a", id: "model-a" });
 	const dropSelection = fakePi(undefined, undefined, { setModelThrowOnce: true, registry: [{ provider: "provider-a", id: "model-a" }, { provider: "provider-b", id: "model-b" }, { provider: "provider-c", id: "model-c" }] });
 	await dropSelection.commands.get("planner-only").handler("handoff", dropSelection.ctx);
-	await dropSelection.tools.get("handoff").execute("drop-selection", { brief, progress }, undefined, undefined, dropSelection.ctx);
+	await dropSelection.tools.get("handoff").execute("drop-selection", { brief, progress, status }, undefined, undefined, dropSelection.ctx);
 	await dropSelection.commands.get("planner-only").handler("handoff", dropSelection.ctx);
 	await dropSelection.commands.get("planner-only").handler("handoff drop", dropSelection.ctx);
 	const droppedCalls = dropSelection.sessionCalls.length;
@@ -483,22 +509,22 @@ try {
 	assert.ok(dropSelection.sentUserMessages.some(([m]) => /Call the handoff tool/.test(m)));
 	dropSelection.setSource({ provider: "provider-c", id: "model-c" });
 	await dropSelection.commands.get("planner-only").handler("handoff", dropSelection.ctx);
-	await dropSelection.tools.get("handoff").execute("fresh-after-drop", { brief, progress }, undefined, undefined, dropSelection.ctx);
+	await dropSelection.tools.get("handoff").execute("fresh-after-drop", { brief, progress, status }, undefined, undefined, dropSelection.ctx);
 	await dropSelection.commands.get("planner-only").handler("handoff", dropSelection.ctx);
 	assert.deepEqual(dropSelection.lastSetModel(), { provider: "provider-c", id: "model-c" });
 	const consecutive = fakePi(undefined, undefined, { registry: [{ provider: "provider-a", id: "model-a" }, { provider: "provider-b", id: "model-b" }, { provider: "provider-c", id: "model-c" }] });
 	await consecutive.commands.get("planner-only").handler("handoff", consecutive.ctx);
-	await consecutive.tools.get("handoff").execute("first-consecutive", { brief, progress }, undefined, undefined, consecutive.ctx);
+	await consecutive.tools.get("handoff").execute("first-consecutive", { brief, progress, status }, undefined, undefined, consecutive.ctx);
 	await consecutive.commands.get("planner-only").handler("handoff", consecutive.ctx);
 	assert.deepEqual(consecutive.lastSetModel(), { provider: "provider-a", id: "model-a" });
 	consecutive.setSource({ provider: "provider-c", id: "model-c" });
 	await consecutive.commands.get("planner-only").handler("handoff", consecutive.ctx);
-	await consecutive.tools.get("handoff").execute("second-consecutive", { brief, progress }, undefined, undefined, consecutive.ctx);
+	await consecutive.tools.get("handoff").execute("second-consecutive", { brief, progress, status }, undefined, undefined, consecutive.ctx);
 	await consecutive.commands.get("planner-only").handler("handoff", consecutive.ctx);
 	assert.deepEqual(consecutive.lastSetModel(), { provider: "provider-c", id: "model-c" });
 	const unidentified = fakePi(undefined, undefined, { sourceModel: null });
 	await unidentified.commands.get("planner-only").handler("handoff", unidentified.ctx);
-	await unidentified.tools.get("handoff").execute("unknown-model", { brief, progress }, undefined, undefined, unidentified.ctx);
+	await unidentified.tools.get("handoff").execute("unknown-model", { brief, progress, status }, undefined, undefined, unidentified.ctx);
 	const beforeUnidentified = unidentified.sessionCalls.length;
 	await unidentified.commands.get("planner-only").handler("handoff", unidentified.ctx);
 	assert.equal(unidentified.sessionCalls.length, beforeUnidentified);
@@ -517,7 +543,7 @@ try {
 	const reviewerPromise = inflight.tools.get("delegate").execute("review-inflight", { role: "reviewer", task: "review" }, undefined, undefined, inflight.ctx);
 	await new Promise((resolve) => setTimeout(resolve, 0));
 	await inflight.commands.get("planner-only").handler("handoff", inflight.ctx);
-	const inflightRefusal = await inflight.tools.get("handoff").execute("inflight-refusal", { brief, progress }, undefined, undefined, inflight.ctx);
+	const inflightRefusal = await inflight.tools.get("handoff").execute("inflight-refusal", { brief, progress, status }, undefined, undefined, inflight.ctx);
 	assert.match(inflightRefusal.content[0].text, /a delegated child is still running/);
 	finishReviewer();
 	await reviewerPromise;
@@ -753,8 +779,8 @@ try {
 	assert.ok(!h2.active().includes("delegate"));
 	assert.ok(h2.active().includes("subagents_enable"));
 	const nativeEvent = { systemPrompt: "B", systemPromptOptions: { selectedTools: ["read", "subagents_enable", "subagent", "delegate", "bash"] } };
+	assert.equal(NATIVE_PROMPT, expectedNativePrompt);
 	assert.deepEqual(await h2.handlers.get("before_agent_start")(nativeEvent, h2.ctx), { systemPrompt: `B\n\n${NATIVE_PROMPT}` });
-	assert.deepEqual(await h2.handlers.get("before_agent_start")(nativeEvent, h2.ctx), { systemPrompt: `B\n\n${expectedNativePrompt}` });
 	assert.deepEqual(nativeEvent.systemPromptOptions.selectedTools, ["read", "subagents_enable", "subagent", "bash", "handoff"]);
 	process.env.PI_PLANNER_ONLY_STRICT = "1";
 	process.env.PI_PLANNER_ONLY_HANDOFF = "auto";
@@ -878,7 +904,7 @@ try {
 	for (const [name, params] of nativeTools) {
 		assert.equal((await h2.tools.get(name).execute("id", params, undefined, undefined, h2.ctx)).details.ok, false, `${name} direct execute refused while off`);
 	}
-	assert.equal((await h2.tools.get("handoff").execute("off", { brief: "x".repeat(200), progress }, undefined, undefined, h2.ctx)).details.ok, false);
+	assert.equal((await h2.tools.get("handoff").execute("off", { brief: "x".repeat(200), progress, status }, undefined, undefined, h2.ctx)).details.ok, false);
 	await h2.commands.get("planner-only").handler("on", h2.ctx);
 	assert.equal(h2.appended.at(-1).data.mode, "lite");
 	const resumed = fakePi(["read", "bash", "subagents_enable"]);
@@ -894,11 +920,9 @@ try {
 	reloaded.branch(startup.appended);
 	await reloaded.handlers.get("session_start")({ reason: "reload" }, reloaded.ctx);
 	assert.equal((await reloaded.handlers.get("before_agent_start")({ systemPrompt: "B" }, reloaded.ctx)).systemPrompt, `B\n\n${NATIVE_PROMPT}`);
-	assert.equal((await reloaded.handlers.get("before_agent_start")({ systemPrompt: "B" }, reloaded.ctx)).systemPrompt, `B\n\n${expectedNativePrompt}`);
 	reloaded.branch([...startup.appended, { type: "custom", customType: "planner-only-mode", data: { mode: "invalid" } }]);
 	await reloaded.handlers.get("session_start")({ reason: "resume" }, reloaded.ctx);
 	assert.equal((await reloaded.handlers.get("before_agent_start")({ systemPrompt: "B" }, reloaded.ctx)).systemPrompt, `B\n\n${NATIVE_PROMPT}`);
-	assert.equal((await reloaded.handlers.get("before_agent_start")({ systemPrompt: "B" }, reloaded.ctx)).systemPrompt, `B\n\n${expectedNativePrompt}`);
 	await startup.commands.get("planner-only").handler("lite", startup.ctx);
 	reloaded.branch([]);
 	reloaded.sessionId("session-2");

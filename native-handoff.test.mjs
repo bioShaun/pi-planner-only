@@ -9,6 +9,7 @@ delete process.env.PI_SUBAGENT_CHILD;
 const { default: plannerOnly } = await import("./index.ts");
 const brief = "Preserve the source session work and next action. ".repeat(8);
 const progress = "Completed: setup.\nRemaining: work.\nNext: continue work.";
+const handoffStatus = "progress";
 const status = { text: "", details: {}, fleet: { version: 1, entries: [], totalActive: 0, omitted: 0 }, asyncSnapshot: { kind: "pi-subagents.async-status-snapshot", version: 1, generatedAt: 1, caps: { maxRuns: 20, maxChildrenPerNode: 8, maxDepth: 3, maxStringLength: 160, maxSerializedBytes: 32768 }, runs: [], omitted: { runs: 0, children: 0, byteLimitExceeded: false } } };
 
 function harness() {
@@ -55,7 +56,7 @@ async function ready() {
 	await h.commands.get("planner-only").handler("handoff", h.ctx);
 	return h;
 }
-const schedule = h => h.tools.get("handoff").execute("native", { brief, progress }, undefined, undefined, h.ctx);
+const schedule = h => h.tools.get("handoff").execute("native", { brief, progress, status: handoffStatus }, undefined, undefined, h.ctx);
 const data = patch => ({ version: 1, success: true, data: { ...status, ...patch } });
 
 test("Native tools and context warning", async () => {
@@ -236,7 +237,7 @@ test("Native failed dispatch brief is replaced by a new brief", async () => {
 	h.setResponse(data({}));
 	await h.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200000, output: 1 } } }, h.ctx);
 	const fresh = "New work and next steps. ".repeat(12);
-	const replacement = await h.tools.get("handoff").execute("new", { brief: fresh, progress }, undefined, undefined, h.ctx);
+	const replacement = await h.tools.get("handoff").execute("new", { brief: fresh, progress, status: handoffStatus }, undefined, undefined, h.ctx);
 	assert.equal(replacement.details.ok, true);
 	assert.match(replacement.content[0].text, /replaces/);
 	await h.commands.get("planner-only").handler("handoff", h.ctx);
@@ -265,7 +266,7 @@ test("Native handoff preserves source mode, model and thinking", async () => {
 		assert.equal(h.ctx.thinkingLevel, "high");
 		assert.equal(h.branch().at(-1).data.mode, "native");
 		assert.ok(h.sent.some(message => message.includes(brief)));
-		assert.ok(h.sent.at(-1).includes(`## Progress against the user's goal (previous Root's account)\n${progress}`));
+		assert.ok(h.sent.at(-1).includes(`## Progress against the user's goal (previous Root's account)\nstatus: ${handoffStatus}\n${progress}`));
 		assert.doesNotMatch(h.sent.at(-1), /Continue as Root under planner-only/);
 		await h.handlers.get("session_start")({ reason: "new" }, h.ctx);
 		assert.equal(h.branch().at(-1).data.mode, "off", "handoff mode is consumed only once");

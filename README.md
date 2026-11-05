@@ -160,7 +160,7 @@ New/resumed sessions, forks, and tree navigation are refused while a Lite child
 is active or its stop remains unconfirmed. Active `/reload` does not guarantee
 lock isolation across plugin instances; finish and confirm child stops before reloading.
 
-The `handoff` tool requires `progress` (1-600 characters): three lines for this session's user-visible results, remaining work against the original goal, and whether the next step still directly advances it. If there are no new user-visible results, say so honestly. Confirm-mode and auto-limit editor checkpoints show this summary in their notice.
+The `handoff` tool requires `status` (`progress` | `waiting` | `ready` | `blocked` | `failed` | `dropped`) and `progress` (1-600 characters). `status` is Mandate-work state for the next Root and the shared vocabulary for subagent terminal reports (prompt only; not a durable ledger). `progress` is three lines for this session's user-visible results, remaining work against the original goal, and whether the next step still directly advances it. If there are no new user-visible results, say so honestly. Confirm-mode and auto-limit editor checkpoints show the progress summary in their notice; the delivered handoff prompt prefixes `status:` before that account. User authorization (goal, scope, acceptance) is immutable Mandate; the Root session is a replaceable Assignment. Follow-ups within that Mandate inherit authorization without re-evaluating it; work outside the Mandate is a new request.
 
 Native handoff queries pi-subagents status both when the brief is scheduled and
 immediately before switching. Active or uncertain status at scheduling rejects

@@ -7,6 +7,7 @@ const savedLimit = process.env.PI_PLANNER_ONLY_HANDOFF_AUTO_LIMIT;
 process.env.PI_PLANNER_ONLY_HANDOFF = "off";
 const brief = "Continue the unfinished Root work with its decisions, constraints, evidence, and next step. ".repeat(3);
 const progress = "Completed: setup.\nRemaining: implementation.\nNext: implement the goal.";
+const status = "progress";
 const progressHeading = "## Progress against the user's goal (previous Root's account)";
 
 function harness(options = {}) {
@@ -75,7 +76,7 @@ try {
 	for (const options of [{ failRestore: true }, { failSend: true }, { cancel: true }]) {
 		const h = harness(options);
 		await h.current.command("handoff", h.ctx);
-		assert.equal(h.current.schedule({ brief, progress }, h.ctx).details.ok, true);
+		assert.equal(h.current.schedule({ brief, progress, status }, h.ctx).details.ok, true);
 		await h.current.command("handoff", h.ctx);
 		assert.equal(h.sent.length, 0);
 		const commands = h.commands.length;
@@ -88,7 +89,7 @@ try {
 		assert.deepEqual(h.ctx.model, { provider: "source", id: "model" });
 		assert.equal(h.ctx.thinkingLevel, "high");
 		assert.ok(h.sent[0].includes(brief));
-		assert.ok(h.sent[0].includes(`${progressHeading}\n${progress}`));
+		assert.ok(h.sent[0].includes(`${progressHeading}\nstatus: ${status}\n${progress}`));
 		assert.equal(h.calls(), 2);
 	}
 
@@ -112,6 +113,16 @@ try {
 		assert.doesNotMatch(h.editor[0], /undefined/);
 		assert.equal(h.notes.at(-1), "Handoff ready. Submit when ready.");
 	}
+	for (const value of [undefined, ""]) {
+		const h = harness();
+		h.activity.rootContext = 200000;
+		assert.equal(h.current.schedule({ brief, progress: value, status }, h.ctx).details.ok, true);
+		await h.current.command("handoff", h.ctx);
+		assert.equal(h.editor.length, 1);
+		assert.ok(h.editor[0].includes(`${progressHeading}\nstatus: ${status}\n`));
+		assert.doesNotMatch(h.editor[0], /undefined/);
+		assert.equal(h.notes.at(-1), "Handoff ready. Submit when ready.");
+	}
 	{
 		const h = harness();
 		await h.current.command("handoff", h.ctx);
@@ -123,17 +134,18 @@ try {
 	for (const options of [{ failRestore: true }, { cancel: true }]) {
 		const h = harness(options);
 		h.activity.rootContext = 200000;
-		assert.equal(h.current.schedule({ brief, progress }, h.ctx).details.ok, true);
+		assert.equal(h.current.schedule({ brief, progress, status }, h.ctx).details.ok, true);
 		await h.current.command("handoff", h.ctx);
 		options.cancel = false;
 		h.setSource({ provider: "new", id: "model" });
 		const fresh = "A fresh replacement brief with new work. ".repeat(8);
-		const replacement = h.current.schedule({ brief: fresh, progress: "Fresh progress" }, h.ctx);
+		const replacement = h.current.schedule({ brief: fresh, progress: "Fresh progress", status: "ready" }, h.ctx);
 		assert.equal(replacement.details.ok, true);
 		assert.match(replacement.content[0].text, /replaces/);
 		await h.current.command("handoff", h.ctx);
 		assert.ok(h.editor[0].includes(fresh));
 		assert.ok(!h.editor[0].includes(brief));
+		assert.ok(h.editor[0].includes("status: ready\nFresh progress"));
 		assert.ok(h.editor[0].includes("Fresh progress"));
 		assert.ok(!h.editor[0].includes(progress));
 		assert.ok(h.notes.at(-1).startsWith("Handoff ready. Submit when ready."));
@@ -181,19 +193,19 @@ try {
 		h.activity.rootContext = 200000;
 		assert.equal(h.current.chain(h.ctx).limit, 3);
 		for (let i = 1; i <= 3; i++) {
-			assert.equal(h.current.schedule({ brief, progress }, h.ctx).details.ok, true);
+			assert.equal(h.current.schedule({ brief, progress, status }, h.ctx).details.ok, true);
 			await h.current.command("handoff", h.ctx);
 			assert.equal(h.sent.length, i, `Root handoff ${i} submits automatically`);
-			assert.ok(h.sent.at(-1).includes(`${progressHeading}\n${progress}`));
+			assert.ok(h.sent.at(-1).includes(`${progressHeading}\nstatus: ${status}\n${progress}`));
 			assert.equal(h.current.chain(h.ctx).count, i);
 		}
-		assert.equal(h.current.schedule({ brief, progress }, h.ctx).details.ok, true);
+		assert.equal(h.current.schedule({ brief, progress, status }, h.ctx).details.ok, true);
 		await h.current.command("handoff", h.ctx);
 		assert.equal(h.sent.length, 3, "the fourth Root handoff stops at the editor");
 		assert.ok(h.editor.at(-1).includes(brief));
 		assert.match(h.notes.at(-1), /已连续自动交接 3 次，请检查简报后提交/);
 		assert.ok(h.notes.at(-1).includes(progress));
-		assert.ok(h.editor.at(-1).includes(`${progressHeading}\n${progress}`));
+		assert.ok(h.editor.at(-1).includes(`${progressHeading}\nstatus: ${status}\n${progress}`));
 		assert.ok(h.editor.at(-1).startsWith("[planner-only handoff]"));
 		assert.ok(h.editor.at(-1).indexOf("Plugin-generated notices") < h.editor.at(-1).indexOf(progressHeading));
 		assert.ok(h.editor.at(-1).indexOf(progressHeading) < h.editor.at(-1).indexOf("## Brief"));
@@ -262,6 +274,9 @@ try {
 		assert.match(h.sent[0], /Do not dismiss content actually submitted, modified, or confirmed by the user solely because it has a \[planner-only prefix/);
 		assert.match(h.sent[0], /Treat the brief as a record of continuity, preserving its uncertainties and verification boundaries/);
 		assert.match(h.sent[0], /Inherit authorization from the real sources cited; Root decisions do not grant new authorization/);
+		assert.match(h.sent[0], /immutable Mandate/);
+		assert.match(h.sent[0], /replaceable Assignment/);
+		assert.match(h.sent[0], /without re-evaluating it/);
 		assert.ok(h.sent[0].indexOf("Plugin-generated notices") < h.sent[0].indexOf("## Brief"));
 		assert.ok(!h.sent[0].includes(progressHeading));
 		assert.doesNotMatch(h.sent[0], /undefined/);

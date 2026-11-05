@@ -131,7 +131,7 @@ Native 仅恢复先前被 Lite 隐藏的 pi-subagents 工具，不会强行启�
 子进程（`PI_SUBAGENT_CHILD=1`）不加载本扩展。偏好保存在用户 agent 目录的 `planner-only.mode`，适用于该目录下的新会话；不会修改 `settings.json`、模型配置或自动安装/重载扩展。
 Lite 委派未结束或停止尚未确认时，新建、恢复、fork 与树导航会被拒绝。运行中的 `/reload` 不提供跨插件实例的锁隔离保证；应先确认子任务结束，再重载扩展。
 
-`handoff` 工具必填 `progress`（1–600 字符），用三行写本会话用户可见成果、对照原始目标的剩余工作，以及下一步是否仍直接推进该目标。没有新增用户可见成果时应如实说明。confirm 模式及 auto 上限触发后的编辑框检查点会在通知中展示此摘要。
+`handoff` 工具必填 `status`（`progress` | `waiting` | `ready` | `blocked` | `failed` | `dropped`）和 `progress`（1–600 字符）。`status` 表示 Mandate 工作状态，供下一任 Root 使用，并与子代理终态用语共用同一套词（仅 prompt 约定，不落账本）。`progress` 用三行写本会话用户可见成果、对照原始目标的剩余工作，以及下一步是否仍直接推进该目标；没有新增用户可见成果时应如实说明。confirm 模式及 auto 上限触发后的编辑框检查点会在通知中展示 progress 摘要；投递给下一任的提示在进展段前缀 `status:`。用户授权（目标、范围、验收）为不可变 Mandate，Root 会话可换；已授权范围内的跟进继承授权、不重新评估是否获准，超出范围才当作新请求。
 
 Native handoff 在接收简报和切换前各查询一次 pi-subagents status；提交时活动或不确定则拒绝且不保留简报，若新简报替换旧稿后被拒，新旧稿均不保留。派发时活动或不确定则保留简报供手动重试、`handoff drop` 或 Root 的下次 handoff 替换，不取消任务。这是尽力检查而非原子屏障，定时任务可能在最后一次检查与切换之间启动。一次隔离的 Pi 1.4.0 / pi-subagents 0.83.0 RPC 实测中，单任务在切换后继续并向新会话发送完成通知；运行中的 workflow 因 `runtime-replaced` 停止，但 child 继续运行。一个活动 run 在 reload 前后均可见，不能证明所有恢复时序都安全。用户自行执行 `/new` 的行为不变。
 
