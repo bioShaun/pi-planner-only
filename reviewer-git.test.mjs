@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createHash } from "node:crypto";
 import * as api from "./git.ts";
+import { tempDir } from "./test-helpers.mjs";
 
 function fixFixture(format = "sha1") {
-	const dir = mkdtempSync(join(process.env.TMPDIR, "review-fix-"));
+	const dir = tempDir("review-fix-");
 	const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 	git("init", "-q", `--object-format=${format}`); git("config", "user.name", "Test"); git("config", "user.email", "test@example.com");
 	return { dir, git, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
@@ -100,7 +101,7 @@ test("fix 6 preserves repository state and query identity without fsmonitor", as
 });
 
 test("refsOnly rejects stash and notes for all ref fields", async () => {
-	const dir = mkdtempSync(join(process.env.TMPDIR, "review-query-refs-"));
+	const dir = tempDir("review-query-refs-");
 	const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 	try {
 		git("init", "-q"); git("config", "user.name", "Test"); git("config", "user.email", "test@example.com");
@@ -129,7 +130,7 @@ test("whitelist rejects disallowed commands before invocation", async () => {
 });
 
 test("log range has a path separator", async () => {
-	const dir = mkdtempSync(join(process.env.TMPDIR, "review-query-log-"));
+	const dir = tempDir("review-query-log-");
 	const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 	try {
 		git("init", "-q"); git("config", "user.name", "Test"); git("config", "user.email", "test@example.com");
@@ -148,7 +149,7 @@ test("invalid ref messages identify the field", async () => {
 });
 
 test("show reads historical objects and first-parent statistics safely", async () => {
-	const dir = mkdtempSync(join(process.env.TMPDIR, "review-show-"));
+	const dir = tempDir("review-show-");
 	const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 	try {
 		git("init", "-q"); git("config", "user.name", "Test"); git("config", "user.email", "test@example.com");
@@ -237,7 +238,7 @@ test("show reads historical objects and first-parent statistics safely", async (
 });
 
 test("show root statistics support SHA-256 repositories", async () => {
-	const dir = mkdtempSync(join(process.env.TMPDIR, "review-show-sha256-"));
+	const dir = tempDir("review-show-sha256-");
 	const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 	try {
 		git("init", "-q", "--object-format=sha256"); git("config", "user.name", "Test"); git("config", "user.email", "test@example.com");
@@ -247,7 +248,7 @@ test("show root statistics support SHA-256 repositories", async () => {
 });
 
 test("file diff returns safe complete patches and refuses unsafe inputs", async () => {
-	const dir = mkdtempSync(join(process.env.TMPDIR, "review-file-diff-"));
+	const dir = tempDir("review-file-diff-");
 	const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", maxBuffer: 5 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] }).trim();
 	const direct = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", maxBuffer: 5 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
 	try {
@@ -332,7 +333,7 @@ test("file diff returns safe complete patches and refuses unsafe inputs", async 
 });
 
 test("file patch matches prepareReviewRange on the default configuration", async () => {
-	const dir = mkdtempSync(join(process.env.TMPDIR, "review-file-range-"));
+	const dir = tempDir("review-file-range-");
 	const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 	try {
 		git("init", "-q"); git("config", "user.name", "Test"); git("config", "user.email", "test@example.com");
@@ -345,7 +346,7 @@ test("file patch matches prepareReviewRange on the default configuration", async
 });
 
 test("file diff does not fetch missing promisor blobs", async () => {
-	const dir = mkdtempSync(join(process.env.TMPDIR, "review-promisor-")); const source = join(dir, "source"), clone = join(dir, "clone"); mkdirSync(source);
+	const dir = tempDir("review-promisor-"); const source = join(dir, "source"), clone = join(dir, "clone"); mkdirSync(source);
 	const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 	try {
 		git(source, "init", "-q"); git(source, "config", "user.name", "Test"); git(source, "config", "user.email", "test@example.com"); git(source, "config", "uploadpack.allowFilter", "true");
@@ -367,7 +368,7 @@ test("file diff does not fetch missing promisor blobs", async () => {
 });
 
 test("diff overview reports paginated facts without generating patches", async () => {
-	const dir = mkdtempSync(join(process.env.TMPDIR, "review-overview-"));
+	const dir = tempDir("review-overview-");
 	const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", maxBuffer: 4 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] }).trim();
 	try {
 		git("init", "-q"); git("config", "user.name", "Test"); git("config", "user.email", "test@example.com");
@@ -449,7 +450,7 @@ test("diff overview reports paginated facts without generating patches", async (
 
 assert.equal(typeof api.runReviewQuery, "function", "runReviewQuery must be exported");
 assert.equal(typeof api.validateReviewPath, "function");
-const cwd = mkdtempSync(join(process.env.TMPDIR, "review-query-"));
+const cwd = tempDir("review-query-");
 const git = (...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 try {
 	git("init", "-q");
