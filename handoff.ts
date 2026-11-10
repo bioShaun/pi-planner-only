@@ -394,7 +394,9 @@ export class RootHandoff {
 					const reason = error instanceof Error ? error.message : String(error);
 					(activeHandoff ?? this).#defer({ ...handoff, selection: handoff.selection });
 					(activeHandoff ?? this).#writeChain(base);
-					rctx.ui.notify(`handoff settings could not be restored (${reason}); brief was not sent. Run /planner-only handoff to retry, or /planner-only handoff drop to discard it. Root's next handoff call will replace this brief.`, "warning");
+					const notice = `handoff settings could not be restored (${reason}); brief was not sent. Run /planner-only handoff to retry, or /planner-only handoff drop to discard it. Root's next handoff call will replace this brief.`;
+					try { rctx.ui.notify(notice, "warning"); }
+					catch { (activeHandoff ?? this).#runtime.host.sendMessage({ customType: "planner-only-handoff", content: `[planner-only] ${notice}`, display: true }); }
 				}
 			} });
 			if (result?.cancelled) {
