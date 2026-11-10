@@ -32,6 +32,7 @@ function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async 
 	let pi;
 	const actionInstances = [];
 	let setModelThrown = false;
+	let withSessionError;
 	const appended = [];
 	let staleContext = false;
 	const notes = [];
@@ -44,7 +45,7 @@ function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async 
 	const modelRequests = [];
 	const sessionCalls = [];
 	const registry = options.registry ?? [{ provider: "provider-a", id: "model-a" }, { provider: "provider-b", id: "model-b" }];
-	const replaced = { sent: [], editor: [], notes: [], modelRegistry: { find: (provider, id) => registry.some((m) => m.provider === provider && m.id === id) ? { provider, id } : undefined }, get model() { return activeModel; }, get thinkingLevel() { return activeThinking; }, ui: { notify: (m) => replaced.notes.push(m), setEditorText: (m) => replaced.editor.push(m) }, sendUserMessage: async (m) => replaced.sent.push(m) };
+	const replaced = { sent: [], editor: [], notes: [], modelRegistry: { find: (provider, id) => registry.some((m) => m.provider === provider && m.id === id) ? { provider, id } : undefined }, get model() { return activeModel; }, get thinkingLevel() { return activeThinking; }, ui: { notify: (m) => { if (options.replacementWarningThrows && /settings could not be restored/.test(m)) throw new Error("stale extension ctx after session replacement"); replaced.notes.push(m); }, setEditorText: (m) => replaced.editor.push(m) }, sendUserMessage: async (m) => replaced.sent.push(m) };
 	const registrations = {
 		events,
 		registerTool: (t) => tools.set(t.name, t),
@@ -71,12 +72,12 @@ function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async 
 		hasUI: true,
 		isIdle: () => true,
 		sessionManager: { getSessionId: () => sessionId, getSessionFile: () => "/sessions/previous.jsonl", getBranch: () => branch },
-		newSession: async (opts) => { sessionCalls.push(opts); activeModel = options.replacementModel ?? { provider: "provider-b", id: "model-b" }; activeThinking = options.replacementThinking ?? "medium"; actionInstances.at(-1).stale = true; staleContext = Boolean(options.throwAfterReplacement); pi = makePi(); plannerOnly(pi); await opts.withSession(replaced); if (options.throwAfterReplacement) throw new Error("post-replacement boom"); return {}; },
+		newSession: async (opts) => { sessionCalls.push(opts); activeModel = options.replacementModel ?? { provider: "provider-b", id: "model-b" }; activeThinking = options.replacementThinking ?? "medium"; actionInstances.at(-1).stale = true; staleContext = Boolean(options.throwAfterReplacement); pi = makePi(); plannerOnly(pi); try { await opts.withSession(replaced); } catch (error) { withSessionError = error; throw error; } if (options.throwAfterReplacement) throw new Error("post-replacement boom"); return {}; },
 		get model() { return activeModel; },
 		get thinkingLevel() { return activeThinking; },
 		ui: { setStatus: (k, v) => statuses.push(v), notify: (m) => { if (staleContext) { staleContext = false; throw new Error("This extension ctx is stale"); } notes.push(m); }, theme: options.legacyTheme ? { fg: (c, s) => { statusColors.push(c); return s; } } : { fg: (c, s) => { statusColors.push(c); return s; }, style: (s, opts) => { statusColors.push(opts.fg); return s; }, colors: { accent: HEAT_COOL, warning: HEAT_MID, error: HEAT_HOT } } },
 	};
-	return { get pi() { return pi; }, tools, handlers, commands, events, ctx, notes, statuses, statusColors, sentMessages, sentUserMessages, sessionCalls, replaced, queuedSteers, queuedNextTurn, modelRequests, toolBoundary: () => { modelRequests.push(...queuedSteers.splice(0)); }, userRun: () => { modelRequests.push(...queuedNextTurn.splice(0)); }, active: () => active, appended, activeModel: () => activeModel, activeThinking: () => activeThinking, lastSetModel: () => actionInstances.at(-1).lastSetModel, oldModelCalls: () => actionInstances[0].modelCalls, setSource: (model, thinking = activeThinking) => { activeModel = model; activeThinking = thinking; }, branch: (entries) => { branch = entries; }, sessionId: (id) => { sessionId = id; } };
+	return { get pi() { return pi; }, get withSessionError() { return withSessionError; }, tools, handlers, commands, events, ctx, notes, statuses, statusColors, sentMessages, sentUserMessages, sessionCalls, replaced, queuedSteers, queuedNextTurn, modelRequests, toolBoundary: () => { modelRequests.push(...queuedSteers.splice(0)); }, userRun: () => { modelRequests.push(...queuedNextTurn.splice(0)); }, active: () => active, appended, activeModel: () => activeModel, activeThinking: () => activeThinking, lastSetModel: () => actionInstances.at(-1).lastSetModel, oldModelCalls: () => actionInstances[0].modelCalls, setSource: (model, thinking = activeThinking) => { activeModel = model; activeThinking = thinking; }, branch: (entries) => { branch = entries; }, sessionId: (id) => { sessionId = id; } };
 }
 
 try {
@@ -460,6 +461,20 @@ try {
 		assert.ok(failed.replaced.notes.some((n) => reason.test(n)), name);
 		assert.ok(failed.replaced.notes.some((n) => /\/planner-only handoff.*retry.*\/planner-only handoff drop.*discard/i.test(n)), `${name} should explain retry/drop`);
 	}
+	const staleRecoveryNotice = fakePi(undefined, undefined, { setModelThrowOnce: true, replacementWarningThrows: true });
+	await staleRecoveryNotice.commands.get("planner-only").handler("handoff", staleRecoveryNotice.ctx);
+	await staleRecoveryNotice.tools.get("handoff").execute("stale-recovery-notice", { brief, progress }, undefined, undefined, staleRecoveryNotice.ctx);
+	await assert.doesNotReject(staleRecoveryNotice.commands.get("planner-only").handler("handoff", staleRecoveryNotice.ctx));
+	assert.equal(staleRecoveryNotice.withSessionError, undefined, "withSession must not throw when its recovery notice fails");
+	assert.ok(staleRecoveryNotice.sentMessages.some(([message]) => /settings could not be restored \(setModel boom\)/.test(message.content)), "host notification retains the original failure");
+	assert.equal(staleRecoveryNotice.replaced.sent.length, 0);
+	const staleRecoveryCalls = staleRecoveryNotice.sessionCalls.length;
+	const staleRecoveryMessages = staleRecoveryNotice.sentUserMessages.length;
+	await staleRecoveryNotice.handlers.get("agent_settled")({}, staleRecoveryNotice.ctx);
+	assert.equal(staleRecoveryNotice.sessionCalls.length, staleRecoveryCalls, "failed handoff remains manual-only");
+	assert.equal(staleRecoveryNotice.sentUserMessages.length, staleRecoveryMessages, "failed handoff does not schedule an automatic retry command");
+	await staleRecoveryNotice.commands.get("planner-only").handler("handoff", staleRecoveryNotice.ctx);
+	assert.match(staleRecoveryNotice.replaced.sent.at(-1), /Continue the parser migration/);
 	const retrySelection = fakePi(undefined, undefined, { setModelThrowOnce: true, registry: [{ provider: "provider-a", id: "model-a" }, { provider: "provider-b", id: "model-b" }, { provider: "provider-c", id: "model-c" }] });
 	await retrySelection.commands.get("planner-only").handler("handoff", retrySelection.ctx);
 	await retrySelection.tools.get("handoff").execute("retry-selection", { brief, progress }, undefined, undefined, retrySelection.ctx);
