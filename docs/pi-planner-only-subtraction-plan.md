@@ -17,6 +17,31 @@
 
 **判断标准（以后每个机制都要回答）：它让一个真实大任务少了几轮 Root，或者防住了哪个真实发生过、代价很大的事故？** 答不出来的机制就不要。
 
+### 0.1 机制台账
+
+新机制合入 main 时在下表加一行。答不出 §0 的，回答类型写「无」，建议处置标为「暂定-待证」。表格是 §0 回答的唯一位置。日常 review 发现缺行时补行，或在跟踪 issue 留言，不再每波另开新 issue。最终处置只由用户填写；本表一律写「待用户」。
+
+| 机制 | 提交/PR | 来源 issue | §0 回答类型 | 证据指针 | 建议处置 | 最终处置 |
+|---|---|---|---|---|---|---|
+| per-call `timeoutSeconds` | 0ea2671 / #32；d1ee6b3 / #33 | #35 | 无 | issue #35；`docs/adr/0008-default-execution-wall-clock-ten-minutes.md:3`；`CONTEXT.md:42`。与 ADR 0008「heavy-worker envelope not revived」及 `CONTEXT.md:42` 的表述冲突待用户裁定 | 暂定-待证 | 待用户 |
+| per-role 统计 | 0ea2671 / #32 | #35 | 无 | issue #35 | 保留-仅工程 | 待用户 |
+| 上下文警告改 steer，并扩大 handoff 建议 | 187f687 | #35 | 无 | issue #35 | 暂定-待证 | 待用户 |
+| `planner-validator` | fa03a63 / #36 | #40 | 无 | issue #40；`delegate.ts:60` | 暂定-待证 | 待用户 |
+| Native handoff 与共享上下文警告 | 2886105 / #37 | #40 | 无 | issue #40；`.scratch/native-context-handoff/spec.md` | 暂定-待证 | 待用户 |
+| Native usage 状态 | 7085aac / #38 | #40 | 无 | issue #40 | 保留-仅工程 | 待用户 |
+| reviewer `base` | 7085aac / #38 | #40 | 无 | issue #40；`delegate.ts:509` | 暂定-待证 | 待用户 |
+| `test:release:isolated` 与 host 1.4.0 / Node 引擎 pin | 7085aac / #38 | #40 | 无 | issue #40 | 保留-仅工程 | 待用户 |
+| Root prompt / 批处理重写 | 7085aac / #38 | #40 | 无 | issue #40；`docs/planner-optimization-plan-2026-10-26.md` | 暂定-待证 | 待用户 |
+| handoff retention / origin | 53499d7 / #42 | #43 | 无 | issue #43 | 暂定-待证 | 待用户 |
+| brief 字段扩展 | 84e3519 | #43 | 无 | issue #43；`index.ts:620` | 暂定-待证 | 待用户 |
+| Native local-task 例外 | 8db3e6c | #43 | 无 | issue #43 | 暂定-待证 | 待用户 |
+| auto handoff 链上限 | be287c3 | #46 | 无 | issue #46；`docs/superpowers/specs/2026-10-30-native-handoff-chain-convergence-design.md` | 暂定-待证 | 待用户 |
+| 必填 progress 与停止措辞 | c335408、f1c64d4 | #46 | 无 | issue #46 | 暂定-待证 | 待用户 |
+| Native 任务粒度 | f363b30 | #46 | 无 | issue #46 | 暂定-待证 | 待用户 |
+| 先合并依赖性 review / 并发修复 | e44bdef | #46 | 无 | issue #46 | 暂定-待证 | 待用户 |
+| reviewer `git_review` | 157e51fd | #49 | 无 | issue #49；`.scratch/reviewer-git-tool/spec.md` | 暂定-待证 | 待用户 |
+| explorer 共享锁 | f2fe050 | #28 | 无 | `docs/adr/0012-explorer-read-only-is-prompt-enforced.md`；`delegate.ts:54` | 保留-仅工程 | 待用户 |
+
 ## 1. 现状规模
 
 源码 23,241 行 TS + 998 行 Python，测试 21,568 行，ADR 10 份，spec/audit 文档 28 份，环境开关 26 个，Root 工具 7 个。`delegate.ts` 里的 `runDelegation` 单个函数就有 1,658 行，`orchestrate.ts` 的 `PlannerOrchestrator` 有 2,597 行。`task.ts` 被 9 个模块引用，`types.ts` 被 13 个模块引用。
