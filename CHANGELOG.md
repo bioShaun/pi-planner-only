@@ -2,6 +2,8 @@
 
 ## 0.9.0-lite.0 - unreleased
 
+- Handoff recovery notification (`423cfe1` / #52): a stale replacement-session `ui.notify` during model/settings restore no longer escapes `withSession` and terminates Pi. The plugin falls back to the existing host message channel, keeps the original recovery error and manual-retry instructions, and does not automatically retry.
+
 - Auto handoff chain (`be287c3`): `PI_PLANNER_ONLY_HANDOFF_AUTO_LIMIT` caps consecutive Root-initiated handoffs in `auto` mode (default 3). The delivery that would exceed the cap waits in the editor with a notice; real user input or a user-initiated handoff resets the count. `/planner-only status` shows `chain current/limit` (`?` when unknown). Brief text separates user authorization (with sources) from Root decisions.
 
 - Native task sizing (`f363b30`, `e44bdef`): Native Root prompt asks for one independently acceptable deliverable per delegation (merge steps that share one acceptance or expensive read; split independent deliverables). When a child asks to split or returns a partial result, shrink this delivery and re-dispatch (reuse the atomic agent / same model first). Merge review fixes that share state-consistency or lock-protocol work before dependents; concurrency/lock/persistence deliveries need an independent reviewer before dependent work.

@@ -18,6 +18,7 @@ was removed.
 | `delegate({role, task, cwd?, timeoutSeconds?, base?})` | Run one child agent and wait. Returns the child's text report, host status, model and usage, and a Git summary of what changed (new commits, diff stat, untracked files). |
 | `git_audit({operation, base?, path?, maxEntries?})` | Read-only `status` / `diff-stat` / `diff` / `log`, with fixed argv. |
 | `git_commit({message, paths?})` | Stage and commit accepted work. Never pushes. |
+| `handoff({brief, progress})` | Transfer unfinished work to a fresh Root session with a self-contained brief and a required 1–600 character, three-line progress account. Available in lite and native. |
 
 For a committed review, pass `base` with role `reviewer` to include the complete `base...HEAD` text diff, up to 32 KiB. Each changed blob must be at most 1 MiB to inspect. The repository must have commits and a clean worktree; empty, binary, non-UTF-8, and submodule changes are refused. The range commits are fixed, but source files remain a live checkout and concurrent changes cannot be ruled out. Without `base`, delegation behaves as before.
 
