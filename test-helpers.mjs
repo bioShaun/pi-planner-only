@@ -2,6 +2,13 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+// Suites must see default config. Product code still reads the host environment;
+// only the test process drops inherited PI_PLANNER_ONLY* values. A test that
+// needs a specific value sets it after this import.
+for (const key of Object.keys(process.env)) {
+	if (key === "PI_PLANNER_ONLY" || key.startsWith("PI_PLANNER_ONLY_")) delete process.env[key];
+}
+
 /** In-memory pi.events stand-in that records emissions and live listeners. */
 export function fakeBus() {
 	const handlers = new Map();
