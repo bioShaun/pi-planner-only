@@ -1,5 +1,7 @@
 # Root 模型对照：进度记录（2026-10-08）
 
+> **2026-11-16 价格更正（issue #30）**：`tcuni-claude/claude-sonnet-5-5` 的实际价格以 `~/.pi/agent/models.json` 为准，为 输入 2 / 输出 10 / 缓存读 0.2 / 缓存写 2.5（美元/百万 token），`bench/prices.json` 已同步更正。本文中 Sonnet 的美元数字是按旧价 3/15/0.3/3.75 计算的，约高估 1.5 倍（Opus 与其它模型不受影响）；结论方向不变（Sonnet 更便宜），比例偏保守。未重算。
+
 本文给后续会话接手用。设计见 `.scratch/root-model-compare-20261007/design.md`（§4 R1 任务，§5 判读规则，§6 预算与停止条件）。第一阶段结论见 `.scratch/root-model-compare-20261007/findings-phase1.md`。
 
 ## 1. 问题与已定事项

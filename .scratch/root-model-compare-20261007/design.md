@@ -8,7 +8,7 @@ worker 固定为 Sonnet 时，Root 从 Opus 换成 Sonnet 或 DeepSeek Flash，�
 
 ## 2. 已知事实
 
-- **单价**（`bench/prices.json`，每百万 token，输入/输出/缓存读）：Opus 5/25/0.5，Sonnet 3/15/0.3，DeepSeek Flash（cline-pass）0.3/1.2/0.006。按 token 计，Sonnet 是 Opus 的 60%，DeepSeek Flash 约 6%。
+- **单价**（`bench/prices.json`，每百万 token，输入/输出/缓存读）：Opus 5/25/0.5，Sonnet 3/15/0.3，DeepSeek Flash（cline-pass）0.3/1.2/0.006。按 token 计，Sonnet 是 Opus 的 60%，DeepSeek Flash 约 6%。（2026-11-16 更正，issue #30：Sonnet 实际为 2/10/0.2，约为 Opus 的 40%；`bench/prices.json` 已更正。）
 - **为什么会话费用差 10 倍以上**：真实会话里，Opus Root 每个会话平均约 $5，Sonnet Root 约 $0.4。单价只差 40%，剩下的差距主要来自任务轻重和轮数，不能当作换模型能省的钱。
 - **已有对比**（explorer 汇总，出处见 §7）：
   - 没有 Opus、Sonnet、DeepSeek Flash 三种 Root 在同一任务、同一 worker、同一验收下的对比。

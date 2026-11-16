@@ -1,5 +1,7 @@
 # Root 模型对照 R2 结论（2026-10-08）
 
+> **2026-11-16 价格更正（issue #30）**：`tcuni-claude/claude-sonnet-5-5` 的实际价格以 `~/.pi/agent/models.json` 为准，为 输入 2 / 输出 10 / 缓存读 0.2 / 缓存写 2.5（美元/百万 token），`bench/prices.json` 已同步更正。本文中 Sonnet 的美元数字是按旧价 3/15/0.3/3.75 计算的，约高估 1.5 倍（Opus 与其它模型不受影响）；结论方向不变（Sonnet 更便宜），比例偏保守。未重算。
+
 设计见 `design-r2.md`（用户已确认：选候选 A「handoff 模式持久化」；按日常配置测，即全局 AGENTS.md 含规则 (a)(b)；预算 $15，含准备阶段）。
 脚手架和隐藏检查在 `r2/`。运行产物在 `/project/tmp/root-model-compare/r2/out/`。
 
