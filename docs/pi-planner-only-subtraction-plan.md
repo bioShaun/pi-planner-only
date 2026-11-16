@@ -23,7 +23,7 @@
 
 | 机制 | 提交/PR | 来源 issue | §0 回答类型 | 证据指针 | 建议处置 | 最终处置 |
 |---|---|---|---|---|---|---|
-| per-call `timeoutSeconds` | 0ea2671 / #32；d1ee6b3 / #33 | #35 | 无 | issue #35；`docs/adr/0008-default-execution-wall-clock-ten-minutes.md:3`；`CONTEXT.md:42`。与 ADR 0008「heavy-worker envelope not revived」及 `CONTEXT.md:42` 的表述冲突待用户裁定 | 暂定-待证 | 待用户 |
+| per-call `timeoutSeconds` | 0ea2671 / #32；d1ee6b3 / #33 | #35 | 无 | issue #35；`docs/adr/0008-default-execution-wall-clock-ten-minutes.md:4`；`CONTEXT.md:42-43`。ADR 0008:4 写「heavy-worker envelope not revived」并加注允许单次 `timeoutSeconds`；最长 24h 的单次时限是否等于复活 envelope，待用户裁定 | 暂定-待证 | 待用户 |
 | per-role 统计 | 0ea2671 / #32 | #35 | 无 | issue #35 | 保留-仅工程 | 待用户 |
 | 上下文警告改 steer，并扩大 handoff 建议 | 187f687 | #35 | 无 | issue #35 | 暂定-待证 | 待用户 |
 | `planner-validator` | fa03a63 / #36 | #40 | 无 | issue #40；`delegate.ts:60` | 暂定-待证 | 待用户 |
