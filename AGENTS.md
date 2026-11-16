@@ -8,6 +8,10 @@ Issues are tracked as local markdown files under `.scratch/<feature>/` in this r
 
 The five canonical triage labels, used as-is: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
 
+### Mechanism review (§0)
+
+When a review of new `main` commits finds a new mechanism, add its row to the ledger in `docs/pi-planner-only-subtraction-plan.md` §0.1 (in the same docs PR as any CHANGELOG fix) and comment on issue #54 for the owner's disposition. Reserve a new GitHub issue for a concrete bug or data error.
+
 ### Domain docs
 
 Single-context: root `CONTEXT.md` + `docs/adr/`. See `docs/agents/domain.md`.

@@ -19,7 +19,7 @@
 
 ### 0.1 机制台账
 
-新机制合入 main 时在下表加一行。答不出 §0 的，回答类型写「无」，建议处置标为「暂定-待证」。表格是 §0 回答的唯一位置。日常 review 发现缺行时补行，或在跟踪 issue 留言，不再每波另开新 issue。最终处置只由用户填写；新行先写「待用户」。2026-11-16 用户按 #54 的建议填写了除 reviewer `base` 外的现有各行。
+新机制合入 main 时在下表加一行。答不出 §0 的，回答类型写「无」，建议处置标为「暂定-待证」。表格是 §0 回答的唯一位置。日常 review 发现缺行时补行，或在跟踪 issue 留言，不再每波另开新 issue。最终处置只由用户填写；新行先写「待用户」。2026-11-16 用户按 #54 的建议填写了现有各行。
 
 | 机制 | 提交/PR | 来源 issue | §0 回答类型 | 证据指针 | 建议处置 | 最终处置 |
 |---|---|---|---|---|---|---|
@@ -29,7 +29,7 @@
 | `planner-validator` | fa03a63 / #36 | #40 | 无 | issue #40；`delegate.ts:60` | 暂定-待证 | 暂定（用户 2026-11-16：0.9.0 正式版前下一轮 bench 无效果则撤回） |
 | Native handoff 与共享上下文警告 | 2886105 / #37 | #40 | 无 | issue #40；`.scratch/native-context-handoff/spec.md`（证据为隔离探针复现，不是真实事故） | 暂定-待证 | 保留（用户 2026-11-16）；证据弱于其它保留行，出现反例时重议 |
 | Native usage 状态 | 7085aac / #38 | #40 | 无 | issue #40 | 保留-仅工程 | 保留（用户 2026-11-16） |
-| reviewer `base` | 7085aac / #38 | #40 | 无 | issue #40；`delegate.ts:509`；与 `git_review` 互补（≤32 KiB 内联路径） | 暂定-待证 | 待用户 |
+| reviewer `base` | 7085aac / #38 | #40 | 无 | issue #40；`delegate.ts:509`；与 `git_review` 互补（≤32 KiB 内联路径） | 保留-仅工程 | 保留（用户 2026-11-16） |
 | `test:release:isolated` 与 host 1.4.0 / Node 引擎 pin | 7085aac / #38 | #40 | 无 | issue #40 | 保留-仅工程 | 保留（用户 2026-11-16） |
 | Root prompt / 批处理重写 | 7085aac / #38 | #40 | 无 | issue #40；`docs/planner-optimization-plan-2026-10-26.md` | 暂定-待证 | 暂定（用户 2026-11-16：0.9.0 正式版前下一轮 bench 无效果则撤回） |
 | handoff retention / origin | 53499d7 / #42 | #43 | 防事故（真实发生） | issue #43；`.scratch/handoff-retention-origin/spec.md`「问题」1–2（旧简报堵住新简报）；`docs/superpowers/specs/2026-10-30-native-handoff-chain-convergence-design.md:19`、`:23` | 保留-已证明 | 保留（用户 2026-11-16） |
