@@ -25,7 +25,7 @@
 |---|---|---|---|---|---|---|
 | per-call `timeoutSeconds` | 0ea2671 / #32；d1ee6b3 / #33 | #35 | 无 | issue #35；`docs/adr/0008-default-execution-wall-clock-ten-minutes.md:4`；`CONTEXT.md:42-43`。ADR 0008:4 写「heavy-worker envelope not revived」并加注允许单次 `timeoutSeconds`；最长 24h 的单次时限是否等于复活 envelope，待用户裁定 | 暂定-待证 | 保留（用户 2026-11-16）；ADR 0008:4 已写明只覆盖单次 `timeoutMs`，token 与取消限制不变，不算复活 envelope |
 | per-role 统计 | 0ea2671 / #32 | #35 | 无 | issue #35 | 保留-仅工程 | 保留（用户 2026-11-16） |
-| 上下文警告改 steer，并扩大 handoff 建议 | 187f687 | #35 | 少轮次（真实任务） | issue #35；日志取证：警告后同会话交接 旧 18/29 → 新 135/140（#54） | 保留-已证明 | 保留（用户 2026-11-16，依据 #54 日志取证） |
+| 上下文警告改 steer，并扩大 handoff 建议 | 187f687 | #35 | 无 | issue #35；日志行为证据（未测轮次/成本）：警告后同会话交接 旧 18/29 → 新 135/140（#54） | 保留-仅工程 | 保留（用户 2026-11-16，依据 #54 日志取证） |
 | `planner-validator` | fa03a63 / #36 | #40 | 无 | issue #40；`delegate.ts:60`；日志取证：未见劫持事故，落地后未运行；属 agent 打包，不占每轮提示词（#54） | 保留-仅工程 | 保留（用户 2026-11-16，依据 #54 日志取证） |
 | Native handoff 与共享上下文警告 | 2886105 / #37 | #40 | 无 | issue #40；`.scratch/native-context-handoff/spec.md`（证据为隔离探针复现，不是真实事故） | 暂定-待证 | 保留（用户 2026-11-16）；证据弱于其它保留行，出现反例时重议 |
 | Native usage 状态 | 7085aac / #38 | #40 | 无 | issue #40 | 保留-仅工程 | 保留（用户 2026-11-16） |
