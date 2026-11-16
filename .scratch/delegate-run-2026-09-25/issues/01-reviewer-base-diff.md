@@ -1,6 +1,6 @@
 # 01: let a reviewer review a committed range
 
-Status: needs-triage
+Status: done
 Type: task
 Blocked by: none
 
@@ -25,3 +25,6 @@ Optional `base` on `delegate` (commit sha, branch, or `HEAD~N`), valid for `revi
 - `delegate({ role: "reviewer", cwd, base, task })` gives the reviewer the `base...HEAD` diff without Root writing files.
 - An invalid `base` is refused before a child starts, with the git error.
 - Tests in `delegate.test.mjs` for the happy path and the invalid-base refusal; no existing assertion weakened.
+
+## Comments
+- 2026-11-16 triage: done — 7085aac9a755911ec3d29ae0bedf0b5dc3ecf243 delegate.ts:509

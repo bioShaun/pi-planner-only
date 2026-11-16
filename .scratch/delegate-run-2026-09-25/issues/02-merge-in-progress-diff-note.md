@@ -1,6 +1,6 @@
 # 02: say when the child diff summary includes an in-progress merge
 
-Status: needs-triage
+Status: done
 Type: task
 Blocked by: none
 
@@ -19,3 +19,6 @@ When `MERGE_HEAD`, `REBASE_HEAD`, `CHERRY_PICK_HEAD`, or `REVERT_HEAD` exists in
 - The note appears only while one of those operations is in progress.
 - No extra git call when the cwd is not a work tree.
 - `git.test.mjs` covers merge in progress and a normal run.
+
+## Comments
+- 2026-11-16 triage: done — 7085aac9a755911ec3d29ae0bedf0b5dc3ecf243 git.ts:453

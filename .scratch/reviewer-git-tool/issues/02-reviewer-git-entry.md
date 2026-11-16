@@ -1,6 +1,6 @@
 # 02: reviewer 子代理扩展入口与契约
 
-Status: needs-triage
+Status: done
 Type: task
 Blocked by: 01
 
@@ -16,3 +16,4 @@ Source: `../spec.md` 第 7 节。
 spec 第 8 节 A12–A13；TDD 规则同 01。
 
 ## Comments
+- 2026-11-16 triage: done — 157e51fd25e61f9c72826b84c6e2f0e46295e47f reviewer-git.ts；package.json files 含 reviewer-git.ts，pi.extensions 仍只有 ./index.ts

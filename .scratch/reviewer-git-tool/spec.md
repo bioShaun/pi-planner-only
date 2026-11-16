@@ -1,6 +1,6 @@
 # reviewer 专用只读 Git 工具（git_review）
 
-Status: ready-for-agent（第 3 版；计划审查第 3 轮 PASS，run 8a8fe68b；已拆为 issues/01–03）
+Status: done
 基线：`2d45933`
 
 决策记录（用户确认）：
@@ -277,3 +277,6 @@ reviewer 审查已提交的范围时，现有两条路径都不完整：
 | 6 | env 清理边界 | 采纳：写明 HOME 保留、不支持环境注入的配置、不自动加 `safe.directory`；补 HOME 全局配置测试 |
 | 7 | `watchdog_diff` 不受约束 | 采纳：保证只覆盖 `git_review` 的执行路径 |
 | 8 | 冗余状态 | 采纳：删去 `page-complete`、`rev-list --count`，`show path` 不再显示 parent |
+
+## Comments
+- 2026-11-16 triage: done — 157e51fd25e61f9c72826b84c6e2f0e46295e47f；issues/03 在 base 上已是 Status: done

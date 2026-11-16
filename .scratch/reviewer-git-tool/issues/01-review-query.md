@@ -1,6 +1,6 @@
 # 01: git_review 查询核心（git.ts）
 
-Status: ready-for-agent
+Status: done
 Type: task
 Blocked by: none
 
@@ -20,3 +20,4 @@ spec 第 8 节 A1–A11；先写测试并贴出红灯输出（缺少行为导致
 - 01a 执行层与 log：受限 runner（env 清理、统一前缀、版本 ≥ 2.45、子命令白名单、1 MiB/30s/UTF-8、AbortSignal）、共享 helper 抽取（prepareReviewRange 不变）、ref/path/字段校验、分页与 contentId、`log` 操作。验收 A1（ref 与字段部分）、A3、A5（merge-base 部分）、A9、A10（argv/env/HOME 部分）、A11，加 log 的分页/contentId 用例。
 - 01b `diff`：概览与逐文件 patch。验收 A2、A4、A5（逐字节）、A6、A10（配置注入、promisor）。
 - 01c `show`：元数据统计与带 path 读取。验收 A7、A8。
+- 2026-11-16 triage: done — 157e51fd25e61f9c72826b84c6e2f0e46295e47f git.ts:49 git.ts:57 git.ts:203

@@ -1,6 +1,6 @@
 # 01：handoff brief 参数说明补齐已排除方案、验证证据、已知坑
 
-Status: ready-for-agent
+Status: done
 Type: task
 Source: ../spec.md
 
@@ -24,3 +24,4 @@ Source: ../spec.md
 - 临时文件放在 `/project/tmp/handoff-brief-fields/`，不放 `/tmp`。
 
 ## Comments
+- 2026-11-16 triage: done — 84e3519644c49988823132ab4218982e976a330c index.ts:620
