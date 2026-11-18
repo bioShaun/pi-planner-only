@@ -8,7 +8,7 @@
 ## 历史基线
 
 - 本轮 HEAD 为 `3db1846`，父提交为 `2126209`；前者提交了 Native 状态栏六个文件，后者集成 reviewer committed-range。
-- [reviewer 集成验收](../.scratch/reviewer-range-integration-20261027/acceptance.md)记录组合 release 成功与 192 项源码指纹。
+- [reviewer 集成验收](https://github.com/bioShaun/pi-planner-only/blob/2126209a8064a5213d3c42cc667c3b44f1d8ef64/.scratch/reviewer-range-integration-20261027/acceptance.md)记录组合 release 成功与 192 项源码指纹。
 - Native 提交验收复核 192/192 指纹，源码及锁文件未变，因此复用了该 release，没有重复全量测试。
 - 该证据是本地源码检查点，不是运行安装已更新的证明；原始 Native 验收在机器本地临时目录，不能作为长期唯一依赖。
 - 本会话 skill 已可见，workflow 指南可读；supervisor 的只读 `list` 成功，但真实待决请求的回复未端到端验证。

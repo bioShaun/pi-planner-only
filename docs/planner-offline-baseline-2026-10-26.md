@@ -12,7 +12,7 @@
 
 分析时仓库 HEAD 为 `6e2c95a091fd0eb17e0ec3b8915affcebc3c29ab`，工作区含步骤 0 的未提交改动。当前 package.json 为插件 0.9.0-lite.0 / Pi 1.4.0，但不能据此回填历史加载版本。历史日志的 `session.version=3` 是序列化格式，不能当作 Pi 版本。
 
-每份 Root/child 的源路径、session ID、SHA-256、行号、模型/推理档位变更、模式和可见 system/tools 快照指纹均见 [baseline.json](../.scratch/offline-baseline/baseline.json)。宿主、插件、pi-subagents 的历史加载版本未由统一运行元数据记录，字段为 null（unknown）；会话里提到的 commit 或包版本也不当作加载证明。system 快照指纹只标识日志可见内容，不证明完整插件提示词或已加载代码相同。strict 的完整启动配置、未记录的模型采样参数也为 unknown。
+每份 Root/child 的源路径、session ID、SHA-256、行号、模型/推理档位变更、模式和可见 system/tools 快照指纹均见 [baseline.json](https://github.com/bioShaun/pi-planner-only/blob/69e521cdbabdd5c198f083491088764a59b8f529/.scratch/offline-baseline/baseline.json)。宿主、插件、pi-subagents 的历史加载版本未由统一运行元数据记录，字段为 null（unknown）；会话里提到的 commit 或包版本也不当作加载证明。system 快照指纹只标识日志可见内容，不证明完整插件提示词或已加载代码相同。strict 的完整启动配置、未记录的模型采样参数也为 unknown。
 
 因此每个 S 编号是独立观察样本；即使模型相同也不合并成一个受控版本组。S13/S14 尤其包含 reload 前后锁行为变化，不能将旧拒绝行为归因到现在的 1.4.0 对齐版本。
 
@@ -58,7 +58,7 @@
 
 ## 复算和结论边界
 
-[分析脚本](../.scratch/offline-baseline/analyze.mjs) 只读源目录、将结果输出到 stdout，不启动模型或改全局配置。
+[分析脚本](https://github.com/bioShaun/pi-planner-only/blob/69e521cdbabdd5c198f083491088764a59b8f529/.scratch/offline-baseline/analyze.mjs) 只读源目录、将结果输出到 stdout，不启动模型或改全局配置。
 
 ```bash
 node .scratch/offline-baseline/analyze.mjs /home/tcuni-claw/.pi/agent/sessions/--home-tcuni-claw-pi-pi-planner-only-- | sha256sum
@@ -66,7 +66,7 @@ node .scratch/offline-baseline/analyze.mjs /home/tcuni-claw/.pi/agent/sessions/-
 
 本次输出 SHA-256：`611aef983d2d255765bf05e12dc57ab2b4fe72fd6c8729f1cdfed02bd5e16258`；805,004 字节。源目录若新增或变更日志，结果会变，应以 JSON 中的 51 份 Root 和 149 份 child 路径及哈希核对，不把变更后的全集冒充原样本。
 
-验证结果与命令见[执行记录](../.scratch/offline-baseline/execution.md)。基线支持以下后续决策：优先按同目标任务减少不必要交接；单独观察锁拒绝和 reload；对 check 的收益另取存在常规 validator 的任务样本；thinking 对照保持任务、版本和其余配置一致。当前历史资料不能证明提示词、check 或降档的因果收益，也不能据此给出节省百分比。
+验证结果与命令见[执行记录](https://github.com/bioShaun/pi-planner-only/blob/69e521cdbabdd5c198f083491088764a59b8f529/.scratch/offline-baseline/execution.md)。基线支持以下后续决策：优先按同目标任务减少不必要交接；单独观察锁拒绝和 reload；对 check 的收益另取存在常规 validator 的任务样本；thinking 对照保持任务、版本和其余配置一致。当前历史资料不能证明提示词、check 或降档的因果收益，也不能据此给出节省百分比。
 
 步骤 1 的离线盘点和可复算证据已具备。后续步骤 2–5 尚未实施；本次没有新增运行埋点、改变插件提示词或执行付费模型对照。
 
