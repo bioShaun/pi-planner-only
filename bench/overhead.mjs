@@ -88,7 +88,7 @@ function jsonArg(args){const i=args.indexOf("--json");return i<0?undefined:args[
 const [command,...args]=process.argv.slice(2), out=jsonArg(args);
 if(command==="static"){
   const refs=[];for(let i=0;i<args.length;i++)if(args[i]==="--ref"&&args[i+1])refs.push(args[++i]);
-  if(refs.length>2){console.error("static accepts at most two --ref arguments");process.exitCode=2;}else{const results=await Promise.all((refs.length===2?refs:refs.length===1?[refs[0],null]:[null]).map(measure));showStatic(results);if(out)await import("node:fs/promises").then(fs=>fs.writeFile(out,JSON.stringify(results,null,2)+"\n"));}
+  if(refs.length>2){console.error("static accepts at most two --ref arguments");process.exitCode=2;}else{const results=[];for(const ref of (refs.length===2?refs:refs.length===1?[refs[0],null]:[null]))results.push(await measure(ref));showStatic(results);if(out)await import("node:fs/promises").then(fs=>fs.writeFile(out,JSON.stringify(results,null,2)+"\n"));}
 }else if(command==="corpus"){
   const inputs=args.filter((x,i)=>x!=="--json"&&args[i-1]!=="--json");const data=corpus(inputs);showCorpus(data);if(out)await import("node:fs/promises").then(fs=>fs.writeFile(out,JSON.stringify(data,null,2)+"\n"));
 }else{console.error("usage: overhead.mjs static [--ref REF] [--ref REF] [--json OUT] | corpus <file-or-dir...> [--json OUT]");process.exitCode=2;}
