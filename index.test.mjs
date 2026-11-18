@@ -19,6 +19,13 @@ const HEAT_HOT = { kind: "rgb", r: 247, g: 118, b: 142 };
 const statusRgb = (color) => `${color.r},${color.g},${color.b}`;
 const progress = "Completed: parser tests.\nRemaining: migration.\nNext: finish migration.";
 
+function nativeIdle(h) {
+	h.events.on("subagents:rpc:v1:request", request => {
+		if (request.method !== "status") return;
+		h.events.emit(`subagents:rpc:v1:reply:${request.requestId}`, { version: 1, requestId: request.requestId, success: true, data: { fleet: { version: 1, entries: [], totalActive: 0, omitted: 0 }, asyncSnapshot: { kind: "pi-subagents.async-status-snapshot", version: 1, generatedAt: 1, caps: { maxRuns: 20, maxChildrenPerNode: 8, maxDepth: 3, maxStringLength: 160, maxSerializedBytes: 32768 }, runs: [], omitted: { runs: 0, children: 0, byteLimitExceeded: false } } } });
+	});
+}
+
 function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async () => ({ stdout: "", stderr: "not a repo", code: 128 }), options = {}) {
 	const tools = new Map();
 	const handlers = new Map();
@@ -59,7 +66,7 @@ function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async 
 	};
 	function makePi() {
 		const actions = { stale: false, modelCalls: 0, lastSetModel: undefined,
-			setModel: async (model) => { if (actions.stale) throw new Error("This extension ctx is stale"); actions.lastSetModel = model; actions.modelCalls++; if (options.setModelThrowOnce && !setModelThrown) { setModelThrown = true; throw new Error("setModel boom"); } if (options.setModelResult === false) return false; if (!options.setModelLies) activeModel = model; return true; },
+			setModel: async (model) => { if (actions.stale) throw new Error("This extension ctx is stale"); actions.lastSetModel = model; actions.modelCalls++; await options.onSetModel?.(); if (options.setModelThrowOnce && !setModelThrown) { setModelThrown = true; throw new Error("setModel boom"); } if (options.setModelResult === false) return false; if (!options.setModelLies) activeModel = model; return true; },
 			setThinkingLevel: (level) => { if (actions.stale) throw new Error("This extension ctx is stale"); if (!options.setThinkingLies) activeThinking = level; },
 			exec, sendMessage: (...args) => { sentMessages.push(args); (args[1]?.deliverAs === "nextTurn" ? queuedNextTurn : queuedSteers).push(args[0]); }, sendUserMessage: (...args) => sentUserMessages.push(args) };
 		actionInstances.push(actions);
@@ -72,7 +79,7 @@ function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async 
 		hasUI: true,
 		isIdle: () => true,
 		sessionManager: { getSessionId: () => sessionId, getSessionFile: () => "/sessions/previous.jsonl", getBranch: () => branch },
-		newSession: async (opts) => { sessionCalls.push(opts); activeModel = options.replacementModel ?? { provider: "provider-b", id: "model-b" }; activeThinking = options.replacementThinking ?? "medium"; actionInstances.at(-1).stale = true; staleContext = Boolean(options.throwAfterReplacement); pi = makePi(); plannerOnly(pi); try { await opts.withSession(replaced); } catch (error) { withSessionError = error; throw error; } if (options.throwAfterReplacement) throw new Error("post-replacement boom"); return {}; },
+		newSession: async (opts) => { sessionCalls.push(opts); activeModel = options.replacementModel ?? { provider: "provider-b", id: "model-b" }; activeThinking = options.replacementThinking ?? "medium"; actionInstances.at(-1).stale = true; staleContext = Boolean(options.throwAfterReplacement); pi = makePi(); plannerOnly(pi); if (options.startReplacement) { branch = []; replaced.sessionManager = ctx.sessionManager; await handlers.get("session_start")({ reason: "new" }, ctx); } try { await opts.withSession(replaced); } catch (error) { withSessionError = error; throw error; } if (options.throwAfterReplacement) throw new Error("post-replacement boom"); return {}; },
 		get model() { return activeModel; },
 		get thinkingLevel() { return activeThinking; },
 		ui: { setStatus: (k, v) => statuses.push(v), notify: (m) => { if (staleContext) { staleContext = false; throw new Error("This extension ctx is stale"); } notes.push(m); }, theme: options.legacyTheme ? { fg: (c, s) => { statusColors.push(c); return s; } } : { fg: (c, s) => { statusColors.push(c); return s; }, style: (s, opts) => { statusColors.push(opts.fg); return s; }, colors: { accent: HEAT_COOL, warning: HEAT_MID, error: HEAT_HOT } } },
@@ -397,10 +404,127 @@ try {
 	await postReplacementThrow.tools.get("handoff").execute("post-replacement", { brief, progress }, undefined, undefined, postReplacementThrow.ctx);
 	await postReplacementThrow.commands.get("planner-only").handler("handoff", postReplacementThrow.ctx);
 	const afterPostThrow = postReplacementThrow.sessionCalls.length;
+	assert.equal(postReplacementThrow.replaced.sent.length, 1, "the brief was delivered before the host threw");
+	assert.match(postReplacementThrow.replaced.sent[0], /Continue the parser migration/);
 	await postReplacementThrow.handlers.get("agent_settled")({}, postReplacementThrow.ctx);
-	assert.equal(postReplacementThrow.sessionCalls.length, afterPostThrow, "recovered replacement handoff is manual-only");
+	assert.equal(postReplacementThrow.sessionCalls.length, afterPostThrow, "successful delivery must not be retried automatically");
 	await postReplacementThrow.commands.get("planner-only").handler("handoff", postReplacementThrow.ctx);
-	assert.match(postReplacementThrow.replaced.sent.at(-1), /Continue the parser migration/);
+	assert.equal(postReplacementThrow.replaced.sent.length, 1, "post-delivery host errors must not make the original brief resendable");
+	assert.equal(postReplacementThrow.sessionCalls.length, afterPostThrow, "the next command requests a fresh brief");
+	const postRootThrow = fakePi(undefined, undefined, { throwAfterReplacement: true });
+	process.env.PI_PLANNER_ONLY_HANDOFF = "auto";
+	postRootThrow.branch([chainEntry(1)]);
+	await postRootThrow.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200000, output: 0 } } }, postRootThrow.ctx);
+	await postRootThrow.tools.get("handoff").execute("post-root", { brief, progress }, undefined, undefined, postRootThrow.ctx);
+	await postRootThrow.commands.get("planner-only").handler("handoff", postRootThrow.ctx);
+	assert.equal(postRootThrow.replaced.sent.length, 1);
+	assert.equal(chainWrites(postRootThrow).at(-1).data.count, 2, "a post-delivery host error must not roll back the chain");
+	delete process.env.PI_PLANNER_ONLY_HANDOFF;
+	const uncertain = fakePi();
+	uncertain.replaced.sendUserMessage = async message => { uncertain.replaced.sent.push(message); throw new Error("send interrupted"); };
+	await uncertain.commands.get("planner-only").handler("handoff", uncertain.ctx);
+	await uncertain.tools.get("handoff").execute("uncertain", { brief, progress }, undefined, undefined, uncertain.ctx);
+	await uncertain.commands.get("planner-only").handler("handoff", uncertain.ctx);
+	assert.equal(uncertain.replaced.sent.length, 1);
+	assert.ok(uncertain.replaced.notes.some(note => /delivery could not be confirmed.*check the session.*duplicate/i.test(note)));
+	assert.ok(!uncertain.replaced.notes.some(note => /brief was not sent/.test(note)));
+	const modelStarted = Promise.withResolvers(), releaseModel = Promise.withResolvers();
+	const lateHandoff = fakePi(undefined, undefined, { onSetModel: async () => { modelStarted.resolve(); await releaseModel.promise; throw new Error("late failure"); } });
+	await lateHandoff.commands.get("planner-only").handler("handoff", lateHandoff.ctx);
+	await lateHandoff.tools.get("handoff").execute("late", { brief, progress }, undefined, undefined, lateHandoff.ctx);
+	const lateDispatch = lateHandoff.commands.get("planner-only").handler("handoff", lateHandoff.ctx);
+	await modelStarted.promise;
+	const newer = fakePi();
+	newer.branch([chainEntry(7)]);
+	releaseModel.resolve();
+	await lateDispatch;
+	await newer.commands.get("planner-only").handler("status", newer.ctx);
+	assert.match(newer.notes.at(-1), /chain 7\/3/, "late failure cannot alter the newer session chain");
+	await newer.commands.get("planner-only").handler("handoff", newer.ctx);
+	assert.equal(newer.sessionCalls.length, 0, "a late failure cannot transfer an old brief to the newer owner");
+	assert.match(newer.sentUserMessages.at(-1)[0], /Call the handoff tool/);
+	const cancelStarted = Promise.withResolvers(), releaseCancel = Promise.withResolvers();
+	const cancelledReplacement = fakePi(undefined, undefined, { onSetModel: async () => { cancelStarted.resolve(); await releaseCancel.promise; } });
+	await cancelledReplacement.commands.get("planner-only").handler("handoff", cancelledReplacement.ctx);
+	await cancelledReplacement.tools.get("handoff").execute("cancel-replacement", { brief, progress }, undefined, undefined, cancelledReplacement.ctx);
+	const cancelledDispatch = cancelledReplacement.commands.get("planner-only").handler("handoff", cancelledReplacement.ctx);
+	await cancelStarted.promise;
+	await cancelledReplacement.commands.get("planner-only").handler("handoff drop", cancelledReplacement.ctx);
+	releaseCancel.resolve();
+	await cancelledDispatch;
+	assert.equal(cancelledReplacement.replaced.sent.length, 0, "a cancelled replacement cannot send after model restoration finishes");
+	for (const outcome of ["resolve", "reject"]) {
+		const started = Promise.withResolvers(), release = Promise.withResolvers();
+		process.env.PI_PLANNER_ONLY_MODE = "native";
+		const check = fakePi(undefined, undefined, { startReplacement: true, onSetModel: async () => { started.resolve(); await release.promise; if (outcome === "reject") throw new Error("late model failure"); } });
+		nativeIdle(check);
+		process.env.PI_PLANNER_ONLY_HANDOFF = "auto";
+		check.branch([chainEntry(2)]);
+		await check.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200000, output: 0 } } }, check.ctx);
+		assert.equal((await check.tools.get("handoff").execute(`root-${outcome}`, { brief, progress }, undefined, undefined, check.ctx)).details.ok, true);
+		const dispatch = check.commands.get("planner-only").handler("handoff", check.ctx);
+		await started.promise;
+		assert.deepEqual(chainWrites(check).map(entry => entry.data.count), [2], "session_start inherits the source chain before delivery");
+		await check.commands.get("planner-only").handler("handoff drop", check.ctx);
+		release.resolve();
+		await dispatch;
+		assert.equal(check.replaced.sent.length, 0);
+		assert.equal(chainWrites(check).at(-1).data.count, 2, `cancelled Root ${outcome} must not advance the chain`);
+		const beforeRetry = check.sessionCalls.length;
+		await check.commands.get("planner-only").handler("handoff", check.ctx);
+		assert.equal(check.sessionCalls.length, beforeRetry, "cancelled brief must not be retried");
+		assert.match(check.sentUserMessages.at(-1)[0], /Call the handoff tool/);
+		delete process.env.PI_PLANNER_ONLY_HANDOFF;
+		delete process.env.PI_PLANNER_ONLY_MODE;
+	}
+	for (const outcome of ["resolve", "reject"]) {
+		const started = Promise.withResolvers(), release = Promise.withResolvers();
+		process.env.PI_PLANNER_ONLY_MODE = "native";
+		const check = fakePi(undefined, undefined, { startReplacement: true, onSetModel: async () => { started.resolve(); await release.promise; if (outcome === "reject") throw new Error("late model failure"); } });
+		nativeIdle(check);
+		process.env.PI_PLANNER_ONLY_HANDOFF = "auto";
+		check.branch([chainEntry(2)]);
+		await check.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200000, output: 0 } } }, check.ctx);
+		await check.tools.get("handoff").execute(`user-input-${outcome}`, { brief, progress }, undefined, undefined, check.ctx);
+		const dispatch = check.commands.get("planner-only").handler("handoff", check.ctx);
+		await started.promise;
+		await check.handlers.get("input")({ type: "input", text: "new user input", source: "interactive" }, check.ctx);
+		release.resolve();
+		await dispatch;
+		assert.equal(chainWrites(check).at(-1).data.count, 0, `late ${outcome} must preserve a user chain reset`);
+		assert.equal(check.replaced.sent.length, 0);
+		const beforeRetry = check.sessionCalls.length;
+		await check.commands.get("planner-only").handler("handoff", check.ctx);
+		assert.equal(check.sessionCalls.length, beforeRetry, "old brief must not be retryable after a user turn");
+		delete process.env.PI_PLANNER_ONLY_HANDOFF;
+		delete process.env.PI_PLANNER_ONLY_MODE;
+	}
+	const newPendingStarted = Promise.withResolvers(), releaseNewPending = Promise.withResolvers();
+	let modelAttempts = 0;
+	process.env.PI_PLANNER_ONLY_MODE = "native";
+	const newPending = fakePi(undefined, undefined, { startReplacement: true, onSetModel: async () => { if (modelAttempts++ === 0) { newPendingStarted.resolve(); await releaseNewPending.promise; throw new Error("late old failure"); } } });
+	nativeIdle(newPending);
+	process.env.PI_PLANNER_ONLY_HANDOFF = "auto";
+	newPending.branch([chainEntry(2)]);
+	await newPending.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200000, output: 0 } } }, newPending.ctx);
+	await newPending.tools.get("handoff").execute("old-root", { brief, progress }, undefined, undefined, newPending.ctx);
+	const oldDispatch = newPending.commands.get("planner-only").handler("handoff", newPending.ctx);
+	await newPendingStarted.promise;
+	await newPending.commands.get("planner-only").handler("handoff drop", newPending.ctx);
+	await newPending.handlers.get("input")({ type: "input", text: "new instruction", source: "interactive" }, newPending.ctx);
+	await newPending.commands.get("planner-only").handler("handoff", newPending.ctx);
+	const newerBrief = "New pending work, not the earlier brief. ".repeat(8);
+	assert.equal((await newPending.tools.get("handoff").execute("new-pending", { brief: newerBrief, progress }, undefined, undefined, newPending.ctx)).details.ok, true);
+	releaseNewPending.resolve();
+	await oldDispatch;
+	assert.equal(chainWrites(newPending).at(-1).data.count, 0, "late failure must not undo the user's chain reset");
+	assert.equal(newPending.replaced.sent.length, 0);
+	await newPending.commands.get("planner-only").handler("handoff", newPending.ctx);
+	assert.equal(newPending.replaced.sent.length, 1);
+	assert.ok(newPending.replaced.sent[0].includes(newerBrief), "late failure must not replace the new pending brief");
+	assert.ok(!newPending.replaced.sent[0].includes(brief));
+	delete process.env.PI_PLANNER_ONLY_HANDOFF;
+	delete process.env.PI_PLANNER_ONLY_MODE;
 	const gitFailure = fakePi(undefined, async () => { throw new Error("git unavailable"); });
 	await gitFailure.commands.get("planner-only").handler("handoff", gitFailure.ctx);
 	await gitFailure.tools.get("handoff").execute("git-failure", { brief, progress }, undefined, undefined, gitFailure.ctx);
@@ -423,6 +547,16 @@ try {
 	assert.equal(confirm.replaced.editor.length, 1);
 	assert.equal(confirm.replaced.sent.length, 0);
 	assert.deepEqual(confirm.activeModel(), { provider: "provider-a", id: "model-a" });
+	const editorThrow = fakePi(undefined, undefined, { throwAfterReplacement: true });
+	process.env.PI_PLANNER_ONLY_HANDOFF = "confirm";
+	await editorThrow.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 200000, output: 0 } } }, editorThrow.ctx);
+	await editorThrow.tools.get("handoff").execute("editor-throw", { brief, progress }, undefined, undefined, editorThrow.ctx);
+	await editorThrow.commands.get("planner-only").handler("handoff", editorThrow.ctx);
+	assert.equal(editorThrow.replaced.editor.length, 1);
+	assert.equal(editorThrow.replaced.sent.length, 0, "editor text is not a user message");
+	await editorThrow.commands.get("planner-only").handler("handoff", editorThrow.ctx);
+	assert.equal(editorThrow.replaced.editor.length, 1, "post-editor host error must not create a retry");
+	delete process.env.PI_PLANNER_ONLY_HANDOFF;
 	const providerCollision = fakePi(undefined, undefined, { sourceModel: { provider: "provider-b", id: "model-a" }, registry: [{ provider: "provider-a", id: "model-a" }, { provider: "provider-b", id: "model-a" }] });
 	await providerCollision.commands.get("planner-only").handler("handoff", providerCollision.ctx);
 	await providerCollision.tools.get("handoff").execute("collision", { brief, progress }, undefined, undefined, providerCollision.ctx);

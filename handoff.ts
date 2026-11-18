@@ -96,7 +96,7 @@ export function takeHandoffChain(): number | undefined {
 	return count;
 }
 const result = (text: string, ok: boolean) => ({ content: [{ type: "text" as const, text }], details: { ok } });
-type NativeActivity = "idle" | "busy" | "unknown";
+type NativeActivity = "idle" | "busy" | "unknown (timeout after 3s)" | "unknown (transport error)" | "unknown (failure reply)" | "unknown (invalid response)";
 const record = (value: unknown): Record<string, unknown> | undefined => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 const nonnegativeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 const terminalStates = new Set(["complete", "failed", "partial", "paused", "stopped", "rejected"]);
@@ -124,6 +124,7 @@ function userText(message: unknown): string {
 
 function nativeStatusActivity(raw: unknown, requestId: string): NativeActivity {
 	const reply = record(raw);
+	if (reply?.version === 1 && reply.requestId === requestId && reply.success === false) return "unknown (failure reply)";
 	const data = record(reply?.data);
 	const fleet = record(data?.fleet);
 	const snapshot = record(data?.asyncSnapshot);
@@ -133,13 +134,13 @@ function nativeStatusActivity(raw: unknown, requestId: string): NativeActivity {
 		fleet?.version !== 1 || !nonnegativeInteger(fleet.totalActive) || !Array.isArray(fleet.entries) || !nonnegativeInteger(fleet.omitted) ||
 		snapshot?.kind !== "pi-subagents.async-status-snapshot" || snapshot.version !== 1 || typeof snapshot.generatedAt !== "number" || !Number.isFinite(snapshot.generatedAt) ||
 		!caps || !["maxRuns", "maxChildrenPerNode", "maxDepth", "maxStringLength", "maxSerializedBytes"].every(key => nonnegativeInteger(caps[key]) && caps[key] > 0) ||
-		!Array.isArray(snapshot.runs) || omitted?.runs !== 0 || !nonnegativeInteger(omitted.children) || omitted.byteLimitExceeded !== false) return "unknown";
+		!Array.isArray(snapshot.runs) || omitted?.runs !== 0 || !nonnegativeInteger(omitted.children) || omitted.byteLimitExceeded !== false) return "unknown (invalid response)";
 	let running = false;
 	for (const value of snapshot.runs) {
 		const run = record(value);
-		if (!run || typeof run.id !== "string" || typeof run.state !== "string") return "unknown";
+		if (!run || typeof run.id !== "string" || typeof run.state !== "string") return "unknown (invalid response)";
 		if (run.state === "queued" || run.state === "running") running = true;
-		else if (!terminalStates.has(run.state)) return "unknown";
+		else if (!terminalStates.has(run.state)) return "unknown (invalid response)";
 	}
 	return fleet.totalActive > 0 || running ? "busy" : "idle";
 }
@@ -149,6 +150,7 @@ export class RootHandoff {
 	#pending: PendingHandoff | undefined;
 	#requested = false;
 	#revision = 0;
+	#inputRevision = 0;
 	#dispatching = false;
 	#scheduleInFlight: PendingHandoff | undefined;
 
@@ -175,6 +177,7 @@ export class RootHandoff {
 	/** A real user turn breaks the chain; injected messages must not call this. */
 	userInput(ctx: ExtensionContext): void {
 		if (this.#runtime.mode() === "off") return;
+		this.#inputRevision++;
 		if (this.#chain(ctx) !== 0) this.#writeChain(0);
 	}
 
@@ -229,12 +232,12 @@ export class RootHandoff {
 		if (activity !== "idle") {
 			this.#pending = undefined;
 			this.#requested = requested;
-			return result(activity === "busy" ? "Handoff refused: Native subagents are still running; the brief was not kept. Wait for them to finish, then call handoff again with the full brief." : "Handoff refused: Native subagent status could not be confirmed (query failed or timed out); the brief was not kept. Call handoff again later with the full brief, or tell the user.", false);
+			return result(activity === "busy" ? "Handoff refused: Native activity is busy; subagents are still running; the brief was not kept. Wait for them to finish, then call handoff again with the full brief." : `Handoff refused: Native subagent status could not be confirmed: ${activity}; the brief was not kept. Call handoff again later with the full brief, or tell the user.`, false);
 		}
 		return this.#scheduled(replacing);
 	}
 
-	async #nativeActivity(): Promise<"idle" | "busy" | "unknown"> {
+	async #nativeActivity(): Promise<NativeActivity> {
 		const events = this.#runtime.host.events;
 		return new Promise((resolve) => {
 			const requestId = randomUUID();
@@ -244,14 +247,15 @@ export class RootHandoff {
 				if (done) return;
 				done = true;
 				clearTimeout(timer);
-				unsubscribe?.();
+				try { unsubscribe?.(); } catch { /* A transport cleanup failure must not strand the query. */ }
 				resolve(state);
 			};
-			const timer = setTimeout(() => finish("unknown"), 3000);
+			const timer = setTimeout(() => finish("unknown (timeout after 3s)"), 3000);
 			try {
-				unsubscribe = events.on(`subagents:rpc:v1:reply:${requestId}`, (raw: unknown) => finish(nativeStatusActivity(raw, requestId)));
+				unsubscribe = events.on(`subagents:rpc:v1:reply:${requestId}`, (raw: unknown) => { try { finish(nativeStatusActivity(raw, requestId)); } catch { finish("unknown (invalid response)"); } });
+				if (done) { try { unsubscribe?.(); } catch { /* Already resolved. */ } return; }
 				events.emit("subagents:rpc:v1:request", { version: 1, requestId, method: "status" });
-			} catch { finish("unknown"); }
+			} catch { finish("unknown (transport error)"); }
 		});
 	}
 
@@ -259,6 +263,20 @@ export class RootHandoff {
 	async command(args: string, ctx: ExtensionCommandContext): Promise<boolean> {
 		const raw = args.trim();
 		const cmd = raw.toLowerCase();
+		if (cmd === "handoff-status") {
+			if (this.#runtime.mode() !== "native") {
+				ctx.ui.notify("handoff status requires planner-only Native mode", "warning");
+				return true;
+			}
+			const revision = this.#revision;
+			const sessionId = ctx.sessionManager?.getSessionId?.();
+			const activity = await this.#nativeActivity();
+			try {
+				if (this.#revision === revision && this.#runtime.mode() === "native" && ctx.sessionManager?.getSessionId?.() === sessionId)
+					ctx.ui.notify(`Native activity: ${activity}`, "info");
+			} catch { /* The source context may have been replaced during the query. */ }
+			return true;
+		}
 		if (cmd === "handoff-mode" || cmd.startsWith("handoff-mode ")) {
 			if (cmd !== "handoff-mode") {
 				const value = cmd.slice("handoff-mode ".length).trim();
@@ -361,50 +379,70 @@ export class RootHandoff {
 				return;
 			}
 		}
+		let delivery: "pending" | "sending" | "sent" | "editor" = "pending";
+		let replacementOwner: RootHandoff | undefined;
+		let ownsReplacement: (() => boolean) | undefined;
 		try {
 			nextHandoffMode = handoff.sourceMode;
-			nextHandoffChain = recorded;
+			// Until the replacement is ready to publish, an unsent brief must not
+			// advance the new session's inherited chain.
+			nextHandoffChain = base;
 			const result = await ctx.newSession({ parentSession: handoff.sessionFile, withSession: async (rctx) => {
-				rctx.ui.notify("planner-only: handoff from previous session", "info");
+				replacementOwner = activeHandoff;
+				const owner = replacementOwner;
+				const ownerRevision = owner ? owner.#revision : undefined;
+				const ownerInputRevision = owner ? owner.#inputRevision : undefined;
+				const ownerPending = owner ? owner.#pending : undefined;
+				ownsReplacement = () => !!owner && activeHandoff === owner && owner.#revision === ownerRevision && owner.#inputRevision === ownerInputRevision && owner.#pending === ownerPending;
 				try {
-					if (!activeHandoff || activeHandoff.#runtime.mode() !== handoff.sourceMode) throw new Error("source mode was not restored");
+					rctx.ui.notify("planner-only: handoff from previous session", "info");
+					if (!owner || owner.#runtime.mode() !== handoff.sourceMode) throw new Error("source mode was not restored");
 					const selection = handoff.selection;
 					if (!selection) throw new Error("source model selection is missing");
-					const pi = activeHandoff ? activeHandoff.#runtime.pi : undefined;
+					const pi = owner.#runtime.pi;
 					if (!pi) throw new Error("live host model bridge is unavailable");
 					const model = rctx.modelRegistry.find(selection.provider, selection.id);
 					if (!model) throw new Error(`model ${selection.provider}/${selection.id} is unavailable in the new session`);
 					if (!await pi.setModel(model)) throw new Error(`host refused model ${selection.provider}/${selection.id}`);
+					if (!ownsReplacement()) return;
 					if (selection.thinkingLevel !== undefined) (pi.setThinkingLevel as (level: string) => void)(selection.thinkingLevel);
 					const current = rctx.model;
 					if (!current || current.provider !== selection.provider || current.id !== selection.id) throw new Error(`active model did not match ${selection.provider}/${selection.id}`);
 					if (selection.thinkingLevel !== undefined && rctx.thinkingLevel !== selection.thinkingLevel) throw new Error(`thinking level did not match ${selection.thinkingLevel}`);
+					// Complete all context access before sendUserMessage, which can run a whole
+					// new Root turn and replace this session before it returns.
+					if (owner.#chain(rctx) !== recorded) owner.#writeChain(recorded);
 					if (editorPath) {
-						rctx.ui.setEditorText(prompt);
 						const progress = handoff.progress ? `\n${handoff.progress}` : "";
 						if (capped) rctx.ui.notify(`已连续自动交接 ${base} 次，请检查简报后提交${progress}`, "info");
 						else rctx.ui.notify(`Handoff ready. Submit when ready.${selection.thinkingLevel === undefined ? " Thinking level was not carried over." : ""}${progress}`, "info");
+						rctx.ui.setEditorText(prompt);
+						delivery = "editor";
 					} else {
-						await rctx.sendUserMessage(prompt);
 						if (selection.thinkingLevel === undefined) rctx.ui.notify("Thinking level was not carried over.", "info");
+						delivery = "sending";
+						await rctx.sendUserMessage(prompt);
+						delivery = "sent";
 					}
-					// The new session's session_start already wrote this count before the mode entry.
-					if (activeHandoff.#chain(rctx) !== recorded) activeHandoff.#writeChain(recorded);
 				} catch (error) {
+					if (!owner || !ownsReplacement() || delivery === "sent" || delivery === "editor") return;
 					const reason = error instanceof Error ? error.message : String(error);
-					(activeHandoff ?? this).#defer({ ...handoff, selection: handoff.selection });
-					(activeHandoff ?? this).#writeChain(base);
-					const notice = `handoff settings could not be restored (${reason}); brief was not sent. Run /planner-only handoff to retry, or /planner-only handoff drop to discard it. Root's next handoff call will replace this brief.`;
+					owner.#defer({ ...handoff, selection: handoff.selection });
+					if (delivery === "pending") owner.#writeChain(base);
+					const status = delivery === "sending" ? `handoff delivery could not be confirmed (${reason}); check the session before retrying to avoid a duplicate` : `handoff settings could not be restored (${reason}); brief was not sent`;
+					const notice = `${status}. Run /planner-only handoff to retry, or /planner-only handoff drop to discard it. Root's next handoff call will replace this brief.`;
 					try { rctx.ui.notify(notice, "warning"); }
-					catch { (activeHandoff ?? this).#runtime.host.sendMessage({ customType: "planner-only-handoff", content: `[planner-only] ${notice}`, display: true }); }
+					catch { owner.#runtime.host.sendMessage({ customType: "planner-only-handoff", content: `[planner-only] ${notice}`, display: true }); }
 				}
 			} });
-			if (result?.cancelled) {
+			if (result?.cancelled && delivery === "pending") {
+				if (activeHandoff !== this) return;
 				this.#defer(handoff);
 				ctx.ui.notify("handoff cancelled; run /planner-only handoff to retry, or /planner-only handoff drop to discard it. Root's next handoff call will replace this brief.", "warning");
 			} else this.deactivate();
 		} catch (error) {
-			const liveHandoff = activeHandoff ?? this;
+			if (delivery !== "pending" || activeHandoff !== (replacementOwner ?? this) || (ownsReplacement && !ownsReplacement())) return;
+			const liveHandoff = replacementOwner ?? this;
 			liveHandoff.#defer(handoff);
 			const reason = error instanceof Error ? error.message : String(error);
 			try {

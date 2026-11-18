@@ -283,3 +283,100 @@ test("mode restore failure does not send brief", async () => {
 	await h.commands.get("planner-only").handler("handoff", h.ctx);
 	assert.ok(h.sent.some(message => message.includes(brief)), "failed restore retains brief for retry");
 });
+
+for (const [name, response, reason] of [
+	["busy", data({ fleet: { ...status.fleet, totalActive: 1 } }), /busy/],
+	["failure", { version: 1, success: false, error: "SECRET" }, /unknown \(failure reply\)/],
+	["transport", "throw", /unknown \(transport error\)/],
+	["invalid", { version: 2, success: true, data: status }, /unknown \(invalid response\)/],
+	["timeout", undefined, /unknown \(timeout after 3s\)/],
+]) test(`activity diagnostics ${name} at admission, status and dispatch`, async () => {
+	const h = await ready();
+	const originalSet = globalThis.setTimeout, originalClear = globalThis.clearTimeout;
+	if (name === "timeout") {
+		globalThis.setTimeout = (fn, ms) => { assert.equal(ms, 3000); queueMicrotask(fn); return {}; };
+		globalThis.clearTimeout = () => {};
+	}
+	try {
+		h.setResponse(response);
+		const admission = await schedule(h);
+		assert.equal(admission.details.ok, false);
+		assert.match(admission.content[0].text, reason);
+		assert.doesNotMatch(admission.content[0].text, /SECRET|injected status error/);
+		const before = h.events.emitted.filter(([event]) => event === "subagents:rpc:v1:request").length;
+		await h.commands.get("planner-only").handler("handoff-status", h.ctx);
+		assert.match(h.notices.at(-1), reason);
+		assert.equal(h.events.emitted.filter(([event]) => event === "subagents:rpc:v1:request").length, before + 1);
+		h.setResponse(data({}));
+		assert.equal((await schedule(h)).details.ok, true);
+		h.setResponse(response);
+		await h.commands.get("planner-only").handler("handoff", h.ctx);
+		assert.equal(h.calls(), 0);
+		assert.match(h.notices.at(-1), reason);
+		h.setResponse(data({}));
+		await h.commands.get("planner-only").handler("handoff-status", h.ctx);
+		assert.match(h.notices.at(-1), /idle/);
+		assert.equal(h.calls(), 0);
+		await h.commands.get("planner-only").handler("handoff", h.ctx);
+		assert.equal(h.calls(), 1);
+		assert.ok(h.sent.at(-1).includes(brief));
+	} finally { globalThis.setTimeout = originalSet; globalThis.clearTimeout = originalClear; }
+});
+
+test("handoff-status is read-only and exact; stale notifications are harmless", async () => {
+	const h = await ready();
+	assert.equal((await schedule(h)).details.ok, true);
+	const queued = h.queued.length, branch = [...h.branch()];
+	const reply = heldReply(h);
+	const pending = h.commands.get("planner-only").handler("handoff-status", h.ctx);
+	h.sessionId("changed");
+	let staleNotices = 0;
+	h.ctx.ui.notify = () => { staleNotices++; throw new Error("stale context"); };
+	await reply(data({}));
+	await pending;
+	assert.equal(staleNotices, 0, "a stale result must not use the replaced session's UI");
+	assert.equal(h.calls(), 0);
+	assert.equal(h.queued.length, queued);
+	assert.deepEqual(h.branch(), branch);
+	h.ctx.ui.notify = message => h.notices.push(message);
+	h.setResponse(data({}));
+	const before = h.events.emitted.length;
+	await h.commands.get("planner-only").handler("handoff-status extra", h.ctx);
+	assert.ok(!h.events.emitted.slice(before).some(([event]) => event === "subagents:rpc:v1:request"));
+	assert.equal(h.calls(), 0);
+	await h.commands.get("planner-only").handler("handoff", h.ctx);
+	assert.ok(h.sent.at(-1).includes(brief));
+});
+
+test("status is Native only and does not authorize a later admission", async () => {
+	const h = await ready();
+	await h.commands.get("planner-only").handler("handoff-status", h.ctx);
+	assert.match(h.notices.at(-1), /idle/);
+	h.setResponse(data({ fleet: { ...status.fleet, totalActive: 1 } }));
+	assert.equal((await schedule(h)).details.ok, false);
+	await h.commands.get("planner-only").handler("off", h.ctx);
+	const before = h.events.emitted.filter(([event]) => event === "subagents:rpc:v1:request").length;
+	await h.commands.get("planner-only").handler("handoff-status", h.ctx);
+	assert.match(h.notices.at(-1), /requires.*Native/);
+	assert.equal(h.events.emitted.filter(([event]) => event === "subagents:rpc:v1:request").length, before);
+});
+
+test("malformed reply throwing during inspection fails closed and releases listener", async () => {
+	const h = await ready();
+	h.setResponse(request => h.events.emit(`subagents:rpc:v1:reply:${request.requestId}`, { version: 1, requestId: request.requestId, success: true, get data() { throw new Error("SECRET"); } }));
+	const result = await schedule(h);
+	assert.equal(result.details.ok, false);
+	assert.match(result.content[0].text, /unknown \(invalid response\)/);
+	assert.doesNotMatch(result.content[0].text, /SECRET/);
+	const request = h.events.emitted.filter(([event]) => event === "subagents:rpc:v1:request").at(-1)[1];
+	assert.equal(h.events.listeners(`subagents:rpc:v1:reply:${request.requestId}`), 0);
+});
+
+test("status notification failure after reply does not reject the command", async () => {
+	const h = await ready();
+	const reply = heldReply(h);
+	const pending = h.commands.get("planner-only").handler("handoff-status", h.ctx);
+	h.ctx.ui.notify = () => { throw new Error("stale context"); };
+	await reply(data({}));
+	await assert.doesNotReject(pending);
+});

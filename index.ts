@@ -630,7 +630,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 	});
 
 	pi.registerCommand("planner-only", {
-		description: "planner-only on | off | native | lite | status | handoff-mode [off|confirm|auto] | handoff [goal]",
+		description: "planner-only on | off | native | lite | status | handoff-status | handoff-mode [off|confirm|auto] | handoff [goal]",
 		handler: (args, ctx) => plannerCommand(runtime, args, ctx),
 	});
 
