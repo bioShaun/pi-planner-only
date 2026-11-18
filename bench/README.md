@@ -70,7 +70,7 @@ slot status >> /project/tmp/ppo-bench/results/<campaign>.log 2>&1
 slot cpu -- bench/run.sh T1 lite-sol 1
 ```
 
-也可用 `slot cpu -b` 后台提交。每次启动重跑前必须执行 `slot audit` 与 `slot status`，并把输出记录到 campaign 日志。运行结果、stderr、耗时、退出码及评测分别保存在 `runs/` 下；克隆默认在成功评测后删除，可设 `BENCH_KEEP_CLONE=1` 保留。`BENCH_DRY_RUN=1` 只执行预检和命令展示，不启动 pi。
+也可用 `slot cpu -b` 后台提交。每次启动重跑前必须执行 `slot audit` 与 `slot status`，并把输出记录到 campaign 日志。运行结果、stderr、耗时、退出码及评测分别保存在 `runs/` 下；克隆默认在成功评测后删除，可设 `BENCH_KEEP_CLONE=1` 保留。`BENCH_DRY_RUN=1` 仍运行 `pi --list-models`，Native 还会启动离线 RPC 探测；不发起付费健康检查，也不执行基准任务。
 
 ## 初筛 Root 的选择（2026-09-25 试跑）
 
