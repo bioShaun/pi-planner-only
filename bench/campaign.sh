@@ -19,7 +19,6 @@ MAX_ATTEMPTS=${BENCH_MAX_ATTEMPTS:-2}; RETRY_DELAY=${BENCH_RETRY_DELAY:-120}; RU
 [[ $MAX_ATTEMPTS =~ ^[1-9][0-9]*$ && $RETRY_DELAY =~ ^[0-9]+$ ]] || { echo 'BENCH_MAX_ATTEMPTS must be a positive integer and BENCH_RETRY_DELAY a non-negative integer' >&2; exit 2; }
 IFS=, read -r -a TASKS <<< "$TASKS_CSV"; IFS=, read -r -a ARMS <<< "$ARMS_CSV"
 OUT=/project/tmp/ppo-bench/results/$NAME; mkdir -p "$OUT"
-PLUGIN_SOURCES=(index.ts delegate.ts git.ts format.ts config.ts host.ts subagent-artifacts.ts subagent-delegation-contract.ts)
 HAS_WORKTREE=$(python3 - "$ROOT" "${ARMS[@]}" <<'PY'
 import json, pathlib, sys
 root=pathlib.Path(sys.argv[1])
@@ -45,7 +44,10 @@ PY
     echo 'WARNING: resumed campaign has no worktreeSha; WORKTREE arms will use legacy behavior' | tee -a "$OUT/campaign.log"
   fi
 elif [[ $HAS_WORKTREE == yes ]]; then
-  if ! git -C "$ROOT" diff --quiet HEAD -- "${PLUGIN_SOURCES[@]}"; then
+  dirty_status=0
+  python3 "$ROOT/bench/worktree-dirty.py" "$ROOT" || dirty_status=$?
+  if (( dirty_status == 2 )); then exit 2; fi
+  if (( dirty_status != 0 )); then
     echo 'REFUSED: plugin source changes are present; commit or discard them before creating a WORKTREE campaign' | tee -a "$OUT/campaign.log" >&2
     exit 2
   fi

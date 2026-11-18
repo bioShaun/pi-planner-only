@@ -849,6 +849,7 @@ class NativeBenchTest(unittest.TestCase):
             (home / '.config/pi/secrets.zsh').write_text('')
             (home / '.pi/agent/settings.json').write_text(json.dumps({'subagents': {'defaultModel': MODEL}}))
             (root / 'bench/run.sh').write_bytes((BENCH / 'run.sh').read_bytes())
+            (root / 'bench/worktree-dirty.py').write_bytes((BENCH / 'worktree-dirty.py').read_bytes())
             (root / 'bench/temp_guard.py').write_bytes((BENCH / 'temp_guard.py').read_bytes())
             if (BENCH / 'native_tool_probe.js').exists():
                 (root / 'bench/native_tool_probe.js').write_bytes((BENCH / 'native_tool_probe.js').read_bytes())
@@ -858,7 +859,7 @@ class NativeBenchTest(unittest.TestCase):
             (root / 'bench/tasks/T3.md').write_text('task')
             (root / 'bin/pi').write_text('#!/bin/sh\nif [ -n "${PI_MARKER:-}" ]; then printf called > "$PI_MARKER"; fi\ncase " $* " in *" --mode rpc "*) echo BENCH_NATIVE_TOOLS_AVAILABLE >&2; exit 0;; esac\ncase "$1" in --list-models) printf "cline/cline-pass deepseek-v4.1-flash\\ntcuni gpt-6-luna\\n";; --version) echo pi-test;; esac\n')
             (root / 'bin/pi').chmod(0o755)
-            (root / 'bin/git').write_text('#!/bin/sh\ncase "$3" in rev-parse) echo testsha;; esac\n')
+            (root / 'bin/git').write_text('#!/bin/sh\ncase "$3" in rev-parse) echo testsha;; show) echo '{"files":[]}';; esac\n')
             (root / 'bin/git').chmod(0o755)
             (root / 'index.ts').write_text('')
             env = {**os.environ, 'PATH': str(root / 'bin') + ':' + os.environ['PATH'], 'TMPDIR': '/project/tmp',
