@@ -20,7 +20,7 @@ function runScenario(mode, tempMode = "outside") {
 	const repoLink = join(root, "repo-link");
 	if (tempMode === "symlink") symlinkSync(repo, repoLink);
 	writeFileSync(join(bin, "npm"), `#!/bin/sh
-printf '%s|%s|%s\n' "$*" "$PWD" "$PI_SUBAGENTS_DIR" >> "$CALL_LOG"
+printf '%s|%s|%s|%s|%s\n' "$*" "$PWD" "$PI_SUBAGENTS_DIR" "\${PI_PACKAGE_DIR-unset}" "\${PI_HOST_DIR-unset}" >> "$CALL_LOG"
 if [ "$1" = ci ]; then
   [ "$MODE" = install-fail ] && exit 42
   if [ "$MODE" != missing-source ]; then
@@ -33,6 +33,8 @@ fi
 exit 0
 `, { mode: 0o755 });
 	const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, TMPDIR: tempMode === "repo" ? repo : tempMode === "symlink" ? repoLink : parent, CALL_LOG: log, MODE: mode };
+	env.PI_PACKAGE_DIR = join(root, "inherited-host");
+	env.PI_HOST_DIR = join(root, "explicit-host");
 	if (tempMode === "unset") delete env.TMPDIR;
 	const result = spawnSync(process.execPath, [npm, "run", "test:release:isolated"], { cwd: repo, encoding: "utf8", env });
 	let calls = "";
@@ -56,6 +58,8 @@ test("isolated release installs outside the repo and passes its package path", (
 	assert.equal(release[0], "run test:release");
 	assert.equal(release[1], repo);
 	assert.equal(release[2], join(install[1], "node_modules", "pi-subagents"));
+	assert.equal(release[3], "unset", "release must not inherit host package metadata");
+	assert.equal(release[4], join(install[1], "..", "..", "explicit-host"), "explicit host selection is preserved");
 });
 
 test("installation failure prevents release", () => {

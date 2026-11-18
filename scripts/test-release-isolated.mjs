@@ -24,7 +24,9 @@ try {
 		for (const path of ["src/api/delegation.js", "src/slash/delegation-request.js", "src/slash/delegation-adapters.js", "src/shared/artifacts.js", "agents"]) {
 			if (!existsSync(join(source, path))) throw new Error(`isolated pi-subagents missing ${path}`);
 		}
-		process.exitCode = run(["run", "test:release"], { cwd: repo, env: { ...process.env, PI_SUBAGENTS_DIR: source } });
+		const env = { ...process.env, PI_SUBAGENTS_DIR: source };
+		delete env.PI_PACKAGE_DIR;
+		process.exitCode = run(["run", "test:release"], { cwd: repo, env });
 	}
 } catch (error) {
 	console.error(`isolated release: ${error.message}`);

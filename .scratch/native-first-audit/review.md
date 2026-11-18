@@ -29,3 +29,4 @@
 - 在 `c3df5e3` 的独立检出运行 `TMPDIR=/project/tmp python3 -B -m unittest discover -s bench -p 'test_*.py'` 与 `TMPDIR=/project/tmp node --test bench/overhead.test.mjs`：61 + 2 项通过，无跳过。含忽略的本地 agent、Lite 启动继承 bridge、双版本测量争用环境变量的回归。未执行付费 campaign。
 - `npm pack --dry-run` 列出 17 个文件，包括运行模块和 validator 定义；未做 tarball 安装测试。
 - 发布门禁和基准是不同的检查。`c3df5e3` 上的本机门禁缺 `@earendil-works/pi-ai`，固定 fixture 门禁则在宿主清单 `1.4.0` 与导出版本 `1.5.2` 不一致时停止；这次尝试不计作通过。
+- `scripts/test-release-isolated.mjs` 已修复隔离门禁误用外层 `PI_PACKAGE_DIR` 的问题，保留 `PI_HOST_DIR` 和真实宿主版本断言。本次最终门禁的命令、结果和提交标识记录在 `/project/tmp/ppo-native-first-audit-4f38194/final-release.log`。
