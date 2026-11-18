@@ -35,9 +35,9 @@ function snapshotPath(ref) {
 }
 async function measure(ref) {
   const label = ref ?? "WORKTREE";
-  const prior = Object.fromEntries(["PI_PLANNER_ONLY","PI_PLANNER_ONLY_STRICT","PI_SUBAGENT_CHILD"].map(k=>[k,process.env[k]]));
+  const prior = Object.fromEntries(["PI_PLANNER_ONLY","PI_PLANNER_ONLY_MODE","PI_PLANNER_ONLY_STRICT","PI_SUBAGENT_CHILD"].map(k=>[k,process.env[k]]));
   try {
-    const dir=snapshotPath(ref); process.env.PI_PLANNER_ONLY="1"; delete process.env.PI_SUBAGENT_CHILD;
+    const dir=snapshotPath(ref); process.env.PI_PLANNER_ONLY="1"; process.env.PI_PLANNER_ONLY_MODE="lite"; delete process.env.PI_SUBAGENT_CHILD;
     const {default: extension, HIDDEN_HOST_TOOLS=[]}=await import(pathToFileURL(join(dir,"index.ts")).href+`?bench=${encodeURIComponent(label)}-${Date.now()}`);
     const modes=[];
     for (const strict of [false,true]) {
