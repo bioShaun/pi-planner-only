@@ -23,3 +23,9 @@
 | 低（清理） | 本地有 56 个 `.planner-only-test-*`、2 个 `.planner-only-request-fixture-*` 目录，合计约 10 MiB；历史归档另有明确用途。`docs/pi-planner-only-subtraction-plan.md` §0.1 已有四项暂定机制及 2026-12-15 的证据期限。 | 先确认无活跃进程或取证引用，再清本地夹具；不因 Native 是主力就删除 Lite 或提前撤回暂定机制。 |
 
 不作为缺陷：`delegate.ts` 只在累计 tokens **超过**阈值时取消，与双语 README 的 `PI_PLANNER_ONLY_MAX_TOKENS` 定义一致。把 `>` 改为 `>=` 是契约变更，不是修 bug。
+
+## 验证边界
+
+- 在 `c3df5e3` 的独立检出运行 `TMPDIR=/project/tmp python3 -B -m unittest discover -s bench -p 'test_*.py'` 与 `TMPDIR=/project/tmp node --test bench/overhead.test.mjs`：61 + 2 项通过，无跳过。含忽略的本地 agent、Lite 启动继承 bridge、双版本测量争用环境变量的回归。未执行付费 campaign。
+- `npm pack --dry-run` 列出 17 个文件，包括运行模块和 validator 定义；未做 tarball 安装测试。
+- 发布门禁和基准是不同的检查。`c3df5e3` 上的本机门禁缺 `@earendil-works/pi-ai`，固定 fixture 门禁则在宿主清单 `1.4.0` 与导出版本 `1.5.2` 不一致时停止；这次尝试不计作通过。
