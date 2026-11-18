@@ -46,8 +46,8 @@ PY
 elif [[ $HAS_WORKTREE == yes ]]; then
   dirty_status=0
   python3 "$ROOT/bench/worktree-dirty.py" "$ROOT" || dirty_status=$?
-  if (( dirty_status == 2 )); then exit 2; fi
-  if (( dirty_status != 0 )); then
+  if (( dirty_status > 1 )); then echo "Cannot check worktree runtime changes (status $dirty_status)" >&2; exit 2; fi
+  if (( dirty_status == 1 )); then
     echo 'REFUSED: plugin source changes are present; commit or discard them before creating a WORKTREE campaign' | tee -a "$OUT/campaign.log" >&2
     exit 2
   fi

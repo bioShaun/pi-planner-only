@@ -126,8 +126,8 @@ if [[ $MODE == lite ]]; then
     PLUGIN_SHA=$(git -C "$ROOT" rev-parse HEAD)
     dirty_status=0
     python3 "$ROOT/bench/worktree-dirty.py" "$ROOT" || dirty_status=$?
-    if (( dirty_status == 2 )); then exit 2; fi
-    if (( dirty_status != 0 )); then WORKTREE_DIRTY=true; fi
+    if (( dirty_status > 1 )); then echo "Cannot check worktree runtime changes (status $dirty_status)" >&2; exit 2; fi
+    if (( dirty_status == 1 )); then WORKTREE_DIRTY=true; fi
     PLUGIN=$ROOT/index.ts
   else
     PLUGIN_SHA=$(git -C "$ROOT" rev-parse "$PLUGIN_REF^{commit}") || { echo "invalid plugin ref: $PLUGIN_REF" >&2; exit 2; }

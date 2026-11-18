@@ -40,10 +40,32 @@ class WorktreeDirtyTest(unittest.TestCase):
             git('add', '.')
             git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'fixture')
             env = {**os.environ, 'HOME': str(home), 'PATH': str(root / 'bin') + ':' + os.environ['PATH'], 'TMPDIR': '/project/tmp', 'BENCH_OUT': str(root / 'out'), 'BENCH_DRY_RUN': '1', 'BENCH_SKIP_HEALTH': '1', 'BENCH_TEMP_RESOURCE': '{}'}
+            real_git = shutil.which('git')
+            (root / 'bin/git').write_text(f'''#!/bin/sh
+if [ "$3" = ls-files ]; then
+  case " $* " in *" --exclude-standard "*|*" -- agents "*) ;; *) echo "unscoped ignored-file scan" >&2; exit 7;; esac
+fi
+exec {real_git} "$@"
+''')
+            (root / 'bin/git').chmod(0o755)
             (root / 'out').mkdir()
             campaign = 'dirty-test-' + uuid.uuid4().hex
             campaign_out = Path('/project/tmp/ppo-bench/results') / campaign
             try:
+                with (root / '.git/info/exclude').open('a') as exclude:
+                    exclude.write('\nagents/local.md\nnode_modules/\n')
+                (root / 'agents/local.md').write_text('local agent\n')
+                (root / 'node_modules').mkdir()
+                (root / 'node_modules/ignored.js').write_text('ignored\n')
+                run = subprocess.run(['bash', str(root / 'bench/run-body.sh'), 'T', 'lite', '1'], env=env, capture_output=True, text=True)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                meta = json.loads((root / 'out/runs/T-lite-1.meta.json').read_text())
+                result = subprocess.run(['bash', str(root / 'bench/campaign.sh'), campaign, '1', 'T', 'lite', '--dry-run'], env=env, capture_output=True, text=True)
+                with self.subTest(caller='direct'):
+                    self.assertTrue(meta['dirty'], 'ignored runtime agent was reported clean')
+                with self.subTest(caller='campaign'):
+                    self.assertEqual(result.returncode, 2, 'campaign accepted ignored runtime agent')
+                (root / 'agents/local.md').unlink()
                 for name, state, dirty in [('handoff.ts', 'working', True), ('status-color.ts', 'staged', True), ('agents/worker.md', 'working', True), ('agents/new.md', 'untracked', True), ('new-runtime.ts', 'untracked', True), ('package.json', 'working', True), ('docs/notes.md', 'untracked', False), ('.scratch/note.md', 'untracked', False)]:
                     with self.subTest(name=name, state=state):
                         path = root / name
@@ -71,6 +93,16 @@ class WorktreeDirtyTest(unittest.TestCase):
                     result = subprocess.run(['bash', *command], env=env, capture_output=True, text=True)
                     self.assertEqual(result.returncode, 2, result.stderr)
                     self.assertIn('Cannot check worktree runtime changes', result.stderr)
+                (root / 'bin/git').unlink()
+                real_python = shutil.which('python3')
+                for failure in ('exit 7', 'kill -TERM $$'):
+                    (root / 'bin/python3').write_text(f'#!/bin/sh\ncase "$1" in */worktree-dirty.py) {failure};; esac\nexec {real_python} "$@"\n')
+                    (root / 'bin/python3').chmod(0o755)
+                    for command in ([str(root / 'bench/run-body.sh'), 'T', 'lite', '2'],
+                                    [str(root / 'bench/campaign.sh'), campaign, '1', 'T', 'lite', '--dry-run']):
+                        with self.subTest(failure=failure, caller=command[0]):
+                            result = subprocess.run(['bash', *command], env=env, capture_output=True, text=True)
+                            self.assertEqual(result.returncode, 2, result.stderr)
             finally:
                 shutil.rmtree(campaign_out, ignore_errors=True)
 

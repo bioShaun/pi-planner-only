@@ -21,6 +21,7 @@ try:
         ('diff', '--name-only', '-z', '--no-renames'),
         ('diff', '--cached', '--name-only', '-z', '--no-renames', 'HEAD'),
         ('ls-files', '--others', '--exclude-standard', '-z'),
+        ('ls-files', '--others', '-z', '--', 'agents'),
     )).split(b'\0')
     def relevant(raw):
         name = raw.decode('utf-8', 'surrogateescape')
