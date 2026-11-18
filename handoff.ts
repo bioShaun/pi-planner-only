@@ -301,8 +301,8 @@ export class RootHandoff {
 		if (!this.#pending || this.#pending.manualOnly || this.#scheduleInFlight === this.#pending) return;
 		try { this.#runtime.pi.sendUserMessage("/planner-only handoff", { expandPromptTemplates: true }); }
 		catch {
-			this.deactivate();
-			this.#runtime.host.sendMessage({ customType: "planner-only-handoff", content: "[planner-only] Handoff dispatch failed; run /planner-only handoff manually.", display: true });
+			this.#defer(this.#pending);
+			this.#runtime.host.sendMessage({ customType: "planner-only-handoff", content: "[planner-only] Handoff dispatch failed; run /planner-only handoff to retry, or /planner-only handoff drop to discard it. Root's next handoff call will replace this brief.", display: true });
 		}
 	}
 

@@ -15,6 +15,7 @@ function harness(options = {}) {
 	const entries = [...(options.entries ?? [])];
 	let current, model = { provider: "source", id: "model" }, thinking = "high", calls = 0;
 	let failRestore = options.failRestore, failSend = options.failSend;
+	let failQueue = options.failQueue;
 	const ctx = {
 		cwd: "/work", hasUI: true, isIdle: () => true,
 		sessionManager: { getBranch: () => entries },
@@ -36,7 +37,7 @@ function harness(options = {}) {
 			pi: {
 				setModel: async (next) => { if (failRestore) { failRestore = false; throw new Error("restore failed"); } model = next; return true; },
 				setThinkingLevel: (next) => { thinking = next; },
-				sendUserMessage: (message) => commands.push(message),
+				sendUserMessage: (message) => { if (message === "/planner-only handoff" && failQueue) { failQueue = false; throw new Error("queue failed"); } commands.push(message); },
 				appendEntry: (customType, data) => { entries.push({ type: "custom", customType, data }); },
 			},
 			git: options.git ?? noGit, host: { sessionFile: () => "/sessions/source.jsonl", sendMessage: (message) => notes.push(message) },
@@ -102,6 +103,42 @@ try {
 	assert.equal(await blocked.current.command("status", blocked.ctx), false);
 
 	process.env.PI_PLANNER_ONLY_HANDOFF = "confirm";
+	// A synchronous host queue failure retains the admitted brief for manual action.
+	for (const user of [true, false]) {
+		const h = harness({ failQueue: true });
+		h.activity.rootContext = 200000;
+		if (user) await h.current.command("handoff", h.ctx);
+		assert.equal(h.current.schedule({ brief, progress }, h.ctx).details.ok, true);
+		h.current.settled();
+		assert.match(h.notes.at(-1).content, /dispatch failed/);
+		h.current.settled();
+		assert.equal(h.commands.filter(command => command === "/planner-only handoff").length, 0, "failed queue is manual-only");
+		await h.current.command("handoff", h.ctx);
+		const delivered = user ? h.sent[0] : h.editor[0];
+		assert.ok(delivered?.includes(brief), "manual retry delivers the retained brief according to its origin");
+		assert.ok(delivered.includes(progress));
+	}
+	{
+		const h = harness({ failQueue: true });
+		h.activity.rootContext = 200000;
+		assert.equal(h.current.schedule({ brief, progress }, h.ctx).details.ok, true);
+		h.current.settled();
+		const fresh = "Replacement brief with new decisions and work. ".repeat(6);
+		assert.match(h.current.schedule({ brief: fresh }, h.ctx).content[0].text, /replaces/);
+		await h.current.command("handoff", h.ctx);
+		assert.ok(h.editor[0].includes(fresh));
+		assert.ok(!h.editor[0].includes(brief));
+	}
+	{
+		const h = harness({ failQueue: true });
+		h.activity.rootContext = 200000;
+		assert.equal(h.current.schedule({ brief }, h.ctx).details.ok, true);
+		h.current.settled();
+		await h.current.command("handoff drop", h.ctx);
+		h.current.settled();
+		assert.equal(h.commands.length, 0);
+		assert.equal(h.current.schedule({ brief }, h.ctx).details.ok, true);
+	}
 	for (const value of [undefined, ""]) {
 		const h = harness();
 		h.activity.rootContext = 200000;
