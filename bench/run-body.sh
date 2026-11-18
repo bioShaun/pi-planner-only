@@ -55,7 +55,7 @@ CLONE=$CLONE_ROOT/$(basename "$BENCH_OUT")-$ID
 PLUGIN_SHA= WORKTREE_DIRTY=false
 SUBAGENTS=$HOME/.pi/agent/npm/node_modules/pi-subagents
 ROOT_ISOLATION=()
-[[ $MODE == native ]] && ROOT_ISOLATION=(-u PI_SUBAGENT_CHILD -u PI_SUBAGENTS_HERDR_BRIDGE)
+[[ $MODE == native || $MODE == lite ]] && ROOT_ISOLATION=(-u PI_SUBAGENT_CHILD -u PI_SUBAGENTS_HERDR_BRIDGE)
 
 # Validate all run paths before creating them.
 [[ -d $(dirname "$BENCH_OUT") || -d $BENCH_OUT ]] || { echo "BENCH_OUT parent must already exist" >&2; exit 2; }
@@ -190,7 +190,7 @@ if [[ $MODE != native ]]; then
 fi
 cd "$CLONE" || exit 2
 T_START=$(date +%s)
-if [[ $MODE == lite ]]; then env -u PI_PLANNER_ONLY_HANDOFF -u PI_PLANNER_ONLY_STRICT -u PI_SUBAGENT_CHILD "${ARM_ENV[@]}" PI_PLANNER_ONLY=1 PI_PLANNER_ONLY_MODE=lite timeout "$RUN_TIMEOUT" pi "${PI_ARGS[@]}" </dev/null >"$RUNS/$ID.jsonl" 2>"$RUNS/$ID.stderr"; else env -u PI_PLANNER_ONLY -u PI_PLANNER_ONLY_HANDOFF -u PI_PLANNER_ONLY_STRICT "${ROOT_ISOLATION[@]}" "${ARM_ENV[@]}" timeout "$RUN_TIMEOUT" pi "${PI_ARGS[@]}" </dev/null >"$RUNS/$ID.jsonl" 2>"$RUNS/$ID.stderr"; fi
+if [[ $MODE == lite ]]; then env -u PI_PLANNER_ONLY_HANDOFF -u PI_PLANNER_ONLY_STRICT "${ROOT_ISOLATION[@]}" "${ARM_ENV[@]}" PI_PLANNER_ONLY=1 PI_PLANNER_ONLY_MODE=lite timeout "$RUN_TIMEOUT" pi "${PI_ARGS[@]}" </dev/null >"$RUNS/$ID.jsonl" 2>"$RUNS/$ID.stderr"; else env -u PI_PLANNER_ONLY -u PI_PLANNER_ONLY_HANDOFF -u PI_PLANNER_ONLY_STRICT "${ROOT_ISOLATION[@]}" "${ARM_ENV[@]}" timeout "$RUN_TIMEOUT" pi "${PI_ARGS[@]}" </dev/null >"$RUNS/$ID.jsonl" 2>"$RUNS/$ID.stderr"; fi
 PI_EXIT=$?
 echo $(($(date +%s)-T_START)) >"$RUNS/$ID.wall"
 echo "$PI_EXIT" >"$RUNS/$ID.exit"

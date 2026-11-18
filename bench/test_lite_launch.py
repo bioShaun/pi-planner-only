@@ -27,7 +27,7 @@ class LiteLaunchTest(unittest.TestCase):
 case "$1" in
   --list-models) echo 'test model';;
   --version) echo test;;
-  *) printf '%s\\n' "${PI_PLANNER_ONLY_MODE-unset}" "${PI_SUBAGENT_CHILD-unset}" "${PI_PLANNER_ONLY-unset}" "${PI_PLANNER_ONLY_STRICT-unset}" > "$MARKER";;
+  *) printf '%s\\n' "${PI_PLANNER_ONLY_MODE-unset}" "${PI_SUBAGENT_CHILD-unset}" "${PI_PLANNER_ONLY-unset}" "${PI_PLANNER_ONLY_STRICT-unset}" "${PI_SUBAGENTS_HERDR_BRIDGE-unset}" > "$MARKER";;
 esac
 ''')
             (root / 'bench/prepare-clone.sh').write_text('#!/bin/bash\nmkdir -p "$2"\necho BASE=test\n')
@@ -38,7 +38,8 @@ esac
             marker = root / 'environment'
             env = {**os.environ, 'HOME': str(root / 'home'), 'PATH': str(root / 'bin') + ':' + os.environ['PATH'],
                    'TMPDIR': '/project/tmp', 'BENCH_OUT': str(root / 'out'), 'BENCH_SKIP_HEALTH': '1',
-                   'BENCH_TEMP_RESOURCE': '{}', 'MARKER': str(marker), 'PI_SUBAGENT_CHILD': '1'}
+                   'BENCH_TEMP_RESOURCE': '{}', 'MARKER': str(marker), 'PI_SUBAGENT_CHILD': '1',
+                   'PI_SUBAGENTS_HERDR_BRIDGE': '1'}
             env.pop('PI_CODING_AGENT_DIR', None)
             env.pop('BENCH_DRY_RUN', None)
             env.pop('BENCH_KEEP_CLONE', None)
@@ -56,7 +57,9 @@ esac
                     done = subprocess.run(['bash', str(root / 'bench/run-body.sh'), 'T', 'lite', '1'],
                                           env={**env, 'PI_PLANNER_ONLY_MODE': mode}, capture_output=True, text=True)
                     self.assertEqual(done.returncode, 0, done.stderr)
-                    self.assertEqual(marker.read_text().splitlines(), ['lite', 'unset', '1', '1'])
+                    values = marker.read_text().splitlines()
+                    self.assertEqual(values[:4], ['lite', 'unset', '1', '1'])
+                    self.assertEqual(values[4], 'unset', 'Lite root inherited bridge value')
 
 
 if __name__ == '__main__':
