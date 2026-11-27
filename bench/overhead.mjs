@@ -70,17 +70,17 @@ function showStatic(results) {
 }
 function filesIn(inputs){const out=[]; function walk(p){try{const s=statSync(p);if(s.isDirectory()){for(const x of readdirSync(p))walk(join(p,x));}else if(p.endsWith(".jsonl"))out.push(p);}catch{}} for(const x of inputs)walk(resolve(x));return out;}
 function corpus(inputs){
-  const runs=[]; const totals=new Map(); let pluginChars=0, allChars=0;
-  for(const file of filesIn(inputs)){let valid=false, turns=0;const results=[];
-    for(const line of readFileSync(file,"utf8").split("\n")){if(!line)continue;let e;try{e=JSON.parse(line);}catch{continue;}if(!e||typeof e.type!=="string")continue;valid=true;
-      if(e.type!=="message_end")continue;const m=e.message;if(m?.role==="assistant")turns++;
-      if(m?.role!=="toolResult")continue;const name=m.toolName??m.name??"unknown";const text=Array.isArray(m.content)?m.content.filter(c=>c?.type==="text").map(c=>c.text??"").join(""):"";results.push({name,chars:text.length,turnAt:turns});
+    const runs=[]; const totals=new Map(); let pluginChars=0, allChars=0;
+    for(const file of filesIn(inputs)){let valid=false, turns=0;const results=[];
+      for(const line of readFileSync(file,"utf8").split("\n")){if(!line)continue;let e;try{e=JSON.parse(line);}catch{continue;}if(!e||typeof e.type!=="string")continue;valid=true;
+        if(e.type!=="message_end")continue;const m=e.message;if(m?.role==="assistant")turns++;
+        if(m?.role!=="toolResult")continue;const name=m.toolName??m.name??"unknown";const text=Array.isArray(m.content)?m.content.filter(c=>c?.type==="text").map(c=>c.text??"").join(""):"";const cjk=(text.match(/[\u3000-\u9fff\uff00-\uffef]/gu)??[]).length;results.push({name,chars:text.length,cjk,turnAt:turns});
+      }
+      if(!valid||turns===0)continue;
+      for(const r of results){const later=Math.max(0,turns-r.turnAt);r.carried=r.chars*later;const t=totals.get(r.name)??{count:0,chars:0,cjk:0,carried:0,sizes:[]};t.count++;t.chars+=r.chars;t.cjk+=r.cjk;t.carried+=r.carried;t.sizes.push(r.chars);totals.set(r.name,t);allChars+=r.chars;if(["delegate","git_audit","git_commit","handoff"].includes(r.name))pluginChars+=r.chars;}
+      runs.push({file,assistantTurns:turns,toolResults:results.length,tools:results});
     }
-    if(!valid||turns===0)continue;
-    const carried=new Map();for(const r of results){const later=Math.max(0,turns-r.turnAt);r.carried=r.chars*later;const t=totals.get(r.name)??{count:0,chars:0,carried:0,sizes:[]};t.count++;t.chars+=r.chars;t.carried+=r.carried;t.sizes.push(r.chars);totals.set(r.name,t);allChars+=r.chars;if(["delegate","git_audit","git_commit","handoff"].includes(r.name))pluginChars+=r.chars;}
-    runs.push({file,assistantTurns:turns,toolResults:results.length,tools:results});
-  }
-  const aggregate=[...totals].map(([name,t])=>{t.sizes.sort((a,b)=>a-b);const mid=Math.floor(t.sizes.length/2),median=t.sizes.length%2?t.sizes[mid]:(t.sizes[mid-1]+t.sizes[mid])/2;return{name,...t,median,max:Math.max(...t.sizes),approxTokens:Math.ceil((t.cjk??0)+Math.ceil((t.chars-(t.cjk??0))/4))};});
+    const aggregate=[...totals].map(([name,t])=>{t.sizes.sort((a,b)=>a-b);const mid=Math.floor(t.sizes.length/2),median=t.sizes.length%2?t.sizes[mid]:(t.sizes[mid-1]+t.sizes[mid])/2;return{name,...t,median,max:Math.max(...t.sizes),approxTokens:Math.ceil(t.cjk+(t.chars-t.cjk)/4)};});
   return {runs,aggregate,pluginToolChars:pluginChars,allToolResultChars:allChars,pluginShare:allChars?pluginChars/allChars:0};
 }
 function showCorpus(data){for(const r of data.runs)console.log(`${r.file}: ${r.assistantTurns} assistant turns, ${r.toolResults} tool results`);console.log("\nTool             count  chars  median  max  approx tokens  carried chars");for(const t of data.aggregate)console.log(`${t.name.padEnd(16)} ${String(t.count).padStart(5)} ${String(t.chars).padStart(7)} ${String(t.median).padStart(7)} ${String(t.max).padStart(5)} ${String(t.approxTokens).padStart(14)} ${String(t.carried).padStart(14)}`);console.log(`Plugin tool-result share: ${(100*data.pluginShare).toFixed(1)}% (${data.pluginToolChars}/${data.allToolResultChars} chars)`);}

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 
@@ -23,7 +24,7 @@ test("static measures Lite prompts regardless of operator mode", () => {
 });
 
 test("two-ref static measurements isolate delayed imports from Native and Off modes", () => {
-  const dir = mkdtempSync("/project/tmp/overhead-test-");
+  const dir = mkdtempSync(join(tmpdir(), "overhead-test-"));
   try {
     mkdirSync(join(dir, "bench"));
     mkdirSync(join(dir, "node_modules"));
@@ -62,6 +63,30 @@ test("two-ref static measurements isolate delayed imports from Native and Off mo
       assert.deepEqual(results.map(result => result.ref), refs);
       for (const result of results) assert.deepEqual(result.modes.map(mode => mode.strict), [false, true]);
     }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("corpus counts CJK characters in tool results identically to approxTokens", () => {
+  const dir = mkdtempSync(join(tmpdir(), "overhead-corpus-"));
+  try {
+    const jsonl = join(dir, "run.jsonl");
+    const out = join(dir, "corpus.json");
+    const cjkText = "中文测试字符十个汉字abcdefgh"; // 10 CJK + 8 ASCII = 18 chars, approxTokens = ceil(10 + 8/4) = 12
+    writeFileSync(jsonl, [
+      JSON.stringify({ type: "message_end", message: { role: "assistant" } }),
+      JSON.stringify({ type: "message_end", message: { role: "toolResult", toolName: "delegate", content: [{ type: "text", text: cjkText }] } }),
+    ].join("\n") + "\n");
+    const child = spawnSync(process.execPath, ["--experimental-strip-types", "bench/overhead.mjs", "corpus", jsonl, "--json", out], {
+      encoding: "utf8",
+    });
+    assert.equal(child.status, 0, child.stderr);
+    const data = JSON.parse(readFileSync(out, "utf8"));
+    assert.equal(data.aggregate.length, 1);
+    assert.equal(data.aggregate[0].chars, 18);
+    assert.equal(data.aggregate[0].cjk, 10);
+    assert.equal(data.aggregate[0].approxTokens, 12);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

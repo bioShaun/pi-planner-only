@@ -69,7 +69,7 @@ model_present "$ROOT_MODEL" || { echo "BLOCKED $ROOT_MODEL"; exit 3; }
 CHILD_MODELS=
 SETTINGS_FILE=${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/settings.json
 if [[ $MODE != direct ]]; then
-  CHILD_MODELS=$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])).get("subagents",{}); o=s.get("agentOverrides",{}); print("\n".join(sorted({(o.get(a) or {}).get("model") or s.get("defaultModel","") for a in ("worker","scout","oracle","reviewer")} - {""})))' "$SETTINGS_FILE") || { echo "BLOCKED invalid child settings" >&2; exit 3; }
+  CHILD_MODELS=$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])).get("subagents",{}); o=s.get("agentOverrides",{}); roles=("worker","scout","oracle","reviewer") if sys.argv[2]=="native" else ("worker","scout","planner-validator","reviewer"); print("\n".join(sorted({(o.get(a) or {}).get("model") or s.get("defaultModel","") for a in roles} - {""})))' "$SETTINGS_FILE" "$MODE") || { echo "BLOCKED invalid child settings" >&2; exit 3; }
   for m in $CHILD_MODELS; do model_present "$m" || { echo "BLOCKED child model $m"; exit 3; }; done
 fi
 
