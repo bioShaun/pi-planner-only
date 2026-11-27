@@ -6,9 +6,16 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-export const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
-	? resolve(process.env.PI_CODING_AGENT_DIR)
-	: join(homedir(), ".pi", "agent");
+export function resolveAgentDir(env: NodeJS.ProcessEnv = process.env): string {
+	const configured = env.PI_CODING_AGENT_DIR?.trim();
+	const home = env.HOME || env.USERPROFILE || homedir();
+	if (!configured) return join(home, ".pi", "agent");
+	if (configured === "~") return home;
+	if (configured.startsWith("~/") || configured.startsWith("~\\")) return join(home, configured.slice(2));
+	return resolve(configured);
+}
+
+export const AGENT_DIR = resolveAgentDir();
 
 export interface DelegationLimits {
 	timeoutMs: number;
@@ -57,15 +64,15 @@ const FALSE_VALUES = ["0", "false", "off"];
 const normalize = (value: string | undefined) => (value ?? "").trim().toLowerCase();
 
 /** Positive integer from `env[name]`, otherwise `fallback`. */
-export function intEnv(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+function intEnv(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
 	const value = Number(env[name]);
 	return Number.isInteger(value) && value > 0 ? value : fallback;
 }
 
 /** `true` for 1/true/on, `false` for 0/false/off, otherwise `fallback`. */
-export function boolEnv(env: NodeJS.ProcessEnv, name: string, fallback: boolean): boolean;
-export function boolEnv(env: NodeJS.ProcessEnv, name: string, fallback?: undefined): boolean | undefined;
-export function boolEnv(env: NodeJS.ProcessEnv, name: string, fallback?: boolean): boolean | undefined {
+function boolEnv(env: NodeJS.ProcessEnv, name: string, fallback: boolean): boolean;
+function boolEnv(env: NodeJS.ProcessEnv, name: string, fallback?: undefined): boolean | undefined;
+function boolEnv(env: NodeJS.ProcessEnv, name: string, fallback?: boolean): boolean | undefined {
 	const value = normalize(env[name]);
 	if (TRUE_VALUES.includes(value)) return true;
 	if (FALSE_VALUES.includes(value)) return false;

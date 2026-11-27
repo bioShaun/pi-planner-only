@@ -12,7 +12,7 @@ def price(t,p): return sum(t[k]*p[short] for k,short in zip(FIELDS,("in","out","
 def valid_usage(u):
     return isinstance(u,dict) and all(isinstance(u.get(k),(int,float)) and not isinstance(u[k],bool) and math.isfinite(u[k]) and u[k]>=0 for k in FIELDS)
 def parse_run(directory,rid,weight,bundle=None):
-    m=re.match(r'^(T\d+[a-z]?)-(.+)-(\d+)$',rid)
+    m=re.match(r'^([A-Z]\d+[a-z]?)-(.+)-(\d+)$',rid)
     task,arm,rep=(m.group(1),m.group(2),int(m.group(3))) if m else (None,None,None)
     evp=directory/(rid+'.eval.json')
     ev=json.loads(evp.read_text()) if evp.exists() else {}; meta={}
@@ -23,7 +23,7 @@ def parse_run(directory,rid,weight,bundle=None):
     metadata_valid=valid_arm_metadata(meta)
     if not isinstance(meta,dict): meta={}
     if not isinstance(meta.get('arm',{}),dict): meta={**meta,'arm':{}}
-    arm=(ev.get('arm') or (ev.get('arm') if isinstance(ev.get('arm'),str) else None) or (meta.get('arm') or {}).get('name') or arm)
+    arm=(ev.get('arm') or (meta.get('arm') or {}).get('name') or arm)
     if isinstance(arm,dict): arm=arm.get('name') or (m.group(2) if m else None)
     rec=dict(id=rid,task=ev.get('task') or task,arm=arm,rep=ev.get('rep',rep),mode=(meta.get('arm') or {}).get('mode'),exit=None,passed=ev.get('pass'),wall=None,root_turns=0,delegates=0,children=0,root={k:0 for k in FIELDS},child_cost=0,root_cost=0,total_cost=0,refused=0,detached=0,truncated=0,root_reads=0,root_bash=0,root_cache_read=0,extra_tools=0,turns_per_delegate=None)
     for ext,key,cast in [('exit','exit',int),('wall','wall',int)]:

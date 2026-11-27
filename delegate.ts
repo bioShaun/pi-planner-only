@@ -180,7 +180,7 @@ export function matchesIdentity(identity: RunIdentity, data: unknown): data is S
 }
 
 /** The host-assigned run id that keys artifacts: the terminal's, else the last update's. */
-export function hostRunId(response: Pick<SubagentDelegationResponse, "runId">, last: LastActivity): string | undefined {
+function hostRunId(response: Pick<SubagentDelegationResponse, "runId">, last: LastActivity): string | undefined {
 	return response.runId ?? last.runId;
 }
 
@@ -258,7 +258,7 @@ const MAX_RECENT_OUTPUT_CHARS = 1_500;
 
 const TRANSCRIPT_TAIL_BYTES = 8 * 1024 * 1024;
 /** Room for ~12 tool calls with full-command previews (om09 run4: the passing check was 11 calls back). */
-export const MAX_TAIL_CALLS_CHARS = 6_500;
+const MAX_TAIL_CALLS_CHARS = 6_500;
 
 /**
  * One short line of tool args, clipped to 120 chars: the parsed argsPayload
@@ -432,7 +432,7 @@ export interface ArtifactSource {
 	artifactDir?: ArtifactDir;
 }
 
-export function recoverPartial(
+function recoverPartial(
 	response: SubagentDelegationResponse,
 	agent: string,
 	source: ArtifactSource,
@@ -451,13 +451,14 @@ export function recoverPartial(
 	if (!runId) return { text: recent, lines };
 	const paths = resolveArtifacts({ runId, agent, ...source });
 	if (paths) {
-		try {
-			const text = readFileSync(paths.outputPath, "utf8");
+		let outputText: string | undefined;
+		try { outputText = readFileSync(paths.outputPath, "utf8"); } catch { /* output may be absent */ }
+		const jsonl = readTranscriptTail(paths.transcriptPath);
+		if (outputText !== undefined || jsonl !== undefined) {
 			lines.push(`Transcript: ${paths.transcriptPath}`);
-			const jsonl = readTranscriptTail(paths.transcriptPath);
 			const tail = jsonl ? summarizeTranscript(jsonl) : undefined;
-			return { text: text.trim() ? text : recent, tail, lines };
-		} catch { /* fall through */ }
+			return { text: outputText?.trim() ? outputText : recent, tail, lines };
+		}
 	}
 	lines.push(`artifacts not found (artifactDir=${source.artifactDir ?? "session"}${paths ? `, expected ${paths.outputPath}` : ""}); runId=${runId}`);
 	return { text: recent, lines };

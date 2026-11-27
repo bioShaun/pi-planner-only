@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
+import { tempDir } from "./test-helpers.mjs";
 
 const repo = resolve(import.meta.dirname);
 const npm = process.env.npm_execpath || "/usr/bin/npm";
 
 function runScenario(mode, tempMode = "outside") {
-	const root = mkdtempSync(join(process.env.TMPDIR, "isolated-test-"));
+	const root = tempDir("isolated-test-");
 	const bin = join(root, "bin");
 	const log = join(root, "calls");
 	const parent = join(root, "parent");

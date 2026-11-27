@@ -886,7 +886,16 @@ class NativeBenchTest(unittest.TestCase):
             self.assertEqual(meta['childOverrides'], overrides)
             self.assertEqual(meta['childDefaultModel'], 'tcuni/gpt-6-luna')
             self.assertEqual(meta['childModelScope'], scope)
-            (isolated / 'models.json').symlink_to(Path.home() / '.pi/agent/models.json')
+            (isolated / 'models.json').write_text(json.dumps({
+                'providers': {
+                    'cline': {
+                        'baseUrl': 'https://offline.invalid/v1',
+                        'apiKey': 'offline-test-key',
+                        'api': 'openai-completions',
+                        'models': [{'id': 'cline-pass/deepseek-v4.1-flash'}],
+                    }
+                }
+            }))
             marker = root / 'probe-environment.json'
             real_pi = shutil.which('pi')
             (root / 'bin/pi').write_text('#!/bin/bash\n'
@@ -1324,6 +1333,20 @@ PY
                 with self.assertRaisesRegex(RuntimeError, 'Bash child /tmp denial unverified'):
                     verify(Path(directory))
             self.assertEqual(child_run.call_count, 2)
+
+    def test_arm_root_models_are_priced_or_explicit_legacy_unpriced(self):
+        """Ensure every bench arm rootModel is priced or explicitly allowlisted as unpriced legacy."""
+        allowlist = frozenset({'kimi-coding/kimi-for-coding', 'tcuni-ds/xiaomi/mimo-v2.6-flash'})
+        priced_models = set(json.loads((BENCH / 'prices.json').read_text())['models'])
+
+        def find_unpriced(arm_models):
+            return sorted({model for model in arm_models if model and model not in priced_models and model not in allowlist})
+
+        arm_models = [json.loads(path.read_text()).get('rootModel') for path in sorted((BENCH / 'arms').glob('*.json'))]
+        self.assertTrue(arm_models)
+        self.assertEqual(find_unpriced(arm_models), [])
+        self.assertTrue(allowlist.isdisjoint(priced_models), 'Remove allowlisted legacy model once priced in prices.json')
+        self.assertEqual(find_unpriced(['synthetic/unpriced-model']), ['synthetic/unpriced-model'])
 
 
 if __name__ == '__main__':

@@ -31,19 +31,14 @@ export const NATIVE_PROMPT = "实现和跑测试优先交给子代理，自己�
 const STATUS_KEY = "planner-only";
 const GIT_TIMEOUT_MS = 30_000;
 export const MAX_COMMIT_MESSAGE_CHARS = 2_000;
-export const PLUGIN_TOOLS = ["delegate", "git_audit", "git_commit", "handoff"] as const;
-export const STRICT_BLOCKED_TOOLS = new Set(["edit", "write", "bash"]);
+const PLUGIN_TOOLS = ["delegate", "git_audit", "git_commit", "handoff"] as const;
+const STRICT_BLOCKED_TOOLS = new Set(["edit", "write", "bash"]);
 /** pi-subagents' own Root-facing tools; hidden while planner-only is enabled. */
 export const HIDDEN_HOST_TOOLS = ["subagents_enable", "subagent"] as const;
 const HIDDEN_HOST_TOOL_SET = new Set<string>(HIDDEN_HOST_TOOLS);
 
 const REPO_CWD_DESCRIPTION = "Repository to run in (absolute or relative to the session cwd). Defaults to the session cwd.";
 const resolveCwd = (ctx: { cwd: string }, cwd: string | undefined) => (cwd ? resolve(ctx.cwd, cwd) : ctx.cwd);
-
-/** Legacy query for whether the fresh-session selection enables the Lite layer. */
-export function isEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-	return initialMode(env) === "lite";
-}
 
 function preference(): PlannerMode | undefined {
 	try {
@@ -59,7 +54,7 @@ export function initialMode(env: NodeJS.ProcessEnv = process.env): PlannerMode {
 		?? preference() ?? (existsSync(OFF_MARKER) ? "off" : "lite");
 }
 
-export function isStrict(env: NodeJS.ProcessEnv = process.env): boolean {
+function isStrict(env: NodeJS.ProcessEnv = process.env): boolean {
 	return loadConfig(env).strict;
 }
 
@@ -92,7 +87,7 @@ export interface RoleStats {
 	durationMissing: number;
 }
 
-export const emptyRoleStats = (): Record<Role, RoleStats> => ({
+const emptyRoleStats = (): Record<Role, RoleStats> => ({
 	worker: { calls: 0, completed: 0, timed_out: 0, otherFailed: 0, refused: 0, durationMs: 0, durationMissing: 0 },
 	explorer: { calls: 0, completed: 0, timed_out: 0, otherFailed: 0, refused: 0, durationMs: 0, durationMissing: 0 },
 	validator: { calls: 0, completed: 0, timed_out: 0, otherFailed: 0, refused: 0, durationMs: 0, durationMissing: 0 },
@@ -138,7 +133,7 @@ export interface ChildRunUsage {
 	cost: number;
 }
 
-export function contextWarnThreshold(env: NodeJS.ProcessEnv = process.env): number {
+function contextWarnThreshold(env: NodeJS.ProcessEnv = process.env): number {
 	return loadConfig(env).contextWarnTokens;
 }
 
@@ -252,8 +247,8 @@ interface PlannerRuntime {
 
 function modeOf({ session }: Pick<PlannerRuntime, "session">): PlannerMode {
 	// Preserve the old live PI_PLANNER_ONLY flag behavior; explicit MODE selects new sessions.
-	const enabled = loadConfig().enabled;
-	return loadConfig().mode === undefined && enabled !== undefined ? enabled ? "lite" : "off" : session.mode;
+	const config = loadConfig();
+	return config.mode === undefined && config.enabled !== undefined ? config.enabled ? "lite" : "off" : session.mode;
 }
 
 function busy(session: PlannerSession): boolean {
@@ -338,7 +333,7 @@ function statusText(theme: StatusTheme, session: PlannerSession, mode: PlannerMo
 	return theme.fg(session.highContext ? "error" : "warning", label);
 }
 
-function updateStatus(session: PlannerSession, ctx: ExtensionContext, mode: PlannerMode = session.mode): void {
+function updateStatus(session: PlannerSession, ctx: ExtensionContext, mode: PlannerMode): void {
 	if (!ctx.hasUI) return;
 	const label = mode === "lite" ? `planner-only${isStrict() ? " (strict)" : ""} · ${statusTotals(session)}` : mode === "native" ? `planner-only: native · ${nativeTotals(session)}` : `planner-only: ${mode}`;
 	ctx.ui.setStatus(STATUS_KEY, statusText(ctx.ui.theme, session, mode, label));
@@ -347,21 +342,22 @@ function updateStatus(session: PlannerSession, ctx: ExtensionContext, mode: Plan
 /** Adds our tools and hides pi-subagents' loader while enabled; restores both when off. */
 function syncTools(runtime: PlannerRuntime): void {
 	const { pi, session } = runtime;
+	const mode = modeOf(runtime);
 	const active = pi.getActiveTools();
 	const ours = new Set<string>(PLUGIN_TOOLS);
 	let next: string[];
-	if (modeOf(runtime) === "lite") {
+	if (mode === "lite") {
 		for (const tool of HIDDEN_HOST_TOOLS) if (active.includes(tool)) session.hiddenNativeTools.add(tool);
 		session.hidLoader ||= active.includes("subagents_enable");
 		next = [...active, ...PLUGIN_TOOLS.filter((t) => !active.includes(t))]
 			.filter((t) => !HIDDEN_HOST_TOOL_SET.has(t));
 	} else {
 		next = active.filter((t) => !ours.has(t));
-		if (modeOf(runtime) === "native" && !next.includes("handoff")) next.push("handoff");
-		const restore = modeOf(runtime) === "native" ? session.hiddenNativeTools : session.hidLoader ? new Set(["subagents_enable"]) : new Set<string>();
+		if (mode === "native" && !next.includes("handoff")) next.push("handoff");
+		const restore = mode === "native" ? session.hiddenNativeTools : session.hidLoader ? new Set(["subagents_enable"]) : new Set<string>();
 		for (const tool of restore) if (!next.includes(tool)) next.push(tool);
 		session.hidLoader = false;
-		if (modeOf(runtime) === "native") session.hiddenNativeTools.clear();
+		if (mode === "native") session.hiddenNativeTools.clear();
 	}
 	if (next.length !== active.length || next.some((t, i) => t !== active[i])) pi.setActiveTools(next);
 }
@@ -405,7 +401,7 @@ async function executeDelegate(
 	));
 	const { usage, status, role } = outcome.details;
 	session.recordRoleDelegation(role, status, usage?.durationMs);
-	if (session.recordChildRun(status, usage)) updateStatus(session, ctx);
+	if (session.recordChildRun(status, usage)) updateStatus(session, ctx, modeOf(runtime));
 	return textResult(outcome.text, outcome.details);
 }
 
@@ -475,7 +471,8 @@ function notifyStatus(runtime: PlannerRuntime, ctx: ExtensionContext): void {
 		.filter((r) => session.roleStats[r]?.calls > 0)
 		.map((r) => `  ${r}: ${formatRoleSummary(session.roleStats[r])}`);
 	const roleBlock = roleLines.length ? `\nRole stats (current session; completed = runtime terminal; cumulative duration includes concurrent child time, not total wall time):\n${roleLines.join("\n")}` : "";
-	ctx.ui.notify(`planner-only ${mode === "lite" ? "on" : mode}${mode === "lite" && isStrict() ? ", strict" : ""}${env}; next fresh session: ${initialMode()}${preference() ? ` (preference: ${preference()})` : ""}; handoff: ${handoff.mode} (source: ${handoff.source})${chainText}${mode === "native" ? `\n${nativeTotals(session)}\nChild usage is a recorded lower bound; missing or incomplete workflow receipts may omit usage.` : mode === "lite" ? `\n${statusTotals(session)}${roleBlock}` : ""}`, "info");
+	const savedPreference = preference();
+	ctx.ui.notify(`planner-only ${mode === "lite" ? "on" : mode}${mode === "lite" && isStrict() ? ", strict" : ""}${env}; next fresh session: ${initialMode()}${savedPreference ? ` (preference: ${savedPreference})` : ""}; handoff: ${handoff.mode} (source: ${handoff.source})${chainText}${mode === "native" ? `\n${nativeTotals(session)}\nChild usage is a recorded lower bound; missing or incomplete workflow receipts may omit usage.` : mode === "lite" ? `\n${statusTotals(session)}${roleBlock}` : ""}`, "info");
 }
 
 async function plannerCommand(runtime: PlannerRuntime, args: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -496,14 +493,15 @@ async function plannerCommand(runtime: PlannerRuntime, args: string, ctx: Extens
 }
 
 function onMessageEnd(runtime: PlannerRuntime, message: Parameters<typeof rootUsageOf>[0], ctx: ExtensionContext): void {
-	if (modeOf(runtime) === "off") return;
+	const mode = modeOf(runtime);
+	if (mode === "off") return;
 	const { host, session } = runtime;
 	const usage = rootUsageOf(message);
 	if (!usage) return;
 	const context = host.contextTokens(ctx) ?? usage.context;
 	session.recordRootTurn(usage, context);
 	if (session.claimContextWarning()) sendContextWarning(host, context);
-	updateStatus(session, ctx);
+	updateStatus(session, ctx, mode);
 }
 
 export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter): void {
@@ -530,7 +528,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 		const current = () => modeOf(runtime) === "native" && session.nativeGeneration === generation && ctx.sessionManager.getSessionId() === sessionId;
 		const timer = setTimeout(() => {
 			if (cancelNativeRequest === cancel) cancel();
-			if (current()) { session.nativeChild = undefined; updateStatus(session, ctx); }
+			if (current()) { session.nativeChild = undefined; updateStatus(session, ctx, modeOf(runtime)); }
 		}, 5000);
 		timer.unref();
 		const unsubscribe = host.events.on(replyEvent, (raw: unknown) => {
@@ -545,7 +543,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 				const [input, output, cacheRead, cacheWrite, cost] = values as number[];
 				session.nativeChild = { tokens: input + output + cacheRead + cacheWrite, cost };
 			}
-			updateStatus(session, ctx);
+			updateStatus(session, ctx, modeOf(runtime));
 		});
 		const cancel = () => { clearTimeout(timer); unsubscribe(); cancelNativeRequest = undefined; };
 		cancelNativeRequest = cancel;
@@ -638,7 +636,7 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 		const chain = takeHandoffChain();
 		if (chain !== undefined) pi.appendEntry(HANDOFF_CHAIN_ENTRY, { version: 1, count: chain });
 		if (!bindMode(runtime, event.reason, ctx)) {
-			ctx.ui.notify(BUSY_MODE_MESSAGE, "warning");
+			if (ctx.hasUI) ctx.ui.notify(BUSY_MODE_MESSAGE, "warning");
 			return;
 		}
 		cancelNativeRequest?.();
@@ -665,7 +663,8 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 	pi.on("session_shutdown", async () => { handoff.deactivate(); cancelNativeRequest?.(); unsubscribeNativeComplete(); nativeContext = undefined; session.nativeGeneration++; });
 
 	pi.on("before_agent_start", async (event) => {
-		if (modeOf(runtime) === "lite") {
+		const mode = modeOf(runtime);
+		if (mode === "lite") {
 			const sel = event.systemPromptOptions?.selectedTools;
 			if (sel) {
 				const kept = sel.filter((t) => !HIDDEN_HOST_TOOL_SET.has(t));
@@ -676,13 +675,13 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 			const sel = event.systemPromptOptions?.selectedTools;
 			if (sel) {
 				const kept = sel.filter((t) => !PLUGIN_TOOLS.includes(t as typeof PLUGIN_TOOLS[number]));
-				if (modeOf(runtime) === "native") kept.push("handoff");
+				if (mode === "native") kept.push("handoff");
 				event.systemPromptOptions.selectedTools = kept;
 			}
 		}
 		syncTools(runtime);
-		if (modeOf(runtime) === "native") return { systemPrompt: `${event.systemPrompt}\n\n${NATIVE_PROMPT}` };
-		if (modeOf(runtime) !== "lite") return;
+		if (mode === "native") return { systemPrompt: `${event.systemPrompt}\n\n${NATIVE_PROMPT}` };
+		if (mode !== "lite") return;
 		return { systemPrompt: `${event.systemPrompt}\n\n${plannerPrompt(isStrict(), loadConfig().limits)}` };
 	});
 

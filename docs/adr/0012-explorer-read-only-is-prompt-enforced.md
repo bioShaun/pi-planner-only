@@ -18,5 +18,5 @@ Explorers may run in parallel under a shared cwd lock. Their read-only posture i
 
 ## Consequences
 
-- The ledger row for this lock is `保留-仅工程`. Its final disposition stays `待用户`.
+- The ledger row for this lock is `保留-仅工程`. Its final disposition is `保留（用户 2026-11-16）`.
 - `CONTEXT.md` points here. `delegate.ts` and the lock tests are unchanged.

@@ -11,9 +11,9 @@
 | 工具 | 作用 |
 |---|---|
 | `delegate({role, task, cwd?, timeoutSeconds?, base?})` | 启动一个子代理并等它结束。返回子代理的文字报告、宿主状态、实际模型和用量，以及 Git 变更摘要（新提交、diff stat、未跟踪文件）。 |
-| `git_audit({operation, base?, path?, maxEntries?})` | 只读的 `status` / `diff-stat` / `diff` / `log`，argv 固定。 |
-| `git_commit({message, paths?})` | 暂存并提交验收通过的改动。从不 push。 |
-| `handoff({brief, progress})` | 把未完成工作连同自包含简报和必填的 1–600 字符三行进度说明交接给新的 Root 会话。lite 与 native 均可用。 |
+| `git_audit({operation, base?, path?, maxEntries?, cwd?})` | 只读的 `status` / `diff-stat` / `diff` / `log`，argv 固定。 |
+| `git_commit({message, paths?, cwd?})` | 暂存并提交验收通过的改动。从不 push。 |
+| `handoff({brief, progress, cwd?})` | 把未完成工作连同自包含简报和必填的 1–600 字符三行进度说明交接给新的 Root 会话。lite 与 native 均可用。 |
 
 审查已提交的变更时，给 `reviewer` 传入 `base`，完整的 `base...HEAD` 文本 diff 会内嵌到任务中，上限为 32 KiB。每个变更 blob 最大为 1 MiB，才能检查。仓库必须已有提交且工作树干净；空 diff、二进制、非 UTF-8 和子模块变更会被拒绝。范围提交固定，但源码仍是实时工作树，无法排除并发修改。不传 `base` 时行为不变。
 
