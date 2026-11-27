@@ -194,6 +194,14 @@ try {
 	assert.ok(injected.systemPrompt.startsWith("BASE\n\n[PLANNER-ONLY]"));
 	assert.ok(!injected.systemPrompt.includes(expectedNativePrompt));
 	for (const strict of [false, true]) assert.ok(plannerPrompt(strict).length < 1_500, "prompt should stay short (cap 1,500 chars; raise only with measured benefit, issue #25)");
+	// In Native mode `before_agent_start` builds Root's system prompt from
+	// NATIVE_PROMPT on every turn, so the whole text is re-read each turn:
+	// #55/#56 grew it from 565 to 1,125 characters.
+	const NATIVE_PROMPT_CHAR_CAP = 1_200;
+	const withinNativeCap = (text) => text.length < NATIVE_PROMPT_CHAR_CAP;
+	assert.ok(withinNativeCap(NATIVE_PROMPT), `native prompt should stay under ${NATIVE_PROMPT_CHAR_CAP} chars (currently ${NATIVE_PROMPT.length}; raise only with measured benefit, issue #25)`);
+	// Fault injection: the same predicate must reject a prompt at the exclusive cap.
+	assert.equal(withinNativeCap("x".repeat(NATIVE_PROMPT_CHAR_CAP)), false, "native prompt cap must reject a prompt at the exclusive cap");
 	assert.match(plannerPrompt(false), /"validator" runs checks and writes nothing/);
 	assert.match(plannerPrompt(true), /"validator" runs checks and writes nothing/);
 	assert.match(plannerPrompt(true), /Strict mode/);

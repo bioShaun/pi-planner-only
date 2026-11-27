@@ -41,6 +41,8 @@
 | 先合并依赖性 review / 并发修复 | e44bdef | #46 | 无 | issue #46 | 暂定-待证 | 暂定（用户 2026-11-16：2026-12-15 前无证据则撤回，见 #54） |
 | reviewer `git_review` | 157e51fd | #49 | 防事故（真实发生） | issue #49；`.scratch/reviewer-git-tool/log.md:181`（A15：审查 116,538 字节的范围，超出 `base` 内联 32 KiB 上限） | 保留-已证明 | 保留（用户 2026-11-16） |
 | explorer 共享锁 | f2fe050 | #28 | 无 | `docs/adr/0012-explorer-read-only-is-prompt-enforced.md`；`delegate.ts:54` | 保留-仅工程 | 保留（用户 2026-11-16） |
+| Native 按角色分流（scout / oracle / worker） | 07f776f / #55 | 未注明（cloud backlog 2） | 无 | `index.ts` `NATIVE_PROMPT`；判断表 `.scratch/native-root-dispatch/spec.md` 第 1–3 节；本行由 #55/#56 的 main review 补记，随本 docs PR 在 #54 留言请用户裁定。两条提示把 `NATIVE_PROMPT` 从 565 增到 1,125 字符，现由 `index.test.mjs` 的 1,200 字符上限断言（含故障注入）守住 | 暂定-待证 | 待用户 |
+| Native 再规划条件与执行摩擦交回 Root | ef87a05 / #56 | 未注明（cloud backlog 2，基于 #55） | 无 | `index.ts` `NATIVE_PROMPT`；`.scratch/native-root-dispatch/spec.md` 第 2、4 节。纯提示与任务包约定：不解析报告、不新增角色或工具、不每轮自动规划 | 暂定-待证 | 待用户 |
 
 ## 1. 现状规模
 
