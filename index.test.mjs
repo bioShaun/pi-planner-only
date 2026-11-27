@@ -1281,3 +1281,39 @@ console.log("index.test: ok");
 	assert.equal(formatTotals({ rootTokens: 12_000, rootCost: 0.05, childTokens: 0, childCost: 0, children: 0, failed: 0 }), "root 12k $0.050 · children(0) 0 $0.000");
 	assert.equal(formatTotals({ rootTokens: 0, rootCost: 0, childTokens: 500, childCost: 0, children: 1, failed: 0 }), "root 0 $0.000 · children(1) 500 $0.000 · root share 0% tok");
 }
+
+// Regression: updateStatus follows effective modeOf(runtime) and session_start guards ctx.hasUI when busy.
+{
+	process.env.PI_PLANNER_ONLY_MODE = "off";
+	const live = fakePi();
+	try {
+		await live.handlers.get("session_start")({ reason: "new" }, live.ctx);
+		assert.match(live.statuses.at(-1), /^planner-only: off$/);
+		delete process.env.PI_PLANNER_ONLY_MODE;
+		process.env.PI_PLANNER_ONLY = "1";
+		await live.handlers.get("message_end")({ message: { role: "assistant", usage: { input: 1_000, output: 200, cost: { total: 0.01 } } } }, live.ctx);
+		assert.match(live.statuses.at(-1), /^planner-only · root /);
+	} finally {
+		delete process.env.PI_PLANNER_ONLY_MODE;
+		delete process.env.PI_PLANNER_ONLY;
+	}
+
+	const headless = fakePi();
+	await headless.handlers.get("session_start")({ reason: "new" }, headless.ctx);
+	const reqReady = Promise.withResolvers();
+	let pendingReq;
+	headless.events.on(SUBAGENT_DELEGATION_REQUEST_EVENT, (req) => { pendingReq = req; reqReady.resolve(); });
+	const inFlight = headless.tools.get("delegate").execute("busy-headless", { role: "worker", task: "wait" }, undefined, undefined, headless.ctx);
+	await reqReady.promise;
+	let notified = 0;
+	const headlessCtx = { ...headless.ctx, hasUI: false, ui: { ...headless.ctx.ui, notify: () => { notified++; throw new Error("notify called without UI"); } } };
+	process.env.PI_PLANNER_ONLY_MODE = "native";
+	try {
+		await assert.doesNotReject(headless.handlers.get("session_start")({ reason: "new" }, headlessCtx));
+		assert.equal(notified, 0);
+	} finally {
+		delete process.env.PI_PLANNER_ONLY_MODE;
+		headless.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, { requestId: pendingReq.requestId, nodeId: pendingReq.nodeId, status: "completed", agent: pendingReq.agent, result: { kind: "text", text: "ok" }, usage: usage() });
+		await inFlight;
+	}
+}

@@ -16,7 +16,7 @@ import { dirname, join, resolve } from "node:path";
 
 export const ARTIFACT_DIRS = ["session", "temp", "project"] as const;
 export type ArtifactDir = (typeof ARTIFACT_DIRS)[number];
-export const DEFAULT_ARTIFACT_DIR: ArtifactDir = "session";
+const DEFAULT_ARTIFACT_DIR: ArtifactDir = "session";
 
 export interface ArtifactPaths {
 	outputPath: string;
@@ -41,7 +41,7 @@ function isArtifactDir(value: unknown): value is ArtifactDir {
 }
 
 /** pi-subagents' agent dir: `PI_CODING_AGENT_DIR` (with `~` expansion) or `~/.pi/agent`. */
-export function piAgentDir(env: NodeJS.ProcessEnv = process.env): string {
+function piAgentDir(env: NodeJS.ProcessEnv = process.env): string {
 	const home = env.HOME || env.USERPROFILE || homedir();
 	const configured = env.PI_CODING_AGENT_DIR;
 	if (configured === "~") return home;

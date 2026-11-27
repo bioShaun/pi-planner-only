@@ -54,7 +54,7 @@ export async function resolveReviewCommit(command: ReviewCommand, root: string, 
 	return result;
 }
 
-export async function reviewMergeBase(command: ReviewCommand, root: string, base: string, head: string): Promise<string> {
+async function reviewMergeBase(command: ReviewCommand, root: string, base: string, head: string): Promise<string> {
 	let output: string;
 	try { output = await command(root, ["merge-base", "--all", base, head]); }
 	catch (error) {
@@ -115,13 +115,13 @@ async function reviewShowPath(command: ReviewCommand, root: string, rev: string,
 	return { body, symlink: mode === "120000" };
 }
 
-async function reviewShowStats(command: ReviewCommand, root: string, rev: string): Promise<{ body: string; parent: string }> {
+async function reviewShowStats(command: ReviewCommand, root: string, rev: string, objectFormat?: string): Promise<{ body: string; parent: string }> {
 	const parents = (await command(root, ["show", "-s", ...REVIEW_LOG_SAFE, "--format=%P", rev])).trim();
 	if (parents && !/^(?:[0-9a-f]{40}|[0-9a-f]{64})(?: (?:[0-9a-f]{40}|[0-9a-f]{64}))*$/.test(parents)) throw new Error("invalid commit parents");
 	const parent = parents ? parents.split(" ")[0] : "empty-tree";
 	let compare = parent;
 	if (parent === "empty-tree") {
-		const format = (await command(root, ["rev-parse", "--show-object-format"])).trim();
+		const format = objectFormat ?? (await command(root, ["rev-parse", "--show-object-format"])).trim();
 		if (format === "sha1") compare = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 		else if (format === "sha256") compare = "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321";
 		else throw new Error(`unsupported object format: ${format}`);
@@ -255,7 +255,7 @@ export async function runReviewQuery(request: ReviewQueryRequest, cwd: string, o
 		attr = rev;
 		identity = JSON.stringify(["show", rev, request.path ?? null]);
 		if (request.path === undefined) {
-			const result = await reviewShowStats(command, root, rev); body = result.body; headerFields = `rev=${rev} parent=${result.parent}`;
+			const result = await reviewShowStats(command, root, rev, format); body = result.body; headerFields = `rev=${rev} parent=${result.parent}`;
 		} else {
 			const result = await reviewShowPath(command, root, rev, request.path); body = result.symlink ? `symlink\n${result.body}` : result.body; headerFields = `rev=${rev} path=${request.path}`;
 		}
@@ -277,16 +277,20 @@ export async function runReviewQuery(request: ReviewQueryRequest, cwd: string, o
 	if (body.endsWith("\n")) lines.pop();
 	if (offset > lines.length && lines.length) throw new Error("offset exceeds content");
 	const header = `git_review ${request.operation}: ${headerFields} contentId=${contentId}`;
+	const headerBytes = Buffer.byteLength(header, "utf8");
 	const selected: string[] = [];
+	let selectedBytes = 0;
 	for (let i = offset - 1; i < lines.length && selected.length < Math.min(limit, 998); i++) {
 		const line = lines[i];
+		const lineBytes = Buffer.byteLength(line, "utf8");
 		const end = i + 1;
 		const footer = `lines ${offset}-${end} of ${lines.length}; next offset: ${end < lines.length ? end + 1 : "none"}${noNewline && end === lines.length ? " (no newline at end)" : ""}`;
-		if (Buffer.byteLength([header, ...selected, line, footer].join("\n")) > 40 * 1024) {
+		if (headerBytes + 1 + selectedBytes + lineBytes + 1 + Buffer.byteLength(footer, "utf8") > 40 * 1024) {
 			if (!selected.length) throw new Error(`line ${i + 1} exceeds page size (${request.path === undefined ? request.operation : JSON.stringify(request.path)})`);
 			break;
 		}
 		selected.push(line);
+		selectedBytes += lineBytes + 1;
 	}
 	const end = offset + selected.length - 1;
 	const footer = lines.length ? `lines ${offset}-${end} of ${lines.length}; next offset: ${end < lines.length ? end + 1 : "none"}${noNewline && end === lines.length ? " (no newline at end)" : ""}` : "lines 0-0 of 0; next offset: none";
@@ -326,11 +330,14 @@ export async function prepareReviewRange(cwd: string, input: string): Promise<Re
 		if (record[1] === "160000" || record[2] === "160000") throw new Error("gitlink changes cannot be reviewed as text");
 		for (const id of [record[3], record[4]]) if (!/^0+$/.test(id)) blobs.add(id);
 	}
-	for (const id of blobs) {
-		let blob: string;
-		try { blob = await reviewCommand(root, ["cat-file", "blob", id]); }
-		catch (error) { throw new Error(`changed blob cannot be inspected (1 MiB maximum): ${String(error)}`); }
-		if (blob.includes("\0")) throw new Error("binary changes cannot be reviewed as text");
+	const blobIds = [...blobs];
+	for (let i = 0; i < blobIds.length; i += 4) {
+		await Promise.all(blobIds.slice(i, i + 4).map(async (id) => {
+			let blob: string;
+			try { blob = await reviewCommand(root, ["cat-file", "blob", id]); }
+			catch (error) { throw new Error(`changed blob cannot be inspected (1 MiB maximum): ${String(error)}`); }
+			if (blob.includes("\0")) throw new Error("binary changes cannot be reviewed as text");
+		}));
 	}
 	const numstat = await reviewCommand(root, ["diff", "--numstat", ...flags, mergeBase, head, "--"]);
 	if (/^-\s+-\s/m.test(numstat)) throw new Error("binary changes cannot be reviewed as text");
@@ -346,14 +353,14 @@ export type GitRunner = (
 	cwd: string,
 ) => Promise<{ stdout: string; stderr?: string; code: number }>;
 
-export const FSMONITOR_OFF = ["-c", "core.fsmonitor=false"] as const;
-export const GIT_SAFE_PREFIX = ["--no-optional-locks", ...FSMONITOR_OFF] as const;
+const FSMONITOR_OFF = ["-c", "core.fsmonitor=false"] as const;
+const GIT_SAFE_PREFIX = ["--no-optional-locks", ...FSMONITOR_OFF] as const;
 const DIFF_SAFE = ["--no-ext-diff", "--no-textconv"] as const;
 
 export const GIT_AUDIT_OPERATIONS = ["status", "diff-stat", "diff", "log"] as const;
 export type GitAuditOperation = (typeof GIT_AUDIT_OPERATIONS)[number];
 
-export const MAX_GIT_OUTPUT_CHARS = 12_000;
+const MAX_GIT_OUTPUT_CHARS = 12_000;
 const REF_PATTERN = /^(?:[0-9a-f]{7,40}|HEAD(?:~\d{1,3})?)$/;
 
 export interface GitAuditRequest {
@@ -364,7 +371,7 @@ export interface GitAuditRequest {
 }
 
 /** True when `git --version` output reports 2.15 or later. */
-export function supportsNoOptionalLocks(versionOutput: string): boolean {
+function supportsNoOptionalLocks(versionOutput: string): boolean {
 	const m = /git version (\d+)\.(\d+)/.exec(versionOutput);
 	if (!m) return false;
 	const [major, minor] = [Number(m[1]), Number(m[2])];
@@ -396,7 +403,7 @@ export async function isWorkTree(run: GitRunner, cwd: string): Promise<boolean> 
 	return r.code === 0 && r.stdout.trim() !== "false";
 }
 
-export const notWorkTree = (cwd: string) => `${cwd} is not inside a git work tree; pass cwd=<repo>`;
+const notWorkTree = (cwd: string) => `${cwd} is not inside a git work tree; pass cwd=<repo>`;
 
 /** Build the argv for one git_audit operation, or explain why it is refused. */
 export function auditArgv(request: GitAuditRequest): { ok: true; args: string[] } | { ok: false; error: string } {
@@ -457,16 +464,16 @@ const operationRefs = [
 ] as const;
 
 async function gitOperations(run: GitRunner, cwd: string): Promise<string[]> {
-	const found: string[] = [];
-	for (const [ref, name] of operationRefs) {
+	const found = await Promise.all(operationRefs.map(async ([ref, name]) => {
 		try {
 			const result = await git(run, ["rev-parse", "-q", "--verify", ref], cwd);
-			if (result.code === 0 && /^[0-9a-f]{40,64}$/i.test(result.stdout.trim())) found.push(name);
+			return result.code === 0 && /^[0-9a-f]{40,64}$/i.test(result.stdout.trim()) ? name : undefined;
 		} catch {
 			// An unavailable probe is not evidence of an operation.
+			return undefined;
 		}
-	}
-	return found;
+	}));
+	return found.filter((name): name is (typeof operationRefs)[number][1] => name !== undefined);
 }
 
 /** Above this many uncommitted paths, fingerprinting is skipped and the summary keeps the plain note. */

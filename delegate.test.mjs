@@ -219,7 +219,17 @@ const respond = (bus, req, over = {}) =>
 		assert.ok(tailAt < found.text.indexOf("Workspace changes"));
 		assert.match(found.text, /result: all 4 suites pass/);
 
-		// Without the transcript file the output artifact still reaches Root, with no tail and no throw.
+		// Missing output artifact still recovers the transcript tail when the transcript file exists.
+		rmSync(output);
+		const transcriptOnly = await run();
+		assert.equal(transcriptOnly.ok, false);
+		assert.ok(transcriptOnly.text.includes(`Transcript: ${transcript}`));
+		assert.match(transcriptOnly.text, /Transcript tail/);
+		assert.match(transcriptOnly.text, /result: all 4 suites pass/);
+		assert.match(transcriptOnly.text, /Child report:\n\(empty\)/);
+
+		// Without the transcript file (restore output) the output artifact still reaches Root, with no tail and no throw.
+		writeFileSync(output, "Subagent timed out.\n\nRecovery summary:\n- currentTool: edit\n");
 		rmSync(transcript);
 		const noTail = await run();
 		assert.equal(noTail.ok, false);
@@ -713,6 +723,19 @@ const respond = (bus, req, over = {}) =>
 	assert.equal(loadConfig({ PI_PLANNER_ONLY_HANDOFF: "Auto" }).handoffMode, "auto");
 	assert.equal(loadConfig({ PI_PLANNER_ONLY_HANDOFF: "confirm" }).handoffMode, "confirm");
 	assert.equal(loadConfig({ PI_PLANNER_ONLY_CONTEXT_WARN_TOKENS: "0" }).contextWarnTokens, 150_000);
+}
+
+// resolveAgentDir: expands ~ and ~/ like piAgentDir, resolves relative paths, falls back to ~/.pi/agent.
+{
+	const { resolveAgentDir } = await import("./config.ts");
+	const home = "/home/alice";
+	assert.equal(resolveAgentDir({ HOME: home }), "/home/alice/.pi/agent");
+	assert.equal(resolveAgentDir({ HOME: home, PI_CODING_AGENT_DIR: "  " }), "/home/alice/.pi/agent");
+	assert.equal(resolveAgentDir({ HOME: home, PI_CODING_AGENT_DIR: "~" }), home);
+	assert.equal(resolveAgentDir({ HOME: home, PI_CODING_AGENT_DIR: "~/custom-agent" }), "/home/alice/custom-agent");
+	assert.equal(resolveAgentDir({ HOME: home, PI_CODING_AGENT_DIR: "~\\win-agent" }), "/home/alice/win-agent");
+	assert.equal(resolveAgentDir({ HOME: home, PI_CODING_AGENT_DIR: "/abs/agent" }), "/abs/agent");
+	assert.equal(resolveAgentDir({ HOME: home, PI_CODING_AGENT_DIR: "rel/agent" }), join(process.cwd(), "rel/agent"));
 }
 
 // Lock key: git toplevel realpath, so /repo and /repo/src share one lock; symlink spellings too.
