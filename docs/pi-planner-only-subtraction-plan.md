@@ -21,6 +21,8 @@
 
 新机制合入 main 时在下表加一行。答不出 §0 的，回答类型写「无」，建议处置标为「暂定-待证」。表格是 §0 回答的唯一位置。日常 review 发现缺行时补行，或在跟踪 issue 留言，不再每波另开新 issue。最终处置只由用户填写；新行先写「待用户」。2026-11-16 用户按 #54 的建议填写了现有各行。
 
+2026-11-27 增量取证（#54 到期复核）：对 4 行到期暂定机制重跑 `scan2.py`（原样复制、仅改输出名，保证与 2026-11-16 同脚本可比）并补 phase 拆分，覆盖 `~/.pi/agent/sessions` 3,217 个 jsonl / 978 个根会话，新窗口（`2026-11-16T03:23:52Z` 之后）130 个根会话、其中 native 127 个。数字与逐行结论写在各行「证据指针」；原始证据与脚本含客户路径，留在本机 `/home/tcuni-claw/pi/s0-evidence-20261127/`（`summary.md`、`findings-baseline.txt`、`findings-incr.txt`），不公开。
+
 | 机制 | 提交/PR | 来源 issue | §0 回答类型 | 证据指针 | 建议处置 | 最终处置 |
 |---|---|---|---|---|---|---|
 | per-call `timeoutSeconds` | 0ea2671 / #32；d1ee6b3 / #33 | #35 | 无 | issue #35；`docs/adr/0008-default-execution-wall-clock-ten-minutes.md:4`；`CONTEXT.md:42-43`。ADR 0008:4 写「heavy-worker envelope not revived」并加注允许单次 `timeoutSeconds`；最长 24h 的单次时限是否等于复活 envelope，待用户裁定 | 暂定-待证 | 保留（用户 2026-11-16）；ADR 0008:4 已写明只覆盖单次 `timeoutMs`，token 与取消限制不变，不算复活 envelope |
@@ -33,12 +35,12 @@
 | `test:release:isolated` 与 host 1.4.0 / Node 引擎 pin | 7085aac / #38 | #40 | 无 | issue #40 | 保留-仅工程 | 保留（用户 2026-11-16） |
 | Root prompt / 批处理重写 | 7085aac / #38 | #40 | 无 | issue #40；`docs/planner-optimization-plan-2026-10-26.md` | 保留-仅工程 | 保留（用户 2026-11-16：不安排 bench，由 1,500 字符上限把关） |
 | handoff retention / origin | 53499d7 / #42 | #43 | 防事故（真实发生） | issue #43；`.scratch/handoff-retention-origin/spec.md`「问题」1–2（旧简报堵住新简报）；`docs/superpowers/specs/2026-10-30-native-handoff-chain-convergence-design.md:19`、`:23` | 保留-已证明 | 保留（用户 2026-11-16） |
-| brief 字段扩展 | 84e3519 | #43 | 无 | issue #43；`index.ts:620` | 暂定-待证 | 暂定（用户 2026-11-16：2026-12-15 前无证据则撤回，见 #54） |
-| Native local-task 例外 | 8db3e6c | #43 | 无 | issue #43 | 暂定-待证 | 暂定（用户 2026-11-16：2026-12-15 前无证据则撤回，见 #54） |
+| brief 字段扩展 | 84e3519 | #43 | 无 | issue #43；`index.ts:620`。2026-11-27 增量：新窗口 33 次 handoff 中 10 次 brief 含 ruled out / pitfall / unverified / 已排除 / 未验证，23 次不含（旧期 29 / 114，比例未改善）；含词样本都是「未验证」状态词，不是已排除路线 / 坑栏目；没有「brief 写了已排除路线，新会话因此没重走」的片段 | 建议撤回（到期：字段大多不填且无挡重走实例） | 暂定（用户 2026-11-16：2026-12-15 前无证据则撤回，见 #54） |
+| Native local-task 例外 | 8db3e6c | #43 | 无 | issue #43。2026-11-27 增量：新窗口 11 个 native 根会话是 1–3 次编辑且零子代理、3 个 ≥8 次编辑且零子代理（旧期 26 / 5）；逐条看过，多是 Root 写咨询答复、进度笔记与配置小改，既无「省掉一次委派且无返工」的干净片段，也无借例外做本该委派的大改动的反例 | 建议保留-仅工程（用法真实；撤回会把明确局部的活也强制委派，与 lite 目标相反；但仍无轮次 / 成本测量） | 暂定（用户 2026-11-16：2026-12-15 前无证据则撤回，见 #54） |
 | auto handoff 链上限 | be287c3 | #46 | 防事故（真实发生） | issue #46；`docs/superpowers/specs/2026-10-30-native-handoff-chain-convergence-design.md:5`、`:36`（SSR 会话链：11 个 Root、9 次无用户输入的自动交接） | 保留-已证明 | 保留（用户 2026-11-16） |
 | 必填 progress 与停止措辞 | c335408、f1c64d4 | #46 | 无 | issue #46；日志取证：落地后 99/99 次 handoff 带具体进度（#54） | 保留-仅工程 | 保留（用户 2026-11-16，依据 #54 日志取证） |
-| Native 任务粒度 | f363b30 | #46 | 无 | issue #46 | 暂定-待证 | 暂定（用户 2026-11-16：2026-12-15 前无证据则撤回，见 #54） |
-| 先合并依赖性 review / 并发修复 | e44bdef | #46 | 无 | issue #46 | 暂定-待证 | 暂定（用户 2026-11-16：2026-12-15 前无证据则撤回，见 #54） |
+| Native 任务粒度 | f363b30 | #46 | 无 | issue #46。2026-11-27 增量：新窗口 0 次 INCOMPLETE（全期唯一一次「落地后」命中是小节标题误报，见 2026-11-16 取证）；落地 28 天里机制前提（子代理只交回部分结果）没有再现 | 建议撤回（到期：0 次触发，无法验证收益） | 暂定（用户 2026-11-16：2026-12-15 前无证据则撤回，见 #54） |
+| 先合并依赖性 review / 并发修复 | e44bdef | #46 | 无 | issue #46。2026-11-27 增量：新窗口 56 次引用「独立 reviewer」，但 0 次 reviewer 任务真在审锁 / 并发——全库 20 次关键词命中里，11 次真正提到锁 / 并发的都在 2026-10-02～10-10（早于 e44bdef 落地），新窗口 9 次是 `target-id-trace` 里 `race` 的误报；无「审查在依赖工作开工前抓到并发 / 锁缺陷」的片段 | 建议保留-仅工程（规则被引用但从未命中目标；操作者全局 `AGENTS.md` 已强制同一口径，插件侧撤回并不改变实际行为，留作观察） | 暂定（用户 2026-11-16：2026-12-15 前无证据则撤回，见 #54） |
 | reviewer `git_review` | 157e51fd | #49 | 防事故（真实发生） | issue #49；`.scratch/reviewer-git-tool/log.md:181`（A15：审查 116,538 字节的范围，超出 `base` 内联 32 KiB 上限） | 保留-已证明 | 保留（用户 2026-11-16） |
 | explorer 共享锁 | f2fe050 | #28 | 无 | `docs/adr/0012-explorer-read-only-is-prompt-enforced.md`；`delegate.ts:54` | 保留-仅工程 | 保留（用户 2026-11-16） |
 | Native 按角色分流（scout / oracle / worker） | 07f776f / #55 | 未注明（cloud backlog 2） | 无 | `index.ts` `NATIVE_PROMPT`；判断表 `.scratch/native-root-dispatch/spec.md` 第 1–3 节；本行由 #55/#56 的 main review 补记，随本 docs PR 在 #54 留言请用户裁定。两条提示把 `NATIVE_PROMPT` 从 565 增到 1,125 字符，现由 `index.test.mjs` 的 1,200 字符上限断言（含故障注入）守住 | 暂定-待证 | 待用户 |
