@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { rmSync } from "node:fs";
+import { after, test } from "node:test";
 import { fakeBus, tempDir } from "./test-helpers.mjs";
 
-process.env.PI_CODING_AGENT_DIR = tempDir("native-handoff-");
+const agentDir = tempDir("native-handoff-");
+after(() => rmSync(agentDir, { recursive: true, force: true }));
+process.env.PI_CODING_AGENT_DIR = agentDir;
 process.env.PI_PLANNER_ONLY_MODE = "native";
 process.env.PI_PLANNER_ONLY_HANDOFF = "auto";
 delete process.env.PI_SUBAGENT_CHILD;

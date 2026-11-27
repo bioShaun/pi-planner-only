@@ -12,13 +12,17 @@ import { fakeBus, noGit, usage, tempDir } from "./test-helpers.mjs";
 const root = process.env.PI_SUBAGENTS_DIR ?? join(homedir(), ".pi", "agent", "npm", "node_modules", "pi-subagents");
 const apiPath = join(root, "src", "api", "delegation.js");
 const parserPath = join(root, "src", "slash", "delegation-request.js");
-const costFixture = tempDir("ppo-cost-contract-");
-process.env.PI_SUBAGENTS_TEMP_ROOT = costFixture;
 
 if (!existsSync(apiPath) || !existsSync(parserPath)) {
 	console.log(`contract.test: SKIP (pi-subagents not found at ${root})`);
 	process.exit(0);
 }
+
+const previousTempRoot = process.env.PI_SUBAGENTS_TEMP_ROOT;
+const costFixture = tempDir("ppo-cost-contract-");
+process.env.PI_SUBAGENTS_TEMP_ROOT = costFixture;
+
+try {
 
 const installed = await import(apiPath);
 for (const name of ["REQUEST", "STARTED", "UPDATE", "RESPONSE", "CANCEL"]) {
@@ -222,4 +226,9 @@ console.log("contract.test: ok");
 	if (previousChild !== undefined) process.env.PI_SUBAGENT_CHILD = previousChild;
 	bridge.dispose();
 	console.log("contract.test: installed cost RPC and async/workflow artifacts ok");
+}
+} finally {
+	if (previousTempRoot === undefined) delete process.env.PI_SUBAGENTS_TEMP_ROOT;
+	else process.env.PI_SUBAGENTS_TEMP_ROOT = previousTempRoot;
+	rmSync(costFixture, { recursive: true, force: true });
 }
