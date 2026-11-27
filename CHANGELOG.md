@@ -2,6 +2,8 @@
 
 ## 0.9.0-lite.0 - unreleased
 
+- Native prompt size guard and §0 ledger rows (`#55`/`#56` review): in Native mode `before_agent_start` builds Root's system prompt from `NATIVE_PROMPT` on every turn, and the two deliveries below grew that text from 565 to 1,125 characters, so `index.test.mjs` now caps it at 1,200 characters (with a fault-injection check that the cap rejects a prompt at the exclusive cap) next to the existing Lite `plannerPrompt` 1,500-character cap. Both prompt conventions are also recorded in `docs/pi-planner-only-subtraction-plan.md` §0.1 as `待用户` for the owner's disposition (issue #54). No runtime behavior change in this patch.
+
 - Native Root dispatch: when work cannot be done locally, the Native prompt routes by role instead of always planning first (scout for context; oracle only for a citable plan contract; worker with a short Root-written Approach as the default). The full table and provenance are in `.scratch/native-root-dispatch/`.
 
 - Native re-plan and friction handback: citable oracle plans must state when to re-plan. Workers hand three friction cases (two consecutive verification failures, unexpected interface behavior, or a design choice the plan did not settle) and mid-task or mid-work user-message progress back to Root in plain text; Root decides whether to close, continue, or dispatch oracle to repair the plan, and escalates to the user only if it also cannot decide. This is a prompt/brief convention, not a parsed report contract, and it does not auto-plan every turn or swap models mid-turn. The full table is in `.scratch/native-root-dispatch/`.
