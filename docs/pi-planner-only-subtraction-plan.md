@@ -45,6 +45,7 @@
 | explorer 共享锁 | f2fe050 | #28 | 无 | `docs/adr/0012-explorer-read-only-is-prompt-enforced.md`；`delegate.ts:54` | 保留-仅工程 | 保留（用户 2026-11-16） |
 | Native 按角色分流（scout / oracle / worker） | 07f776f / #55 | 未注明（cloud backlog 2） | 无 | `index.ts` `NATIVE_PROMPT`；判断表 `.scratch/native-root-dispatch/spec.md` 第 1–3 节；本行由 #55/#56 的 main review 补记，随本 docs PR 在 #54 留言请用户裁定。两条提示把 `NATIVE_PROMPT` 从 565 增到 1,125 字符，现由 `index.test.mjs` 的 1,200 字符上限断言（含故障注入）守住 | 暂定-待证 | 待用户 |
 | Native 再规划条件与执行摩擦交回 Root | ef87a05 / #56 | 未注明（cloud backlog 2，基于 #55） | 无 | `index.ts` `NATIVE_PROMPT`；`.scratch/native-root-dispatch/spec.md` 第 2、4 节。纯提示与任务包约定：不解析报告、不新增角色或工具、不每轮自动规划 | 暂定-待证 | 待用户 |
+| Native oracle 访谈分工、可续用方案与规划期门闩（仅 spec 约定） | #60 | 未注明（cloud backlog 2，基于 #56） | 无 | `.scratch/native-root-dispatch/spec.md` 第 2、5–7 节；纯判断表与任务包约定，未改动 `NATIVE_PROMPT`（仍 1,125 字符，上限 1,200）或运行时代码；`oracle` 保持只读不直连用户、由 Root 负责提问/落盘/勾选步骤；待本机试用并由用户裁定 | 暂定-待证 | 待用户 |
 
 ## 1. 现状规模
 
