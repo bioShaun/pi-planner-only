@@ -2,6 +2,8 @@
 
 ## 0.9.0-lite.0 - unreleased
 
+- Native Root dispatch: when work cannot be done locally, the Native prompt routes by role instead of always planning first (scout for context; oracle only for a citable plan contract; worker with a short Root-written Approach as the default). The full table and provenance are in `.scratch/native-root-dispatch/`.
+
 - Handoff recovery notification (`423cfe1` / #52): a stale replacement-session `ui.notify` during model/settings restore no longer escapes `withSession` and terminates Pi. The plugin falls back to the existing host message channel, keeps the original recovery error and manual-retry instructions, and does not automatically retry.
 
 - Reviewer optional `git_review` (`157e51fd`): packaged entry `reviewer-git.ts` (not in `pi.extensions`) mounts a read-only paginated `log` / `diff` / `show` tool for committed ranges when the operator adds it via reviewer `subagentOnlyExtensions` and a matching tools allowlist (no bash/edit/write). Large ranges can be reviewed without inlining the full patch into `delegate`; the existing `base` path (≤32 KiB clean text diff) is unchanged. `scripts/check-reviewer-config.mjs` checks the effective allowlist and extension path.
