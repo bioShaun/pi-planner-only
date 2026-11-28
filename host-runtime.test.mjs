@@ -20,7 +20,7 @@ const manifest = JSON.parse(readFileSync(new URL("./package.json", import.meta.u
 const installed = JSON.parse(readFileSync(new URL("../package.json", hostEntry), "utf8"));
 
 // The release suite must exercise the same host version the plugin declares.
-assert.equal(installed.version, "1.4.0", "host runtime tests require the target Pi 1.4.0 installation");
+assert.equal(installed.version, "1.7.0", "host runtime tests require the target Pi 1.7.0 installation");
 assert.equal(manifest.devDependencies[hostPackage], installed.version);
 assert.equal(manifest.peerDependencies[hostPackage], installed.version);
 assert.equal(manifest["pi-planner-only"].piHost, installed.version);
@@ -104,7 +104,7 @@ async function fixture(t, calls) {
 	return { session, bus, cwd, delegate, events };
 }
 
-await test("independent delegate calls overlap on Pi 1.4.0 and results preserve source order", { timeout: 15_000 }, async (t) => {
+await test("independent delegate calls overlap on Pi 1.7.0 and results preserve source order", { timeout: 15_000 }, async (t) => {
 	const { session, bus, events } = await fixture(t, ["explorer", "explorer"]);
 	const requests = [];
 	const firstEnded = Promise.withResolvers();

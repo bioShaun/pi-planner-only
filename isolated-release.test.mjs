@@ -25,8 +25,9 @@ printf '%s|%s|%s|%s|%s\n' "$*" "$PWD" "$PI_SUBAGENTS_DIR" "\${PI_PACKAGE_DIR-uns
 if [ "$1" = ci ]; then
   [ "$MODE" = install-fail ] && exit 42
   if [ "$MODE" != missing-source ]; then
-    mkdir -p node_modules/pi-subagents/src/api node_modules/pi-subagents/src/slash node_modules/pi-subagents/src/shared node_modules/pi-subagents/agents
-    touch node_modules/pi-subagents/src/api/delegation.js node_modules/pi-subagents/src/slash/delegation-request.js node_modules/pi-subagents/src/slash/delegation-adapters.js node_modules/pi-subagents/src/shared/artifacts.js
+    mkdir -p node_modules/pi-subagents/agents
+    printf '%s\n' '{"name":"pi-subagents","version":"0.90.0","exports":{".":"./index.js","./delegation":"./delegation.js","./preflight":"./preflight.js"}}' > node_modules/pi-subagents/package.json
+    touch node_modules/pi-subagents/index.js node_modules/pi-subagents/delegation.js node_modules/pi-subagents/preflight.js
   fi
   exit 0
 fi

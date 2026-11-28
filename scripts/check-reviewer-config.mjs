@@ -1,32 +1,38 @@
 import { existsSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const expectedTools = ["read", "grep", "find", "ls", "watchdog_diff", "contact_supervisor", "git_review"];
 
+async function publicPreflight(root) {
+	const requireFromSubagents = createRequire(join(root, "noop.js"));
+	return import(requireFromSubagents.resolve("pi-subagents/preflight"));
+}
+
 export async function checkReviewerConfig(cwd = process.cwd(), options = {}) {
 	const root = options.piSubagentsDir ?? process.env.PI_SUBAGENTS_DIR ?? join(homedir(), ".pi", "agent", "npm", "node_modules", "pi-subagents");
-	const { discoverAgents, clearAgentDiscoveryCache } = await import(pathToFileURL(join(root, "src/agents/agents.js")).href);
-	const { resolvePiLaunchToolPlan } = await import(pathToFileURL(join(root, "src/runs/shared/child-tool-plan.js")).href);
+	const { resolveSubagentLaunchContract } = await publicPreflight(root);
 	const project = resolve(cwd);
-	clearAgentDiscoveryCache();
-	const reviewer = discoverAgents(project, "both").agents.find((agent) => agent.name === "reviewer");
-	if (!reviewer) return { tools: [], subagentOnlyExtensions: [], issues: ["reviewer agent not found"] };
-	const plan = resolvePiLaunchToolPlan({
-		cwd: project, agentName: reviewer.name, tools: reviewer.tools, excludeTools: reviewer.excludeTools,
-		allowNestedSubagents: reviewer.allowNestedSubagents, extensions: reviewer.extensions,
-		subagentOnlyExtensions: reviewer.subagentOnlyExtensions, mcpDirectTools: reviewer.mcpDirectTools,
-		fast: reviewer.fast, model: reviewer.model, permissionRules: reviewer.permission,
+	const result = await resolveSubagentLaunchContract({
+		agent: "reviewer",
+		cwd: project,
+		task: "reviewer configuration probe",
+		context: "fresh",
+		intercomBridge: { mode: "off" },
 	});
-	const tools = plan.effectiveToolAllowlist;
+	if (!result.ok) return { tools: [], subagentOnlyExtensions: [], issues: [`reviewer agent not found: ${result.code}${result.message ? ` (${result.message})` : ""}`] };
+	const tools = result.contract.tools.effectiveAllowlist;
 	const issues = [];
-	if (!plan.explicitToolAllowlist || tools.length !== expectedTools.length || expectedTools.some((tool) => !tools.includes(tool))) {
+	if (!result.contract.tools.explicitAllowlist || tools.length !== expectedTools.length || expectedTools.some((tool) => !tools.includes(tool))) {
 		issues.push(`reviewer tools must equal ${expectedTools.join(", ")}; effective: ${tools.join(", ") || "(none)"}`);
 	}
 	const forbidden = tools.filter((tool) => ["bash", "edit", "write"].includes(tool));
 	if (forbidden.length) issues.push(`reviewer has forbidden tools: ${forbidden.join(", ")}`);
-	const subagentOnlyExtensions = (reviewer.subagentOnlyExtensions ?? []).map((entry) => {
+	// Public preflight reports the child extensions after settings and frontmatter are merged;
+	// it intentionally does not expose which layer supplied each entry.
+	const subagentOnlyExtensions = result.contract.tools.configuredExtensions.map((entry) => {
 		const expanded = entry === "~" ? homedir() : entry.startsWith("~/") ? join(homedir(), entry.slice(2)) : entry;
 		return isAbsolute(expanded) ? expanded : resolve(project, expanded);
 	});

@@ -44,7 +44,7 @@
   },
   "pi-planner-only": {
     "piSubagents": ">=0.70 <1",
-    "piHost": "1.4.0"
+    "piHost": "1.7.0"
   },
   "scripts": {
     "test": "node --test isolated-release.test.mjs && node --experimental-strip-types contract.test.mjs && node --experimental-strip-types git.test.mjs && node --experimental-strip-types reviewer-git.test.mjs && node --experimental-strip-types reviewer-git-runtime.test.mjs && node --experimental-strip-types delegate.test.mjs && node --experimental-strip-types host.test.mjs && node --experimental-strip-types host-runtime.test.mjs && node --experimental-strip-types handoff.test.mjs && node --experimental-strip-types status-color.test.mjs && node --experimental-strip-types index.test.mjs && node --experimental-strip-types --test native-handoff.test.mjs && node --experimental-strip-types --test native-handoff-runtime.test.mjs && node --experimental-strip-types env-isolation.test.mjs",
@@ -54,11 +54,11 @@
     "bench:overhead": "node --experimental-strip-types bench/overhead.mjs static"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@earendil-works/pi-coding-agent": "1.7.0",
     "typebox": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@earendil-works/pi-coding-agent": "1.7.0",
     "@types/node": "^22.15.0",
     "typebox": "*",
     "typescript": "^5.8.0"

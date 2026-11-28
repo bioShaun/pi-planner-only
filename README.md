@@ -106,7 +106,7 @@ pi install https://github.com/bioShaun/pi-planner-only -l    # project-level
 pi install /path/to/pi-planner-only                          # local checkout
 ```
 
-Restart Pi or run `/reload`. Requires Pi **1.4.0**, Node **>=22.19.0**, and
+Restart Pi or run `/reload`. Requires Pi **1.7.0**, Node **>=22.19.0**, and
 pi-subagents `>=0.70 <1`. The host and development dependency are pinned to the
 same verified version; other host versions are not currently declared supported.
 
@@ -178,7 +178,7 @@ reached the new session; a running workflow stopped with `runtime-replaced` whil
 its child continued. One active run remained visible across reload, which does not
 prove all restoration timings are safe. User-initiated `/new` is unchanged.
 
-The verified host is Pi 1.4.0; other host versions are not declared supported.
+The verified host is Pi 1.7.0; other host versions are not declared supported.
 
 ## Development
 
@@ -187,15 +187,16 @@ npm run typecheck
 TMPDIR=/path/outside/repo npm test
 ```
 
-`contract.test.mjs` checks event names, agent names, and the exact request
-shape against the installed pi-subagents (`PI_SUBAGENTS_DIR` to override the
-location); it skips when pi-subagents is absent.
+`contract.test.mjs` checks event names, agent resolution, artifact paths, the
+exact request shape, and cost-RPC accounting through the installed pi-subagents'
+public exports (`PI_SUBAGENTS_DIR` to override the location); it skips when
+pi-subagents is absent.
 
 First run `npm ci` in the root project to install its development dependencies.
 With an existing directory outside the repository as `TMPDIR`,
 `TMPDIR=/path/outside/repo npm run test:release:isolated` installs the locked
-registry fixture (pi-subagents 0.83.0 and pi-ai 1.4.0) in a fresh temporary
-directory, checks its source, runs `test:release`, and removes that directory on
+registry fixture (pi-subagents 0.90.0, pi-ai 1.7.0, and pi-coding-agent 1.7.0) in a fresh temporary
+directory, checks its public export surface, runs `test:release`, and removes that directory on
 normal completion or reported failure. Cleanup after interruption is not guaranteed.
 This checks the fixed versions; `npm run test:release` continues to check the
 locally installed pi-subagents instead. Installation requires registry access.

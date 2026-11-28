@@ -1,4 +1,5 @@
 import { cpSync, existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -21,8 +22,10 @@ try {
 	if (installStatus !== 0) process.exitCode = installStatus;
 	else {
 		const source = join(dir, "node_modules", "pi-subagents");
-		for (const path of ["src/api/delegation.js", "src/slash/delegation-request.js", "src/slash/delegation-adapters.js", "src/shared/artifacts.js", "agents"]) {
-			if (!existsSync(join(source, path))) throw new Error(`isolated pi-subagents missing ${path}`);
+		if (!existsSync(join(source, "agents"))) throw new Error("isolated pi-subagents missing agents");
+		const requireFromSubagents = createRequire(join(source, "noop.js"));
+		for (const specifier of ["pi-subagents", "pi-subagents/delegation", "pi-subagents/preflight"]) {
+			requireFromSubagents.resolve(specifier);
 		}
 		const env = { ...process.env, PI_SUBAGENTS_DIR: source };
 		delete env.PI_PACKAGE_DIR;

@@ -14,7 +14,7 @@ const { AgentSessionRuntime, createAgentSession, createEventBus, DefaultResource
 const aiEntry = process.env.PI_HOST_DIR ? pathToFileURL(join(process.env.PI_HOST_DIR, "../pi-ai/dist/index.js")).href : import.meta.resolve("@earendil-works/pi-ai");
 const { createAssistantMessageEventStream } = await import(aiEntry);
 assert.equal(VERSION, installed.version);
-if (!process.env.PI_HOST_DIR) assert.equal(VERSION, "1.4.0");
+if (!process.env.PI_HOST_DIR) assert.equal(VERSION, "1.7.0");
 
 async function fixture(t, count) {
 	const dir = tempDir("native-handoff-runtime-");

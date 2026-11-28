@@ -88,7 +88,7 @@ pi install https://github.com/bioShaun/pi-planner-only -l    # 项目级
 pi install /path/to/pi-planner-only                          # 本地 checkout
 ```
 
-装完重启 Pi 或执行 `/reload`。需要 Pi **1.4.0**、Node **>=22.19.0** 和 pi-subagents `>=0.70 <1`。
+装完重启 Pi 或执行 `/reload`。需要 Pi **1.7.0**、Node **>=22.19.0** 和 pi-subagents `>=0.70 <1`。
 宿主声明与开发依赖固定在同一验证版本，当前不声明支持其他宿主版本。
 
 ## 开关
@@ -139,7 +139,7 @@ Lite 委派未结束或停止尚未确认时，新建、恢复、fork 与树导�
 
 Native handoff 在接收简报和切换前各查询一次 pi-subagents status；提交时活动或不确定则拒绝且不保留简报，若新简报替换旧稿后被拒，新旧稿均不保留。派发时活动或不确定则保留简报供手动重试、`handoff drop` 或 Root 的下次 handoff 替换，不取消任务。这是尽力检查而非原子屏障，定时任务可能在最后一次检查与切换之间启动。一次隔离的 Pi 1.4.0 / pi-subagents 0.83.0 RPC 实测中，单任务在切换后继续并向新会话发送完成通知；运行中的 workflow 因 `runtime-replaced` 停止，但 child 继续运行。一个活动 run 在 reload 前后均可见，不能证明所有恢复时序都安全。用户自行执行 `/new` 的行为不变。
 
-已验证的宿主为 Pi 1.4.0；不声明支持其他宿主版本。
+已验证的宿主为 Pi 1.7.0；不声明支持其他宿主版本。
 
 ## 开发
 
@@ -148,6 +148,6 @@ npm run typecheck
 TMPDIR=/仓库外的目录 npm test
 ```
 
-`contract.test.mjs` 用已安装的 pi-subagents 核对事件名、agent 名和实际发出的请求结构（位置可用 `PI_SUBAGENTS_DIR` 覆盖）；未安装 pi-subagents 时跳过。
+`contract.test.mjs` 通过已安装 pi-subagents 的公开导出核对事件名、agent 解析、artifact 路径、实际发出的请求结构和 cost RPC 记账（位置可用 `PI_SUBAGENTS_DIR` 覆盖）；未安装 pi-subagents 时跳过。
 
-先在根项目运行 `npm ci` 安装开发依赖。`TMPDIR` 必须指向已存在的仓库外目录。`TMPDIR=/仓库外的目录 npm run test:release:isolated` 在全新临时目录中安装锁定的 registry fixture（pi-subagents 0.83.0 和 pi-ai 1.4.0），检查源码并运行 `test:release`，在正常完成或报告失败后删除该临时目录；中断信号后的清理不作保证。此入口验证固定版本；默认 `npm run test:release` 仍验证本机安装版本。安装需要访问 registry。
+先在根项目运行 `npm ci` 安装开发依赖。`TMPDIR` 必须指向已存在的仓库外目录。`TMPDIR=/仓库外的目录 npm run test:release:isolated` 在全新临时目录中安装锁定的 registry fixture（pi-subagents 0.90.0、pi-ai 1.7.0 和 pi-coding-agent 1.7.0），检查公开导出面并运行 `test:release`，在正常完成或报告失败后删除该临时目录；中断信号后的清理不作保证。此入口验证固定版本；默认 `npm run test:release` 仍验证本机安装版本。安装需要访问 registry。
