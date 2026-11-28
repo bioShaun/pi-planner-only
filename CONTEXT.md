@@ -2,6 +2,8 @@
 
 In Lite, Root spends the expensive tokens on planning and review; children do the bulk of the work on cheaper models. Children run **in-process** through pi-subagents structured delegation, so a cancelled or crashed Root ends them too (shell commands a child already spawned may still orphan). No task ledger is persisted between delegations; mode selection is session metadata.
 
+Orchestration history (Lite → Native → planning split out of Root): `docs/orchestration-evolution.md`.
+
 ## Language
 
 **Mode**:
