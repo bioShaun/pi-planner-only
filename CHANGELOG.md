@@ -2,6 +2,8 @@
 
 ## 0.9.0-lite.0 - unreleased
 
+- Docs: the English README Native mode table now includes the local-task exception and first-draft rule already present in `NATIVE_PROMPT` and README.zh-CN (`8622b9a`).
+
 - Native Root now dispatches the packaged read-only `architect` with fresh context to write or revise plan contracts. The builtin `oracle` remains available for decision-consistency advice outside `NATIVE_PROMPT`.
 
 - Native prompt: writing a new script or changing decision criteria does not qualify for the local-task exception. When an oracle plan is required, Root does not write the first draft itself.

@@ -206,6 +206,11 @@ try {
 	assert.ok(usesNativeArchitect(NATIVE_PROMPT), "Native prompt must name architect and omit oracle");
 	assert.equal(usesNativeArchitect("architect oracle"), false, "Native role guard must reject a stray oracle reference");
 	assert.equal(usesNativeArchitect("worker"), false, "Native role guard must require architect");
+	const nativeReadmeRow = (file) => readFileSync(new URL(file, import.meta.url), "utf8").split("\n").find((line) => line.startsWith("| `native`"));
+	assert.match(nativeReadmeRow("./README.md"), /writing a new script or changing decision criteria does not count as local/);
+	assert.match(nativeReadmeRow("./README.md"), /Root does not write the first draft of that plan itself/);
+	assert.match(nativeReadmeRow("./README.zh-CN.md"), /新写脚本或改判定口径不算局部/);
+	assert.match(nativeReadmeRow("./README.zh-CN.md"), /此时首份方案不由你自写/);
 	assert.match(plannerPrompt(false), /"validator" runs checks and writes nothing/);
 	assert.match(plannerPrompt(true), /"validator" runs checks and writes nothing/);
 	assert.match(plannerPrompt(true), /Strict mode/);
