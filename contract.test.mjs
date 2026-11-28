@@ -155,6 +155,69 @@ const modelWithoutThinking = (model) => model?.replace(thinkingSuffix, "");
 		const architect = await contractFor("architect");
 		assert.equal(architect.agent.source, "package");
 		const architectDefinition = readFileSync(resolve("agents", "architect.md"), "utf8");
+		const architectContractErrors = (definition) => {
+			const errors = [];
+			const headings = [
+				"1. 背景与边界",
+				"2. 已决定事项",
+				"3. 接口、数据与异常契约",
+				"4. 验证命令与可证伪完成断言",
+				"5. 按依赖排序的可勾选实施步骤",
+				"6. 风险与重新规划条件",
+			];
+			let previous = -1;
+			for (const heading of headings) {
+				const index = definition.indexOf(heading);
+				if (index < 0) errors.push(`missing ${heading}`);
+				else if (index < previous) errors.push(`${heading} is out of order`);
+				else previous = index;
+			}
+			for (const required of [
+				"先冻结可证伪的验证标准，再拆分实施步骤",
+				"- [ ] 步骤 N",
+				"worker`、`scout`、`reviewer",
+				"隐藏意图",
+				"术语或口径歧义",
+				"范围膨胀",
+				"缺失可执行验收断言",
+				"未处理异常或并发边界",
+				"contact_supervisor",
+				"need_decision",
+			]) if (!definition.includes(required)) errors.push(`missing ${required}`);
+			return errors;
+		};
+		assert.deepEqual(architectContractErrors(architectDefinition), [], "architect must freeze falsifiable validation before implementation steps and self-check omissions");
+		const swappedArchitectHeadings = architectDefinition
+			.replace("4. 验证命令与可证伪完成断言", "__ARCHITECT_HEADING_4__")
+			.replace("5. 按依赖排序的可勾选实施步骤", "4. 验证命令与可证伪完成断言")
+			.replace("__ARCHITECT_HEADING_4__", "5. 按依赖排序的可勾选实施步骤");
+		assert.ok(architectContractErrors(swappedArchitectHeadings).some((error) => error.includes("out of order")), "architect contract guard must catch validation/steps order inversion");
+		assert.ok(architectContractErrors(architectDefinition.replace("隐藏意图", "")).length > 0, "architect contract guard must catch a missing omission self-check");
+		const dispatchSpec = readFileSync(resolve(".scratch", "native-root-dispatch", "spec.md"), "utf8");
+		const dispatchSpecErrors = (spec) => {
+			const errors = [];
+			for (const required of [
+				"现 1,167 字符",
+				"architect 写方案契约",
+				"architect 访谈纪律",
+				"contact_supervisor",
+				"need_decision",
+				"偏批准",
+				"仅因经代码或契约查证属实的阻塞项",
+				"仅剩非阻塞改进建议或推测性风险，即判为通过",
+			]) if (!spec.includes(required)) errors.push(`missing ${required}`);
+			for (const stale of [
+				"oracle 继续承担 planner/architect",
+				"派 oracle 写方案契约",
+				"oracle 访谈纪律",
+				"oracle 任务包",
+				"才派 oracle",
+			]) if (spec.includes(stale)) errors.push(`stale ${stale}`);
+			return errors;
+		};
+		assert.deepEqual(dispatchSpecErrors(dispatchSpec), [], "Native dispatch spec must route plan contracts to architect and use the approval-leaning plan-review gate");
+		assert.ok(dispatchSpecErrors(dispatchSpec.replaceAll("偏批准", "")).length > 0, "dispatch spec guard must catch removal of the approval-leaning gate");
+		assert.ok(dispatchSpecErrors(`${dispatchSpec}\n才派 oracle`).some((error) => error.startsWith("stale ")), "dispatch spec guard must catch a stale oracle dispatch route");
 		assert.ok(architectDefinition.match(/^description:\s*\S/m), "architect must describe its role");
 		assert.ok(architectDefinition.match(/^acceptanceRole:\s*read-only\s*$/m), "architect must stay read-only for acceptance");
 		const assertArchitectTools = (tools) => {

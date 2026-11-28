@@ -39,7 +39,7 @@ delete process.env.PI_SUBAGENT_CHILD;
 after(() => rmSync(sandbox, { recursive: true, force: true }));
 
 const { createAgentSession, createEventBus, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, VERSION } = await import(hostEntry);
-const { createAssistantMessageEventStream } = await import("@earendil-works/pi-ai");
+const { createAssistantMessageEventStream, getCurrentTools, toToolDeclaration } = await import("@earendil-works/pi-ai");
 assert.equal(VERSION, installed.version);
 const modelRuntime = await ModelRuntime.create({
 	authPath: join(sandbox, "auth.json"), modelsPath: null,
@@ -49,11 +49,25 @@ const model = modelRuntime.getModels()[0];
 assert.ok(model, "host must provide a static model for the offline response fixture");
 const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 
+const toolRequestSignature = (llmContext) => getCurrentTools(llmContext.messages).map(toToolDeclaration);
+
+function assertIdenticalToolRequests(requests) {
+	assert.ok(requests.length >= 2, "tool stability needs at least two requests");
+	for (let index = 1; index < requests.length; index++) assert.deepEqual(requests[index], requests[0]);
+}
+
 function terminal(bus, request, status = "completed") {
 	bus.emit(RESPONSE, { requestId: request.requestId, ownerRunId: request.ownerRunId, nodeId: request.nodeId, agent: request.agent, status, result: { kind: "text", text: status } });
 }
 
-async function fixture(t, calls) {
+async function fixture(t, calls, options = {}) {
+	const mode = options.mode ?? "lite";
+	const previousMode = process.env.PI_PLANNER_ONLY_MODE;
+	process.env.PI_PLANNER_ONLY_MODE = mode;
+	const restoreMode = () => {
+		if (previousMode === undefined) delete process.env.PI_PLANNER_ONLY_MODE;
+		else process.env.PI_PLANNER_ONLY_MODE = previousMode;
+	};
 	const cwd = tempDir("ppo-host-work-");
 	const bus = createEventBus();
 	const pendingRequests = new Map();
@@ -74,8 +88,13 @@ async function fixture(t, calls) {
 	const errors = [];
 	await session.bindExtensions({ mode: "rpc", onError: (error) => errors.push(error) });
 	const delegate = session.agent.state.tools.find((tool) => tool.name === "delegate");
-	assert.ok(delegate, "plugin must expose delegate through the real host");
-	assert.equal(delegate.executionMode, undefined, "delegate must inherit host default scheduling");
+	if (mode === "lite") {
+		assert.ok(delegate, "plugin must expose delegate through the real host");
+		assert.equal(delegate.executionMode, undefined, "delegate must inherit host default scheduling");
+	} else if (mode === "native") {
+		assert.equal(delegate, undefined, "native must not expose Lite delegate");
+		assert.ok(session.agent.state.tools.find((tool) => tool.name === "handoff"), "native must expose handoff through the real host");
+	}
 	let responses = 0;
 	// The provider and structured-delegation peer are controlled fixtures.
 	// Extension loading, tool dispatch, abort and the event bus are the real host.
@@ -92,13 +111,17 @@ async function fixture(t, calls) {
 	const events = [];
 	session.agent.subscribe((event) => { events.push(event); });
 	t.after(async () => {
-		session.agent.abort();
-		for (const request of pendingRequests.values()) terminal(bus, request, "cancelled");
-		await session.agent.waitForIdle();
-		session.dispose();
-		bus.clear();
-		rmSync(cwd, { recursive: true, force: true });
-		assert.deepEqual(errors, [], "extension event handlers must remain compatible");
+		try {
+			session.agent.abort();
+			for (const request of pendingRequests.values()) terminal(bus, request, "cancelled");
+			await session.agent.waitForIdle();
+			session.dispose();
+			bus.clear();
+			rmSync(cwd, { recursive: true, force: true });
+			assert.deepEqual(errors, [], "extension event handlers must remain compatible");
+		} finally {
+			restoreMode();
+		}
 	});
 	t.signal.addEventListener("abort", () => session.agent.abort(), { once: true });
 	return { session, bus, cwd, delegate, events };
@@ -238,4 +261,27 @@ await test("agent_end does not imply idle until asynchronous host listeners sett
 	await running;
 	await session.agent.waitForIdle();
 	assert.equal(session.agent.state.isStreaming, false);
+});
+
+await test("native mode keeps tool declarations stable across consecutive Pi 1.7.0 turns", { timeout: 15_000 }, async (t) => {
+	const { session } = await fixture(t, [], { mode: "native" });
+	const requests = [];
+	session.agent.streamFunction = (_model, llmContext) => {
+		requests.push(toolRequestSignature(llmContext));
+		const message = { role: "assistant", content: [{ type: "text", text: "done" }], api: model.api, provider: model.provider, model: model.id, usage, stopReason: "stop", timestamp: Date.now() };
+		const stream = createAssistantMessageEventStream();
+		stream.push({ type: "start", partial: message });
+		stream.push({ type: "done", reason: "stop", message });
+		return stream;
+	};
+
+	await session.agent.prompt("first native turn");
+	await session.agent.prompt("second native turn");
+	assert.equal(requests.length, 2, "the offline fixture should make exactly one provider request per prompt");
+	assertIdenticalToolRequests(requests);
+	assert.ok(requests[0].some((tool) => tool.name === "handoff"), "native request must include handoff");
+	assert.ok(!requests[0].some((tool) => tool.name === "delegate"), "native request must not include Lite delegate");
+	const drifted = [...requests[0]];
+	drifted.push(drifted.shift());
+	assert.throws(() => assertIdenticalToolRequests([requests[0], drifted]), undefined, "fault injection: reordered tool declarations must trip the stability guard");
 });

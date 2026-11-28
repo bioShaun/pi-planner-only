@@ -32,6 +32,10 @@
 - **提示词预算**：`NATIVE_PROMPT` 受 1,200 字符上限约束（`index.test.mjs`），约定尽量写在 brief 和 `.scratch/native-root-dispatch/` 的 dispatch 表里，不堆进系统提示。
 - 依据：`.scratch/native-root-dispatch/spec.md`、`CHANGELOG.md` 0.9.0-lite.0 中 Native dispatch / re-plan / architect 各条、`pi-planner-only-subtraction-plan.md` §0.1 账本。
 
+## 同类做法对照
+
+阶段三与 Aider、Claude Code opusplan、omo、Roo、OpenCode 及 2026 年 Cursor、Factory、Amp 的对照，以及可借鉴项：`research-planner-split-prior-art-2026-11-28.md`。
+
 ## 一句话
 
 Lite：贵 Root + 便宜 worker → Native：把调用与并行交给 pi-subagents → 规划抽离：最强模型只规划，中等模型 Root 只编排。

@@ -352,7 +352,7 @@ function syncTools(runtime: PlannerRuntime): void {
 		next = [...active, ...PLUGIN_TOOLS.filter((t) => !active.includes(t))]
 			.filter((t) => !HIDDEN_HOST_TOOL_SET.has(t));
 	} else {
-		next = active.filter((t) => !ours.has(t));
+		next = active.filter((t) => !ours.has(t) || (mode === "native" && t === "handoff"));
 		if (mode === "native" && !next.includes("handoff")) next.push("handoff");
 		const restore = mode === "native" ? session.hiddenNativeTools : session.hidLoader ? new Set(["subagents_enable"]) : new Set<string>();
 		for (const tool of restore) if (!next.includes(tool)) next.push(tool);
@@ -674,8 +674,8 @@ export default function plannerOnly(pi: ExtensionAPI, hostAdapter?: HostAdapter)
 		else {
 			const sel = event.systemPromptOptions?.selectedTools;
 			if (sel) {
-				const kept = sel.filter((t) => !PLUGIN_TOOLS.includes(t as typeof PLUGIN_TOOLS[number]));
-				if (mode === "native") kept.push("handoff");
+				const kept = sel.filter((t) => !PLUGIN_TOOLS.includes(t as typeof PLUGIN_TOOLS[number]) || (mode === "native" && t === "handoff"));
+				if (mode === "native" && !kept.includes("handoff")) kept.push("handoff");
 				event.systemPromptOptions.selectedTools = kept;
 			}
 		}

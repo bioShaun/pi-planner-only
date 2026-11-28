@@ -32,6 +32,7 @@ function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async 
 	const commands = new Map();
 	const events = fakeBus();
 	let active = initialActive;
+	const activeToolWrites = [];
 	let branch = [];
 	let sessionId = "session-1";
 	let activeModel = options.sourceModel === undefined ? { provider: "provider-a", id: "model-a" } : options.sourceModel;
@@ -59,7 +60,7 @@ function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async 
 		registerCommand: (n, c) => commands.set(n, c),
 		on: (event, h) => handlers.set(event, h),
 		getActiveTools: () => active,
-		setActiveTools: (next) => (active = next),
+		setActiveTools: (next) => { activeToolWrites.push([...next]); active = next; },
 		appendEntry: (customType, data) => { const entry = { type: "custom", customType, data }; appended.push(entry); branch.push(entry); },
 		get model() { return activeModel; },
 		get thinkingLevel() { return activeThinking; },
@@ -84,7 +85,18 @@ function fakePi(initialActive = ["read", "bash", "edit", "write"], exec = async 
 		get thinkingLevel() { return activeThinking; },
 		ui: { setStatus: (k, v) => statuses.push(v), notify: (m) => { if (staleContext) { staleContext = false; throw new Error("This extension ctx is stale"); } notes.push(m); }, theme: options.legacyTheme ? { fg: (c, s) => { statusColors.push(c); return s; } } : { fg: (c, s) => { statusColors.push(c); return s; }, style: (s, opts) => { statusColors.push(opts.fg); return s; }, colors: { accent: HEAT_COOL, warning: HEAT_MID, error: HEAT_HOT } } },
 	};
-	return { get pi() { return pi; }, get withSessionError() { return withSessionError; }, tools, handlers, commands, events, ctx, notes, statuses, statusColors, sentMessages, sentUserMessages, sessionCalls, replaced, queuedSteers, queuedNextTurn, modelRequests, toolBoundary: () => { modelRequests.push(...queuedSteers.splice(0)); }, userRun: () => { modelRequests.push(...queuedNextTurn.splice(0)); }, active: () => active, appended, activeModel: () => activeModel, activeThinking: () => activeThinking, lastSetModel: () => actionInstances.at(-1).lastSetModel, oldModelCalls: () => actionInstances[0].modelCalls, setSource: (model, thinking = activeThinking) => { activeModel = model; activeThinking = thinking; }, branch: (entries) => { branch = entries; }, sessionId: (id) => { sessionId = id; } };
+	return { get pi() { return pi; }, get withSessionError() { return withSessionError; }, tools, handlers, commands, events, ctx, notes, statuses, statusColors, sentMessages, sentUserMessages, sessionCalls, replaced, queuedSteers, queuedNextTurn, modelRequests, toolBoundary: () => { modelRequests.push(...queuedSteers.splice(0)); }, userRun: () => { modelRequests.push(...queuedNextTurn.splice(0)); }, active: () => active, activeToolWrites, appended, activeModel: () => activeModel, activeThinking: () => activeThinking, lastSetModel: () => actionInstances.at(-1).lastSetModel, oldModelCalls: () => actionInstances[0].modelCalls, setSource: (model, thinking = activeThinking) => { activeModel = model; activeThinking = thinking; }, branch: (entries) => { branch = entries; }, sessionId: (id) => { sessionId = id; } };
+}
+
+function assertStableToolRounds(rounds) {
+	assert.ok(rounds.length >= 3, "tool stability checks need at least three rounds");
+	for (let index = 1; index < rounds.length; index++) {
+		try {
+			assert.deepEqual(rounds[index], rounds[0]);
+		} catch {
+			throw new Error(`tool round ${index + 1} drifted`);
+		}
+	}
 }
 
 try {
@@ -917,6 +929,43 @@ try {
 	assert.deepEqual(await h2.handlers.get("before_agent_start")(nativeEvent, h2.ctx), { systemPrompt: `B\n\n${NATIVE_PROMPT}` });
 	assert.deepEqual(await h2.handlers.get("before_agent_start")(nativeEvent, h2.ctx), { systemPrompt: `B\n\n${expectedNativePrompt}` });
 	assert.deepEqual(nativeEvent.systemPromptOptions.selectedTools, ["read", "subagents_enable", "subagent", "bash", "handoff"]);
+
+	for (const mode of ["native", "lite", "off"]) {
+		const initial = mode === "lite"
+			? ["read", "bash", "edit", "write"]
+			: ["read", "handoff", "bash", "delegate", "edit", "git_audit", "write", "git_commit"];
+		const stable = fakePi(initial);
+		stable.branch([{ type: "custom", customType: "planner-only-mode", data: { mode } }]);
+		await stable.handlers.get("session_start")({ reason: "resume" }, stable.ctx);
+		if (mode === "native") assert.deepEqual(stable.active(), ["read", "handoff", "bash", "edit", "write"]);
+		if (mode === "lite") assert.deepEqual(stable.active(), ["read", "bash", "edit", "write", "delegate", "git_audit", "git_commit", "handoff"]);
+		if (mode === "off") assert.deepEqual(stable.active(), ["read", "bash", "edit", "write"]);
+		const selectedInput = ["read", "handoff", "subagents_enable", "delegate", "subagent", "bash", "git_audit", "edit", "git_commit", "write"];
+		const expectedSelected = mode === "native"
+			? ["read", "handoff", "subagents_enable", "subagent", "bash", "edit", "write"]
+			: mode === "lite"
+				? ["read", "handoff", "delegate", "bash", "git_audit", "edit", "git_commit", "write"]
+				: ["read", "subagents_enable", "subagent", "bash", "edit", "write"];
+		const selectedRounds = [];
+		const activeRounds = [];
+		let writesAfterFirstRound;
+		for (let round = 0; round < 3; round++) {
+			const event = { systemPrompt: "B", systemPromptOptions: { selectedTools: [...selectedInput] } };
+			await stable.handlers.get("before_agent_start")(event, stable.ctx);
+			assert.deepEqual(event.systemPromptOptions.selectedTools, expectedSelected, `${mode} selectedTools round ${round + 1}`);
+			selectedRounds.push([...event.systemPromptOptions.selectedTools]);
+			activeRounds.push([...stable.active()]);
+			if (round === 0) writesAfterFirstRound = stable.activeToolWrites.length;
+			else assert.equal(stable.activeToolWrites.length, writesAfterFirstRound, `${mode} must not rewrite active tools after the first stable round`);
+		}
+		assertStableToolRounds(selectedRounds);
+		assertStableToolRounds(activeRounds);
+		if (mode === "native") {
+			const drifted = [...selectedRounds[0]];
+			drifted.push(drifted.shift());
+			assert.throws(() => assertStableToolRounds([selectedRounds[0], drifted, selectedRounds[0]]), /tool round 2 drifted/, "fault injection: reordered tools must trip the stability guard");
+		}
+	}
 	process.env.PI_PLANNER_ONLY_STRICT = "1";
 	process.env.PI_PLANNER_ONLY_HANDOFF = "auto";
 	assert.equal(await callTool("bash"), undefined);

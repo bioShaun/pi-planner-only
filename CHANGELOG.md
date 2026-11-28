@@ -2,6 +2,8 @@
 
 ## 0.9.0-lite.0 - unreleased
 
+- Native tool declaration stability and plan-contract convergence: Native mode now preserves an existing `handoff` tool's host position instead of moving it to the end, with fake-host three-round and real Pi 1.7.0 two-turn regression coverage. The packaged read-only `architect` prompt and `.scratch/native-root-dispatch/spec.md` now freeze falsifiable validation before implementation steps, use checkable plan steps, limit CLEAR/UNCLEAR supervisor questions to owner decisions, and record the approval-leaning one-pass plan-review gate. `NATIVE_PROMPT` remains 1,167 characters.
+
 - Host and contract-test maintenance: the declared and tested Pi host is now 1.7.0. The isolated registry fixture uses pi-subagents 0.90.0 with Pi 1.7.0 packages, and `contract.test.mjs` exercises pi-subagents through its public exports (`pi-subagents`, `./delegation`, and `./preflight`) rather than private source paths.
 
 - Native Root now dispatches the packaged read-only `architect` with fresh context to write or revise plan contracts. The builtin `oracle` remains available for decision-consistency advice outside `NATIVE_PROMPT`.
