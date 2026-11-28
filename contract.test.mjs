@@ -74,6 +74,20 @@ for (const [role, { agent, lock }] of Object.entries(ROLE_AGENTS)) {
 		assert.equal(validator.model, "test/validator-model");
 		assert.equal(agents.find((agent) => agent.name === "oracle").model, "test/oracle-model");
 		assert.ok(!validator.aliases?.some((alias) => ["oracle", "advisor", "validator"].includes(alias)));
+		const architect = agents.find((agent) => agent.name === "architect");
+		assert.ok(architect, "package architect must be discoverable");
+		assert.equal(architect.source, "package");
+		assert.ok(architect.description.trim(), "architect must describe its role");
+		const assertArchitectTools = (agent) => {
+			assert.deepEqual(agent.tools, ["read", "grep", "find", "ls", "contact_supervisor"], "architect must have only its read-only tools and supervisor contact");
+		};
+		assertArchitectTools(architect);
+		assert.equal(architect.acceptanceRole, "read-only");
+		assert.equal(architect.thinking, "high");
+		assert.equal(architect.defaultContext, "fresh");
+		assert.equal(architect.systemPromptMode, "replace");
+		assert.equal(architect.inheritProjectContext, true);
+		assert.equal(architect.inheritSkills, false);
 		writeFileSync(join(config, "settings.json"), JSON.stringify({ packages: [process.cwd()], subagents: { defaultModel: "test/default-model", agentOverrides: { oracle: { model: "test/oracle-model" } } } }));
 		clearAgentDiscoveryCache();
 		const defaults = discover(project);
@@ -85,6 +99,17 @@ for (const [role, { agent, lock }] of Object.entries(ROLE_AGENTS)) {
 		writeFileSync(join(config, "settings.json"), JSON.stringify({ packages: [missing] }));
 		clearAgentDiscoveryCache();
 		assert.equal(discover(project).some((agent) => agent.name === "planner-validator"), false, "missing package metadata must not discover the validator");
+
+		const faultPackage = join(dir, "architect-tool-fault");
+		mkdirSync(join(faultPackage, "agents"), { recursive: true });
+		writeFileSync(join(faultPackage, "package.json"), JSON.stringify({ name: "architect-tool-fault", "pi-subagents": { agents: ["./agents"] } }));
+		const architectDefinition = readFileSync(resolve("agents", "architect.md"), "utf8");
+		writeFileSync(join(faultPackage, "agents", "architect.md"), architectDefinition.replace(/^tools:.*$/m, "$&, bash"));
+		writeFileSync(join(config, "settings.json"), JSON.stringify({ packages: [faultPackage] }));
+		clearAgentDiscoveryCache();
+		const architectWithBash = discover(project).find((agent) => agent.name === "architect");
+		assert.ok(architectWithBash?.tools.includes("bash"), "fault fixture must parse with bash");
+		assert.throws(() => assertArchitectTools(architectWithBash), /architect must have only its read-only tools/);
 	} finally {
 		if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = oldAgentDir;

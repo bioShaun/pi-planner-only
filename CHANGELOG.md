@@ -2,6 +2,8 @@
 
 ## 0.9.0-lite.0 - unreleased
 
+- Native Root now dispatches the packaged read-only `architect` with fresh context to write or revise plan contracts. The builtin `oracle` remains available for decision-consistency advice outside `NATIVE_PROMPT`.
+
 - Native prompt: writing a new script or changing decision criteria does not qualify for the local-task exception. When an oracle plan is required, Root does not write the first draft itself.
 
 - Native oracle interview, resume-friendly plans, and plan-phase review gate (dispatch table convention; `#60`): `.scratch/native-root-dispatch/spec.md` (§2, §§5–7) documents three brief conventions without changing `NATIVE_PROMPT` (still 1,125 chars, under the 1,200-char cap) or runtime behavior. `oracle` stays read-only and does not talk to the user or write files directly: it explores read-only first, surfaces only owner decisions (irreversible, destructive, or spend) to Root when intent is clear or adopts defaults when unclear, and self-checks omissions; Root asks the user (approval authorizes planning only), saves the citable plan doc (checkable steps, per-step checks, `worker`/`scout`/`reviewer` roles, and re-plan triggers), and ticks off accepted steps. Handoff `relevant files/specs` and `exact next step` (along with worker `Approach`) point at that plan so a later Root can resume without re-dispatching oracle. Plan review is one-shot before implementation; post-implementation `reviewer` handles delivery review (or read-only failure diagnosis) only, and plan changes require Root to explicitly re-dispatch oracle. Recorded in `docs/pi-planner-only-subtraction-plan.md` §0.1 (`暂定-待证` / `待用户`). No new tools or roles, no boulder registry, and no idle auto-continue. No runtime behavior change.
