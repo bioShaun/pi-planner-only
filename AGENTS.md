@@ -10,7 +10,7 @@ The five canonical triage labels, used as-is: `needs-triage`, `needs-info`, `rea
 
 ### Mechanism review (§0)
 
-When a review of new `main` commits finds a new mechanism, add its row to the ledger in `docs/pi-planner-only-subtraction-plan.md` §0.1 (in the same docs PR as any CHANGELOG fix) and comment on issue #54 for the owner's disposition. Reserve a new GitHub issue for a concrete bug or data error.
+When reviewing new `main` commits, see `docs/agents/mechanism-review.md`.
 
 ### Domain docs
 
@@ -18,7 +18,7 @@ Single-context: root `CONTEXT.md` + `docs/adr/`. See `docs/agents/domain.md`.
 
 ### Native Codex delegation
 
-Pi hosts use the lite contract described in `CONTEXT.md`. Native Codex delegation uses the machine-local file `.codex/codex-subagent-config-astra-planner.md` only when that file is present. It is gitignored local config and is not part of this repo. When it is present, follow it: the seven `astra_*` roles, Root owning scope, scheduling, and final acceptance, complex evidence validation on `astra_validator_complex`, one writer per cwd, frozen neutral evidence, and the separate read-only launcher for a strict review gate. Role or config changes require a new main session.
+Pi hosts use the lite contract in `CONTEXT.md`. In Codex, follow the gitignored machine-local `.codex/codex-subagent-config-astra-planner.md` when it is present.
 
 ### Testing
 
